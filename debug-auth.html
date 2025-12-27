@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Debug Auth - Catálogo FYL</title>
+    <style>
+        body {
+            font-family: 'Poppins', sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .debug-container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .debug-section {
+            margin-bottom: 30px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+        .debug-section h3 {
+            color: #CD844D;
+            margin-top: 0;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .status.warning {
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        .log {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+        }
+        .btn {
+            padding: 10px 20px;
+            background: #CD844D;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+            text-decoration: none;
+            display: inline-block;
+        }
+        .btn:hover {
+            background: #B8734A;
+        }
+        .btn-danger {
+            background: #dc3545;
+        }
+        .btn-danger:hover {
+            background: #c82333;
+        }
+        .test-result {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 5px;
+            border-left: 4px solid #CD844D;
+        }
+        .cliente-link {
+            position: relative;
+            right: 16px;
+            top: 16px;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            text-decoration: none;
+            color: #333;
+            background: #fff;
+            font-family: Poppins, system-ui, sans-serif;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s ease;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            cursor: pointer;
+            max-width: 200px;
+        }
+        .cliente-link:hover {
+            background: #f7f7f7;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        }
+        .cliente-link img {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 2px solid #CD844D;
+            transition: transform 0.2s ease;
+        }
+        .cliente-link:hover img {
+            transform: scale(1.05);
+        }
+    </style>
+</head>
+<body>
+    <div class="debug-container">
+        <h1>🔧 Debug de Autenticación - Catálogo FYL</h1>
+        <p>Esta página te ayuda a diagnosticar por qué no se muestra el avatar del usuario logueado.</p>
+
+        <div class="debug-section">
+            <h3>1. Estado de Autenticación</h3>
+            <div id="auth-status" class="status info">Verificando...</div>
+            <div id="user-info" style="display: none;">
+                <h4>Usuario Autenticado:</h4>
+                <div id="user-details"></div>
+            </div>
+        </div>
+
+        <div class="debug-section">
+            <h3>2. Botón Área de Clientes</h3>
+            <div id="button-status" class="status info">Verificando...</div>
+            <div id="button-preview">
+                <a class="cliente-link" href="#" onclick="return false;">Área de Clientes</a>
+            </div>
+        </div>
+
+        <div class="debug-section">
+            <h3>3. Pruebas de Script</h3>
+            <div id="script-tests">
+                <div class="test-result">
+                    <strong>Script auth-status.js:</strong> <span id="auth-script-test">Probando...</span>
+                </div>
+                <div class="test-result">
+                    <strong>Función updateClientAreaLink:</strong> <span id="update-function-test">Probando...</span>
+                </div>
+                <div class="test-result">
+                    <strong>Detección de sesión:</strong> <span id="session-detection-test">Probando...</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="debug-section">
+            <h3>4. Acciones de Diagnóstico</h3>
+            <button id="run-tests" class="btn">Ejecutar Todas las Pruebas</button>
+            <button id="force-update" class="btn">Forzar Actualización</button>
+            <button id="test-login" class="btn">Ir a Login</button>
+            <button id="test-dashboard" class="btn">Ir a Dashboard</button>
+            <a href="index.html" class="btn">Ir a Página Principal</a>
+        </div>
+
+        <div class="debug-section">
+            <h3>5. Log de Eventos</h3>
+            <div id="log" class="log"></div>
+            <button id="clear-log" class="btn">Limpiar Log</button>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script type="module" src="scripts/config.js"></script>
+    <script type="module" src="scripts/supabase-client.js"></script>
+    <script type="module" src="scripts/auth-status.js"></script>
+    
+    <script type="module">
+        import { supabase } from "./scripts/supabase-client.js";
+
+        const authStatus = document.getElementById("auth-status");
+        const userInfo = document.getElementById("user-info");
+        const userDetails = document.getElementById("user-details");
+        const buttonStatus = document.getElementById("button-status");
+        const log = document.getElementById("log");
+        const clearLogBtn = document.getElementById("clear-log");
+        const runTestsBtn = document.getElementById("run-tests");
+        const forceUpdateBtn = document.getElementById("force-update");
+        const testLoginBtn = document.getElementById("test-login");
+        const testDashboardBtn = document.getElementById("test-dashboard");
+
+        // Función para agregar al log
+        function addLog(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('div');
+            logEntry.innerHTML = `<strong>[${timestamp}]</strong> ${message}`;
+            logEntry.style.color = type === 'error' ? '#dc3545' : type === 'success' ? '#28a745' : type === 'warning' ? '#ffc107' : '#333';
+            log.appendChild(logEntry);
+            log.scrollTop = log.scrollHeight;
+        }
+
+        // Función para verificar autenticación
+        async function checkAuth() {
+            try {
+                addLog("🔍 Verificando autenticación...");
+                
+                const { data: { session }, error } = await supabase.auth.getSession();
+                
+                if (error) {
+                    addLog(`❌ Error obteniendo sesión: ${error.message}`, 'error');
+                    authStatus.textContent = "Error al verificar sesión";
+                    authStatus.className = "status error";
+                    return false;
+                }
+
+                if (!session) {
+                    addLog("👤 No hay sesión activa");
+                    authStatus.textContent = "No autenticado";
+                    authStatus.className = "status warning";
+                    return false;
+                }
+
+                addLog(`✅ Sesión activa: ${session.user.email}`);
+                authStatus.textContent = "Autenticado";
+                authStatus.className = "status success";
+                
+                userDetails.innerHTML = `
+                    <p><strong>Email:</strong> ${session.user.email}</p>
+                    <p><strong>ID:</strong> ${session.user.id}</p>
+                    <p><strong>Nombre:</strong> ${session.user.user_metadata?.full_name || 'No disponible'}</p>
+                    <p><strong>Avatar URL:</strong> ${session.user.user_metadata?.avatar_url || 'No disponible'}</p>
+                    <p><strong>Picture:</strong> ${session.user.user_metadata?.picture || 'No disponible'}</p>
+                    <p><strong>Última conexión:</strong> ${new Date(session.user.last_sign_in_at).toLocaleString()}</p>
+                `;
+                userInfo.style.display = "block";
+                return true;
+
+            } catch (error) {
+                addLog(`❌ Error verificando autenticación: ${error.message}`, 'error');
+                authStatus.textContent = "Error";
+                authStatus.className = "status error";
+                return false;
+            }
+        }
+
+        // Función para verificar el botón
+        function checkButton() {
+            const clienteLink = document.querySelector(".cliente-link");
+            if (clienteLink) {
+                const hasImage = clienteLink.querySelector("img");
+                const hasName = clienteLink.querySelector("span");
+                
+                if (hasImage && hasName) {
+                    buttonStatus.innerHTML = `
+                        <strong>✅ Botón con Avatar</strong><br>
+                        <small>Imagen: ${hasImage.src}<br>
+                        Nombre: ${hasName.textContent}</small>
+                    `;
+                    buttonStatus.className = "status success";
+                    addLog("✅ Botón muestra avatar correctamente");
+                } else {
+                    buttonStatus.innerHTML = `
+                        <strong>⚠️ Botón sin Avatar</strong><br>
+                        <small>Mostrando estado por defecto</small>
+                    `;
+                    buttonStatus.className = "status warning";
+                    addLog("⚠️ Botón no muestra avatar");
+                }
+            } else {
+                buttonStatus.innerHTML = `<strong>❌ Botón no encontrado</strong>`;
+                buttonStatus.className = "status error";
+                addLog("❌ Botón no encontrado");
+            }
+        }
+
+        // Función para probar scripts
+        async function testScripts() {
+            addLog("🧪 Probando scripts...");
+            
+            // Probar si el script auth-status.js está cargado
+            if (typeof window.updateClientAreaLink === 'function') {
+                document.getElementById("auth-script-test").innerHTML = `<span style="color: #28a745;">✅ Cargado</span>`;
+                addLog("✅ Script auth-status.js cargado");
+            } else {
+                document.getElementById("auth-script-test").innerHTML = `<span style="color: #dc3545;">❌ No cargado</span>`;
+                addLog("❌ Script auth-status.js no cargado", 'error');
+            }
+
+            // Probar función updateClientAreaLink
+            try {
+                if (typeof window.updateClientAreaLink === 'function') {
+                    await window.updateClientAreaLink();
+                    document.getElementById("update-function-test").innerHTML = `<span style="color: #28a745;">✅ Funciona</span>`;
+                    addLog("✅ Función updateClientAreaLink ejecutada");
+                } else {
+                    document.getElementById("update-function-test").innerHTML = `<span style="color: #dc3545;">❌ No disponible</span>`;
+                    addLog("❌ Función updateClientAreaLink no disponible", 'error');
+                }
+            } catch (error) {
+                document.getElementById("update-function-test").innerHTML = `<span style="color: #dc3545;">❌ Error: ${error.message}</span>`;
+                addLog(`❌ Error ejecutando updateClientAreaLink: ${error.message}`, 'error');
+            }
+
+            // Probar detección de sesión
+            try {
+                const { data: { session } } = await supabase.auth.getSession();
+                if (session) {
+                    document.getElementById("session-detection-test").innerHTML = `<span style="color: #28a745;">✅ Sesión detectada</span>`;
+                    addLog("✅ Sesión detectada correctamente");
+                } else {
+                    document.getElementById("session-detection-test").innerHTML = `<span style="color: #ffc107;">⚠️ Sin sesión</span>`;
+                    addLog("⚠️ No hay sesión activa");
+                }
+            } catch (error) {
+                document.getElementById("session-detection-test").innerHTML = `<span style="color: #dc3545;">❌ Error: ${error.message}</span>`;
+                addLog(`❌ Error detectando sesión: ${error.message}`, 'error');
+            }
+        }
+
+        // Función para ejecutar todas las pruebas
+        async function runAllTests() {
+            addLog("🚀 Ejecutando todas las pruebas...");
+            
+            await checkAuth();
+            await testScripts();
+            checkButton();
+            
+            addLog("✅ Todas las pruebas completadas");
+        }
+
+        // Función para forzar actualización
+        async function forceUpdate() {
+            addLog("🔄 Forzando actualización...");
+            
+            if (typeof window.updateClientAreaLink === 'function') {
+                await window.updateClientAreaLink();
+                addLog("✅ Actualización forzada");
+            } else {
+                addLog("❌ Función no disponible", 'error');
+            }
+            
+            setTimeout(() => {
+                checkButton();
+            }, 500);
+        }
+
+        // Event listeners
+        runTestsBtn.addEventListener("click", runAllTests);
+        forceUpdateBtn.addEventListener("click", forceUpdate);
+        testLoginBtn.addEventListener("click", () => {
+            window.location.href = "client/login.html";
+        });
+        testDashboardBtn.addEventListener("click", () => {
+            window.location.href = "client/dashboard.html";
+        });
+        clearLogBtn.addEventListener("click", () => {
+            log.innerHTML = "";
+        });
+
+        // Ejecutar pruebas al cargar
+        document.addEventListener("DOMContentLoaded", async () => {
+            addLog("🚀 Iniciando diagnóstico de autenticación...");
+            await runAllTests();
+        });
+
+        // Escuchar cambios de autenticación
+        supabase.auth.onAuthStateChange((event, session) => {
+            addLog(`🔄 Cambio de autenticación: ${event}`, session ? 'success' : 'info');
+            setTimeout(() => {
+                checkAuth();
+                checkButton();
+            }, 500);
+        });
+    </script>
+</body>
+</html>

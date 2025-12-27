@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex" />
+  <title>Meta Catalog Feed | Admin</title>
+  <link rel="stylesheet" href="../styles.css" />
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #f5f5f5;
+      margin: 0;
+      padding: 20px;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 24px;
+      color: #333;
+    }
+    .back-link {
+      display: inline-block;
+      margin-bottom: 24px;
+      color: #CD844D;
+      text-decoration: none;
+    }
+    .back-link:hover {
+      text-decoration: underline;
+    }
+    .section {
+      background: white;
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 24px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    .section-title {
+      font-size: 18px;
+      font-weight: 600;
+      margin: 0 0 16px;
+      color: #333;
+      border-bottom: 2px solid #CD844D;
+      padding-bottom: 8px;
+    }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+    .stat-card {
+      background: #f8f9fa;
+      border-radius: 8px;
+      padding: 16px;
+      border-left: 4px solid #CD844D;
+    }
+    .stat-label {
+      font-size: 12px;
+      color: #666;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+    .stat-value {
+      font-size: 24px;
+      font-weight: 600;
+      color: #333;
+    }
+    .stat-warning {
+      border-left-color: #ff9800;
+    }
+    .stat-error {
+      border-left-color: #e74c3c;
+    }
+    .form-group {
+      margin-bottom: 16px;
+    }
+    .form-group label {
+      display: block;
+      margin-bottom: 6px;
+      font-weight: 500;
+      color: #333;
+      font-size: 14px;
+    }
+    .form-group input,
+    .form-group select {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      font-size: 14px;
+      box-sizing: border-box;
+    }
+    .form-group input:focus,
+    .form-group select:focus {
+      outline: none;
+      border-color: #CD844D;
+      box-shadow: 0 0 0 3px rgba(205, 132, 77, 0.1);
+    }
+    .btn {
+      padding: 10px 20px;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      margin-right: 8px;
+      margin-bottom: 8px;
+    }
+    .btn-primary {
+      background: #CD844D;
+      color: white;
+    }
+    .btn-primary:hover:not(:disabled) {
+      background: #B8734A;
+    }
+    .btn-secondary {
+      background: #6c757d;
+      color: white;
+    }
+    .btn-secondary:hover:not(:disabled) {
+      background: #5a6268;
+    }
+    .btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .preview-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 16px;
+      font-size: 12px;
+    }
+    .preview-table th,
+    .preview-table td {
+      padding: 8px;
+      text-align: left;
+      border-bottom: 1px solid #eee;
+    }
+    .preview-table th {
+      background: #f8f9fa;
+      font-weight: 600;
+      position: sticky;
+      top: 0;
+    }
+    .preview-table tr:hover {
+      background: #f8f9fa;
+    }
+    .preview-container {
+      max-height: 400px;
+      overflow: auto;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+    }
+    .error-log {
+      max-height: 300px;
+      overflow: auto;
+      background: #f8f9fa;
+      border-radius: 6px;
+      padding: 12px;
+      font-family: monospace;
+      font-size: 12px;
+    }
+    .error-log-item {
+      padding: 4px 0;
+      border-bottom: 1px solid #eee;
+    }
+    .error-log-item:last-child {
+      border-bottom: none;
+    }
+    .error-time {
+      color: #666;
+      margin-right: 8px;
+    }
+    .error-message {
+      color: #e74c3c;
+    }
+    .loading {
+      text-align: center;
+      padding: 20px;
+      color: #666;
+    }
+    .token-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .token-display {
+      flex: 1;
+      font-family: monospace;
+      font-size: 12px;
+      padding: 8px;
+      background: #f8f9fa;
+      border-radius: 4px;
+      word-break: break-all;
+    }
+    .metrics-badges {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+      margin-bottom: 12px;
+    }
+    .metric-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 500;
+      background: #f0f0f0;
+      color: #666;
+    }
+    .metric-badge.warning {
+      background: #fff3cd;
+      color: #856404;
+    }
+    .metric-badge.error {
+      background: #f8d7da;
+      color: #721c24;
+    }
+    input[readonly][disabled] {
+      background: #f5f5f5 !important;
+      cursor: not-allowed !important;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <a href="./index.html" class="back-link">← Volver al panel</a>
+    <h1>Meta Catalog Feed</h1>
+    <p style="color: #666; margin-bottom: 24px;">Feed CSV para Facebook/Instagram Catalog</p>
+
+    <!-- A. Estado -->
+    <div class="section">
+      <h2 class="section-title">Estado</h2>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-label">Última generación</div>
+          <div class="stat-value" id="last-generation">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Total de ítems</div>
+          <div class="stat-value" id="total-items">-</div>
+        </div>
+        <div class="stat-card stat-warning">
+          <div class="stat-label">Sin imagen</div>
+          <div class="stat-value" id="sin-imagen">-</div>
+        </div>
+        <div class="stat-card stat-warning">
+          <div class="stat-label">Sin precio</div>
+          <div class="stat-value" id="sin-precio">-</div>
+        </div>
+        <div class="stat-card stat-error">
+          <div class="stat-label">Sin stock (out of stock)</div>
+          <div class="stat-value" id="inactivas">-</div>
+        </div>
+        <div class="stat-card stat-warning">
+          <div class="stat-label">Con placeholder</div>
+          <div class="stat-value" id="con-placeholder">-</div>
+        </div>
+        <div class="stat-card stat-warning">
+          <div class="stat-label">Sin descripción</div>
+          <div class="stat-value" id="sin-descripcion">-</div>
+        </div>
+      </div>
+      <button class="btn btn-primary" id="btn-preview">Probar feed (preview)</button>
+      <div id="preview-container" style="display: none;">
+        <div class="metrics-badges" id="preview-metrics-badges"></div>
+        <div class="preview-container">
+          <table class="preview-table" id="preview-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Item Group</th>
+                <th>Title</th>
+                <th>Price</th>
+                <th>Availability</th>
+                <th>Image</th>
+              </tr>
+            </thead>
+            <tbody id="preview-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- B. Configuración -->
+    <div class="section">
+      <h2 class="section-title">Configuración</h2>
+      <div class="form-group">
+        <label>Dominio base del link</label>
+        <input type="text" id="base-url" placeholder="https://tudominio.com" value="https://tudominio.com" />
+        <small style="color: #666; font-size: 12px;">URL base para generar links del feed</small>
+      </div>
+      <div class="form-group">
+        <label>Moneda</label>
+        <select id="currency">
+          <option value="ARS" selected>ARS (Peso Argentino)</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Regla de disponibilidad</label>
+        <input type="text" id="availability-rule" placeholder="available > 0" value="available > 0" readonly disabled style="background: #f5f5f5; cursor: not-allowed;" />
+        <small style="color: #666; font-size: 12px;">La disponibilidad se calcula automáticamente: available > 0</small>
+      </div>
+      <div class="form-group">
+        <label>Token de acceso al feed</label>
+        <div class="token-actions">
+          <input type="text" id="feed-token" class="token-display" placeholder="Token opcional para proteger el feed" />
+          <button class="btn btn-secondary" id="btn-generate-token">Generar</button>
+          <button class="btn btn-secondary" id="btn-copy-token">Copiar</button>
+        </div>
+        <small style="color: #666; font-size: 12px;">Token opcional para proteger el endpoint público. Si no se usa token, el feed es público.</small>
+      </div>
+      <button class="btn btn-primary" id="btn-save-config">Guardar configuración</button>
+    </div>
+
+    <!-- C. Acciones -->
+    <div class="section">
+      <h2 class="section-title">Acciones</h2>
+      <button class="btn btn-primary" id="btn-download-csv">Descargar CSV ahora</button>
+      <button class="btn btn-secondary" id="btn-copy-url">Copiar URL del feed</button>
+      <button class="btn btn-secondary" id="btn-view-errors">Ver log de errores</button>
+      <div id="error-log-container" style="display: none; margin-top: 16px;">
+        <h3 style="font-size: 14px; margin-bottom: 8px;">Últimos 50 errores</h3>
+        <div class="error-log" id="error-log"></div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="../scripts/config.js"></script>
+  <script type="module" src="../scripts/supabase-client.js"></script>
+  <script type="module" src="./admin-auth.js"></script>
+  <script type="module" src="./meta-feed.js"></script>
+</body>
+</html>
+

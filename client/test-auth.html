@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test de Autenticación - Catálogo FYL</title>
+    <style>
+        body {
+            font-family: 'Poppins', sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .test-container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .test-section {
+            margin-bottom: 30px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+        .test-section h3 {
+            color: #CD844D;
+            margin-top: 0;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        .btn {
+            padding: 10px 20px;
+            background: #CD844D;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+            text-decoration: none;
+            display: inline-block;
+        }
+        .btn:hover {
+            background: #B8734A;
+        }
+        .btn-danger {
+            background: #dc3545;
+        }
+        .btn-danger:hover {
+            background: #c82333;
+        }
+        .user-info {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .log {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+        }
+    </style>
+</head>
+<body>
+    <div class="test-container">
+        <h1>🧪 Test de Autenticación - Catálogo FYL</h1>
+        <p>Esta página te permite probar el flujo completo de autenticación.</p>
+
+        <div class="test-section">
+            <h3>1. Estado de Autenticación</h3>
+            <div id="auth-status" class="status info">Verificando...</div>
+            <div id="user-info" class="user-info" style="display: none;">
+                <h4>Usuario Autenticado:</h4>
+                <div id="user-details"></div>
+            </div>
+        </div>
+
+        <div class="test-section">
+            <h3>2. Acciones de Autenticación</h3>
+            <button id="login-btn" class="btn">Iniciar Sesión con Google</button>
+            <button id="logout-btn" class="btn btn-danger" style="display: none;">Cerrar Sesión</button>
+            <button id="refresh-btn" class="btn">Actualizar Estado</button>
+        </div>
+
+        <div class="test-section">
+            <h3>3. Navegación</h3>
+            <a href="login.html" class="btn">Ir a Login</a>
+            <a href="dashboard.html" class="btn">Ir a Dashboard</a>
+            <a href="profile.html" class="btn">Ir a Perfil</a>
+            <a href="../index.html" class="btn">Volver al Catálogo</a>
+        </div>
+
+        <div class="test-section">
+            <h3>4. Log de Eventos</h3>
+            <div id="log" class="log"></div>
+            <button id="clear-log" class="btn">Limpiar Log</button>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script type="module" src="../scripts/config.js"></script>
+    <script type="module" src="../scripts/supabase-client.js"></script>
+    <script type="module" src="client-utils.js"></script>
+    <script type="module">
+        import { supabase } from "../scripts/supabase-client.js";
+
+        const authStatus = document.getElementById("auth-status");
+        const userInfo = document.getElementById("user-info");
+        const userDetails = document.getElementById("user-details");
+        const loginBtn = document.getElementById("login-btn");
+        const logoutBtn = document.getElementById("logout-btn");
+        const refreshBtn = document.getElementById("refresh-btn");
+        const log = document.getElementById("log");
+        const clearLogBtn = document.getElementById("clear-log");
+
+        // Función para agregar al log
+        function addLog(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('div');
+            logEntry.innerHTML = `<strong>[${timestamp}]</strong> ${message}`;
+            logEntry.style.color = type === 'error' ? '#dc3545' : type === 'success' ? '#28a745' : '#333';
+            log.appendChild(logEntry);
+            log.scrollTop = log.scrollHeight;
+        }
+
+        // Función para verificar autenticación
+        async function checkAuth() {
+            try {
+                addLog("🔍 Verificando autenticación...");
+                
+                const { data: { session }, error } = await supabase.auth.getSession();
+                
+                if (error) {
+                    addLog(`❌ Error obteniendo sesión: ${error.message}`, 'error');
+                    authStatus.textContent = "Error al verificar sesión";
+                    authStatus.className = "status error";
+                    return;
+                }
+
+                if (!session) {
+                    addLog("👤 No hay sesión activa");
+                    authStatus.textContent = "No autenticado";
+                    authStatus.className = "status info";
+                    userInfo.style.display = "none";
+                    loginBtn.style.display = "inline-block";
+                    logoutBtn.style.display = "none";
+                    return;
+                }
+
+                addLog(`✅ Sesión activa: ${session.user.email}`);
+                authStatus.textContent = "Autenticado";
+                authStatus.className = "status success";
+                
+                // Mostrar información del usuario
+                userDetails.innerHTML = `
+                    <p><strong>Email:</strong> ${session.user.email}</p>
+                    <p><strong>ID:</strong> ${session.user.id}</p>
+                    <p><strong>Última conexión:</strong> ${new Date(session.user.last_sign_in_at).toLocaleString()}</p>
+                `;
+                userInfo.style.display = "block";
+                loginBtn.style.display = "none";
+                logoutBtn.style.display = "inline-block";
+
+                // Verificar perfil de cliente
+                const { data: customer, error: customerError } = await supabase
+                    .from("customers")
+                    .select("*")
+                    .eq("id", session.user.id)
+                    .single();
+
+                if (customerError) {
+                    addLog(`⚠️ No hay perfil de cliente: ${customerError.message}`);
+                } else {
+                    addLog(`📝 Perfil de cliente encontrado: ${customer.full_name || 'Sin nombre'}`);
+                }
+
+            } catch (error) {
+                addLog(`❌ Error verificando autenticación: ${error.message}`, 'error');
+                authStatus.textContent = "Error";
+                authStatus.className = "status error";
+            }
+        }
+
+        // Event listeners
+        loginBtn.addEventListener("click", async () => {
+            addLog("🔐 Iniciando login con Google...");
+            try {
+                const { error } = await supabase.auth.signInWithOAuth({
+                    provider: "google",
+                    options: {
+                        redirectTo: `${window.location.origin}/client/dashboard.html`,
+                        queryParams: { prompt: "select_account" },
+                    },
+                });
+
+                if (error) {
+                    addLog(`❌ Error en OAuth: ${error.message}`, 'error');
+                } else {
+                    addLog("✅ Redirigiendo a Google...");
+                }
+            } catch (error) {
+                addLog(`❌ Error en login: ${error.message}`, 'error');
+            }
+        });
+
+        logoutBtn.addEventListener("click", async () => {
+            addLog("🚪 Cerrando sesión...");
+            try {
+                const { error } = await supabase.auth.signOut();
+                if (error) {
+                    addLog(`❌ Error cerrando sesión: ${error.message}`, 'error');
+                } else {
+                    addLog("✅ Sesión cerrada correctamente");
+                    await checkAuth();
+                }
+            } catch (error) {
+                addLog(`❌ Error cerrando sesión: ${error.message}`, 'error');
+            }
+        });
+
+        refreshBtn.addEventListener("click", async () => {
+            addLog("🔄 Actualizando estado...");
+            await checkAuth();
+        });
+
+        clearLogBtn.addEventListener("click", () => {
+            log.innerHTML = "";
+        });
+
+        // Verificar autenticación al cargar
+        document.addEventListener("DOMContentLoaded", async () => {
+            addLog("🚀 Iniciando test de autenticación...");
+            await checkAuth();
+        });
+
+        // Escuchar cambios de autenticación
+        supabase.auth.onAuthStateChange((event, session) => {
+            addLog(`🔄 Cambio de estado de autenticación: ${event}`);
+            if (session) {
+                addLog(`✅ Usuario autenticado: ${session.user.email}`);
+            } else {
+                addLog("👤 Usuario desautenticado");
+            }
+            checkAuth();
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Final - Catálogo FYL</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .test-container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .success { color: #28a745; font-weight: bold; }
+        .error { color: #dc3545; font-weight: bold; }
+        .warning { color: #ffc107; font-weight: bold; }
+        .info { color: #17a2b8; font-weight: bold; }
+        button {
+            background: #CD844D;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover { background: #b8733a; }
+        .producto {
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 10px 0;
+            background: #f9f9f9;
+        }
+        .producto img {
+            max-width: 100px;
+            height: auto;
+            border-radius: 4px;
+        }
+        pre {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+            max-height: 300px;
+        }
+    </style>
+</head>
+<body>
+    <h1>🧪 Test Final - Catálogo FYL</h1>
+    
+    <div class="test-container">
+        <h2>📊 Test de Carga de Productos desde Supabase</h2>
+        <button onclick="cargarProductos()">Cargar Productos</button>
+        <div id="productos-resultado">Haz clic en "Cargar Productos"</div>
+    </div>
+
+    <div class="test-container">
+        <h2>🔍 Test de Funciones del Catálogo</h2>
+        <button onclick="testFunciones()">Probar Funciones</button>
+        <div id="funciones-resultado">Haz clic en "Probar Funciones"</div>
+    </div>
+
+    <div class="test-container">
+        <h2>📱 Enlace al Catálogo Principal</h2>
+        <p><a href="index.html" target="_blank" style="font-size: 18px; color: #CD844D; text-decoration: none; font-weight: bold;">🚀 Abrir Catálogo Principal</a></p>
+    </div>
+
+    <script type="module">
+        let supabase = null;
+
+        // Inicializar Supabase
+        async function initSupabase() {
+            try {
+                const config = await import('./scripts/config.local.js');
+                const { createClient } = await import('https://cdn.skypack.dev/@supabase/supabase-js@2');
+                supabase = createClient(config.SUPABASE_URL, config.SUPABASE_ANON_KEY);
+                return true;
+            } catch (error) {
+                console.error('Error inicializando Supabase:', error);
+                return false;
+            }
+        }
+
+        // Cargar productos desde Supabase
+        window.cargarProductos = async function() {
+            const resultado = document.getElementById('productos-resultado');
+            resultado.innerHTML = '<p class="info">🔄 Cargando productos desde Supabase...</p>';
+
+            try {
+                if (!supabase) {
+                    const inicializado = await initSupabase();
+                    if (!inicializado) {
+                        throw new Error('No se pudo inicializar Supabase');
+                    }
+                }
+
+                // Cargar productos desde la vista del catálogo
+                const { data, error } = await supabase
+                    .from('catalog_public_view')
+                    .select('*')
+                    .limit(10);
+
+                if (error) {
+                    throw new Error(`Error de Supabase: ${error.message}`);
+                }
+
+                if (!data || data.length === 0) {
+                    resultado.innerHTML = `
+                        <p class="warning">⚠️ No se encontraron productos en Supabase</p>
+                        <p class="info">💡 Verifica que la vista 'catalog_public_view' tenga datos</p>
+                    `;
+                    return;
+                }
+
+                // Mostrar productos
+                let html = `<p class="success">✅ Productos cargados exitosamente (${data.length} productos)</p>`;
+                html += '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 15px; margin-top: 20px;">';
+
+                data.forEach((producto, index) => {
+                    html += `
+                        <div class="producto">
+                            <h4>${producto.Articulo || 'Sin nombre'}</h4>
+                            <p><strong>Categoría:</strong> ${producto.Categoria || 'N/A'}</p>
+                            <p><strong>Color:</strong> ${producto.Color || 'N/A'}</p>
+                            <p><strong>Precio:</strong> $${producto.Precio || 'N/A'}</p>
+                            ${producto['Imagen Principal'] ? `<img src="${producto['Imagen Principal']}" alt="${producto.Articulo}" style="max-width: 100px; height: auto;">` : '<p>Sin imagen</p>'}
+                            <p><strong>Oferta:</strong> ${producto.Oferta || 'FALSE'}</p>
+                        </div>
+                    `;
+                });
+
+                html += '</div>';
+
+                resultado.innerHTML = html;
+
+            } catch (error) {
+                resultado.innerHTML = `
+                    <p class="error">❌ Error cargando productos: ${error.message}</p>
+                    <p class="warning">💡 Verifica la configuración de Supabase</p>
+                `;
+            }
+        };
+
+        // Probar funciones del catálogo
+        window.testFunciones = async function() {
+            const resultado = document.getElementById('funciones-resultado');
+            resultado.innerHTML = '<p class="info">🔄 Probando funciones del catálogo...</p>';
+
+            try {
+                // Cargar el script principal
+                await import('./scripts/main-supabase.js');
+
+                let html = '<p class="success">✅ Funciones del catálogo cargadas</p>';
+                html += '<ul>';
+
+                // Verificar funciones disponibles
+                const funciones = [
+                    'cargarCategoria',
+                    'cambiarCategoria',
+                    'downloadImage',
+                    'compartirImagen'
+                ];
+
+                funciones.forEach(funcion => {
+                    if (typeof window[funcion] === 'function') {
+                        html += `<li class="success">✅ ${funcion}(): Disponible</li>`;
+                    } else {
+                        html += `<li class="error">❌ ${funcion}(): No disponible</li>`;
+                    }
+                });
+
+                html += '</ul>';
+
+                // Verificar elementos del DOM
+                html += '<h4>Elementos del DOM:</h4><ul>';
+                const elementos = ['catalogo', 'loader', 'categoria-actual'];
+                elementos.forEach(elemento => {
+                    const el = document.getElementById(elemento);
+                    if (el) {
+                        html += `<li class="success">✅ #${elemento}: Encontrado</li>`;
+                    } else {
+                        html += `<li class="error">❌ #${elemento}: No encontrado</li>`;
+                    }
+                });
+                html += '</ul>';
+
+                resultado.innerHTML = html;
+
+            } catch (error) {
+                resultado.innerHTML = `
+                    <p class="error">❌ Error probando funciones: ${error.message}</p>
+                `;
+            }
+        };
+
+        // Inicializar automáticamente
+        window.addEventListener('load', async () => {
+            console.log('🚀 Inicializando test final...');
+            await initSupabase();
+            console.log('✅ Test final listo');
+        });
+    </script>
+</body>
+</html>
+

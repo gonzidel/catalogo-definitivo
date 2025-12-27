@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gestión de Pedidos - Catálogo FYL</title>
+    <link rel="stylesheet" href="../styles.css">
+    <script>
+      // Configurar antes de que se carguen los módulos
+      window.redirectTarget = "./orders.html";
+      window.skipPanelRedirect = true;
+    </script>
+    <style>
+        .orders-container {
+            max-width: 960px;
+            margin: 0 auto;
+            padding: 16px;
+        }
+        .orders-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 24px;
+            padding: 16px;
+            background: #f8f9fa;
+            border-radius: 12px;
+        }
+        .orders-header h1 {
+            font-size: 22px;
+        }
+        .orders-filters {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+        .filter-btn {
+            padding: 6px 12px;
+            border: 1px solid #ddd;
+            background: white;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s;
+            position: relative;
+        }
+        .filter-btn.active {
+            background: #CD844D;
+            color: white;
+            border-color: #CD844D;
+        }
+        .filter-btn-badge {
+            position: absolute;
+            top: -8px;
+            right: -8px;
+            background: #dc3545;
+            color: white;
+            border-radius: 50%;
+            min-width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 0 5px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            z-index: 10;
+        }
+        .filter-btn-badge.hidden {
+            display: none;
+        }
+        .orders-list {
+            display: grid;
+            gap: 16px;
+        }
+        .order-card {
+            background: white;
+            border: 1px solid #e9ecef;
+            border-radius: 12px;
+            padding: 16px;
+            box-shadow: 0 6px 20px rgba(0,0,0,0.08);
+        }
+        .order-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 12px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #eee;
+        }
+        .order-id {
+            font-size: 16px;
+            font-weight: 600;
+            color: #333;
+            word-break: break-word;
+        }
+        .order-status {
+            padding: 4px 10px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+        }
+        .status-active {
+            background: #e6f4ea;
+            color: #1b5e20;
+        }
+        .status-picked {
+            background: #e3f2fd;
+            color: #1565c0;
+        }
+        .status-closed {
+            background: #e8f0fe;
+            color: #1a237e;
+        }
+        .status-sent {
+            background: #d1ecf1;
+            color: #0c5460;
+        }
+        .status-pending {
+            background: #fff3cd;
+            color: #856404;
+        }
+        .status-waiting {
+            background: #fff4e6;
+            color: #e65100;
+        }
+        .item-status.waiting {
+            background: #fff4e6;
+            color: #e65100;
+            border: 1px solid #ff9800;
+        }
+        .customer-info {
+            margin-bottom: 12px;
+            font-size: 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .customer-name {
+            font-weight: 600;
+            font-size: 15px;
+        }
+        .customer-details {
+            color: #666;
+            font-size: 13px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: center;
+        }
+        .customer-details span {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            white-space: nowrap;
+        }
+        .order-items {
+            margin-bottom: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .order-item {
+            display: flex;
+            gap: 12px;
+            align-items: flex-start;
+            padding: 12px;
+            border-radius: 10px;
+            border: 1px solid #f0f0f0;
+            background: #fafafa;
+        }
+        .item-thumb {
+            width: 64px;
+            height: 64px;
+            object-fit: cover;
+            border-radius: 10px;
+            flex-shrink: 0;
+        }
+        .item-main {
+            flex: 1;
+            min-width: 0;
+        }
+        .item-name {
+            font-weight: 600;
+            margin-bottom: 4px;
+            font-size: 14px;
+        }
+        .item-details {
+            color: #666;
+            font-size: 12px;
+            margin-bottom: 4px;
+        }
+        .item-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            padding: 2px 8px;
+            border-radius: 999px;
+            background: #e9ecef;
+            color: #495057;
+        }
+        .item-status.picked {
+            background: #e6f4ea;
+            color: #1b5e20;
+        }
+        .item-status.missing {
+            background: #fdecea;
+            color: #c62828;
+        }
+        .item-status.cancelled {
+            background: #fff3e0;
+            color: #e65100;
+            border: 1px solid #ff9800;
+        }
+        .order-item.cancelled-item {
+            background: #fff3e0;
+            border: 2px solid #ff9800;
+            border-left: 4px solid #ff9800;
+        }
+        .cancelled-warning {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            background: #fff3e0;
+            border: 1px solid #ff9800;
+            border-radius: 6px;
+            margin-bottom: 8px;
+            color: #e65100;
+            font-weight: 600;
+            font-size: 13px;
+        }
+        .status-cancelled {
+            background: #fff3e0;
+            color: #e65100;
+            border: 1px solid #ff9800;
+        }
+        .item-actions {
+            display: flex;
+            gap: 8px;
+        }
+        .item-action-btn {
+            width: 38px;
+            height: 38px;
+            border-radius: 50%;
+            border: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            cursor: pointer;
+            font-size: 16px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+        }
+        .item-action-btn.success {
+            background: #34a853;
+        }
+        .item-action-btn.danger {
+            background: #ea4335;
+        }
+        .item-action-btn.neutral {
+            background: #9e9e9e;
+        }
+        .order-total {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-top: 12px;
+            border-top: 2px solid #CD844D;
+            font-size: 16px;
+            font-weight: 600;
+        }
+        .order-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 12px;
+        }
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+        }
+        .btn-success { background: #28a745; color: white; }
+        .btn-danger { background: #dc3545; color: white; }
+        .btn-secondary { background: #6c757d; color: white; }
+        .btn-outline {
+            background: white;
+            border: 1px solid #CD844D;
+            color: #CD844D;
+        }
+        .empty-orders, .loading {
+            text-align: center;
+            padding: 48px 16px;
+            color: #666;
+        }
+        .loading {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 200px;
+        }
+        .loading-spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #CD844D;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 16px;
+        }
+        .loading.hidden {
+            display: none;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        /* Notificación toast */
+        .toast-notification {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+            padding: 24px 32px;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            z-index: 10000;
+            min-width: 300px;
+            max-width: 500px;
+            animation: toastFadeIn 0.3s ease-out;
+            border: 2px solid #28a745;
+        }
+        .toast-notification.success {
+            border-color: #28a745;
+        }
+        .toast-notification.error {
+            border-color: #dc3545;
+        }
+        .toast-notification .toast-icon {
+            font-size: 32px;
+            flex-shrink: 0;
+        }
+        .toast-notification.success .toast-icon {
+            color: #28a745;
+        }
+        .toast-notification.error .toast-icon {
+            color: #dc3545;
+        }
+        .toast-notification .toast-message {
+            flex: 1;
+            font-size: 16px;
+            color: #333;
+            font-weight: 500;
+        }
+        @keyframes toastFadeIn {
+            from {
+                opacity: 0;
+                transform: translate(-50%, -50%) scale(0.9);
+            }
+            to {
+                opacity: 1;
+                transform: translate(-50%, -50%) scale(1);
+            }
+        }
+        @keyframes toastFadeOut {
+            from {
+                opacity: 1;
+                transform: translate(-50%, -50%) scale(1);
+            }
+            to {
+                opacity: 0;
+                transform: translate(-50%, -50%) scale(0.9);
+            }
+        }
+        .toast-notification.fade-out {
+            animation: toastFadeOut 0.3s ease-in forwards;
+        }
+        .item-price {
+            color: #CD844D;
+            font-weight: 600;
+            font-size: 14px;
+        }
+        /* Modal para crear/editar pedido */
+        .order-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 10000;
+            overflow-y: auto;
+            padding: 20px;
+        }
+        .order-modal.active {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .order-modal-content {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+            width: 100%;
+            max-width: 900px;
+            position: relative;
+            animation: modalFadeIn 0.3s ease;
+        }
+        @keyframes modalFadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        .order-modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 24px;
+            border-bottom: 1px solid #e9ecef;
+        }
+        .order-modal-header h2 {
+            margin: 0;
+            font-size: 22px;
+            color: #333;
+        }
+        .order-modal-close {
+            background: none;
+            border: none;
+            font-size: 32px;
+            color: #666;
+            cursor: pointer;
+            padding: 0;
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            transition: all 0.2s;
+        }
+        .order-modal-close:hover {
+            background: #f0f0f0;
+            color: #333;
+        }
+        .order-modal-body {
+            padding: 24px;
+        }
+        .order-form-section {
+            margin-bottom: 24px;
+        }
+        .order-form-section h3 {
+            margin: 0 0 16px 0;
+            font-size: 18px;
+            color: #333;
+            border-bottom: 2px solid #CD844D;
+            padding-bottom: 8px;
+        }
+        .order-form-section label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #555;
+        }
+        .order-modal-footer {
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+            padding: 20px 24px;
+            border-top: 1px solid #e9ecef;
+            background: #f8f9fa;
+        }
+        .customer-result-item, .product-result-item {
+            padding: 12px;
+            cursor: pointer;
+            border-bottom: 1px solid #eee;
+            transition: background 0.2s;
+        }
+        .customer-result-item:hover, .product-result-item:hover {
+            background: #f8f9fa;
+        }
+        .customer-result-item:last-child, .product-result-item:last-child {
+            border-bottom: none;
+        }
+        .order-item-in-modal {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            margin-bottom: 8px;
+        }
+        .order-item-in-modal-info {
+            flex: 1;
+        }
+        .order-item-in-modal-actions {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        @media (max-width: 768px) {
+            .orders-container {
+                padding: 12px;
+            }
+            .orders-header {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 16px;
+            }
+            .orders-header h1 {
+                font-size: 20px;
+            }
+            .orders-header div {
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+            }
+            .orders-filters {
+                gap: 6px;
+            }
+            .filter-btn {
+                flex: 1;
+                text-align: center;
+            }
+            .order-card {
+                padding: 14px;
+            }
+            .order-header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+            .order-item {
+                flex-direction: column;
+            }
+            .item-thumb {
+                width: 72px;
+                height: 72px;
+            }
+            .item-actions {
+                width: 100%;
+                justify-content: flex-end;
+            }
+            .order-actions {
+                flex-direction: column;
+            }
+            .btn {
+                width: 100%;
+                justify-content: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="orders-container">
+        <div class="orders-header">
+    <h1>📦 Gestión de Pedidos</h1>
+            <div>
+                <button id="create-order-btn" class="btn" style="background: #28a745; color: white;">➕ Crear Pedido</button>
+                <a href="index.html" class="btn btn-secondary" style="margin-left: 10px;">← Panel Admin</a>
+                <a href="sent-orders.html" class="btn" style="background: #17a2b8; color: white; margin-left: 10px;">📦 Pedidos Enviados</a>
+                <button id="refresh-btn" class="btn" style="background: #CD844D; color: white; margin-left: 10px;">Actualizar</button>
+            </div>
+        </div>
+
+        <div class="orders-filters">
+            <button class="filter-btn active" data-status="active">
+                Activos
+                <span class="filter-btn-badge hidden" id="active-orders-badge">0</span>
+            </button>
+            <button class="filter-btn" data-status="picked">
+                Apartados
+                <span class="filter-btn-badge hidden" id="picked-orders-badge">0</span>
+            </button>
+            <button class="filter-btn" data-status="waiting">
+                Espera
+                <span class="filter-btn-badge hidden" id="waiting-orders-badge">0</span>
+            </button>
+            <button class="filter-btn" data-status="closed">
+                Cerrados
+                <span class="filter-btn-badge hidden" id="closed-orders-badge">0</span>
+            </button>
+            <button class="filter-btn" data-status="cancelled">
+                Cancelaciones
+                <span class="filter-btn-badge hidden" id="cancelled-orders-badge">0</span>
+            </button>
+            <button class="filter-btn" data-status="all">Todos</button>
+            <div style="margin-left:auto; display:flex; align-items:center; gap:8px;">
+                <input id="search-input" type="text" placeholder="Buscar (nombre, DNI, teléfono)" style="padding:6px 10px; border:1px solid #ddd; border-radius:8px; font-size:13px; min-width: 260px;" />
+                <label for="sort-select" style="font-size:13px; color:#666;">Ordenar:</label>
+                <select id="sort-select" class="btn" style="padding:6px 10px; background:white; border:1px solid #ddd; border-radius:8px; font-size:13px;">
+                    <option value="recent" selected>Más recientes</option>
+                    <option value="oldest">Más antiguos</option>
+                    <option value="name_az">Nombre (A-Z)</option>
+                    <option value="name_za">Nombre (Z-A)</option>
+                </select>
+            </div>
+        </div>
+
+        <div id="orders-content">
+            <div class="loading">
+                <div class="loading-spinner"></div>
+                <p>Cargando pedidos...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal para crear/editar pedido -->
+    <div id="create-order-modal" class="order-modal" style="display: none;">
+        <div class="order-modal-content" style="max-width: 900px; max-height: 90vh; overflow-y: auto;">
+            <div class="order-modal-header">
+                <h2 id="modal-title">➕ Crear Nuevo Pedido</h2>
+                <button id="close-order-modal" class="order-modal-close">&times;</button>
+            </div>
+            <div class="order-modal-body">
+                <!-- Selección de Cliente -->
+                <div class="order-form-section">
+                    <h3>👤 Cliente</h3>
+                    <div style="display: flex; gap: 12px; margin-bottom: 16px;">
+                        <div style="flex: 1;">
+                            <label for="customer-search">Buscar Cliente:</label>
+                            <input type="text" id="customer-search" placeholder="Buscar por nombre, DNI, email..." style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
+                            <div id="customer-results" style="max-height: 200px; overflow-y: auto; border: 1px solid #ddd; border-radius: 6px; margin-top: 8px; display: none; background: white; position: absolute; z-index: 1000; width: 100%; max-width: 400px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);"></div>
+                        </div>
+                        <div>
+                            <label>&nbsp;</label>
+                            <button id="create-customer-btn" class="btn" style="background: #17a2b8; color: white; padding: 8px 16px;">➕ Crear Cliente</button>
+                        </div>
+                    </div>
+                    <div id="selected-customer" style="display: none; padding: 12px; background: #f8f9fa; border-radius: 6px; margin-top: 8px;">
+                        <strong>Cliente seleccionado:</strong> <span id="selected-customer-name"></span>
+                        <button id="remove-customer-btn" style="margin-left: 12px; padding: 4px 8px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">Cambiar</button>
+                    </div>
+                </div>
+
+                <!-- Valores Extra del Pedido -->
+                <div class="order-form-section">
+                    <h3>💰 Valores Extra</h3>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+                        <div>
+                            <label for="shipping-amount">🚚 Envío ($):</label>
+                            <input type="number" id="shipping-amount" placeholder="Ej: 4000" min="0" step="0.01" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
+                        </div>
+                        <div>
+                            <label for="discount-amount">💸 Descuento ($):</label>
+                            <input type="number" id="discount-amount" placeholder="Ej: 5000" min="0" step="0.01" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
+                        </div>
+                        <div>
+                            <label for="extras-amount">➕ Extras ($):</label>
+                            <input type="number" id="extras-amount" placeholder="Ej: 6000" min="0" step="0.01" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
+                        </div>
+                        <div>
+                            <label for="extras-percentage">➕ Extras (%):</label>
+                            <input type="number" id="extras-percentage" placeholder="Ej: 5" min="0" max="100" step="0.01" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Búsqueda de Productos -->
+                <div class="order-form-section">
+                    <h3>🛍️ Agregar Productos</h3>
+                    <div style="margin-bottom: 16px;">
+                        <label for="product-search">Buscar Producto:</label>
+                        <input type="text" id="product-search" placeholder="Buscar producto por nombre..." style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
+                        <div id="product-results" style="max-height: 300px; overflow-y: auto; border: 1px solid #ddd; border-radius: 6px; margin-top: 8px; display: none; background: white; position: absolute; z-index: 1000; width: 100%; max-width: 600px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);"></div>
+                    </div>
+                </div>
+
+                <!-- Productos Agregados al Pedido -->
+                <div class="order-form-section">
+                    <h3>📦 Productos del Pedido</h3>
+                    <div id="order-items-list" style="min-height: 100px; padding: 12px; background: #f8f9fa; border-radius: 6px; margin-bottom: 16px;">
+                        <p style="color: #666; text-align: center; padding: 20px;">No hay productos agregados aún</p>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px; background: #e9ecef; border-radius: 6px;">
+                        <strong style="font-size: 18px;">Total:</strong>
+                        <strong style="font-size: 20px; color: #CD844D;" id="order-total">$0</strong>
+                    </div>
+                </div>
+            </div>
+            <div class="order-modal-footer">
+                <button id="cancel-order-btn" class="btn btn-secondary">Cancelar</button>
+                <button id="save-order-btn" class="btn" style="background: #28a745; color: white;" disabled>Guardar Pedido</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal para crear cliente -->
+    <div id="create-customer-modal" class="order-modal" style="display: none; z-index: 20000;">
+        <div class="order-modal-content" style="max-width: 600px; max-height: 90vh; overflow-y: auto;">
+            <div class="order-modal-header">
+                <h2>➕ Crear Nuevo Cliente</h2>
+                <button id="close-customer-modal" class="order-modal-close">&times;</button>
+            </div>
+            <div class="order-modal-body">
+                <form id="customer-form" style="display: flex; flex-direction: column; gap: 16px;">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                        <div>
+                            <label for="customer-first-name">Nombre <span style="color: red;">*</span>:</label>
+                            <input type="text" id="customer-first-name" required placeholder="Ej: Juan" autocomplete="off" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
+                        </div>
+                        <div>
+                            <label for="customer-last-name">Apellido <span style="color: red;">*</span>:</label>
+                            <input type="text" id="customer-last-name" required placeholder="Ej: Pérez" autocomplete="off" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
+                        </div>
+                    </div>
+                    <div>
+                        <label for="customer-dni">DNI (opcional):</label>
+                        <input type="text" id="customer-dni" placeholder="Ej: 12345678" autocomplete="off" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
+                    </div>
+                    <div>
+                        <label for="customer-phone">Teléfono <span style="color: red;">*</span>:</label>
+                        <input type="text" id="customer-phone" required placeholder="Ej: 1123456789" autocomplete="off" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
+                    </div>
+                    <div>
+                        <label for="customer-email">Email (opcional):</label>
+                        <input type="email" id="customer-email" placeholder="Ej: juan@example.com" autocomplete="off" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
+                    </div>
+                    <div>
+                        <label for="customer-address">Dirección <span style="color: red;">*</span>:</label>
+                        <input type="text" id="customer-address" required placeholder="Ej: Av. Corrientes 1234" autocomplete="off" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                        <div style="position: relative;">
+                            <label for="customer-province">Provincia <span style="color: red;">*</span>:</label>
+                            <input type="text" id="customer-province" required placeholder="Escriba para buscar provincia..." autocomplete="new-password" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
+                            <div id="province-dropdown" class="custom-dropdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: white; border: 1px solid #ddd; border-radius: 6px; max-height: 200px; overflow-y: auto; z-index: 1000; box-shadow: 0 4px 8px rgba(0,0,0,0.1); margin-top: 4px;"></div>
+                        </div>
+                        <div style="position: relative;">
+                            <label for="customer-city">Ciudad <span style="color: red;">*</span>:</label>
+                            <input type="text" id="customer-city" required placeholder="Seleccione provincia primero..." autocomplete="new-password" disabled style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
+                            <div id="city-dropdown" class="custom-dropdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: white; border: 1px solid #ddd; border-radius: 6px; max-height: 200px; overflow-y: auto; z-index: 1000; box-shadow: 0 4px 8px rgba(0,0,0,0.1); margin-top: 4px;"></div>
+                        </div>
+                    </div>
+                    <div id="customer-form-error" style="display: none; padding: 12px; background: #ffebee; color: #c62828; border-radius: 6px; border: 1px solid #ef5350;"></div>
+                </form>
+            </div>
+            <div class="order-modal-footer">
+                <button id="cancel-customer-btn" class="btn btn-secondary">Cancelar</button>
+                <button id="save-customer-btn" class="btn" style="background: #28a745; color: white;">Guardar Cliente</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal para seleccionar método de pago -->
+    <div id="payment-method-modal" class="order-modal" style="display: none;">
+        <div class="order-modal-content" style="max-width: 500px;">
+            <div class="order-modal-header">
+                <h2>💳 Seleccionar Método de Pago</h2>
+                <button id="close-payment-modal" class="order-modal-close">&times;</button>
+            </div>
+            <div class="order-modal-body">
+                <div style="margin-bottom: 16px;">
+                    <label for="payment-method-select" style="display: block; margin-bottom: 8px; font-weight: 600;">Método de pago:</label>
+                    <select id="payment-method-select" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px;">
+                        <option value="">-- Seleccione un método --</option>
+                    </select>
+                </div>
+                <div style="margin-bottom: 16px; padding: 12px; background: #f8f9fa; border-radius: 6px;">
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                        <input type="checkbox" id="create-new-payment-method" style="width: 18px; height: 18px;">
+                        <span>Crear nuevo método de pago</span>
+                    </label>
+                </div>
+                <div id="new-payment-method-container" style="display: none; margin-top: 16px;">
+                    <label for="new-payment-method-input" style="display: block; margin-bottom: 8px; font-weight: 600;">Nombre del nuevo método:</label>
+                    <input type="text" id="new-payment-method-input" placeholder="Ej: Transferencia, Efectivo..." style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px;">
+                </div>
+                <div id="payment-method-error" style="display: none; padding: 12px; background: #ffebee; color: #c62828; border-radius: 6px; border: 1px solid #ef5350; margin-top: 12px;"></div>
+            </div>
+            <div class="order-modal-footer">
+                <button id="cancel-payment-btn" class="btn btn-secondary">Cancelar</button>
+                <button id="confirm-payment-btn" class="btn" style="background: #28a745; color: white;">Confirmar</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="../scripts/supabase-client.js"></script>
+    <script type="module" src="admin-auth.js"></script>
+    <script type="module" src="orders.js"></script>
+    <script type="module" src="order-creator.js"></script>
+</body>
+</html>

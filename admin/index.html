@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex" />
+  <title>Admin | Catálogo FYL</title>
+  <link rel="stylesheet" href="../styles.css" />
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #f5f5f5;
+    }
+    .admin-container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 40px 20px;
+    }
+    .admin-header {
+      text-align: center;
+      margin-bottom: 40px;
+    }
+    .admin-header h1 {
+      margin: 0 0 8px;
+      font-size: 32px;
+      color: #333;
+    }
+    .admin-header p {
+      color: #666;
+      font-size: 16px;
+    }
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 24px;
+      margin-top: 40px;
+    }
+    .dashboard-card {
+      background: white;
+      border-radius: 12px;
+      padding: 32px 24px;
+      text-align: center;
+      text-decoration: none;
+      color: #333;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      transition: all 0.3s ease;
+      border: 2px solid transparent;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+    }
+    .dashboard-card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+      border-color: #CD844D;
+    }
+    .dashboard-card-icon {
+      font-size: 48px;
+      line-height: 1;
+    }
+    .dashboard-card-title {
+      font-size: 20px;
+      font-weight: 600;
+      margin: 0;
+      color: #333;
+    }
+    .dashboard-card-desc {
+      font-size: 14px;
+      color: #666;
+      margin: 0;
+    }
+    #auth-section {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    #login-form {
+      max-width: 500px;
+      margin: 0 auto;
+      background: white;
+      padding: 32px;
+      border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      display: none; /* Ocultar inicialmente para evitar flash */
+    }
+    #logged {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: none; /* Ocultar inicialmente para evitar flash */
+    }
+    #logged.ready {
+      display: block !important; /* Mostrar cuando el filtrado esté completo */
+    }
+    /* NO mostrar login automáticamente - solo cuando JavaScript determine que no hay sesión */
+    /* El login se mostrará explícitamente desde admin-auth.js cuando no haya sesión */
+    #login-form h2 {
+      margin-top: 0;
+      margin-bottom: 24px;
+    }
+    #login-form label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: 500;
+      color: #333;
+    }
+    #login-form input {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      font-size: 16px;
+      margin-bottom: 16px;
+      box-sizing: border-box;
+    }
+    #login-form input:focus {
+      outline: none;
+      border-color: #CD844D;
+      box-shadow: 0 0 0 3px rgba(205, 132, 77, 0.1);
+    }
+    #login-form button {
+      padding: 10px 20px;
+      border: none;
+      border-radius: 6px;
+      font-size: 16px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    #login-btn {
+      background: #CD844D;
+      color: white;
+    }
+    #login-btn:hover:not(:disabled) {
+      background: #B8734A;
+    }
+    #login-btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    #signup-btn, #reset-btn {
+      background: #f0f0f0;
+      color: #333;
+    }
+    #signup-btn:hover, #reset-btn:hover {
+      background: #e0e0e0;
+    }
+    #force-logout {
+      background: #e74c3c;
+      color: white;
+    }
+    #force-logout:hover {
+      background: #c0392b;
+    }
+    #login-error {
+      color: #e74c3c;
+      margin-top: 12px;
+      font-size: 14px;
+    }
+    #logged {
+      text-align: center;
+    }
+    #logged p {
+      margin-bottom: 16px;
+      color: #666;
+    }
+    #logout-btn {
+      background: #e74c3c;
+      color: white;
+      padding: 10px 20px;
+      border: none;
+      border-radius: 6px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+    #logout-btn:hover {
+      background: #c0392b;
+    }
+    .user-info {
+      margin-bottom: 24px;
+      padding: 16px;
+      background: #f8f9fa;
+      border-radius: 8px;
+    }
+    .user-info p {
+      margin: 0;
+      color: #333;
+      font-weight: 500;
+    }
+    #loading-spinner {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 400px;
+      color: #666;
+      position: relative;
+      z-index: 10;
+    }
+    .spinner {
+      width: 50px;
+      height: 50px;
+      border: 4px solid #f3f3f3;
+      border-top: 4px solid #CD844D;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin-bottom: 16px;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    #loading-spinner p {
+      margin: 0;
+      font-size: 16px;
+      color: #666;
+    }
+  </style>
+</head>
+<body>
+  <div class="admin-container">
+    <div class="admin-header">
+      <h1>Panel Administrativo</h1>
+      <p>Acceso interno para gestión de artículos y stock</p>
+    </div>
+
+    <section id="auth-section">
+      <div id="loading-spinner" style="display: flex;">
+        <div class="spinner"></div>
+        <p>Cargando...</p>
+      </div>
+      
+      <div id="login-form">
+        <h2>Ingresar</h2>
+        <label>Email<br/><input id="email" type="email" autocomplete="username" /></label>
+        <label>Contraseña<br/><input id="password" type="password" autocomplete="current-password" /></label>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <button id="login-btn">Entrar</button>
+          <button id="signup-btn" type="button">Registrarme (dev)</button>
+          <button id="reset-btn" type="button">Olvidé mi contraseña</button>
+          <button id="force-logout" type="button" style="margin-left:auto">Cerrar sesión</button>
+        </div>
+        <p id="login-error" style="color:#c00;margin-top:8px"></p>
+      </div>
+
+      <div id="logged" style="display:none;">
+        <div class="user-info">
+          <p id="user-email"></p>
+        </div>
+        <div class="dashboard-grid" id="dashboard-grid">
+          <a href="./products.html" class="dashboard-card" data-module="products">
+            <div class="dashboard-card-icon">📦</div>
+            <h3 class="dashboard-card-title">Productos</h3>
+            <p class="dashboard-card-desc">Crear y editar productos y variantes</p>
+          </a>
+          <a href="./fyl-products.html" class="dashboard-card" data-module="fyl-products">
+            <div class="dashboard-card-icon">🏭</div>
+            <h3 class="dashboard-card-title">Productos FYL</h3>
+            <p class="dashboard-card-desc">Gestionar stock y visibilidad de productos propios</p>
+          </a>
+          <a href="./stock.html" class="dashboard-card" data-module="stock">
+            <div class="dashboard-card-icon">📊</div>
+            <h3 class="dashboard-card-title">Stock</h3>
+            <p class="dashboard-card-desc">Control de inventario y precios</p>
+          </a>
+          <a href="./orders.html" class="dashboard-card" data-module="orders">
+            <div class="dashboard-card-icon">🛒</div>
+            <h3 class="dashboard-card-title">Pedidos</h3>
+            <p class="dashboard-card-desc">Gestionar pedidos pendientes</p>
+          </a>
+          <a href="./daily-sales.html" class="dashboard-card" data-module="daily-sales">
+            <div class="dashboard-card-icon">💰</div>
+            <h3 class="dashboard-card-title">Ventas Diarias</h3>
+            <p class="dashboard-card-desc">Registrar y consultar ventas diarias</p>
+          </a>
+          <a href="./statistics.html" class="dashboard-card" data-module="statistics">
+            <div class="dashboard-card-icon">📊</div>
+            <h3 class="dashboard-card-title">Estadísticas</h3>
+            <p class="dashboard-card-desc">KPIs, gráficos y rankings de ventas</p>
+          </a>
+          <a href="./closed-orders.html" class="dashboard-card" data-module="closed-orders">
+            <div class="dashboard-card-icon">📦</div>
+            <h3 class="dashboard-card-title">Pedidos Cerrados</h3>
+            <p class="dashboard-card-desc">Gestionar pedidos cerrados, transporte y rótulos</p>
+          </a>
+          <a href="./import-export.html" class="dashboard-card" data-module="import-export" data-modules="import,export">
+            <div class="dashboard-card-icon">📥</div>
+            <h3 class="dashboard-card-title">Importar/Exportar</h3>
+            <p class="dashboard-card-desc">Importar y exportar datos CSV</p>
+          </a>
+          <a href="./publications.html" class="dashboard-card" data-module="publications">
+            <div class="dashboard-card-icon">📱</div>
+            <h3 class="dashboard-card-title">Publicaciones</h3>
+            <p class="dashboard-card-desc">Gestionar productos para publicar en redes sociales</p>
+          </a>
+          <a href="./move-stock.html" class="dashboard-card" data-module="move-stock">
+            <div class="dashboard-card-icon">📦</div>
+            <h3 class="dashboard-card-title">Mover Stock</h3>
+            <p class="dashboard-card-desc">Mover productos entre almacenes</p>
+          </a>
+          <a href="./public-sales.html" class="dashboard-card" data-module="public-sales">
+            <div class="dashboard-card-icon">🏪</div>
+            <h3 class="dashboard-card-title">Venta al público</h3>
+            <p class="dashboard-card-desc">Gestionar stock de venta al público</p>
+          </a>
+          <a href="./offers.html" class="dashboard-card" data-module="offers">
+            <div class="dashboard-card-icon">🔥</div>
+            <h3 class="dashboard-card-title">OFERTA</h3>
+            <p class="dashboard-card-desc">Gestionar ofertas por color y promociones 2x1/2xMonto</p>
+          </a>
+          <a href="./search.html" class="dashboard-card" data-module="search">
+            <div class="dashboard-card-icon">🔍</div>
+            <h3 class="dashboard-card-title">Búsqueda</h3>
+            <p class="dashboard-card-desc">Búsqueda avanzada de productos y stock</p>
+          </a>
+          <a href="./labels.html" class="dashboard-card" data-module="labels">
+            <div class="dashboard-card-icon">🏷️</div>
+            <h3 class="dashboard-card-title">ETIQUETAS</h3>
+            <p class="dashboard-card-desc">Imprimir etiquetas para productos</p>
+          </a>
+          <a href="./collaborators.html" class="dashboard-card" id="collaborators-card" style="display: none;">
+            <div class="dashboard-card-icon">👥</div>
+            <h3 class="dashboard-card-title">Colaboradores</h3>
+            <p class="dashboard-card-desc">Gestionar colaboradores y permisos</p>
+          </a>
+          <a href="./customers.html" class="dashboard-card" data-module="customers">
+            <div class="dashboard-card-icon">👤</div>
+            <h3 class="dashboard-card-title">Clientes</h3>
+            <p class="dashboard-card-desc">Gestionar clientes y sus datos</p>
+          </a>
+          <a href="./meta-feed.html" class="dashboard-card" data-module="meta-feed">
+            <div class="dashboard-card-icon">🔗</div>
+            <h3 class="dashboard-card-title">Meta (Catálogo)</h3>
+            <p class="dashboard-card-desc">Feed CSV para Facebook/Instagram Catalog</p>
+          </a>
+        </div>
+        <div style="text-align:center;margin-top:32px;">
+          <button id="logout-btn">Cerrar sesión</button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Suprimir errores de extensiones del navegador -->
+  <script src="./suppress-extension-errors.js"></script>
+  <script type="module" src="../scripts/config.js"></script>
+  <script type="module" src="../scripts/supabase-client.js"></script>
+  <script type="module" src="./admin-auth.js"></script>
+  <script type="module">
+    // Mostrar card de Colaboradores solo para super_admin
+    import { isSuperAdmin } from "./permissions-helper.js";
+    import { supabase } from "../scripts/supabase-client.js";
+    
+    async function checkAndShowCollaboratorsCard() {
+      const card = document.getElementById("collaborators-card");
+      if (!card) {
+        console.warn("Card de colaboradores no encontrado");
+        return;
+      }
+      
+      try {
+        // Verificar que hay sesión activa
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) {
+          console.log("No hay sesión activa");
+          return;
+        }
+        
+        console.log("Verificando si es super_admin...");
+        
+        // Verificación alternativa directa desde la tabla
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const { data: adminData, error: adminError } = await supabase
+            .from("admins")
+            .select("role")
+            .eq("user_id", user.id)
+            .single();
+          
+          if (adminError) {
+            console.error("Error consultando admins:", adminError);
+          } else if (adminData && adminData.role === 'super_admin') {
+            console.log("Usuario es super_admin (verificación directa)");
+            card.style.display = "flex";
+            return;
+          }
+        }
+        
+        // También intentar con la función helper
+        const isSuper = await isSuperAdmin();
+        console.log("¿Es super_admin (helper)?", isSuper);
+        
+        if (isSuper) {
+          card.style.display = "flex";
+          console.log("Card de colaboradores mostrado");
+        } else {
+          console.log("Usuario no es super_admin");
+          // Verificar email directamente como fallback
+          if (user && user.email === 'gonzidel@gmail.com') {
+            console.log("Email coincide con super_admin, mostrando card");
+            card.style.display = "flex";
+          }
+        }
+      } catch (error) {
+        console.error("Error verificando permisos:", error);
+      }
+    }
+    
+    // Esperar a que la sesión esté lista y el DOM esté cargado
+    async function initCollaboratorsCard() {
+      // Esperar a que el DOM esté listo
+      if (document.readyState === 'loading') {
+        await new Promise(resolve => {
+          document.addEventListener('DOMContentLoaded', resolve);
+        });
+      }
+      
+      // Esperar un poco más para que supabase esté listo
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Esperar a que la sesión se verifique (admin-auth.js actualiza la UI)
+      let attempts = 0;
+      const maxAttempts = 30; // 3 segundos
+      while (attempts < maxAttempts) {
+        const loggedBox = document.getElementById("logged");
+        if (loggedBox && loggedBox.style.display !== 'none') {
+          // La sesión está activa, verificar permisos
+          await checkAndShowCollaboratorsCard();
+          return;
+        }
+        await new Promise(resolve => setTimeout(resolve, 100));
+        attempts++;
+      }
+      
+      // Si después de esperar aún no hay sesión, intentar de todos modos
+      await checkAndShowCollaboratorsCard();
+      
+      // También verificar periódicamente por si la sesión se carga después
+      setTimeout(checkAndShowCollaboratorsCard, 2000);
+    }
+    
+    initCollaboratorsCard();
+  </script>
+  <script type="module">
+    // Ocultar módulos del dashboard según permisos del colaborador
+    import { getUserPermissions, isSuperAdmin } from "./permissions-helper.js";
+    import { supabase } from "../scripts/supabase-client.js";
+    
+    async function filterDashboardModules() {
+      try {
+        // Verificar que hay sesión activa
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) {
+          console.log("No hay sesión activa, no se filtran módulos");
+          hideLoadingSpinner();
+          return;
+        }
+        
+        // Obtener todas las cards del dashboard
+        const dashboardGrid = document.getElementById("dashboard-grid");
+        if (!dashboardGrid) {
+          console.warn("No se encontró el dashboard-grid");
+          hideLoadingSpinner();
+          return;
+        }
+        
+        // Si es super_admin, mostrar todos los módulos (excepto colaboradores que tiene lógica especial)
+        const isSuper = await isSuperAdmin();
+        if (isSuper) {
+          console.log("Usuario es super_admin, mostrando todos los módulos");
+          // Esperar un momento para asegurar que todo esté listo
+          await new Promise(resolve => setTimeout(resolve, 100));
+          hideLoadingSpinner();
+          return;
+        }
+        
+        console.log("Usuario es colaborador, filtrando módulos según permisos...");
+        
+        // Obtener permisos del usuario
+        const permissions = await getUserPermissions();
+        console.log("Permisos del usuario:", permissions);
+        
+        const cards = dashboardGrid.querySelectorAll('.dashboard-card[data-module]');
+        
+        cards.forEach(card => {
+          const moduleKey = card.getAttribute('data-module');
+          const modulesAttr = card.getAttribute('data-modules');
+          
+          // Caso especial: import-export requiere verificar ambos permisos
+          if (moduleKey === 'import-export' && modulesAttr) {
+            const moduleKeys = modulesAttr.split(',').map(m => m.trim());
+            const hasPermission = moduleKeys.some(key => {
+              const perm = permissions[key];
+              return perm && perm.can_view === true;
+            });
+            
+            if (!hasPermission) {
+              card.style.display = 'none';
+              console.log(`Ocultando módulo: ${moduleKey} (sin permiso de view)`);
+            }
+          } else {
+            // Verificar permiso para el módulo
+            const perm = permissions[moduleKey];
+            if (!perm || perm.can_view !== true) {
+              card.style.display = 'none';
+              console.log(`Ocultando módulo: ${moduleKey} (sin permiso de view)`);
+            }
+          }
+        });
+        
+        console.log("Filtrado de módulos completado");
+        // Esperar un momento para asegurar que el filtrado esté completamente aplicado
+        await new Promise(resolve => setTimeout(resolve, 100));
+        hideLoadingSpinner();
+      } catch (error) {
+        console.error("Error filtrando módulos del dashboard:", error);
+        hideLoadingSpinner();
+      }
+    }
+    
+    // Función para ocultar el spinner y mostrar el dashboard
+    function hideLoadingSpinner() {
+      console.log("Ocultando spinner y mostrando dashboard...");
+      const spinner = document.getElementById("loading-spinner");
+      const loggedBox = document.getElementById("logged");
+      
+      if (spinner) {
+        spinner.style.display = "none";
+        console.log("Spinner oculto");
+      }
+      
+      // Mostrar el dashboard solo cuando el filtrado esté completo
+      if (loggedBox) {
+        // Agregar clase 'ready' para mostrar el dashboard
+        loggedBox.classList.add('ready');
+        loggedBox.style.opacity = "1";
+        loggedBox.style.transition = "opacity 0.3s ease-in";
+        console.log("Dashboard mostrado");
+      } else {
+        console.warn("No se encontró loggedBox");
+      }
+    }
+    
+    // Función callback para cuando la autenticación esté lista
+    window.onAuthReady = async function() {
+      console.log("Auth ready, iniciando filtrado de módulos...");
+      await filterDashboardModules();
+    };
+    
+    // Esperar a que la sesión esté lista y el DOM esté cargado
+    async function initModuleFilter() {
+      // Esperar a que el DOM esté listo
+      if (document.readyState === 'loading') {
+        await new Promise(resolve => {
+          document.addEventListener('DOMContentLoaded', resolve);
+        });
+      }
+      
+      // Esperar un poco más para que supabase esté listo
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      // Esperar a que la autenticación esté lista
+      // admin-auth.js establecerá window.authReady = true cuando esté listo
+      let attempts = 0;
+      const maxAttempts = 50; // 5 segundos máximo
+      
+      while (attempts < maxAttempts) {
+        // Verificar si authReady está establecido
+        if (window.authReady) {
+          // La autenticación está lista, filtrar módulos
+          console.log("Auth ready detectado, filtrando módulos...");
+          await filterDashboardModules();
+          return;
+        }
+        
+        // Verificar si el login está visible (no hay sesión)
+        const loginForm = document.getElementById("login-form");
+        if (loginForm && loginForm.style.display !== 'none' && loginForm.style.display !== '') {
+          // No hay sesión, ocultar spinner
+          console.log("Login visible, ocultando spinner...");
+          hideLoadingSpinner();
+          return;
+        }
+        
+        await new Promise(resolve => setTimeout(resolve, 100));
+        attempts++;
+      }
+      
+      // Si después de esperar aún no hay respuesta, verificar estado final
+      const loginForm = document.getElementById("login-form");
+      const loggedBox = document.getElementById("logged");
+      
+      if (loginForm && loginForm.style.display !== 'none' && loginForm.style.display !== '') {
+        // Login visible, no hay sesión
+        hideLoadingSpinner();
+      } else if (window.authReady || (loggedBox && loggedBox.style.display !== 'none')) {
+        // Hay sesión, filtrar módulos
+        await filterDashboardModules();
+      } else {
+        // Estado desconocido, ocultar spinner por seguridad
+        hideLoadingSpinner();
+      }
+    }
+    
+    initModuleFilter();
+  </script>
+</body>
+</html>

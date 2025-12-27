@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex" />
+  <title>Colaboradores | Admin</title>
+  <link rel="stylesheet" href="../styles.css" />
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #f5f5f5;
+    }
+    .admin-container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 40px 20px;
+    }
+    .page-header {
+      background: white;
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 24px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    .page-header h1 {
+      margin: 0 0 16px 0;
+      font-size: 32px;
+      color: #333;
+    }
+    .nav-bar {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+      padding-top: 16px;
+      border-top: 1px solid #e9ecef;
+    }
+    .nav-bar a {
+      padding: 8px 16px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      text-decoration: none;
+      color: #333;
+      font-size: 14px;
+      transition: all 0.2s ease;
+    }
+    .nav-bar a:hover {
+      border-color: #CD844D;
+      color: #CD844D;
+    }
+    .section-card {
+      background: white;
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 24px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    .section-card h2 {
+      margin: 0 0 20px 0;
+      font-size: 24px;
+      color: #333;
+    }
+    .form-group {
+      margin-bottom: 16px;
+    }
+    .form-group label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: 500;
+      color: #333;
+    }
+    .form-group input {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      font-size: 16px;
+      box-sizing: border-box;
+    }
+    .form-group input:focus {
+      outline: none;
+      border-color: #CD844D;
+      box-shadow: 0 0 0 3px rgba(205, 132, 77, 0.1);
+    }
+    button {
+      padding: 10px 20px;
+      border: none;
+      border-radius: 6px;
+      font-size: 16px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .btn-primary {
+      background: #CD844D;
+      color: white;
+    }
+    .btn-primary:hover:not(:disabled) {
+      background: #B8734A;
+    }
+    .btn-primary:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .btn-danger {
+      background: #e74c3c;
+      color: white;
+    }
+    .btn-danger:hover {
+      background: #c0392b;
+    }
+    .btn-secondary {
+      background: #f0f0f0;
+      color: #333;
+    }
+    .btn-secondary:hover {
+      background: #e0e0e0;
+    }
+    .collaborators-list {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .collaborator-card {
+      background: #f8f9fa;
+      border: 1px solid #e9ecef;
+      border-radius: 8px;
+      padding: 20px;
+      transition: all 0.2s ease;
+    }
+    .collaborator-card:hover {
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    .collaborator-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .collaborator-info h3 {
+      margin: 0 0 4px 0;
+      font-size: 18px;
+      color: #333;
+    }
+    .collaborator-info p {
+      margin: 0;
+      color: #666;
+      font-size: 14px;
+    }
+    .role-badge {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .role-badge.super-admin {
+      background: #ffc107;
+      color: #856404;
+    }
+    .role-badge.collaborator {
+      background: #17a2b8;
+      color: #fff;
+    }
+    .permissions-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+      margin-top: 16px;
+    }
+    .permission-item {
+      background: white;
+      border: 1px solid #e9ecef;
+      border-radius: 6px;
+      padding: 12px;
+    }
+    .permission-item h4 {
+      margin: 0 0 8px 0;
+      font-size: 14px;
+      font-weight: 600;
+      color: #333;
+    }
+    .permission-checkboxes {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .permission-checkboxes label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      font-weight: normal;
+      cursor: pointer;
+    }
+    .permission-checkboxes input[type="checkbox"] {
+      width: auto;
+      cursor: pointer;
+    }
+    .actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .message {
+      padding: 12px 16px;
+      border-radius: 6px;
+      margin-bottom: 16px;
+      font-size: 14px;
+    }
+    .message.success {
+      background: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+    .message.error {
+      background: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+    }
+    .message.info {
+      background: #d1ecf1;
+      color: #0c5460;
+      border: 1px solid #bee5eb;
+    }
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: #666;
+    }
+    .empty-state {
+      text-align: center;
+      padding: 40px;
+      color: #666;
+    }
+    .empty-state p {
+      margin: 8px 0;
+    }
+    @media (max-width: 768px) {
+      .admin-container {
+        padding: 20px 12px;
+      }
+      .collaborator-header {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      .permissions-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="admin-container">
+    <div class="page-header">
+      <h1>Gestión de Colaboradores</h1>
+      <div class="nav-bar">
+        <a href="./index.html">← Volver al panel</a>
+        <span style="flex:1 1 auto"></span>
+        <a href="./products.html">Productos</a>
+        <a href="./stock.html">Stock</a>
+        <a href="./orders.html">Pedidos</a>
+        <a href="./import-export.html">Importar/Exportar</a>
+      </div>
+    </div>
+
+    <div id="message-container"></div>
+
+    <section class="section-card">
+      <h2>Agregar Colaborador</h2>
+      <form id="add-collaborator-form">
+        <div class="form-group">
+          <label for="collaborator-email">Email del colaborador</label>
+          <input 
+            type="email" 
+            id="collaborator-email" 
+            placeholder="colaborador@ejemplo.com" 
+            required
+          />
+        </div>
+        <div class="form-group">
+          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+            <input type="checkbox" id="create-account" style="width: auto; cursor: pointer;" />
+            <span>Crear cuenta nueva con contraseña</span>
+          </label>
+        </div>
+        <div class="form-group" id="password-group" style="display: none;">
+          <label for="collaborator-password">Contraseña</label>
+          <input 
+            type="password" 
+            id="collaborator-password" 
+            placeholder="Mínimo 6 caracteres"
+            minlength="6"
+            style="width: 100%;"
+          />
+          <small style="color: #666; font-size: 13px; margin-top: 4px; display: block;">
+            El colaborador podrá iniciar sesión inmediatamente con esta contraseña
+          </small>
+        </div>
+        <div class="form-group" id="existing-user-info">
+          <small style="color: #666; font-size: 13px; display: block; padding: 8px; background: #f8f9fa; border-radius: 6px;">
+            El usuario debe estar registrado en el sistema. Si no existe, marca la opción de crear cuenta nueva.
+          </small>
+        </div>
+        <button type="submit" class="btn-primary" id="add-collaborator-btn">
+          Agregar Colaborador
+        </button>
+      </form>
+    </section>
+
+    <section class="section-card">
+      <h2>Colaboradores</h2>
+      <div id="collaborators-container">
+        <div class="loading">Cargando colaboradores...</div>
+      </div>
+    </section>
+  </div>
+
+  <script type="module" src="../scripts/config.js"></script>
+  <script type="module" src="../scripts/supabase-client.js"></script>
+  <script type="module" src="./collaborators.js"></script>
+</body>
+</html>
+

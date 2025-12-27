@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mi Historial de Compras</title>
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #f5f5f5;
+      margin: 0;
+      padding: 20px;
+    }
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 12px;
+      padding: 24px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    .header {
+      text-align: center;
+      margin-bottom: 32px;
+      padding-bottom: 24px;
+      border-bottom: 2px solid #e9ecef;
+    }
+    .header h1 {
+      margin: 0 0 8px;
+      color: #333;
+      font-size: 24px;
+    }
+    .customer-info {
+      background: #f8f9fa;
+      padding: 16px;
+      border-radius: 8px;
+      margin-bottom: 24px;
+    }
+    .customer-info h2 {
+      margin: 0 0 8px;
+      font-size: 18px;
+      color: #333;
+    }
+    .credits-section {
+      background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%);
+      border: 3px solid #28a745;
+      padding: 32px 20px;
+      border-radius: 16px;
+      margin-bottom: 24px;
+      text-align: center;
+      box-shadow: 0 4px 12px rgba(40, 167, 69, 0.15);
+    }
+    .credits-section h3 {
+      margin: 0 0 20px;
+      font-size: 18px;
+      color: #155724;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .credit-total {
+      font-size: 48px;
+      font-weight: 900;
+      color: #28a745;
+      margin: 0 0 12px;
+      line-height: 1.2;
+      text-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .credit-validity {
+      font-size: 16px;
+      color: #155724;
+      font-weight: 500;
+      margin: 0;
+    }
+    .credit-validity.warning {
+      color: #dc3545;
+      font-weight: 700;
+    }
+    .credit-item {
+      padding: 12px;
+      background: white;
+      border-radius: 6px;
+      margin-bottom: 8px;
+      border-left: 4px solid #ffc107;
+      text-align: left;
+    }
+    .credit-item:last-child {
+      margin-bottom: 0;
+    }
+    .credit-amount {
+      font-size: 18px;
+      font-weight: 700;
+      color: #856404;
+      margin-bottom: 4px;
+    }
+    .credit-expiry {
+      font-size: 12px;
+      color: #666;
+    }
+    .credit-warning {
+      color: #dc3545;
+      font-weight: 600;
+    }
+    
+    /* Responsive para móviles */
+    @media (max-width: 600px) {
+      body {
+        padding: 12px;
+      }
+      .container {
+        padding: 16px;
+        border-radius: 8px;
+      }
+      .header h1 {
+        font-size: 20px;
+      }
+      .credits-section {
+        padding: 24px 16px;
+        border-radius: 12px;
+      }
+      .credits-section h3 {
+        font-size: 16px;
+        margin-bottom: 16px;
+      }
+      .credit-total {
+        font-size: 40px;
+      }
+      .credit-validity {
+        font-size: 14px;
+      }
+      .customer-info {
+        padding: 12px;
+      }
+      .customer-info h2 {
+        font-size: 16px;
+      }
+      .sale-item {
+        padding: 12px;
+      }
+      .sale-number {
+        font-size: 14px;
+      }
+      .sale-total {
+        font-size: 16px;
+      }
+    }
+    .sales-section h3 {
+      margin: 0 0 16px;
+      font-size: 18px;
+      color: #333;
+    }
+    .sale-item {
+      padding: 16px;
+      border: 1px solid #e9ecef;
+      border-radius: 8px;
+      margin-bottom: 12px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .sale-item:hover {
+      border-color: #CD844D;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    .sale-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .sale-number {
+      font-weight: 700;
+      color: #CD844D;
+      font-size: 16px;
+    }
+    .sale-date {
+      font-size: 12px;
+      color: #666;
+    }
+    .sale-total {
+      font-size: 18px;
+      font-weight: 700;
+      color: #333;
+    }
+    .sale-details {
+      display: none;
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 2px solid #e9ecef;
+    }
+    .sale-details.active {
+      display: block;
+    }
+    .sale-details-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .sale-details-table thead {
+      background: #f8f9fa;
+      border-bottom: 2px solid #dee2e6;
+    }
+    .sale-details-table thead th {
+      padding: 10px 8px;
+      text-align: left;
+      font-weight: 700;
+      color: #495057;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .sale-details-table tbody tr {
+      border-bottom: 1px solid #e9ecef;
+    }
+    .sale-details-table tbody tr:hover {
+      background: #f8f9fa;
+    }
+    .sale-details-table tbody tr.return-row {
+      background: #fee;
+      border-left: 4px solid #dc3545;
+    }
+    .sale-details-table tbody td {
+      padding: 12px 8px;
+      color: #333;
+    }
+    .sale-details-table tbody td.return-badge {
+      color: #dc3545;
+      font-weight: 700;
+      font-size: 11px;
+      text-transform: uppercase;
+    }
+    .sale-details-table tbody td.product-name {
+      font-weight: 600;
+      color: #212529;
+    }
+    .sale-details-table tbody td.quantity {
+      text-align: center;
+      font-weight: 600;
+    }
+    .sale-details-table tbody td.price {
+      text-align: right;
+      font-weight: 600;
+      color: #333;
+    }
+    .sale-details-table tbody td.price.return-price {
+      color: #dc3545;
+    }
+    .sale-detail-item {
+      padding: 8px 0;
+      font-size: 14px;
+      color: #666;
+    }
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: #666;
+    }
+    .error {
+      text-align: center;
+      padding: 40px;
+      color: #dc3545;
+    }
+    .no-data {
+      text-align: center;
+      padding: 40px;
+      color: #999;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Mi Historial de Compras</h1>
+      <p style="color: #666; margin: 0;">Consulta tus compras y créditos disponibles</p>
+    </div>
+
+    <div id="loading" class="loading">Cargando información...</div>
+    <div id="error" class="error" style="display: none;"></div>
+    <div id="content" style="display: none;">
+      <div class="customer-info" id="customer-info"></div>
+      <div class="credits-section" id="credits-section" style="display: none;"></div>
+      <div class="sales-section">
+        <h3>Historial de Compras</h3>
+        <div id="sales-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="scripts/config.js"></script>
+  <script type="module" src="scripts/supabase-client.js"></script>
+  <script type="module">
+    import { supabase } from "./scripts/supabase-client.js";
+
+    // Función principal auto-ejecutada
+    (async function() {
+      // Obtener código QR de la URL
+      const urlParams = new URLSearchParams(window.location.search);
+      const qrCode = urlParams.get('code');
+
+      if (!qrCode) {
+        document.getElementById("loading").style.display = "none";
+        document.getElementById("error").style.display = "block";
+        document.getElementById("error").textContent = "Código de acceso no válido";
+        return;
+      }
+
+      // Función helper para escapar HTML
+      function escapeHtml(text) {
+        if (text === null || text === undefined) return "";
+        const div = document.createElement("div");
+        div.textContent = text;
+        return div.innerHTML;
+      }
+
+      // Cargar detalles de una venta
+      async function loadSaleDetails(saleId) {
+        try {
+          const { data, error } = await supabase
+            .rpc("rpc_get_public_sale_details", { p_sale_id: saleId });
+
+          if (error) throw error;
+
+          const items = data.items || [];
+          const detailsContainer = document.getElementById(`sale-details-${saleId}`);
+
+          if (items.length > 0 && detailsContainer) {
+            const totalAmount = items.reduce((sum, item) => {
+              const itemTotal = parseFloat(item.price) * item.qty;
+              return sum + (item.is_return ? -itemTotal : itemTotal);
+            }, 0);
+            
+            detailsContainer.innerHTML = `
+              <table class="sale-details-table">
+                <thead>
+                  <tr>
+                    <th style="width: 80px;">Tipo</th>
+                    <th>Producto</th>
+                    <th style="width: 60px; text-align: center;">Cant.</th>
+                    <th style="width: 100px; text-align: right;">Precio</th>
+                    <th style="width: 100px; text-align: right;">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${items.map(item => {
+                    const itemTotal = parseFloat(item.price) * item.qty;
+                    const rowClass = item.is_return ? 'return-row' : '';
+                    const priceClass = item.is_return ? 'return-price' : '';
+                    return `
+                      <tr class="${rowClass}">
+                        <td class="${item.is_return ? 'return-badge' : ''}">
+                          ${item.is_return ? 'DEVOLUCIÓN' : 'VENTA'}
+                        </td>
+                        <td class="product-name">
+                          ${escapeHtml(item.product_name)}<br>
+                          <span style="font-size: 11px; color: #666; font-weight: normal;">
+                            ${escapeHtml(item.color)} - Talle ${escapeHtml(item.size)}
+                          </span>
+                        </td>
+                        <td class="quantity">${item.qty}</td>
+                        <td class="price ${priceClass}">$${parseFloat(item.price).toLocaleString('es-AR')}</td>
+                        <td class="price ${priceClass}">
+                          ${item.is_return ? '-' : ''}$${itemTotal.toLocaleString('es-AR')}
+                        </td>
+                      </tr>
+                    `;
+                  }).join("")}
+                  <tr style="background: #f8f9fa; border-top: 2px solid #dee2e6; font-weight: 700;">
+                    <td colspan="4" style="text-align: right; padding: 12px 8px;">Total:</td>
+                    <td class="price" style="padding: 12px 8px; ${totalAmount < 0 ? 'color: #dc3545;' : ''}">
+                      ${totalAmount < 0 ? '-' : ''}$${Math.abs(totalAmount).toLocaleString('es-AR')}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            `;
+          }
+        } catch (error) {
+          console.error("Error cargando detalles:", error);
+        }
+      }
+
+      // Toggle detalles de venta
+      window.toggleSaleDetails = function(saleId) {
+        const details = document.getElementById(`sale-details-${saleId}`);
+        if (details) {
+          details.classList.toggle("active");
+        }
+      };
+
+      // Cargar datos del cliente
+      async function loadCustomerData() {
+        try {
+          // Validar que el código QR sea un UUID válido
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (!uuidRegex.test(qrCode)) {
+          throw new Error("Código de acceso no válido. El formato debe ser un UUID.");
+        }
+
+        console.log("Buscando cliente con QR code:", qrCode);
+        
+        const { data, error } = await supabase
+          .rpc("rpc_get_customer_public_data", { p_qr_code: qrCode });
+
+        console.log("Respuesta RPC:", { data, error });
+
+        if (error) {
+          console.error("Error en RPC:", error);
+          throw error;
+        }
+
+        if (!data) {
+          throw new Error("No se recibieron datos del servidor");
+        }
+
+        if (!data.customer) {
+          throw new Error("Cliente no encontrado con el código proporcionado");
+        }
+
+        const customer = data.customer;
+        const sales = data.sales_history || [];
+        const credits = data.credits || [];
+
+        // Mostrar información del cliente
+        document.getElementById("customer-info").innerHTML = `
+          <h2>${escapeHtml(customer.first_name)} ${escapeHtml(customer.last_name || '')}</h2>
+          <div style="font-size: 14px; color: #666;">
+            Número de cliente: ${escapeHtml(customer.customer_number)}
+          </div>
+        `;
+
+        // Mostrar créditos
+        if (credits.length > 0) {
+          const totalCredit = credits.reduce((sum, c) => sum + parseFloat(c.amount), 0);
+          
+          // Encontrar el crédito que expira primero (menor days_remaining)
+          const minDaysRemaining = Math.min(...credits.map(c => c.days_remaining || 0));
+          const earliestCredit = credits.find(c => (c.days_remaining || 0) === minDaysRemaining);
+          
+          // Calcular tiempo de validez del crédito que expira primero
+          const daysRemaining = earliestCredit?.days_remaining || 0;
+          const monthsRemaining = Math.floor(daysRemaining / 30);
+          const daysInMonth = daysRemaining % 30;
+
+          let validityText = "";
+          let validityClass = "";
+          
+          if (daysRemaining > 0) {
+            if (monthsRemaining > 0) {
+              validityText = `Válido por ${monthsRemaining} mes${monthsRemaining > 1 ? 'es' : ''} y ${daysInMonth} día${daysInMonth !== 1 ? 's' : ''}`;
+            } else {
+              validityText = `Válido por ${daysRemaining} día${daysRemaining !== 1 ? 's' : ''}`;
+            }
+            
+            if (daysRemaining < 30) {
+              validityClass = "warning";
+            }
+          } else {
+            validityText = "Expirando pronto";
+            validityClass = "warning";
+          }
+
+          let creditsHtml = `
+            <h3>Crédito Disponible</h3>
+            <div class="credit-total">$${totalCredit.toLocaleString('es-AR')}</div>
+            <div class="credit-validity ${validityClass}">${validityText}</div>
+          `;
+
+          // Mostrar detalles de créditos individuales solo si hay más de uno
+          if (credits.length > 1) {
+            creditsHtml += `<div style="margin-top: 20px; padding-top: 20px; border-top: 2px solid rgba(40, 167, 69, 0.3);">`;
+            credits.forEach(credit => {
+              const creditDaysRemaining = credit.days_remaining || 0;
+              const creditMonthsRemaining = Math.floor(creditDaysRemaining / 30);
+              const creditDaysInMonth = creditDaysRemaining % 30;
+
+              let expiryText = "";
+              if (creditDaysRemaining > 0) {
+                if (creditMonthsRemaining > 0) {
+                  expiryText = `${creditMonthsRemaining} mes${creditMonthsRemaining > 1 ? 'es' : ''} y ${creditDaysInMonth} día${creditDaysInMonth !== 1 ? 's' : ''} restantes`;
+                } else {
+                  expiryText = `${creditDaysRemaining} día${creditDaysRemaining !== 1 ? 's' : ''} restantes`;
+                }
+              } else {
+                expiryText = "Expirando pronto";
+              }
+
+              const warningClass = creditDaysRemaining < 30 ? "credit-warning" : "";
+
+              creditsHtml += `
+                <div class="credit-item">
+                  <div class="credit-amount">$${parseFloat(credit.amount).toLocaleString('es-AR')}</div>
+                  <div class="credit-expiry ${warningClass}">
+                    ${expiryText}
+                  </div>
+                </div>
+              `;
+            });
+            creditsHtml += `</div>`;
+          }
+
+          document.getElementById("credits-section").innerHTML = creditsHtml;
+          document.getElementById("credits-section").style.display = "block";
+        }
+
+        // Mostrar historial de compras
+        if (sales.length === 0) {
+          document.getElementById("sales-list").innerHTML = `
+            <div class="no-data">No hay compras registradas</div>
+          `;
+        } else {
+          document.getElementById("sales-list").innerHTML = sales.map(sale => `
+            <div class="sale-item" onclick="toggleSaleDetails('${sale.id}')">
+              <div class="sale-header">
+                <div>
+                  <div class="sale-number">${escapeHtml(sale.sale_number)}</div>
+                  <div class="sale-date">${new Date(sale.created_at).toLocaleString('es-AR')}</div>
+                </div>
+                <div class="sale-total" style="${parseFloat(sale.total_amount) < 0 ? 'color: #dc3545;' : ''}">
+                  ${parseFloat(sale.total_amount) < 0 ? '-' : ''}$${Math.abs(parseFloat(sale.total_amount)).toLocaleString('es-AR')}
+                </div>
+              </div>
+              ${sale.credit_used > 0 ? `<div style="font-size: 14px; color: #28a745; font-weight: 700; margin-top: 6px;">Crédito aplicado: $${parseFloat(sale.credit_used).toLocaleString('es-AR')}</div>` : ''}
+              <div class="sale-details" id="sale-details-${sale.id}"></div>
+            </div>
+          `).join("");
+
+          // Cargar detalles de cada venta
+          for (const sale of sales) {
+            await loadSaleDetails(sale.id);
+          }
+        }
+
+        document.getElementById("loading").style.display = "none";
+        document.getElementById("content").style.display = "block";
+      } catch (error) {
+        console.error("Error cargando datos:", error);
+        document.getElementById("loading").style.display = "none";
+        document.getElementById("error").style.display = "block";
+        
+        let errorMessage = "Error al cargar información. Verifique que el código de acceso sea correcto.";
+        if (error.message) {
+          errorMessage = error.message;
+        } else if (error.code) {
+          errorMessage = `Error ${error.code}: ${error.message || 'Error desconocido'}`;
+        }
+        
+        document.getElementById("error").innerHTML = `
+          <p style="margin-bottom: 8px;"><strong>${errorMessage}</strong></p>
+          <p style="font-size: 12px; color: #666;">Código QR: ${escapeHtml(qrCode)}</p>
+          <p style="font-size: 11px; color: #999; margin-top: 8px;">Si el problema persiste, contacte al administrador.</p>
+        `;
+        }
+      }
+
+      // Cargar datos al iniciar
+      await loadCustomerData();
+    })();
+  </script>
+</body>
+</html>
+

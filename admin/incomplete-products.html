@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex" />
+  <title>Productos Incompletos | Admin</title>
+  <link rel="stylesheet" href="../styles.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'Poppins', system-ui, -apple-system, sans-serif;
+      background: linear-gradient(135deg, #f5f7fa 0%, #e8ecf1 100%);
+      min-height: 100vh;
+      padding: 20px;
+      color: #333;
+    }
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+    .page-header {
+      background: white;
+      border-radius: 16px;
+      padding: 32px;
+      margin-bottom: 32px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+    }
+    .page-header h1 {
+      margin: 0 0 16px 0;
+      font-size: 32px;
+      font-weight: 700;
+      color: #2c3e50;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .page-header h1::before {
+      content: "⚠️";
+      font-size: 36px;
+    }
+    .nav-bar {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+      padding: 16px 0;
+      border-top: 1px solid #e9ecef;
+      margin-top: 16px;
+    }
+    .nav-bar a {
+      padding: 10px 18px;
+      border: 2px solid #e9ecef;
+      border-radius: 10px;
+      text-decoration: none;
+      color: #495057;
+      font-weight: 500;
+      font-size: 14px;
+      transition: all 0.3s ease;
+      background: white;
+    }
+    .nav-bar a:hover {
+      border-color: #CD844D;
+      color: #CD844D;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(205, 132, 77, 0.15);
+    }
+    .section-card {
+      background: white;
+      border-radius: 16px;
+      padding: 32px;
+      margin-bottom: 32px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+    }
+    .section-card h2 {
+      margin: 0 0 24px 0;
+      font-size: 24px;
+      font-weight: 600;
+      color: #2c3e50;
+      padding-bottom: 16px;
+      border-bottom: 2px solid #f0f0f0;
+    }
+    .product-card {
+      border: 2px solid #e9ecef;
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 16px;
+      transition: all 0.3s ease;
+      background: #fafafa;
+    }
+    .product-card:hover {
+      border-color: #CD844D;
+      box-shadow: 0 4px 12px rgba(205, 132, 77, 0.15);
+      transform: translateY(-2px);
+    }
+    .product-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 16px;
+    }
+    .product-info h3 {
+      margin: 0 0 8px 0;
+      font-size: 20px;
+      color: #2c3e50;
+    }
+    .product-info p {
+      margin: 4px 0;
+      color: #6c757d;
+      font-size: 14px;
+    }
+    .variants-list {
+      margin: 16px 0;
+      padding: 12px;
+      background: white;
+      border-radius: 8px;
+      border: 1px solid #e9ecef;
+    }
+    .variant-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 0;
+      border-bottom: 1px solid #f0f0f0;
+    }
+    .variant-item:last-child {
+      border-bottom: none;
+    }
+    .variant-info {
+      flex: 1;
+    }
+    .variant-info strong {
+      color: #495057;
+    }
+    .variant-stock {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .stock-column {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 4px;
+    }
+    .stock-label {
+      font-size: 12px;
+      color: #6c757d;
+      font-weight: 500;
+    }
+    .stock-total-value {
+      font-weight: 600;
+      font-size: 16px;
+      color: #2c3e50;
+      padding: 4px 8px;
+      background: #f8f9fa;
+      border-radius: 4px;
+      min-width: 50px;
+      text-align: center;
+    }
+    .variant-stock input {
+      width: 80px;
+      padding: 6px 10px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      text-align: center;
+    }
+    button {
+      padding: 12px 24px;
+      border: none;
+      border-radius: 10px;
+      font-weight: 600;
+      font-size: 15px;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      font-family: 'Poppins', sans-serif;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .btn-complete {
+      background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+      color: white;
+    }
+    .btn-complete:hover {
+      background: linear-gradient(135deg, #3d9be8 0%, #00d9e6 100%);
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(79, 172, 254, 0.3);
+    }
+    .btn-save {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+    }
+    .btn-save:hover {
+      background: linear-gradient(135deg, #5568d3 0%, #6a3f8f 100%);
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+    }
+    .btn-cancel {
+      background: #6c757d;
+      color: white;
+    }
+    .btn-cancel:hover {
+      background: #5a6268;
+    }
+    .modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      backdrop-filter: blur(4px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+    .modal.active {
+      display: flex;
+    }
+    .modal-content {
+      background: white;
+      padding: 32px;
+      border-radius: 16px;
+      max-width: 800px;
+      width: 90vw;
+      max-height: 90vh;
+      overflow-y: auto;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+    }
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+    }
+    .modal-header h3 {
+      margin: 0;
+      font-size: 24px;
+      color: #2c3e50;
+    }
+    .close-btn {
+      background: transparent;
+      border: none;
+      font-size: 24px;
+      cursor: pointer;
+      color: #6c757d;
+      padding: 0;
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      transition: all 0.2s ease;
+    }
+    .close-btn:hover {
+      background: #f0f0f0;
+      color: #333;
+    }
+    .tags-section {
+      margin: 24px 0;
+    }
+    .tags-section label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: 600;
+      color: #495057;
+    }
+    .tags-input {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .tag-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      background: #e9ecef;
+      border-radius: 20px;
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .tag-chip.selected {
+      background: #CD844D;
+      color: white;
+    }
+    .tag-chip:hover {
+      transform: scale(1.05);
+    }
+    .variants-section {
+      margin: 24px 0;
+    }
+    .variants-section h4 {
+      margin: 0 0 16px 0;
+      color: #495057;
+    }
+    .modal-actions {
+      display: flex;
+      gap: 12px;
+      justify-content: flex-end;
+      margin-top: 24px;
+      padding-top: 24px;
+      border-top: 1px solid #e9ecef;
+    }
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: #6c757d;
+    }
+    .empty-state::before {
+      content: "✅";
+      font-size: 64px;
+      display: block;
+      margin-bottom: 16px;
+    }
+    .message {
+      padding: 12px 16px;
+      border-radius: 10px;
+      font-weight: 500;
+      font-size: 14px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .message.ok {
+      background: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+    .message.err {
+      background: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="page-header">
+      <h1>Productos Incompletos</h1>
+      <p style="color: #6c757d; margin: 0;">Completá los tags y stock de los productos importados para activarlos en el catálogo.</p>
+      <div class="nav-bar">
+        <a href="./index.html">← Volver al panel</a>
+        <span style="flex:1 1 auto"></span>
+        <a href="./products.html">Productos</a>
+        <a href="./stock.html">Stock</a>
+        <a href="./orders.html">Pedidos</a>
+        <a href="./import-export.html">Importar/Exportar</a>
+      </div>
+    </div>
+
+    <div id="message-container"></div>
+
+    <section class="section-card">
+      <h2>Calzado</h2>
+      <div id="shoes-container"></div>
+    </section>
+
+    <section class="section-card">
+      <h2>Ropa</h2>
+      <div id="clothing-container"></div>
+    </section>
+  </div>
+
+  <!-- Modal para completar producto -->
+  <div id="complete-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="modal-product-name">Completar Producto</h3>
+        <button class="close-btn" id="close-modal">×</button>
+      </div>
+      <div id="modal-body">
+        <!-- Se llena dinámicamente -->
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="../scripts/config.js"></script>
+  <script type="module" src="../scripts/supabase-client.js"></script>
+  <script type="module" src="./incomplete-products.js"></script>
+</body>
+</html>

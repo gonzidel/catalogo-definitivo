@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prueba de Carrito Persistente</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .test-section {
+            background: white;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .test-button {
+            background: #CD844D;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        .test-button:hover {
+            background: #b8734a;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        .info { background: #d1ecf1; color: #0c5460; }
+        .cart-info {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .product-card {
+            border: 1px solid #ddd;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 5px;
+            background: white;
+        }
+        .product-card h3 {
+            margin: 0 0 10px 0;
+            color: #333;
+        }
+        .product-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-top: 10px;
+        }
+        .product-controls select,
+        .product-controls input {
+            padding: 5px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body>
+    <h1>🛒 Prueba de Carrito Persistente</h1>
+    
+    <div class="test-section">
+        <h2>📊 Estado del Carrito</h2>
+        <div id="cart-status" class="status info">Cargando...</div>
+        <div id="cart-info" class="cart-info">
+            <p><strong>Items en carrito:</strong> <span id="cart-count">0</span></p>
+            <p><strong>Total:</strong> $<span id="cart-total">0</span></p>
+        </div>
+    </div>
+
+    <div class="test-section">
+        <h2>🧪 Productos de Prueba</h2>
+        
+        <div class="product-card">
+            <h3>Producto 1 - Camiseta Básica</h3>
+            <p>Precio: $15.000</p>
+            <div class="product-controls">
+                <label>Color: 
+                    <select id="color1">
+                        <option value="Negro">Negro</option>
+                        <option value="Blanco">Blanco</option>
+                        <option value="Azul">Azul</option>
+                    </select>
+                </label>
+                <label>Talle: 
+                    <select id="size1">
+                        <option value="S">S</option>
+                        <option value="M">M</option>
+                        <option value="L">L</option>
+                        <option value="XL">XL</option>
+                    </select>
+                </label>
+                <label>Cantidad: 
+                    <input type="number" id="qty1" value="1" min="1" style="width: 60px;">
+                </label>
+                <button class="test-button" onclick="addProduct1()">Agregar al Carrito</button>
+            </div>
+        </div>
+
+        <div class="product-card">
+            <h3>Producto 2 - Pantalón Jean</h3>
+            <p>Precio: $25.000</p>
+            <div class="product-controls">
+                <label>Color: 
+                    <select id="color2">
+                        <option value="Azul Claro">Azul Claro</option>
+                        <option value="Azul Oscuro">Azul Oscuro</option>
+                        <option value="Negro">Negro</option>
+                    </select>
+                </label>
+                <label>Talle: 
+                    <select id="size2">
+                        <option value="28">28</option>
+                        <option value="30">30</option>
+                        <option value="32">32</option>
+                        <option value="34">34</option>
+                    </select>
+                </label>
+                <label>Cantidad: 
+                    <input type="number" id="qty2" value="1" min="1" style="width: 60px;">
+                </label>
+                <button class="test-button" onclick="addProduct2()">Agregar al Carrito</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="test-section">
+        <h2>🔧 Funciones de Prueba</h2>
+        <button class="test-button" onclick="testLocalStorage()">Probar localStorage</button>
+        <button class="test-button" onclick="testSupabaseSync()">Probar Sincronización Supabase</button>
+        <button class="test-button" onclick="clearCart()">Limpiar Carrito</button>
+        <button class="test-button" onclick="reloadPage()">Recargar Página</button>
+    </div>
+
+    <div class="test-section">
+        <h2>📝 Logs</h2>
+        <div id="logs" style="background: #f8f9fa; padding: 15px; border-radius: 5px; max-height: 200px; overflow-y: auto; font-family: monospace; font-size: 12px;">
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script type="module" src="scripts/config.js"></script>
+    <script type="module" src="scripts/supabase-client.js"></script>
+    <script type="module" src="scripts/cart-persistent.js"></script>
+
+    <script>
+        // Función para agregar logs
+        function addLog(message) {
+            const logs = document.getElementById('logs');
+            const timestamp = new Date().toLocaleTimeString();
+            logs.innerHTML += `[${timestamp}] ${message}<br>`;
+            logs.scrollTop = logs.scrollHeight;
+        }
+
+        // Función para actualizar estado del carrito
+        function updateCartStatus() {
+            const cartCount = document.getElementById('cart-count');
+            const cartTotal = document.getElementById('cart-total');
+            const cartStatus = document.getElementById('cart-status');
+            
+            try {
+                const cartData = JSON.parse(localStorage.getItem('fyl_cart') || '[]');
+                const totalItems = cartData.reduce((sum, item) => sum + item.cantidad, 0);
+                const totalPrice = cartData.reduce((sum, item) => sum + (item.precio * item.cantidad), 0);
+                
+                cartCount.textContent = totalItems;
+                cartTotal.textContent = totalPrice.toLocaleString();
+                
+                if (totalItems > 0) {
+                    cartStatus.textContent = `✅ Carrito con ${totalItems} items`;
+                    cartStatus.className = 'status success';
+                } else {
+                    cartStatus.textContent = '📭 Carrito vacío';
+                    cartStatus.className = 'status info';
+                }
+                
+                addLog(`Carrito actualizado: ${totalItems} items, $${totalPrice.toLocaleString()}`);
+            } catch (error) {
+                cartStatus.textContent = '❌ Error cargando carrito';
+                cartStatus.className = 'status error';
+                addLog(`Error: ${error.message}`);
+            }
+        }
+
+        // Función para agregar producto 1
+        function addProduct1() {
+            const productData = {
+                articulo: 'Camiseta Básica',
+                color: document.getElementById('color1').value,
+                talle: document.getElementById('size1').value,
+                cantidad: parseInt(document.getElementById('qty1').value),
+                precio: 15000,
+                imagen: 'https://via.placeholder.com/100x100/CD844D/FFFFFF?text=C1',
+                descripcion: 'Camiseta básica de algodón'
+            };
+            
+            if (window.addToCart) {
+                window.addToCart(productData);
+                addLog(`Producto 1 agregado: ${productData.articulo} - ${productData.color} - ${productData.talle}`);
+                setTimeout(updateCartStatus, 100);
+            } else {
+                addLog('❌ Función addToCart no disponible');
+            }
+        }
+
+        // Función para agregar producto 2
+        function addProduct2() {
+            const productData = {
+                articulo: 'Pantalón Jean',
+                color: document.getElementById('color2').value,
+                talle: document.getElementById('size2').value,
+                cantidad: parseInt(document.getElementById('qty2').value),
+                precio: 25000,
+                imagen: 'https://via.placeholder.com/100x100/CD844D/FFFFFF?text=P2',
+                descripcion: 'Pantalón jean clásico'
+            };
+            
+            if (window.addToCart) {
+                window.addToCart(productData);
+                addLog(`Producto 2 agregado: ${productData.articulo} - ${productData.color} - ${productData.talle}`);
+                setTimeout(updateCartStatus, 100);
+            } else {
+                addLog('❌ Función addToCart no disponible');
+            }
+        }
+
+        // Función para probar localStorage
+        function testLocalStorage() {
+            try {
+                const cartData = localStorage.getItem('fyl_cart');
+                addLog(`localStorage data: ${cartData || 'vacío'}`);
+                updateCartStatus();
+            } catch (error) {
+                addLog(`Error accediendo localStorage: ${error.message}`);
+            }
+        }
+
+        // Función para probar sincronización con Supabase
+        function testSupabaseSync() {
+            if (window.syncCartWithSupabase) {
+                addLog('Iniciando sincronización con Supabase...');
+                window.syncCartWithSupabase().then(() => {
+                    addLog('✅ Sincronización completada');
+                }).catch(error => {
+                    addLog(`❌ Error en sincronización: ${error.message}`);
+                });
+            } else {
+                addLog('❌ Función syncCartWithSupabase no disponible');
+            }
+        }
+
+        // Función para limpiar carrito
+        function clearCart() {
+            if (confirm('¿Estás seguro de que quieres limpiar el carrito?')) {
+                localStorage.removeItem('fyl_cart');
+                addLog('Carrito limpiado');
+                updateCartStatus();
+            }
+        }
+
+        // Función para recargar página
+        function reloadPage() {
+            addLog('Recargando página...');
+            window.location.reload();
+        }
+
+        // Inicializar cuando se carga la página
+        document.addEventListener('DOMContentLoaded', function() {
+            addLog('Página de prueba cargada');
+            updateCartStatus();
+            
+            // Actualizar estado cada 2 segundos
+            setInterval(updateCartStatus, 2000);
+        });
+
+        // Escuchar cambios en el carrito
+        window.addEventListener('storage', function(e) {
+            if (e.key === 'fyl_cart') {
+                addLog('Carrito actualizado desde otra pestaña');
+                updateCartStatus();
+            }
+        });
+    </script>
+</body>
+</html>

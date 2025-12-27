@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Debug Auth - Admin</title>
+  <style>
+    body {
+      font-family: monospace;
+      padding: 20px;
+      background: #1e1e1e;
+      color: #d4d4d4;
+    }
+    .section {
+      background: #252526;
+      padding: 15px;
+      margin: 10px 0;
+      border-radius: 5px;
+    }
+    .error { color: #f48771; }
+    .success { color: #89d185; }
+    .warning { color: #dcdcaa; }
+    pre { background: #1e1e1e; padding: 10px; border-radius: 3px; overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <h1>🔍 Debug de Autenticación Admin</h1>
+  
+  <div class="section">
+    <h2>1. Configuración</h2>
+    <div id="config-info">Cargando...</div>
+  </div>
+  
+  <div class="section">
+    <h2>2. Cliente Supabase</h2>
+    <div id="client-info">Cargando...</div>
+  </div>
+  
+  <div class="section">
+    <h2>3. Sesión</h2>
+    <div id="session-info">Cargando...</div>
+  </div>
+  
+  <div class="section">
+    <h2>4. Errores de Consola</h2>
+    <div id="console-errors"></div>
+  </div>
+
+  <script type="module">
+    const errors = [];
+    const originalError = console.error;
+    console.error = (...args) => {
+      errors.push(args.join(' '));
+      originalError.apply(console, args);
+      updateConsoleErrors();
+    };
+
+    function updateConsoleErrors() {
+      const div = document.getElementById('console-errors');
+      if (errors.length === 0) {
+        div.innerHTML = '<span class="success">✅ No hay errores en consola</span>';
+      } else {
+        div.innerHTML = errors.map(e => `<div class="error">${e}</div>`).join('');
+      }
+    }
+
+    async function checkConfig() {
+      try {
+        const config = await import('../scripts/config.js');
+        const local = await import('../scripts/config.local.js').catch(() => null);
+        
+        const info = document.getElementById('config-info');
+        info.innerHTML = `
+          <div><strong>SUPABASE_URL:</strong> <span class="${config.SUPABASE_URL ? 'success' : 'error'}">${config.SUPABASE_URL || 'NO CONFIGURADO'}</span></div>
+          <div><strong>SUPABASE_ANON_KEY:</strong> <span class="${config.SUPABASE_ANON_KEY ? 'success' : 'error'}">${config.SUPABASE_ANON_KEY ? 'Configurado (' + config.SUPABASE_ANON_KEY.substring(0, 20) + '...)' : 'NO CONFIGURADO'}</span></div>
+          <div><strong>USE_SUPABASE:</strong> <span class="${config.USE_SUPABASE ? 'success' : 'warning'}">${config.USE_SUPABASE}</span></div>
+          <div><strong>config.local.js:</strong> <span class="${local ? 'success' : 'warning'}">${local ? 'Cargado' : 'No encontrado'}</span></div>
+        `;
+      } catch (error) {
+        document.getElementById('config-info').innerHTML = `<div class="error">Error: ${error.message}</div>`;
+      }
+    }
+
+    async function checkClient() {
+      try {
+        const clientModule = await import('../scripts/supabase-client.js');
+        const supabase = clientModule.supabase;
+        
+        const info = document.getElementById('client-info');
+        if (!supabase) {
+          info.innerHTML = '<div class="error">❌ Cliente de Supabase es null o undefined</div>';
+          return;
+        }
+        
+        if (typeof supabase.from !== 'function') {
+          info.innerHTML = '<div class="error">❌ Cliente de Supabase no tiene método .from()</div>';
+          return;
+        }
+        
+        if (typeof supabase.auth === 'undefined' || !supabase.auth) {
+          info.innerHTML = '<div class="error">❌ Cliente de Supabase no tiene .auth</div>';
+          return;
+        }
+        
+        info.innerHTML = `
+          <div class="success">✅ Cliente de Supabase inicializado correctamente</div>
+          <div><strong>Tipo:</strong> ${typeof supabase}</div>
+          <div><strong>Tiene .from:</strong> <span class="success">✅</span></div>
+          <div><strong>Tiene .auth:</strong> <span class="success">✅</span></div>
+          <div><strong>Tiene .auth.getSession:</strong> <span class="${typeof supabase.auth.getSession === 'function' ? 'success' : 'error'}">${typeof supabase.auth.getSession === 'function' ? '✅' : '❌'}</span></div>
+        `;
+      } catch (error) {
+        document.getElementById('client-info').innerHTML = `
+          <div class="error">❌ Error al cargar cliente: ${error.message}</div>
+          <pre>${error.stack}</pre>
+        `;
+      }
+    }
+
+    async function checkSession() {
+      try {
+        const clientModule = await import('../scripts/supabase-client.js');
+        const supabase = clientModule.supabase;
+        
+        if (!supabase || !supabase.auth) {
+          document.getElementById('session-info').innerHTML = '<div class="error">❌ No se puede verificar sesión: cliente no disponible</div>';
+          return;
+        }
+        
+        const { data, error } = await supabase.auth.getSession();
+        
+        const info = document.getElementById('session-info');
+        if (error) {
+          info.innerHTML = `<div class="error">❌ Error: ${error.message}</div>`;
+          return;
+        }
+        
+        if (data?.session) {
+          info.innerHTML = `
+            <div class="success">✅ Sesión activa</div>
+            <div><strong>Usuario:</strong> ${data.session.user?.email || 'Sin email'}</div>
+            <div><strong>ID:</strong> ${data.session.user?.id || 'Sin ID'}</div>
+          `;
+        } else {
+          info.innerHTML = '<div class="warning">⚠️ No hay sesión activa</div>';
+        }
+      } catch (error) {
+        document.getElementById('session-info').innerHTML = `
+          <div class="error">❌ Error: ${error.message}</div>
+          <pre>${error.stack}</pre>
+        `;
+      }
+    }
+
+    // Ejecutar todas las verificaciones
+    setTimeout(async () => {
+      await checkConfig();
+      await checkClient();
+      await checkSession();
+      updateConsoleErrors();
+    }, 500);
+  </script>
+</body>
+</html>
+
+
+
+
+
+
+

@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex" />
+  <title>Publicaciones | Admin</title>
+  <link rel="stylesheet" href="../styles.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'Poppins', system-ui, -apple-system, sans-serif;
+      background: linear-gradient(135deg, #f5f7fa 0%, #e8ecf1 100%);
+      min-height: 100vh;
+      padding: 20px;
+      color: #333;
+    }
+    .container {
+      max-width: 1600px;
+      margin: 0 auto;
+    }
+    .page-header {
+      background: white;
+      border-radius: 16px;
+      padding: 32px;
+      margin-bottom: 32px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+    }
+    .page-header h1 {
+      margin: 0 0 16px 0;
+      font-size: 32px;
+      font-weight: 700;
+      color: #2c3e50;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .page-header h1::before {
+      content: "📱";
+      font-size: 36px;
+    }
+    .nav-bar {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+      padding: 16px 0;
+      border-top: 1px solid #e9ecef;
+      margin-top: 16px;
+    }
+    .nav-bar a {
+      padding: 10px 18px;
+      border: 2px solid #e9ecef;
+      border-radius: 10px;
+      text-decoration: none;
+      color: #495057;
+      font-weight: 500;
+      font-size: 14px;
+      transition: all 0.3s ease;
+      background: white;
+    }
+    .nav-bar a:hover {
+      border-color: #CD844D;
+      color: #CD844D;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(205, 132, 77, 0.15);
+    }
+    .nav-bar .active {
+      background: #CD844D;
+      color: white;
+      border-color: #CD844D;
+    }
+    .tabs-container {
+      background: white;
+      border-radius: 16px;
+      padding: 24px;
+      margin-bottom: 32px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+    }
+    .tabs {
+      display: flex;
+      gap: 8px;
+      border-bottom: 2px solid #e9ecef;
+      margin-bottom: 24px;
+      flex-wrap: wrap;
+    }
+    .tab {
+      padding: 12px 24px;
+      background: transparent;
+      border: none;
+      border-bottom: 3px solid transparent;
+      cursor: pointer;
+      font-family: 'Poppins', sans-serif;
+      font-size: 15px;
+      font-weight: 600;
+      color: #6c757d;
+      transition: all 0.3s ease;
+      position: relative;
+      top: 2px;
+    }
+    .tab:hover {
+      color: #CD844D;
+    }
+    .tab.active {
+      color: #CD844D;
+      border-bottom-color: #CD844D;
+    }
+    .tab-content {
+      display: none;
+    }
+    .tab-content.active {
+      display: block;
+    }
+    .search-bar {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 24px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .search-bar input {
+      flex: 1;
+      min-width: 250px;
+      padding: 12px 16px;
+      border: 2px solid #e9ecef;
+      border-radius: 10px;
+      font-family: 'Poppins', sans-serif;
+      font-size: 14px;
+      transition: all 0.3s ease;
+    }
+    .search-bar input:focus {
+      outline: none;
+      border-color: #CD844D;
+      box-shadow: 0 0 0 3px rgba(205, 132, 77, 0.1);
+    }
+    .products-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 20px;
+    }
+    .product-color-card {
+      border: 2px solid #e9ecef;
+      border-radius: 12px;
+      padding: 20px;
+      background: #fafafa;
+      transition: all 0.3s ease;
+      position: relative;
+    }
+    .product-color-card:hover {
+      border-color: #CD844D;
+      box-shadow: 0 4px 12px rgba(205, 132, 77, 0.15);
+      transform: translateY(-2px);
+    }
+    .product-color-card.selected {
+      border-color: #CD844D;
+      background: #fff8f3;
+    }
+    .product-image {
+      width: 100%;
+      height: 200px;
+      object-fit: cover;
+      border-radius: 8px;
+      margin-bottom: 12px;
+      background: #f0f0f0;
+    }
+    .product-info h3 {
+      margin: 0 0 8px 0;
+      font-size: 18px;
+      color: #2c3e50;
+    }
+    .product-info p {
+      margin: 4px 0;
+      color: #6c757d;
+      font-size: 14px;
+    }
+    .product-color-badge {
+      display: inline-block;
+      padding: 4px 12px;
+      background: #CD844D;
+      color: white;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    .sizes-info {
+      margin: 12px 0;
+      padding: 8px 12px;
+      background: #e9ecef;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #495057;
+    }
+    .checkbox-wrapper {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+    }
+    .checkbox-wrapper input[type="checkbox"] {
+      width: 20px;
+      height: 20px;
+      cursor: pointer;
+      accent-color: #CD844D;
+    }
+    .publication-table {
+      width: 100%;
+      border-collapse: collapse;
+      background: white;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    }
+    .publication-table th {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 14px;
+      text-align: left;
+      font-weight: 600;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .publication-table td {
+      padding: 14px;
+      border-bottom: 1px solid #e9ecef;
+      vertical-align: middle;
+    }
+    .publication-table tbody tr:hover {
+      background: #f8f9fa;
+    }
+    .publication-table img {
+      width: 60px;
+      height: 60px;
+      object-fit: cover;
+      border-radius: 6px;
+    }
+    .image-urls {
+      max-width: 300px;
+      font-size: 12px;
+      color: #6c757d;
+      word-break: break-all;
+    }
+    .action-buttons {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .card-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+    button {
+      padding: 10px 18px;
+      border: none;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      font-family: 'Poppins', sans-serif;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+      color: white;
+    }
+    .btn-primary:hover {
+      background: linear-gradient(135deg, #3d9be8 0%, #00d9e6 100%);
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(79, 172, 254, 0.3);
+    }
+    .btn-success {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+    }
+    .btn-success:hover {
+      background: linear-gradient(135deg, #5568d3 0%, #6a3f8f 100%);
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+    }
+    .btn-danger {
+      background: #dc3545;
+      color: white;
+    }
+    .btn-danger:hover {
+      background: #c82333;
+    }
+    .btn-secondary {
+      background: #6c757d;
+      color: white;
+    }
+    .btn-secondary:hover {
+      background: #5a6268;
+    }
+    .btn-small {
+      padding: 6px 12px;
+      font-size: 12px;
+    }
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: #6c757d;
+    }
+    .empty-state::before {
+      content: "📭";
+      font-size: 64px;
+      display: block;
+      margin-bottom: 16px;
+    }
+    .message {
+      padding: 12px 16px;
+      border-radius: 10px;
+      font-weight: 500;
+      font-size: 14px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .message.ok {
+      background: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+    .message.err {
+      background: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+    }
+    .publication-actions {
+      display: flex;
+      gap: 12px;
+      margin-top: 24px;
+      padding-top: 24px;
+      border-top: 2px solid #e9ecef;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .count-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 24px;
+      height: 24px;
+      padding: 0 8px;
+      background: #CD844D;
+      color: white;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 700;
+      margin-left: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="page-header">
+      <h1>Publicaciones para Redes Sociales</h1>
+      <p style="color: #6c757d; margin: 0;">Seleccioná productos por color para publicar en redes sociales. Cada color se publica por separado.</p>
+      <div class="nav-bar">
+        <a href="./index.html">← Volver al panel</a>
+        <span style="flex:1 1 auto"></span>
+        <a href="./products.html">Productos</a>
+        <a href="./stock.html">Stock</a>
+        <a href="./orders.html">Pedidos</a>
+        <a href="./import-export.html">Importar/Exportar</a>
+        <a href="./publications.html" class="active">Publicaciones</a>
+      </div>
+    </div>
+
+    <div id="message-container"></div>
+
+    <div class="tabs-container">
+      <div class="tabs">
+        <button class="tab active" data-tab="new">🆕 Nuevos</button>
+        <button class="tab" data-tab="recommended">⭐ Recomendados</button>
+        <button class="tab" data-tab="all">📦 Todo</button>
+        <button class="tab" data-tab="publication">
+          📱 Publicación 
+          <span id="publication-count" class="count-badge">0</span>
+        </button>
+      </div>
+
+      <!-- Tab Nuevos -->
+      <div id="tab-new" class="tab-content active">
+        <div class="search-bar">
+          <input type="text" id="search-new" placeholder="Buscar por nombre, categoría o color..." />
+        </div>
+        <div id="new-products-container" class="products-grid"></div>
+      </div>
+
+      <!-- Tab Recomendados -->
+      <div id="tab-recommended" class="tab-content">
+        <div class="search-bar">
+          <input type="text" id="search-recommended" placeholder="Buscar por nombre, categoría o color..." />
+        </div>
+        <div id="recommended-products-container" class="products-grid"></div>
+      </div>
+
+      <!-- Tab Todo -->
+      <div id="tab-all" class="tab-content">
+        <div class="search-bar">
+          <input type="text" id="search-all" placeholder="Buscar por nombre, categoría o color..." />
+        </div>
+        <div id="all-products-container" class="products-grid"></div>
+      </div>
+
+      <!-- Tab Publicación -->
+      <div id="tab-publication" class="tab-content">
+        <div class="search-bar">
+          <input type="text" id="search-publication" placeholder="Buscar en productos seleccionados..." />
+        </div>
+        <div id="publication-table-container">
+          <table class="publication-table">
+            <thead>
+              <tr>
+                <th>Imagen</th>
+                <th>Producto</th>
+                <th>Color</th>
+                <th>Precio</th>
+                <th>Talles Disponibles</th>
+                <th>URLs de Imágenes</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="publication-table-body">
+              <tr>
+                <td colspan="6" class="empty-state">No hay productos seleccionados para publicar</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="publication-actions">
+          <div>
+            <strong>Total seleccionados: <span id="selected-count">0</span></strong>
+          </div>
+          <div class="action-buttons">
+            <button class="btn-primary" id="copy-to-sheet-btn" disabled>
+              <span>📋</span>
+              <span>Copiar para Sheet</span>
+            </button>
+            <button class="btn-secondary" id="clear-all">Limpiar Todo</button>
+            <button class="btn-success" id="publish-btn" disabled>
+              <span>📤</span>
+              <span>Publicar Seleccionados</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="../scripts/config.js"></script>
+  <script type="module" src="../scripts/supabase-client.js"></script>
+  <script type="module" src="./publications.js"></script>
+</body>
+</html>
+

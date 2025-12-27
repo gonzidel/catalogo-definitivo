@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Avatar Display - Catálogo FYL</title>
+    <style>
+        body {
+            font-family: 'Poppins', sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .test-container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .cliente-link {
+            position: relative;
+            right: 16px;
+            top: 16px;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            text-decoration: none;
+            color: #333;
+            background: #fff;
+            font-family: Poppins, system-ui, sans-serif;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s ease;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            cursor: pointer;
+            max-width: 200px;
+        }
+        .cliente-link:hover {
+            background: #f7f7f7;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        }
+        .cliente-link img {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 2px solid #CD844D;
+            transition: transform 0.2s ease;
+        }
+        .cliente-link:hover img {
+            transform: scale(1.05);
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+        .test-section h3 {
+            color: #CD844D;
+            margin-top: 0;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        .btn {
+            padding: 10px 20px;
+            background: #CD844D;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+            text-decoration: none;
+            display: inline-block;
+        }
+        .btn:hover {
+            background: #B8734A;
+        }
+    </style>
+</head>
+<body>
+    <div class="test-container">
+        <h1>🧪 Test de Avatar Display</h1>
+        <p>Esta página prueba la funcionalidad del avatar de Google en el botón "Área de Clientes".</p>
+
+        <div class="test-section">
+            <h3>1. Estado Actual del Botón</h3>
+            <div id="button-status" class="status info">Verificando...</div>
+            <div id="button-preview">
+                <a class="cliente-link" href="#" onclick="return false;">Área de Clientes</a>
+            </div>
+        </div>
+
+        <div class="test-section">
+            <h3>2. Información de Sesión</h3>
+            <div id="session-info" class="status info">Verificando sesión...</div>
+        </div>
+
+        <div class="test-section">
+            <h3>3. Acciones de Prueba</h3>
+            <button id="test-login" class="btn">Simular Login</button>
+            <button id="test-logout" class="btn">Simular Logout</button>
+            <button id="refresh-status" class="btn">Actualizar Estado</button>
+            <a href="index.html" class="btn">Ir a Página Principal</a>
+        </div>
+
+        <div class="test-section">
+            <h3>4. Log de Eventos</h3>
+            <div id="log" style="background: #f8f9fa; padding: 10px; border-radius: 5px; font-family: monospace; font-size: 12px; max-height: 200px; overflow-y: auto;"></div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script type="module" src="scripts/config.js"></script>
+    <script type="module" src="scripts/supabase-client.js"></script>
+    <script type="module" src="scripts/auth-status.js"></script>
+    
+    <script type="module">
+        import { supabase } from "./scripts/supabase-client.js";
+
+        const buttonStatus = document.getElementById("button-status");
+        const sessionInfo = document.getElementById("session-info");
+        const log = document.getElementById("log");
+        const testLoginBtn = document.getElementById("test-login");
+        const testLogoutBtn = document.getElementById("test-logout");
+        const refreshBtn = document.getElementById("refresh-status");
+
+        // Función para agregar al log
+        function addLog(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('div');
+            logEntry.innerHTML = `<strong>[${timestamp}]</strong> ${message}`;
+            logEntry.style.color = type === 'error' ? '#dc3545' : type === 'success' ? '#28a745' : type === 'warning' ? '#ffc107' : '#333';
+            log.appendChild(logEntry);
+            log.scrollTop = log.scrollHeight;
+        }
+
+        // Función para verificar estado del botón
+        function checkButtonStatus() {
+            const clienteLink = document.querySelector(".cliente-link");
+            if (clienteLink) {
+                const hasImage = clienteLink.querySelector("img");
+                const hasName = clienteLink.querySelector("span");
+                
+                if (hasImage && hasName) {
+                    buttonStatus.innerHTML = `
+                        <strong>✅ Botón con Avatar</strong><br>
+                        <small>Imagen: ${hasImage.src}<br>
+                        Nombre: ${hasName.textContent}</small>
+                    `;
+                    buttonStatus.className = "status success";
+                    addLog("✅ Botón muestra avatar correctamente");
+                } else {
+                    buttonStatus.innerHTML = `
+                        <strong>⚠️ Botón sin Avatar</strong><br>
+                        <small>Mostrando estado por defecto</small>
+                    `;
+                    buttonStatus.className = "status error";
+                    addLog("⚠️ Botón no muestra avatar");
+                }
+            } else {
+                buttonStatus.innerHTML = `<strong>❌ Botón no encontrado</strong>`;
+                buttonStatus.className = "status error";
+                addLog("❌ Botón no encontrado");
+            }
+        }
+
+        // Función para verificar sesión
+        async function checkSession() {
+            try {
+                const { data: { session }, error } = await supabase.auth.getSession();
+                
+                if (error) {
+                    sessionInfo.innerHTML = `<strong>❌ Error:</strong> ${error.message}`;
+                    sessionInfo.className = "status error";
+                    addLog(`❌ Error de sesión: ${error.message}`, 'error');
+                    return;
+                }
+
+                if (session) {
+                    sessionInfo.innerHTML = `
+                        <strong>✅ Usuario Autenticado</strong><br>
+                        <small>Email: ${session.user.email}<br>
+                        Nombre: ${session.user.user_metadata?.full_name || 'No disponible'}<br>
+                        Avatar: ${session.user.user_metadata?.avatar_url ? 'Disponible' : 'No disponible'}</small>
+                    `;
+                    sessionInfo.className = "status success";
+                    addLog(`✅ Usuario autenticado: ${session.user.email}`);
+                } else {
+                    sessionInfo.innerHTML = `<strong>👤 No hay sesión activa</strong>`;
+                    sessionInfo.className = "status info";
+                    addLog("👤 No hay sesión activa");
+                }
+            } catch (error) {
+                sessionInfo.innerHTML = `<strong>❌ Error:</strong> ${error.message}`;
+                sessionInfo.className = "status error";
+                addLog(`❌ Error verificando sesión: ${error.message}`, 'error');
+            }
+        }
+
+        // Event listeners
+        testLoginBtn.addEventListener("click", () => {
+            addLog("🔗 Redirigiendo a login...");
+            window.location.href = "client/login.html";
+        });
+
+        testLogoutBtn.addEventListener("click", async () => {
+            try {
+                await supabase.auth.signOut();
+                addLog("🚪 Sesión cerrada");
+                setTimeout(() => {
+                    checkSession();
+                    checkButtonStatus();
+                }, 500);
+            } catch (error) {
+                addLog(`❌ Error cerrando sesión: ${error.message}`, 'error');
+            }
+        });
+
+        refreshBtn.addEventListener("click", () => {
+            addLog("🔄 Actualizando estado...");
+            checkSession();
+            checkButtonStatus();
+        });
+
+        // Inicializar
+        document.addEventListener("DOMContentLoaded", () => {
+            addLog("🚀 Iniciando test de avatar...");
+            setTimeout(() => {
+                checkSession();
+                checkButtonStatus();
+            }, 1000);
+        });
+
+        // Escuchar cambios de autenticación
+        supabase.auth.onAuthStateChange((event, session) => {
+            addLog(`🔄 Cambio de autenticación: ${event}`, session ? 'success' : 'info');
+            setTimeout(() => {
+                checkSession();
+                checkButtonStatus();
+            }, 500);
+        });
+    </script>
+</body>
+</html>

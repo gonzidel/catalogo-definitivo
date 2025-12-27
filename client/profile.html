@@ -1,0 +1,243 @@
+﻿<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mi Perfil | Cliente</title>
+  <link rel="stylesheet" href="../styles.css" />
+  <meta name="robots" content="noindex" />
+  <style>
+    .box { 
+      max-width: 800px; 
+      margin: 32px auto; 
+      padding: 24px;
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+    .box h1 {
+      margin: 0 0 24px 0;
+      font-size: 28px;
+      color: #333;
+      border-bottom: 3px solid #CD844D;
+      padding-bottom: 12px;
+    }
+    .row { 
+      display: flex; 
+      gap: 12px; 
+      align-items: center; 
+      flex-wrap: wrap; 
+      margin-bottom: 24px; 
+    }
+    .profile-grid { 
+      display: grid; 
+      grid-template-columns: 1fr 1fr; 
+      gap: 20px; 
+    }
+    .profile-grid label { 
+      display: flex; 
+      flex-direction: column; 
+      gap: 8px;
+      font-weight: 600;
+      color: #555;
+    }
+    .profile-grid input, .profile-grid select {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      font-size: 14px;
+      transition: border-color 0.2s, box-shadow 0.2s;
+      box-sizing: border-box;
+    }
+    .profile-grid input:focus, .profile-grid select:focus {
+      outline: none;
+      border-color: #CD844D;
+      box-shadow: 0 0 0 3px rgba(205, 132, 77, 0.1);
+    }
+    .profile-grid input:disabled {
+      background: #f5f5f5;
+      cursor: not-allowed;
+    }
+    .full-width {
+      grid-column: 1 / -1;
+    }
+    .phone-container {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .phone-prefix {
+      padding: 10px 12px;
+      background: #f5f5f5;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      font-size: 14px;
+      color: #666;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .phone-input {
+      flex: 1;
+    }
+    .custom-dropdown {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      background: white;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      max-height: 200px;
+      overflow-y: auto;
+      z-index: 1000;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+      margin-top: 4px;
+    }
+    .custom-dropdown-item {
+      padding: 10px 12px;
+      cursor: pointer;
+      border-bottom: 1px solid #f0f0f0;
+      transition: background 0.2s;
+    }
+    .custom-dropdown-item:hover {
+      background: #f8f9fa;
+    }
+    .custom-dropdown-item:last-child {
+      border-bottom: none;
+    }
+    .relative {
+      position: relative;
+    }
+    button { 
+      padding: 12px 24px; 
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 16px;
+      font-weight: 600;
+      transition: all 0.2s;
+    }
+    #save-btn {
+      background: #28a745;
+      color: white;
+    }
+    #save-btn:hover {
+      background: #218838;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(40, 167, 69, 0.3);
+    }
+    #logout {
+      background: #dc3545;
+      color: white;
+      padding: 8px 16px;
+      font-size: 14px;
+    }
+    #logout:hover {
+      background: #c82333;
+    }
+    small.help { color:#c00; display:none; }
+    .error-message {
+      display: none;
+      padding: 12px;
+      background: #ffebee;
+      color: #c62828;
+      border-radius: 6px;
+      border: 1px solid #ef5350;
+      margin-top: 16px;
+      grid-column: 1 / -1;
+    }
+    .error-message.show {
+      display: block;
+    }
+    .success-message {
+      display: none;
+      padding: 12px;
+      background: #e8f5e9;
+      color: #2e7d32;
+      border-radius: 6px;
+      border: 1px solid #4caf50;
+      margin-top: 16px;
+      grid-column: 1 / -1;
+    }
+    .success-message.show {
+      display: block;
+    }
+    @media (max-width: 768px) {
+      .profile-grid {
+        grid-template-columns: 1fr;
+      }
+      .phone-container {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .phone-prefix {
+        text-align: center;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h1>Mi Perfil</h1>
+    <div class="row">
+      <a href="./dashboard.html">&larr; Volver al Dashboard</a>
+      <span id="email" style="margin-left:auto"></span>
+      <button id="logout">Cerrar sesión</button>
+    </div>
+
+    <form id="form">
+      <div class="profile-grid">
+        <div>
+          <label>Nombre <span style="color: red;">*</span>
+            <input id="first_name" required autocomplete="given-name" />
+          </label>
+        </div>
+        <div>
+          <label>Apellido <span style="color: red;">*</span>
+            <input id="last_name" required autocomplete="family-name" />
+          </label>
+        </div>
+        <div>
+          <label>Dirección <span style="color: red;">*</span>
+            <input id="address" required autocomplete="street-address" />
+          </label>
+        </div>
+        <div class="relative">
+          <label for="province">Provincia <span style="color: red;">*</span></label>
+          <input type="text" id="province" required placeholder="Escriba para buscar provincia..." autocomplete="new-password" />
+          <div id="province-dropdown" class="custom-dropdown"></div>
+        </div>
+        <div class="relative">
+          <label for="city">Localidad <span style="color: red;">*</span></label>
+          <input type="text" id="city" required placeholder="Seleccione provincia primero..." autocomplete="new-password" disabled />
+          <div id="city-dropdown" class="custom-dropdown"></div>
+        </div>
+        <div>
+          <label>Teléfono <span style="color: red;">*</span>
+            <div class="phone-container">
+              <span class="phone-prefix">+54 9</span>
+              <input id="phone" class="phone-input" required autocomplete="tel" placeholder="362 472-0762" />
+            </div>
+          </label>
+        </div>
+        <div>
+          <label>DNI <span style="color: red;">*</span>
+            <input id="dni" required autocomplete="off" inputmode="numeric" pattern="[0-9]{7,8}" title="El DNI debe tener 7 u 8 dígitos numéricos" />
+          </label>
+        </div>
+        <div class="error-message" id="error-message"></div>
+        <div class="success-message" id="success-message"></div>
+        <div class="full-width">
+          <button id="save-btn" type="submit">Guardar</button>
+        </div>
+      </div>
+    </form>
+  </div>
+
+  <script type="module" src="../scripts/config.js"></script>
+  <script type="module" src="../scripts/supabase-client.js"></script>
+  <script type="module" src="./client-utils.js"></script>
+  <script type="module" src="./profile.js"></script>
+</body>
+</html>

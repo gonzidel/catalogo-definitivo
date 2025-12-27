@@ -1,0 +1,773 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex" />
+  <title>CSV | Admin</title>
+  <link rel="stylesheet" href="../styles.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'Poppins', system-ui, -apple-system, sans-serif;
+      background: linear-gradient(135deg, #f5f7fa 0%, #e8ecf1 100%);
+      min-height: 100vh;
+      padding: 20px;
+      color: #333;
+    }
+    .box {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0;
+    }
+    .page-header {
+      background: white;
+      border-radius: 16px;
+      padding: 32px;
+      margin-bottom: 32px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+    }
+    .page-header h1 {
+      margin: 0 0 16px 0;
+      font-size: 32px;
+      font-weight: 700;
+      color: #2c3e50;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .page-header h1::before {
+      content: "📊";
+      font-size: 36px;
+    }
+    .nav-bar {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+      padding: 16px 0;
+      border-top: 1px solid #e9ecef;
+      margin-top: 16px;
+    }
+    .nav-bar a {
+      padding: 10px 18px;
+      border: 2px solid #e9ecef;
+      border-radius: 10px;
+      text-decoration: none;
+      color: #495057;
+      font-weight: 500;
+      font-size: 14px;
+      transition: all 0.3s ease;
+      background: white;
+    }
+    .nav-bar a:hover {
+      border-color: #CD844D;
+      color: #CD844D;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(205, 132, 77, 0.15);
+    }
+    .nav-bar a:first-child {
+      background: #f8f9fa;
+      border-color: #dee2e6;
+    }
+    .nav-bar a:first-child:hover {
+      background: #e9ecef;
+    }
+    .nav-bar .active {
+      background: #CD844D;
+      color: white;
+      border-color: #CD844D;
+    }
+    .section-card {
+      background: white;
+      border-radius: 16px;
+      padding: 32px;
+      margin-bottom: 32px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+      transition: transform 0.3s ease, box-shadow 0.3s ease;
+    }
+    .section-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 30px rgba(0,0,0,0.12);
+    }
+    .section-card h2 {
+      margin: 0 0 24px 0;
+      font-size: 24px;
+      font-weight: 600;
+      color: #2c3e50;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding-bottom: 16px;
+      border-bottom: 2px solid #f0f0f0;
+    }
+    .section-card h2::before {
+      font-size: 28px;
+    }
+    .section-card.export h2::before { content: "📤"; }
+    .section-card.import h2::before { content: "📥"; }
+    .section-card.inventory h2::before { content: "📦"; }
+    .section-card.new-products h2::before { content: "🆕"; }
+    input[type="text"], input[type="url"] {
+      padding: 12px 16px;
+      border: 2px solid #e9ecef;
+      border-radius: 10px;
+      font-family: 'Poppins', sans-serif;
+      font-size: 14px;
+      transition: all 0.3s ease;
+      width: 100%;
+      max-width: 500px;
+    }
+    input[type="text"]:focus, input[type="url"]:focus {
+      outline: none;
+      border-color: #CD844D;
+      box-shadow: 0 0 0 3px rgba(205, 132, 77, 0.1);
+    }
+    select {
+      padding: 12px 16px;
+      border: 2px solid #e9ecef;
+      border-radius: 10px;
+      font-family: 'Poppins', sans-serif;
+      font-size: 14px;
+      background: white;
+      cursor: pointer;
+      transition: all 0.3s ease;
+    }
+    select:focus {
+      outline: none;
+      border-color: #CD844D;
+      box-shadow: 0 0 0 3px rgba(205, 132, 77, 0.1);
+    }
+    .section-card.new-products h2::before { content: "🆕"; }
+    input[type="text"], input[type="url"] {
+      padding: 10px 16px;
+      border: 2px solid #e9ecef;
+      border-radius: 10px;
+      font-family: 'Poppins', sans-serif;
+      font-size: 14px;
+      transition: all 0.3s ease;
+      width: 100%;
+      max-width: 500px;
+    }
+    input[type="text"]:focus, input[type="url"]:focus {
+      outline: none;
+      border-color: #CD844D;
+      box-shadow: 0 0 0 3px rgba(205, 132, 77, 0.1);
+    }
+    .sheet-url-input {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .sheet-url-input input {
+      flex: 1;
+      min-width: 300px;
+    }
+    .row {
+      display: flex;
+      gap: 16px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+    button {
+      padding: 12px 24px;
+      border: none;
+      border-radius: 10px;
+      font-weight: 600;
+      font-size: 15px;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      font-family: 'Poppins', sans-serif;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    button:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+    button:active:not(:disabled) {
+      transform: translateY(0);
+    }
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    #export-all, #export-inventory {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+    }
+    #export-all:hover, #export-inventory:hover {
+      background: linear-gradient(135deg, #5568d3 0%, #6a3f8f 100%);
+    }
+    #parse, #parse-inv {
+      background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+      color: white;
+    }
+    #parse:hover, #parse-inv:hover {
+      background: linear-gradient(135deg, #e081e8 0%, #e4465a 100%);
+    }
+    #run, #run-inv {
+      background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+      color: white;
+    }
+    #run:hover:not(:disabled), #run-inv:hover:not(:disabled) {
+      background: linear-gradient(135deg, #3d9be8 0%, #00d9e6 100%);
+    }
+    input[type="file"] {
+      padding: 10px 16px;
+      border: 2px dashed #CD844D;
+      border-radius: 10px;
+      background: #fff8f3;
+      cursor: pointer;
+      font-family: 'Poppins', sans-serif;
+      font-size: 14px;
+      transition: all 0.3s ease;
+    }
+    input[type="file"]:hover {
+      background: #fff5ed;
+      border-color: #B8734A;
+    }
+    input[type="file"]::file-selector-button {
+      padding: 8px 16px;
+      margin-right: 12px;
+      border: none;
+      border-radius: 8px;
+      background: #CD844D;
+      color: white;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: 'Poppins', sans-serif;
+      transition: all 0.3s ease;
+    }
+    input[type="file"]::file-selector-button:hover {
+      background: #B8734A;
+      transform: scale(1.05);
+    }
+    label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      font-size: 14px;
+      color: #495057;
+      padding: 8px 12px;
+      border-radius: 8px;
+      transition: all 0.2s ease;
+    }
+    label:hover {
+      background: #f8f9fa;
+    }
+    input[type="checkbox"], input[type="radio"] {
+      width: 18px;
+      height: 18px;
+      cursor: pointer;
+      accent-color: #CD844D;
+    }
+    .info-text {
+      margin: 16px 0;
+      padding: 16px;
+      background: #f8f9fa;
+      border-left: 4px solid #CD844D;
+      border-radius: 8px;
+      font-size: 14px;
+      color: #495057;
+    }
+    .info-text code {
+      background: #e9ecef;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+      color: #CD844D;
+      font-weight: 600;
+    }
+    textarea.preview {
+      width: 100%;
+      height: 200px;
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+      padding: 16px;
+      border: 2px solid #e9ecef;
+      border-radius: 10px;
+      resize: vertical;
+      transition: all 0.3s ease;
+      background: #fafafa;
+    }
+    textarea.preview:focus {
+      outline: none;
+      border-color: #CD844D;
+      background: white;
+      box-shadow: 0 0 0 3px rgba(205, 132, 77, 0.1);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 16px;
+      background: white;
+      border-radius: 10px;
+      overflow: hidden;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    }
+    th {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 12px;
+      text-align: left;
+      font-weight: 600;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    td {
+      border: 1px solid #e9ecef;
+      padding: 12px;
+      font-size: 13px;
+    }
+    tbody tr:nth-child(even) {
+      background: #f8f9fa;
+    }
+    tbody tr:hover {
+      background: #fff5ed;
+    }
+    .ok { color: #28a745; font-weight: 600; }
+    .err { color: #dc3545; font-weight: 600; }
+    .warn { color: #ffc107; font-weight: 600; }
+    .progress-container {
+      margin: 20px 0;
+      display: none;
+    }
+    .progress-container.active {
+      display: block;
+    }
+    .progress-bar {
+      width: 100%;
+      height: 32px;
+      background: #e9ecef;
+      border-radius: 16px;
+      overflow: hidden;
+      position: relative;
+      box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #4facfe 0%, #00f2fe 100%);
+      transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+      width: 0%;
+      box-shadow: 0 2px 8px rgba(79, 172, 254, 0.4);
+    }
+    .progress-text {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 13px;
+      font-weight: 700;
+      color: #2c3e50;
+      text-shadow: 0 1px 2px rgba(255,255,255,0.8);
+    }
+    .validation-errors {
+      margin: 20px 0;
+      padding: 20px;
+      background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
+      border: 2px solid #ffc107;
+      border-radius: 12px;
+      display: none;
+      box-shadow: 0 4px 12px rgba(255, 193, 7, 0.2);
+    }
+    .validation-errors.active {
+      display: block;
+    }
+    .validation-errors strong {
+      display: block;
+      margin-bottom: 12px;
+      font-size: 16px;
+      color: #856404;
+    }
+    .validation-errors ul {
+      margin: 8px 0 0 0;
+      padding-left: 24px;
+    }
+    .validation-errors li {
+      margin: 8px 0;
+      color: #856404;
+      font-size: 14px;
+    }
+    .duplicate-skus {
+      margin: 20px 0;
+      padding: 20px;
+      background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%);
+      border: 2px solid #dc3545;
+      border-radius: 12px;
+      display: none;
+      box-shadow: 0 4px 12px rgba(220, 53, 69, 0.2);
+    }
+    .duplicate-skus.active {
+      display: block;
+    }
+    .duplicate-skus strong {
+      display: block;
+      margin-bottom: 12px;
+      font-size: 16px;
+      color: #721c24;
+    }
+    .duplicate-skus ul {
+      margin: 8px 0 0 0;
+      padding-left: 24px;
+    }
+    .duplicate-skus li {
+      margin: 8px 0;
+      color: #721c24;
+      font-size: 14px;
+    }
+    .confirm-modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      backdrop-filter: blur(4px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      animation: fadeIn 0.3s ease;
+    }
+    .confirm-modal.active {
+      display: flex;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    .confirm-content {
+      background: white;
+      padding: 32px;
+      border-radius: 16px;
+      max-width: 520px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+      animation: slideUp 0.3s ease;
+    }
+    @keyframes slideUp {
+      from {
+        transform: translateY(20px);
+        opacity: 0;
+      }
+      to {
+        transform: translateY(0);
+        opacity: 1;
+      }
+    }
+    .confirm-content h3 {
+      margin: 0 0 16px 0;
+      font-size: 22px;
+      color: #2c3e50;
+    }
+    .confirm-content p {
+      margin: 12px 0;
+      color: #495057;
+      line-height: 1.6;
+    }
+    .confirm-buttons {
+      display: flex;
+      gap: 12px;
+      margin-top: 24px;
+      justify-content: flex-end;
+    }
+    .confirm-buttons button {
+      padding: 12px 24px;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 15px;
+      transition: all 0.3s ease;
+    }
+    .confirm-buttons .btn-cancel {
+      background: #6c757d;
+      color: white;
+    }
+    .confirm-buttons .btn-confirm {
+      background: linear-gradient(135deg, #f5576c 0%, #f093fb 100%);
+      color: white;
+    }
+    .confirm-buttons .btn-cancel:hover {
+      background: #5a6268;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(108, 117, 125, 0.3);
+    }
+    .confirm-buttons .btn-confirm:hover {
+      background: linear-gradient(135deg, #e4465a 0%, #e081e8 100%);
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(245, 87, 108, 0.3);
+    }
+    .message {
+      padding: 12px 16px;
+      border-radius: 10px;
+      font-weight: 500;
+      font-size: 14px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .message.ok {
+      background: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+    .message.err {
+      background: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+    }
+    .message.warn {
+      background: #fff3cd;
+      color: #856404;
+      border: 1px solid #ffeaa7;
+    }
+    hr {
+      border: none;
+      border-top: 2px solid #e9ecef;
+      margin: 32px 0;
+    }
+    @media (max-width: 768px) {
+      .page-header {
+        padding: 24px;
+      }
+      .page-header h1 {
+        font-size: 24px;
+      }
+      .section-card {
+        padding: 24px;
+      }
+      .section-card h2 {
+        font-size: 20px;
+      }
+      button {
+        width: 100%;
+        justify-content: center;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <div class="page-header">
+      <h1>Importar / Exportar CSV</h1>
+      <div class="nav-bar">
+        <a href="./index.html">← Volver al panel</a>
+        <span style="flex:1 1 auto"></span>
+        <a href="./products.html">Productos</a>
+        <a href="./stock.html">Stock</a>
+        <a href="./orders.html">Pedidos</a>
+        <a href="./import-export.html" class="active">Importar/Exportar</a>
+      </div>
+    </div>
+
+    <section class="section-card export">
+      <h2>Exportar Datos</h2>
+      <div class="row">
+        <button id="export-all">
+          <span>📥</span>
+          <span>Exportar CSV Completo</span>
+        </button>
+        <span id="export-msg" class="message"></span>
+      </div>
+      <div class="row">
+        <button id="export-inventory">
+          <span>📦</span>
+          <span>Exportar Inventario (SKU)</span>
+        </button>
+        <span id="export-inv-msg" class="message"></span>
+      </div>
+      <div class="info-text">
+        <strong>💡 Información:</strong> Los archivos CSV exportados incluyen BOM UTF-8 y son compatibles con Excel. El inventario solo exporta campos de stock, precio y estado.
+      </div>
+    </section>
+
+    <section class="section-card import">
+      <h2>Importar Productos Completos</h2>
+      <div class="row">
+        <input type="file" id="file" accept=".csv" />
+      </div>
+      <div class="row" style="margin-top: 16px;">
+        <label>
+          <input type="checkbox" id="create-tags" checked />
+          <span>Crear tags que no existan</span>
+        </label>
+        <label>
+          <input type="checkbox" id="create-colors" />
+          <span>Crear colores que no existan</span>
+        </label>
+        <label>
+          <input type="checkbox" id="truncate-images" checked />
+          <span>Reemplazar imágenes de cada variante</span>
+        </label>
+      </div>
+      <div class="row" style="margin-top: 16px;">
+        <button id="parse">
+          <span>👁️</span>
+          <span>Previsualizar</span>
+        </button>
+        <button id="run" disabled>
+          <span>✅</span>
+          <span>Importar</span>
+        </button>
+        <span id="import-msg" class="message"></span>
+      </div>
+      <div class="info-text">
+        <strong>📋 Cabeceras esperadas:</strong> <code>handle,name,category,status,description,sku,color,size,price,stock,active,images,tags</code>
+      </div>
+      <div id="validation-errors" class="validation-errors"></div>
+      <div id="duplicate-skus" class="duplicate-skus"></div>
+      <div id="progress-container" class="progress-container">
+        <div class="progress-bar">
+          <div id="progress-fill" class="progress-fill"></div>
+          <div id="progress-text" class="progress-text">0%</div>
+        </div>
+      </div>
+      <textarea id="preview" class="preview" placeholder="Vista previa (primeras filas)…"></textarea>
+      <div id="table-wrap"></div>
+    </section>
+
+    <section class="section-card new-products">
+      <h2>Importar Productos Nuevos desde Google Sheets</h2>
+      <div class="row">
+        <label style="flex-direction: column; align-items: flex-start; gap: 8px;">
+          <strong>Método de importación:</strong>
+          <select id="import-method">
+            <option value="csv">CSV exportado desde Google Sheets</option>
+            <option value="url">URL pública de Google Sheet (solo lectura)</option>
+          </select>
+        </label>
+      </div>
+      <div class="row" id="csv-method">
+        <input type="file" id="file-new" accept=".csv" />
+      </div>
+      <div class="row" id="url-method" style="display: none;">
+        <input type="url" id="sheet-url" placeholder="https://docs.google.com/spreadsheets/d/..." />
+        <select id="sheet-category">
+          <option value="Calzado">Calzado</option>
+          <option value="Ropa">Ropa</option>
+          <option value="Otros">Otros</option>
+        </select>
+      </div>
+      <div class="row" style="margin-top: 16px;">
+        <button id="parse-new">
+          <span>👁️</span>
+          <span>Previsualizar</span>
+        </button>
+        <button id="run-new" disabled>
+          <span>✅</span>
+          <span>Importar Productos Nuevos</span>
+        </button>
+        <span id="import-new-msg" class="message"></span>
+      </div>
+      <div class="info-text">
+        <strong>📋 Formato esperado:</strong> Columnas: <code>name, color, size, price, images1-images12, handle, sku</code><br>
+        <strong>💡 Nota:</strong> Los productos se agruparán por nombre. Cada fila con el mismo nombre pero diferente color creará variantes del mismo producto. Los tamaños en la columna "size" deben estar separados por comas (ej: "35,36,37").
+      </div>
+      <div id="validation-errors-new" class="validation-errors"></div>
+      <div id="progress-container-new" class="progress-container">
+        <div class="progress-bar">
+          <div id="progress-fill-new" class="progress-fill"></div>
+          <div id="progress-text-new" class="progress-text">0%</div>
+        </div>
+      </div>
+      <div id="preview-new-wrap"></div>
+    </section>
+
+    <section class="section-card inventory">
+      <h2>Importar Inventario (SKU)</h2>
+      <div class="row">
+        <input type="file" id="file-inv" accept=".csv" />
+      </div>
+      <div class="row" style="margin-top: 16px;">
+        <button id="parse-inv">
+          <span>👁️</span>
+          <span>Previsualizar</span>
+        </button>
+        <button id="run-inv" disabled>
+          <span>✅</span>
+          <span>Importar Inventario</span>
+        </button>
+        <span id="import-inv-msg" class="message"></span>
+      </div>
+      <div class="info-text">
+        <strong>📋 Cabeceras esperadas:</strong> <code>sku,size,stock,price,active</code>. Solo actualiza estos campos sin modificar otros datos del producto.
+      </div>
+      <div id="progress-container-inv" class="progress-container">
+        <div class="progress-bar">
+          <div id="progress-fill-inv" class="progress-fill"></div>
+          <div id="progress-text-inv" class="progress-text">0%</div>
+        </div>
+      </div>
+      <textarea id="preview-inv" class="preview" placeholder="Vista previa inventario…"></textarea>
+      <div id="table-wrap-inv"></div>
+    </section>
+
+    <section class="section-card new-products">
+      <h2>Importar Productos Nuevos desde Google Sheets</h2>
+      <div class="info-text" style="margin-bottom: 20px;">
+        <strong>💡 Instrucciones:</strong> Exportá tu Google Sheet como CSV (Archivo → Descargar → CSV). El sistema agrupará filas con el mismo nombre pero diferentes colores para crear un producto con múltiples variantes. Los tamaños deben estar separados por comas (ej: "35,36,37").
+      </div>
+      <div class="row">
+        <input type="file" id="file-new" accept=".csv" />
+      </div>
+      <div class="row" style="margin-top: 16px;">
+        <label>
+          <input type="radio" name="category-new" value="Calzado" checked />
+          <span>Calzado</span>
+        </label>
+        <label>
+          <input type="radio" name="category-new" value="Ropa" />
+          <span>Ropa</span>
+        </label>
+      </div>
+      <div class="row" style="margin-top: 16px;">
+        <button id="parse-new">
+          <span>👁️</span>
+          <span>Previsualizar</span>
+        </button>
+        <button id="run-new" disabled>
+          <span>✅</span>
+          <span>Importar Productos Nuevos</span>
+        </button>
+        <span id="import-new-msg" class="message"></span>
+      </div>
+      <div class="info-text">
+        <strong>📋 Columnas esperadas:</strong> <code>name, color, size, price, images1, images2, ..., images12, handle, sku</code><br>
+        <strong>Nota:</strong> Los productos se crearán con estado "incomplete" y no aparecerán en el catálogo hasta que se completen los datos faltantes (tags y stock).
+      </div>
+      <div id="validation-errors-new" class="validation-errors"></div>
+      <div id="progress-container-new" class="progress-container">
+        <div class="progress-bar">
+          <div id="progress-fill-new" class="progress-fill"></div>
+          <div id="progress-text-new" class="progress-text">0%</div>
+        </div>
+      </div>
+      <textarea id="preview-new" class="preview" placeholder="Vista previa productos nuevos…"></textarea>
+      <div id="table-wrap-new"></div>
+    </section>
+  </div>
+
+  <!-- Modal de confirmación para reemplazar imágenes -->
+  <div id="confirm-modal" class="confirm-modal">
+    <div class="confirm-content">
+      <h3>⚠️ Confirmar reemplazo de imágenes</h3>
+      <p>Estás a punto de reemplazar todas las imágenes de las variantes. Esta acción eliminará las imágenes existentes y las reemplazará con las del CSV.</p>
+      <p><strong>⚠️ Advertencia:</strong> Esta acción no se puede deshacer fácilmente. ¿Deseas continuar?</p>
+      <div class="confirm-buttons">
+        <button id="confirm-cancel" class="btn-cancel">Cancelar</button>
+        <button id="confirm-ok" class="btn-confirm">Sí, reemplazar</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="../scripts/config.js"></script>
+  <script type="module" src="../scripts/supabase-client.js"></script>
+  <script type="module" src="./import-export.js"></script>
+</body>
+</html>

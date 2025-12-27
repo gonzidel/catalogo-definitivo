@@ -1,0 +1,20 @@
+{
+  "name": "catalogo-fyl",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node test/check-config.js",
+    "test:secrets": "node test/scan-secrets.js",
+    "test:staged-secrets": "node test/scan-staged-secrets.js",
+    "prepare": "husky install",
+    "generate-customers-sql": "node scripts/generate-customers-sql.js",
+    "generate-customers-batches": "node scripts/generate-customers-sql-batches.js"
+  },
+  "devDependencies": {
+    "husky": "^8.0.0"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.89.0"
+  }
+}

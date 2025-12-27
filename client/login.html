@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Acceso de Clientes - Catálogo FYL</title>
+    <link rel="stylesheet" href="../styles.css">
+    <style>
+        .login-container {
+            max-width: 400px;
+            margin: 50px auto;
+            padding: 40px;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            text-align: center;
+        }
+        .login-header {
+            margin-bottom: 30px;
+        }
+        .login-header h1 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+        .login-header p {
+            color: #666;
+            font-size: 14px;
+        }
+        .google-btn {
+            width: 100%;
+            padding: 12px 20px;
+            background: #4285f4;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        .google-btn:hover {
+            background: #3367d6;
+        }
+        .google-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .msg {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        .msg.error {
+            background: #fee;
+            color: #c33;
+            border: 1px solid #fcc;
+        }
+        .msg.success {
+            background: #efe;
+            color: #363;
+            border: 1px solid #cfc;
+        }
+        .back-link {
+            margin-top: 20px;
+        }
+        .back-link a {
+            color: #CD844D;
+            text-decoration: none;
+            font-size: 14px;
+        }
+        .back-link a:hover {
+            text-decoration: underline;
+        }
+        .biometric-btn {
+            width: 100%;
+            padding: 12px 20px;
+            background: #CD844D;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .biometric-btn:hover {
+            background: #b8733a;
+        }
+        .biometric-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-header">
+            <img src="../logo.png" alt="Logo FYL" style="height: 60px; margin-bottom: 20px;">
+            <h1>Acceso de Clientes</h1>
+            <p>Iniciá con tu cuenta de Google para acceder a tu área personal y gestionar tus pedidos.</p>
+        </div>
+        
+        <button id="google-btn" class="google-btn">
+            Continuar con Google
+        </button>
+
+        <div id="biometric-section" style="margin-top: 20px; display: none;">
+            <div style="margin: 20px 0; text-align: center; color: #666; font-size: 14px;">
+                <span style="display: block; margin-bottom: 10px;">o</span>
+            </div>
+            <input 
+                type="email" 
+                id="biometric-email" 
+                placeholder="Ingresá tu email"
+                style="width: 100%; padding: 12px; margin-bottom: 12px; border: 1px solid #ddd; border-radius: 5px; font-size: 16px; box-sizing: border-box;"
+            />
+            <button id="biometric-btn" class="biometric-btn" style="display: none;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 8px;">
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                    <path d="M9 12l2 2 4-4"/>
+                </svg>
+                Entrar con huella/rostro
+            </button>
+        </div>
+        
+        <div id="msg" class="msg" style="display: none;"></div>
+        
+        <div class="back-link">
+            <a href="../index.html">← Volver al catálogo</a>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script type="module" src="login.js"></script>
+</body>
+</html>

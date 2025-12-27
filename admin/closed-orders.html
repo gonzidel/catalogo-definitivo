@@ -1,0 +1,684 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pedidos Cerrados - Catálogo FYL</title>
+    <link rel="stylesheet" href="../styles.css">
+    <script>
+      // Configurar antes de que se carguen los módulos
+      window.redirectTarget = "./closed-orders.html";
+      window.skipPanelRedirect = true;
+    </script>
+    <style>
+        .orders-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 16px;
+        }
+        .orders-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 24px;
+            padding: 16px;
+            background: #f8f9fa;
+            border-radius: 12px;
+        }
+        .orders-header h1 {
+            font-size: 22px;
+        }
+        .search-bar {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 16px;
+            padding: 12px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        .search-bar input {
+            flex: 1;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+        .orders-list {
+            display: grid;
+            gap: 16px;
+        }
+        .order-card {
+            background: white;
+            border: 1px solid #e9ecef;
+            border-radius: 12px;
+            padding: 16px;
+            box-shadow: 0 6px 20px rgba(0,0,0,0.08);
+        }
+        .order-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 12px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #eee;
+        }
+        .order-id {
+            font-size: 16px;
+            font-weight: 600;
+            color: #333;
+        }
+        .order-status {
+            padding: 4px 10px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            background: #e8f0fe;
+            color: #1a237e;
+        }
+        .customer-info {
+            margin-bottom: 12px;
+            font-size: 14px;
+        }
+        .customer-name {
+            font-weight: 600;
+            font-size: 15px;
+            margin-bottom: 6px;
+        }
+        .customer-details {
+            color: #666;
+            font-size: 13px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+        .customer-details span {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .transport-section {
+            margin: 12px 0;
+            padding: 12px;
+            background: #f0f7ff;
+            border-radius: 8px;
+            border-left: 4px solid #17a2b8;
+        }
+        .transport-selector {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            margin-top: 8px;
+        }
+        .transport-selector select {
+            flex: 1;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+            background: white;
+        }
+        .transport-selector select:focus {
+            outline: none;
+            border-color: #17a2b8;
+            box-shadow: 0 0 0 2px rgba(23, 162, 184, 0.1);
+        }
+        .order-summary {
+            margin: 12px 0;
+            padding: 12px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+        .order-summary-item {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 4px;
+        }
+        .order-total {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-top: 12px;
+            border-top: 2px solid #CD844D;
+            font-size: 16px;
+            font-weight: 600;
+            margin-top: 12px;
+        }
+        .labels-section {
+            margin: 12px 0;
+            padding: 12px;
+            background: #fff3e0;
+            border-radius: 8px;
+            border: 1px solid #ff9800;
+        }
+        .labels-controls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 8px;
+        }
+        .labels-controls button {
+            width: 32px;
+            height: 32px;
+            border: 1px solid #ddd;
+            background: white;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .labels-controls button:hover {
+            background: #f0f0f0;
+        }
+        .labels-controls input {
+            width: 60px;
+            padding: 6px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            text-align: center;
+            font-size: 14px;
+        }
+        .labels-printed-badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-top: 8px;
+        }
+        .labels-printed-badge.printed {
+            background: #e6f4ea;
+            color: #1b5e20;
+        }
+        .labels-printed-badge.not-printed {
+            background: #ffebee;
+            color: #c62828;
+        }
+        .order-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 12px;
+        }
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .btn:hover:not(:disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+        }
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        .btn-success { background: #28a745; color: white; }
+        .btn-primary { background: #17a2b8; color: white; }
+        .btn-secondary { background: #6c757d; color: white; }
+        .btn-warning { background: #ffc107; color: #333; }
+        .btn-danger { background: #dc3545; color: white; }
+        .empty-orders {
+            text-align: center;
+            padding: 48px 16px;
+            color: #666;
+        }
+        /* Modal de detalle */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 10000;
+            overflow-y: auto;
+            padding: 20px;
+        }
+        .modal.active {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .modal-content {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+            width: 100%;
+            max-width: 900px;
+            max-height: 90vh;
+            overflow-y: auto;
+            position: relative;
+        }
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 24px;
+            border-bottom: 1px solid #e9ecef;
+        }
+        .modal-header h2 {
+            margin: 0;
+            font-size: 22px;
+        }
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 32px;
+            color: #666;
+            cursor: pointer;
+            padding: 0;
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+        }
+        .modal-close:hover {
+            background: #f0f0f0;
+        }
+        .modal-body {
+            padding: 24px;
+        }
+        .order-item {
+            display: flex;
+            gap: 12px;
+            align-items: flex-start;
+            padding: 12px;
+            border-radius: 10px;
+            border: 1px solid #f0f0f0;
+            background: #fafafa;
+            margin-bottom: 8px;
+        }
+        .item-thumb {
+            width: 64px;
+            height: 64px;
+            object-fit: cover;
+            border-radius: 10px;
+            flex-shrink: 0;
+        }
+        .item-main {
+            flex: 1;
+        }
+        .item-name {
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+        .item-details {
+            color: #666;
+            font-size: 12px;
+            margin-bottom: 4px;
+        }
+        .item-price {
+            color: #CD844D;
+            font-weight: 600;
+            font-size: 14px;
+        }
+        /* Modal de transporte */
+        .transport-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 10001;
+            overflow-y: auto;
+            padding: 20px;
+        }
+        .transport-modal.active {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .transport-modal-content {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+            width: 100%;
+            max-width: 500px;
+            padding: 24px;
+        }
+        .transport-modal-content h3 {
+            margin-top: 0;
+        }
+        .transport-modal-content input {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            margin-bottom: 12px;
+            box-sizing: border-box;
+        }
+        .transport-modal-actions {
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+            margin-top: 16px;
+        }
+        /* Estilos para modal de Imprimir Listas */
+        .print-lists-filters {
+            display: flex;
+            gap: 16px;
+            align-items: flex-end;
+            margin-bottom: 24px;
+            padding: 16px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            flex: 1;
+        }
+        .filter-group label {
+            font-weight: 600;
+            font-size: 14px;
+            color: #333;
+        }
+        .filter-select,
+        .filter-input {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+            background: white;
+        }
+        .filter-select:focus,
+        .filter-input:focus {
+            outline: none;
+            border-color: #17a2b8;
+            box-shadow: 0 0 0 2px rgba(23, 162, 184, 0.1);
+        }
+        #orders-list-container {
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        .orders-list-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .orders-list-table thead {
+            background: #17a2b8;
+            color: white;
+        }
+        .orders-list-table th {
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+            font-size: 13px;
+        }
+        .orders-list-table td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #eee;
+            font-size: 13px;
+        }
+        .orders-list-table tbody tr:hover {
+            background: #f8f9fa;
+        }
+        .orders-list-table tbody tr:last-child td {
+            border-bottom: none;
+        }
+        /* Tabs para nueva lista y listas guardadas */
+        .tabs-container {
+            display: flex;
+            gap: 8px;
+            border-bottom: 2px solid #e9ecef;
+            margin-bottom: 16px;
+        }
+        .tab-btn {
+            padding: 10px 20px;
+            border: none;
+            background: transparent;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            color: #666;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -2px;
+            transition: all 0.2s;
+        }
+        .tab-btn:hover {
+            color: #17a2b8;
+        }
+        .tab-btn.active {
+            color: #17a2b8;
+            border-bottom-color: #17a2b8;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        /* Estilos para lista de listas guardadas */
+        .saved-list-item {
+            background: white;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        .saved-list-item:hover {
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        .saved-list-info {
+            flex: 1;
+        }
+        .saved-list-info h4 {
+            margin: 0 0 8px 0;
+            font-size: 16px;
+            color: #333;
+        }
+        .saved-list-info p {
+            margin: 4px 0;
+            font-size: 13px;
+            color: #666;
+        }
+        .saved-list-actions {
+            display: flex;
+            gap: 8px;
+        }
+        @media (max-width: 768px) {
+            .print-lists-filters {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .orders-list-table {
+                font-size: 11px;
+            }
+            .orders-list-table th,
+            .orders-list-table td {
+                padding: 8px;
+            }
+            .saved-list-item {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .saved-list-actions {
+                margin-top: 12px;
+                width: 100%;
+            }
+            .saved-list-actions .btn {
+                flex: 1;
+            }
+            .orders-container {
+                padding: 12px;
+            }
+            .orders-header {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .order-card {
+                padding: 14px;
+            }
+            .order-actions {
+                flex-direction: column;
+            }
+            .btn {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="orders-container">
+        <div class="orders-header">
+            <h1>📦 Pedidos Cerrados</h1>
+            <div>
+                <a href="index.html" class="btn btn-secondary">← Panel Admin</a>
+                <a href="orders.html" class="btn btn-primary" style="margin-left: 10px;">Ver Todos los Pedidos</a>
+                <button id="print-lists-btn" class="btn btn-success" style="margin-left: 10px;">📄 Imprimir Listas</button>
+            </div>
+        </div>
+
+        <div class="search-bar">
+            <input id="search-input" type="text" placeholder="Buscar (nombre, DNI, teléfono)" />
+        </div>
+
+        <div id="orders-content">
+            <div class="empty-orders">
+                <p>Cargando pedidos cerrados...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de detalle del pedido -->
+    <div id="detail-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Detalle del Pedido</h2>
+                <button class="modal-close" id="close-detail-modal">&times;</button>
+            </div>
+            <div class="modal-body" id="detail-modal-body">
+                <!-- Contenido dinámico -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de crear transporte -->
+    <div id="transport-modal" class="transport-modal">
+        <div class="transport-modal-content">
+            <h3>Crear Nuevo Transporte</h3>
+            <input type="text" id="new-transport-name" placeholder="Nombre del transporte" />
+            <input type="text" id="new-transport-details" placeholder="Detalles (opcional)" />
+            <div class="transport-modal-actions">
+                <button class="btn btn-secondary" id="cancel-transport-modal">Cancelar</button>
+                <button class="btn btn-success" id="save-transport-modal">Guardar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de Imprimir Listas -->
+    <div id="print-lists-modal" class="modal">
+        <div class="modal-content" style="max-width: 1000px;">
+            <div class="modal-header">
+                <h2>📄 Imprimir Lista de Envíos</h2>
+                <button class="modal-close" id="close-print-lists-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <!-- Tabs para nueva lista y listas guardadas -->
+                <div class="tabs-container" style="margin-bottom: 24px;">
+                    <button class="tab-btn active" data-tab="new-list">Nueva Lista</button>
+                    <button class="tab-btn" data-tab="saved-lists">Listas Guardadas</button>
+                </div>
+
+                <!-- Tab: Nueva Lista -->
+                <div id="tab-new-list" class="tab-content active">
+                    <div class="print-lists-filters">
+                        <div class="filter-group">
+                            <label for="filter-transport">Transporte:</label>
+                            <select id="filter-transport" class="filter-select">
+                                <option value="">Cargando transportes...</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label for="filter-date">Fecha:</label>
+                            <input type="date" id="filter-date" class="filter-input" />
+                        </div>
+                        <button id="search-orders-btn" class="btn btn-primary">🔍 Buscar</button>
+                    </div>
+                    <div id="orders-list-container" style="margin-top: 24px; display: none;">
+                        <div id="orders-list-header" style="margin-bottom: 12px;">
+                            <h3 id="orders-list-title"></h3>
+                        </div>
+                        <div id="orders-list-content">
+                            <!-- Lista de pedidos se renderizará aquí -->
+                        </div>
+                        <div style="margin-top: 24px; text-align: center;">
+                            <button id="print-pdf-btn" class="btn btn-success" style="display: none;">🖨️ Imprimir y Guardar PDF</button>
+                        </div>
+                    </div>
+                    <div id="orders-list-empty" style="text-align: center; padding: 48px; color: #666; display: none;">
+                        <p>No se encontraron pedidos para los filtros seleccionados.</p>
+                    </div>
+                </div>
+
+                <!-- Tab: Listas Guardadas -->
+                <div id="tab-saved-lists" class="tab-content" style="display: none;">
+                    <div class="print-lists-filters">
+                        <div class="filter-group">
+                            <label for="saved-lists-start-date">Desde:</label>
+                            <input type="date" id="saved-lists-start-date" class="filter-input" />
+                        </div>
+                        <div class="filter-group">
+                            <label for="saved-lists-end-date">Hasta:</label>
+                            <input type="date" id="saved-lists-end-date" class="filter-input" />
+                        </div>
+                        <button id="search-saved-lists-btn" class="btn btn-primary">🔍 Buscar Listas</button>
+                    </div>
+                    <div id="saved-lists-container" style="margin-top: 24px;">
+                        <div id="saved-lists-content">
+                            <!-- Listas guardadas se renderizarán aquí -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- QZ Tray script -->
+    <script>
+      // Cargar QZ Tray si no está disponible
+      if (typeof qz === 'undefined') {
+        const script = document.createElement('script');
+        script.src = 'https://demo.qz.io/js/qz-tray.js';
+        script.onload = function() {
+          console.log('QZ Tray cargado');
+        };
+        document.head.appendChild(script);
+      }
+    </script>
+
+    <!-- jsPDF library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+
+    <script type="module" src="../scripts/supabase-client.js"></script>
+    <script type="module" src="admin-auth.js"></script>
+    <script type="module" src="closed-orders.js"></script>
+</body>
+</html>

@@ -1,0 +1,1021 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Catálogo FYL</title>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#CD844D">
+
+  <head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Catálogo FYL</title>
+
+  <!-- Google Analytics -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-2JDYZW1KD6"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-2JDYZW1KD6');
+  </script>
+
+
+
+  <style>
+    /* Reset y tipografías */
+    body {
+      font-family: 'Poppins', sans-serif;
+      margin: 0;
+      background: #E5E1DC;
+      color: #333;
+    }
+    header {
+      background: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    header img { height: 60px; }
+    header h1 { margin: 0; font-size: 1.5rem; }
+
+    /* Menú de categorías */
+    .menu {
+      display: flex;
+      justify-content: center;
+      gap: .5rem;
+      background: #fff;
+      padding: .5rem;
+      flex-wrap: wrap;
+    }
+    .menu button {
+      padding: .5rem 1rem;
+      font-size: .9rem;
+      border: none;
+      border-radius: 5px;
+      background: #CD844D;
+      color: #fff;
+      cursor: pointer;
+      font-weight: 600;
+      transition: background-color .2s;
+    }
+    .menu button:hover { background: #b86f3d; }
+
+    /* Contenedor filtro + botón de vista */
+    #filter-container {
+      padding: 0 .5rem;
+      background: #E5E1DC;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    #filter-select {
+    flex: 1;
+      max-width: 60%;
+      margin-right: 1rem;
+      padding: .4rem .8rem;
+      font-size: .9rem;
+      border-radius: 4px;
+      border: 1px solid #ccc;
+      display: block;
+    }
+    #view-toggle {
+      padding: .5rem 1rem;
+      font-size: .9rem;
+      border: none;
+      border-radius: 5px;
+      background: #CD844D;
+      color: #fff;
+      cursor: pointer;
+      transition: background-color .2s;
+      flex: none;
+    }
+    #toggleFiltros {
+      padding: .5rem 1rem;
+      font-size: .9rem;
+      border: none;
+      border-radius: 5px;
+      background: #CD844D;
+      color: #fff;
+      cursor: pointer;
+      font-weight: 600;
+      transition: background-color 0.2s ease;
+      flex: none;
+    }
+
+#toggleFiltros:hover {
+  background: #b86f3d;
+}
+  .toggle-btn {
+  background: #CD844D;
+  color: white;
+  border: none;
+  padding: 0.5rem 1.2rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  border-radius: 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  transition: background 0.2s ease;
+}
+
+.toggle-btn:hover {
+  background: #b86f3d;
+}
+
+
+
+    #view-toggle:hover { background: #b86f3d; }
+
+    /* Grid de tarjetas */
+    #catalogo {
+      padding: 1rem;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px,1fr));
+      gap: 1rem;
+    }
+    /* Vista compacta: 2 columnas fijas */
+    #catalogo.compact {
+      grid-template-columns: repeat(2,1fr) !important;
+    }
+    /* Evitar que las tarjetas crezcan */
+    #catalogo .card {
+      min-width: 0;
+    }
+
+    /* Tarjeta */
+    .card {
+      position: relative;
+      background: #fff;
+      border-radius: 12px;
+      padding: 1rem;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+    }
+    .download-btn {
+  position: absolute;
+  top: 30px;
+  right: 22px;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 50%;
+  background: #CD844D;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+  transition: background 0.2s ease;
+  z-index: 10;
+}
+
+.download-btn:hover {
+  background: #b86f3d;
+}
+
+
+    .download-btn img {
+      width: 18px;
+      height: 18px;
+    }
+    
+    download-btn svg {
+      width: 30px;
+      height: 30px;
+      fill: white;
+    }
+
+
+    /* Imagen principal */
+    .main-image {
+      width: 100%;
+      aspect-ratio: 4/5;
+      object-fit: cover;
+      border-radius: 8px;
+    }
+
+    /* Galería de miniaturas */
+    .gallery {
+      display: flex;
+      gap: .4rem;
+      margin-top: .5rem;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+      scroll-snap-type: x proximity;
+    }
+    .gallery::-webkit-scrollbar { display: none; }
+    .gallery img {
+      flex: 0 0 auto;
+      width: 60px;
+      aspect-ratio: 4/5;
+      object-fit: cover;
+      border-radius: 4px;
+      cursor: pointer;
+      border: 2px solid transparent;
+      scroll-snap-align: start;
+    }
+    /* Ajustes para compact */
+    #catalogo.compact .gallery {
+      flex-wrap: nowrap;
+      scroll-snap-type: x mandatory;
+    }
+    #catalogo.compact .gallery img {
+      width: 48px;
+    }
+
+    /* Título, colores, descripción, precio, talles */
+    .title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin: .5rem 0;
+    }
+    .article-box {
+      background: #eee;
+      padding: 4px 8px;
+      border-radius: 6px;
+      font-size: .95rem;
+    }
+    .article-fire {
+      margin-left: 4px;
+      font-size: 1.1rem;
+    }
+    .colors { display: flex; flex-wrap: wrap; gap: .4rem; }
+    .color-btn {
+      padding: 4px 8px;
+      border: none;
+      border-radius: 6px;
+      background: #CD844D;
+      color: #fff;
+      font-size: .85rem;
+      cursor: pointer;
+      transition: opacity .2s;
+    }
+       #btn-scroll-top {
+      position: fixed;
+      bottom: 90px;
+      right: 20px;
+      width: 44px;
+      height: 44px;
+      background: white;
+      border: none;
+      border-radius: 50%;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+      color: #333;
+      cursor: pointer;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.3s ease, visibility 0.3s ease;
+      z-index: 999;
+    }
+    #btn-scroll-top svg {
+      width: 24px;
+      height: 24px;
+    }
+    #btn-scroll-top:hover {
+      background: #f1f1f1;
+    }
+    #btn-scroll-top.visible {
+      opacity: 1;
+      visibility: visible;
+    }
+    .loader {
+      text-align: center;
+      padding: 2rem;
+      font-size: 1rem;
+      font-weight: bold;
+      color: #CD844D;
+      display: none;
+    }
+    .loader.show {
+      display: block;
+    }
+    #search-container {
+  padding: 0.5rem 1rem;
+  background: #E5E1DC;
+  text-align: center;
+    }
+
+    #searchInput {
+    width: 100%;
+    max-width: 100%; /* 👈 se adapta al contenedor */
+    box-sizing: border-box; /* 👈 incluye padding dentro del ancho */
+    padding: 0.5rem 1rem;
+    font-size: 0.9rem;
+    border-radius: 8px;
+    border: 1px solid #ccc;
+    outline: none;
+    transition: box-shadow 0.2s ease;
+    }
+
+    #searchInput:focus {
+      box-shadow: 0 0 0 2px #CD844D33;
+      border-color: #CD844D;
+    }
+
+
+
+        #filtroMenu {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      padding: 1rem;
+      background: #E5E1DC;
+      border-radius: 8px;
+      justify-content: flex-start;
+    }
+
+    #filtroMenu label {
+      display: flex;
+      align-items: center;
+      background: #fff;
+      border: 1px solid #ccc;
+      border-radius: 20px;
+      padding: 0.3rem 0.9rem;
+      font-size: 0.85rem;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      color: #333;
+    }
+
+    #filtroMenu label:hover {
+      background-color: #f2f2f2;
+    }
+
+    #filtroMenu input[type="checkbox"] {
+      display: none;
+    }
+
+    #filtroMenu input[type="checkbox"]:checked + span {
+      background: #CD844D;
+      color: #fff;
+      border-color: #CD844D;
+      padding: 0.3rem 0.9rem;
+      border-radius: 20px;
+    }
+
+    .menu button.active {
+      background: white;
+      color: #CD844D;
+      border: 2px solid #CD844D;
+    }
+    .image-loader {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      background: rgba(255, 255, 255, 0.9);
+      border-radius: 8px;
+      padding: 0.5rem;
+      display: none;
+      z-index: 2;
+    }
+
+    .image-loader.active {
+      display: block;
+    }
+
+    .spinner {
+      width: 20px;
+      height: 20px;
+      border: 3px solid #ccc;
+      border-top: 3px solid #CD844D;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+      .download-container {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 0.5rem;
+    }
+
+
+    .color-btn:hover { opacity: .8; }
+    .description { font-size: .9rem; color: #555; margin-bottom: .4rem; }
+    .price-container { display: flex; align-items: baseline; gap: .5rem; margin-bottom: .4rem; }
+    .price { font-weight: bold; color: #d33; font-size: 1rem; }
+    .wholesale { font-size: .8rem; color: #777; }
+    .variant { margin-top: .6rem; }
+    .talles { display: flex; flex-wrap: wrap; gap: .3rem; }
+    .talle { background: #eee; padding: 4px 8px; border-radius: 6px; font-size: .9rem; }
+
+    /* WhatsApp popup */
+    #wa-popup { position: fixed; bottom: 20px; right: 20px; z-index: 1000; }
+    #wa-toggle { width: 50px; height: 50px; border: none; border-radius: 50%; background: #25D366; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 2px 6px rgba(0,0,0,0.3); }
+    #wa-toggle svg { width: 40px; height: 40px; fill: #fff; }
+    #wa-toggle img { width: 40px; height: 40px; }
+    #wa-menu {
+  display: none;
+  position: absolute;
+  bottom: 60px;
+  right: 0;
+  background: white; /* ✅ para que se vea */
+  padding: 0.5rem;
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  flex-direction: column;
+  gap: 0.5rem;
+}
+    #wa-menu.open { display: flex; }
+    #wa-menu a { margin: .25rem 0; padding: .6rem 1rem; background: #76f1a3; border-radius: 4px; text-decoration: none; color: #000000; box-shadow: 0 1px 3px rgba(0,0,0,0.15); }
+    #wa-menu a:hover { background: #f5f5f5; }
+
+    /* Modal PWA */
+    .install-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 2000; }
+    .install-modal.hidden { display: none; }
+    .install-modal-content { background: #fff; padding: 2rem; border-radius: 8px; text-align: center; max-width: 90%; }
+    .install-modal-content p { margin-bottom: 1.5rem; font-size: 1rem; color: #333; }
+    .install-modal-content button { margin: 0 .5rem; padding: .6rem 1.2rem; border: none; border-radius: 5px; font-size: .95rem; cursor: pointer; }
+    #install-accept { background: #CD844D; color: #fff; }
+    #install-later { background: #777; color: #fff; }
+  </style>
+</head>
+<body>
+  <header>
+    <img src="logo.png" alt="Logo F&L"/>
+    <h1>Catálogo FYL</h1>
+  </header>
+
+  <div class="menu">
+    <button onclick="cambiarCategoria('Calzado')">Calzado</button>
+    <button onclick="cambiarCategoria('Ropa')">Ropa</button>
+    <button onclick="cambiarCategoria('Lenceria')">Lencería</button>
+    <button onclick="cambiarCategoria('Marroquineria')">Accesorios</button>
+    <button id="btn-novedades" onclick="cambiarCategoria('Novedades')">
+      Novedades ⭐
+    </button>
+    <button id="btn-ofertas" onclick="cambiarCategoria('Ofertas')">
+      Ofertas 🔥
+    </button>
+  </div>
+
+  <!-- filtro dinámico + botón de vista -->
+  <div id="filter-container">
+    <button id="toggleFiltros">🪄 Filtros</button>
+    <div id="filtroMenu" style="display: none;"></div>
+    <button id="view-toggle" class="toggle-btn">🔳 Columnas</button>
+  </div>
+  <div id="search-container">
+  <input type="text" id="searchInput" placeholder="Buscar artículo..." />
+</div>
+
+  <div id="loader" class="loader">
+  <span>Cargando modelos...</span>
+</div>
+
+  <div class="container" id="catalogo"></div>
+
+  <!-- WhatsApp popup -->
+  <div id="wa-popup">
+  <button id="wa-toggle" title="Chat WhatsApp">
+    <img src="./icons/whatsapp.svg" alt="WhatsApp" />
+      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path fill="#fff" d="M17.472 14.382c-...z"/>
+      </svg>
+    </button>
+    <div id="wa-menu">
+      <a href="https://wa.me/5493625172874" target="_blank">Ani</a>
+      <a href="https://wa.me/5493624866768" target="_blank">Fati</a>
+      <a href="https://wa.me/5493624118637" target="_blank">Local</a> 
+    </div>
+  </div>
+  <!-- Botón scroll hacia arriba -->
+
+<button id="btn-scroll-top" title="Volver arriba" aria-label="Volver arriba">
+  <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
+    <path d="M4 12l1.41 1.41L11 7.83V20h2V7.83l5.59 5.58L20 12l-8-8-8 8z"/>
+  </svg>
+</button>
+
+  <!-- Modal de instalación PWA -->
+  <div id="install-modal" class="install-modal hidden">
+    <div class="install-modal-content">
+      <p>¿Te gustaría descargar el acceso directo a nuestro catálogo?</p>
+      <button id="install-accept">Sí, quiero</button>
+      <button id="install-later">En otro momento</button>
+    </div>
+  </div>
+
+  <script>
+    // parsea dd/mm/yyyy
+    function parseFecha(str) {
+      const [d,m,y] = str.split('/').map(n=>parseInt(n,10));
+      return new Date(y,m-1,d);
+    }
+
+    function cloudinaryOptimized(url, w) {
+  if (!url || typeof url !== 'string') {
+    return url || '';
+  }
+
+  // 🔒 Forzar https si viene como http
+  url = url.startsWith('http://') ? url.replace('http://', 'https://') : url;
+
+  return url.replace(
+    '/upload/',
+    `/upload/f_auto,q_auto,c_scale,w_${w}/`
+  );
+}
+
+
+    const sheetID    = '1kdhxSWHl3Rg0tXpaRsKhR_m30oTZhzqYj5ypsjtcTig';
+    const categorias = ['Calzado','Ropa','Lenceria','Marroquineria'];
+    let hojaActual   = 'Calzado';
+
+   async function existeNovedades() {
+  const hoy = new Date(),
+        hace7 = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate() - 7);
+
+  for (const cat of categorias) {
+    const data = await fetch(`https://opensheet.elk.sh/${sheetID}/${cat}`)
+      .then(r => r.json())
+      .catch(() => []);
+
+    if (data.some(i =>
+      i.Mostrar === 'TRUE' &&
+      i.FechaIngreso &&
+      parseFecha(i.FechaIngreso) >= hace7
+    )) {
+      return true;
+    }
+  }
+
+  return false;
+}
+    async function toggleNovedadesButton() {
+      const btn = document.getElementById('btn-novedades');
+      if (!await existeNovedades()) btn.style.display='none';
+    }
+
+    
+  
+      // --- descarga la imagen siempre en JPEG ---
+  async function downloadImage(btn) {
+    const card     = btn.closest('.card');
+    const src      = card.querySelector('.main-image').src;
+    gtag('event', 'descarga_imagen', {
+  event_category: 'interaccion',
+  event_label: src
+});
+
+    // renombramos extensión a .jpg
+    const filename = src
+      .split('/').pop().split('?')[0]
+      .replace(/\.\w+$/, '.jpg');
+
+    try {
+      // 1️⃣ Cargar imagen con CORS
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.src = src;
+      await new Promise((resolve, reject) => {
+        img.onload  = resolve;
+        img.onerror = reject;
+      });
+
+      // 2️⃣ Dibujar en canvas
+      const canvas = document.createElement('canvas');
+      canvas.width  = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+
+      // 3️⃣ Convertir a JPEG y descargar
+      canvas.toBlob(blob => {
+        const url = URL.createObjectURL(blob);
+        const a   = document.createElement('a');
+        a.href      = url;
+        a.download  = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      }, 'image/jpeg', 0.92);
+
+    } catch (err) {
+      console.warn('Canvas fallback failed, usando <a download> directo:', err);
+      // Fallback directo: cambiamos el download a `.jpg`
+      const a = document.createElement('a');
+      a.href     = src;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }
+  }
+
+
+        async function cargarCategoria(cat) {
+          document.getElementById('loader').classList.add('show');
+      const cont = document.getElementById('catalogo');
+      cont.innerHTML = '';
+
+      let data = [];
+
+     if (cat === 'Novedades' || cat === 'Ofertas') {
+  const all = await Promise.all(
+    categorias.map(c =>
+      fetch(`https://opensheet.elk.sh/${sheetID}/${c}`)
+        .then(r => r.json())
+        .catch(() => [])
+    )
+  );
+  data = all.flat();
+} else {
+  data = await fetch(`https://opensheet.elk.sh/${sheetID}/${cat}`)
+    .then(r => r.json())
+    .catch(() => []);
+      }
+
+    let items = data.filter(i => i.Mostrar === 'TRUE');
+
+    // 🔄 Ordenar por FechaIngreso (más reciente primero)
+    items.sort((a, b) => {
+      const fechaA = a.FechaIngreso ? parseFecha(a.FechaIngreso) : new Date(2000, 0, 1);
+      const fechaB = b.FechaIngreso ? parseFecha(b.FechaIngreso) : new Date(2000, 0, 1);
+      return fechaB - fechaA;
+    });
+
+      // Si es la pestaña de Novedades, mostrar solo los últimos 7 días
+      if (cat === 'Novedades') {
+  const hoy = new Date();
+  const h7 = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate() - 7);
+  items = items.filter(i =>
+    i.FechaIngreso && parseFecha(i.FechaIngreso) >= h7
+  );
+}
+
+if (cat === 'Ofertas') {
+  items = items.filter(i => i.Oferta === 'TRUE');
+}
+
+
+      const grupos = items.reduce((acc, i) => {
+        const art = i.Articulo.trim();
+        if (!acc[art]) acc[art] = {
+          Articulo: art,
+          Descripcion: i.Descripcion || '',
+          Precio: i.Precio || '',
+          VariantePrincipal: i['Imagen Principal'],
+          Oferta: i.Oferta || '',
+          FechaIngreso: i.FechaIngreso || '',  // 👈 AÑADIDO
+          Filtro1: i.Filtro1 || '',
+          Filtro2: i.Filtro2 || '',
+          Filtro3: i.Filtro3 || '',
+          DetalleColor: []
+        };
+                acc[art].DetalleColor.push({
+          color: i.Color,
+          talles: i.Numeracion?.split(',').map(t => t.trim()) || [],
+          images: Object.keys(i).filter(k => k.toLowerCase().startsWith('imagen'))
+                                .map(k => i[k])
+                                .filter(Boolean)
+        });
+        return acc;
+      }, {});
+
+      Object.values(grupos)
+      .sort((a, b) => {
+        const fechaA = a.FechaIngreso ? parseFecha(a.FechaIngreso) : new Date(2000, 0, 1);
+        const fechaB = b.FechaIngreso ? parseFecha(b.FechaIngreso) : new Date(2000, 0, 1);
+        return fechaB - fechaA; // más nuevo primero
+      })
+      .forEach(m => {
+        // render
+        
+        const gal = m.DetalleColor
+      .flatMap(v => v.images)
+      .map(src => {
+        const thumb = cloudinaryOptimized(src, 200);
+        const full  = cloudinaryOptimized(src, 800);
+        return `
+          <img
+            loading="lazy"
+            src="${thumb}"
+            data-full="${full}"
+            alt="Miniatura de producto">
+        `;
+      })
+      .join('');
+
+
+        
+        const colores = m.DetalleColor.map(v => `<button class='color-btn' data-src="${v.images[0]}">${v.color}</button>`).join('');
+        const varsHtml = m.DetalleColor.map(v => {
+          const chips = v.talles.map(t => `<div class="talle">${t}</div>`).join('');
+          return `<div class="variant"><strong>${v.color}:</strong><div class="talles">${chips}</div></div>`;
+        }).join('');
+
+        cont.innerHTML += `
+        <div class="card producto"
+             data-filtro1="${m.Filtro1}"
+             data-filtro2="${m.Filtro2}"
+             data-filtro3="${m.Filtro3}">
+
+              <div class="download-container">
+            <button class="download-btn" onclick="downloadImage(this)">
+              ⬇ 
+            </button>
+          </div>
+
+          <img class="main-image" loading="lazy" src="${cloudinaryOptimized(m.VariantePrincipal, 800)}" alt="${m.Articulo}"/>
+          <div class="image-loader"><div class="spinner"></div></div>
+         
+         
+        <button class="download-btn" onclick="downloadImage(this)" title="Descargar imagen">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+    <path d="M5 20h14v-2H5v2zm7-18v12l4-4h-3v-4h-2v4H8l4 4z" fill="#fff"/>
+  </svg>
+</button>
+
+
+
+
+
+
+          <div class="gallery">${gal}</div>
+          <div class="title-row">
+            <h3>Art: <span class="article-box">${m.Articulo}</span>${m.Oferta === 'TRUE' ? ' <span class="article-fire">🔥</span>' : ''}</h3>
+            <div class="colors">${colores}</div>
+          </div>
+          <div class="description">${m.Descripcion}</div>
+          <div class="price-container">
+            <div class="price">${m.Precio}</div>
+            <div class="wholesale">Precio por mayor</div>
+          </div>
+          ${varsHtml}
+        </div>`;
+      });
+    }
+
+   async function cambiarCategoria(cat) {
+    gtag('event', 'categoria_cambiada', {
+  event_category: 'navegacion',
+  event_label: cat
+});
+  await cargarCategoria(cat);
+  // Actualiza botones activos
+document.querySelectorAll('.menu button').forEach(btn => {
+  btn.classList.remove('active');
+});
+ const btnActivo = document.querySelector(`.menu button[onclick="cambiarCategoria('${cat}')"]`);
+  if (btnActivo) btnActivo.classList.add('active');
+
+
+  document.getElementById('loader').classList.remove('show');
+    // 🔄 Limpiar campo de búsqueda
+  document.getElementById('searchInput').value = '';
+  // 🔄 Mostrar todos los productos
+  document.querySelectorAll('.card').forEach(card => {
+    card.style.display = 'block';
+  });
+  }
+
+
+    window.addEventListener('DOMContentLoaded', async () => {
+  await toggleNovedadesButton();
+  const inicial = await existeNovedades() ? 'Novedades' : 'Calzado';
+  cambiarCategoria(inicial); // 👈 Usamos esta para que también marque el botón activo
+
+  await cargarCategoria(inicial);
+  document.getElementById('loader').classList.remove('show');
+  
+  
+
+
+
+
+
+
+
+
+  
+
+
+    const searchInput = document.getElementById('searchInput');
+  searchInput.addEventListener('input', () => {
+    const term = searchInput.value.trim().toLowerCase();
+    const cards = document.querySelectorAll('.card');
+
+    cards.forEach(card => {
+      const art = card.querySelector('.article-box')?.textContent?.toLowerCase() || '';
+const filtros = [
+  card.dataset.filtro1?.toLowerCase() || '',
+  card.dataset.filtro2?.toLowerCase() || '',
+  card.dataset.filtro3?.toLowerCase() || ''
+].join(' ');
+
+const visible = art.includes(term) || filtros.includes(term);
+card.style.display = visible ? 'block' : 'none';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// GA: clic en botón de descarga
+  document.querySelectorAll('.download-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      gtag('event', 'descarga_imagen', {
+        event_category: 'interaccion',
+        event_label: 'Botón descarga'
+
+      });
+      // 🔄 Recargar si el usuario vuelve después de 10 minutos
+let ultimaVista = Date.now();
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    const ahora = Date.now();
+    const minutosAusente = (ahora - ultimaVista) / 60000;
+
+    if (minutosAusente >= 10) {
+      location.reload();
+    }
+    ultimaVista = ahora;
+  } else {
+    ultimaVista = Date.now();
+  }
+});
+
+
+    });
+
+  });
+
+    });
+  });
+
+  document.getElementById('view-toggle').addEventListener('click', () => {
+    const catEl = document.getElementById('catalogo');
+    catEl.classList.toggle('compact');
+    const btn = document.getElementById('view-toggle');
+    btn.textContent = catEl.classList.contains('compact') ? '🔳 Normal' : '🔳 Comunas';
+  });
+
+
+
+
+ document.getElementById('catalogo').addEventListener('click', (e) => {
+  const card = e.target.closest('.card');
+  const mainImage = card?.querySelector('.main-image');
+  const loader = card?.querySelector('.image-loader');
+
+
+
+// 🎯 Detectar swipe en main-image (solo en móvil)
+document.getElementById('catalogo').addEventListener('touchstart', handleTouchStart, false);
+document.getElementById('catalogo').addEventListener('touchend', handleTouchEnd, false);
+
+let xStart = null;
+
+function handleTouchStart(e) {
+  const touch = e.touches[0];
+  xStart = touch.clientX;
+}
+
+function handleTouchEnd(e) {
+  if (!xStart) return;
+  const xEnd = e.changedTouches[0].clientX;
+  const deltaX = xEnd - xStart;
+
+  // Solo si el movimiento fue significativo
+  if (Math.abs(deltaX) > 50) {
+    const card = e.target.closest('.card');
+    if (!card) return;
+
+    const mainImage = card.querySelector('.main-image');
+    const thumbs = Array.from(card.querySelectorAll('.gallery img'));
+    const currentSrc = mainImage?.src.split('/upload/')[1];
+    const currentIndex = thumbs.findIndex(img =>
+      img.dataset.full.includes(currentSrc)
+    );
+
+
+    let newIndex = currentIndex;
+    if (deltaX < 0 && currentIndex < thumbs.length - 1) {
+      newIndex++; // 👉 derecha → siguiente
+    } else if (deltaX > 0 && currentIndex > 0) {
+      newIndex--; // 👈 izquierda → anterior
+    }
+
+    if (newIndex !== currentIndex) {
+      mainImage.src = thumbs[newIndex].dataset.full;
+    }
+  }
+
+  xStart = null;
+}
+
+
+
+
+  
+  // Miniatura tocada
+  if (e.target.tagName === 'IMG' && e.target.closest('.gallery')) {
+    const fullSrc = e.target.dataset.full;
+    if (fullSrc && mainImage && loader) {
+      loader.classList.add('active');
+      mainImage.onload = () => loader.classList.remove('active');
+      mainImage.src = fullSrc;
+    }
+  }
+
+  // Botón de color tocado
+  if (e.target.classList.contains('color-btn')) {
+    const newSrc = e.target.dataset.src;
+    if (newSrc && mainImage && loader) {
+      loader.classList.add('active');
+      mainImage.onload = () => loader.classList.remove('active');
+      mainImage.src = newSrc;
+    }
+  }
+});
+
+
+
+
+const scrollBtn = document.getElementById('btn-scroll-top');
+
+// Mostrar u ocultar el botón al hacer scroll
+window.addEventListener('scroll', () => {
+  if (window.scrollY > 200) {
+    scrollBtn.classList.add('visible');
+  } else {
+    scrollBtn.classList.remove('visible');
+  }
+});
+
+// Volver al tope al hacer clic
+scrollBtn.addEventListener('click', () => {
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+});
+  
+
+  document.getElementById('wa-toggle').addEventListener('click', () => {
+    document.getElementById('wa-menu').classList.toggle('open');
+    document.querySelectorAll('#wa-menu a').forEach(link => {
+  link.addEventListener('click', () => {
+    const nombre = link.textContent.trim();
+    gtag('event', 'whatsapp_click', {
+      event_category: 'interaccion',
+      event_label: nombre // Ani, Fati o Local
+    });
+  });
+});
+
+
+    gtag('event', 'click_whatsapp', {
+  event_category: 'interaccion',
+  event_label: 'Botón WhatsApp'
+});
+
+  });
+  
+});
+  </script>
+
+  <!-- scripts externos -->
+  <script src="scripts/filtros.js"></script>
+  <script src="scripts/ofertas.js"></script>
+  <script src="scripts/pwa-install.js"></script>
+</body>
+</html>

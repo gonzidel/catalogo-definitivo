@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex" />
+  <title>Stock | Admin</title>
+  <link rel="stylesheet" href="../styles.css" />
+  <style>
+    /* Estilos para el sistema de tarjetas de stock */
+    .toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0}
+    .toolbar .spacer{flex:1 1 auto}
+    .pill{display:inline-block;padding:2px 8px;border:1px solid #ddd;border-radius:999px;background:#fff}
+    .counter{font-variant-numeric:tabular-nums}
+    .mini-btn{font-size:12px;line-height:1;padding:3px 6px;margin-left:6px;border:1px solid #ddd;border-radius:4px;background:#f8f8f8;cursor:pointer}
+    .mini-btn:hover{background:#f1f1f1}
+    
+    /* Contenedor de productos */
+    #products-container{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;margin-top:16px}
+    
+    /* Tarjeta de producto */
+    .product-card{border:1px solid #ddd;border-radius:8px;background:#fff;padding:16px;transition:box-shadow 0.2s;cursor:pointer}
+    .product-card:hover{box-shadow:0 2px 8px rgba(0,0,0,0.1)}
+    .product-card.expanded{box-shadow:0 4px 12px rgba(0,0,0,0.15)}
+    .product-card-header{display:flex;gap:12px;margin-bottom:12px}
+    .product-card-image{width:80px;height:80px;object-fit:cover;border-radius:6px;border:1px solid #eee;flex-shrink:0}
+    .product-card-image.placeholder{background:#f5f5f5;display:flex;align-items:center;justify-content:center;color:#999;font-size:12px}
+    .product-card-info{flex:1;min-width:0}
+    .product-card-title{font-weight:600;font-size:16px;margin:0 0 4px 0;word-wrap:break-word}
+    .product-card-meta{font-size:13px;color:#666;margin:4px 0}
+    .product-card-body{margin-top:12px}
+    .product-card-section{margin-bottom:12px}
+    .product-card-section-title{font-size:12px;font-weight:600;color:#666;margin-bottom:6px;text-transform:uppercase}
+    .product-colors{display:flex;flex-wrap:wrap;gap:6px}
+    .color-chip{display:inline-block;padding:4px 10px;border-radius:16px;background:#f4f4f4;border:1px solid #e5e5e5;font-size:12px}
+    .product-sizes{display:flex;flex-wrap:wrap;gap:6px}
+    .size-chip{display:inline-block;padding:4px 10px;border-radius:16px;background:#e8f4f8;border:1px solid #b3d9e6;font-size:12px}
+    .stock-table{margin-top:8px;width:100%;font-size:13px;border-collapse:collapse}
+    .stock-table th,.stock-table td{padding:6px;border:1px solid #eee;text-align:left}
+    .stock-table th{background:#f9f9f9;font-weight:600;font-size:12px}
+    .stock-table .stock-total{font-weight:600;background:#f0f0f0}
+    .product-card-footer{display:flex;justify-content:space-between;align-items:center;margin-top:12px;padding-top:12px;border-top:1px solid #eee}
+    .product-price{font-size:18px;font-weight:600;color:#2c3e50}
+    .product-status{display:flex;align-items:center;gap:6px}
+    .supplier-section{display:flex;align-items:center;gap:8px;margin-top:8px}
+    .supplier-name{font-size:13px;color:#666}
+    .btn-edit-supplier{font-size:11px;padding:4px 8px}
+    
+    /* Variantes (colores) expandidas */
+    .variants-container{display:none;margin-top:12px;padding-top:12px;border-top:1px solid #eee}
+    .variants-container.expanded{display:block}
+    .variant-card{border:1px solid #ddd;border-radius:6px;padding:12px;margin-bottom:12px;background:#fafafa}
+    .variant-card-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;cursor:pointer}
+    .variant-color{font-weight:600;font-size:14px}
+    .variant-toggle{font-size:12px;color:#666}
+    
+    /* Tabla de talles expandida */
+    .sizes-detail{display:none;margin-top:12px}
+    .sizes-detail.expanded{display:block}
+    .sizes-table{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}
+    .sizes-table th,.sizes-table td{padding:8px;border:1px solid #ddd;text-align:center}
+    .sizes-table th{background:#f0f0f0;font-weight:600}
+    .sizes-table input[type="number"]{width:80px;padding:4px;border:1px solid #ddd;border-radius:4px}
+    .btn-save-row{font-size:11px;padding:4px 8px;margin-left:4px}
+    
+    /* Estados */
+    .low-stock{border-left:4px solid #ff6b6b}
+    .dirty-card{outline:2px solid #ffd24d}
+    .dirty-row{background-color:#fff9e6}
+    
+    /* Tabla principal de stock */
+    #tbl{width:100%;border-collapse:collapse;margin-top:16px;background:#fff}
+    #tbl thead{background:#f9f9f9;position:sticky;top:0;z-index:10}
+    #tbl th,#tbl td{padding:8px;border:1px solid #eee;text-align:left}
+    #tbl th{font-weight:600;font-size:13px;color:#666}
+    #tbl tbody tr:hover{background:#f5f5f5}
+    #tbl tbody tr.low-stock{background:#fff5f5}
+    #tbl tbody tr.dirty-row{background:#fff9e6}
+    #tbl input[type="number"]{width:80px;padding:4px;border:1px solid #ddd;border-radius:4px}
+    #tbl input[type="checkbox"]{cursor:pointer}
+    #tbl .cell-center{text-align:center}
+    #tbl button{padding:4px 8px;border:1px solid #ddd;border-radius:4px;background:#f8f8f8;cursor:pointer;font-size:12px}
+    #tbl button:hover{background:#e8e8e8}
+    
+    /* Modal bajo stock */
+    .overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;z-index:1000}
+    .overlay.show{display:flex}
+    .modal{background:#fff;max-width:720px;width:92vw;border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.2);padding:16px;max-height:90vh;overflow:auto}
+    .modal header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+    .modal h3{margin:0}
+    .close-btn{border:1px solid #ddd;background:#fafafa;border-radius:6px;padding:4px 8px;cursor:pointer}
+    .list{max-height:60vh;overflow:auto;border:1px solid #eee;border-radius:8px}
+    .list table{width:100%;border-collapse:collapse}
+    .list th,.list td{padding:8px;border-bottom:1px solid #f0f0f0;text-align:left}
+    .chip{display:inline-block;padding:2px 8px;border-radius:999px;background:#f4f4f4;border:1px solid #e5e5e5}
+    
+    /* Modal editar proveedor */
+    .supplier-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);align-items:center;justify-content:center;z-index:1001}
+    .supplier-modal.show{display:flex}
+    .supplier-modal-content{background:#fff;padding:20px;border-radius:8px;min-width:300px}
+    .supplier-modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+    .supplier-modal-body{display:flex;flex-direction:column;gap:12px}
+    .supplier-modal-footer{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+  </style>
+</head>
+<body>
+  <div class="container" style="max-width:980px;margin:24px auto;">
+    <h1>Control de Stock</h1>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
+      <a href="./index.html">← Volver al panel</a>
+      <span style="flex:1 1 auto"></span>
+      <a href="./products.html" style="padding:6px 10px;border:1px solid #ddd;border-radius:6px;text-decoration:none;">Productos</a>
+      <a href="./stock.html" style="padding:6px 10px;border:1px solid #ddd;border-radius:6px;text-decoration:none;">Stock</a>
+      <a href="./orders.html" style="padding:6px 10px;border:1px solid #ddd;border-radius:6px;text-decoration:none;">Pedidos</a>
+      <a href="./import-export.html" style="padding:6px 10px;border:1px solid #ddd;border-radius:6px;text-decoration:none;">Importar/Exportar</a>
+    </div>
+
+    <div id="incomplete-alert" style="display:none;margin-bottom:16px;padding:16px;background:linear-gradient(135deg,#fff3cd 0%,#ffeaa7 100%);border:2px solid #ffc107;border-radius:12px;box-shadow:0 4px 12px rgba(255,193,7,0.2);">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <span style="font-size:24px;">⚠️</span>
+          <div>
+            <strong style="display:block;margin-bottom:4px;color:#856404;">Productos incompletos detectados</strong>
+            <span style="font-size:14px;color:#856404;">Hay <span id="incomplete-count">0</span> producto(s) que requieren completar tags y stock antes de activarse.</span>
+          </div>
+        </div>
+        <a href="./incomplete-products.html" style="padding:10px 20px;background:#ffc107;color:#856404;border:none;border-radius:8px;text-decoration:none;font-weight:600;transition:all 0.3s ease;">
+          Completar Productos →
+        </a>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <input id="q" placeholder="Buscar por nombre, SKU, color o talle..." style="flex:1;" />
+      <select id="f-category" class="pill">
+        <option value="">Categoría: todas</option>
+      </select>
+      <select id="f-color" class="pill">
+        <option value="">Color: todos</option>
+      </select>
+      <select id="f-size" class="pill">
+        <option value="">Talle: todos</option>
+      </select>
+      <select id="f-active" class="pill">
+        <option value="">Estado: todos</option>
+        <option value="true">Activas</option>
+        <option value="false">Inactivas</option>
+      </select>
+      <select id="f-supplier" class="pill">
+        <option value="">Proveedor: todos</option>
+      </select>
+      <label class="pill" style="display:flex;align-items:center;gap:6px;">
+        <input id="f-low" type="checkbox" />
+        Solo bajo stock
+      </label>
+      <span class="spacer"></span>
+      <button id="reload">Recargar</button>
+      <button id="low-alert" class="pill" title="Ver productos con bajo stock">Alertas bajo stock (<span id="low-alert-count">0</span>)</button>
+      <button id="old-products" class="pill" title="Productos antiguos (18+ meses)">Productos antiguos</button>
+      <button id="save-all" style="background:#155724;color:#fff;border:1px solid #0f3f1e">Guardar cambios (<span id="pending-count" class="counter">0</span>)</button>
+      <button id="discard-all" style="border:1px solid #ddd;">Descartar</button>
+      <span id="msg" class="counter"></span>
+    </div>
+
+    <div id="products-container"></div>
+    <div id="no-results" style="display:none;text-align:center;padding:40px;color:#666;">
+      <p>No se encontraron productos. Busca o aplica filtros para ver resultados.</p>
+    </div>
+    
+    <table id="tbl" style="width:100%;border-collapse:collapse;margin-top:16px;">
+      <thead>
+        <tr>
+          <th>Producto</th>
+          <th>Categoría</th>
+          <th>SKU</th>
+          <th>Color</th>
+          <th>Talle</th>
+          <th>Stock Total</th>
+          <th>Stock General</th>
+          <th>Stock Venta al Público</th>
+          <th>Precio</th>
+          <th>Activa</th>
+          <th>Acción</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <!-- Modal editar proveedor -->
+  <div id="supplier-modal" class="supplier-modal">
+    <div class="supplier-modal-content">
+      <div class="supplier-modal-header">
+        <h3>Editar Proveedor</h3>
+        <button id="close-supplier-modal" class="close-btn">✕</button>
+      </div>
+      <div class="supplier-modal-body">
+        <label>
+          Proveedor
+          <select id="supplier-select" style="width:100%;padding:6px;border:1px solid #ddd;border-radius:4px;">
+            <option value="">Sin proveedor</option>
+          </select>
+        </label>
+      </div>
+      <div class="supplier-modal-footer">
+        <button id="cancel-supplier" style="padding:6px 12px;border:1px solid #ddd;border-radius:4px;background:#fff;cursor:pointer">Cancelar</button>
+        <button id="save-supplier" style="padding:6px 12px;border:1px solid #155724;border-radius:4px;background:#155724;color:#fff;cursor:pointer">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal bajo stock -->
+  <div id="overlay" class="overlay" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="low-title">
+      <header>
+        <h3 id="low-title">Productos con bajo stock</h3>
+        <button id="close-overlay" class="close-btn">Cerrar</button>
+      </header>
+      <div id="low-summary" style="margin-bottom:8px"></div>
+      <div class="list">
+        <table>
+          <thead>
+            <tr>
+              <th>Producto</th>
+              <th>Categoría</th>
+              <th>Color</th>
+              <th>Total disponible</th>
+              <th>Variantes</th>
+            </tr>
+          </thead>
+          <tbody id="low-list"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal productos antiguos -->
+  <div id="overlay-old" class="overlay" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="old-title">
+      <header>
+        <h3 id="old-title">Productos antiguos (18+ meses)</h3>
+        <button id="close-overlay-old" class="close-btn">Cerrar</button>
+      </header>
+      <div id="old-summary" style="margin-bottom:8px"></div>
+      <div class="list">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:32px"><input type="checkbox" id="old-check-all"/></th>
+              <th>Producto</th>
+              <th>Handle</th>
+              <th>Categoría</th>
+              <th>Creado</th>
+              <th>Variantes</th>
+            </tr>
+          </thead>
+          <tbody id="old-list"></tbody>
+        </table>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+        <button id="archive-selected" class="pill" style="border-color:#c33;color:#c33">Archivar seleccionados</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="../scripts/config.js"></script>
+  <script type="module" src="../scripts/supabase-client.js"></script>
+  <script type="module" src="./stock.js"></script>
+</body>
+</html>

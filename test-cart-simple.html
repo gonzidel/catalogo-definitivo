@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prueba Simple Carrito</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        .test { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        .info { background: #d1ecf1; color: #0c5460; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Prueba Simple del Carrito</h1>
+    
+    <div class="test info">
+        <h3>Estado del Sistema</h3>
+        <div id="status">Verificando...</div>
+    </div>
+
+    <div class="test">
+        <h3>Enlaces de Prueba</h3>
+        <a href="client/cart.html" target="_blank" style="display: inline-block; padding: 10px 20px; background: #007bff; color: white; text-decoration: none; border-radius: 5px; margin: 5px;">Ir a Carrito</a>
+        <a href="client/dashboard.html" target="_blank" style="display: inline-block; padding: 10px 20px; background: #28a745; color: white; text-decoration: none; border-radius: 5px; margin: 5px;">Dashboard</a>
+    </div>
+
+    <script type="module" src="scripts/supabase-client.js"></script>
+    <script>
+        async function checkStatus() {
+            const statusDiv = document.getElementById('status');
+            
+            try {
+                // Verificar Supabase
+                if (!window.supabase) {
+                    statusDiv.innerHTML = '<div class="error">❌ Supabase no disponible</div>';
+                    return;
+                }
+
+                // Verificar autenticación
+                const { data: { user }, error: userError } = await window.supabase.auth.getUser();
+                
+                if (userError) {
+                    statusDiv.innerHTML = `<div class="error">❌ Error de auth: ${userError.message}</div>`;
+                    return;
+                }
+
+                if (!user) {
+                    statusDiv.innerHTML = '<div class="error">❌ Usuario no autenticado</div>';
+                    return;
+                }
+
+                statusDiv.innerHTML = `<div class="success">✅ Usuario autenticado: ${user.email}</div>`;
+
+                // Verificar carrito
+                const { data: cart, error: cartError } = await window.supabase
+                    .from("carts")
+                    .select("id")
+                    .eq("customer_id", user.id)
+                    .eq("status", "open")
+                    .single();
+
+                if (cartError) {
+                    if (cartError.code === 'PGRST116') {
+                        statusDiv.innerHTML += '<div class="info">📭 No hay carrito abierto</div>';
+                    } else {
+                        statusDiv.innerHTML += `<div class="error">❌ Error carrito: ${cartError.message}</div>`;
+                    }
+                    return;
+                }
+
+                // Verificar items
+                const { data: items, error: itemsError } = await window.supabase
+                    .from("cart_items")
+                    .select("*")
+                    .eq("cart_id", cart.id);
+
+                if (itemsError) {
+                    statusDiv.innerHTML += `<div class="error">❌ Error items: ${itemsError.message}</div>`;
+                    return;
+                }
+
+                statusDiv.innerHTML += `<div class="success">✅ Carrito con ${items.length} items</div>`;
+
+            } catch (error) {
+                statusDiv.innerHTML = `<div class="error">❌ Error: ${error.message}</div>`;
+            }
+        }
+
+        // Ejecutar cuando se carga
+        document.addEventListener('DOMContentLoaded', checkStatus);
+    </script>
+</body>
+</html>

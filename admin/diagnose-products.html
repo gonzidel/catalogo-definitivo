@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Diagnóstico de Productos</title>
+  <style>
+    body { font-family: system-ui, sans-serif; padding: 20px; max-width: 1200px; margin: 0 auto; }
+    .section { background: #f5f5f5; padding: 15px; margin: 15px 0; border-radius: 8px; }
+    .error { color: #c00; }
+    .success { color: #0a0; }
+    .warning { color: #fa0; }
+    table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+    th, td { padding: 8px; text-align: left; border: 1px solid #ddd; }
+    th { background: #333; color: #fff; }
+    .btn { padding: 10px 20px; background: #CD844D; color: white; border: none; border-radius: 5px; cursor: pointer; }
+    .btn:hover { background: #B8734A; }
+    pre { background: #f0f0f0; padding: 10px; border-radius: 5px; overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <h1>🔍 Diagnóstico de Productos en Catálogo</h1>
+  <div style="margin-bottom: 20px;">
+    <button class="btn" onclick="runDiagnosis()">Ejecutar Diagnóstico</button>
+    <button class="btn" onclick="forceRefresh()" style="margin-left: 10px; background: #28a745;">Forzar Refresco (Ctrl+F5)</button>
+  </div>
+  <div id="cache-info" style="padding: 10px; background: #fff3cd; border-radius: 5px; margin-bottom: 10px; display: none;">
+    <strong>💡 Tip:</strong> Si los productos aparecen en Supabase pero no aquí, intenta:
+    <ul style="margin: 5px 0;">
+      <li>Refrescar la página con <strong>Ctrl+F5</strong> (forzar recarga sin caché)</li>
+      <li>Ejecutar en Supabase: <code>SELECT pg_notify('pgrst','reload schema');</code></li>
+      <li>Verificar permisos RLS en la vista <code>catalog_public_view</code></li>
+    </ul>
+  </div>
+  <div id="results"></div>
+
+  <script type="module">
+    import { supabase } from '../scripts/supabase-client.js';
+
+    window.runDiagnosis = async function() {
+      const results = document.getElementById('results');
+      results.innerHTML = '<p>Cargando...</p>';
+
+      let html = '';
+
+      try {
+        // 1. Verificar productos en la tabla products
+        html += '<div class="section"><h2>1. Productos en tabla products</h2>';
+        const { data: products, error: productsError } = await supabase
+          .from('products')
+          .select('id, name, category, status, created_at')
+          .order('created_at', { ascending: false })
+          .limit(10);
+
+        if (productsError) {
+          html += `<p class="error">Error: ${productsError.message}</p>`;
+        } else {
+          html += `<p>Total encontrados: ${products.length}</p>`;
+          html += '<table><tr><th>ID</th><th>Nombre</th><th>Categoría</th><th>Status</th><th>Creado</th></tr>';
+          products.forEach(p => {
+            const statusClass = p.status === 'active' ? 'success' : 'error';
+            html += `<tr>
+              <td>${p.id.substring(0, 8)}...</td>
+              <td>${p.name || '(sin nombre)'}</td>
+              <td>${p.category || '(sin categoría)'}</td>
+              <td class="${statusClass}">${p.status}</td>
+              <td>${p.created_at ? new Date(p.created_at).toLocaleString() : 'N/A'}</td>
+            </tr>`;
+          });
+          html += '</table></div>';
+
+          // 2. Verificar variantes de los productos
+          html += '<div class="section"><h2>2. Variantes de productos</h2>';
+          const productIds = products.map(p => p.id);
+          const { data: variants, error: variantsError } = await supabase
+            .from('product_variants')
+            .select('id, product_id, color, size, sku, active, price')
+            .in('product_id', productIds);
+
+          if (variantsError) {
+            html += `<p class="error">Error: ${variantsError.message}</p>`;
+          } else {
+            html += `<p>Total de variantes: ${variants.length}</p>`;
+            html += '<table><tr><th>Producto</th><th>Color</th><th>Talle</th><th>SKU</th><th>Activa</th><th>Precio</th></tr>';
+            variants.forEach(v => {
+              const product = products.find(p => p.id === v.product_id);
+              const activeClass = v.active ? 'success' : 'error';
+              html += `<tr>
+                <td>${product?.name || v.product_id.substring(0, 8)}</td>
+                <td>${v.color || '(sin color)'}</td>
+                <td>${v.size || '(sin talle)'}</td>
+                <td>${v.sku || '(sin SKU)'}</td>
+                <td class="${activeClass}">${v.active ? 'Sí' : 'No'}</td>
+                <td>${v.price || '0'}</td>
+              </tr>`;
+            });
+            html += '</table></div>';
+
+            // 3. Verificar qué productos aparecen en catalog_public_view
+            html += '<div class="section"><h2>3. Productos en catalog_public_view</h2>';
+            // Forzar consulta sin caché agregando un parámetro único
+            const { data: catalogView, error: viewError } = await supabase
+              .from('catalog_public_view')
+              .select('*')
+              .limit(100);  // Aumentar límite para ver más productos
+
+            if (viewError) {
+              html += `<p class="error">Error: ${viewError.message}</p>`;
+            } else {
+              html += `<p>Total en vista: ${catalogView.length}</p>`;
+              if (catalogView.length > 0) {
+                html += '<table><tr><th>Artículo</th><th>Categoría</th><th>Color</th><th>Precio</th><th>Imagen Principal</th></tr>';
+                catalogView.forEach(item => {
+                  html += `<tr>
+                    <td>${item.Articulo || '(sin nombre)'}</td>
+                    <td>${item.Categoria || '(sin categoría)'}</td>
+                    <td>${item.Color || '(sin color)'}</td>
+                    <td>${item.Precio || '0'}</td>
+                    <td>${item['Imagen Principal'] ? '✓' : '✗'}</td>
+                  </tr>`;
+                });
+                html += '</table>';
+              } else {
+                html += '<p class="warning">⚠️ No hay productos en la vista catalog_public_view</p>';
+              }
+            }
+            html += '</div>';
+
+            // 4. Análisis de problemas
+            html += '<div class="section"><h2>4. Análisis de Problemas</h2>';
+            const problems = [];
+
+            // Productos sin status active
+            const inactiveProducts = products.filter(p => p.status !== 'active');
+            if (inactiveProducts.length > 0) {
+              problems.push({
+                type: 'error',
+                message: `Hay ${inactiveProducts.length} producto(s) con status diferente de 'active'`,
+                details: inactiveProducts.map(p => `- ${p.name || p.id} (status: ${p.status})`).join('<br>')
+              });
+            }
+
+            // Productos sin variantes activas
+            products.forEach(p => {
+              const productVariants = variants.filter(v => v.product_id === p.id);
+              const activeVariants = productVariants.filter(v => v.active === true);
+              if (activeVariants.length === 0 && productVariants.length > 0) {
+                problems.push({
+                  type: 'error',
+                  message: `El producto "${p.name || p.id}" no tiene variantes activas`,
+                  details: `Tiene ${productVariants.length} variante(s) pero ninguna está activa`
+                });
+              }
+              if (productVariants.length === 0) {
+                problems.push({
+                  type: 'warning',
+                  message: `El producto "${p.name || p.id}" no tiene variantes`,
+                  details: 'Necesita al menos una variante para aparecer en el catálogo'
+                });
+              }
+            });
+
+            // Productos que deberían aparecer pero no aparecen - análisis detallado
+            const productsInView = new Set(catalogView.map(item => item.Articulo));
+            const productsInViewByColor = new Map();
+            catalogView.forEach(item => {
+              if (!productsInViewByColor.has(item.Articulo)) {
+                productsInViewByColor.set(item.Articulo, []);
+              }
+              productsInViewByColor.get(item.Articulo).push(item.Color);
+            });
+            
+            products.forEach(p => {
+              if (p.status === 'active') {
+                const productVariants = variants.filter(v => v.product_id === p.id && v.active === true);
+                if (productVariants.length > 0 && !productsInView.has(p.name)) {
+                  // Análisis detallado de por qué no aparece
+                  const variantsWithoutColor = productVariants.filter(v => !v.color || v.color.trim() === '');
+                  const variantsWithoutSize = productVariants.filter(v => !v.size || v.size.trim() === '');
+                  const variantsWithoutPrice = productVariants.filter(v => !v.price || v.price === 0);
+                  
+                  // Verificar colores únicos de las variantes
+                  const uniqueColors = [...new Set(productVariants.map(v => v.color).filter(c => c && c.trim()))];
+                  
+                  let details = `Status: ${p.status}, Variantes activas: ${productVariants.length}`;
+                  if (uniqueColors.length > 0) {
+                    details += `<br>Colores en variantes: ${uniqueColors.join(', ')}`;
+                  }
+                  if (variantsWithoutColor.length > 0) {
+                    details += `<br>⚠️ ${variantsWithoutColor.length} variante(s) sin color definido`;
+                  }
+                  if (variantsWithoutSize.length > 0) {
+                    details += `<br>⚠️ ${variantsWithoutSize.length} variante(s) sin talle definido`;
+                  }
+                  if (variantsWithoutPrice.length > 0) {
+                    details += `<br>⚠️ ${variantsWithoutPrice.length} variante(s) sin precio`;
+                  }
+                  
+                  // Verificar si el problema es de permisos RLS
+                  details += `<br>💡 <strong>Posibles causas:</strong>`;
+                  details += `<br>- Problema de caché (intenta refrescar la página con Ctrl+F5)`;
+                  details += `<br>- Permisos RLS en la vista (ejecuta el script de permisos en Supabase)`;
+                  details += `<br>- La vista necesita ser refrescada (ejecuta: SELECT pg_notify('pgrst','reload schema');)`;
+                  
+                  problems.push({
+                    type: 'warning',
+                    message: `El producto "${p.name}" debería aparecer en la vista pero no aparece`,
+                    details: details
+                  });
+                } else if (productVariants.length > 0 && productsInView.has(p.name)) {
+                  // Producto SÍ aparece - verificar si aparece con todos los colores
+                  const colorsInVariants = [...new Set(productVariants.map(v => v.color).filter(c => c && c.trim()))];
+                  const colorsInView = productsInViewByColor.get(p.name) || [];
+                  const missingColors = colorsInVariants.filter(c => !colorsInView.includes(c));
+                  if (missingColors.length > 0) {
+                    problems.push({
+                      type: 'warning',
+                      message: `El producto "${p.name}" aparece pero faltan algunos colores en la vista`,
+                      details: `Colores en variantes: ${colorsInVariants.join(', ')}<br>Colores en vista: ${colorsInView.join(', ')}<br>Faltan: ${missingColors.join(', ')}`
+                    });
+                  }
+                }
+              }
+            });
+
+            if (problems.length === 0) {
+              html += '<p class="success">✓ No se encontraron problemas aparentes</p>';
+            } else {
+              problems.forEach(problem => {
+                const className = problem.type === 'error' ? 'error' : 'warning';
+                html += `<div class="${className}">
+                  <strong>${problem.message}</strong><br>
+                  <small>${problem.details}</small>
+                </div>`;
+              });
+            }
+            html += '</div>';
+
+            // 5. Verificación de permisos RLS
+            html += '<div class="section"><h2>5. Verificación de Permisos RLS</h2>';
+            try {
+              // Intentar consultar directamente las tablas para verificar permisos
+              const { data: directProducts, error: directError } = await supabase
+                .from('products')
+                .select('id, name, status')
+                .eq('status', 'active')
+                .limit(5);
+              
+              if (directError) {
+                html += `<p class="error">Error consultando productos directamente: ${directError.message}</p>`;
+                html += '<p>Esto podría indicar un problema con los permisos RLS.</p>';
+              } else {
+                html += `<p class="success">✓ Puedes consultar productos directamente (${directProducts.length} encontrados)</p>`;
+              }
+              
+              const { data: directVariants, error: variantsError } = await supabase
+                .from('product_variants')
+                .select('id, product_id, active, color, size')
+                .eq('active', true)
+                .limit(5);
+              
+              if (variantsError) {
+                html += `<p class="error">Error consultando variantes directamente: ${variantsError.message}</p>`;
+                html += '<p>Esto podría indicar un problema con los permisos RLS.</p>';
+              } else {
+                html += `<p class="success">✓ Puedes consultar variantes directamente (${directVariants.length} encontradas)</p>`;
+              }
+            } catch (e) {
+              html += `<p class="error">Error verificando permisos: ${e.message}</p>`;
+            }
+            html += '</div>';
+
+            // 6. Recomendaciones
+            html += '<div class="section"><h2>6. Recomendaciones y Soluciones</h2><ul>';
+            html += '<li><strong>Productos con status "incomplete":</strong> Cambia el status a "active" en el formulario de productos</li>';
+            html += '<li><strong>Productos sin variantes:</strong> Agrega al menos una variante con color, talle, SKU y precio</li>';
+            html += '<li><strong>Productos que no aparecen a pesar de tener variantes activas:</strong><ul>';
+            html += '<li>Verifica que las variantes tengan <strong>color</strong> definido (no vacío)</li>';
+            html += '<li>Verifica que las variantes tengan <strong>talle</strong> definido (no vacío)</li>';
+            html += '<li>Verifica que las variantes tengan <strong>precio</strong> mayor a 0</li>';
+            html += '<li>Si todo está correcto, puede ser un problema de permisos RLS. Ejecuta el script de permisos en Supabase</li>';
+            html += '<li>Intenta refrescar la vista ejecutando: <code>SELECT pg_notify(\'pgrst\',\'reload schema\');</code> en el SQL Editor de Supabase</li>';
+            html += '</ul></li>';
+            html += '<li><strong>Refrescar la vista:</strong> Si hiciste cambios, puede que necesites refrescar la vista en Supabase</li>';
+            html += '</ul></div>';
+          }
+        }
+
+        results.innerHTML = html;
+        document.getElementById('cache-info').style.display = 'block';
+      } catch (error) {
+        results.innerHTML = `<p class="error">Error ejecutando diagnóstico: ${error.message}</p><pre>${error.stack}</pre>`;
+      }
+    };
+
+    window.forceRefresh = function() {
+      // Forzar recarga sin caché
+      if (confirm('¿Refrescar la página sin caché? Esto recargará todos los recursos.')) {
+        window.location.reload(true);
+      }
+    };
+  </script>
+</body>
+</html>
+

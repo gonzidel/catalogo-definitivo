@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Debug Carrito</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .debug-section {
+            background: white;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .debug-button {
+            background: #CD844D;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        .debug-button:hover {
+            background: #b8734a;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        .info { background: #d1ecf1; color: #0c5460; }
+        .cart-info {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .log {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔧 Debug del Carrito</h1>
+    
+    <div class="debug-section">
+        <h2>📊 Estado Actual</h2>
+        <div id="cart-status" class="status info">Cargando...</div>
+        <div id="cart-info" class="cart-info">
+            <p><strong>Items en carrito:</strong> <span id="cart-count">0</span></p>
+            <p><strong>localStorage:</strong> <span id="localStorage-info">Verificando...</span></p>
+            <p><strong>Supabase:</strong> <span id="supabase-info">Verificando...</span></p>
+        </div>
+    </div>
+
+    <div class="debug-section">
+        <h2>🧪 Pruebas</h2>
+        <button class="debug-button" onclick="testAddProduct()">Agregar Producto de Prueba</button>
+        <button class="debug-button" onclick="testLocalStorage()">Verificar localStorage</button>
+        <button class="debug-button" onclick="testSupabase()">Verificar Supabase</button>
+        <button class="debug-button" onclick="testSync()">Probar Sincronización</button>
+        <button class="debug-button" onclick="clearCart()">Limpiar Carrito</button>
+        <button class="debug-button" onclick="reloadPage()">Recargar Página</button>
+    </div>
+
+    <div class="debug-section">
+        <h2>📝 Logs</h2>
+        <div id="logs" class="log"></div>
+    </div>
+
+    <!-- Scripts -->
+    <script type="module" src="scripts/config.js"></script>
+    <script type="module" src="scripts/supabase-client.js"></script>
+    <script type="module" src="scripts/cart-persistent.js"></script>
+
+    <script>
+        // Función para agregar logs
+        function addLog(message) {
+            const logs = document.getElementById('logs');
+            const timestamp = new Date().toLocaleTimeString();
+            logs.textContent += `[${timestamp}] ${message}\n`;
+            logs.scrollTop = logs.scrollHeight;
+        }
+
+        // Función para actualizar estado
+        function updateStatus() {
+            try {
+                // Verificar localStorage
+                const localCart = JSON.parse(localStorage.getItem('fyl_cart') || '[]');
+                const localCount = localCart.reduce((sum, item) => sum + (item.cantidad || 0), 0);
+                
+                document.getElementById('cart-count').textContent = localCount;
+                document.getElementById('localStorage-info').textContent = `${localCount} items en localStorage`;
+                
+                // Verificar contador del botón
+                const cartCountElement = document.getElementById('cart-count');
+                if (cartCountElement) {
+                    addLog(`Contador del botón: ${cartCountElement.textContent}`);
+                }
+                
+                // Verificar funciones globales
+                if (window.addToCart) {
+                    addLog('✅ Función addToCart disponible');
+                } else {
+                    addLog('❌ Función addToCart NO disponible');
+                }
+                
+                if (window.updateCartCount) {
+                    addLog('✅ Función updateCartCount disponible');
+                } else {
+                    addLog('❌ Función updateCartCount NO disponible');
+                }
+                
+                if (window.syncCartWithSupabase) {
+                    addLog('✅ Función syncCartWithSupabase disponible');
+                } else {
+                    addLog('❌ Función syncCartWithSupabase NO disponible');
+                }
+                
+            } catch (error) {
+                addLog(`❌ Error actualizando estado: ${error.message}`);
+            }
+        }
+
+        // Función para agregar producto de prueba
+        function testAddProduct() {
+            const productData = {
+                articulo: 'Producto de Prueba',
+                color: 'Negro',
+                talle: 'M',
+                cantidad: 1,
+                precio: 10000,
+                imagen: 'https://via.placeholder.com/100x100/CD844D/FFFFFF?text=TEST',
+                descripcion: 'Producto de prueba para debug'
+            };
+            
+            if (window.addToCart) {
+                window.addToCart(productData);
+                addLog(`Producto agregado: ${productData.articulo}`);
+                setTimeout(updateStatus, 500);
+            } else {
+                addLog('❌ Función addToCart no disponible');
+            }
+        }
+
+        // Función para verificar localStorage
+        function testLocalStorage() {
+            try {
+                const cartData = localStorage.getItem('fyl_cart');
+                addLog(`localStorage data: ${cartData || 'vacío'}`);
+                
+                if (cartData) {
+                    const parsed = JSON.parse(cartData);
+                    addLog(`Items en localStorage: ${parsed.length}`);
+                    parsed.forEach((item, index) => {
+                        addLog(`  ${index + 1}. ${item.articulo} - ${item.cantidad} unidades`);
+                    });
+                }
+                
+                updateStatus();
+            } catch (error) {
+                addLog(`❌ Error accediendo localStorage: ${error.message}`);
+            }
+        }
+
+        // Función para verificar Supabase
+        async function testSupabase() {
+            try {
+                if (window.supabase) {
+                    addLog('✅ Supabase disponible');
+                    
+                    // Verificar autenticación
+                    const { data: { user } } = await window.supabase.auth.getUser();
+                    if (user) {
+                        addLog(`✅ Usuario autenticado: ${user.email}`);
+                        
+                        // Verificar carrito
+                        const { data: cart, error: cartError } = await window.supabase
+                            .from("carts")
+                            .select("id")
+                            .eq("customer_id", user.id)
+                            .eq("status", "open")
+                            .single();
+                            
+                        if (cart) {
+                            addLog(`✅ Carrito encontrado: ${cart.id}`);
+                            
+                            // Verificar items
+                            const { data: items, error: itemsError } = await window.supabase
+                                .from("cart_items")
+                                .select("*")
+                                .eq("cart_id", cart.id);
+                                
+                            if (items) {
+                                addLog(`✅ Items en Supabase: ${items.length}`);
+                                items.forEach((item, index) => {
+                                    addLog(`  ${index + 1}. ${item.product_name} - ${item.quantity} unidades`);
+                                });
+                            } else {
+                                addLog(`❌ Error obteniendo items: ${itemsError?.message}`);
+                            }
+                        } else {
+                            addLog(`📭 No hay carrito abierto: ${cartError?.message}`);
+                        }
+                    } else {
+                        addLog('👤 Usuario no autenticado');
+                    }
+                } else {
+                    addLog('❌ Supabase no disponible');
+                }
+            } catch (error) {
+                addLog(`❌ Error verificando Supabase: ${error.message}`);
+            }
+        }
+
+        // Función para probar sincronización
+        async function testSync() {
+            try {
+                if (window.syncCartWithSupabase) {
+                    addLog('Iniciando sincronización...');
+                    await window.syncCartWithSupabase();
+                    addLog('✅ Sincronización completada');
+                } else {
+                    addLog('❌ Función syncCartWithSupabase no disponible');
+                }
+            } catch (error) {
+                addLog(`❌ Error en sincronización: ${error.message}`);
+            }
+        }
+
+        // Función para limpiar carrito
+        function clearCart() {
+            if (confirm('¿Estás seguro de que quieres limpiar el carrito?')) {
+                localStorage.removeItem('fyl_cart');
+                addLog('Carrito limpiado');
+                updateStatus();
+            }
+        }
+
+        // Función para recargar página
+        function reloadPage() {
+            addLog('Recargando página...');
+            window.location.reload();
+        }
+
+        // Inicializar cuando se carga la página
+        document.addEventListener('DOMContentLoaded', function() {
+            addLog('Página de debug cargada');
+            updateStatus();
+            
+            // Actualizar estado cada 3 segundos
+            setInterval(updateStatus, 3000);
+        });
+
+        // Escuchar cambios en el carrito
+        window.addEventListener('storage', function(e) {
+            if (e.key === 'fyl_cart') {
+                addLog('Carrito actualizado desde otra pestaña');
+                updateStatus();
+            }
+        });
+    </script>
+</body>
+</html>

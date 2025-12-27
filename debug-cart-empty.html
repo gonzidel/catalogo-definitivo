@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Debug Carrito Vacío - Catálogo FYL</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .debug-container {
+            max-width: 1000px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .debug-header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: #dc3545;
+            color: white;
+            border-radius: 10px;
+        }
+        .debug-section {
+            margin-bottom: 30px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+        .debug-section h3 {
+            color: #dc3545;
+            margin-top: 0;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        .status.warning {
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+        .btn {
+            background: #dc3545;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+            text-decoration: none;
+            display: inline-block;
+        }
+        .btn:hover {
+            background: #c82333;
+        }
+        .btn-success {
+            background: #28a745;
+        }
+        .btn-success:hover {
+            background: #218838;
+        }
+        .btn-info {
+            background: #17a2b8;
+        }
+        .btn-info:hover {
+            background: #138496;
+        }
+        .data-display {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+        .step {
+            margin: 15px 0;
+            padding: 10px;
+            border-left: 4px solid #dc3545;
+            background: #f8f9fa;
+        }
+        .step h4 {
+            margin: 0 0 10px 0;
+            color: #dc3545;
+        }
+    </style>
+</head>
+<body>
+    <div class="debug-container">
+        <div class="debug-header">
+            <h1>🔍 Debug Carrito Vacío</h1>
+            <p>Diagnóstico completo del problema del carrito</p>
+        </div>
+
+        <div class="debug-section">
+            <h3>📊 Estado del Sistema</h3>
+            <div id="system-status" class="status info">
+                Verificando sistema...
+            </div>
+            <button class="btn" onclick="checkSystem()">Verificar Sistema</button>
+        </div>
+
+        <div class="debug-section">
+            <h3>🔐 Autenticación</h3>
+            <div id="auth-status" class="status info">
+                Verificando autenticación...
+            </div>
+            <button class="btn" onclick="checkAuth()">Verificar Auth</button>
+        </div>
+
+        <div class="debug-section">
+            <h3>💾 LocalStorage</h3>
+            <div id="localstorage-status" class="status info">
+                Verificando localStorage...
+            </div>
+            <div id="localstorage-data" class="data-display" style="display: none;"></div>
+            <button class="btn" onclick="checkLocalStorage()">Verificar localStorage</button>
+            <button class="btn btn-info" onclick="clearLocalStorage()">Limpiar localStorage</button>
+        </div>
+
+        <div class="debug-section">
+            <h3>🗄️ Base de Datos</h3>
+            <div id="database-status" class="status info">
+                Verificando base de datos...
+            </div>
+            <div id="database-data" class="data-display" style="display: none;"></div>
+            <button class="btn" onclick="checkDatabase()">Verificar DB</button>
+        </div>
+
+        <div class="debug-section">
+            <h3>🛒 Carrito en Supabase</h3>
+            <div id="cart-status" class="status info">
+                Verificando carrito en Supabase...
+            </div>
+            <div id="cart-data" class="data-display" style="display: none;"></div>
+            <button class="btn" onclick="checkSupabaseCart()">Verificar Carrito</button>
+        </div>
+
+        <div class="debug-section">
+            <h3>🔄 Sincronización</h3>
+            <div id="sync-status" class="status info">
+                Verificando sincronización...
+            </div>
+            <button class="btn" onclick="testSync()">Probar Sincronización</button>
+            <button class="btn btn-success" onclick="forceSync()">Forzar Sincronización</button>
+        </div>
+
+        <div class="debug-section">
+            <h3>🧪 Pruebas</h3>
+            <div class="step">
+                <h4>Paso 1: Agregar Producto de Prueba</h4>
+                <button class="btn btn-success" onclick="addTestProduct()">Agregar Producto</button>
+            </div>
+            <div class="step">
+                <h4>Paso 2: Verificar en localStorage</h4>
+                <button class="btn btn-info" onclick="checkLocalStorageAfterAdd()">Verificar localStorage</button>
+            </div>
+            <div class="step">
+                <h4>Paso 3: Sincronizar con Supabase</h4>
+                <button class="btn btn-info" onclick="syncAfterAdd()">Sincronizar</button>
+            </div>
+            <div class="step">
+                <h4>Paso 4: Verificar en Supabase</h4>
+                <button class="btn btn-info" onclick="checkSupabaseAfterSync()">Verificar Supabase</button>
+            </div>
+        </div>
+
+        <div class="debug-section">
+            <h3>📝 Logs de Debug</h3>
+            <div id="debug-logs" class="data-display">
+                Iniciando diagnóstico...
+            </div>
+            <button class="btn btn-info" onclick="clearLogs()">Limpiar Logs</button>
+        </div>
+
+        <div class="debug-section">
+            <h3>🔧 Soluciones</h3>
+            <button class="btn btn-success" onclick="fixCart()">Intentar Reparar Carrito</button>
+            <button class="btn btn-success" onclick="resetCart()">Resetear Carrito</button>
+            <a href="client/cart.html" class="btn">Ir a Carrito</a>
+            <a href="index.html" class="btn">Página Principal</a>
+        </div>
+    </div>
+
+    <script type="module" src="scripts/supabase-client.js"></script>
+    <script type="module" src="scripts/cart-persistent.js"></script>
+    <script>
+        // Función para agregar logs
+        function addLog(message, type = 'info') {
+            const logsDiv = document.getElementById('debug-logs');
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('div');
+            logEntry.innerHTML = `<span style="color: #666;">[${timestamp}]</span> <span style="color: ${type === 'error' ? '#dc3545' : type === 'success' ? '#28a745' : type === 'warning' ? '#ffc107' : '#007bff'};">${message}</span>`;
+            logsDiv.appendChild(logEntry);
+            logsDiv.scrollTop = logsDiv.scrollHeight;
+        }
+
+        // Verificar sistema
+        async function checkSystem() {
+            try {
+                addLog('Verificando sistema...');
+                
+                const statusDiv = document.getElementById('system-status');
+                let status = 'info';
+                let message = '';
+
+                // Verificar Supabase
+                if (!window.supabase) {
+                    message = '❌ Supabase no disponible';
+                    status = 'error';
+                } else {
+                    message = '✅ Supabase disponible';
+                    status = 'success';
+                }
+
+                // Verificar funciones del carrito
+                const cartFunctions = [
+                    'addToCart',
+                    'syncCartWithSupabase',
+                    'loadCartFromSupabase',
+                    'updateCartCount'
+                ];
+
+                const missingFunctions = cartFunctions.filter(fn => !window[fn]);
+                
+                if (missingFunctions.length > 0) {
+                    message += ` | ❌ Funciones faltantes: ${missingFunctions.join(', ')}`;
+                    status = 'error';
+                } else {
+                    message += ' | ✅ Funciones del carrito disponibles';
+                }
+
+                statusDiv.innerHTML = `<div class="status ${status}">${message}</div>`;
+                addLog(`Sistema: ${message}`, status === 'error' ? 'error' : 'success');
+
+            } catch (error) {
+                addLog(`Error verificando sistema: ${error.message}`, 'error');
+                document.getElementById('system-status').innerHTML = `<div class="status error">❌ Error: ${error.message}</div>`;
+            }
+        }
+
+        // Verificar autenticación
+        async function checkAuth() {
+            try {
+                addLog('Verificando autenticación...');
+                
+                const statusDiv = document.getElementById('auth-status');
+                
+                if (!window.supabase) {
+                    statusDiv.innerHTML = '<div class="status error">❌ Supabase no disponible</div>';
+                    addLog('Error: Supabase no disponible', 'error');
+                    return;
+                }
+
+                const { data: { user }, error: authError } = await window.supabase.auth.getUser();
+                
+                if (authError) {
+                    statusDiv.innerHTML = `<div class="status error">❌ Error de autenticación: ${authError.message}</div>`;
+                    addLog(`Error de autenticación: ${authError.message}`, 'error');
+                    return;
+                }
+
+                if (!user) {
+                    statusDiv.innerHTML = '<div class="status error">❌ Usuario no autenticado</div>';
+                    addLog('Usuario no autenticado', 'error');
+                    return;
+                }
+
+                statusDiv.innerHTML = `<div class="status success">✅ Usuario autenticado: ${user.email}</div>`;
+                addLog(`Usuario autenticado: ${user.email}`, 'success');
+
+            } catch (error) {
+                addLog(`Error verificando autenticación: ${error.message}`, 'error');
+                document.getElementById('auth-status').innerHTML = `<div class="status error">❌ Error: ${error.message}</div>`;
+            }
+        }
+
+        // Verificar localStorage
+        function checkLocalStorage() {
+            try {
+                addLog('Verificando localStorage...');
+                
+                const statusDiv = document.getElementById('localstorage-status');
+                const dataDiv = document.getElementById('localstorage-data');
+                
+                const cartData = localStorage.getItem('cartItems');
+                const authData = localStorage.getItem('supabase.auth.token');
+                
+                if (cartData) {
+                    try {
+                        const parsedCart = JSON.parse(cartData);
+                        statusDiv.innerHTML = `<div class="status success">✅ localStorage tiene datos del carrito (${parsedCart.length} items)</div>`;
+                        dataDiv.textContent = JSON.stringify(parsedCart, null, 2);
+                        dataDiv.style.display = 'block';
+                        addLog(`localStorage: ${parsedCart.length} items encontrados`, 'success');
+                    } catch (e) {
+                        statusDiv.innerHTML = '<div class="status error">❌ Error parseando datos del carrito</div>';
+                        addLog('Error parseando datos del carrito', 'error');
+                    }
+                } else {
+                    statusDiv.innerHTML = '<div class="status warning">⚠️ No hay datos del carrito en localStorage</div>';
+                    addLog('No hay datos del carrito en localStorage', 'warning');
+                }
+
+                if (authData) {
+                    addLog('Token de autenticación encontrado en localStorage', 'info');
+                } else {
+                    addLog('No hay token de autenticación en localStorage', 'warning');
+                }
+
+            } catch (error) {
+                addLog(`Error verificando localStorage: ${error.message}`, 'error');
+                document.getElementById('localstorage-status').innerHTML = `<div class="status error">❌ Error: ${error.message}</div>`;
+            }
+        }
+
+        // Limpiar localStorage
+        function clearLocalStorage() {
+            try {
+                if (confirm('¿Estás seguro de que quieres limpiar localStorage?')) {
+                    localStorage.removeItem('cartItems');
+                    localStorage.removeItem('cartCount');
+                    addLog('localStorage limpiado', 'success');
+                    checkLocalStorage();
+                }
+            } catch (error) {
+                addLog(`Error limpiando localStorage: ${error.message}`, 'error');
+            }
+        }
+
+        // Verificar base de datos
+        async function checkDatabase() {
+            try {
+                addLog('Verificando base de datos...');
+                
+                const statusDiv = document.getElementById('database-status');
+                const dataDiv = document.getElementById('database-data');
+                
+                if (!window.supabase) {
+                    statusDiv.innerHTML = '<div class="status error">❌ Supabase no disponible</div>';
+                    return;
+                }
+
+                // Verificar conexión
+                const { data, error } = await window.supabase
+                    .from('carts')
+                    .select('count')
+                    .limit(1);
+
+                if (error) {
+                    statusDiv.innerHTML = `<div class="status error">❌ Error de conexión: ${error.message}</div>`;
+                    addLog(`Error de conexión: ${error.message}`, 'error');
+                    return;
+                }
+
+                statusDiv.innerHTML = '<div class="status success">✅ Conexión a base de datos exitosa</div>';
+                addLog('Conexión a base de datos exitosa', 'success');
+
+            } catch (error) {
+                addLog(`Error verificando base de datos: ${error.message}`, 'error');
+                document.getElementById('database-status').innerHTML = `<div class="status error">❌ Error: ${error.message}</div>`;
+            }
+        }
+
+        // Verificar carrito en Supabase
+        async function checkSupabaseCart() {
+            try {
+                addLog('Verificando carrito en Supabase...');
+                
+                const statusDiv = document.getElementById('cart-status');
+                const dataDiv = document.getElementById('cart-data');
+                
+                if (!window.supabase) {
+                    statusDiv.innerHTML = '<div class="status error">❌ Supabase no disponible</div>';
+                    return;
+                }
+
+                const { data: { user } } = await window.supabase.auth.getUser();
+                if (!user) {
+                    statusDiv.innerHTML = '<div class="status error">❌ Usuario no autenticado</div>';
+                    return;
+                }
+
+                // Buscar carrito abierto
+                const { data: cart, error: cartError } = await window.supabase
+                    .from("carts")
+                    .select("id, status, created_at")
+                    .eq("customer_id", user.id)
+                    .eq("status", "open")
+                    .single();
+
+                if (cartError) {
+                    if (cartError.code === 'PGRST116') {
+                        statusDiv.innerHTML = '<div class="status warning">⚠️ No hay carrito abierto</div>';
+                        addLog('No hay carrito abierto', 'warning');
+                    } else {
+                        statusDiv.innerHTML = `<div class="status error">❌ Error: ${cartError.message}</div>`;
+                        addLog(`Error: ${cartError.message}`, 'error');
+                    }
+                    return;
+                }
+
+                // Buscar items del carrito
+                const { data: items, error: itemsError } = await window.supabase
+                    .from("cart_items")
+                    .select("*")
+                    .eq("cart_id", cart.id);
+
+                if (itemsError) {
+                    statusDiv.innerHTML = `<div class="status error">❌ Error cargando items: ${itemsError.message}</div>`;
+                    addLog(`Error cargando items: ${itemsError.message}`, 'error');
+                    return;
+                }
+
+                if (items && items.length > 0) {
+                    statusDiv.innerHTML = `<div class="status success">✅ Carrito encontrado con ${items.length} items</div>`;
+                    dataDiv.textContent = JSON.stringify({ cart, items }, null, 2);
+                    dataDiv.style.display = 'block';
+                    addLog(`Carrito encontrado con ${items.length} items`, 'success');
+                } else {
+                    statusDiv.innerHTML = '<div class="status warning">⚠️ Carrito vacío en Supabase</div>';
+                    dataDiv.textContent = JSON.stringify({ cart, items: [] }, null, 2);
+                    dataDiv.style.display = 'block';
+                    addLog('Carrito vacío en Supabase', 'warning');
+                }
+
+            } catch (error) {
+                addLog(`Error verificando carrito: ${error.message}`, 'error');
+                document.getElementById('cart-status').innerHTML = `<div class="status error">❌ Error: ${error.message}</div>`;
+            }
+        }
+
+        // Probar sincronización
+        async function testSync() {
+            try {
+                addLog('Probando sincronización...');
+                
+                const statusDiv = document.getElementById('sync-status');
+                
+                if (!window.syncCartWithSupabase) {
+                    statusDiv.innerHTML = '<div class="status error">❌ Función syncCartWithSupabase no disponible</div>';
+                    addLog('Función syncCartWithSupabase no disponible', 'error');
+                    return;
+                }
+
+                await window.syncCartWithSupabase();
+                statusDiv.innerHTML = '<div class="status success">✅ Sincronización completada</div>';
+                addLog('Sincronización completada', 'success');
+
+            } catch (error) {
+                addLog(`Error en sincronización: ${error.message}`, 'error');
+                document.getElementById('sync-status').innerHTML = `<div class="status error">❌ Error: ${error.message}</div>`;
+            }
+        }
+
+        // Forzar sincronización
+        async function forceSync() {
+            try {
+                addLog('Forzando sincronización...');
+                
+                if (!window.syncCartWithSupabase) {
+                    addLog('Función syncCartWithSupabase no disponible', 'error');
+                    return;
+                }
+
+                // Limpiar localStorage primero
+                localStorage.removeItem('cartItems');
+                localStorage.removeItem('cartCount');
+                
+                // Intentar sincronizar
+                await window.syncCartWithSupabase();
+                
+                addLog('Sincronización forzada completada', 'success');
+                
+                // Verificar resultados
+                setTimeout(() => {
+                    checkLocalStorage();
+                    checkSupabaseCart();
+                }, 1000);
+
+            } catch (error) {
+                addLog(`Error en sincronización forzada: ${error.message}`, 'error');
+            }
+        }
+
+        // Agregar producto de prueba
+        async function addTestProduct() {
+            try {
+                addLog('Agregando producto de prueba...');
+                
+                if (!window.addToCart) {
+                    addLog('Función addToCart no disponible', 'error');
+                    return;
+                }
+
+                const testProduct = {
+                    articulo: 'Producto de Prueba Debug',
+                    color: 'Azul',
+                    talle: 'M',
+                    cantidad: 1,
+                    precio: 10000,
+                    imagen: 'https://via.placeholder.com/300x300/007bff/FFFFFF?text=Debug',
+                    descripcion: 'Producto de prueba para debug'
+                };
+
+                window.addToCart(testProduct);
+                addLog('Producto de prueba agregado', 'success');
+                
+                // Verificar después de un momento
+                setTimeout(() => {
+                    checkLocalStorage();
+                }, 500);
+
+            } catch (error) {
+                addLog(`Error agregando producto: ${error.message}`, 'error');
+            }
+        }
+
+        // Verificar localStorage después de agregar
+        function checkLocalStorageAfterAdd() {
+            addLog('Verificando localStorage después de agregar...');
+            checkLocalStorage();
+        }
+
+        // Sincronizar después de agregar
+        async function syncAfterAdd() {
+            addLog('Sincronizando después de agregar...');
+            await testSync();
+        }
+
+        // Verificar Supabase después de sincronizar
+        async function checkSupabaseAfterSync() {
+            addLog('Verificando Supabase después de sincronizar...');
+            await checkSupabaseCart();
+        }
+
+        // Intentar reparar carrito
+        async function fixCart() {
+            try {
+                addLog('Intentando reparar carrito...');
+                
+                // 1. Verificar autenticación
+                const { data: { user } } = await window.supabase.auth.getUser();
+                if (!user) {
+                    addLog('Usuario no autenticado, no se puede reparar', 'error');
+                    return;
+                }
+
+                // 2. Crear carrito si no existe
+                const { data: cart, error: cartError } = await window.supabase
+                    .from("carts")
+                    .select("id")
+                    .eq("customer_id", user.id)
+                    .eq("status", "open")
+                    .single();
+
+                if (cartError && cartError.code === 'PGRST116') {
+                    // Crear carrito
+                    const { data: newCart, error: createError } = await window.supabase
+                        .from("carts")
+                        .insert({
+                            customer_id: user.id,
+                            status: 'open'
+                        })
+                        .select()
+                        .single();
+
+                    if (createError) {
+                        addLog(`Error creando carrito: ${createError.message}`, 'error');
+                        return;
+                    }
+
+                    addLog('Carrito creado exitosamente', 'success');
+                }
+
+                // 3. Sincronizar desde localStorage
+                if (window.syncCartWithSupabase) {
+                    await window.syncCartWithSupabase();
+                    addLog('Sincronización completada', 'success');
+                }
+
+                // 4. Verificar resultado
+                setTimeout(() => {
+                    checkSupabaseCart();
+                }, 1000);
+
+            } catch (error) {
+                addLog(`Error reparando carrito: ${error.message}`, 'error');
+            }
+        }
+
+        // Resetear carrito
+        async function resetCart() {
+            try {
+                if (confirm('¿Estás seguro de que quieres resetear el carrito? Esto eliminará todos los datos.')) {
+                    addLog('Reseteando carrito...');
+                    
+                    // Limpiar localStorage
+                    localStorage.removeItem('cartItems');
+                    localStorage.removeItem('cartCount');
+                    
+                    // Limpiar Supabase
+                    if (window.supabase) {
+                        const { data: { user } } = await window.supabase.auth.getUser();
+                        if (user) {
+                            const { data: cart } = await window.supabase
+                                .from("carts")
+                                .select("id")
+                                .eq("customer_id", user.id)
+                                .eq("status", "open")
+                                .single();
+
+                            if (cart) {
+                                await window.supabase
+                                    .from("cart_items")
+                                    .delete()
+                                    .eq("cart_id", cart.id);
+                            }
+                        }
+                    }
+
+                    addLog('Carrito reseteado', 'success');
+                    
+                    // Verificar resultado
+                    setTimeout(() => {
+                        checkLocalStorage();
+                        checkSupabaseCart();
+                    }, 1000);
+                }
+            } catch (error) {
+                addLog(`Error reseteando carrito: ${error.message}`, 'error');
+            }
+        }
+
+        // Limpiar logs
+        function clearLogs() {
+            document.getElementById('debug-logs').innerHTML = 'Logs limpiados...';
+        }
+
+        // Inicializar cuando se carga la página
+        document.addEventListener('DOMContentLoaded', () => {
+            addLog('Página de debug cargada');
+            checkSystem();
+            checkAuth();
+        });
+    </script>
+</body>
+</html>

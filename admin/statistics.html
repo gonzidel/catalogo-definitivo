@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Estadísticas - Catálogo FYL</title>
+    <link rel="stylesheet" href="../styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script>
+      // Configurar antes de que se carguen los módulos
+      window.redirectTarget = "./statistics.html";
+      window.skipPanelRedirect = true;
+    </script>
+    <style>
+        .stats-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 16px;
+        }
+        .stats-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 24px;
+            padding: 16px;
+            background: #f8f9fa;
+            border-radius: 12px;
+            flex-wrap: wrap;
+        }
+        .stats-header h1 {
+            font-size: 22px;
+            margin: 0;
+        }
+        .toolbar {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        .toolbar label {
+            font-weight: 600;
+            color: #333;
+            font-size: 14px;
+        }
+        .toolbar input[type="date"],
+        .toolbar select {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+        .channel-filters {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 24px;
+        }
+        .filter-btn {
+            padding: 10px 20px;
+            border: 2px solid #ddd;
+            background: white;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.3s;
+        }
+        .filter-btn:hover {
+            border-color: #CD844D;
+            background: #fff8f5;
+        }
+        .filter-btn.active {
+            background: #CD844D;
+            color: white;
+            border-color: #CD844D;
+        }
+        .warning-banner {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            color: #856404;
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            font-size: 14px;
+        }
+        .warning-banner strong {
+            display: block;
+            margin-bottom: 4px;
+        }
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        .kpi-card {
+            background: white;
+            border: 1px solid #e9ecef;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .kpi-card h3 {
+            margin: 0 0 8px 0;
+            font-size: 14px;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .kpi-card .value {
+            font-size: 24px;
+            font-weight: 700;
+            color: #CD844D;
+            margin: 0;
+        }
+        .kpi-card .subvalue {
+            font-size: 14px;
+            color: #999;
+            margin-top: 4px;
+        }
+        .section {
+            background: white;
+            border: 1px solid #e9ecef;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 24px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .section h2 {
+            margin: 0 0 20px 0;
+            font-size: 18px;
+            color: #333;
+            border-bottom: 2px solid #f0f0f0;
+            padding-bottom: 12px;
+        }
+        .chart-container {
+            position: relative;
+            height: 300px;
+            margin-bottom: 20px;
+        }
+        .stats-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .stats-table thead {
+            background: #f8f9fa;
+        }
+        .stats-table th {
+            padding: 12px 16px;
+            text-align: left;
+            font-weight: 600;
+            color: #333;
+            font-size: 14px;
+            border-bottom: 2px solid #e9ecef;
+        }
+        .stats-table td {
+            padding: 12px 16px;
+            border-bottom: 1px solid #f0f0f0;
+            font-size: 14px;
+        }
+        .stats-table tbody tr:hover {
+            background: #f8f9fa;
+        }
+        .stats-table tbody tr:last-child td {
+            border-bottom: none;
+        }
+        .text-right {
+            text-align: right;
+        }
+        .empty-state {
+            text-align: center;
+            padding: 48px 16px;
+            color: #666;
+        }
+        .loading {
+            text-align: center;
+            padding: 48px 16px;
+            color: #666;
+        }
+        @media (max-width: 768px) {
+            .stats-header {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .kpi-grid {
+                grid-template-columns: 1fr;
+            }
+            .stats-table {
+                font-size: 12px;
+            }
+            .stats-table th,
+            .stats-table td {
+                padding: 8px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="stats-container">
+        <div class="stats-header">
+            <h1>📊 Estadísticas</h1>
+            <div class="toolbar">
+                <label for="date-from">Desde:</label>
+                <input type="date" id="date-from" />
+                <label for="date-to">Hasta:</label>
+                <input type="date" id="date-to" />
+                <label for="granularity">Agrupar por:</label>
+                <select id="granularity">
+                    <option value="day">Día</option>
+                    <option value="week">Semana</option>
+                    <option value="month">Mes</option>
+                </select>
+                <a href="index.html" class="btn btn-secondary">← Panel Admin</a>
+            </div>
+        </div>
+
+        <div id="warnings-container"></div>
+
+        <div class="channel-filters">
+            <button class="filter-btn active" data-channel="all">Todos</button>
+            <button class="filter-btn" data-channel="envios">Envíos</button>
+            <button class="filter-btn" data-channel="publico">Público</button>
+        </div>
+
+        <!-- KPIs Principales -->
+        <div class="section">
+            <h2>KPIs Principales</h2>
+            <div class="kpi-grid" id="kpi-grid">
+                <div class="loading">Cargando KPIs...</div>
+            </div>
+        </div>
+
+        <!-- Métricas de Clientes -->
+        <div class="section">
+            <h2>Métricas de Clientes</h2>
+            <div class="kpi-grid" id="customer-kpi-grid">
+                <div class="loading">Cargando métricas de clientes...</div>
+            </div>
+        </div>
+
+        <!-- Gráficos -->
+        <div class="section">
+            <h2>Series Temporales</h2>
+            <div class="chart-container">
+                <canvas id="revenue-chart"></canvas>
+            </div>
+            <div class="chart-container">
+                <canvas id="units-chart"></canvas>
+            </div>
+            <div class="chart-container">
+                <canvas id="customers-chart"></canvas>
+            </div>
+        </div>
+
+        <!-- Rankings -->
+        <div class="section">
+            <h2>Top SKUs</h2>
+            <div id="top-skus-table">
+                <div class="loading">Cargando ranking de SKUs...</div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Top Productos</h2>
+            <div id="top-products-table">
+                <div class="loading">Cargando ranking de productos...</div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Top Categorías</h2>
+            <div id="top-categories-table">
+                <div class="loading">Cargando ranking de categorías...</div>
+            </div>
+        </div>
+
+        <!-- Origen de Pedidos -->
+        <div class="section">
+            <h2>Origen de Pedidos (Envíos)</h2>
+            <div id="order-source-breakdown">
+                <div class="loading">Cargando desglose...</div>
+            </div>
+        </div>
+
+        <!-- Métodos de Registro -->
+        <div class="section">
+            <h2>Métodos de Registro de Clientes</h2>
+            <div id="registration-methods">
+                <div class="loading">Cargando métodos...</div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="../scripts/supabase-client.js"></script>
+    <script type="module" src="admin-auth.js"></script>
+    <script type="module" src="statistics.js"></script>
+</body>
+</html>
+

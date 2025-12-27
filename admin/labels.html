@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex" />
+  <title>Etiquetas | Admin</title>
+  <link rel="stylesheet" href="../styles.css" />
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #f5f5f5;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 24px 20px;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .header h1 {
+      margin: 0;
+      font-size: 28px;
+      color: #333;
+    }
+    .back-link {
+      padding: 6px 12px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      text-decoration: none;
+      color: #333;
+      background: white;
+    }
+    .back-link:hover {
+      background: #f8f8f8;
+    }
+    .search-section {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      margin-bottom: 24px;
+    }
+    #label-product-search {
+      width: 100%;
+      padding: 12px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      font-size: 16px;
+      box-sizing: border-box;
+    }
+    #label-product-search:focus {
+      outline: none;
+      border-color: #CD844D;
+      box-shadow: 0 0 0 3px rgba(205, 132, 77, 0.1);
+    }
+    #label-product-results {
+      margin-top: 16px;
+    }
+    .product-result-item {
+      padding: 12px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      margin-bottom: 8px;
+      cursor: pointer;
+      background: white;
+      transition: all 0.2s ease;
+    }
+    .product-result-item:hover {
+      background: #f8f8f8;
+      border-color: #CD844D;
+    }
+    .product-result-item .product-name {
+      font-weight: 600;
+      color: #333;
+      margin-bottom: 4px;
+    }
+    .product-result-item .product-sku {
+      font-size: 13px;
+      color: #666;
+    }
+    .loading {
+      text-align: center;
+      padding: 20px;
+      color: #666;
+    }
+    .no-results {
+      text-align: center;
+      padding: 40px;
+      color: #666;
+    }
+    #label-product-detail {
+      background: white;
+      padding: 24px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      display: none;
+    }
+    #label-product-detail.show {
+      display: block;
+    }
+    .product-detail-header {
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid #eee;
+      display: flex;
+      align-items: flex-start;
+      gap: 20px;
+    }
+    .product-detail-image {
+      max-width: 120px;
+      max-height: 120px;
+      border-radius: 6px;
+      border: 1px solid #eee;
+      flex-shrink: 0;
+    }
+    .product-detail-info {
+      flex: 1;
+    }
+    .product-detail-title {
+      font-size: 24px;
+      font-weight: 600;
+      color: #333;
+      margin: 0 0 8px 0;
+    }
+    .product-detail-sku {
+      font-size: 14px;
+      color: #666;
+      margin-bottom: 12px;
+    }
+    .variants-container {
+      margin-top: 24px;
+    }
+    .variant-card {
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      margin-bottom: 16px;
+      overflow: hidden;
+    }
+    .variant-header {
+      padding: 12px 16px;
+      background: #f8f8f8;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-weight: 600;
+      color: #333;
+    }
+    .variant-header:hover {
+      background: #f0f0f0;
+    }
+    .variant-toggle {
+      font-size: 12px;
+      color: #666;
+    }
+    .variant-content {
+      display: none;
+      padding: 16px;
+    }
+    .variant-content.expanded {
+      display: block;
+    }
+    .label-size-row {
+      display: grid;
+      grid-template-columns: 80px 100px 100px 120px 1fr auto auto;
+      gap: 12px;
+      align-items: center;
+      padding: 12px;
+      border-bottom: 1px solid #eee;
+    }
+    .label-size-row:last-child {
+      border-bottom: none;
+    }
+    .label-size-name {
+      font-weight: 600;
+      color: #333;
+    }
+    .label-size-stock {
+      font-size: 13px;
+      color: #666;
+    }
+    .label-size-qty {
+      width: 80px;
+      padding: 6px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+    }
+    .label-size-selected {
+      margin-right: 6px;
+    }
+    .btn-print-stock-total,
+    .btn-print-custom-qty {
+      padding: 6px 12px;
+      border: none;
+      border-radius: 4px;
+      color: white;
+      cursor: pointer;
+      font-size: 13px;
+      white-space: nowrap;
+      min-width: 140px;
+      width: 140px;
+      text-align: center;
+    }
+    .btn-print-stock-total {
+      background: #CD844D;
+      border: 1px solid #B8734A;
+    }
+    .btn-print-stock-total:hover {
+      background: #B8734A;
+    }
+    .btn-print-custom-qty {
+      background: #155724;
+      border: 1px solid #0f3f1e;
+    }
+    .btn-print-custom-qty:hover {
+      background: #0f3f1e;
+    }
+    .global-actions {
+      margin-top: 24px;
+      padding-top: 24px;
+      border-top: 2px solid #eee;
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .btn-print-all-stock,
+    .btn-print-selected {
+      padding: 12px 24px;
+      border: none;
+      border-radius: 6px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      background: #CD844D;
+      color: white;
+    }
+    .btn-print-all-stock:hover,
+    .btn-print-selected:hover {
+      background: #B8734A;
+    }
+    .btn-print-selected {
+      background: #155724;
+    }
+    .btn-print-selected:hover {
+      background: #0f3f1e;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <a href="./index.html" class="back-link">← Volver al panel</a>
+      <h1>Impresión de etiquetas</h1>
+    </div>
+
+    <div class="search-section">
+      <input 
+        type="text" 
+        id="label-product-search" 
+        placeholder="Buscar por nombre o SKU..." 
+        autocomplete="off"
+      />
+      <div id="label-product-results"></div>
+    </div>
+
+    <div id="label-product-detail"></div>
+  </div>
+
+  <!-- QZ Tray script -->
+  <script>
+    // Cargar QZ Tray si no está disponible
+    if (typeof qz === 'undefined') {
+      const script = document.createElement('script');
+      script.src = 'https://demo.qz.io/js/qz-tray.js';
+      script.onload = function() {
+        console.log('QZ Tray cargado');
+      };
+      document.head.appendChild(script);
+    }
+  </script>
+
+  <script type="module" src="../scripts/config.js"></script>
+  <script type="module" src="../scripts/supabase-client.js"></script>
+  <script type="module" src="./admin-auth.js"></script>
+  <script type="module" src="./labels.js"></script>
+</body>
+</html>
+

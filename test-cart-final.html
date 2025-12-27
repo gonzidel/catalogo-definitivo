@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prueba Final Carrito - Catálogo FYL</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .test-container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .test-header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: #28a745;
+            color: white;
+            border-radius: 10px;
+        }
+        .test-section {
+            margin-bottom: 30px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+        .test-section h3 {
+            color: #28a745;
+            margin-top: 0;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        .btn {
+            background: #28a745;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+            text-decoration: none;
+            display: inline-block;
+        }
+        .btn:hover {
+            background: #218838;
+        }
+        .btn-danger {
+            background: #dc3545;
+        }
+        .btn-danger:hover {
+            background: #c82333;
+        }
+        .btn-info {
+            background: #17a2b8;
+        }
+        .btn-info:hover {
+            background: #138496;
+        }
+        .links {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin: 20px 0;
+        }
+        .links a {
+            padding: 10px 15px;
+            background: #007bff;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            transition: background 0.3s;
+        }
+        .links a:hover {
+            background: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <div class="test-container">
+        <div class="test-header">
+            <h1>🎉 Prueba Final del Carrito</h1>
+            <p>Verificación completa después de aplicar el SQL</p>
+        </div>
+
+        <div class="test-section">
+            <h3>🔐 Estado de Autenticación</h3>
+            <div id="auth-status" class="status info">
+                Verificando autenticación...
+            </div>
+            <button class="btn" onclick="checkAuth()">Verificar Auth</button>
+        </div>
+
+        <div class="test-section">
+            <h3>🛒 Estado del Carrito</h3>
+            <div id="cart-status" class="status info">
+                Verificando carrito...
+            </div>
+            <button class="btn" onclick="checkCart()">Verificar Carrito</button>
+        </div>
+
+        <div class="test-section">
+            <h3>🗄️ Estado de la Base de Datos</h3>
+            <div id="db-status" class="status info">
+                Verificando estructura de la base de datos...
+            </div>
+            <button class="btn" onclick="checkDatabase()">Verificar DB</button>
+        </div>
+
+        <div class="test-section">
+            <h3>🔗 Enlaces de Prueba</h3>
+            <div class="links">
+                <a href="client/cart.html" target="_blank">Ir a Carrito Directo</a>
+                <a href="client/dashboard.html" target="_blank">Dashboard</a>
+                <a href="index.html" target="_blank">Página Principal</a>
+            </div>
+        </div>
+
+        <div class="test-section">
+            <h3>🧪 Prueba Completa del Flujo</h3>
+            <button class="btn" onclick="testCompleteFlow()">Probar Flujo Completo</button>
+            <button class="btn btn-info" onclick="addTestProduct()">Agregar Producto de Prueba</button>
+            <button class="btn btn-danger" onclick="clearAllData()">Limpiar Todo</button>
+        </div>
+
+        <div class="test-section">
+            <h3>📝 Logs de Debug</h3>
+            <div id="debug-logs" style="background: #f8f9fa; padding: 15px; border-radius: 5px; font-family: monospace; font-size: 12px; max-height: 200px; overflow-y: auto;">
+                Iniciando pruebas finales...
+            </div>
+            <button class="btn btn-info" onclick="clearLogs()">Limpiar Logs</button>
+        </div>
+    </div>
+
+    <script type="module" src="scripts/supabase-client.js"></script>
+    <script type="module" src="scripts/cart-persistent.js"></script>
+    <script>
+        // Función para agregar logs
+        function addLog(message, type = 'info') {
+            const logsDiv = document.getElementById('debug-logs');
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('div');
+            logEntry.innerHTML = `<span style="color: #666;">[${timestamp}]</span> <span style="color: ${type === 'error' ? '#dc3545' : type === 'success' ? '#28a745' : type === 'warning' ? '#ffc107' : '#007bff'};">${message}</span>`;
+            logsDiv.appendChild(logEntry);
+            logsDiv.scrollTop = logsDiv.scrollHeight;
+        }
+
+        // Verificar autenticación
+        async function checkAuth() {
+            try {
+                addLog('Verificando autenticación...');
+                
+                const statusDiv = document.getElementById('auth-status');
+                
+                if (!window.supabase) {
+                    statusDiv.innerHTML = '<div class="status error">❌ Supabase no disponible</div>';
+                    addLog('Error: Supabase no disponible', 'error');
+                    return;
+                }
+
+                const { data: { user }, error: userError } = await window.supabase.auth.getUser();
+                
+                if (userError) {
+                    statusDiv.innerHTML = `<div class="status error">❌ Error de autenticación: ${userError.message}</div>`;
+                    addLog(`Error de autenticación: ${userError.message}`, 'error');
+                    return;
+                }
+
+                if (!user) {
+                    statusDiv.innerHTML = '<div class="status error">❌ Usuario no autenticado</div>';
+                    addLog('Usuario no autenticado', 'error');
+                    return;
+                }
+
+                statusDiv.innerHTML = `<div class="status success">✅ Usuario autenticado: ${user.email}</div>`;
+                addLog(`Usuario autenticado: ${user.email}`, 'success');
+
+            } catch (error) {
+                addLog(`Error verificando autenticación: ${error.message}`, 'error');
+                document.getElementById('auth-status').innerHTML = `<div class="status error">❌ Error: ${error.message}</div>`;
+            }
+        }
+
+        // Verificar carrito
+        async function checkCart() {
+            try {
+                addLog('Verificando carrito...');
+                
+                const statusDiv = document.getElementById('cart-status');
+                
+                if (!window.supabase) {
+                    statusDiv.innerHTML = '<div class="status error">❌ Supabase no disponible</div>';
+                    return;
+                }
+
+                const { data: { user } } = await window.supabase.auth.getUser();
+                if (!user) {
+                    statusDiv.innerHTML = '<div class="status error">❌ Usuario no autenticado</div>';
+                    return;
+                }
+
+                // Buscar carrito abierto
+                const { data: cart, error: cartError } = await window.supabase
+                    .from("carts")
+                    .select("id, status, created_at")
+                    .eq("customer_id", user.id)
+                    .eq("status", "open")
+                    .single();
+
+                if (cartError) {
+                    if (cartError.code === 'PGRST116') {
+                        statusDiv.innerHTML = '<div class="status info">📭 No hay carrito abierto</div>';
+                        addLog('No hay carrito abierto', 'info');
+                    } else {
+                        statusDiv.innerHTML = `<div class="status error">❌ Error: ${cartError.message}</div>`;
+                        addLog(`Error: ${cartError.message}`, 'error');
+                    }
+                    return;
+                }
+
+                // Buscar items del carrito
+                const { data: items, error: itemsError } = await window.supabase
+                    .from("cart_items")
+                    .select("*")
+                    .eq("cart_id", cart.id);
+
+                if (itemsError) {
+                    statusDiv.innerHTML = `<div class="status error">❌ Error cargando items: ${itemsError.message}</div>`;
+                    addLog(`Error cargando items: ${itemsError.message}`, 'error');
+                    return;
+                }
+
+                if (items && items.length > 0) {
+                    statusDiv.innerHTML = `<div class="status success">✅ Carrito con ${items.length} items</div>`;
+                    addLog(`Carrito con ${items.length} items`, 'success');
+                    
+                    // Verificar si tienen imagen
+                    const itemsWithImage = items.filter(item => item.imagen);
+                    addLog(`${itemsWithImage.length} items tienen imagen`, 'info');
+                } else {
+                    statusDiv.innerHTML = '<div class="status info">📭 Carrito vacío</div>';
+                    addLog('Carrito vacío', 'info');
+                }
+
+            } catch (error) {
+                addLog(`Error verificando carrito: ${error.message}`, 'error');
+                document.getElementById('cart-status').innerHTML = `<div class="status error">❌ Error: ${error.message}</div>`;
+            }
+        }
+
+        // Verificar base de datos
+        async function checkDatabase() {
+            try {
+                addLog('Verificando estructura de la base de datos...');
+                
+                const statusDiv = document.getElementById('db-status');
+                
+                if (!window.supabase) {
+                    statusDiv.innerHTML = '<div class="status error">❌ Supabase no disponible</div>';
+                    return;
+                }
+
+                // Verificar columnas de cart_items
+                const { data: columns, error: columnsError } = await window.supabase
+                    .rpc('get_table_columns', { table_name: 'cart_items' });
+
+                if (columnsError) {
+                    // Intentar verificar directamente
+                    const { data: items, error: itemsError } = await window.supabase
+                        .from("cart_items")
+                        .select("id, product_name, color, size, quantity, imagen")
+                        .limit(1);
+
+                    if (itemsError) {
+                        statusDiv.innerHTML = `<div class="status error">❌ Error verificando estructura: ${itemsError.message}</div>`;
+                        addLog(`Error verificando estructura: ${itemsError.message}`, 'error');
+                        return;
+                    }
+
+                    statusDiv.innerHTML = '<div class="status success">✅ Estructura de cart_items verificada</div>';
+                    addLog('Estructura de cart_items verificada', 'success');
+                } else {
+                    statusDiv.innerHTML = '<div class="status success">✅ Columnas verificadas</div>';
+                    addLog('Columnas verificadas', 'success');
+                }
+
+            } catch (error) {
+                addLog(`Error verificando base de datos: ${error.message}`, 'error');
+                document.getElementById('db-status').innerHTML = `<div class="status error">❌ Error: ${error.message}</div>`;
+            }
+        }
+
+        // Probar flujo completo
+        async function testCompleteFlow() {
+            try {
+                addLog('Iniciando prueba de flujo completo...');
+                
+                // 1. Verificar autenticación
+                await checkAuth();
+                await new Promise(resolve => setTimeout(resolve, 500));
+                
+                // 2. Verificar carrito
+                await checkCart();
+                await new Promise(resolve => setTimeout(resolve, 500));
+                
+                // 3. Verificar base de datos
+                await checkDatabase();
+                await new Promise(resolve => setTimeout(resolve, 500));
+                
+                // 4. Probar redirección
+                addLog('Probando redirección a carrito...');
+                const cartWindow = window.open('client/cart.html', '_blank');
+                
+                if (cartWindow) {
+                    addLog('Ventana de carrito abierta', 'success');
+                    
+                    setTimeout(() => {
+                        if (cartWindow.closed) {
+                            addLog('La ventana se cerró - posible redirección a login', 'warning');
+                        } else {
+                            addLog('La ventana sigue abierta - carrito funcionando', 'success');
+                        }
+                    }, 3000);
+                } else {
+                    addLog('No se pudo abrir la ventana del carrito', 'error');
+                }
+                
+                addLog('Prueba de flujo completo terminada', 'success');
+
+            } catch (error) {
+                addLog(`Error en prueba de flujo: ${error.message}`, 'error');
+            }
+        }
+
+        // Agregar producto de prueba
+        async function addTestProduct() {
+            try {
+                addLog('Agregando producto de prueba...');
+                
+                if (!window.addToCart) {
+                    addLog('Función addToCart no disponible', 'error');
+                    return;
+                }
+
+                const testProduct = {
+                    articulo: 'Producto Final Test',
+                    color: 'Azul',
+                    talle: 'M',
+                    cantidad: 1,
+                    precio: 7500,
+                    imagen: 'https://via.placeholder.com/300x300/007bff/FFFFFF?text=Final',
+                    descripcion: 'Producto de prueba final'
+                };
+
+                window.addToCart(testProduct);
+                addLog('Producto de prueba agregado', 'success');
+                
+                // Verificar carrito después de un momento
+                setTimeout(() => {
+                    checkCart();
+                }, 1000);
+
+            } catch (error) {
+                addLog(`Error agregando producto: ${error.message}`, 'error');
+            }
+        }
+
+        // Limpiar todos los datos
+        async function clearAllData() {
+            try {
+                if (confirm('¿Estás seguro de que quieres limpiar todos los datos?')) {
+                    addLog('Limpiando todos los datos...');
+                    
+                    // Limpiar localStorage
+                    localStorage.removeItem('cartItems');
+                    localStorage.removeItem('cartCount');
+                    
+                    // Limpiar Supabase
+                    if (window.supabase) {
+                        const { data: { user } } = await window.supabase.auth.getUser();
+                        if (user) {
+                            const { data: cart } = await window.supabase
+                                .from("carts")
+                                .select("id")
+                                .eq("customer_id", user.id)
+                                .eq("status", "open")
+                                .single();
+
+                            if (cart) {
+                                await window.supabase
+                                    .from("cart_items")
+                                    .delete()
+                                    .eq("cart_id", cart.id);
+                            }
+                        }
+                    }
+
+                    addLog('Todos los datos limpiados', 'success');
+                    
+                    // Verificar estado
+                    setTimeout(() => {
+                        checkAuth();
+                        checkCart();
+                    }, 1000);
+                }
+            } catch (error) {
+                addLog(`Error limpiando datos: ${error.message}`, 'error');
+            }
+        }
+
+        // Limpiar logs
+        function clearLogs() {
+            document.getElementById('debug-logs').innerHTML = 'Logs limpiados...';
+        }
+
+        // Inicializar cuando se carga la página
+        document.addEventListener('DOMContentLoaded', () => {
+            addLog('Página de prueba final cargada');
+            checkAuth();
+            checkCart();
+            checkDatabase();
+        });
+    </script>
+</body>
+</html>

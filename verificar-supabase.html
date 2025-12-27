@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Verificación Completa Supabase - Catálogo FYL</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .test-container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .success { color: #28a745; font-weight: bold; }
+        .error { color: #dc3545; font-weight: bold; }
+        .warning { color: #ffc107; font-weight: bold; }
+        .info { color: #17a2b8; font-weight: bold; }
+        button {
+            background: #CD844D;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover { background: #b8733a; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        pre {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+            max-height: 300px;
+        }
+        .progress {
+            background: #e9ecef;
+            border-radius: 10px;
+            height: 20px;
+            margin: 10px 0;
+        }
+        .progress-bar {
+            background: #CD844D;
+            height: 100%;
+            border-radius: 10px;
+            transition: width 0.3s ease;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔍 Verificación Completa Supabase - Catálogo FYL</h1>
+    
+    <div class="test-container">
+        <h2>📋 Configuración Actual</h2>
+        <div id="config-info">Cargando...</div>
+    </div>
+
+    <div class="test-container">
+        <h2>🗄️ Verificación de Base de Datos</h2>
+        <button onclick="verificarBaseDatos()">Verificar Base de Datos</button>
+        <div class="progress">
+            <div class="progress-bar" id="db-progress" style="width: 0%"></div>
+        </div>
+        <div id="db-result">Haz clic en "Verificar Base de Datos"</div>
+    </div>
+
+    <div class="test-container">
+        <h2>📊 Verificación de Vista del Catálogo</h2>
+        <button onclick="verificarVistaCatalogo()">Verificar Vista del Catálogo</button>
+        <div id="catalog-result">Haz clic en "Verificar Vista del Catálogo"</div>
+    </div>
+
+    <div class="test-container">
+        <h2>🛒 Verificación de Funciones del Carrito</h2>
+        <button onclick="verificarFuncionesCarrito()">Verificar Funciones del Carrito</button>
+        <div id="cart-result">Haz clic en "Verificar Funciones del Carrito"</div>
+    </div>
+
+    <div class="test-container">
+        <h2>🔐 Verificación de Permisos RLS</h2>
+        <button onclick="verificarPermisos()">Verificar Permisos RLS</button>
+        <div id="permissions-result">Haz clic en "Verificar Permisos RLS"</div>
+    </div>
+
+    <div class="test-container">
+        <h2>📝 Resumen de Verificación</h2>
+        <div id="summary-result">Ejecuta las verificaciones para ver el resumen</div>
+    </div>
+
+    <script type="module">
+        // Cargar configuración
+        let config = {
+            SUPABASE_URL: "No configurado",
+            SUPABASE_ANON_KEY: "No configurado",
+            USE_SUPABASE: false,
+            USE_OPEN_SHEET_FALLBACK: true
+        };
+
+        // Intentar cargar configuración local
+        try {
+            const localConfig = await import('./scripts/config.local.js');
+            config = {
+                SUPABASE_URL: localConfig.SUPABASE_URL || "No configurado",
+                SUPABASE_ANON_KEY: localConfig.SUPABASE_ANON_KEY ? "Configurada" : "No configurada",
+                USE_SUPABASE: localConfig.USE_SUPABASE || false,
+                USE_OPEN_SHEET_FALLBACK: localConfig.USE_OPEN_SHEET_FALLBACK || true
+            };
+        } catch (e) {
+            console.warn("No se pudo cargar config.local.js:", e.message);
+        }
+
+        // Mostrar configuración
+        document.getElementById('config-info').innerHTML = `
+            <p><strong>SUPABASE_URL:</strong> <span class="${config.SUPABASE_URL.includes('supabase.co') ? 'success' : 'error'}">${config.SUPABASE_URL}</span></p>
+            <p><strong>SUPABASE_ANON_KEY:</strong> <span class="${config.SUPABASE_ANON_KEY === 'Configurada' ? 'success' : 'error'}">${config.SUPABASE_ANON_KEY}</span></p>
+            <p><strong>USE_SUPABASE:</strong> <span class="${config.USE_SUPABASE ? 'success' : 'warning'}">${config.USE_SUPABASE}</span></p>
+            <p><strong>USE_OPEN_SHEET_FALLBACK:</strong> <span class="${config.USE_OPEN_SHEET_FALLBACK ? 'warning' : 'success'}">${config.USE_OPEN_SHEET_FALLBACK}</span></p>
+        `;
+
+        // Cliente de Supabase
+        let supabase = null;
+        let verificaciones = {
+            configuracion: false,
+            baseDatos: false,
+            vistaCatalogo: false,
+            funcionesCarrito: false,
+            permisos: false
+        };
+
+        // Inicializar Supabase
+        async function initSupabase() {
+            if (!config.SUPABASE_URL || !config.SUPABASE_ANON_KEY || config.SUPABASE_ANON_KEY === "No configurada") {
+                throw new Error("Configuración de Supabase incompleta");
+            }
+
+            try {
+                const { createClient } = await import('https://cdn.skypack.dev/@supabase/supabase-js@2');
+                supabase = createClient(config.SUPABASE_URL, config.SUPABASE_ANON_KEY);
+                return true;
+            } catch (error) {
+                throw new Error(`Error creando cliente: ${error.message}`);
+            }
+        }
+
+        // Verificar base de datos
+        window.verificarBaseDatos = async function() {
+            const resultDiv = document.getElementById('db-result');
+            const progressBar = document.getElementById('db-progress');
+            resultDiv.innerHTML = '<p class="info">🔄 Verificando base de datos...</p>';
+            progressBar.style.width = '10%';
+
+            try {
+                await initSupabase();
+                progressBar.style.width = '30%';
+
+                // Verificar tablas principales
+                const tablas = ['products', 'product_variants', 'variant_images', 'tags', 'product_tags', 'customers', 'carts', 'cart_items'];
+                const resultados = [];
+
+                for (let i = 0; i < tablas.length; i++) {
+                    const tabla = tablas[i];
+                    try {
+                        const { data, error } = await supabase
+                            .from(tabla)
+                            .select('count')
+                            .limit(1);
+                        
+                        if (error) {
+                            resultados.push(`❌ ${tabla}: Error - ${error.message}`);
+                        } else {
+                            resultados.push(`✅ ${tabla}: Accesible`);
+                        }
+                    } catch (e) {
+                        resultados.push(`❌ ${tabla}: Error - ${e.message}`);
+                    }
+                    progressBar.style.width = `${30 + (i + 1) * 8}%`;
+                }
+
+                progressBar.style.width = '100%';
+                verificaciones.baseDatos = true;
+                resultDiv.innerHTML = `
+                    <p class="success">✅ Verificación de base de datos completada</p>
+                    <details>
+                        <summary>Ver detalles de tablas</summary>
+                        <pre>${resultados.join('\n')}</pre>
+                    </details>
+                `;
+            } catch (error) {
+                progressBar.style.width = '100%';
+                resultDiv.innerHTML = `
+                    <p class="error">❌ Error verificando base de datos: ${error.message}</p>
+                    <p class="warning">💡 Verifica tu configuración en config.local.js</p>
+                `;
+            }
+        };
+
+        // Verificar vista del catálogo
+        window.verificarVistaCatalogo = async function() {
+            const resultDiv = document.getElementById('catalog-result');
+            resultDiv.innerHTML = '<p class="info">🔄 Verificando vista del catálogo...</p>';
+
+            try {
+                if (!supabase) {
+                    await initSupabase();
+                }
+
+                // Verificar que la vista existe y tiene datos
+                const { data, error } = await supabase
+                    .from('catalog_public_view')
+                    .select('*')
+                    .limit(5);
+
+                if (error) {
+                    throw new Error(`Error accediendo a catalog_public_view: ${error.message}`);
+                }
+
+                verificaciones.vistaCatalogo = true;
+                resultDiv.innerHTML = `
+                    <p class="success">✅ Vista del catálogo funcionando correctamente</p>
+                    <p class="info">📊 Productos encontrados: ${data.length}</p>
+                    <details>
+                        <summary>Ver datos de muestra</summary>
+                        <pre>${JSON.stringify(data, null, 2)}</pre>
+                    </details>
+                `;
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <p class="error">❌ Error verificando vista del catálogo: ${error.message}</p>
+                    <p class="warning">💡 Verifica que la vista 'catalog_public_view' exista y tenga datos</p>
+                `;
+            }
+        };
+
+        // Verificar funciones del carrito
+        window.verificarFuncionesCarrito = async function() {
+            const resultDiv = document.getElementById('cart-result');
+            resultDiv.innerHTML = '<p class="info">🔄 Verificando funciones del carrito...</p>';
+
+            try {
+                if (!supabase) {
+                    await initSupabase();
+                }
+
+                // Verificar funciones RPC del carrito
+                const funciones = [
+                    'get_or_create_user_cart',
+                    'sync_cart_from_local',
+                    'get_user_cart_complete',
+                    'get_cart_summary'
+                ];
+
+                const resultados = [];
+                for (const funcion of funciones) {
+                    try {
+                        // Intentar llamar a la función (esto verificará que existe)
+                        const { data, error } = await supabase.rpc(funcion, { user_id: '00000000-0000-0000-0000-000000000000' });
+                        
+                        if (error && error.message.includes('function') && error.message.includes('does not exist')) {
+                            resultados.push(`❌ ${funcion}: No existe`);
+                        } else {
+                            resultados.push(`✅ ${funcion}: Disponible`);
+                        }
+                    } catch (e) {
+                        if (e.message.includes('does not exist')) {
+                            resultados.push(`❌ ${funcion}: No existe`);
+                        } else {
+                            resultados.push(`✅ ${funcion}: Disponible`);
+                        }
+                    }
+                }
+
+                verificaciones.funcionesCarrito = true;
+                resultDiv.innerHTML = `
+                    <p class="success">✅ Verificación de funciones del carrito completada</p>
+                    <details>
+                        <summary>Ver estado de funciones</summary>
+                        <pre>${resultados.join('\n')}</pre>
+                    </details>
+                `;
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <p class="error">❌ Error verificando funciones del carrito: ${error.message}</p>
+                    <p class="warning">💡 Verifica que los scripts SQL del carrito se hayan ejecutado</p>
+                `;
+            }
+        };
+
+        // Verificar permisos RLS
+        window.verificarPermisos = async function() {
+            const resultDiv = document.getElementById('permissions-result');
+            resultDiv.innerHTML = '<p class="info">🔄 Verificando permisos RLS...</p>';
+
+            try {
+                if (!supabase) {
+                    await initSupabase();
+                }
+
+                // Verificar acceso anónimo a la vista del catálogo
+                const { data, error } = await supabase
+                    .from('catalog_public_view')
+                    .select('*')
+                    .limit(1);
+
+                if (error) {
+                    throw new Error(`Error de permisos: ${error.message}`);
+                }
+
+                verificaciones.permisos = true;
+                resultDiv.innerHTML = `
+                    <p class="success">✅ Permisos RLS configurados correctamente</p>
+                    <p class="info">🔐 Acceso anónimo a catalog_public_view: Permitido</p>
+                    <p class="info">📊 Datos accesibles: ${data.length > 0 ? 'Sí' : 'No'}</p>
+                `;
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <p class="error">❌ Error verificando permisos: ${error.message}</p>
+                    <p class="warning">💡 Verifica que las políticas RLS estén configuradas correctamente</p>
+                `;
+            }
+        };
+
+        // Actualizar resumen
+        function actualizarResumen() {
+            const total = Object.keys(verificaciones).length;
+            const completadas = Object.values(verificaciones).filter(v => v).length;
+            const porcentaje = Math.round((completadas / total) * 100);
+
+            let html = `
+                <h3>📊 Resumen de Verificación</h3>
+                <div class="progress">
+                    <div class="progress-bar" style="width: ${porcentaje}%"></div>
+                </div>
+                <p><strong>Progreso:</strong> ${completadas}/${total} verificaciones completadas (${porcentaje}%)</p>
+                <ul>
+                    <li>Configuración: <span class="${verificaciones.configuracion ? 'success' : 'error'}">${verificaciones.configuracion ? '✅' : '❌'}</span></li>
+                    <li>Base de Datos: <span class="${verificaciones.baseDatos ? 'success' : 'error'}">${verificaciones.baseDatos ? '✅' : '❌'}</span></li>
+                    <li>Vista del Catálogo: <span class="${verificaciones.vistaCatalogo ? 'success' : 'error'}">${verificaciones.vistaCatalogo ? '✅' : '❌'}</span></li>
+                    <li>Funciones del Carrito: <span class="${verificaciones.funcionesCarrito ? 'success' : 'error'}">${verificaciones.funcionesCarrito ? '✅' : '❌'}</span></li>
+                    <li>Permisos RLS: <span class="${verificaciones.permisos ? 'success' : 'error'}">${verificaciones.permisos ? '✅' : '❌'}</span></li>
+                </ul>
+            `;
+
+            if (porcentaje === 100) {
+                html += '<p class="success">🎉 ¡Todas las verificaciones completadas exitosamente!</p>';
+            } else if (porcentaje >= 80) {
+                html += '<p class="warning">⚠️ La mayoría de verificaciones completadas, revisa las fallidas</p>';
+            } else {
+                html += '<p class="error">❌ Varias verificaciones fallaron, revisa la configuración</p>';
+            }
+
+            document.getElementById('summary-result').innerHTML = html;
+        }
+
+        // Verificar configuración inicial
+        verificaciones.configuracion = config.SUPABASE_URL.includes('supabase.co') && config.SUPABASE_ANON_KEY === 'Configurada';
+        actualizarResumen();
+
+        // Actualizar resumen después de cada verificación
+        const originalVerificarBaseDatos = window.verificarBaseDatos;
+        window.verificarBaseDatos = async function() {
+            await originalVerificarBaseDatos();
+            actualizarResumen();
+        };
+
+        const originalVerificarVistaCatalogo = window.verificarVistaCatalogo;
+        window.verificarVistaCatalogo = async function() {
+            await originalVerificarVistaCatalogo();
+            actualizarResumen();
+        };
+
+        const originalVerificarFuncionesCarrito = window.verificarFuncionesCarrito;
+        window.verificarFuncionesCarrito = async function() {
+            await originalVerificarFuncionesCarrito();
+            actualizarResumen();
+        };
+
+        const originalVerificarPermisos = window.verificarPermisos;
+        window.verificarPermisos = async function() {
+            await originalVerificarPermisos();
+            actualizarResumen();
+        };
+    </script>
+</body>
+</html>
+

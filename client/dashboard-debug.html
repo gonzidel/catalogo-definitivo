@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Debug - Catálogo FYL</title>
+    <style>
+        body {
+            font-family: 'Poppins', sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .debug-container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .debug-section {
+            margin-bottom: 30px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+        .debug-section h3 {
+            color: #CD844D;
+            margin-top: 0;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .status.warning {
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        .log {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+        }
+        .btn {
+            padding: 10px 20px;
+            background: #CD844D;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+            text-decoration: none;
+            display: inline-block;
+        }
+        .btn:hover {
+            background: #B8734A;
+        }
+        .btn-danger {
+            background: #dc3545;
+        }
+        .btn-danger:hover {
+            background: #c82333;
+        }
+        .test-result {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 5px;
+            border-left: 4px solid #CD844D;
+        }
+    </style>
+</head>
+<body>
+    <div class="debug-container">
+        <h1>🔧 Dashboard Debug - Catálogo FYL</h1>
+        <p>Esta página te ayuda a diagnosticar problemas en el dashboard.</p>
+
+        <div class="debug-section">
+            <h3>1. Estado de Autenticación</h3>
+            <div id="auth-status" class="status info">Verificando...</div>
+            <div id="user-info" style="display: none;">
+                <h4>Usuario Autenticado:</h4>
+                <div id="user-details"></div>
+            </div>
+        </div>
+
+        <div class="debug-section">
+            <h3>2. Verificación de Base de Datos</h3>
+            <div id="db-tests">
+                <div class="test-result">
+                    <strong>Tabla customers:</strong> <span id="customers-test">Probando...</span>
+                </div>
+                <div class="test-result">
+                    <strong>Tabla cart_items:</strong> <span id="cart-test">Probando...</span>
+                </div>
+                <div class="test-result">
+                    <strong>Tabla orders:</strong> <span id="orders-test">Probando...</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="debug-section">
+            <h3>3. Pruebas de Rendimiento</h3>
+            <div id="performance-tests">
+                <div class="test-result">
+                    <strong>Tiempo de respuesta Supabase:</strong> <span id="response-time">Probando...</span>
+                </div>
+                <div class="test-result">
+                    <strong>Timeout de conexión:</strong> <span id="timeout-test">Probando...</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="debug-section">
+            <h3>4. Acciones de Diagnóstico</h3>
+            <button id="run-tests" class="btn">Ejecutar Todas las Pruebas</button>
+            <button id="clear-cache" class="btn">Limpiar Cache</button>
+            <button id="reload-page" class="btn">Recargar Página</button>
+            <a href="dashboard.html" class="btn">Ir al Dashboard</a>
+        </div>
+
+        <div class="debug-section">
+            <h3>5. Log de Eventos</h3>
+            <div id="log" class="log"></div>
+            <button id="clear-log" class="btn">Limpiar Log</button>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script type="module" src="../scripts/config.js"></script>
+    <script type="module" src="../scripts/supabase-client.js"></script>
+    <script type="module">
+        import { supabase } from "../scripts/supabase-client.js";
+
+        const authStatus = document.getElementById("auth-status");
+        const userInfo = document.getElementById("user-info");
+        const userDetails = document.getElementById("user-details");
+        const log = document.getElementById("log");
+        const clearLogBtn = document.getElementById("clear-log");
+        const runTestsBtn = document.getElementById("run-tests");
+        const clearCacheBtn = document.getElementById("clear-cache");
+        const reloadPageBtn = document.getElementById("reload-page");
+
+        // Función para agregar al log
+        function addLog(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('div');
+            logEntry.innerHTML = `<strong>[${timestamp}]</strong> ${message}`;
+            logEntry.style.color = type === 'error' ? '#dc3545' : type === 'success' ? '#28a745' : type === 'warning' ? '#ffc107' : '#333';
+            log.appendChild(logEntry);
+            log.scrollTop = log.scrollHeight;
+        }
+
+        // Función para verificar autenticación
+        async function checkAuth() {
+            try {
+                addLog("🔍 Verificando autenticación...");
+                
+                const { data: { session }, error } = await supabase.auth.getSession();
+                
+                if (error) {
+                    addLog(`❌ Error obteniendo sesión: ${error.message}`, 'error');
+                    authStatus.textContent = "Error al verificar sesión";
+                    authStatus.className = "status error";
+                    return false;
+                }
+
+                if (!session) {
+                    addLog("👤 No hay sesión activa");
+                    authStatus.textContent = "No autenticado";
+                    authStatus.className = "status warning";
+                    return false;
+                }
+
+                addLog(`✅ Sesión activa: ${session.user.email}`);
+                authStatus.textContent = "Autenticado";
+                authStatus.className = "status success";
+                
+                userDetails.innerHTML = `
+                    <p><strong>Email:</strong> ${session.user.email}</p>
+                    <p><strong>ID:</strong> ${session.user.id}</p>
+                    <p><strong>Última conexión:</strong> ${new Date(session.user.last_sign_in_at).toLocaleString()}</p>
+                `;
+                userInfo.style.display = "block";
+                return true;
+
+            } catch (error) {
+                addLog(`❌ Error verificando autenticación: ${error.message}`, 'error');
+                authStatus.textContent = "Error";
+                authStatus.className = "status error";
+                return false;
+            }
+        }
+
+        // Función para probar tablas de la base de datos
+        async function testDatabaseTables() {
+            addLog("🗄️ Probando conexión a base de datos...");
+            
+            // Probar tabla customers
+            try {
+                const startTime = Date.now();
+                const { data: customers, error: customersError } = await supabase
+                    .from("customers")
+                    .select("id")
+                    .limit(1);
+                
+                const responseTime = Date.now() - startTime;
+                
+                if (customersError) {
+                    document.getElementById("customers-test").innerHTML = `<span style="color: #dc3545;">❌ Error: ${customersError.message}</span>`;
+                    addLog(`❌ Error en tabla customers: ${customersError.message}`, 'error');
+                } else {
+                    document.getElementById("customers-test").innerHTML = `<span style="color: #28a745;">✅ OK (${responseTime}ms)</span>`;
+                    addLog(`✅ Tabla customers OK (${responseTime}ms)`);
+                }
+            } catch (error) {
+                document.getElementById("customers-test").innerHTML = `<span style="color: #dc3545;">❌ Error: ${error.message}</span>`;
+                addLog(`❌ Error probando customers: ${error.message}`, 'error');
+            }
+
+            // Probar tabla cart_items
+            try {
+                const startTime = Date.now();
+                const { data: cartItems, error: cartError } = await supabase
+                    .from("cart_items")
+                    .select("id")
+                    .limit(1);
+                
+                const responseTime = Date.now() - startTime;
+                
+                if (cartError) {
+                    document.getElementById("cart-test").innerHTML = `<span style="color: #dc3545;">❌ Error: ${cartError.message}</span>`;
+                    addLog(`❌ Error en tabla cart_items: ${cartError.message}`, 'error');
+                } else {
+                    document.getElementById("cart-test").innerHTML = `<span style="color: #28a745;">✅ OK (${responseTime}ms)</span>`;
+                    addLog(`✅ Tabla cart_items OK (${responseTime}ms)`);
+                }
+            } catch (error) {
+                document.getElementById("cart-test").innerHTML = `<span style="color: #dc3545;">❌ Error: ${error.message}</span>`;
+                addLog(`❌ Error probando cart_items: ${error.message}`, 'error');
+            }
+
+            // Probar tabla orders
+            try {
+                const startTime = Date.now();
+                const { data: orders, error: ordersError } = await supabase
+                    .from("orders")
+                    .select("id")
+                    .limit(1);
+                
+                const responseTime = Date.now() - startTime;
+                
+                if (ordersError) {
+                    document.getElementById("orders-test").innerHTML = `<span style="color: #dc3545;">❌ Error: ${ordersError.message}</span>`;
+                    addLog(`❌ Error en tabla orders: ${ordersError.message}`, 'error');
+                } else {
+                    document.getElementById("orders-test").innerHTML = `<span style="color: #28a745;">✅ OK (${responseTime}ms)</span>`;
+                    addLog(`✅ Tabla orders OK (${responseTime}ms)`);
+                }
+            } catch (error) {
+                document.getElementById("orders-test").innerHTML = `<span style="color: #dc3545;">❌ Error: ${error.message}</span>`;
+                addLog(`❌ Error probando orders: ${error.message}`, 'error');
+            }
+        }
+
+        // Función para probar rendimiento
+        async function testPerformance() {
+            addLog("⚡ Probando rendimiento...");
+            
+            // Probar tiempo de respuesta
+            try {
+                const startTime = Date.now();
+                await supabase.from("customers").select("id").limit(1);
+                const responseTime = Date.now() - startTime;
+                
+                document.getElementById("response-time").innerHTML = `<span style="color: ${responseTime > 2000 ? '#dc3545' : responseTime > 1000 ? '#ffc107' : '#28a745'};">${responseTime}ms</span>`;
+                addLog(`⏱️ Tiempo de respuesta: ${responseTime}ms`);
+            } catch (error) {
+                document.getElementById("response-time").innerHTML = `<span style="color: #dc3545;">❌ Error</span>`;
+                addLog(`❌ Error probando rendimiento: ${error.message}`, 'error');
+            }
+
+            // Probar timeout
+            try {
+                const timeoutPromise = new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error("Timeout")), 5000)
+                );
+                
+                const dbPromise = supabase.from("customers").select("id").limit(1);
+                
+                await Promise.race([dbPromise, timeoutPromise]);
+                document.getElementById("timeout-test").innerHTML = `<span style="color: #28a745;">✅ OK (sin timeout)</span>`;
+                addLog("✅ Sin problemas de timeout");
+            } catch (error) {
+                if (error.message === "Timeout") {
+                    document.getElementById("timeout-test").innerHTML = `<span style="color: #dc3545;">❌ Timeout (>5s)</span>`;
+                    addLog("❌ Timeout detectado (>5 segundos)", 'error');
+                } else {
+                    document.getElementById("timeout-test").innerHTML = `<span style="color: #dc3545;">❌ Error: ${error.message}</span>`;
+                    addLog(`❌ Error en test de timeout: ${error.message}`, 'error');
+                }
+            }
+        }
+
+        // Función para ejecutar todas las pruebas
+        async function runAllTests() {
+            addLog("🚀 Ejecutando todas las pruebas...");
+            
+            const isAuthenticated = await checkAuth();
+            await testDatabaseTables();
+            await testPerformance();
+            
+            addLog("✅ Todas las pruebas completadas");
+        }
+
+        // Event listeners
+        runTestsBtn.addEventListener("click", runAllTests);
+        
+        clearCacheBtn.addEventListener("click", () => {
+            addLog("🧹 Limpiando cache...");
+            localStorage.clear();
+            sessionStorage.clear();
+            addLog("✅ Cache limpiado");
+        });
+        
+        reloadPageBtn.addEventListener("click", () => {
+            window.location.reload();
+        });
+        
+        clearLogBtn.addEventListener("click", () => {
+            log.innerHTML = "";
+        });
+
+        // Ejecutar pruebas al cargar
+        document.addEventListener("DOMContentLoaded", async () => {
+            addLog("🚀 Iniciando diagnóstico del dashboard...");
+            await runAllTests();
+        });
+    </script>
+</body>
+</html>

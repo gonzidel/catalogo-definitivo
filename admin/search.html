@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex" />
+  <title>Búsqueda Avanzada | Admin</title>
+  <link rel="stylesheet" href="../styles.css" />
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #f5f5f5;
+    }
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 24px 20px;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 24px;
+      flex-wrap: wrap;
+    }
+    .header h1 {
+      margin: 0;
+      font-size: 28px;
+      color: #333;
+    }
+    .filters-section {
+      background: white;
+      padding: 24px;
+      border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      margin-bottom: 24px;
+    }
+    .filters-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+    .filter-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .filter-group label {
+      font-weight: 600;
+      color: #333;
+      font-size: 14px;
+    }
+    .filter-group input,
+    .filter-group select {
+      padding: 10px 12px;
+      border: 2px solid #ddd;
+      border-radius: 8px;
+      font-size: 14px;
+    }
+    .filter-group input:focus,
+    .filter-group select:focus {
+      outline: none;
+      border-color: #CD844D;
+    }
+    .filter-group .checkbox-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .filter-group .checkbox-group input[type="checkbox"] {
+      width: auto;
+    }
+    .suggestion-item {
+      padding: 10px 12px;
+      cursor: pointer;
+      border-bottom: 1px solid #f0f0f0;
+      transition: background 0.2s;
+    }
+    .suggestion-item:hover {
+      background: #f8f9fa;
+    }
+    .suggestion-item:last-child {
+      border-bottom: none;
+    }
+    .suggestion-name {
+      font-weight: 600;
+      color: #333;
+      margin-bottom: 2px;
+    }
+    .suggestion-details {
+      font-size: 12px;
+      color: #666;
+    }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      background: #CD844D;
+      color: white;
+      border-radius: 16px;
+      font-size: 13px;
+      font-weight: 500;
+    }
+    .chip-remove {
+      cursor: pointer;
+      font-weight: bold;
+      font-size: 16px;
+      line-height: 1;
+      opacity: 0.8;
+    }
+    .chip-remove:hover {
+      opacity: 1;
+    }
+    .search-actions {
+      display: flex;
+      gap: 12px;
+      margin-top: 16px;
+    }
+    .btn {
+      padding: 10px 20px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 500;
+      transition: all 0.2s;
+    }
+    .btn-primary {
+      background: #CD844D;
+      color: white;
+    }
+    .btn-primary:hover {
+      background: #B8734A;
+    }
+    .btn-secondary {
+      background: #f0f0f0;
+      color: #333;
+      border: 1px solid #ddd;
+    }
+    .btn-secondary:hover {
+      background: #e0e0e0;
+    }
+    .results-section {
+      background: white;
+      padding: 24px;
+      border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    .results-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .results-count {
+      color: #666;
+      font-size: 14px;
+    }
+    .table-container {
+      overflow-x: auto;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    thead th {
+      background: #f8f9fa;
+      padding: 12px;
+      text-align: left;
+      font-weight: 600;
+      color: #333;
+      border-bottom: 2px solid #e5e5e5;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+    tbody td {
+      padding: 12px;
+      border-bottom: 1px solid #f0f0f0;
+      vertical-align: middle;
+    }
+    tbody tr:hover {
+      background: #f8f9fa;
+    }
+    .stock-cell {
+      text-align: center;
+      font-weight: 600;
+    }
+    .stock-general {
+      color: #155724;
+    }
+    .stock-venta {
+      color: #0c5460;
+    }
+    .stock-total {
+      color: #856404;
+      font-size: 16px;
+    }
+    .status-badge {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+    .status-active {
+      background: #d4edda;
+      color: #155724;
+    }
+    .status-inactive {
+      background: #f8d7da;
+      color: #721c24;
+    }
+    .history-toggle {
+      background: none;
+      border: none;
+      color: #CD844D;
+      cursor: pointer;
+      text-decoration: underline;
+      font-size: 13px;
+      padding: 0;
+    }
+    .history-toggle:hover {
+      color: #B8734A;
+    }
+    .history-section {
+      display: none;
+      margin-top: 12px;
+      padding: 12px;
+      background: #f8f9fa;
+      border-radius: 6px;
+    }
+    .history-section.show {
+      display: block;
+    }
+    .history-item {
+      padding: 8px;
+      border-bottom: 1px solid #e5e5e5;
+      font-size: 13px;
+    }
+    .history-item:last-child {
+      border-bottom: none;
+    }
+    .history-date {
+      color: #666;
+      font-size: 12px;
+    }
+    .product-row {
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .product-row:hover {
+      background: #f0f7ff !important;
+    }
+    .product-row.expanded {
+      background: #e8f4fd !important;
+    }
+    .sizes-cell {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+    }
+    .size-box {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      border: 2px solid #ddd;
+      border-radius: 4px;
+      font-weight: 600;
+      font-size: 13px;
+      background: white;
+      color: #333;
+      width: 40px;
+      height: 40px;
+      text-align: center;
+      box-sizing: border-box;
+    }
+    .size-box.size-zero {
+      background: #fee;
+      border-color: #fcc;
+      color: #c00;
+    }
+    .size-box.size-low {
+      background: #fff4e6;
+      border-color: #ffa500;
+      color: #ff8c00;
+    }
+    .btn-expand, .btn-image {
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 16px;
+      padding: 4px 8px;
+      margin: 0 2px;
+      border-radius: 4px;
+      transition: background 0.2s;
+    }
+    .btn-expand:hover, .btn-image:hover {
+      background: #f0f0f0;
+    }
+    .details-row {
+      background: #f8f9fa;
+    }
+    .details-row td {
+      padding: 0 !important;
+    }
+    .variant-details {
+      padding: 24px;
+      background: white;
+      margin: 12px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    .variant-table {
+      width: 100%;
+      border-collapse: collapse;
+      background: white;
+    }
+    .variant-table thead th {
+      background: #f8f9fa;
+      padding: 16px;
+      text-align: center;
+      font-size: 12px;
+      font-weight: 700;
+      color: #495057;
+      border-bottom: 3px solid #dee2e6;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      white-space: nowrap;
+    }
+    .variant-table thead th:first-child {
+      text-align: center;
+      min-width: 80px;
+    }
+    .variant-table thead th:last-child {
+      text-align: left;
+      min-width: 120px;
+    }
+    .variant-table tbody td {
+      padding: 16px;
+      border-bottom: 1px solid #e9ecef;
+      font-size: 14px;
+      text-align: center;
+      vertical-align: middle;
+    }
+    .variant-table tbody td:first-child {
+      text-align: center;
+      font-weight: 700;
+      color: #212529;
+      font-size: 16px;
+      min-width: 80px;
+    }
+    .variant-table tbody td:last-child {
+      text-align: left;
+      min-width: 120px;
+    }
+    .variant-table tbody tr {
+      transition: background 0.15s;
+    }
+    .variant-table tbody tr:nth-child(even) {
+      background: #f8f9fa;
+    }
+    .variant-table tbody tr:hover {
+      background: #e9ecef;
+    }
+    .variant-table tbody tr:last-child td {
+      border-bottom: 2px solid #dee2e6;
+    }
+    .variant-table .stock-cell {
+      font-weight: 700;
+      font-size: 16px;
+      letter-spacing: 0.5px;
+      min-width: 80px;
+    }
+    .variant-table .stock-general {
+      color: #155724;
+    }
+    .variant-table .stock-venta {
+      color: #0c5460;
+    }
+    .variant-table .stock-total {
+      color: #856404;
+      font-size: 18px;
+      font-weight: 800;
+    }
+    .image-modal {
+      display: none;
+      position: fixed;
+      z-index: 10000;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.8);
+      justify-content: center;
+      align-items: center;
+    }
+    .image-modal-content {
+      position: relative;
+      max-width: 90%;
+      max-height: 90%;
+      background: white;
+      border-radius: 8px;
+      padding: 20px;
+    }
+    .image-modal-close {
+      position: absolute;
+      top: 10px;
+      right: 20px;
+      color: #aaa;
+      font-size: 32px;
+      font-weight: bold;
+      cursor: pointer;
+      line-height: 1;
+    }
+    .image-modal-close:hover {
+      color: #000;
+    }
+    .image-modal-content img {
+      max-width: 100%;
+      max-height: 80vh;
+      display: block;
+      margin: 0 auto;
+    }
+    .message {
+      padding: 12px;
+      border-radius: 6px;
+      margin-bottom: 16px;
+    }
+    .message.info {
+      background: #d1ecf1;
+      color: #0c5460;
+      border: 1px solid #bee5eb;
+    }
+    .no-results {
+      text-align: center;
+      padding: 48px;
+      color: #666;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <a href="./index.html" style="text-decoration: none; color: #333;">← Volver al panel</a>
+      <h1>Búsqueda Avanzada</h1>
+    </div>
+
+    <div class="filters-section">
+      <div class="filters-grid">
+        <div class="filter-group">
+          <label>Buscar (nombre, SKU)</label>
+          <div style="position: relative;">
+            <input 
+              type="text" 
+              id="search-input" 
+              placeholder="Buscar productos..." 
+              autocomplete="off"
+            />
+            <div id="search-suggestions" style="display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0; background: white; border: 1px solid #ddd; border-radius: 8px; max-height: 300px; overflow-y: auto; z-index: 1000; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
+              <div id="search-suggestions-list"></div>
+            </div>
+          </div>
+        </div>
+        <div class="filter-group">
+          <label>Tags</label>
+          <select id="tags-filter" class="multi-select" multiple size="5">
+            <option value="">Cargando tags...</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label>Talles</label>
+          <div style="position: relative;">
+            <input 
+              type="text" 
+              id="sizes-input" 
+              placeholder="Buscar o escribir talle..." 
+              autocomplete="off"
+              list="sizes-datalist"
+            />
+            <datalist id="sizes-datalist"></datalist>
+            <div id="sizes-chips" style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; min-height: 24px;"></div>
+          </div>
+        </div>
+        <div class="filter-group">
+          <label>Almacén</label>
+          <select id="warehouse-filter">
+            <option value="all">Todos</option>
+            <option value="general">General</option>
+            <option value="venta-publico">Venta al Público</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label>&nbsp;</label>
+          <div class="checkbox-group">
+            <input type="checkbox" id="include-inactive" />
+            <label for="include-inactive" style="font-weight: normal;">Incluir inactivos/archivados</label>
+          </div>
+        </div>
+      </div>
+      <div class="search-actions">
+        <button class="btn btn-primary" id="search-btn">Buscar</button>
+        <button class="btn btn-secondary" id="clear-btn">Limpiar</button>
+      </div>
+    </div>
+
+    <div id="message-container"></div>
+
+    <div class="results-section">
+      <div class="results-header">
+        <h2 style="margin: 0; font-size: 20px;">Resultados</h2>
+        <div class="results-count" id="results-count">0 productos encontrados</div>
+      </div>
+      <div class="table-container">
+        <table id="results-table">
+          <thead>
+            <tr>
+              <th>Producto</th>
+              <th>Categoría</th>
+              <th>Precio</th>
+              <th>Color</th>
+              <th>Talles</th>
+              <th>Stock General</th>
+              <th>Stock Venta Público</th>
+              <th>Stock Total</th>
+              <th>Estado</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="results-tbody">
+            <tr>
+              <td colspan="8" class="no-results">Realiza una búsqueda para ver resultados</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="./suppress-extension-errors.js"></script>
+  <script type="module" src="../scripts/config.js"></script>
+  <script type="module" src="../scripts/supabase-client.js"></script>
+  <script type="module" src="./admin-auth.js"></script>
+  <script type="module" src="./search.js"></script>
+</body>
+</html>
+

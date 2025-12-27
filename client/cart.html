@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Carrito - Catálogo FYL</title>
+    <link rel="stylesheet" href="../styles.css">
+    <style>
+        .cart-container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .cart-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 10px;
+        }
+        .cart-item {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 10px;
+            margin-bottom: 15px;
+            background: white;
+        }
+        .cart-item img {
+            width: 80px;
+            height: 80px;
+            object-fit: cover;
+            border-radius: 8px;
+            border: 2px solid #f0f0f0;
+            transition: transform 0.2s;
+        }
+        .cart-item img:hover {
+            transform: scale(1.05);
+        }
+        .cart-item-info {
+            flex: 1;
+        }
+        .cart-item-name {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+        .cart-item-details {
+            color: #666;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+        .cart-item-details strong {
+            color: #333;
+            font-weight: 600;
+        }
+        .cart-item-price {
+            font-size: 20px;
+            font-weight: bold;
+            color: #CD844D;
+        }
+        .quantity-controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .quantity-btn {
+            width: 30px;
+            height: 30px;
+            border: 1px solid #ddd;
+            background: white;
+            border-radius: 5px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .quantity-btn:hover {
+            background: #f8f9fa;
+        }
+        .quantity-input {
+            width: 50px;
+            text-align: center;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 5px;
+        }
+        .remove-btn {
+            background: #dc3545;
+            color: white;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        .remove-btn:hover {
+            background: #c82333;
+        }
+        .cart-summary {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 10px;
+            margin-top: 20px;
+        }
+        .summary-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+        .summary-total {
+            font-size: 24px;
+            font-weight: bold;
+            color: #CD844D;
+            border-top: 2px solid #CD844D;
+            padding-top: 10px;
+        }
+        .btn {
+            background: #CD844D;
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background 0.3s;
+        }
+        .btn:hover {
+            background: #b8733a;
+        }
+        .btn-secondary {
+            background: #6c757d;
+        }
+        .btn-secondary:hover {
+            background: #5a6268;
+        }
+        .empty-cart {
+            text-align: center;
+            padding: 60px 20px;
+            color: #666;
+        }
+        .empty-cart h2 {
+            margin-bottom: 20px;
+        }
+        .empty-cart p {
+            margin-bottom: 30px;
+        }
+    </style>
+</head>
+<body>
+    <div class="cart-container">
+        <div class="cart-header">
+            <h1>🛒 Mi Carrito</h1>
+            <div>
+                <a href="dashboard.html" class="btn btn-secondary">← Dashboard</a>
+                <a href="../index.html" class="btn btn-secondary" style="margin-left: 10px;">Continuar Comprando</a>
+            </div>
+        </div>
+
+        <div id="cart-content">
+            <div class="empty-cart">
+                <h2>Tu carrito está vacío</h2>
+                <p>Agrega algunos productos para comenzar tu compra</p>
+                <a href="../index.html" class="btn">Ver Productos</a>
+            </div>
+        </div>
+
+        <div id="cart-summary" class="cart-summary" style="display: none;">
+            <div class="summary-row">
+                <span>Subtotal:</span>
+                <span id="subtotal">$0</span>
+            </div>
+            <div class="summary-row">
+                <span>Envío:</span>
+                <span>Gratis</span>
+            </div>
+            <div class="summary-row summary-total">
+                <span>Total:</span>
+                <span id="total">$0</span>
+            </div>
+            <div style="margin-top: 20px; display: flex; gap: 15px;">
+                <button id="checkout-btn" class="btn">Finalizar Compra</button>
+                <button id="clear-cart-btn" class="btn btn-secondary">Limpiar Carrito</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="../scripts/supabase-client.js"></script>
+    <script type="module" src="../scripts/auth-wait.js"></script>
+    <script type="module" src="auth-helper.js"></script>
+    <script type="module" src="cart.js"></script>
+</body>
+</html>

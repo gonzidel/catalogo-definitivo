@@ -1,0 +1,85 @@
+para crear  una URL tipo https://staging--tu-sitio.web.app para probar sin tocar producción.
+
+firebase hosting:channel:deploy staging
+
+
+
+
+4) ¿Cómo trabajás un día normal?
+
+Imaginemos que prendés la compu y querés cambiar algo:
+
+Traé lo último
+“Traer lo que está en la vidriera a mi compu”
+
+cd D:\PROYECTOS\CATALOGO
+git pull origin main
+
+
+Creá una copia para trabajar (rama)
+
+git checkout -b feat/arreglar-botones
+
+
+Hacé tus cambios
+Editás tus archivos (HTML/JS/CSS).
+
+Saca una foto (commit) y mandala al cofre (push)
+
+git add .
+git commit -m "fix: botones de compartir y descargar"
+git push -u origin feat/arreglar-botones
+
+
+Abrí el PR en GitHub
+GitHub te muestra una URL de preview (la mesa de prueba).
+Abrila en el celular y revisá que todo ande.
+
+Si está bien → ponelo en la vidriera
+Hacés Merge del PR a main.
+(Si configuraste deploy automático, se publica solo; si no, corrés:)
+
+firebase deploy
+
+
+¿Algo salió mal?
+Botón de “volver atrás”:
+
+firebase hosting:rollback
+
+
+(o elegís una versión anterior en la consola de Firebase).
+
+
+
+
+
+
+
+
+
+
+
+# 1) iniciar día
+cd D:\PROYECTOS\CATALOGO
+git pull origin main
+
+# 2) rama nueva
+git checkout -b feat/arreglo-del-install nombre-cambio
+
+# 3) (editar archivos...)
+
+# 4) guardar y subir
+git status                  # ver qué cambió
+git add .                   # preparar todo
+git commit -m "feat: descripción corta del cambio"
+git push -u origin feat/tu-cambio
+
+# 5) abrir PR en GitHub → probar la URL de preview
+
+# 6) si OK → merge a main
+# (si no tenés deploy automático)
+firebase deploy
+
+# 7) si algo salió mal
+firebase hosting:rollback

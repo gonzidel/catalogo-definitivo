@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Debug Session Detection - Catálogo FYL</title>
+    <style>
+        body {
+            font-family: 'Poppins', sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .debug-container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .debug-section {
+            margin-bottom: 30px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+        .debug-section h3 {
+            color: #CD844D;
+            margin-top: 0;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .status.warning {
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        .log {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+        }
+        .btn {
+            padding: 10px 20px;
+            background: #CD844D;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+            text-decoration: none;
+            display: inline-block;
+        }
+        .btn:hover {
+            background: #B8734A;
+        }
+        .cliente-link {
+            position: relative;
+            right: 16px;
+            top: 16px;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            text-decoration: none;
+            color: #333;
+            background: #fff;
+            font-family: Poppins, system-ui, sans-serif;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s ease;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            cursor: pointer;
+            max-width: 200px;
+        }
+        .cliente-link:hover {
+            background: #f7f7f7;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        }
+        .cliente-link img {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 2px solid #CD844D;
+            transition: transform 0.2s ease;
+        }
+        .cliente-link:hover img {
+            transform: scale(1.05);
+        }
+    </style>
+</head>
+<body>
+    <div class="debug-container">
+        <h1>🔧 Debug Session Detection - Catálogo FYL</h1>
+        <p>Esta página diagnostica por qué el botón no detecta la sesión activa.</p>
+
+        <div class="debug-section">
+            <h3>1. Estado de Sesión Actual</h3>
+            <div id="session-status" class="status info">Verificando...</div>
+            <div id="session-details" style="display: none;">
+                <h4>Detalles de la Sesión:</h4>
+                <div id="session-info"></div>
+            </div>
+        </div>
+
+        <div class="debug-section">
+            <h3>2. Botón de Prueba</h3>
+            <div id="button-preview">
+                <a class="cliente-link" href="#" onclick="return false;">Área de Clientes</a>
+            </div>
+            <div id="click-result" class="status info">Haz click en el botón para probar</div>
+        </div>
+
+        <div class="debug-section">
+            <h3>3. Pruebas de Detección</h3>
+            <button id="test-session" class="btn">Probar Detección de Sesión</button>
+            <button id="test-click-handler" class="btn">Probar Click Handler</button>
+            <button id="force-update" class="btn">Forzar Actualización</button>
+            <button id="simulate-click" class="btn">Simular Click</button>
+        </div>
+
+        <div class="debug-section">
+            <h3>4. Log de Eventos</h3>
+            <div id="log" class="log"></div>
+            <button id="clear-log" class="btn">Limpiar Log</button>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script type="module" src="scripts/config.js"></script>
+    <script type="module" src="scripts/supabase-client.js"></script>
+    <script type="module" src="scripts/auth-status.js"></script>
+    
+    <script type="module">
+        import { supabase } from "./scripts/supabase-client.js";
+
+        const sessionStatus = document.getElementById("session-status");
+        const sessionDetails = document.getElementById("session-details");
+        const sessionInfo = document.getElementById("session-info");
+        const clickResult = document.getElementById("click-result");
+        const log = document.getElementById("log");
+        const clearLogBtn = document.getElementById("clear-log");
+        const testSessionBtn = document.getElementById("test-session");
+        const testClickHandlerBtn = document.getElementById("test-click-handler");
+        const forceUpdateBtn = document.getElementById("force-update");
+        const simulateClickBtn = document.getElementById("simulate-click");
+
+        // Función para agregar al log
+        function addLog(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('div');
+            logEntry.innerHTML = `<strong>[${timestamp}]</strong> ${message}`;
+            logEntry.style.color = type === 'error' ? '#dc3545' : type === 'success' ? '#28a745' : type === 'warning' ? '#ffc107' : '#333';
+            log.appendChild(logEntry);
+            log.scrollTop = log.scrollHeight;
+        }
+
+        // Función para verificar sesión
+        async function checkSession() {
+            try {
+                addLog("🔍 Verificando sesión...");
+                
+                const { data: { session }, error } = await supabase.auth.getSession();
+                
+                if (error) {
+                    addLog(`❌ Error obteniendo sesión: ${error.message}`, 'error');
+                    sessionStatus.textContent = "Error al verificar sesión";
+                    sessionStatus.className = "status error";
+                    return false;
+                }
+
+                if (!session) {
+                    addLog("👤 No hay sesión activa");
+                    sessionStatus.textContent = "No autenticado";
+                    sessionStatus.className = "status warning";
+                    sessionDetails.style.display = "none";
+                    return false;
+                }
+
+                addLog(`✅ Sesión activa: ${session.user.email}`);
+                sessionStatus.textContent = "Autenticado";
+                sessionStatus.className = "status success";
+                
+                sessionInfo.innerHTML = `
+                    <p><strong>Email:</strong> ${session.user.email}</p>
+                    <p><strong>ID:</strong> ${session.user.id}</p>
+                    <p><strong>Nombre:</strong> ${session.user.user_metadata?.full_name || 'No disponible'}</p>
+                    <p><strong>Avatar URL:</strong> ${session.user.user_metadata?.avatar_url || 'No disponible'}</p>
+                    <p><strong>Última conexión:</strong> ${new Date(session.user.last_sign_in_at).toLocaleString()}</p>
+                `;
+                sessionDetails.style.display = "block";
+                return true;
+
+            } catch (error) {
+                addLog(`❌ Error verificando sesión: ${error.message}`, 'error');
+                sessionStatus.textContent = "Error";
+                sessionStatus.className = "status error";
+                return false;
+            }
+        }
+
+        // Función para probar detección de sesión
+        async function testSessionDetection() {
+            addLog("🧪 Probando detección de sesión...");
+            
+            try {
+                const sessionPromise = supabase.auth.getSession();
+                const timeoutPromise = new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error("Timeout")), 2000)
+                );
+
+                const { data: { session }, error } = await Promise.race([
+                    sessionPromise,
+                    timeoutPromise
+                ]);
+
+                if (error) {
+                    addLog(`❌ Error en detección: ${error.message}`, 'error');
+                    clickResult.innerHTML = `<strong>❌ Error:</strong> ${error.message}`;
+                    clickResult.className = "status error";
+                } else if (session) {
+                    addLog(`✅ Sesión detectada: ${session.user.email}`);
+                    clickResult.innerHTML = `<strong>✅ Sesión detectada:</strong> ${session.user.email}`;
+                    clickResult.className = "status success";
+                } else {
+                    addLog("👤 No hay sesión");
+                    clickResult.innerHTML = `<strong>👤 No hay sesión</strong>`;
+                    clickResult.className = "status warning";
+                }
+            } catch (error) {
+                addLog(`❌ Error en prueba: ${error.message}`, 'error');
+                clickResult.innerHTML = `<strong>❌ Error:</strong> ${error.message}`;
+                clickResult.className = "status error";
+            }
+        }
+
+        // Función para probar click handler
+        function testClickHandler() {
+            addLog("🧪 Probando click handler...");
+            
+            const clienteLink = document.querySelector(".cliente-link");
+            if (clienteLink) {
+                addLog("✅ Botón encontrado, simulando click...");
+                clienteLink.click();
+            } else {
+                addLog("❌ Botón no encontrado", 'error');
+            }
+        }
+
+        // Función para simular click
+        function simulateClick() {
+            addLog("🖱️ Simulando click...");
+            
+            const clienteLink = document.querySelector(".cliente-link");
+            if (clienteLink) {
+                const event = new MouseEvent('click', {
+                    bubbles: true,
+                    cancelable: true,
+                    view: window
+                });
+                clienteLink.dispatchEvent(event);
+            }
+        }
+
+        // Event listeners
+        testSessionBtn.addEventListener("click", testSessionDetection);
+        testClickHandlerBtn.addEventListener("click", testClickHandler);
+        forceUpdateBtn.addEventListener("click", () => {
+            if (typeof window.forceUpdateAuth === 'function') {
+                addLog("🔄 Forzando actualización...");
+                window.forceUpdateAuth();
+            } else {
+                addLog("❌ Función forceUpdateAuth no disponible", 'error');
+            }
+        });
+        simulateClickBtn.addEventListener("click", simulateClick);
+        clearLogBtn.addEventListener("click", () => {
+            log.innerHTML = "";
+        });
+
+        // Configurar listener del botón
+        const clienteLink = document.querySelector(".cliente-link");
+        if (clienteLink) {
+            clienteLink.addEventListener("click", (e) => {
+                addLog("🖱️ Click detectado en botón");
+                e.preventDefault();
+                
+                // Probar detección de sesión
+                testSessionDetection();
+            });
+        }
+
+        // Inicializar
+        document.addEventListener("DOMContentLoaded", async () => {
+            addLog("🚀 Iniciando diagnóstico de detección de sesión...");
+            await checkSession();
+        });
+
+        // Escuchar cambios de autenticación
+        supabase.auth.onAuthStateChange((event, session) => {
+            addLog(`🔄 Cambio de autenticación: ${event}`, session ? 'success' : 'info');
+            setTimeout(() => {
+                checkSession();
+            }, 500);
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,53 @@
+{
+  "name": "Catálogo FYL",
+  "short_name": "FYL",
+  "description": "Catálogo de productos FYL - Calzado, Ropa, Lencería y Accesorios",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#E5E1DC",
+  "theme_color": "#CD844D",
+  "categories": ["shopping", "business"],
+  "lang": "es",
+  "icons": [
+    {
+      "src": "icons/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icons/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Novedades",
+      "short_name": "Novedades",
+      "description": "Ver productos nuevos",
+      "url": "/?categoria=novedades",
+      "icons": [
+        {
+          "src": "icons/icon-192x192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Ofertas",
+      "short_name": "Ofertas",
+      "description": "Ver ofertas especiales",
+      "url": "/?categoria=ofertas",
+      "icons": [
+        {
+          "src": "icons/icon-192x192.png",
+          "sizes": "192x192"
+        }
+      ]
+    }
+  ]
+}

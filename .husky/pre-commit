@@ -1,0 +1,9 @@
+#!/usr/bin/env sh
+.
+# Ejecutar escaneo de secretos solo en archivos staged antes de permitir el commit
+echo "Running staged secrets scan (pre-commit)..."
+npm run test:staged-secrets || {
+  echo "Pre-commit: staged secrets scan failed. Commit aborted." >&2
+  exit 1
+}
+echo "Pre-commit: staged secrets scan passed."

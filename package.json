@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build": "node scripts/generate-config.mjs",
     "test": "node test/check-config.js",
     "test:secrets": "node test/scan-secrets.js",
     "test:staged-secrets": "node test/scan-staged-secrets.js",

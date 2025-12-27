@@ -14,13 +14,12 @@ if (!url || !anon) {
 }
 
 const content = `// Generado automáticamente en el deploy
-window.SUPABASE_URL = ${JSON.stringify(url)};
-window.SUPABASE_ANON_KEY = ${JSON.stringify(anon)};
+export const SUPABASE_URL = ${JSON.stringify(url)};
+export const SUPABASE_ANON_KEY = ${JSON.stringify(anon)};
 `;
 
-// Generar en la raíz del proyecto (un nivel arriba de scripts/)
-const rootDir = path.join(__dirname, "..");
-const outputPath = path.join(rootDir, "config.local.js");
+// Generar en scripts/config.local.js (mismo directorio que este script)
+const outputPath = path.join(__dirname, "config.local.js");
 fs.writeFileSync(outputPath, content, "utf8");
-console.log("OK: config.local.js generado");
+console.log(`OK: config.local.js generado en ${outputPath}`);
 

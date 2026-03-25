@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex" />
+  <title>Imágenes Faltantes | Admin</title>
+  <link rel="stylesheet" href="../styles.css" />
+  <style>
+    body{margin:0;padding:0;font-size:14px;background:#f5f7fa;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+    .container{max-width:1400px;margin:0 auto;padding:20px}
+    h1{font-size:24px;margin:0 0 8px;color:#1a1a1a;font-weight:600}
+    .subtitle{color:#666;font-size:14px;margin-bottom:20px;line-height:1.5}
+    .card{background:#fff;border-radius:12px;padding:20px;margin-bottom:20px;box-shadow:0 2px 8px rgba(0,0,0,0.08);border:1px solid #e5e7eb}
+    .filters{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:16px;background:#f9fafb;border-radius:8px;margin-bottom:16px}
+    .filters label{display:flex;flex-direction:row;align-items:center;gap:8px;font-weight:500;color:#374151;cursor:pointer}
+    .filters input[type="checkbox"]{width:18px;height:18px;cursor:pointer;accent-color:#3a6df0}
+    .btn{padding:10px 16px;border:none;border-radius:8px;background:#3a6df0;color:#fff;cursor:pointer;font-size:14px;font-weight:500;white-space:nowrap;transition:all 0.2s;display:inline-flex;align-items:center;gap:6px}
+    .btn:hover{background:#2f5fe0;transform:translateY(-1px);box-shadow:0 4px 12px rgba(58,109,240,0.3)}
+    .btn:active{transform:translateY(0)}
+    .btn.secondary{background:#6b7280;color:#fff}
+    .btn.secondary:hover{background:#4b5563}
+    .btn.small{font-size:12px;padding:6px 12px}
+    .count-display{font-size:14px;color:#6b7280;font-weight:500;padding:8px 12px;background:#fff;border-radius:6px;border:1px solid #e5e7eb}
+    .message{padding:12px 16px;border-radius:8px;margin:16px 0;font-size:14px;display:flex;align-items:center;gap:8px}
+    .message.ok{background:#d1fae5;color:#065f46;border:1px solid #a7f3d0}
+    .message.err{background:#fee2e2;color:#991b1b;border:1px solid #fecaca}
+    .message.info{background:#dbeafe;color:#1e40af;border:1px solid #bfdbfe}
+    .variants-wrapper{overflow-x:auto;width:100%;border-radius:8px;border:1px solid #e5e7eb}
+    #variants-table{width:100%;min-width:1000px;border-collapse:collapse;font-size:14px;background:#fff}
+    #variants-table thead{background:#f9fafb}
+    #variants-table thead th{position:sticky;top:0;background:#f9fafb;border-bottom:2px solid #e5e7eb;z-index:10;padding:12px 16px;font-size:12px;font-weight:600;white-space:nowrap;color:#374151;text-align:left}
+    #variants-table tbody tr{border-bottom:1px solid #f3f4f6;transition:background 0.15s}
+    #variants-table tbody tr:hover{background:#f9fafb}
+    #variants-table tbody tr:last-child{border-bottom:none}
+    #variants-table td{padding:16px;vertical-align:middle;color:#1f2937}
+    #variants-table td strong{color:#111827;font-weight:600}
+    #variants-table td small{color:#6b7280;font-size:12px;display:block;margin-top:4px}
+    #variants-table code{background:#f3f4f6;padding:4px 8px;border-radius:4px;font-size:12px;font-family:"SF Mono",Monaco,Consolas,"Liberation Mono","Courier New",monospace;color:#1f2937}
+    .status-badge{padding:4px 10px;border-radius:6px;font-size:11px;font-weight:600;display:inline-block;text-transform:uppercase;letter-spacing:0.5px}
+    .status-active{background:#d1fae5;color:#065f46}
+    .status-draft{background:#fef3c7;color:#92400e}
+    .status-pending{background:#dbeafe;color:#1e40af}
+    .status-archived{background:#fee2e2;color:#991b1b}
+    .status-inactive{background:#e5e7eb;color:#374151}
+    .image-actions{display:flex;gap:8px;flex-direction:column}
+    .image-actions .btn{width:100%;justify-content:center;font-size:12px;padding:8px 12px}
+    input[type="file"]{display:none}
+    /* Modal para URLs */
+    .modal-overlay{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
+    .modal-overlay.active{display:flex}
+    .modal{background:#fff;border-radius:12px;padding:24px;max-width:600px;width:90%;max-height:80vh;overflow-y:auto;box-shadow:0 20px 25px -5px rgba(0,0,0,0.1),0 10px 10px -5px rgba(0,0,0,0.04)}
+    .modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;padding-bottom:16px;border-bottom:2px solid #e5e7eb}
+    .modal-header h3{margin:0;font-size:18px;font-weight:600;color:#111827}
+    .modal-close{background:none;border:none;font-size:24px;color:#6b7280;cursor:pointer;padding:0;width:32px;height:32px;display:flex;align-items:center;justify-content:center;border-radius:6px;transition:all 0.2s}
+    .modal-close:hover{background:#f3f4f6;color:#111827}
+    .modal-body{margin-bottom:20px}
+    .modal-body label{display:block;margin-bottom:8px;font-weight:500;color:#374151;font-size:14px}
+    .modal-body textarea{width:100%;min-height:200px;padding:12px;border:2px solid #e5e7eb;border-radius:8px;font-size:13px;font-family:monospace;resize:vertical;box-sizing:border-box;transition:border-color 0.2s}
+    .modal-body textarea:focus{outline:none;border-color:#3a6df0;box-shadow:0 0 0 3px rgba(58,109,240,0.1)}
+    .url-input-wrapper{display:flex;gap:8px;align-items:center}
+    .url-input-wrapper input{flex:1;padding:10px 12px;border:2px solid #e5e7eb;border-radius:8px;font-size:13px;font-family:monospace;transition:border-color 0.2s}
+    .url-input-wrapper input:focus{outline:none;border-color:#3a6df0;box-shadow:0 0 0 3px rgba(58,109,240,0.1)}
+    .url-input-wrapper .remove-btn{background:#fee2e2;color:#991b1b;border:none;padding:8px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:500;transition:all 0.2s;white-space:nowrap}
+    .url-input-wrapper .remove-btn:hover{background:#fecaca}
+    .url-input-wrapper .remove-btn:disabled{display:none}
+    .modal-body .hint{color:#6b7280;font-size:12px;margin-top:8px;line-height:1.5}
+    .modal-footer{display:flex;gap:12px;justify-content:flex-end;padding-top:16px;border-top:2px solid #e5e7eb}
+    .modal-footer .btn{min-width:100px}
+    /* Estilos para preview de imágenes */
+    .image-preview-item{position:relative;border:2px solid #e5e7eb;border-radius:8px;padding:8px;background:#fff;transition:all 0.2s}
+    .image-preview-item:hover{border-color:#3a6df0}
+    .image-preview-item input[type="radio"]:checked + label{background:#3a6df0;color:#fff}
+    .preview-image{width:100%;height:150px;object-fit:cover;border-radius:4px;margin-bottom:8px}
+    .main-label-wrapper{display:flex;align-items:center;gap:6px;justify-content:center}
+    .main-label-wrapper input[type="radio"]{cursor:pointer}
+    .main-label-wrapper label{cursor:pointer;font-size:12px;padding:4px 8px;border-radius:4px;background:#f3f4f6;color:#374151;transition:all 0.2s}
+    .main-label-wrapper input[type="radio"]:checked ~ label{background:#3a6df0;color:#fff}
+    /* Estilos para modal de tags */
+    .tag-chip{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:#e8f4f8;border:1px solid #b3d9e6;border-radius:16px;font-size:12px;margin:2px}
+    .tag-chip button{background:none;border:none;cursor:pointer;color:#666;font-size:14px;padding:0;width:16px;height:16px;display:flex;align-items:center;justify-content:center}
+    .tag-chip button:hover{color:#c33}
+    .card{background:#fff;border:1px solid #e5e5e5;border-radius:8px;padding:16px;margin-bottom:16px}
+    .card legend{padding:0 8px;font-size:14px;font-weight:600;color:#2c3e50}
+    /* Estilos para tarjetas de producto */
+    .product-card{background:#fff;border:2px solid #e5e7eb;border-radius:12px;padding:20px;margin-bottom:20px;box-shadow:0 2px 8px rgba(0,0,0,0.08);transition:all 0.2s}
+    .product-card:hover{box-shadow:0 4px 12px rgba(0,0,0,0.12);border-color:#3a6df0}
+    .product-card-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;padding-bottom:12px;border-bottom:2px solid #f3f4f6}
+    .product-card-title{flex:1}
+    .product-card-title h3{margin:0 0 4px;font-size:18px;font-weight:600;color:#111827}
+    .product-card-title small{color:#6b7280;font-size:12px;display:block;margin-top:4px}
+    .product-card-meta{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .product-card-count{font-size:12px;color:#6b7280;padding:4px 8px;background:#f9fafb;border-radius:6px}
+    .variants-list{margin-top:16px}
+    .variant-item{display:flex;align-items:center;gap:12px;padding:12px;background:#f9fafb;border-radius:8px;margin-bottom:8px;border:1px solid #e5e7eb}
+    .variant-item:last-child{margin-bottom:0}
+    .variant-info{flex:1;display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+    .variant-sku{background:#f3f4f6;padding:4px 8px;border-radius:4px;font-size:11px;font-family:monospace;color:#1f2937}
+    .variant-color{font-size:13px;color:#374151}
+    .variant-actions{display:flex;gap:8px}
+    .variant-actions .btn{font-size:12px;padding:6px 12px}
+    .pending-images-section{margin-top:16px;padding:12px;background:#fef3c7;border:1px solid #fbbf24;border-radius:8px;display:none}
+    .pending-images-section.has-pending{display:block}
+    .pending-images-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+    .pending-images-header h4{margin:0;font-size:14px;font-weight:600;color:#92400e}
+    .pending-images-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px;margin-bottom:12px}
+    .pending-image-item{position:relative;border:2px solid #e5e7eb;border-radius:6px;overflow:hidden;background:#fff}
+    .pending-image-item img{width:100%;height:100px;object-fit:cover;display:block}
+    .pending-image-item .remove-btn{position:absolute;top:4px;right:4px;background:#fee2e2;color:#991b1b;border:none;width:24px;height:24px;border-radius:4px;cursor:pointer;font-size:12px;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 4px rgba(0,0,0,0.2)}
+    .pending-image-item .remove-btn:hover{background:#fecaca}
+    .pending-image-label{position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.7);color:#fff;font-size:10px;padding:4px;text-align:center}
+    .save-product-btn{width:100%;padding:12px;font-size:14px;font-weight:600;background:#10b981;color:#fff;border:none;border-radius:8px;cursor:pointer;transition:all 0.2s;display:none}
+    .save-product-btn:hover{background:#059669;transform:translateY(-1px);box-shadow:0 4px 12px rgba(16,185,129,0.3)}
+    .save-product-btn:disabled{background:#9ca3af;cursor:not-allowed;transform:none;box-shadow:none}
+    .save-product-btn.has-pending{display:block}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>📷 Imágenes Faltantes</h1>
+    <p class="subtitle">
+      Detecta y carga imágenes para variantes que no tienen fotos. Por defecto se muestran solo variantes/productos que NO están en estado "active".
+    </p>
+
+    <section class="card">
+      <div class="filters">
+        <label>
+          <input type="checkbox" id="show-active" />
+          Mostrar también variantes/productos activos
+        </label>
+        <button id="refresh-btn" class="btn">🔄 Actualizar</button>
+        <div style="flex:1"></div>
+        <span id="count-display" class="count-display">Cargando...</span>
+      </div>
+    </section>
+
+    <div id="status-message" class="message" style="display:none;"></div>
+
+    <section class="card" style="padding:0">
+      <div id="products-cards-container" style="padding:20px">
+        <div style="text-align:center;padding:40px;color:#9ca3af">
+          <div style="font-size:16px;margin-bottom:8px">⏳</div>
+          Cargando variantes sin imágenes...
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Modal para cargar URLs -->
+  <div id="url-modal" class="modal-overlay">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>🔗 Cargar Imágenes desde URLs</h3>
+        <button class="modal-close" id="modal-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <label>
+          Ingresá las URLs de Cloudinary (mínimo 1, máximo 10):
+        </label>
+        <div id="url-inputs-container" style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">
+          <!-- Los inputs se generarán dinámicamente -->
+        </div>
+        <button type="button" id="add-url-btn" class="btn secondary small" style="width:auto;margin-bottom:12px">
+          ➕ Agregar URL
+        </button>
+        <div class="hint">
+          <strong>Ejemplo:</strong><br/>
+          https://res.cloudinary.com/dnuedzuzm/image/upload/v1234567890/productos/calzado/ZAP343-NEG-1.jpg
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn secondary" id="modal-cancel">Cancelar</button>
+        <button class="btn" id="modal-submit">Cargar URLs</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal para preview y selección de imagen principal -->
+  <div id="image-preview-modal" class="modal-overlay">
+    <div class="modal" style="max-width:900px">
+      <div class="modal-header">
+        <h3>📷 Seleccionar Imagen Principal</h3>
+        <button class="modal-close" id="image-preview-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p style="margin-bottom:16px;color:#666">Seleccioná cuál imagen será la principal (se mostrará primero en el catálogo):</p>
+        <div id="image-preview-container" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:16px;max-height:500px;overflow-y:auto;padding:8px">
+          <!-- Los previews se generarán dinámicamente -->
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn secondary" id="image-preview-cancel">Cancelar</button>
+        <button class="btn" id="image-preview-finish">Terminar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal para cargar tags jerárquicos -->
+  <div id="tags-modal" class="modal-overlay">
+    <div class="modal" style="max-width:800px">
+      <div class="modal-header">
+        <h3>🏷️ Completar Tags Jerárquicos (Obligatorio)</h3>
+        <button class="modal-close" id="tags-modal-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p style="margin-bottom:16px;color:#c00;font-weight:600">⚠️ Este producto no tiene tags cargados. Debes completarlos para continuar.</p>
+        <fieldset class="card" style="border:1px solid #e5e5e5;border-radius:8px;padding:16px;background:#fff;margin-bottom:16px">
+          <legend style="padding:0 8px;font-size:14px;font-weight:600;color:#2c3e50">Tags Jerárquicos</legend>
+          <div>
+            <label style="display:flex;flex-direction:column;gap:6px;font-weight:600;font-size:13px;color:#333;margin-bottom:12px">
+              Tags1 (Nivel 1)
+              <select id="tags-modal-tag1-select" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:6px;font-size:13px">
+                <option value="">-- Seleccionar Tags1 --</option>
+              </select>
+              <div style="display:flex;gap:6px;margin-top:6px;align-items:center">
+                <input type="text" id="tags-modal-tag1-new" placeholder="O crear nuevo Tags1..." style="flex:1;padding:6px 10px;font-size:12px;border:1px solid #ddd;border-radius:6px" />
+                <button type="button" id="tags-modal-tag1-create" class="btn" style="padding:6px 16px;font-size:12px;white-space:nowrap">➕ Crear</button>
+              </div>
+            </label>
+            <label style="display:flex;flex-direction:column;gap:6px;font-weight:600;font-size:13px;color:#333;margin-bottom:12px">
+              Tags2 (Nivel 2)
+              <select id="tags-modal-tag2-select" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:6px;font-size:13px" disabled>
+                <option value="">-- Primero selecciona Tags1 --</option>
+              </select>
+              <div style="display:flex;gap:6px;margin-top:6px;align-items:center">
+                <input type="text" id="tags-modal-tag2-new" placeholder="O crear nuevo Tags2..." style="flex:1;padding:6px 10px;font-size:12px;border:1px solid #ddd;border-radius:6px" disabled />
+                <button type="button" id="tags-modal-tag2-create" class="btn" style="padding:6px 16px;font-size:12px;white-space:nowrap" disabled>➕ Crear</button>
+              </div>
+            </label>
+            <label style="display:flex;flex-direction:column;gap:6px;font-weight:600;font-size:13px;color:#333;margin-bottom:12px">
+              Tags3 (Nivel 3) - Máx 2
+              <select id="tags-modal-tag3-select" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:6px;font-size:13px" disabled multiple>
+                <option value="">-- Primero selecciona Tags2 --</option>
+              </select>
+              <div style="display:flex;gap:6px;margin-top:6px;align-items:center">
+                <input type="text" id="tags-modal-tag3-new" placeholder="O crear nuevo Tags3..." style="flex:1;padding:6px 10px;font-size:12px;border:1px solid #ddd;border-radius:6px" disabled />
+                <button type="button" id="tags-modal-tag3-create" class="btn" style="padding:6px 16px;font-size:12px;white-space:nowrap" disabled>➕ Crear</button>
+              </div>
+              <div id="tags-modal-tag3-chips" style="display:flex;gap:4px;flex-wrap:wrap;margin-top:8px"></div>
+            </label>
+            <small style="color:#666;font-size:11px;line-height:1.4;margin-top:4px;display:block">Seleccioná Tags1, luego Tags2, y finalmente hasta 2 Tags3. Los Tags3 se pueden compartir entre diferentes Tags2 del mismo Tags1.</small>
+          </div>
+          <div style="margin-top:12px;padding:8px;background:#f0f7ff;border:1px solid #3a6df0;border-radius:4px">
+            <button type="button" id="tags-modal-auto-tags-btn" class="btn primary" style="width:100%;padding:8px;font-size:12px">
+              🤖 Auto-tags con IA
+            </button>
+            <span id="tags-modal-auto-tags-status" style="display:block;margin-top:6px;font-size:11px;color:#666"></span>
+          </div>
+        </fieldset>
+      </div>
+      <div class="modal-footer">
+        <button class="btn secondary" id="tags-modal-cancel-btn">Cancelar</button>
+        <button class="btn" id="tags-modal-save-btn">Guardar Tags</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="../scripts/config.js"></script>
+  <script type="module" src="../scripts/supabase-client.js"></script>
+  <script type="module" src="./missing-images.js"></script>
+</body>
+</html>
+

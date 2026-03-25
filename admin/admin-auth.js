@@ -122,6 +122,7 @@ async function updateSessionUI() {
       
       if (!userIsAdmin) {
         console.log("⚠️ Usuario no autorizado como admin, mostrando mensaje");
+        const userEmail = data.session.user?.email || "";
         // Marcar como loaded solo cuando vamos a mostrar el login
         const authSection = document.getElementById("auth-section");
         if (authSection) {
@@ -131,7 +132,20 @@ async function updateSessionUI() {
         loginForm.style.display = "block";
         loggedBox.style.display = "none";
         if (loginErr) {
-          loginErr.textContent = "No tienes autorización para acceder al panel de administración. Solo los administradores autorizados pueden acceder.";
+          loginErr.innerHTML = `
+            <div style="color: #e74c3c; background: #f8d7da; padding: 16px; border-radius: 8px; border: 1px solid #f5c6cb; margin-top: 12px;">
+              <strong>⚠️ Acceso no autorizado</strong>
+              <p style="margin: 12px 0 8px 0; font-size: 14px;">
+                Tu cuenta <strong>${userEmail}</strong> no tiene permisos para acceder al panel de administración.
+              </p>
+              <p style="margin: 0; font-size: 13px; color: #721c24;">
+                Para obtener acceso, un super administrador debe agregarte como colaborador desde la página de <strong>Colaboradores</strong>.
+              </p>
+              <p style="margin: 8px 0 0 0; font-size: 12px; color: #856404;">
+                Si crees que esto es un error, contacta al super administrador.
+              </p>
+            </div>
+          `;
           loginErr.style.color = "#e74c3c";
         }
         // Cerrar sesión automáticamente
@@ -204,6 +218,7 @@ window.updateSessionUI = updateSessionUI;
 
 // Entrar
 document.addEventListener("DOMContentLoaded", () => {
+  console.log("📋 DOMContentLoaded - Configurando eventos de login");
   const { loginBtn, loginErr, emailEl, passEl } = getDOMElements();
   
   if (loginBtn) {
@@ -235,12 +250,30 @@ document.addEventListener("DOMContentLoaded", () => {
           console.error("Mensaje:", error.message);
           
           // Mensaje más descriptivo según el tipo de error
+          let errorMessage = "";
           if (error.message.includes("Invalid login credentials")) {
-            elements.loginErr.textContent = "Credenciales inválidas. Si te registraste con Google, necesitas establecer una contraseña primero. Contacta al administrador.";
+            errorMessage = "Credenciales inválidas. Verifica tu email y contraseña.";
+          } else if (error.message.includes("Email not confirmed")) {
+            errorMessage = "Tu email no está confirmado. Revisa tu bandeja de entrada.";
+          } else if (error.message.includes("Email rate limit")) {
+            errorMessage = "Demasiados intentos. Espera unos minutos antes de intentar de nuevo.";
+          } else if (error.message.includes("User not found")) {
+            errorMessage = "Usuario no encontrado. ¿Necesitas registrarte? Usa el botón 'Registrarme (dev)'.";
+          } else if (error.message.includes("redirect")) {
+            errorMessage = "Error de redirección. Verifica que la URL esté configurada en Supabase.";
           } else {
-            elements.loginErr.textContent = error.message;
+            errorMessage = error.message || "Error al iniciar sesión. Intenta de nuevo.";
           }
+          
+          elements.loginErr.textContent = errorMessage;
           elements.loginErr.style.color = "#e74c3c";
+          
+          // Mostrar sugerencias adicionales en la consola
+          console.warn("💡 Sugerencias:");
+          console.warn("  1. Verifica que tu email y contraseña sean correctos");
+          console.warn("  2. Si te registraste con Google, necesitas establecer una contraseña");
+          console.warn("  3. Verifica que las URLs de redirección estén configuradas en Supabase");
+          console.warn("  4. Revisa SOLUCION_LOGIN_ADMIN.md para más ayuda");
           return;
         }
 
@@ -447,6 +480,94 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  // Login con Google OAuth - usando event delegation para mayor robustez
+  console.log("🔍 Configurando botón de Google OAuth...");
+  
+  // Función para manejar el click del botón de Google
+  async function handleGoogleLogin(e) {
+    // Verificar si el click fue en el botón o en un elemento dentro del botón
+    const btn = e.target.closest("#google-login-btn");
+    if (!btn) return;
+    
+    e.preventDefault();
+    e.stopPropagation();
+    console.log("🖱️ Click en botón de Google detectado");
+    
+    const elements = getDOMElements();
+    if (!elements.loginErr) {
+      console.error("❌ Elemento loginErr no encontrado");
+      return;
+    }
+
+    elements.loginErr.textContent = "";
+    btn.disabled = true;
+    const originalHTML = btn.innerHTML;
+    btn.textContent = "Redirigiendo a Google...";
+
+    try {
+      console.log("🔐 Iniciando login con Google OAuth...");
+      const redirectUrl = `${window.location.origin}/admin/index.html`;
+      console.log("📍 URL de redirección:", redirectUrl);
+
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: redirectUrl,
+          queryParams: {
+            prompt: "select_account",
+            access_type: "offline",
+          },
+        },
+      });
+
+      if (error) {
+        console.error("❌ Error en OAuth:", error);
+        elements.loginErr.textContent = `Error: ${error.message}`;
+        elements.loginErr.style.color = "#e74c3c";
+        btn.disabled = false;
+        btn.innerHTML = originalHTML;
+      } else {
+        console.log("✅ Redirigiendo a Google...");
+        // La redirección se hará automáticamente
+      }
+    } catch (e) {
+      console.error("❌ Error en login con Google:", e);
+      elements.loginErr.textContent = `Error: ${e.message || String(e)}`;
+      elements.loginErr.style.color = "#e74c3c";
+      btn.disabled = false;
+      btn.innerHTML = originalHTML;
+    }
+  }
+  
+  // Usar event delegation en el documento para capturar clicks
+  // Esto funciona incluso si el botón se carga después
+  document.addEventListener("click", handleGoogleLogin);
+  console.log("✅ Event listener configurado con event delegation");
+  
+  // También intentar configurar directamente el botón si ya existe
+  const googleLoginBtn = document.getElementById("google-login-btn");
+  if (googleLoginBtn) {
+    console.log("✅ Botón encontrado, configurando listener directo también");
+    googleLoginBtn.addEventListener("click", handleGoogleLogin);
+  } else {
+    console.log("⚠️ Botón no encontrado aún, usando solo event delegation");
+    // Intentar varias veces con delay para encontrar el botón
+    let attempts = 0;
+    const maxAttempts = 30;
+    const checkInterval = setInterval(() => {
+      attempts++;
+      const btn = document.getElementById("google-login-btn");
+      if (btn) {
+        console.log(`✅ Botón encontrado en intento ${attempts}, agregando listener directo`);
+        btn.addEventListener("click", handleGoogleLogin);
+        clearInterval(checkInterval);
+      } else if (attempts >= maxAttempts) {
+        console.log("⚠️ Botón no encontrado después de múltiples intentos, usando solo event delegation");
+        clearInterval(checkInterval);
+      }
+    }, 200);
+  }
+
   // Cerrar sesión (bloque logueado)
   const { logoutBtn } = getDOMElements();
   if (logoutBtn) {
@@ -490,8 +611,39 @@ async function initializeUI() {
     console.log("🔍 Iniciando verificación de sesión...");
     console.log("📍 URL actual:", window.location.href);
     
-    // Verificar si hay un error de reset de contraseña en la URL
+    // Verificar si hay un hash de OAuth o reset de contraseña en la URL
     const hash = window.location.hash;
+    
+    // Manejar retorno de OAuth (Google)
+    if (hash && (hash.includes("access_token") || hash.includes("type=recovery"))) {
+      console.log("🔄 Procesando retorno de OAuth...");
+      // Esperar un momento para que Supabase procese el hash
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Verificar si la sesión se estableció correctamente
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      
+      if (sessionError) {
+        console.error("❌ Error procesando OAuth:", sessionError);
+        const elements = getDOMElements();
+        if (elements.loginErr) {
+          elements.loginErr.textContent = `Error al procesar autenticación: ${sessionError.message}`;
+          elements.loginErr.style.color = "#e74c3c";
+        }
+      } else if (sessionData?.session) {
+        console.log("✅ OAuth exitoso, sesión establecida");
+        // Limpiar el hash de la URL
+        window.history.replaceState(null, '', window.location.pathname);
+        // Actualizar la UI para mostrar el dashboard
+        await updateSessionUI();
+        return;
+      }
+      
+      // Limpiar el hash después de procesarlo
+      window.history.replaceState(null, '', window.location.pathname);
+    }
+    
+    // Verificar si hay un error de reset de contraseña en la URL
     if (hash.includes("error=") && hash.includes("otp_expired")) {
       const params = new URLSearchParams(hash.substring(1));
       const errorDescription = params.get("error_description") || "El enlace ha expirado";

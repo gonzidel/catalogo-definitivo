@@ -1,0 +1,945 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <!-- Cache bust móvil: cambiá m250324 en todo el archivo (+ sw.js CACHE_NAME + import en main-supabase.js) -->
+  <meta name="app-version" content="m250324">
+  <title>Catálogo FYL</title>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="manifest" href="manifest.json?v=m250324">
+  <link rel="stylesheet" href="styles.css?v=m250324">
+  <link rel="icon" href="icons/icon-192x192.png" type="image/png">
+  <meta name="theme-color" content="#CD844D">
+  
+  <style>
+    /* Estilos inline para header y elementos críticos */
+    header { position: relative; }
+    
+    .cliente-link { 
+      position: static;
+      padding: 4px 8px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      text-decoration: none;
+      color: #333;
+      background: #fff;
+      font-family: Poppins, system-ui, sans-serif;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      transition: all 0.2s ease;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      cursor: pointer;
+    }
+    
+    .cliente-link:hover { 
+      background: #f7f7f7;
+    }
+    
+    .cliente-link img {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      object-fit: cover;
+      border: 2px solid #CD844D;
+    }
+    
+    .user-dropdown {
+      position: absolute;
+      top: 100%;
+      right: 0;
+      background: white;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      z-index: 1000;
+      min-width: 200px;
+      display: none;
+      animation: dropdownFadeIn 0.2s ease;
+    }
+    
+    @keyframes dropdownFadeIn {
+      from { opacity: 0; transform: translateY(-10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    
+    .user-dropdown a:hover,
+    .user-dropdown button:hover {
+      background: #f8f9fa !important;
+    }
+    
+    /* Modal de login */
+    body.modal-open { overflow: hidden; }
+    
+    #login-modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.45);
+      backdrop-filter: blur(6px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 3000;
+      padding: 20px;
+    }
+    
+    #login-modal.active { display: flex; }
+    
+    .login-modal-card {
+      width: min(420px, 100%);
+      background: #fff;
+      border-radius: 16px;
+      padding: 32px;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.25);
+      position: relative;
+      text-align: center;
+      font-family: Poppins, system-ui, sans-serif;
+      animation: modalFadeIn 0.25s ease;
+    }
+    
+    .login-modal-close {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      background: transparent;
+      border: none;
+      font-size: 20px;
+      color: #888;
+      cursor: pointer;
+    }
+    
+    .login-modal-close:hover { color: #444; }
+    
+    .login-modal-card h2 {
+      margin: 12px 0 8px;
+      color: #333;
+    }
+    
+    .login-modal-card p {
+      color: #666;
+      font-size: 14px;
+      margin-bottom: 24px;
+    }
+    
+    .login-modal-google {
+      width: 100%;
+      padding: 12px 20px;
+      background: #4285f4;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.2s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    
+    .login-modal-google:hover:not([disabled]) { background: #3367d6; }
+    .login-modal-google[disabled] {
+      background: #9cbaf9;
+      cursor: not-allowed;
+    }
+    
+    .login-modal-msg {
+      margin-top: 18px;
+      font-size: 14px;
+      color: #c0392b;
+      display: none;
+    }
+    
+    .login-modal-msg.visible { display: block; }
+    
+    @keyframes modalFadeIn {
+      from { transform: translateY(15px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+
+    /* Banner Promocional */
+    .promotional-banner {
+      background: #CD844D;
+      color: white;
+      padding: 10px 16px;
+      margin: 0 0.75rem;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      font-size: 13px;
+      font-weight: 500;
+      margin-bottom: 0.75rem;
+    }
+
+    .promotional-banner:hover {
+      background: #B8734A;
+      transform: translateY(-1px);
+    }
+
+    .promotional-banner-text {
+      flex: 1;
+    }
+
+    .promotional-banner-arrow {
+      margin-left: 8px;
+      font-size: 16px;
+    }
+
+    @media (max-width: 414px) {
+      .promotional-banner {
+        font-size: 12px;
+        padding: 8px 12px;
+      }
+    }
+
+    /* Ocultar en desktop */
+    @media (min-width: 768px) {
+      .promotional-banner {
+        display: none;
+      }
+    }
+  </style>
+
+  <!-- Google Analytics -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-2JDYZW1KD6"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-2JDYZW1KD6');
+  </script>
+  
+  <!-- Suprimir errores 401 esperados de Supabase cuando no hay sesión activa -->
+  <script>
+    (function() {
+      const originalFetch = window.fetch;
+      window.fetch = function(...args) {
+        return originalFetch.apply(this, args).catch(error => {
+          const url = args[0]?.toString() || '';
+          if (url.includes('/auth/v1/user') && error.message && error.message.includes('401')) {
+            return Promise.reject(error);
+          }
+          throw error;
+        });
+      };
+    })();
+    
+    (function() {
+      if (typeof window !== 'undefined' && window.addEventListener) {
+        window.addEventListener('unhandledrejection', function(event) {
+          const error = event.reason;
+          const url = error?.url || error?.config?.url || '';
+          if (url.includes('/auth/v1/user') && (error?.status === 401 || error?.statusCode === 401)) {
+            event.preventDefault();
+            return false;
+          }
+        });
+      }
+    })();
+  </script>
+  <!-- Microsoft Clarity -->
+  <script type="text/javascript">
+    (function(c,l,a,r,i,t,y){
+        c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
+        t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
+        y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
+    })(window, document, "clarity", "script", "vuuq665971");
+  </script>
+</head>
+<body class="catalog-boot-active">
+  <!-- Bloqueo hasta que el catálogo termine de inicializar (main-supabase.js) -->
+  <div id="catalog-boot-overlay" class="catalog-boot-overlay" aria-busy="true" aria-live="polite" role="status">
+    <div class="catalog-boot-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+    <span class="visually-hidden">Cargando catálogo…</span>
+  </div>
+  <script>
+    (function () {
+      var LIMIT_MS = 65000;
+      var MAX_LIMIT_MS = 120000;
+      var WARN_MS = 20000;
+      var RETRY_STEP_MS = 15000;
+      var startTs = Date.now();
+
+      function overlayStillVisible(ov) {
+        if (!ov || ov.classList.contains("catalog-boot-overlay--hidden")) return false;
+        if (ov.style.display === "none") return false;
+        return true;
+      }
+
+      var warnId = setTimeout(function () {
+        var ov = document.getElementById("catalog-boot-overlay");
+        if (!overlayStillVisible(ov)) return;
+        if (document.getElementById("catalog-boot-slow-msg")) return;
+        var p = document.createElement("p");
+        p.id = "catalog-boot-slow-msg";
+        p.setAttribute("role", "status");
+        p.style.cssText =
+          "text-align:center;padding:0 1.25rem;margin:1rem 0 0;color:#666;font-family:Poppins,system-ui,sans-serif;font-size:14px;line-height:1.45;max-width:22rem;";
+        p.textContent =
+          "La carga está tardando más de lo normal. Verificá tu conexión o cambiá entre Wi-Fi y datos.";
+        ov.appendChild(p);
+      }, WARN_MS);
+
+      function shouldExtendTimeout() {
+        try {
+          var boot = window.__FYL_BOOT__;
+          if (!boot || !Array.isArray(boot.stages) || boot.stages.length === 0) return false;
+          var last = boot.stages[boot.stages.length - 1];
+          var nowPerf = (typeof performance !== "undefined" && performance.now) ? performance.now() : 0;
+          // Si hubo actividad reciente de arranque, todavía no asumimos fallo de red.
+          return !!last && typeof last.t === "number" && (nowPerf - last.t) < 12000;
+        } catch (_) {
+          return false;
+        }
+      }
+
+      function showHardTimeout() {
+        var ov = document.getElementById("catalog-boot-overlay");
+        // Si el overlay ya se ocultó, el catálogo sigue cargando en #catalogo (container suele estar vacío o ausente): no es fallo de red.
+        if (!overlayStillVisible(ov)) return;
+        if ((Date.now() - startTs) < MAX_LIMIT_MS && shouldExtendTimeout()) {
+          limitId = setTimeout(showHardTimeout, RETRY_STEP_MS);
+          return;
+        }
+        ov.classList.add("catalog-boot-overlay--hidden");
+        document.body.classList.remove("catalog-boot-active");
+        var box = document.getElementById("catalog-container");
+        if (box && box.children.length === 0) {
+          box.innerHTML =
+            '<p style="text-align:center;padding:2rem 1rem;color:#555;font-family:Poppins,system-ui,sans-serif;font-size:15px;line-height:1.5;max-width:28rem;margin:0 auto;">La carga tardó demasiado. Comprobá tu conexión o probá otra red (Wi‑Fi/datos) y actualizá la página.</p>';
+        }
+      }
+
+      var limitId = setTimeout(showHardTimeout, LIMIT_MS);
+
+      window.addEventListener(
+        "fyl-catalog-boot-done",
+        function () {
+          clearTimeout(warnId);
+          clearTimeout(limitId);
+        },
+        { once: true }
+      );
+    })();
+  </script>
+
+  <!-- Onboarding historias (solo invitados; ver scripts/catalog-onboarding.js) -->
+  <div
+    id="catalog-onboarding"
+    class="catalog-onboarding hidden"
+    aria-hidden="true"
+    role="dialog"
+    aria-modal="true"
+    aria-label="Bienvenida al catálogo"
+  >
+    <div class="catalog-onboarding__backdrop" id="co-backdrop"></div>
+    <div class="catalog-onboarding__card-shell" role="document">
+      <div class="catalog-onboarding__chrome">
+        <button type="button" class="catalog-onboarding__back" id="co-back" aria-label="Cerrar o volver">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M15 18l-6-6 6-6"/>
+          </svg>
+        </button>
+        <div class="catalog-onboarding__progress" aria-hidden="true">
+          <span class="catalog-onboarding__progress-bar is-active" data-co-bar="0"></span>
+          <span class="catalog-onboarding__progress-bar" data-co-bar="1"></span>
+          <span class="catalog-onboarding__progress-bar" data-co-bar="2"></span>
+        </div>
+        <button type="button" class="catalog-onboarding__skip" id="co-close" aria-label="Saltar onboarding">Saltar</button>
+      </div>
+      <div class="catalog-onboarding__viewport">
+        <div class="catalog-onboarding__track" id="co-track">
+        <section class="catalog-onboarding__slide" aria-roledescription="slide" aria-label="Paso 1 de 3">
+          <div class="catalog-onboarding__card catalog-onboarding__card--decor catalog-onboarding__card--welcome">
+            <div class="catalog-onboarding__content">
+              <h2 class="catalog-onboarding__title">¡Bienvenida!</h2>
+              <p class="catalog-onboarding__subtitle">Comprá por mayor</p>
+              <ul class="catalog-onboarding__list">
+                <li>
+                  <span class="catalog-onboarding__bullet-icon" aria-hidden="true"></span>
+                  <span class="catalog-onboarding__item-text">
+                    <span class="catalog-onboarding__list-lead">Compra&nbsp;mínima:</span><br>
+                    <span>4 productos surtidos</span>
+                  </span>
+                </li>
+                <li>
+                  <span class="catalog-onboarding__bullet-icon" aria-hidden="true"></span>
+                  <span class="catalog-onboarding__item-text">
+                    <span>Podés armar tu pedido</span><br>
+                    <span>a lo largo de 7 días</span>
+                  </span>
+                </li>
+                <li>
+                  <span class="catalog-onboarding__bullet-icon" aria-hidden="true"></span>
+                  <span class="catalog-onboarding__item-text">
+                    <span>Hacemos envíos</span><br>
+                    <span>a todo el país</span>
+                  </span>
+                </li>
+              </ul>
+            </div>
+            <div class="catalog-onboarding__hero-wrap" aria-hidden="true">
+              <img class="catalog-onboarding__hero" src="history/onboarding-1-bag.png" width="560" height="560" alt="" decoding="async" />
+            </div>
+          </div>
+        </section>
+        <section class="catalog-onboarding__slide" aria-roledescription="slide" aria-label="Paso 2 de 3">
+          <div class="catalog-onboarding__card catalog-onboarding__card--steps">
+            <h2 class="catalog-onboarding__title catalog-onboarding__title--single">Así funciona:</h2>
+            <div class="catalog-onboarding__steps">
+              <div class="catalog-onboarding__step-card catalog-onboarding__step-card--1">
+                <div class="catalog-onboarding__step-copy">
+                  <strong class="catalog-onboarding__step-title">1. Armá tu carrito</strong>
+                </div>
+                <img class="catalog-onboarding__step-ill catalog-onboarding__step-ill--1" src="history/ChatGPT%20Image%2021%20mar%202026,%2001_58_45%20p.m..png" width="400" height="400" alt="" decoding="async" />
+              </div>
+              <div class="catalog-onboarding__step-card catalog-onboarding__step-card--2">
+                <div class="catalog-onboarding__step-copy">
+                  <strong class="catalog-onboarding__step-title">2. Enviás tu pedido</strong>
+                </div>
+                <img class="catalog-onboarding__step-ill catalog-onboarding__step-ill--2" src="history/onboarding-step-send.png" width="400" height="400" alt="" decoding="async" />
+              </div>
+              <div class="catalog-onboarding__step-card catalog-onboarding__step-card--3">
+                <div class="catalog-onboarding__step-copy">
+                  <strong class="catalog-onboarding__step-title">3. Confirmamos el stock para vos</strong>
+                </div>
+                <img class="catalog-onboarding__step-ill catalog-onboarding__step-ill--3" src="history/onboarding-step-confirm.png" width="400" height="400" alt="" decoding="async" />
+              </div>
+            </div>
+          </div>
+        </section>
+        <section class="catalog-onboarding__slide" aria-roledescription="slide" aria-label="Paso 3 de 3">
+          <div class="catalog-onboarding__card catalog-onboarding__card--decor catalog-onboarding__card--delivery">
+            <div class="catalog-onboarding__content">
+              <h2 class="catalog-onboarding__title catalog-onboarding__title--single">Coordinamos el envío y listo.</h2>
+              <ul class="catalog-onboarding__list">
+                <li>
+                  <span class="catalog-onboarding__bullet-icon" aria-hidden="true"></span>
+                  <span class="catalog-onboarding__item-text">Pago por transferencia<br>o contra reembolso</span>
+                </li>
+                <li>
+                  <span class="catalog-onboarding__bullet-icon" aria-hidden="true"></span>
+                  <span class="catalog-onboarding__item-text">Despachamos rápido<br>a todo el país</span>
+                </li>
+              </ul>
+            </div>
+            <div class="catalog-onboarding__hero-wrap" aria-hidden="true">
+              <img class="catalog-onboarding__hero" src="history/onboarding-3-delivery.png" width="560" height="560" alt="" decoding="async" />
+            </div>
+          </div>
+        </section>
+        </div>
+      </div>
+      <div class="catalog-onboarding__footer">
+        <label class="catalog-onboarding__never">
+          <input type="checkbox" id="co-never" />
+          No volver a mostrar
+        </label>
+        <button type="button" class="catalog-onboarding__next" id="co-next">Siguiente</button>
+        <div class="catalog-onboarding__dots" role="tablist" aria-label="Pasos">
+          <button type="button" class="catalog-onboarding__dot is-active" data-co-dot="0" aria-label="Ir al paso 1"></button>
+          <button type="button" class="catalog-onboarding__dot" data-co-dot="1" aria-label="Ir al paso 2"></button>
+          <button type="button" class="catalog-onboarding__dot" data-co-dot="2" aria-label="Ir al paso 3"></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- HEADER MOBILE -->
+  <header>
+    <div class="header-left">
+      <img src="logo.png" alt="Logo F&L" class="header-logo"/>
+    </div>
+    <div class="search-bar-wrapper">
+      <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="11" cy="11" r="8"></circle>
+        <path d="M21 21l-4.35-4.35"></path>
+      </svg>
+      <input type="search" class="search-bar-mobile" id="search-bar-mobile" placeholder="¿Qué buscás? Ej: Zapatillas..." autocomplete="off" enterkeyhint="search">
+    </div>
+    <div class="header-right">
+      <button class="header-notifications" id="header-notifications" title="Notificaciones">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+          <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+        </svg>
+        <span class="notification-badge" id="notification-badge" style="display: none;"></span>
+      </button>
+      <a class="cliente-link" href="#" onclick="return false;">
+        <!-- El avatar se carga dinámicamente desde auth-status.js -->
+      </a>
+    </div>
+  </header>
+
+  <div id="catalog-view">
+  <div class="container">
+    <!-- Menú Desktop (visible en desktop vía CSS @media min-width: 768px) -->
+    <div class="menu menu-desktop" aria-label="Categorías">
+      <button onclick="window.cambiarCategoria('Calzado')">Calzado</button>
+      <button onclick="window.cambiarCategoria('Ropa')">Ropa</button>
+      <button onclick="window.cambiarCategoria('Lenceria')">Lencería</button>
+      <button onclick="window.cambiarCategoria('Marroquineria')">Accesorios</button>
+      <button onclick="window.cambiarCategoria('Novedades')" id="btn-novedades">Novedades ⭐</button>
+      <button onclick="window.cambiarCategoria('Ofertas')">Ofertas 🔥</button>
+    </div>
+
+    <!-- Acciones Rápidas (SOLO mobile - reemplazan el menú de categorías) -->
+    <div class="quick-actions-container">
+      <div class="quick-actions" id="quick-actions">
+        <!-- Se llenará dinámicamente -->
+      </div>
+      <!-- Botón Talles - Separado y fijado -->
+      <button class="size-filter-btn" id="size-filter-btn">
+        <span class="filter-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="4" y1="6" x2="20" y2="6"></line>
+            <line x1="4" y1="12" x2="20" y2="12"></line>
+            <line x1="4" y1="18" x2="20" y2="18"></line>
+          </svg>
+        </span>
+        <span>Talles</span>
+      </button>
+    </div>
+
+    <!-- Banner F&L Originals (fabricación propia, solo en vista Inicio) -->
+    <section id="fyl-originals-banner" class="orig-block fyl-originals-banner" style="display: none;">
+      <div class="orig-head">
+        <h2 class="orig-title">F&L Originals <span class="orig-subInline">• Fabricación propia</span></h2>
+        <a id="fyl-ver-todo-btn" class="orig-cta" href="#/coleccion/fyl-originals" aria-label="Ver colección F&L Originals">Ver colección →</a>
+      </div>
+      <div class="orig-carouselWrap">
+        <div class="fyl-originals-scroll orig-carousel" id="fyl-originals-scroll">
+          <!-- Se llenará dinámicamente con productos FYL -->
+        </div>
+        <div class="orig-fadeRight" aria-hidden="true"></div>
+      </div>
+    </section>
+
+    <!-- Banner informativo mayorista (solo en vista Inicio) -->
+    <div id="info-banner-top-container" class="is-hidden">
+      <a href="#/como-comprar" class="info-banner-top info-banner-top--visual" aria-label="Guía de compra mayorista">
+        <div class="info-banner-top__inner">
+          <div class="info-banner-top__iconWrap" aria-hidden="true">
+            <img class="info-banner-top__icon" src="assets/icono-carrito-x4.png" alt="" loading="lazy" decoding="async">
+          </div>
+          <div class="info-banner-top__content">
+            <h3 class="info-banner-top__title">Compra mínima: <strong>4 productos combinables</strong></h3>
+            <p class="info-banner-top__line">Tenés hasta 7 días para armar tu pedido</p>
+            <p class="info-banner-top__line">Confirmamos stock al enviarlo</p>
+            <span class="info-banner-top__cta">Guía de compra →</span>
+          </div>
+        </div>
+      </a>
+    </div>
+
+    <!-- Banner Promocional (solo en vista Inicio, debajo del banner F&L Originals) -->
+    <div class="promotional-banner-container" id="promotional-banner-container" style="display: none;"></div>
+
+    <!-- Modal Filtro de Talles (Bottom Sheet) -->
+    <div id="size-filter-modal" class="size-filter-modal">
+      <div class="size-filter-overlay"></div>
+      <div class="size-filter-panel">
+        <div class="size-filter-header">
+          <h2>Filtrar por Talle</h2>
+          <button class="size-filter-close" id="size-filter-close" aria-label="Cerrar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
+        <div class="size-filter-body" id="size-filter-body">
+          <!-- Se llenará dinámicamente con selector de categoría o grid de talles -->
+        </div>
+        <div class="size-filter-footer" id="size-filter-footer" style="display: none;">
+          <button class="size-filter-clear-btn" id="size-filter-clear">Limpiar Filtros</button>
+          <button class="size-filter-apply-btn" id="size-filter-apply">Aplicar</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Filtros y búsqueda desktop (OCULTO en mobile) -->
+    <div class="filter-search-view" id="filter-container">
+      <button id="toggleFiltros">Filtros</button>
+      <button type="button" class="desktop-only-talles" id="size-filter-btn-desktop" title="Filtrar por talle" aria-label="Filtrar por talle">
+        <span class="filter-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
+            <line x1="4" y1="6" x2="20" y2="6"></line>
+            <line x1="4" y1="12" x2="20" y2="12"></line>
+            <line x1="4" y1="18" x2="20" y2="18"></line>
+          </svg>
+        </span>
+        <span>Talles</span>
+      </button>
+      <div id="filtroMenu" style="display:none"></div>
+      <input type="text" id="searchInput" placeholder="Buscar artículo...">
+      <input type="text" id="search-input" placeholder="Buscar artículo..." style="display:none;">
+      <button id="clear-search" title="Limpiar búsqueda">Limpiar</button>
+      <button id="view-toggle">🔳 Normal</button>
+      <div id="cart-bar" style="margin-left:auto;display:flex;gap:8px;align-items:center;">
+        <button id="cart-button" class="cart-button" style="display:none;background:#CD844D;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-weight:bold;transition:all 0.2s ease;">
+          <span>🛒 Pedido: <strong id="cart-count">0</strong> ítems</span>
+        </button>
+        <button id="cart-submit" title="Enviar pedido" style="display:none;">Enviar pedido</button>
+      </div>
+    </div>
+
+    <!-- Loader -->
+    <div id="loader" class="loader">
+      <div class="spinner"></div>
+    </div>
+
+    <!-- Header de colección (solo visible en #/coleccion/fyl-originals) -->
+    <div id="collection-header" class="collection-head is-hidden" aria-hidden="true" style="display: none;">
+      <a href="#/" class="collection-back" aria-label="Volver al inicio">← Volver</a>
+      <div class="collection-head__titleRow">
+        <h1 class="collection-title">F&L Originals</h1>
+        <div class="collection-sub">
+          Producción propia • Stock estable • Reposición frecuente •
+          <span class="collection-count"><span id="collection-count">0</span> modelos</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Catálogo -->
+    <div id="catalogo" class="catalogo">
+      <div id="catalog-container"></div>
+    </div>
+  </div>
+
+  <!-- Banner Personalizado de Productos -->
+  <div id="custom-banner-container" style="display: none; padding: 0 0.75rem 0.15rem 0.75rem; margin: 0.5rem 0 0.1rem 0;">
+    <div class="custom-banner-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0; padding: 0.05rem 0.5rem 0.117rem 0.5rem;">
+      <h2 id="custom-banner-title" class="custom-banner-title" style="margin: 0; font-size: 1.25rem; font-weight: 600; color: #333;">Productos Destacados</h2>
+    </div>
+    <div id="custom-banner-scroll" class="custom-banner-scroll" style="display: flex; gap: 0.075rem; overflow-x: auto; padding: 0; -webkit-overflow-scrolling: touch;">
+      <!-- Los productos se cargarán aquí dinámicamente -->
+    </div>
+  </div>
+  </div><!-- /#catalog-view -->
+
+  <!-- Página Cómo comprar -->
+  <main class="howto is-hidden" id="howto-page" aria-label="Cómo comprar por mayor">
+    <section class="howto-hero" aria-labelledby="howto-title">
+      <div class="howto-hero__badge">Mayorista</div>
+      <h1 id="howto-title">Cómo comprar por mayor</h1>
+      <p class="howto-hero__lead">
+        Mínimo 4 productos combinables. Armás tu pedido, lo enviás para reserva y te confirmamos stock. Sin pago online.
+      </p>
+      <div class="howto-hero__actions">
+        <a class="btn btn-primary" href="#/" data-action="go-home">Empezar a comprar</a>
+        <a class="btn btn-ghost" href="#howto-steps">Ver pasos</a>
+      </div>
+      <div class="howto-hero__chips" role="list" aria-label="Resumen">
+        <div class="chip" role="listitem">Mínimo 4</div>
+        <div class="chip" role="listitem">Hasta 7 días para armar</div>
+        <div class="chip" role="listitem">Reserva sin pago online</div>
+        <div class="chip" role="listitem">Envíos a todo el país</div>
+      </div>
+    </section>
+    <section class="howto-section" id="howto-steps" aria-labelledby="howto-steps-title">
+      <div class="howto-section__head">
+        <h2 id="howto-steps-title">Comprá en 4 pasos</h2>
+        <p class="muted">No pagás por la web: enviás el pedido y coordinamos después.</p>
+      </div>
+      <ol class="steps" aria-label="Pasos para comprar">
+        <li class="step">
+          <div class="step__num">1</div>
+          <div class="step__body">
+            <h3>Armá tu carrito</h3>
+            <p>Elegí modelos, talles y colores. Podés combinar lo que quieras; el mínimo son 4 productos.</p>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step__num">2</div>
+          <div class="step__body">
+            <h3>Enviá el pedido para reserva</h3>
+            <p>Cuando llegás al mínimo, enviás el pedido. Ahí lo pasamos a reserva y revisamos stock.</p>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step__num">3</div>
+          <div class="step__body">
+            <h3>Sumá productos hasta 7 días</h3>
+            <p>Mientras tanto podés seguir agregando ítems durante 7 días. Te avisamos si algo no tiene stock para que lo reemplaces.</p>
+          </div>
+        </li>
+        <li class="step">
+          <div class="step__num">4</div>
+          <div class="step__body">
+            <h3>Coordinamos envío y pago</h3>
+            <p>Te confirmamos el total y coordinamos envío. Pagás por transferencia o contra reembolso según acordemos.</p>
+          </div>
+        </li>
+      </ol>
+      <div class="callout">
+        <div class="callout__icon">Tip</div>
+        <div class="callout__body">
+          Para compartir un producto con alguien, copiá el link de la ficha y enviáselo.
+        </div>
+      </div>
+    </section>
+    <section class="howto-section" id="howto-notes" aria-labelledby="howto-notes-title">
+      <div class="howto-section__head">
+        <h2 id="howto-notes-title">Aclaraciones importantes</h2>
+        <p class="muted">Condiciones que te conviene tener en cuenta.</p>
+      </div>
+      <div class="cards">
+        <article class="info-card">
+          <h3>Reserva y stock</h3>
+          <p>El pedido se reserva cuando lo enviás. Si algo no está, te avisamos y podés cambiarlo por otro modelo/talle/color.</p>
+        </article>
+        <article class="info-card">
+          <h3>Envíos y retiro</h3>
+          <p>Enviamos a todo el país. Si retirás en el local, también enviá el pedido y esperá nuestra confirmación para evitar faltantes.</p>
+        </article>
+        <article class="info-card">
+          <h3>Medios de pago</h3>
+          <p>Transferencia o contra reembolso según localidad. Si pagás con tarjeta puede haber un recargo (ej. 3%); te lo indicamos al confirmar.</p>
+        </article>
+        <article class="info-card">
+          <h3>Cambios</h3>
+          <p>Consultá cambios y devoluciones con nosotros al confirmar; te pasamos las condiciones según el caso.</p>
+        </article>
+      </div>
+    </section>
+    <section class="howto-section" id="howto-faq" aria-labelledby="howto-faq-title">
+      <div class="howto-section__head">
+        <h2 id="howto-faq-title">Preguntas frecuentes</h2>
+        <p class="muted">Respuestas cortas, sin vueltas.</p>
+      </div>
+      <div class="faq" role="region" aria-label="Preguntas frecuentes">
+        <div class="faq-item">
+          <button class="faq-q" type="button" aria-expanded="false">¿Puedo mezclar modelos, talles y colores? <span class="faq-icon" aria-hidden="true">+</span></button>
+          <div class="faq-a" hidden>Sí. El mínimo es 4 productos y los combinás como quieras.</div>
+        </div>
+        <div class="faq-item">
+          <button class="faq-q" type="button" aria-expanded="false">¿Tengo que pagar desde la web? <span class="faq-icon" aria-hidden="true">+</span></button>
+          <div class="faq-a" hidden>No. Enviás el pedido, te confirmamos stock y después coordinamos pago y envío.</div>
+        </div>
+        <div class="faq-item">
+          <button class="faq-q" type="button" aria-expanded="false">¿Qué pasa si un producto no tiene stock? <span class="faq-icon" aria-hidden="true">+</span></button>
+          <div class="faq-a" hidden>Te avisamos al confirmar y podés reemplazarlo por otro disponible.</div>
+        </div>
+        <div class="faq-item">
+          <button class="faq-q" type="button" aria-expanded="false">¿Cómo sé si mi pedido está confirmado? <span class="faq-icon" aria-hidden="true">+</span></button>
+          <div class="faq-a" hidden>Te avisamos por WhatsApp o en la sección Pedidos una vez que revisamos el stock.</div>
+        </div>
+        <div class="faq-item">
+          <button class="faq-q" type="button" aria-expanded="false">¿Hay cambios o devoluciones? <span class="faq-icon" aria-hidden="true">+</span></button>
+          <div class="faq-a" hidden>Consultalo con nosotros al confirmar; te pasamos la política según el producto y el caso.</div>
+        </div>
+        <div class="faq-item">
+          <button class="faq-q" type="button" aria-expanded="false">¿Puede haber recargo por pagar con tarjeta? <span class="faq-icon" aria-hidden="true">+</span></button>
+          <div class="faq-a" hidden>En algunos casos sí (por ejemplo 3%). Te lo decimos al confirmar el pedido.</div>
+        </div>
+      </div>
+    </section>
+    <section class="howto-final" aria-label="Acción final">
+      <h2>¿Lista para armar tu pedido?</h2>
+      <p class="muted">Entrá al catálogo, elegí tus productos y enviá el pedido cuando llegues al mínimo.</p>
+      <a class="btn btn-primary btn-wide" href="#/" data-action="go-home">Ir al catálogo</a>
+    </section>
+  </main>
+
+  <!-- WhatsApp popup -->
+  <div id="wa-popup">
+    <button id="wa-toggle" title="Chat WhatsApp">
+      <img src="./icons/whatsapp.svg" alt="WhatsApp" />
+    </button>
+    <div id="wa-menu">
+      <a href="https://wa.me/5493624118637" target="_blank">Envíos</a>
+      <a href="https://wa.me/5493624118637" target="_blank">Local</a> 
+    </div>
+  </div>
+
+  <!-- Botón scroll hacia arriba -->
+  <button id="btn-scroll-top" title="Volver arriba" aria-label="Volver arriba">
+    <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
+      <path d="M4 12l1.41 1.41L11 7.83V20h2V7.83l5.59 5.58L20 12l-8-8-8 8z"/>
+    </svg>
+  </button>
+
+  <!-- Barra de Navegación Inferior (solo mobile) -->
+  <nav class="bottom-nav" id="bottom-nav">
+    <button class="bottom-nav-item active" data-nav="inicio" id="nav-inicio">
+      <div class="icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+          <polyline points="9 22 9 12 15 12 15 22"/>
+        </svg>
+      </div>
+      <span class="label">Inicio</span>
+    </button>
+    <button class="bottom-nav-item" data-nav="buscar" id="nav-buscar">
+      <div class="icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="8"/>
+          <path d="m21 21-4.3-4.3"/>
+        </svg>
+      </div>
+      <span class="label">Buscar</span>
+    </button>
+    <a href="client/dashboard.html" class="bottom-nav-item" data-nav="pedidos" id="nav-pedidos">
+      <span class="bottom-nav-badge" id="pedidos-badge"></span>
+      <div class="icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect width="8" height="4" x="8" y="2" rx="1" ry="1"/>
+          <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
+          <path d="M12 11h4"/>
+          <path d="M12 16h4"/>
+          <path d="M8 11h.01"/>
+          <path d="M8 16h.01"/>
+        </svg>
+      </div>
+      <span class="label">Pedidos</span>
+    </a>
+    <button class="bottom-nav-item" data-nav="perfil" id="nav-perfil">
+      <div class="icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/>
+          <circle cx="12" cy="8" r="4"/>
+        </svg>
+      </div>
+      <span class="label">Perfil</span>
+    </button>
+  </nav>
+
+  <!-- Modal de login -->
+  <div id="login-modal">
+    <div class="login-modal-card">
+      <button id="login-modal-close" class="login-modal-close" aria-label="Cerrar">×</button>
+      <img src="logo.png" alt="Logo FYL" style="height: 64px; margin-bottom: 12px;">
+      
+      <div id="login-step-1">
+        <h2>¿Cuál es tu email?</h2>
+        <p style="color: #666; font-size: 14px; margin-bottom: 24px;">Regístrate o iniciá sesión para hacer tu pedido</p>
+        
+        <button id="login-google-btn-step1" class="login-modal-google" style="margin-bottom: 16px;">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 533.5 544.3" aria-hidden="true">
+            <path fill="#4285f4" d="M533.5 278.4c0-17.4-1.5-34.1-4.3-50.3H272.1v95.1h147.1c-6.3 34-25 62.8-53.3 82l86.1 66.9c50.3-46.4 81.5-114.8 81.5-193.7z"/>
+            <path fill="#34a853" d="M272.1 544.3c72.8 0 134-24 178.7-65.3l-86.1-66.9c-24 16.1-54.8 25.7-92.6 25.7-71.2 0-131.7-48.1-153.3-112.8l-89 68.7c44.4 88 135.4 150.6 242.3 150.6z"/>
+            <path fill="#fbbc04" d="M118.8 324.9c-10.7-31.9-10.7-66.3 0-98.2l-89-68.7c-39.2 78.6-39.2 171.7 0 250.3l89-68.7z"/>
+            <path fill="#ea4335" d="M272.1 107.7c39.6 0 75.2 13.6 103.3 40.3l77.4-77.4C406.1 24.4 344.9 0 272.1 0 165.2 0 74.2 62.6 29.8 150.6l89 68.7c21.6-64.7 82.1-111.6 153.3-111.6z"/>
+          </svg>
+          Continuar con Gmail
+        </button>
+        
+        <div style="margin: 20px 0; text-align: center; color: #666; font-size: 14px;">
+          <span>O</span>
+        </div>
+        
+        <input 
+          type="email" 
+          id="login-email-input" 
+          placeholder="tu@email.com"
+          style="width: 100%; padding: 14px; margin-bottom: 16px; border: 1px solid #ddd; border-radius: 8px; font-size: 16px; box-sizing: border-box;"
+          autocomplete="email"
+        />
+        <button id="login-continue-btn" class="login-modal-google" style="background: #4285f4;">
+          Enviarme un enlace de inicio de sesión
+        </button>
+        <div id="login-modal-msg" class="login-modal-msg"></div>
+      </div>
+
+      <div id="login-step-3" style="display: none;">
+        <h2>Inicio de Sesión por Email</h2>
+        <div style="color: #666; font-size: 14px; line-height: 1.6; text-align: left; margin-top: 20px;">
+          <p style="margin-bottom: 12px;">¡Genial! Te hemos enviado un email</p>
+          <p style="margin-bottom: 12px;">
+            Revisa tu bandeja de entrada <strong id="login-email-confirmation" style="font-weight: bold;"></strong> para encontrar el email y haz clic en el enlace para iniciar sesión automáticamente. Debería llegar pronto.
+          </p>
+          <p style="margin-top: 16px; text-decoration: underline; font-size: 13px;">
+            No olvides revisar tu carpeta de spam.
+          </p>
+        </div>
+        <div id="login-resend-msg" class="login-modal-msg" style="margin-top: 16px; display: none;"></div>
+        <div style="display: flex; gap: 12px; margin-top: 24px;">
+          <button id="login-resend-email-btn" class="login-modal-google" style="background: #CD844D; flex: 1;">
+            Reenviar email
+          </button>
+          <button id="login-close-after-email" class="login-modal-google" style="background: #6c757d; flex: 1;">
+            Cerrar
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal de instalación PWA -->
+  <div id="install-modal" class="install-modal hidden">
+    <div class="install-modal-content">
+      <p>¿Te gustaría descargar el acceso directo a nuestro catálogo?</p>
+      <button id="install-accept">Sí, quiero</button>
+      <button id="install-later">En otro momento</button>
+    </div>
+  </div>
+
+  <!-- Scripts esenciales (?v=m250324 = un solo token para forzar recarga en móviles) -->
+  <script src="/config.prod.js"></script>
+  <script type="module" src="scripts/boot-telemetry.js?v=m250324"></script>
+  <script type="module" src="scripts/config.js?v=m250324"></script>
+  <script type="module" src="scripts/supabase-client.js?v=m250324"></script>
+  <script type="module" src="scripts/main-supabase.js?v=m250324"></script>
+  <script type="module" src="scripts/auth-status.js?v=m250324"></script>
+  <script type="module" src="scripts/catalog-onboarding.js?v=m250324"></script>
+  <script type="module" src="scripts/product-alternatives.js?v=m250324"></script>
+  <script type="module" src="scripts/cart-persistent.js?v=m250324"></script>
+  <script type="module" src="scripts/ui/toast.js?v=m250324"></script>
+  <script type="module" src="scripts/search-manager.js?v=m250324"></script>
+  <script type="module" src="scripts/whatsapp.js?v=m250324"></script>
+  <script type="module" src="scripts/scroll.js?v=m250324"></script>
+  <script src="scripts/pwa-install.js?v=m250324"></script>
+  <script src="scripts/filtros.js?v=m250324"></script>
+  <script type="module" src="scripts/quick-actions.js?v=m250324"></script>
+  <script type="module" src="scripts/mobile-nav.js?v=m250324"></script>
+  <script type="module" src="scripts/banner.js?v=m250324"></script>
+  <script type="module" src="scripts/size-filter.js?v=m250324"></script>
+  <script type="module" src="scripts/fyl-originals-banner.js?v=m250324"></script>
+  <script type="module" src="scripts/custom-banner.js?v=m250324"></script>
+  <script type="module" src="scripts/como-comprar.js?v=m250324"></script>
+  <script type="module" src="scripts/ui/bottom-sheet.js?v=m250324"></script>
+  
+  <!-- Modal de producto con SKU -->
+  <div id="product-modal" class="product-modal">
+    <div class="product-modal-content">
+      <button class="product-modal-close" aria-label="Cerrar">×</button>
+      <div class="product-modal-actions">
+        <button class="pm-action-btn" data-action="pm-download" aria-label="Descargar foto" type="button">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+        </button>
+        <button class="pm-action-btn" data-action="pm-share" aria-label="Compartir foto" type="button">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="18" cy="5" r="3"/>
+            <circle cx="6" cy="12" r="3"/>
+            <circle cx="18" cy="19" r="3"/>
+            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/>
+            <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+          </svg>
+        </button>
+      </div>
+      <div id="product-modal-body" class="product-modal-body"></div>
+      <div id="product-modal-footer" class="product-modal-footer"></div>
+    </div>
+  </div>
+
+  <!-- Bottom Sheet para agregar al carrito -->
+  <div id="bottom-sheet-overlay" class="bottom-sheet-overlay"></div>
+  <div id="bottom-sheet-agregar" class="bottom-sheet">
+    <div class="bottom-sheet-content">
+      <div id="bottom-sheet-body"></div>
+      <div id="bottom-sheet-footer" class="bottom-sheet-footer"></div>
+    </div>
+  </div>
+</body>
+</html>

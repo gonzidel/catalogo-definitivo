@@ -1,13 +1,15 @@
-// Incrementar la versión del cache cuando se actualicen assets para forzar reload en clientes
-const CACHE_NAME = "fyl-catalog-v2";
+// Mismo sufijo que ?v= en index2/index.html (buscar m250324) para pruebas rápidas en móvil / PWA.
+// index/index2: network-first (abajo). Scripts críticos de boot: siempre red (sin cache-first).
+const CACHE_NAME = "fyl-catalog-m250324";
+
 const urlsToCache = [
   "/",
   "/index.html",
+  "/index2.html",
+  "/client/dashboard.html",
   "/styles.css",
-  "/scripts/main.js",
   "/scripts/whatsapp.js",
   "/scripts/scroll.js",
-  "/scripts/pwa.js",
   "/scripts/search-manager.js",
   "/scripts/filtros.js",
   "/logo.png",
@@ -17,9 +19,23 @@ const urlsToCache = [
   "https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap",
 ];
 
+/** Rutas que no deben servirse desde cache (deploy parcial / JS crítico). */
+function mustFetchFromNetwork(pathname) {
+  if (pathname === "/config.prod.js") return true;
+  const critical = new Set([
+    "/scripts/config.js",
+    "/scripts/config.local.js",
+    "/scripts/supabase-client.js",
+    "/scripts/main-supabase.js",
+    "/scripts/boot-telemetry.js",
+    "/scripts/vendor/supabase-js.bundle.js",
+  ]);
+  return critical.has(pathname);
+}
+
 // Instalación del service worker
 self.addEventListener("install", (event) => {
-  console.log("Service Worker instalando...");
+  console.log("Service Worker instalando...", CACHE_NAME);
   event.waitUntil(
     caches
       .open(CACHE_NAME)
@@ -29,6 +45,10 @@ self.addEventListener("install", (event) => {
       })
       .then(() => {
         console.log("Service Worker instalado");
+        return self.skipWaiting();
+      })
+      .catch((err) => {
+        console.warn("SW install: precache parcial o fallo:", err);
         return self.skipWaiting();
       })
   );
@@ -59,13 +79,61 @@ self.addEventListener("activate", (event) => {
 
 // Interceptar peticiones
 self.addEventListener("fetch", (event) => {
-  // No cachear peticiones a Google Sheets (datos dinámicos)
-  if (event.request.url.includes("opensheet.elk.sh")) {
+  const requestUrl = event.request.url;
+
+  if (
+    requestUrl.startsWith("chrome-extension://") ||
+    requestUrl.startsWith("moz-extension://") ||
+    requestUrl.startsWith("safari-extension://") ||
+    requestUrl.startsWith("ms-browser-extension://")
+  ) {
     return;
   }
 
-  // No cachear peticiones a Cloudinary (imágenes dinámicas)
-  if (event.request.url.includes("cloudinary.com")) {
+  if (requestUrl.includes("opensheet.elk.sh")) {
+    return;
+  }
+
+  if (requestUrl.includes("cloudinary.com")) {
+    return;
+  }
+
+  let pathname = "";
+  try {
+    pathname = new URL(requestUrl).pathname;
+  } catch (_) {
+    pathname = "";
+  }
+
+  if (mustFetchFromNetwork(pathname) || requestUrl.includes("/scripts/config.local.js")) {
+    event.respondWith(fetch(event.request));
+    return;
+  }
+
+  if (requestUrl.includes("/admin/")) {
+    event.respondWith(fetch(event.request));
+    return;
+  }
+
+  const url = new URL(requestUrl);
+  const isDoc = event.request.destination === "document";
+  const isIndex =
+    url.pathname === "/" ||
+    url.pathname === "/index.html" ||
+    url.pathname === "/index2.html" ||
+    url.pathname === "/client/dashboard.html";
+  if (isDoc && isIndex) {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          if (response && response.status === 200 && response.type === "basic") {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          }
+          return response;
+        })
+        .catch(() => caches.match(event.request).then((r) => r || caches.match("/index.html")))
+    );
     return;
   }
 
@@ -73,35 +141,48 @@ self.addEventListener("fetch", (event) => {
     caches
       .match(event.request)
       .then((response) => {
-        // Si está en cache, devolverlo
         if (response) {
           return response;
         }
 
-        // Si no está en cache, hacer la petición
+        if (
+          requestUrl.startsWith("chrome-extension://") ||
+          requestUrl.startsWith("moz-extension://") ||
+          requestUrl.startsWith("safari-extension://") ||
+          requestUrl.startsWith("ms-browser-extension://")
+        ) {
+          return fetch(event.request);
+        }
+
         return fetch(event.request).then((response) => {
-          // Solo cachear respuestas exitosas
+          if (!response || response.status !== 200 || response.type !== "basic") {
+            return response;
+          }
+
           if (
-            !response ||
-            response.status !== 200 ||
-            response.type !== "basic"
+            requestUrl.startsWith("chrome-extension://") ||
+            requestUrl.startsWith("moz-extension://") ||
+            requestUrl.startsWith("safari-extension://") ||
+            requestUrl.startsWith("ms-browser-extension://")
           ) {
             return response;
           }
 
-          // Clonar la respuesta para cachearla
           const responseToCache = response.clone();
           caches.open(CACHE_NAME).then((cache) => {
-            cache.put(event.request, responseToCache);
+            try {
+              cache.put(event.request, responseToCache);
+            } catch (error) {
+              console.warn("No se pudo cachear la petición:", error);
+            }
           });
 
           return response;
         });
       })
       .catch(() => {
-        // Si falla la petición y es una página, mostrar página offline
         if (event.request.destination === "document") {
-          return caches.match("/index.html");
+          return caches.match("/index.html") || caches.match("/");
         }
       })
   );

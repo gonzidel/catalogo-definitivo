@@ -1,5 +1,10 @@
 // closed-orders.js - Módulo de gestión de pedidos cerrados
 
+// Importar configuración de Supabase y QZ
+import { SUPABASE_URL, QZ_SIGN_SECRET } from "../scripts/config.js";
+
+const TIMEZONE_BUENOS_AIRES = "America/Argentina/Buenos_Aires";
+
 let supabase = null;
 let orders = [];
 let scheduledTransports = [];
@@ -16,19 +21,19 @@ async function getSupabase() {
     supabase = window.supabase;
     return supabase;
   }
-  
+
   let attempts = 0;
   const maxAttempts = 50;
   while (!window.supabase && attempts < maxAttempts) {
     await new Promise(resolve => setTimeout(resolve, 100));
     attempts++;
   }
-  
+
   if (window.supabase) {
     supabase = window.supabase;
     return supabase;
   }
-  
+
   try {
     const module = await import("../scripts/supabase-client.js");
     supabase = module.supabase || window.supabase;
@@ -79,16 +84,158 @@ function formatCurrency(value) {
 // QZ Tray - Funciones helper para TSC
 // ============================================================================
 
-async function qzConnect() {
-  if (typeof qz === 'undefined' || !qz || !qz.websocket) {
-    throw new Error("QZ Tray no está disponible");
+// Función helper para configurar firma remota de QZ Tray
+async function setupQZSignature() {
+  // Esperar a que QZ Tray se cargue
+  const isAvailable = await checkQZAvailable();
+  
+  if (!isAvailable || !qz || !qz.security) {
+    console.warn("⚠️ QZ Tray no disponible para configurar firma");
+    return false;
+  }
+
+  try {
+    console.log("🔧 Configurando certificado y firma remota de QZ Tray...");
+
+    // PASO 1: Precargar y configurar certificado público (ANTES de la firma)
+    console.log("📜 setCertificatePromise: cargando /certs/qz-site.crt");
+    const certResponse = await fetch("/certs/qz-site.crt", { cache: "no-store" });
+    const certText = await certResponse.text();
+    console.log("✅ cert cargado, len=", certText.length, "begin=", certText.includes("BEGIN CERTIFICATE"));
+
+    qz.security.setCertificatePromise((resolve, reject) => {
+      console.log("📜 setCertificatePromise: resolviendo certificado precargado");
+      if (certText) {
+        const match = certText.match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/);
+        if (match) {
+          console.log("✅ Certificado sanitizado encontrado");
+          resolve(match[0]);
+        } else {
+          console.warn("⚠️ No se pudo extraer bloque limpio, usando texto original");
+          resolve(certText);
+        }
+      } else {
+        reject(new Error("Certificado vacío"));
+      }
+    });
+
+    console.log("✅ Certificado público configurado");
+
+    // IMPORTANTE: Configurar algoritmo SHA-512 (requerido por QZ Tray 2.1+)
+    qz.security.setSignatureAlgorithm("SHA512");
+    console.log("✅ Algoritmo de firma configurado: SHA512");
+
+    // PASO 2: Configurar firma remota (DESPUÉS del certificado)
+    qz.security.setSignaturePromise(async (toSign) => {
+      console.log("🔐 QZ Tray solicitó firma. Longitud:", toSign?.length || 0);
+
+      if (!toSign || typeof toSign !== 'string') {
+        throw new Error("toSign inválido o vacío");
+      }
+
+      // Obtener secret y URL desde config (con fallback)
+      const secret = QZ_SIGN_SECRET || 
+        (typeof window !== 'undefined' ? window.QZ_SIGN_SECRET : "") ||
+        "a8cc79b81b8552702d7deccbef31c1eea7a30043b032d136a8eb4671614b5b75";
+
+      const supabaseUrl = SUPABASE_URL || 
+        (typeof window !== 'undefined' ? window.SUPABASE_URL : "");
+
+      if (!supabaseUrl) {
+        console.error("❌ SUPABASE_URL no definido");
+        throw new Error("SUPABASE_URL no definido");
+      }
+
+      console.log("📡 Enviando request de firma a Edge Function...");
+      console.log("📤 toSign a enviar (len=" + toSign.length + "):", toSign.substring(0, 50) + "...");
+
+      // IMPORTANTE: Enviar toSign como text/plain (no JSON) para evitar alteraciones
+      // QZ Tray requiere que el string llegue exactamente igual, sin JSON.stringify
+      const res = await fetch(`${supabaseUrl}/functions/v1/qz-sign`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "text/plain;charset=utf-8",
+          "x-qz-secret": secret
+        },
+        body: toSign // Enviar directamente, sin JSON.stringify
+      });
+
+      console.log("📥 Respuesta recibida. Status:", res.status);
+
+      if (!res.ok) {
+        const errorText = await res.text();
+        console.error("❌ Error HTTP:", res.status, errorText);
+        throw new Error(`Error en firma: ${res.status} - ${errorText}`);
+      }
+
+      const signature = (await res.text()).trim();
+      console.log("✅ Firma generada correctamente. Longitud:", signature.length);
+      return signature;
+    });
+
+    console.log("✅ Certificado y firma remota configurados para QZ Tray");
+    return true;
+  } catch (e) {
+    console.error("❌ Error setupQZSignature:", e);
+    return false;
+  }
+}
+
+/**
+ * Verifica si QZ Tray está disponible y listo
+ * @returns {Promise<boolean>}
+ */
+async function checkQZAvailable() {
+  // Esperar hasta 5 segundos a que QZ Tray se cargue
+  const maxWait = 5000;
+  const startTime = Date.now();
+  
+  while (typeof qz === 'undefined' || !qz || !qz.websocket) {
+    if (Date.now() - startTime > maxWait) {
+      return false;
+    }
+    await new Promise(resolve => setTimeout(resolve, 100));
   }
   
+  return true;
+}
+
+async function qzConnect() {
+  // Verificar que QZ Tray esté disponible
+  const isAvailable = await checkQZAvailable();
+  
+  if (!isAvailable) {
+    const error = new Error("QZ Tray no está disponible. Verificá que:\n" +
+      "1. QZ Tray esté instalado en tu sistema\n" +
+      "2. QZ Tray esté corriendo (buscalo en la bandeja del sistema)\n" +
+      "3. El navegador tenga permisos para acceder a QZ Tray");
+    console.error("❌", error.message);
+    throw error;
+  }
+
+  // Asegurar que el certificado y la firma estén configurados ANTES de conectar
+  await setupQZSignature();
+
   if (!qz.websocket.isActive()) {
     try {
+      console.log("🚀 conectando QZ...");
       await qz.websocket.connect();
       console.log("✅ QZ Tray conectado");
     } catch (error) {
+      console.error("❌ Error conectando QZ Tray:", error);
+      
+      // Mejorar mensaje de error
+      if (error.message && error.message.includes("Unable to establish connection")) {
+        const improvedError = new Error("No se pudo establecer conexión con QZ Tray.\n\n" +
+          "Posibles causas:\n" +
+          "1. QZ Tray no está corriendo (verificá la bandeja del sistema)\n" +
+          "2. QZ Tray está bloqueado por firewall o antivirus\n" +
+          "3. El certificado no está correctamente configurado\n\n" +
+          "Solución: Abrí QZ Tray desde el menú Inicio y verificá que aparezca en la bandeja del sistema.");
+        improvedError.stack = error.stack;
+        throw improvedError;
+      }
+      
       throw error;
     }
   }
@@ -129,6 +276,92 @@ async function qzGetPrinterConfig() {
   }
 }
 
+/**
+ * Obtiene la configuración de la impresora POS-80 específicamente para tickets
+ * @returns {Promise<Object>} Configuración de QZ para la impresora POS-80
+ */
+async function qzGetPrinterConfigPos80() {
+  await qzConnect();
+
+  const printers = await qz.printers.find();
+  console.log("🖨️ Impresoras disponibles en QZ:", printers);
+
+  // Buscar impresora POS-80 (case-insensitive, busca "pos-80" o "pos80")
+  const printerName = printers.find(p => /pos-80/i.test(p) || /pos80/i.test(p));
+
+  if (!printerName) {
+    console.error("❌ No se encontró la impresora POS-80 en la lista:", printers);
+    throw new Error(
+      "No se encontró la impresora POS-80 en la lista de QZ Tray. " +
+      "Verificá que la POS-80 aparezca en el menú Printers de QZ."
+    );
+  }
+
+  console.log("✅ Impresora POS-80 seleccionada:", printerName);
+  return qz.configs.create(printerName);
+}
+
+// ============================================================================
+// Funciones helper para formateo de tickets
+// ============================================================================
+
+const TICKET_WIDTH = 42;
+
+/**
+ * Convierte un valor a string de forma segura
+ * @param {any} text - Valor a convertir
+ * @returns {string}
+ */
+function toStr(text) {
+  return (text === null || text === undefined) ? "" : text.toString();
+}
+
+/**
+ * Rellena texto a la derecha hasta el ancho especificado
+ * @param {string} text - Texto a rellenar
+ * @param {number} width - Ancho deseado
+ * @returns {string}
+ */
+function padRight(text, width) {
+  text = toStr(text);
+  if (width <= 0) return "";
+  if (text.length >= width) {
+    return text.slice(0, width);
+  }
+  return text + " ".repeat(width - text.length);
+}
+
+/**
+ * Rellena texto a la izquierda hasta el ancho especificado
+ * @param {string} text - Texto a rellenar
+ * @param {number} width - Ancho deseado
+ * @returns {string}
+ */
+function padLeft(text, width) {
+  text = toStr(text);
+  if (width <= 0) return "";
+  if (text.length >= width) {
+    return text.slice(0, width);
+  }
+  return " ".repeat(width - text.length) + text;
+}
+
+/**
+ * Centra texto en el ancho especificado
+ * @param {string} text - Texto a centrar
+ * @param {number} width - Ancho deseado (por defecto TICKET_WIDTH)
+ * @returns {string}
+ */
+function center(text, width = TICKET_WIDTH) {
+  text = toStr(text);
+  if (width <= 0) return "";
+  if (text.length >= width) {
+    return text.slice(0, width);
+  }
+  const left = Math.floor((width - text.length) / 2);
+  return " ".repeat(left) + text;
+}
+
 // ============================================================================
 // Generación de TSPL para rótulos de envío
 // ============================================================================
@@ -140,14 +373,14 @@ function buildTsplShippingLabel(shippingLabel, packageNumber = 1, totalPackages 
       .replace(/[\r\n]+/g, " ")
       .replace(/"/g, "'");
 
-  const fullName   = clean(shippingLabel.fullName).toUpperCase(); // Convertir a mayúsculas
-  const address    = clean(shippingLabel.address);
-  const locality   = clean(shippingLabel.locality);
-  const province   = clean(shippingLabel.province);
-  const phone      = clean(shippingLabel.phone);
-  const carrier    = clean(shippingLabel.carrier);
+  const fullName = clean(shippingLabel.fullName).toUpperCase(); // Convertir a mayúsculas
+  const address = clean(shippingLabel.address);
+  const locality = clean(shippingLabel.locality);
+  const province = clean(shippingLabel.province);
+  const phone = clean(shippingLabel.phone);
+  const carrier = clean(shippingLabel.carrier);
   const itemsCount = clean(shippingLabel.itemsCount);
-  const amount     = clean(shippingLabel.amount);
+  const amount = clean(shippingLabel.amount);
   const paymentMethod = clean(shippingLabel.paymentMethod || '');
   const packagesText = totalPackages > 1 ? `${packageNumber} / ${totalPackages}` : "1";
 
@@ -194,7 +427,7 @@ function buildTsplShippingLabel(shippingLabel, packageNumber = 1, totalPackages 
   // Nombre - primera línea (siempre) - usando fuente 3
   let currentY = 30;
   lines.push(`TEXT 20,${currentY},"3",0,2.0,2.0,"${nameLine1}"`);
-  
+
   // Nombre - segunda línea (si existe)
   if (nameLine2) {
     currentY += 40; // Espacio para la segunda línea con tamaño 2.0
@@ -208,7 +441,7 @@ function buildTsplShippingLabel(shippingLabel, packageNumber = 1, totalPackages 
   // Espacio después del nombre
   currentY += 20;
   lines.push(`TEXT 20,${currentY},"3",0,2,2,"${addressLine1}"`);
-  
+
   // Dirección - segunda línea (si existe)
   if (addressLine2) {
     currentY += 45; // Espacio para la segunda línea con tamaño doble
@@ -229,43 +462,43 @@ function buildTsplShippingLabel(shippingLabel, packageNumber = 1, totalPackages 
   // Construir texto de localidad y provincia
   const cityProvText = `${locality} - ${province}`;
   lines.push(`TEXT 20,${currentY},"2",0,2.5,2.5,"${cityProvText}"`);
-  
+
   // Teléfono - con mismo tamaño que localidad
   currentY += 50; // Espacio entre localidad y teléfono (aumentado para evitar superposición con tamaño 2.5)
   lines.push(`TEXT 20,${currentY},"2",0,2.5,2.5,"Tel: ${phone}"`);
-  
+
   // Línea horizontal después del teléfono (usando guiones)
   currentY += 40; // Espacio más grande antes de la línea para no atravesar el teléfono
   const lineDashes2 = "-".repeat(50); // Crear línea con guiones
   lines.push(`TEXT 20,${currentY},"1",0,1,1,"${lineDashes2}"`);
   currentY += 15; // Espacio después de la línea
-  
+
   // Transporte - espacio doble debajo del teléfono, mismo tamaño
   currentY += 75; // Espacio después de la línea (ajustado desde 100)
   lines.push(`TEXT 20,${currentY},"2",0,2.5,2.5,"Transporte: ${carrier}"`);
-  
+
   // Productos - mismo tamaño que transporte, teléfono y localidad
   currentY += 50; // Espacio después del transporte
   lines.push(`TEXT 20,${currentY},"2",0,2.5,2.5,"Productos: ${itemsCount}"`);
-  
+
   // Total (en línea separada)
   currentY += 50; // Espacio después de productos
   lines.push(`TEXT 20,${currentY},"2",0,2.5,2.5,"Total: $${amount}"`);
-  
+
   // Paquetes - 2 espacios después del total
   currentY += 100; // Espacio doble (50 * 2) después del total
   lines.push(`TEXT 20,${currentY},"2",0,2.5,2.5,"Paquetes: ${packagesText}"`);
-  
+
   // Remitente en esquina inferior derecha (letra más pequeña)
   // Etiqueta es 98mm x 80mm, posición aproximada en puntos (203 dpi ≈ 8 dots/mm)
   // Ancho: 98mm * 8 = 784 puntos, Alto: 80mm * 8 = 640 puntos
   const remitenteX = 550; // Posición X para alinear a la derecha (con margen)
   const remitenteY = 550; // Posición Y en la parte inferior (con margen)
-  
+
   // Método de pago arriba de Rte. (sin etiqueta, solo el método, en mayúsculas y letra más grande)
   if (paymentMethod) {
     const paymentMethodUpper = paymentMethod.toUpperCase();
-    
+
     // Si es "Contra Reembolso", dividir en dos líneas
     if (paymentMethodUpper.includes("CONTRA") && paymentMethodUpper.includes("REEMBOLSO")) {
       // Dividir "CONTRA REEMBOLSO" en dos líneas con más separación
@@ -278,11 +511,11 @@ function buildTsplShippingLabel(shippingLabel, packageNumber = 1, totalPackages 
       lines.push(`TEXT ${remitenteX},${remitenteY - 80},"3",0,2.0,2.0,"${paymentMethodUpper}"`);
     }
   }
-  
+
   lines.push(`TEXT ${remitenteX},${remitenteY},"1",0,1,1,"Rte. FyL Moda"`);
   lines.push(`TEXT ${remitenteX},${remitenteY + 25},"1",0,1,1,"Av. Alberdi 1099"`);
   lines.push(`TEXT ${remitenteX},${remitenteY + 50},"1",0,1,1,"Resistencia - Chaco"`);
-  
+
   // Imprimir
   lines.push('PRINT 1');
 
@@ -316,7 +549,7 @@ async function debugTscRawPrint() {
       format: 'command',
       data: tspl
     }]);
-    
+
     console.log('✅ Prueba enviada a TSC correctamente');
   } catch (err) {
     console.error('❌ Error en debugTscRawPrint:', err);
@@ -341,12 +574,12 @@ async function printTscShippingLabel(shippingLabel, copies = 1) {
       // Generar TSPL para cada paquete con su número correspondiente
       const packageNumber = i + 1;
       const tspl = buildTsplShippingLabel(shippingLabel, packageNumber, copies);
-      
+
       if (i === 0) {
         console.log("📄 TSPL generado (primeras líneas):");
         console.log(tspl.split('\r\n').slice(0, 10));
       }
-      
+
       jobs.push({
         type: "raw",
         format: "command",
@@ -365,7 +598,28 @@ async function printTscShippingLabel(shippingLabel, copies = 1) {
       stack: err.stack,
       name: err.name
     });
-    alert("No se pudo imprimir el rótulo en la impresora TSC. Verifica que QZ Tray esté instalado y la impresora esté conectada.\n\nError: " + (err.message || 'Error desconocido'));
+    
+    // Mensaje de error más claro
+    let errorMessage = "No se pudo imprimir el rótulo en la impresora TSC.\n\n";
+    
+    if (err.message && err.message.includes("QZ Tray no está disponible")) {
+      errorMessage += "❌ QZ Tray no está disponible.\n\n";
+      errorMessage += "Pasos para solucionarlo:\n";
+      errorMessage += "1. Verificá que QZ Tray esté instalado\n";
+      errorMessage += "2. Abrí QZ Tray desde el menú Inicio\n";
+      errorMessage += "3. Verificá que aparezca el ícono de QZ Tray en la bandeja del sistema\n";
+      errorMessage += "4. Recargá esta página y volvé a intentar\n";
+    } else if (err.message && err.message.includes("Unable to establish connection")) {
+      errorMessage += "❌ No se pudo conectar con QZ Tray.\n\n";
+      errorMessage += "Verificá que:\n";
+      errorMessage += "1. QZ Tray esté corriendo (ícono en la bandeja del sistema)\n";
+      errorMessage += "2. No haya firewall o antivirus bloqueando la conexión\n";
+      errorMessage += "3. El certificado esté correctamente configurado\n";
+    } else {
+      errorMessage += "Error: " + (err.message || 'Error desconocido');
+    }
+    
+    alert(errorMessage);
     return false;
   }
 }
@@ -380,8 +634,8 @@ function prepareShippingLabelFromOrder(order) {
   }
 
   // Obtener transporte asignado
-  const transportId = (customer.transport_id !== undefined ? customer.transport_id : null) || 
-                      (order.transport_id !== undefined ? order.transport_id : null);
+  const transportId = (customer.transport_id !== undefined ? customer.transport_id : null) ||
+    (order.transport_id !== undefined ? order.transport_id : null);
   const transport = scheduledTransports.find(t => t.id === transportId);
   const carrier = transport ? transport.name : (customer.transport_id ? 'Sin transporte' : 'Sin transporte asignado');
 
@@ -395,9 +649,9 @@ function prepareShippingLabelFromOrder(order) {
   const total = typeof order.total_amount === "number"
     ? order.total_amount
     : (order.order_items || []).reduce(
-        (sum, item) => sum + (item.quantity || 0) * ((item.price_snapshot || 0)),
-        0
-      );
+      (sum, item) => sum + (item.quantity || 0) * ((item.price_snapshot || 0)),
+      0
+    );
 
   // Formatear monto sin símbolo de moneda para el rótulo
   const amount = total.toLocaleString("es-AR", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
@@ -523,12 +777,12 @@ async function getOffersAndPromotionsForOrder(order) {
   if (!supabase || !order.order_items || order.order_items.length === 0) {
     return { offers: [], promotions: [], totalDiscount: 0, itemOffers: new Map(), itemPromos: new Map() };
   }
-  
+
   const items = order.order_items.filter(item => item.status !== 'cancelled');
   const variantIds = [];
   const itemVariantMap = new Map();
   const itemToVariantMap = new Map();
-  
+
   for (const item of items) {
     let variantId = item.variant_id;
     if (variantId) {
@@ -540,28 +794,28 @@ async function getOffersAndPromotionsForOrder(order) {
       itemToVariantMap.set(item.id, variantId);
     }
   }
-  
+
   if (variantIds.length === 0) {
     return { offers: [], promotions: [], totalDiscount: 0, itemOffers: new Map(), itemPromos: new Map() };
   }
-  
+
   const { data: promotionsData, error: promotionsError } = await supabase
     .rpc('get_active_promotions_for_variants', {
       p_variant_ids: variantIds
     });
-  
+
   const promotions = promotionsError ? [] : (promotionsData || []);
   const itemOffersMap = new Map();
   const itemPromosMap = new Map();
-  
+
   for (const promo of promotions) {
     const variantIdsInPromo = promo.variant_ids || [];
-    const promoText = promo.promo_type === '2x1' 
-      ? '2x1' 
+    const promoText = promo.promo_type === '2x1'
+      ? '2x1'
       : promo.promo_type === '2xMonto' && promo.fixed_amount
-      ? `2x$${promo.fixed_amount}`
-      : null;
-    
+        ? `2x$${promo.fixed_amount}`
+        : null;
+
     if (promoText) {
       for (const variantId of variantIdsInPromo) {
         const itemsInPromo = itemVariantMap.get(variantId) || [];
@@ -571,35 +825,35 @@ async function getOffersAndPromotionsForOrder(order) {
       }
     }
   }
-  
+
   let totalDiscount = 0;
   const appliedPromotions = new Map();
-  
+
   for (const promo of promotions) {
     const variantIdsInPromo = promo.variant_ids || [];
     const itemsInPromo = [];
-    
+
     for (const variantId of variantIdsInPromo) {
       const variantItems = itemVariantMap.get(variantId) || [];
       itemsInPromo.push(...variantItems);
     }
-    
+
     if (itemsInPromo.length === 0) continue;
-    
+
     let totalQuantity = 0;
     let totalPrice = 0;
-    
+
     for (const item of itemsInPromo) {
       const qty = item.quantity || 0;
       const price = item.price_snapshot || 0;
       totalQuantity += qty;
       totalPrice += qty * price;
     }
-    
+
     if (totalQuantity > 0) {
       const groups = Math.floor(totalQuantity / 2);
       let discount = 0;
-      
+
       if (promo.promo_type === '2x1') {
         const averagePrice = totalPrice / totalQuantity;
         discount = groups * averagePrice;
@@ -607,11 +861,11 @@ async function getOffersAndPromotionsForOrder(order) {
         const promoPrice = groups * promo.fixed_amount;
         discount = totalPrice - promoPrice;
       }
-      
+
       totalDiscount += discount;
     }
   }
-  
+
   return {
     offers: [],
     promotions: Array.from(appliedPromotions.entries()).map(([type, info]) => ({ type, ...info })),
@@ -639,6 +893,7 @@ async function loadClosedOrders() {
       total_amount,
       created_at,
       updated_at,
+      closed_at,
       customer_id,
       notes,
       labels_printed,
@@ -663,7 +918,7 @@ async function loadClosedOrders() {
     .select(selectFields)
     .eq("status", "closed")
     .order("created_at", { ascending: false });
-  
+
   // Si hay error por columnas inexistentes, intentar sin ellas
   if (response.error && (response.error.code === '42703' || response.error.message?.includes('does not exist'))) {
     console.warn("⚠️ Algunas columnas no existen aún. Cargando sin labels_printed, labels_count y transport_id.");
@@ -674,6 +929,7 @@ async function loadClosedOrders() {
       total_amount,
       created_at,
       updated_at,
+      closed_at,
       customer_id,
       notes,
       order_items (
@@ -688,20 +944,20 @@ async function loadClosedOrders() {
         variant_id
       )
     `;
-    
+
     response = await supabase
       .from("orders")
       .select(selectFields)
       .eq("status", "closed")
       .order("created_at", { ascending: false });
   }
-  
+
   let data = response.data;
   let error = response.error;
-  
+
   if (data && !error && data.length > 0) {
     const customerIds = [...new Set(data.map(order => order.customer_id).filter(Boolean))];
-    
+
     if (customerIds.length > 0) {
       // Intentar cargar transport_id de customers, pero si no existe, continuar sin él
       let customerSelectFields = "id, customer_number, full_name, address, phone, city, province, dni, email, transport_id";
@@ -709,7 +965,7 @@ async function loadClosedOrders() {
         .from("customers")
         .select(customerSelectFields)
         .in("id", customerIds);
-      
+
       // Si transport_id no existe en customers, intentar sin él
       if (customersResponse.error && (customersResponse.error.code === '42703' || customersResponse.error.message?.includes('does not exist'))) {
         console.warn("⚠️ Columna transport_id no existe en customers aún.");
@@ -719,9 +975,9 @@ async function loadClosedOrders() {
           .select(customerSelectFields)
           .in("id", customerIds);
       }
-      
+
       const { data: customersData, error: customersError } = customersResponse;
-      
+
       // Debug: Verificar que transport_id se está cargando
       if (customersData && customersData.length > 0) {
         console.log("🔍 Customers cargados con transport_id:", customersData.map(c => ({
@@ -730,11 +986,11 @@ async function loadClosedOrders() {
           transport_id: c.transport_id
         })));
       }
-      
+
       if (customersError) {
         console.error("❌ Error obteniendo datos de customers:", customersError);
       }
-      
+
       const customersMap = new Map();
       if (customersData) {
         customersData.forEach(c => {
@@ -745,7 +1001,7 @@ async function loadClosedOrders() {
           }
         });
       }
-      
+
       data = data.map(order => {
         const customer = customersMap.get(order.customer_id) || {};
         // Asegurar que el customer tenga el id del pedido
@@ -756,12 +1012,12 @@ async function loadClosedOrders() {
         if (customer.transport_id === undefined && order.transport_id !== undefined) {
           customer.transport_id = order.transport_id;
         }
-        
+
         // Debug: Log para verificar qué transport_id tiene el order
         if (order.customer_id) {
           console.log(`🔍 Order ${order.order_number || order.id?.substring(0, 8)} - customer_id: ${order.customer_id?.substring(0, 8)}, customer.transport_id:`, customer.transport_id, "order.transport_id:", order.transport_id);
         }
-        
+
         // Agregar valores por defecto si las columnas no existen
         return {
           ...order,
@@ -804,16 +1060,16 @@ async function renderOrderCard(order) {
   } else if (order.customers && typeof order.customers === 'object') {
     customer = order.customers;
   }
-  
+
   const customerEmail = customer.email || "Sin email";
   const offersData = await getOffersAndPromotionsForOrder(order);
-  
+
   const total = typeof order.total_amount === "number"
     ? order.total_amount
     : (order.order_items || []).reduce(
-        (sum, item) => sum + (item.quantity || 0) * ((item.price_snapshot || 0)),
-        0
-      );
+      (sum, item) => sum + (item.quantity || 0) * ((item.price_snapshot || 0)),
+      0
+    );
 
   // Calcular cantidad total de productos
   const totalProducts = (order.order_items || []).reduce(
@@ -826,7 +1082,7 @@ async function renderOrderCard(order) {
   let discountAmount = 0;
   let extrasAmount = 0;
   let extrasPercentage = 0;
-  
+
   if (order.notes) {
     try {
       const extraValues = JSON.parse(order.notes);
@@ -842,7 +1098,7 @@ async function renderOrderCard(order) {
   // Obtener transporte asignado (manejar si no existe la columna)
   // Priorizar transport_id del customer sobre el del order
   let transportId = null;
-  
+
   // Debug: Ver qué tiene el customer
   console.log(`🔍 Renderizando pedido ${order.order_number || order.id?.substring(0, 8)} - customer:`, {
     isArray: Array.isArray(customer),
@@ -850,7 +1106,7 @@ async function renderOrderCard(order) {
     transportIdValue: customer?.transport_id,
     customerKeys: customer ? Object.keys(customer) : []
   });
-  
+
   if (customer && typeof customer === 'object') {
     if (Array.isArray(customer)) {
       const custTransportId = customer[0]?.transport_id;
@@ -867,17 +1123,20 @@ async function renderOrderCard(order) {
     transportId = String(order.transport_id);
     console.log(`  → Usando transport_id del order como fallback:`, transportId);
   }
-  
+
   // Buscar el transporte en la lista de transportes agendados (comparar como strings)
   const transport = transportId ? scheduledTransports.find(t => String(t.id) === String(transportId)) : null;
   const transportName = transport ? transport.name : (transportId ? 'Transporte no encontrado' : 'Sin transporte asignado');
-  
+
   // Debug: Log para verificar el transporte asignado
   console.log(`🔍 Pedido ${order.order_number || order.id?.substring(0, 8)}: transportId=${transportId}, transport encontrado:`, transport ? transport.name : `NO ENCONTRADO (hay ${scheduledTransports.length} transportes disponibles: ${scheduledTransports.map(t => t.name).join(', ')})`);
 
   // Estado de rótulos (valores por defecto si las columnas no existen)
   const labelsPrinted = order.labels_printed !== undefined ? order.labels_printed : false;
   const labelsCount = order.labels_count !== undefined ? order.labels_count : 1;
+  
+  // Estado de ticket impreso (usando un campo temporal en el objeto order)
+  const ticketPrinted = order.ticket_printed !== undefined ? order.ticket_printed : false;
 
   const orderDisplayNumber = order.order_number || order.id.substring(0, 8);
 
@@ -897,6 +1156,7 @@ async function renderOrderCard(order) {
           ${customer.dni ? `<span>🆔 DNI: ${customer.dni}</span>` : ""}
           <span>📞 ${customer.phone || "Sin teléfono"}</span>
           <span>📧 ${customerEmail}</span>
+          ${customer.address ? `<span>🏠 ${customer.address}</span>` : ""}
           ${(customer.city || customer.province) ? `<span>📍 ${[customer.city, customer.province].filter(Boolean).join(" - ")}</span>` : ""}
         </div>
       </div>
@@ -907,12 +1167,12 @@ async function renderOrderCard(order) {
           <select class="transport-select" data-order-id="${order.id}" data-customer-id="${order.customer_id || customer.id || ''}" ${transportId ? `data-current-transport="${transportId}"` : ''}>
             <option value="" ${!transportId ? 'selected' : ''}>Sin transporte</option>
             ${scheduledTransports.map(t => {
-              const isSelected = transportId && String(transportId) === String(t.id);
-              if (isSelected) {
-                console.log(`✅ Transporte seleccionado en select: ${t.name} (${t.id}) para pedido ${order.order_number || order.id?.substring(0, 8)}`);
-              }
-              return `<option value="${t.id}" ${isSelected ? 'selected' : ''}>${t.name || 'Sin nombre'}</option>`;
-            }).join('')}
+    const isSelected = transportId && String(transportId) === String(t.id);
+    if (isSelected) {
+      console.log(`✅ Transporte seleccionado en select: ${t.name} (${t.id}) para pedido ${order.order_number || order.id?.substring(0, 8)}`);
+    }
+    return `<option value="${t.id}" ${isSelected ? 'selected' : ''}>${t.name || 'Sin nombre'}</option>`;
+  }).join('')}
           </select>
           ${transportId ? `<input type="hidden" class="transport-id-debug" value="${transportId}" data-order-id="${order.id}" />` : ''}
           <button class="btn btn-primary" style="padding: 6px 12px; font-size: 12px;" data-create-transport="${order.id}">+ Nuevo</button>
@@ -963,10 +1223,15 @@ async function renderOrderCard(order) {
           <button class="btn-labels-decrease" data-order-id="${order.id}" style="font-weight: bold;">-</button>
           <input type="number" class="labels-count-input" data-order-id="${order.id}" value="${labelsCount}" min="1" />
           <button class="btn-labels-increase" data-order-id="${order.id}" style="font-weight: bold;">+</button>
-          <button class="btn btn-warning" data-print-labels="${order.id}" style="margin-left: 12px;">Imprimir rótulos</button>
+          <button class="btn btn-success" data-print-all="${order.id}" style="margin-left: 12px;">Imprimir todo</button>
+          <button class="btn btn-warning" data-print-labels="${order.id}" style="margin-left: 8px;">Imprimir rótulos</button>
+          <button class="btn btn-primary" data-print-ticket="${order.id}" style="margin-left: 8px; color: #000 !important;">Imprimir ticket</button>
         </div>
         <div class="labels-printed-badge ${labelsPrinted ? 'printed' : 'not-printed'}">
           ${labelsPrinted ? '✅ Rótulos impresos' : '⚠️ Rótulos no impresos'}
+        </div>
+        <div class="labels-printed-badge ${ticketPrinted ? 'printed' : 'not-printed'}" style="margin-top: 8px;">
+          ${ticketPrinted ? '✅ Ticket impreso' : '⚠️ Ticket no impreso'}
         </div>
       </div>
       <div class="order-total">
@@ -1043,7 +1308,7 @@ async function saveTransport(customerId, transportId) {
   // Intentar usar función RPC primero (más confiable)
   let updateSuccess = false;
   let updateError = null;
-  
+
   try {
     const { data: rpcData, error: rpcError } = await supabase.rpc("rpc_update_customer_transport", {
       p_customer_id: customerId,
@@ -1086,29 +1351,29 @@ async function saveTransport(customerId, transportId) {
     }
     console.log("✅ UPDATE directo ejecutado correctamente");
   }
-  
+
   // Esperar un momento para que la actualización se propague
   await new Promise(resolve => setTimeout(resolve, 300));
-  
+
   // Verificar que se guardó correctamente consultando directamente
   const { data: verifyData, error: verifyError } = await supabase
     .from("customers")
     .select("id, transport_id, full_name")
     .eq("id", customerId)
     .single();
-  
+
   if (verifyError) {
     console.error("❌ Error verificando transporte guardado:", verifyError);
   } else {
     console.log("✅ Verificación: customer tiene transport_id =", verifyData?.transport_id, "Nombre:", verifyData?.full_name);
-    
+
     // Si la verificación muestra null pero debería tener valor, hay un problema
     if (!verifyData?.transport_id && transportId) {
       console.error("❌ PROBLEMA: El transporte se guardó pero la verificación muestra null. Puede ser un problema de RLS.");
       console.log("💡 Solución: Verifica que la política 'customers_admin_update' exista en Supabase.");
     }
   }
-  
+
   // Actualizar el estado local antes de recargar para mantener la selección
   const order = orders.find(o => o.customer_id === customerId);
   if (order && order.customers) {
@@ -1120,27 +1385,27 @@ async function saveTransport(customerId, transportId) {
       console.log("💾 Estado local actualizado - customer[0].transport_id:", order.customers[0].transport_id);
     }
   }
-  
+
   // Recargar transportes primero para asegurar que estén disponibles
   await loadScheduledTransports();
   console.log("📋 Transportes recargados:", scheduledTransports.length, "transportes disponibles:", scheduledTransports.map(t => `${t.name} (${t.id?.substring(0, 8)})`).join(', '));
-  
+
   // Esperar un momento adicional para que la BD se actualice completamente
   await new Promise(resolve => setTimeout(resolve, 500));
-  
+
   // Forzar recarga de pedidos limpiando el array primero
   orders = [];
-  
+
   // Recargar pedidos para actualizar la vista (esto recargará desde la BD con el transport_id actualizado)
   await loadClosedOrders();
-  
+
   // Verificar que el pedido se cargó con el transporte correcto
   const updatedOrder = orders.find(o => o.customer_id === customerId);
   if (updatedOrder) {
     const updatedCustomer = Array.isArray(updatedOrder.customers) ? updatedOrder.customers[0] : updatedOrder.customers;
     console.log("🔍 Después de recargar - Order tiene customer.transport_id:", updatedCustomer?.transport_id);
   }
-  
+
   return true;
 }
 
@@ -1204,7 +1469,7 @@ async function updateLabelsCount(orderId, count) {
         .from("orders")
         .update({ labels_count: count })
         .eq("id", orderId);
-      
+
       if (updateError) {
         if (updateError.code === '42703') {
           alert("⚠️ La columna 'labels_count' no existe aún. Por favor ejecuta el script SQL primero:\nsupabase/canonical/16_closed_orders_transport.sql");
@@ -1247,7 +1512,7 @@ async function markLabelsPrinted(orderId) {
         .from("orders")
         .update({ labels_printed: true })
         .eq("id", orderId);
-      
+
       if (updateError) {
         if (updateError.code === '42703') {
           alert("⚠️ La columna 'labels_printed' no existe aún. Por favor ejecuta el script SQL primero:\nsupabase/canonical/16_closed_orders_transport.sql");
@@ -1316,9 +1581,9 @@ async function revertOrderStatus(orderId) {
       console.warn("⚠️ Función RPC no existe aún. Intentando actualización directa...");
       const { error: updateError } = await supabase
         .from("orders")
-        .update({ status: 'picked', updated_at: new Date().toISOString() })
+        .update({ status: 'active', updated_at: new Date().toISOString() })
         .eq("id", orderId);
-      
+
       if (updateError) {
         console.error("❌ Error revirtiendo pedido:", updateError);
         alert("No se pudo revertir el pedido: " + (updateError.message || 'Error desconocido'));
@@ -1400,7 +1665,7 @@ async function showOrderDetail(orderId) {
   let discountAmount = 0;
   let extrasAmount = 0;
   let extrasPercentage = 0;
-  
+
   if (order.notes) {
     try {
       const extraValues = JSON.parse(order.notes);
@@ -1422,14 +1687,14 @@ async function showOrderDetail(orderId) {
     const offerInfo = offersData.itemOffers?.get(item.id);
     let displayPrice = item.price_snapshot || 0;
     let originalPrice = null;
-    
+
     if (promoText) {
       originalPrice = displayPrice;
     } else if (offerInfo) {
       originalPrice = offerInfo.originalPrice;
       displayPrice = offerInfo.offerPrice;
     }
-    
+
     const subtotal = (item.quantity || 0) * displayPrice;
     const imageHtml = item.imagen
       ? `<img src="${item.imagen}" alt="${item.product_name}" class="item-thumb" onerror="this.remove()" />`
@@ -1471,6 +1736,7 @@ async function showOrderDetail(orderId) {
       ${customer.dni ? `<p><strong>DNI:</strong> ${customer.dni}</p>` : ''}
       ${customer.phone ? `<p><strong>Teléfono:</strong> ${customer.phone}</p>` : ''}
       ${customer.email ? `<p><strong>Email:</strong> ${customer.email}</p>` : ''}
+      ${customer.address ? `<p><strong>Dirección:</strong> ${customer.address}</p>` : ''}
       ${(customer.city || customer.province) ? `<p><strong>Ubicación:</strong> ${[customer.city, customer.province].filter(Boolean).join(" - ")}</p>` : ''}
       
       <h3 style="margin-top: 24px;">Productos</h3>
@@ -1530,6 +1796,295 @@ async function showOrderDetail(orderId) {
   }
 }
 
+// ============================================================================
+// Funciones de impresión de ticket para pedidos cerrados
+// ============================================================================
+
+/**
+ * Construye el ticket en formato ESC/POS a partir de los datos del pedido
+ * @param {Object} order - Objeto del pedido completo
+ * @returns {Promise<string>} Ticket formateado en texto plano
+ */
+async function buildEscposTicketOrder(order) {
+  const items = order.order_items || [];
+  
+  // Obtener cliente (puede ser objeto o array)
+  let customer = null;
+  if (Array.isArray(order.customers)) {
+    customer = order.customers[0] || null;
+  } else if (order.customers && typeof order.customers === 'object') {
+    customer = order.customers;
+  }
+
+  // Parsear valores extra desde order.notes (igual que en showOrderDetail)
+  let shippingAmount = parseFloat(order.shipping_amount || 0);
+  let discountAmount = parseFloat(order.discount_amount || 0);
+  let extrasAmount = parseFloat(order.extras_amount || 0);
+  let extrasPercentage = parseFloat(order.extras_percentage || 0);
+
+  if (order.notes) {
+    try {
+      const extraValues = JSON.parse(order.notes);
+      shippingAmount = parseFloat(extraValues.shipping) || shippingAmount;
+      discountAmount = parseFloat(extraValues.discount) || discountAmount;
+      extrasAmount = parseFloat(extraValues.extras_amount) || extrasAmount;
+      extrasPercentage = parseFloat(extraValues.extras_percentage) || extrasPercentage;
+    } catch (e) {
+      console.warn('Error parseando valores extra del pedido:', e);
+    }
+  }
+
+  // Obtener descuentos de ofertas/promociones
+  let offersData = { totalDiscount: 0 };
+  try {
+    offersData = await getOffersAndPromotionsForOrder(order);
+  } catch (e) {
+    console.warn('Error obteniendo descuentos de ofertas:', e);
+  }
+
+  // Formatear fecha y hora
+  const orderDate = new Date(order.created_at);
+  const dateStr = orderDate.toLocaleDateString('es-AR', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    timeZone: TIMEZONE_BUENOS_AIRES,
+  });
+  const timeStr = orderDate.toLocaleTimeString('es-AR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: TIMEZONE_BUENOS_AIRES,
+  });
+
+  let ticket = [];
+
+  // Encabezado centrado (sin líneas vacías al inicio)
+  ticket.push(center("FYL moda"));
+  ticket.push("-".repeat(TICKET_WIDTH));
+  ticket.push("");
+
+  // Datos del pedido
+  ticket.push(`Pedido: ${order.order_number || order.id}`);
+  ticket.push(`Fecha: ${dateStr}`);
+  ticket.push(`Hora: ${timeStr}`);
+  if (customer) {
+    // Obtener nombre del cliente (usar full_name, name, o first_name + last_name)
+    let customerName = customer.full_name || customer.name || '';
+    if (!customerName) {
+      customerName = `${customer.first_name || ''} ${customer.last_name || ''}`.trim();
+    }
+    customerName = customerName.trim();
+    
+    if (customerName) {
+      const maxNameLength = TICKET_WIDTH - 9; // "Cliente: " = 9 caracteres
+      ticket.push(`Cliente: ${customerName.substring(0, maxNameLength)}`);
+    }
+  }
+  ticket.push("");
+  ticket.push("-".repeat(TICKET_WIDTH));
+
+  // Sección DETALLE DEL PEDIDO (centrada)
+  ticket.push(center("DETALLE DEL PEDIDO"));
+  ticket.push("-".repeat(TICKET_WIDTH));
+
+  // Cabecera de columnas con anchos: Producto 22, Cant 4, Precio 8, Total 8
+  const colProducto = 22;
+  const colCant = 4;
+  const colPrecio = 8;
+  const colTotal = 8;
+
+  const header = padRight("Producto", colProducto) +
+    padLeft("Cant", colCant) +
+    padLeft("Precio", colPrecio) +
+    padLeft("Total", colTotal);
+  ticket.push(header);
+  ticket.push("-".repeat(TICKET_WIDTH));
+
+  // Items del pedido
+  items.forEach(item => {
+    const price = parseFloat(item.price_snapshot || 0);
+    const qty = parseInt(item.quantity || 0);
+    const total = price * qty;
+
+    // Nombre del producto (truncar a 22 caracteres)
+    let productName = `${item.product_name || 'N/A'}`;
+    if (item.color) productName += ` - ${item.color}`;
+    if (item.size) productName += ` (${item.size})`;
+
+    // Truncar a 22 caracteres
+    const name = productName.slice(0, colProducto);
+
+    // Formatear valores
+    const qtyStr = padLeft(String(qty), colCant);
+    const priceStr = `$${price.toLocaleString('es-AR')}`;
+    const totalStr = `$${total.toLocaleString('es-AR')}`;
+    const priceFormatted = padLeft(priceStr, colPrecio);
+    const totalFormatted = padLeft(totalStr, colTotal);
+
+    // Línea del item con columnas alineadas
+    ticket.push(
+      padRight(name, colProducto) +
+      qtyStr +
+      priceFormatted +
+      totalFormatted
+    );
+  });
+
+  ticket.push("-".repeat(TICKET_WIDTH));
+  ticket.push("");
+
+  // Subtotal productos
+  const productsSubtotal = items.reduce((sum, item) => {
+    const price = parseFloat(item.price_snapshot || 0);
+    const qty = parseInt(item.quantity || 0);
+    return sum + (price * qty);
+  }, 0);
+
+  // Envío (si existe)
+  if (shippingAmount > 0) {
+    ticket.push(`Envio: ${padLeft(`$${shippingAmount.toLocaleString('es-AR')}`, TICKET_WIDTH - 7)}`);
+    ticket.push("");
+  }
+
+  // Descuento (si existe)
+  if (discountAmount > 0) {
+    ticket.push(`Descuento: ${padLeft(`-$${discountAmount.toLocaleString('es-AR')}`, TICKET_WIDTH - 11)}`);
+    ticket.push("");
+  }
+
+  // Extras (si existen)
+  if (extrasAmount > 0) {
+    ticket.push(`Extras: ${padLeft(`$${extrasAmount.toLocaleString('es-AR')}`, TICKET_WIDTH - 8)}`);
+    ticket.push("");
+  }
+
+  // Extras porcentuales (si existen)
+  if (extrasPercentage > 0) {
+    const extrasPercentAmount = productsSubtotal * extrasPercentage / 100;
+    ticket.push(`Extras (${extrasPercentage}%): ${padLeft(`$${extrasPercentAmount.toLocaleString('es-AR')}`, TICKET_WIDTH - 18)}`);
+    ticket.push("");
+  }
+
+  // Descuentos de ofertas/promociones (si existen)
+  if (offersData.totalDiscount > 0) {
+    ticket.push(`Descuentos (ofertas): ${padLeft(`-$${offersData.totalDiscount.toLocaleString('es-AR')}`, TICKET_WIDTH - 22)}`);
+    ticket.push("");
+  }
+
+  // TOTAL alineado a la derecha
+  const totalAmount = parseFloat(order.total_amount || 0);
+  const totalStr = `$${totalAmount.toLocaleString('es-AR')}`;
+  ticket.push(padLeft(`TOTAL: ${totalStr}`, TICKET_WIDTH));
+  ticket.push("");
+
+  // Footer: DOCUMENTO NO VALIDO / COMO FACTURA
+  ticket.push("-".repeat(TICKET_WIDTH));
+  ticket.push(center("DOCUMENTO NO VALIDO"));
+  ticket.push(center("COMO FACTURA"));
+  ticket.push("");
+
+  // Texto previo al QR (si existe cliente con QR)
+  if (customer?.qr_code) {
+    ticket.push(center("Escanea para ver tu"));
+    ticket.push(center("historial y creditos:"));
+  }
+
+  return ticket.join("\n");
+}
+
+/**
+ * Imprime el ticket del pedido usando QZ Tray
+ * @param {Object} order - Objeto del pedido completo
+ * @returns {Promise<void>}
+ */
+async function printOrderTicketWithQZ(order) {
+  // Verificar si QZ está disponible antes de intentar
+  if (typeof qz === 'undefined' || !qz) {
+    throw new Error("QZ Tray no está disponible");
+  }
+
+  try {
+    // Conectar a QZ
+    await qzConnect();
+
+    // Obtener configuración de impresora POS-80 específicamente para tickets
+    const config = await qzGetPrinterConfigPos80();
+
+    // Construir ticket de texto
+    const ticketText = await buildEscposTicketOrder(order);
+
+    // Preparar datos para QZ
+    const data = [];
+
+    // Reset impresora y ticket de texto (sin espacios adicionales)
+    data.push("\x1B\x40" + ticketText);
+
+    // QR Code como imagen (si existe cliente con QR)
+    let customer = null;
+    if (Array.isArray(order.customers)) {
+      customer = order.customers[0] || null;
+    } else if (order.customers && typeof order.customers === 'object') {
+      customer = order.customers;
+    }
+
+    if (customer && customer.qr_code) {
+      const url = `${window.location.origin}/customer.html?code=${customer.qr_code}`;
+      const size = 180;
+      const qrApiUrl = `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&margin=10&data=${encodeURIComponent(url)}`;
+
+      // Alineación centrada antes del QR
+      data.push("\x1B\x61\x01");  // ESC a 1
+
+      data.push({
+        type: "raw",
+        format: "image",
+        flavor: "file",
+        data: qrApiUrl,
+        options: {
+          language: "ESCPOS"
+        }
+      });
+
+      // Alimentar un poco después del QR
+      data.push("\x1B\x64\x03");  // ESC d 3 -> 3 líneas
+
+      // Volver a alineación izquierda
+      data.push("\x1B\x61\x00");  // ESC a 0
+    }
+
+    // Corte total
+    data.push("\x1D\x56\x42\x00");   // GS V 66 0
+
+    // Imprimir
+    await qz.print(config, data);
+    console.log("✅ Ticket del pedido enviado a impresora");
+
+  } catch (error) {
+    console.error("❌ Error imprimiendo con QZ Tray:", error);
+    throw error;
+  }
+}
+
+/**
+ * Imprime el ticket del pedido directamente usando QZ Tray
+ * @param {Object} order - Objeto del pedido completo
+ * @returns {Promise<void>}
+ */
+async function printOrderTicketDirectly(order) {
+  // Verificar que QZ Tray esté disponible
+  if (typeof qz === 'undefined' || !qz || !qz.websocket) {
+    alert("⚠️ QZ Tray no está disponible. Por favor, instala QZ Tray para imprimir tickets.");
+    return;
+  }
+
+  try {
+    await printOrderTicketWithQZ(order);
+  } catch (error) {
+    console.error("❌ Error al imprimir ticket:", error);
+    throw error;
+  }
+}
+
 // Función para adjuntar manejadores de eventos
 function attachEventHandlers() {
   // Selector de transporte - usar event delegation para evitar problemas con recargas
@@ -1537,12 +2092,12 @@ function attachEventHandlers() {
     // Remover listeners anteriores si existen
     const newSelect = select.cloneNode(true);
     select.parentNode.replaceChild(newSelect, select);
-    
+
     newSelect.addEventListener('change', async (e) => {
       const orderId = e.target.dataset.orderId;
       let customerId = e.target.dataset.customerId;
       const transportId = e.target.value || null;
-      
+
       // Si no hay customerId en el dataset, intentar obtenerlo del pedido
       if (!customerId) {
         const order = orders.find(o => o.id === orderId);
@@ -1550,7 +2105,7 @@ function attachEventHandlers() {
           customerId = order.customer_id;
         }
       }
-      
+
       if (!customerId) {
         console.error("❌ Error: customerId no encontrado. OrderId:", orderId, "Dataset:", e.target.dataset);
         alert("Error: No se pudo identificar al cliente. Por favor, recarga la página.");
@@ -1558,19 +2113,19 @@ function attachEventHandlers() {
         const order = orders.find(o => o.id === orderId);
         if (order) {
           const customer = order.customers;
-          const currentTransportId = (customer && typeof customer === 'object' && !Array.isArray(customer) ? customer.transport_id : null) || 
-                                     (Array.isArray(customer) && customer.length > 0 ? customer[0].transport_id : null);
+          const currentTransportId = (customer && typeof customer === 'object' && !Array.isArray(customer) ? customer.transport_id : null) ||
+            (Array.isArray(customer) && customer.length > 0 ? customer[0].transport_id : null);
           e.target.value = currentTransportId || '';
         }
         return;
       }
-      
+
       console.log("💾 Guardando transporte para cliente:", customerId, "Transporte:", transportId);
-      
+
       // Deshabilitar el select mientras se guarda
       e.target.disabled = true;
       const originalValue = e.target.value;
-      
+
       try {
         const success = await saveTransport(customerId, transportId);
         if (!success) {
@@ -1642,7 +2197,7 @@ function attachEventHandlers() {
     btn.addEventListener('click', async (e) => {
       const orderId = e.target.dataset.printLabels;
       const order = orders.find(o => o.id === orderId);
-      
+
       if (!order) {
         alert("Pedido no encontrado.");
         return;
@@ -1660,8 +2215,8 @@ function attachEventHandlers() {
       }
 
       // Obtener transport_id del cliente o del pedido (misma lógica que prepareShippingLabelFromOrder)
-      const transportId = (customer.transport_id !== undefined ? customer.transport_id : null) || 
-                          (order.transport_id !== undefined ? order.transport_id : null);
+      const transportId = (customer.transport_id !== undefined ? customer.transport_id : null) ||
+        (order.transport_id !== undefined ? order.transport_id : null);
 
       // Verificar que exista un transporte asignado
       if (!transportId) {
@@ -1731,6 +2286,151 @@ function attachEventHandlers() {
       await finalizeOrder(orderId);
     });
   });
+
+  // Botón imprimir ticket
+  document.querySelectorAll('[data-print-ticket]').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const orderId = e.target.dataset.printTicket;
+      const order = orders.find(o => o.id === orderId);
+
+      if (!order) {
+        alert("Pedido no encontrado.");
+        return;
+      }
+
+      try {
+        await printOrderTicketDirectly(order);
+        
+        // Marcar ticket como impreso en el objeto order
+        order.ticket_printed = true;
+        
+        // Actualizar el badge visualmente
+        const orderCard = e.target.closest('.order-card');
+        if (orderCard) {
+          const ticketBadge = orderCard.querySelector('.labels-printed-badge:last-of-type');
+          if (ticketBadge) {
+            ticketBadge.className = 'labels-printed-badge printed';
+            ticketBadge.style.marginTop = '8px';
+            ticketBadge.textContent = '✅ Ticket impreso';
+          }
+        }
+      } catch (error) {
+        console.error("❌ Error al imprimir ticket:", error);
+        alert("Error al imprimir el ticket: " + (error.message || "Error desconocido"));
+      }
+    });
+  });
+
+  // Botón imprimir todo (rótulos + ticket)
+  document.querySelectorAll('[data-print-all]').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const orderId = e.target.dataset.printAll;
+      const order = orders.find(o => o.id === orderId);
+
+      if (!order) {
+        alert("Pedido no encontrado.");
+        return;
+      }
+
+      const orderCard = e.target.closest('.order-card');
+      let labelsSuccess = false;
+      let ticketSuccess = false;
+
+      // Deshabilitar el botón mientras se imprime
+      e.target.disabled = true;
+      e.target.textContent = 'Imprimiendo...';
+
+      try {
+        // Primero imprimir rótulos
+        try {
+          // Obtener cantidad de rótulos a imprimir
+          const labelsCount = order.labels_count !== undefined ? order.labels_count : 1;
+
+          // Validar que el pedido tenga un transporte asignado
+          let customer = {};
+          if (Array.isArray(order.customers)) {
+            customer = order.customers[0] || {};
+          } else if (order.customers && typeof order.customers === 'object') {
+            customer = order.customers;
+          }
+
+          const transportId = (customer.transport_id !== undefined ? customer.transport_id : null) ||
+            (order.transport_id !== undefined ? order.transport_id : null);
+
+          if (!transportId) {
+            throw new Error("El pedido debe tener un transporte asignado para imprimir rótulos.");
+          }
+
+          const transport = scheduledTransports.find(t => t.id === transportId);
+          if (!transport) {
+            throw new Error("El transporte asignado no es válido.");
+          }
+
+          if (typeof qz === 'undefined' || !qz || !qz.websocket) {
+            throw new Error("QZ Tray no está disponible.");
+          }
+
+          const shippingLabel = prepareShippingLabelFromOrder(order);
+          labelsSuccess = await printTscShippingLabel(shippingLabel, labelsCount);
+
+          if (labelsSuccess) {
+            await markLabelsPrinted(orderId);
+            order.labels_printed = true;
+            
+            // Actualizar badge de rótulos
+            if (orderCard) {
+              const labelsBadge = orderCard.querySelector('.labels-printed-badge:first-of-type');
+              if (labelsBadge) {
+                labelsBadge.className = 'labels-printed-badge printed';
+                labelsBadge.textContent = '✅ Rótulos impresos';
+              }
+            }
+          }
+        } catch (error) {
+          console.error("❌ Error al imprimir rótulos:", error);
+          // Continuar con el ticket aunque falle los rótulos
+        }
+
+        // Luego imprimir ticket
+        try {
+          await printOrderTicketDirectly(order);
+          ticketSuccess = true;
+          
+          // Marcar ticket como impreso
+          order.ticket_printed = true;
+          
+          // Actualizar badge de ticket
+          if (orderCard) {
+            const ticketBadge = orderCard.querySelector('.labels-printed-badge:last-of-type');
+            if (ticketBadge) {
+              ticketBadge.className = 'labels-printed-badge printed';
+              ticketBadge.style.marginTop = '8px';
+              ticketBadge.textContent = '✅ Ticket impreso';
+            }
+          }
+        } catch (error) {
+          console.error("❌ Error al imprimir ticket:", error);
+        }
+
+        // Mostrar resultado
+        if (labelsSuccess && ticketSuccess) {
+          // Ambos exitosos - no mostrar alert, solo los badges
+        } else if (labelsSuccess || ticketSuccess) {
+          alert(`Se imprimió ${labelsSuccess ? 'rótulos' : ''}${labelsSuccess && ticketSuccess ? ' y ' : ''}${ticketSuccess ? 'ticket' : ''}, pero hubo un error con ${!labelsSuccess ? 'rótulos' : 'ticket'}.`);
+        } else {
+          alert("Error al imprimir. Verifica que QZ Tray esté disponible y que el pedido tenga transporte asignado.");
+        }
+
+      } catch (error) {
+        console.error("❌ Error al imprimir:", error);
+        alert("Error al imprimir: " + (error.message || "Error desconocido"));
+      } finally {
+        // Rehabilitar el botón
+        e.target.disabled = false;
+        e.target.textContent = 'Imprimir todo';
+      }
+    });
+  });
 }
 
 // Función para configurar modales
@@ -1772,7 +2472,7 @@ function setupModals() {
     saveTransportModal.addEventListener('click', async () => {
       const name = newTransportName?.value?.trim();
       const details = newTransportDetails?.value?.trim();
-      
+
       if (!name) {
         alert("El nombre del transporte es requerido.");
         return;
@@ -1817,13 +2517,13 @@ function setupRealtimeSubscription() {
     console.warn("⚠️ Supabase no disponible para suscripción en tiempo real");
     return;
   }
-  
+
   // Evitar múltiples suscripciones
   if (isRealtimeSubscribed && realtimeSubscription) {
     console.log("ℹ️ Suscripción en tiempo real ya está activa");
     return;
   }
-  
+
   // Limpiar suscripción anterior si existe
   if (realtimeSubscription) {
     try {
@@ -1834,7 +2534,7 @@ function setupRealtimeSubscription() {
       console.warn("⚠️ Error al limpiar suscripción anterior:", error);
     }
   }
-  
+
   // Crear nueva suscripción
   const channel = supabase
     .channel("closed-orders-changes", {
@@ -1842,7 +2542,7 @@ function setupRealtimeSubscription() {
         broadcast: { self: false }
       }
     });
-  
+
   // Suscripción a cambios en orders (solo pedidos cerrados)
   channel.on(
     "postgres_changes",
@@ -1861,7 +2561,7 @@ function setupRealtimeSubscription() {
       }, 500);
     }
   );
-  
+
   // Suscripción a cambios en order_items (solo si afectan pedidos cerrados)
   channel.on(
     "postgres_changes",
@@ -1883,7 +2583,7 @@ function setupRealtimeSubscription() {
       }, 500);
     }
   );
-  
+
   // Suscripción a cambios en transports (solo si la tabla existe)
   // Intentar suscribirse, pero no fallar si la tabla no existe
   try {
@@ -1907,7 +2607,7 @@ function setupRealtimeSubscription() {
     // Si la tabla no existe, simplemente no suscribirse a ella
     console.warn("⚠️ No se pudo suscribir a cambios en transports (tabla puede no existir):", error.message);
   }
-  
+
   // Suscribirse al canal
   realtimeSubscription = channel.subscribe((status, err) => {
     if (status === "SUBSCRIBED") {
@@ -1942,38 +2642,38 @@ function setupRealtimeSubscription() {
 async function initClosedOrders() {
   try {
     supabase = await getSupabase();
-    
+
     if (!supabase) {
       await new Promise(resolve => setTimeout(resolve, 1000));
       supabase = window.supabase;
-      
+
       if (!supabase) {
         console.error("❌ Supabase no disponible");
         alert("Error: Supabase no disponible. Por favor, recarga la página.");
         return;
       }
     }
-    
+
     const { data: { user }, error: authError } = await supabase.auth.getUser();
-    
+
     if (authError || !user) {
       window.location.href = "index.html";
       return;
     }
-    
+
     const isAdmin = await verifyAdminAuth();
-    
+
     if (!isAdmin) {
       window.location.href = "index.html";
       return;
     }
-    
+
     // Cargar transportes (puede fallar si la tabla no existe, pero no es crítico)
     await loadScheduledTransports();
     if (scheduledTransports.length === 0) {
       console.warn("⚠️ No hay transportes disponibles. La tabla puede no existir aún.");
     }
-    
+
     // Cargar pedidos cerrados
     await loadClosedOrders();
     setupSearchControls();
@@ -2019,7 +2719,8 @@ let currentOrdersList = [];
 let currentTransportName = "";
 let currentFilterDate = "";
 
-// Función para cargar pedidos para la lista de impresión
+// Función para cargar pedidos para la lista de impresión.
+// Usa RPC rpc_get_shipping_orders para evitar el límite de filas de PostgREST y alinear con el criterio del día.
 async function loadOrdersForList(transportId, date) {
   try {
     if (!transportId || !date) {
@@ -2027,163 +2728,130 @@ async function loadOrdersForList(transportId, date) {
       return [];
     }
 
-    // Convertir fecha a rango del día completo (00:00:00 a 23:59:59)
-    // Usar fecha local para evitar problemas de zona horaria
-    const dateParts = date.split('-');
-    const year = parseInt(dateParts[0]);
-    const month = parseInt(dateParts[1]) - 1; // Mes es 0-indexed
-    const day = parseInt(dateParts[2]);
-    
-    const startDate = new Date(year, month, day, 0, 0, 0, 0);
-    const endDate = new Date(year, month, day, 23, 59, 59, 999);
+    console.log("🔍 Buscando pedidos para lista de envíos:", { transportId, date });
 
-    console.log("🔍 Buscando pedidos para fecha:", date);
-    console.log("📅 Rango de búsqueda:", {
-      start: startDate.toISOString(),
-      end: endDate.toISOString(),
-      startLocal: startDate.toLocaleString('es-AR'),
-      endLocal: endDate.toLocaleString('es-AR')
+    const { data: orders, error } = await supabase.rpc("rpc_get_shipping_orders", {
+      p_date: date,
+      p_transport_id: transportId
     });
 
-    // Construir query base - primero obtener orders sin join
-    // Buscar pedidos con sent_at en el rango O pedidos sin sent_at pero con updated_at en el rango (fallback para pedidos antiguos)
-    const { data: orders, error: ordersError } = await supabase
-      .from("orders")
-      .select(`
-        id,
-        order_number,
-        status,
-        total_amount,
-        labels_count,
-        sent_at,
-        updated_at,
-        transport_id,
-        customer_id,
-        payment_method
-      `)
-      .eq("status", "sent");
-
-    if (ordersError) {
-      console.error("❌ Error cargando pedidos:", ordersError);
-      throw ordersError;
+    if (error) {
+      console.error("❌ Error cargando pedidos (RPC):", error);
+      throw error;
     }
 
-    console.log(`📦 Pedidos encontrados (status=sent): ${orders?.length || 0}`);
+    const list = Array.isArray(orders) ? orders : [];
+    console.log(`✅ Pedidos devueltos por rpc_get_shipping_orders: ${list.length}`);
 
-    // Filtrar por fecha: usar sent_at si existe, sino updated_at como fallback
-    const filteredByDate = (orders || []).filter(order => {
-      const dateToCheck = order.sent_at || order.updated_at;
-      if (!dateToCheck) return false;
-      
-      const orderDate = new Date(dateToCheck);
-      return orderDate >= startDate && orderDate <= endDate;
-    });
-
-    console.log(`📅 Pedidos filtrados por fecha (${date}): ${filteredByDate.length}`);
-    
-    if (filteredByDate.length === 0) {
-      console.warn("⚠️ No se encontraron pedidos para la fecha. Pedidos disponibles:", 
-        (orders || []).map(o => ({
-          id: o.id,
-          sent_at: o.sent_at,
-          updated_at: o.updated_at,
-          date_sent: o.sent_at ? new Date(o.sent_at).toLocaleDateString('es-AR') : null,
-          date_updated: o.updated_at ? new Date(o.updated_at).toLocaleDateString('es-AR') : null
-        }))
-      );
-      return [];
-    }
-
-    if (ordersError) {
-      console.error("❌ Error cargando pedidos:", ordersError);
-      throw ordersError;
-    }
-
-    // Obtener order_items para cada pedido
-    const orderIds = filteredByDate.map(o => o.id);
-    const { data: orderItems, error: itemsError } = await supabase
-      .from("order_items")
-      .select("order_id, quantity")
-      .in("order_id", orderIds);
-
-    if (itemsError) {
-      console.warn("⚠️ Error cargando items de pedidos:", itemsError);
-    }
-
-    // Agrupar items por order_id
-    const itemsByOrder = {};
-    if (orderItems) {
-      orderItems.forEach(item => {
-        if (!itemsByOrder[item.order_id]) {
-          itemsByOrder[item.order_id] = [];
-        }
-        itemsByOrder[item.order_id].push(item);
-      });
-    }
-
-    // Obtener customers
-    const customerIds = [...new Set(orders.map(o => o.customer_id).filter(Boolean))];
-    let customersMap = {};
-    
-    if (customerIds.length > 0) {
-      const { data: customers, error: customersError } = await supabase
-        .from("customers")
-        .select("id, full_name, address, city, province, phone, transport_id")
-        .in("id", customerIds);
-
-      if (customersError) {
-        console.warn("⚠️ Error cargando clientes:", customersError);
-      } else if (customers) {
-        customers.forEach(customer => {
-          customersMap[customer.id] = customer;
-        });
-      }
-    }
-
-    // Filtrar por transporte y enriquecer datos
-    const enrichedOrders = filteredByDate
-      .filter(order => {
-        const orderTransportId = order.transport_id;
-        const customer = customersMap[order.customer_id];
-        const customerTransportId = customer?.transport_id;
-        const matchesTransport = orderTransportId === transportId || customerTransportId === transportId;
-        
-        if (!matchesTransport) {
-          console.log(`⚠️ Pedido ${order.order_number || order.id} no coincide con transporte ${transportId}`, {
-            order_transport: orderTransportId,
-            customer_transport: customerTransportId,
-            buscado: transportId
-          });
-        }
-        
-        return matchesTransport;
-      })
-      .map(order => {
-        const customer = customersMap[order.customer_id] || {};
-        const items = itemsByOrder[order.id] || [];
-        const itemsCount = items.reduce((sum, item) => sum + (item.quantity || 0), 0);
-
-      return {
-        id: order.id,
-        order_number: order.order_number,
-        customer_name: customer.full_name || "Sin nombre",
-        address: customer.address || "Sin dirección",
-        city: customer.city || "",
-        province: customer.province || "",
-        phone: customer.phone || "Sin teléfono",
-        items_count: itemsCount,
-        packages_count: order.labels_count || 1,
-        total_amount: order.total_amount || 0,
-        payment_method: order.payment_method || null
-      };
-    });
-
-    console.log(`✅ Pedidos finales después de filtrar por transporte: ${enrichedOrders.length}`);
-    
-    return enrichedOrders;
+    return list;
   } catch (error) {
     console.error("❌ Error en loadOrdersForList:", error);
     throw error;
+  }
+}
+
+// Función para cargar pedidos para extracción Excel
+// Usa RPC rpc_get_shipping_orders_range para evitar límite de filas y alinear con el mismo criterio que la lista de envíos.
+async function loadOrdersForExtract(startDate, endDate, transportId = null) {
+  try {
+    if (!startDate || !endDate) {
+      console.warn("⚠️ Fechas desde y hasta son requeridas");
+      return [];
+    }
+
+    const pTransportId = (transportId && transportId !== "" && transportId !== "all") ? transportId : null;
+    console.log("🔍 Buscando pedidos para extracción (RPC):", { startDate, endDate, transportId: pTransportId });
+
+    const { data: orders, error } = await supabase.rpc("rpc_get_shipping_orders_range", {
+      p_start_date: startDate,
+      p_end_date: endDate,
+      p_transport_id: pTransportId
+    });
+
+    if (error) {
+      console.error("❌ Error cargando pedidos para extracción (RPC):", error);
+      throw error;
+    }
+
+    const list = Array.isArray(orders) ? orders : [];
+    console.log(`✅ Pedidos devueltos por rpc_get_shipping_orders_range: ${list.length}`);
+
+    return list;
+  } catch (error) {
+    console.error("❌ Error en loadOrdersForExtract:", error);
+    throw error;
+  }
+}
+
+// Función para descargar Excel con los datos extraídos
+function downloadExtractExcel(orders, startDate, endDate) {
+  try {
+    if (!window.XLSX) {
+      alert("Error: Librería SheetJS no está disponible. Por favor, recarga la página.");
+      return;
+    }
+
+    if (!orders || orders.length === 0) {
+      alert("No hay pedidos para exportar.");
+      return;
+    }
+
+    // Preparar datos para Excel
+    const excelData = orders.map(order => {
+      // Formatear fecha de envío (dd/mm/aaaa)
+      let fechaEnvio = "";
+      if (order.sent_at) {
+        const date = new Date(order.sent_at);
+        const day = String(date.getDate()).padStart(2, '0');
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const year = date.getFullYear();
+        fechaEnvio = `${day}/${month}/${year}`;
+      }
+
+      // Formatear monto como número para Excel (usar punto para decimales)
+      // Excel reconocerá esto como número y aplicará formato local automáticamente
+      const monto = typeof order.total_amount === "number" 
+        ? order.total_amount.toFixed(2)
+        : "0.00";
+
+      return {
+        "Fecha de envío": fechaEnvio,
+        "Nombre del cliente del envío": order.customer_name || "Sin nombre",
+        "Pagos": order.payment_method || "Sin especificar",
+        "Monto de este pedido": monto,
+        "Transporte que fue enviado": order.transport_name || "Sin transporte asignado"
+      };
+    });
+
+    // Crear workbook y worksheet
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(excelData);
+
+    // Ajustar ancho de columnas
+    const colWidths = [
+      { wch: 15 }, // Fecha de envío
+      { wch: 40 }, // Nombre del cliente
+      { wch: 20 }, // Pagos
+      { wch: 20 }, // Monto
+      { wch: 30 }  // Transporte
+    ];
+    ws['!cols'] = colWidths;
+
+    // Agregar worksheet al workbook
+    XLSX.utils.book_append_sheet(wb, ws, "Envíos");
+
+    // Generar nombre de archivo
+    const startDateStr = startDate.replace(/-/g, "");
+    const endDateStr = endDate.replace(/-/g, "");
+    const filename = `Extraccion_Envios_${startDateStr}_${endDateStr}.xlsx`;
+
+    // Descargar archivo
+    XLSX.writeFile(wb, filename);
+
+    console.log(`✅ Archivo Excel descargado: ${filename}`);
+  } catch (error) {
+    console.error("❌ Error generando Excel:", error);
+    alert("Error al generar el archivo Excel: " + (error.message || "Error desconocido"));
   }
 }
 
@@ -2206,8 +2874,12 @@ function renderOrdersList(orders, transportName, date) {
   empty.style.display = "none";
   printBtn.style.display = "inline-block";
 
-  // Formatear fecha para mostrar
-  const dateObj = new Date(date);
+  // Formatear fecha para mostrar (usar la fecha del parámetro directamente, no convertir)
+  const dateParts = date.split('-');
+  const year = parseInt(dateParts[0]);
+  const month = parseInt(dateParts[1]) - 1; // Mes es 0-indexed
+  const day = parseInt(dateParts[2]);
+  const dateObj = new Date(year, month, day);
   const formattedDate = dateObj.toLocaleDateString("es-AR", {
     year: "numeric",
     month: "long",
@@ -2222,6 +2894,7 @@ function renderOrdersList(orders, transportName, date) {
       <thead>
         <tr>
           <th>Cliente</th>
+          <th>DNI</th>
           <th>Dirección</th>
           <th>Localidad</th>
           <th>Teléfono</th>
@@ -2244,6 +2917,7 @@ function renderOrdersList(orders, transportName, date) {
     tableHTML += `
       <tr>
         <td>${escapeHtml(order.customer_name)}</td>
+        <td>${escapeHtml(order.dni || "-")}</td>
         <td>${escapeHtml(order.address)}</td>
         <td>${escapeHtml(locality)}</td>
         <td>${escapeHtml(order.phone)}</td>
@@ -2271,24 +2945,26 @@ async function generateShippingListPDF(orders, transportName, date, transportId 
 
   const { jsPDF } = window.jspdf;
 
-  // Crear documento A4 (210mm x 297mm)
+  // Crear documento A4 en orientación horizontal (297mm x 210mm)
   const doc = new jsPDF({
-    orientation: "portrait",
+    orientation: "landscape",
     unit: "mm",
     format: "a4"
   });
 
   // Función para agregar una página del PDF
   function addPageToPDF() {
-    // Encabezado
+    // Encabezado - título a la izquierda, transporte y fecha a la derecha
     doc.setFontSize(18);
     doc.setFont(undefined, "bold");
-    doc.text("Lista de Envíos", 105, 20, { align: "center" });
+    doc.text("Lista de Envíos FYL", 15, 20);
 
-    doc.setFontSize(12);
+    doc.setFontSize(11);
     doc.setFont(undefined, "normal");
-    doc.text(`Transporte: ${transportName}`, 20, 30);
     
+    // Transporte y fecha alineados a la derecha
+    doc.text(`Transporte: ${transportName}`, 282, 15, { align: "right" });
+
     // Convertir fecha correctamente usando fecha local (evitar problemas de UTC)
     const dateParts = date.split('-');
     const year = parseInt(dateParts[0]);
@@ -2300,10 +2976,10 @@ async function generateShippingListPDF(orders, transportName, date, transportId 
       month: "long",
       day: "numeric"
     });
-    doc.text(`Fecha: ${formattedDate}`, 20, 37);
+    doc.text(`Fecha: ${formattedDate}`, 282, 22, { align: "right" });
 
-    // Tabla de pedidos
-    const tableData = orders.map(order => {
+    // Tabla de pedidos - comenzar más arriba para aprovechar el espacio
+    const tableData = orders.map((order, index) => {
       const locality = [order.city, order.province].filter(Boolean).join(", ") || "Sin localidad";
       const totalFormatted = new Intl.NumberFormat("es-AR", {
         style: "currency",
@@ -2312,6 +2988,7 @@ async function generateShippingListPDF(orders, transportName, date, transportId 
       }).format(order.total_amount);
 
       return [
+        (index + 1).toString(),
         order.customer_name,
         order.address,
         locality,
@@ -2336,35 +3013,41 @@ async function generateShippingListPDF(orders, transportName, date, transportId 
     }).format(totalMonto).replace(/\s/g, ""); // Eliminar espacios que puedan causar división
 
     doc.autoTable({
-      startY: 45,
-      head: [["Cliente", "Dirección", "Localidad", "Teléfono", "Productos", "Paquetes", "Método Pago", "Total"]],
+      startY: 30,
+      head: [["N°", "Cliente", "Dirección", "Localidad", "Teléfono", "Productos", "Paquetes", "Método Pago", "Total"]],
       body: tableData,
-      styles: { fontSize: 8 },
+      styles: { fontSize: 9 },
       headStyles: { fillColor: [23, 162, 184], textColor: 255, fontStyle: "bold" },
       alternateRowStyles: { fillColor: [245, 245, 245] },
-      margin: { left: 10, right: 10 },
+      margin: { left: 15, right: 15 },
       columnStyles: {
-        4: { cellWidth: 15 }, // Productos - columna más estrecha
-        5: { cellWidth: 15 }, // Paquetes - columna más estrecha
-        6: { cellWidth: 20 }, // Método Pago
-        7: { cellWidth: 25, halign: 'right' } // Total - más ancho y alineado a la derecha
+        0: { cellWidth: 10, halign: 'center' }, // N°
+        1: { cellWidth: 38 }, // Cliente
+        2: { cellWidth: 60 }, // Dirección
+        3: { cellWidth: 38 }, // Localidad
+        4: { cellWidth: 26 }, // Teléfono
+        5: { cellWidth: 18 }, // Productos
+        6: { cellWidth: 18 }, // Paquetes
+        7: { cellWidth: 26 }, // Método Pago
+        8: { cellWidth: 30, halign: 'right' } // Total - alineado a la derecha
       }
     });
 
-    // Mostrar solo el total de paquetes debajo de la lista
+    // Total de paquetes y firma en la misma altura
     const finalY = doc.lastAutoTable.finalY + 15;
+    
+    // Total de paquetes a la izquierda
     doc.setFontSize(12);
     doc.setFont(undefined, "bold");
     doc.text(`Total de Paquetes: ${totalPaquetes}`, 20, finalY);
 
-    // Espacio para firma
-    const signatureY = finalY + 20;
+    // Firma a la derecha a la misma altura
     doc.setFontSize(10);
     doc.setFont(undefined, "normal");
-    doc.text("Firma del Transporte:", 20, signatureY);
-    doc.line(20, signatureY + 5, 100, signatureY + 5);
-    doc.text("Aclaración:", 20, signatureY + 15);
-    doc.line(20, signatureY + 20, 100, signatureY + 20);
+    doc.text("Firma del Transporte:", 130, finalY);
+    doc.line(130, finalY + 5, 180, finalY + 5);
+    doc.text("Aclaración:", 190, finalY);
+    doc.line(190, finalY + 5, 240, finalY + 5);
   }
 
   // Agregar primera página (original)
@@ -2511,15 +3194,15 @@ function setupPrintListsModal() {
   const filterTransport = document.getElementById("filter-transport");
   const filterDate = document.getElementById("filter-date");
 
-  // Establecer fecha por defecto (hoy) - usar fecha local correcta
+  // Establecer fecha por defecto (hoy) usando hora de Buenos Aires
   if (filterDate) {
-    const today = new Date();
-    // Ajustar a zona horaria local para obtener la fecha correcta
-    const year = today.getFullYear();
-    const month = String(today.getMonth() + 1).padStart(2, '0');
-    const day = String(today.getDate()).padStart(2, '0');
-    const todayStr = `${year}-${month}-${day}`;
-    filterDate.value = todayStr;
+    const todayBA = new Date().toLocaleDateString("en-CA", {
+      timeZone: "America/Argentina/Buenos_Aires",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+    filterDate.value = todayBA;
   }
 
   // Abrir modal
@@ -2527,8 +3210,18 @@ function setupPrintListsModal() {
     printListsBtn.addEventListener("click", async () => {
       if (printListsModal) {
         printListsModal.classList.add("active");
-        
-        // Cargar transportes en el selector
+
+        // Fecha por defecto = hoy en Buenos Aires (refrescar cada vez que se abre para que coincida con el día al buscar)
+        if (filterDate) {
+          filterDate.value = new Date().toLocaleDateString("en-CA", {
+            timeZone: "America/Argentina/Buenos_Aires",
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+          });
+        }
+
+        // Cargar transportes en el selector de Nueva Lista
         if (filterTransport && scheduledTransports.length > 0) {
           filterTransport.innerHTML = '<option value="">Seleccionar transporte...</option>';
           scheduledTransports.forEach(transport => {
@@ -2539,6 +3232,20 @@ function setupPrintListsModal() {
           });
         } else if (filterTransport) {
           filterTransport.innerHTML = '<option value="">No hay transportes disponibles</option>';
+        }
+
+        // Cargar transportes en el selector de Extraer
+        const extractTransport = document.getElementById("extract-transport");
+        if (extractTransport && scheduledTransports.length > 0) {
+          extractTransport.innerHTML = '<option value="all">Todos los transportes</option>';
+          scheduledTransports.forEach(transport => {
+            const option = document.createElement("option");
+            option.value = transport.id;
+            option.textContent = transport.name || "Sin nombre";
+            extractTransport.appendChild(option);
+          });
+        } else if (extractTransport) {
+          extractTransport.innerHTML = '<option value="all">Todos los transportes</option><option value="">No hay transportes disponibles</option>';
         }
       }
     });
@@ -2584,7 +3291,7 @@ function setupPrintListsModal() {
 
         const orders = await loadOrdersForList(transportId, date);
         currentOrdersList = orders;
-        
+
         const selectedTransport = scheduledTransports.find(t => t.id === transportId);
         currentTransportName = selectedTransport?.name || "Desconocido";
         currentFilterDate = date;
@@ -2605,11 +3312,11 @@ function setupPrintListsModal() {
     // Clonar el botón para remover todos los listeners anteriores
     const newPrintPdfBtn = printPdfBtn.cloneNode(true);
     printPdfBtn.parentNode.replaceChild(newPrintPdfBtn, printPdfBtn);
-    
+
     newPrintPdfBtn.addEventListener("click", async (e) => {
       e.preventDefault();
       e.stopPropagation();
-      
+
       if (currentOrdersList.length === 0) {
         alert("No hay pedidos para imprimir.");
         return;
@@ -2627,17 +3334,17 @@ function setupPrintListsModal() {
   tabButtons.forEach(btn => {
     btn.addEventListener("click", () => {
       const targetTab = btn.dataset.tab;
-      
+
       // Actualizar botones
       tabButtons.forEach(b => b.classList.remove("active"));
       btn.classList.add("active");
-      
+
       // Actualizar contenidos
       tabContents.forEach(content => {
         content.classList.remove("active");
         content.style.display = "none";
       });
-      
+
       const targetContent = document.getElementById(`tab-${targetTab}`);
       if (targetContent) {
         targetContent.classList.add("active");
@@ -2672,6 +3379,70 @@ function setupPrintListsModal() {
     });
   }
 
+  // Descarga de Excel para Extraer
+  const downloadExcelBtn = document.getElementById("download-excel-btn");
+  const extractStartDate = document.getElementById("extract-start-date");
+  const extractEndDate = document.getElementById("extract-end-date");
+  const extractTransport = document.getElementById("extract-transport");
+  const extractMessage = document.getElementById("extract-message");
+
+  if (downloadExcelBtn) {
+    downloadExcelBtn.addEventListener("click", async () => {
+      const startDate = extractStartDate?.value;
+      const endDate = extractEndDate?.value;
+      const transportId = extractTransport?.value || null;
+
+      if (!startDate || !endDate) {
+        alert("Por favor, selecciona las fechas desde y hasta.");
+        return;
+      }
+
+      // Validar que la fecha desde sea menor o igual a la fecha hasta
+      if (new Date(startDate) > new Date(endDate)) {
+        alert("La fecha 'Desde' debe ser menor o igual a la fecha 'Hasta'.");
+        return;
+      }
+
+      try {
+        downloadExcelBtn.disabled = true;
+        downloadExcelBtn.textContent = "Generando Excel...";
+        
+        if (extractMessage) {
+          extractMessage.style.display = "block";
+          extractMessage.innerHTML = "<p>Buscando pedidos...</p>";
+        }
+
+        const orders = await loadOrdersForExtract(startDate, endDate, transportId);
+
+        if (extractMessage) {
+          if (orders.length === 0) {
+            extractMessage.innerHTML = "<p style='color: #dc3545;'>No se encontraron pedidos para los filtros seleccionados.</p>";
+            downloadExcelBtn.disabled = false;
+            downloadExcelBtn.textContent = "📥 Descargar Excel";
+            return;
+          } else {
+            extractMessage.innerHTML = `<p style='color: #28a745;'>Se encontraron ${orders.length} pedidos. Generando archivo Excel...</p>`;
+          }
+        }
+
+        downloadExtractExcel(orders, startDate, endDate);
+
+        if (extractMessage) {
+          extractMessage.innerHTML = `<p style='color: #28a745;'>✅ Archivo Excel generado correctamente con ${orders.length} pedidos.</p>`;
+        }
+      } catch (error) {
+        console.error("❌ Error generando Excel:", error);
+        alert("Error al generar el archivo Excel: " + (error.message || "Error desconocido"));
+        if (extractMessage) {
+          extractMessage.innerHTML = "<p style='color: #dc3545;'>Error al generar el archivo Excel.</p>";
+        }
+      } finally {
+        downloadExcelBtn.disabled = false;
+        downloadExcelBtn.textContent = "📥 Descargar Excel";
+      }
+    });
+  }
+
   // Ver lista guardada
   document.addEventListener("click", async (e) => {
     if (e.target.classList.contains("view-list-btn")) {
@@ -2679,17 +3450,17 @@ function setupPrintListsModal() {
       try {
         const list = await loadSavedList(listId);
         const orders = list.orders_data || [];
-        
+
         // Cambiar a tab de nueva lista y mostrar los datos
         document.querySelector('[data-tab="new-list"]').click();
         renderOrdersList(orders, list.transport_name, list.list_date);
-        
+
         // Mostrar el contenedor
         const container = document.getElementById("orders-list-container");
         if (container) {
           container.style.display = "block";
         }
-        
+
         // Ocultar botón de imprimir (ya está guardada)
         if (printPdfBtn) {
           printPdfBtn.style.display = "none";
@@ -2706,7 +3477,7 @@ function setupPrintListsModal() {
       try {
         const list = await loadSavedList(listId);
         const orders = list.orders_data || [];
-        
+
         // Generar PDF sin guardar nuevamente (ya está guardada)
         if (!window.jspdf) {
           alert("Error: Librería jsPDF no está disponible.");
@@ -2714,17 +3485,20 @@ function setupPrintListsModal() {
         }
 
         const { jsPDF } = window.jspdf;
-        const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+        const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
 
         function addPageToPDF() {
+          // Encabezado - título a la izquierda, transporte y fecha a la derecha
           doc.setFontSize(18);
           doc.setFont(undefined, "bold");
-          doc.text("Lista de Envíos", 105, 20, { align: "center" });
+          doc.text("Lista de Envíos FYL", 15, 20);
 
-          doc.setFontSize(12);
+          doc.setFontSize(11);
           doc.setFont(undefined, "normal");
-          doc.text(`Transporte: ${list.transport_name}`, 20, 30);
           
+          // Transporte y fecha alineados a la derecha
+          doc.text(`Transporte: ${list.transport_name}`, 282, 15, { align: "right" });
+
           // Convertir fecha correctamente usando fecha local (evitar problemas de UTC)
           const listDateParts = list.list_date.split('-');
           const listYear = parseInt(listDateParts[0]);
@@ -2736,9 +3510,9 @@ function setupPrintListsModal() {
             month: "long",
             day: "numeric"
           });
-          doc.text(`Fecha: ${formattedDate}`, 20, 37);
+          doc.text(`Fecha: ${formattedDate}`, 282, 22, { align: "right" });
 
-          const tableData = orders.map(order => {
+          const tableData = orders.map((order, index) => {
             const locality = [order.city, order.province].filter(Boolean).join(", ") || "Sin localidad";
             const totalFormatted = new Intl.NumberFormat("es-AR", {
               style: "currency",
@@ -2747,6 +3521,7 @@ function setupPrintListsModal() {
             }).format(order.total_amount);
 
             return [
+              (index + 1).toString(),
               order.customer_name,
               order.address,
               locality,
@@ -2770,34 +3545,40 @@ function setupPrintListsModal() {
           }).format(totalMonto).replace(/\s/g, ""); // Eliminar espacios que puedan causar división
 
           doc.autoTable({
-            startY: 45,
-            head: [["Cliente", "Dirección", "Localidad", "Teléfono", "Productos", "Paquetes", "Total"]],
+            startY: 30,
+            head: [["N°", "Cliente", "Dirección", "Localidad", "Teléfono", "Productos", "Paquetes", "Total"]],
             body: tableData,
-            styles: { fontSize: 8 },
+            styles: { fontSize: 9 },
             headStyles: { fillColor: [23, 162, 184], textColor: 255, fontStyle: "bold" },
             alternateRowStyles: { fillColor: [245, 245, 245] },
-            margin: { left: 10, right: 10 },
+            margin: { left: 15, right: 15 },
             columnStyles: {
-              4: { cellWidth: 15 }, // Productos - columna más estrecha
-              5: { cellWidth: 15 }, // Paquetes - columna más estrecha
-              6: { cellWidth: 25, halign: 'right' } // Total - más ancho y alineado a la derecha
+              0: { cellWidth: 10, halign: 'center' }, // N°
+              1: { cellWidth: 42 }, // Cliente
+              2: { cellWidth: 70 }, // Dirección
+              3: { cellWidth: 42 }, // Localidad
+              4: { cellWidth: 28 }, // Teléfono
+              5: { cellWidth: 18 }, // Productos
+              6: { cellWidth: 18 }, // Paquetes
+              7: { cellWidth: 36, halign: 'right' } // Total - alineado a la derecha
             }
           });
 
-          // Mostrar solo el total de paquetes debajo de la lista
+          // Total de paquetes y firma en la misma altura
           const finalY = doc.lastAutoTable.finalY + 15;
+          
+          // Total de paquetes a la izquierda
           doc.setFontSize(12);
           doc.setFont(undefined, "bold");
           doc.text(`Total de Paquetes: ${totalPaquetes}`, 20, finalY);
 
-          // Espacio para firma
-          const signatureY = finalY + 20;
+          // Firma a la derecha a la misma altura
           doc.setFontSize(10);
           doc.setFont(undefined, "normal");
-          doc.text("Firma del Transporte:", 20, signatureY);
-          doc.line(20, signatureY + 5, 100, signatureY + 5);
-          doc.text("Aclaración:", 20, signatureY + 15);
-          doc.line(20, signatureY + 20, 100, signatureY + 20);
+          doc.text("Firma del Transporte:", 130, finalY);
+          doc.line(130, finalY + 5, 180, finalY + 5);
+          doc.text("Aclaración:", 190, finalY);
+          doc.line(190, finalY + 5, 240, finalY + 5);
         }
 
         addPageToPDF();
@@ -2824,15 +3605,15 @@ async function initWhenReady() {
       document.addEventListener("DOMContentLoaded", resolve);
     });
   }
-  
+
   supabase = await getSupabase();
-  
+
   if (!supabase) {
     console.error("❌ No se pudo obtener Supabase");
     alert("Error: No se pudo conectar con Supabase. Por favor, recarga la página.");
     return;
   }
-  
+
   await initClosedOrders();
   // setupPrintListsModal ya se llama en initClosedOrders, no es necesario llamarlo de nuevo
 }

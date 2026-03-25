@@ -1,8 +1,15 @@
 // admin/public-sales.js
 import { requireAuth } from "./admin-auth.js";
 import { supabase } from "../scripts/supabase-client.js";
+import { SUPABASE_URL, QZ_SIGN_SECRET } from "../scripts/config.js";
+import { normalizeSize } from "../scripts/utils/size-normalizer.js";
+
+const TIMEZONE_BUENOS_AIRES = "America/Argentina/Buenos_Aires";
 
 await requireAuth();
+
+// Caja actual: 1 = finalizar venta aquí; 2 o 3 = enviar a Caja 1 (definido en HTML antes del script)
+const PUBLIC_SALES_CAJA = Number(window.PUBLIC_SALES_CAJA) || 1;
 
 // ============================================================================
 // QZ TRAY - Funciones helper para impresión térmica ESC/POS
@@ -10,6 +17,92 @@ await requireAuth();
 
 // Ancho del ticket en caracteres (80mm ≈ 42 caracteres con fuente estándar)
 const TICKET_WIDTH = 42;
+
+// Función helper para configurar firma remota de QZ Tray
+async function setupQZSignature() {
+  if (typeof qz === 'undefined' || !qz || !qz.security) {
+    console.warn("⚠️ QZ Tray no disponible");
+    return;
+  }
+
+  try {
+    console.log("🔧 Configurando certificado y firma remota de QZ Tray...");
+
+    // PASO 1: Precargar y configurar certificado público (ANTES de la firma)
+    console.log("📜 setCertificatePromise: cargando /certs/qz-site.crt");
+    const certResponse = await fetch("/certs/qz-site.crt", { cache: "no-store" });
+    const certText = await certResponse.text();
+    console.log("✅ cert cargado, len=", certText.length, "begin=", certText.includes("BEGIN CERTIFICATE"));
+
+    qz.security.setCertificatePromise((resolve, reject) => {
+      console.log("📜 setCertificatePromise: resolviendo certificado precargado");
+      if (certText) {
+        const match = certText.match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/);
+        if (match) {
+          console.log("✅ Certificado sanitizado encontrado");
+          resolve(match[0]);
+        } else {
+          console.warn("⚠️ No se pudo extraer bloque limpio, usando texto original");
+          resolve(certText);
+        }
+      } else {
+        reject(new Error("Certificado vacío"));
+      }
+    });
+
+    console.log("✅ Certificado público configurado");
+
+    // IMPORTANTE: Configurar algoritmo SHA-512 (requerido por QZ Tray 2.1+)
+    qz.security.setSignatureAlgorithm("SHA512");
+    console.log("✅ Algoritmo de firma configurado: SHA512");
+
+    // PASO 2: Configurar firma remota (DESPUÉS del certificado)
+    qz.security.setSignaturePromise(async (toSign) => {
+      console.log("🔐 QZ Tray solicitó firma. Longitud:", toSign?.length || 0);
+
+      if (!toSign || typeof toSign !== 'string') {
+        throw new Error("toSign inválido o vacío");
+      }
+
+      // Obtener secret desde config (con fallback)
+      const secret = QZ_SIGN_SECRET || 
+        (typeof window !== 'undefined' ? window.QZ_SIGN_SECRET : "") ||
+        "a8cc79b81b8552702d7deccbef31c1eea7a30043b032d136a8eb4671614b5b75";
+
+      console.log("📡 Enviando request de firma a Edge Function...");
+      console.log("📤 toSign a enviar (len=" + toSign.length + "):", toSign.substring(0, 50) + "...");
+
+      // IMPORTANTE: Enviar toSign como text/plain (no JSON) para evitar alteraciones
+      // QZ Tray requiere que el string llegue exactamente igual, sin JSON.stringify
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/qz-sign`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "text/plain;charset=utf-8",
+          "x-qz-secret": secret
+        },
+        body: toSign // Enviar directamente, sin JSON.stringify
+      });
+
+      console.log("📥 Respuesta recibida. Status:", res.status);
+
+      if (!res.ok) {
+        const errorText = await res.text();
+        console.error("❌ Error HTTP:", res.status, errorText);
+        throw new Error(`Error en firma: ${res.status} - ${errorText}`);
+      }
+
+      const signature = (await res.text()).trim();
+      console.log("✅ Firma generada correctamente. Longitud:", signature.length);
+      return signature;
+    });
+
+    console.log("✅ Certificado y firma remota configurados para QZ Tray");
+  } catch (e) {
+    console.error("❌ Error setupQZSignature:", e);
+  }
+}
+
+// NO configurar firma aquí - se configurará cuando QZ esté disponible en qzConnect() o loadQZTray()
 
 /**
  * Conecta al websocket de QZ Tray si no está activo
@@ -20,7 +113,10 @@ async function qzConnect() {
   if (typeof qz === 'undefined' || !qz || !qz.websocket) {
     throw new Error("QZ Tray no está disponible");
   }
-  
+
+  // Asegurar que la firma esté configurada antes de conectar
+  setupQZSignature();
+
   if (!qz.websocket.isActive()) {
     try {
       await qz.websocket.connect();
@@ -116,26 +212,28 @@ function center(text, width = TICKET_WIDTH) {
 function buildEscposTicket(saleDetails, customer, finalTotal) {
   const sale = saleDetails.sale;
   const items = saleDetails.items || [];
-  
+
   // Formatear fecha y hora
   const saleDate = new Date(sale.created_at);
   const dateStr = saleDate.toLocaleDateString('es-AR', {
     year: 'numeric',
     month: '2-digit',
-    day: '2-digit'
+    day: '2-digit',
+    timeZone: TIMEZONE_BUENOS_AIRES,
   });
   const timeStr = saleDate.toLocaleTimeString('es-AR', {
     hour: '2-digit',
-    minute: '2-digit'
+    minute: '2-digit',
+    timeZone: TIMEZONE_BUENOS_AIRES,
   });
-  
+
   let ticket = [];
-  
+
   // Encabezado centrado
   ticket.push(center("FYL moda"));
   ticket.push("-".repeat(TICKET_WIDTH));
   ticket.push("");
-  
+
   // Datos de venta
   ticket.push(`Venta: ${sale.sale_number}`);
   ticket.push(`Fecha: ${dateStr}`);
@@ -147,46 +245,46 @@ function buildEscposTicket(saleDetails, customer, finalTotal) {
   }
   ticket.push("");
   ticket.push("-".repeat(TICKET_WIDTH));
-  
+
   // Sección DETALLE DE LA COMPRA (centrada)
   ticket.push(center("DETALLE DE LA COMPRA"));
   ticket.push("-".repeat(TICKET_WIDTH));
-  
+
   // Cabecera de columnas con anchos: Producto 22, Cant 4, Precio 8, Total 8
   const colProducto = 22;
   const colCant = 4;
   const colPrecio = 8;
   const colTotal = 8;
-  
+
   const header = padRight("Producto", colProducto) +
-                 padLeft("Cant", colCant) +
-                 padLeft("Precio", colPrecio) +
-                 padLeft("Total", colTotal);
+    padLeft("Cant", colCant) +
+    padLeft("Precio", colPrecio) +
+    padLeft("Total", colTotal);
   ticket.push(header);
   ticket.push("-".repeat(TICKET_WIDTH));
-  
+
   // Items de la venta
   items.forEach(item => {
     const price = parseFloat(item.price || item.price_snapshot || 0);
     const total = price * item.qty;
     const isReturn = item.is_return || false;
-    
+
     // Nombre del producto (truncar a 22 caracteres)
     let productName = `${item.product_name || 'N/A'}`;
     if (item.color) productName += ` - ${item.color}`;
     if (item.size) productName += ` (${item.size})`;
     if (isReturn) productName += " [DEV]";
-    
+
     // Truncar a 22 caracteres
     const name = productName.slice(0, colProducto);
-    
+
     // Formatear valores
     const qty = padLeft(String(item.qty), colCant);
     const priceStr = `$${price.toLocaleString('es-AR')}`;
     const totalStr = `${isReturn ? '-' : ''}$${total.toLocaleString('es-AR')}`;
     const priceFormatted = padLeft(priceStr, colPrecio);
     const totalFormatted = padLeft(totalStr, colTotal);
-    
+
     // Línea del item con columnas alineadas
     ticket.push(
       padRight(name, colProducto) +
@@ -195,10 +293,10 @@ function buildEscposTicket(saleDetails, customer, finalTotal) {
       totalFormatted
     );
   });
-  
+
   ticket.push("-".repeat(TICKET_WIDTH));
   ticket.push("");
-  
+
   // Crédito aplicado (si existe) - sin tilde
   if (sale.credit_used > 0) {
     const creditAmount = parseFloat(sale.credit_used);
@@ -206,32 +304,33 @@ function buildEscposTicket(saleDetails, customer, finalTotal) {
     ticket.push(`Credito Aplicado: ${padLeft(creditStr, TICKET_WIDTH - 20)}`);
     ticket.push("");
   }
-  
+
   // TOTAL alineado a la derecha
-  const totalAmount = parseFloat(sale.total_amount);
+  // Usar finalTotal si se proporciona (incluye todos los extras), sino usar sale.total_amount
+  const totalAmount = finalTotal !== undefined && finalTotal !== null ? parseFloat(finalTotal) : parseFloat(sale.total_amount);
   const totalStr = `${totalAmount < 0 ? '-' : ''}$${Math.abs(totalAmount).toLocaleString('es-AR')}`;
   ticket.push(padLeft(`TOTAL: ${totalStr}`, TICKET_WIDTH));
   ticket.push("");
-  
+
   // Saldo a favor (si el total es negativo) - sin tilde
   if (totalAmount < 0) {
     ticket.push("Saldo a favor (Credito):");
     ticket.push(padLeft(totalStr, TICKET_WIDTH));
     ticket.push("");
   }
-  
+
   // Footer primero: DOCUMENTO NO VALIDO / COMO FACTURA
   ticket.push("-".repeat(TICKET_WIDTH));
   ticket.push(center("DOCUMENTO NO VALIDO"));
   ticket.push(center("COMO FACTURA"));
   ticket.push("");
-  
+
   // Texto previo al QR (si existe cliente con QR) - sin tilde
   if (customer?.qr_code) {
     ticket.push(center("Escanea para ver tu"));
     ticket.push(center("historial y creditos:"));
   }
-  
+
   return ticket.join("\n");
 }
 
@@ -247,35 +346,35 @@ async function printSaleWithQZ(saleDetails, customer, finalTotal) {
   if (typeof qz === 'undefined' || !qz) {
     throw new Error("QZ Tray no está disponible");
   }
-  
+
   try {
     // Conectar a QZ
     await qzConnect();
-    
+
     // Obtener configuración de impresora
     const config = await qzGetPrinterConfig();
-    
+
     // Construir ticket de texto
     const ticketText = buildEscposTicket(saleDetails, customer, finalTotal);
-    
+
     // Preparar datos para QZ
     const data = [];
-    
+
     // Reset impresora
     data.push("\x1B\x40");
-    
+
     // Ticket de texto
     data.push(ticketText + "\n\n");
-    
+
     // QR Code como imagen (si existe cliente con QR)
     if (customer && customer.qr_code) {
       const url = `${window.location.origin}/customer.html?code=${customer.qr_code}`;
       const size = 180;
       const qrApiUrl = `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&margin=10&data=${encodeURIComponent(url)}`;
-      
+
       // Alineacion centrada antes del QR
       data.push("\x1B\x61\x01");  // ESC a 1
-      
+
       data.push({
         type: "raw",
         format: "image",
@@ -285,21 +384,21 @@ async function printSaleWithQZ(saleDetails, customer, finalTotal) {
           language: "ESCPOS"
         }
       });
-      
+
       // Alimentar un poco despues del QR (pero no tanto)
       data.push("\x1B\x64\x03");  // ESC d 3 -> 3 lineas
-      
+
       // Volver a alineacion izquierda
       data.push("\x1B\x61\x00");  // ESC a 0
     }
-    
+
     // Corte total
     data.push("\x1D\x56\x42\x00");   // GS V 66 0
-    
+
     // Imprimir
     await qz.print(config, data);
     console.log("✅ Ticket enviado a impresora");
-    
+
   } catch (error) {
     console.error("❌ Error imprimiendo con QZ Tray:", error);
     throw error; // Re-lanzar para que el fallback funcione
@@ -309,26 +408,26 @@ async function printSaleWithQZ(saleDetails, customer, finalTotal) {
 // Función principal para generar QR usando API (más confiable que librería)
 function generateQRCode(url, container, size = 200) {
   console.log("generateQRCode llamado con:", { url, container: !!container, size });
-  
+
   if (!container) {
     console.error("❌ Container no encontrado para generar QR");
     return;
   }
-  
+
   if (!url) {
     console.error("❌ URL no proporcionada para generar QR");
     return;
   }
-  
+
   console.log("🔄 Generando QR code usando API para:", url);
-  
+
   // Limpiar contenedor primero
   container.innerHTML = "";
-  
+
   // Usar API de QR Server (más confiable que librerías CDN)
   const qrApiUrl = `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(url)}`;
   console.log("📡 URL de API QR:", qrApiUrl);
-  
+
   const img = document.createElement('img');
   img.src = qrApiUrl;
   img.alt = "QR Code";
@@ -338,18 +437,18 @@ function generateQRCode(url, container, size = 200) {
   img.style.margin = "0 auto";
   img.style.border = "1px solid #ddd";
   img.style.borderRadius = "4px";
-  
+
   img.onload = () => {
     console.log("✅ QR code generado exitosamente usando API");
     console.log("✅ Imagen cargada correctamente, dimensiones:", img.width, "x", img.height);
   };
-  
+
   img.onerror = (error) => {
     console.error("❌ Error cargando QR desde API:", error);
     console.error("❌ URL que falló:", qrApiUrl);
     container.innerHTML = `<p style="word-break: break-all; font-size: 12px; text-align: center; color: #dc3545;">Error al cargar QR. URL: ${url}</p>`;
   };
-  
+
   container.appendChild(img);
   console.log("📝 Imagen agregada al contenedor");
 }
@@ -361,12 +460,12 @@ function generateQRWithLibrary(url, container, size = 200) {
     generateQRCode(url, container, size);
     return;
   }
-  
+
   try {
     const canvas = document.createElement('canvas');
     container.innerHTML = "";
     container.appendChild(canvas);
-    
+
     QRCode.toCanvas(canvas, url, {
       width: size,
       margin: 2,
@@ -450,6 +549,12 @@ const pendingSalesContainer = document.getElementById("pending-sales-container")
 const pendingSalesGrid = document.getElementById("pending-sales-grid");
 const caja2Btn = document.getElementById("caja2-btn");
 const caja3Btn = document.getElementById("caja3-btn");
+// Reservas (campana)
+const reservasBellBtn = document.getElementById("reservas-bell-btn");
+const reservasBellBadge = document.getElementById("reservas-bell-badge");
+const reservasPanel = document.getElementById("reservas-panel");
+const reservasList = document.getElementById("reservas-list");
+const reservasRefreshBtn = document.getElementById("reservas-refresh-btn");
 const manualProduct = document.getElementById("manual-product");
 const manualSearchBtn = document.getElementById("manual-search-btn");
 const manualProductSelection = document.getElementById("manual-product-selection");
@@ -464,6 +569,9 @@ const autocompleteDropdown = document.getElementById("autocomplete-dropdown");
 const extraNumericInput = document.getElementById("extra-numeric");
 const extraPercentageInput = document.getElementById("extra-percentage");
 const applyExtrasBtn = document.getElementById("apply-extras-btn");
+const specialExtraNameInput = document.getElementById("special-extra-name");
+const specialExtraAmountInput = document.getElementById("special-extra-amount");
+const addSpecialExtraBtn = document.getElementById("add-special-extra-btn");
 const paymentMethodIndicator = document.getElementById("payment-method-indicator");
 const paymentMethodText = document.getElementById("payment-method-text");
 const loadAsCreditContainer = document.getElementById("load-as-credit-container");
@@ -489,6 +597,11 @@ let manualCurrentVariants = [];
 let manualSelectedColor = null;
 let manualSelectedSizes = {};
 let manualSelectedSizesSource = {}; // { size: { ventaPublico: qty, general: qty } }
+let manualSelectedSizesConfirmedWithoutStock = {}; // { size: true } - talles confirmados para agregar sin stock
+
+// Control de versiones para evitar race conditions en renderizado de talles
+let renderSizeButtonsVersion = 0;
+let renderManualSizeButtonsVersion = 0;
 
 // Estado para autocompletado
 let autocompleteProducts = [];
@@ -505,6 +618,192 @@ let pendingSales = [];
 let currentPendingSale = null;
 let currentLocalOrderId = null; // ID del pedido local si viene de un pedido local
 
+// =============================================================================
+// Reservas (Pedidos): ítems que salen 100% de venta-publico
+// =============================================================================
+
+function _safeText(v) {
+  return (v ?? "").toString();
+}
+
+function setBellCount(units) {
+  const n = Number(units || 0) || 0;
+  if (!reservasBellBadge) return;
+  if (n <= 0) {
+    reservasBellBadge.style.display = "none";
+    reservasBellBadge.textContent = "0";
+    return;
+  }
+  reservasBellBadge.style.display = "inline-flex";
+  reservasBellBadge.textContent = n > 99 ? "99+" : String(n);
+}
+
+function toggleReservasPanel(forceOpen = null) {
+  if (!reservasPanel) return;
+  const open = forceOpen == null ? !reservasPanel.classList.contains("is-open") : !!forceOpen;
+  reservasPanel.classList.toggle("is-open", open);
+  if (open) {
+    refreshReservas().catch((e) => console.warn("refreshReservas:", e?.message || e));
+  }
+}
+
+async function fetchLocalReservations() {
+  if (!supabase) return [];
+
+  // A) Resolver IDs de warehouses (general / venta-publico)
+  const { data: whData, error: whErr } = await supabase
+    .from("warehouses")
+    .select("id, code")
+    .in("code", ["general", "venta-publico"]);
+
+  if (whErr) throw whErr;
+  const generalId = (whData || []).find((w) => w.code === "general")?.id;
+  const ventaId = (whData || []).find((w) => w.code === "venta-publico")?.id;
+
+  if (!generalId || !ventaId) return [];
+
+  // B) Cargar order_items reservados con joins mínimos
+  const { data, error } = await supabase
+    .from("order_items")
+    .select(
+      [
+        "id",
+        "order_id",
+        "product_name",
+        "color",
+        "size",
+        "quantity",
+        "status",
+        "created_at",
+        "orders(id, order_number, status, customer_id, customers(full_name))",
+        "order_item_stock_sources(qty, warehouse_id)"
+      ].join(",")
+    )
+    .eq("status", "reserved");
+
+  if (error) throw error;
+
+  // C) Filtrar solo órdenes activas y SOLO FULL local (venta-publico == quantity, general==0)
+  const finalStatuses = new Set(["closed", "sent", "devolucion", "devolucion_alt", "cancelled"]);
+  const rows = Array.isArray(data) ? data : [];
+
+  const filtered = rows.filter((oi) => {
+    const order = oi.orders;
+    if (!order) return false;
+    const orderStatus = (_safeText(order.status).trim().toLowerCase());
+    if (finalStatuses.has(orderStatus)) return false;
+
+    const qty = Number(oi.quantity || 0) || 0;
+    if (qty <= 0) return false;
+
+    const sources = Array.isArray(oi.order_item_stock_sources) ? oi.order_item_stock_sources : [];
+    let ventaQty = 0;
+    let generalQty = 0;
+    sources.forEach((s) => {
+      const q = Number(s?.qty || 0) || 0;
+      if (s?.warehouse_id === ventaId) ventaQty += q;
+      if (s?.warehouse_id === generalId) generalQty += q;
+    });
+
+    return (ventaQty === qty) && (generalQty === 0);
+  });
+
+  return filtered;
+}
+
+function groupReservationsByOrder(items) {
+  const map = new Map();
+  (items || []).forEach((oi) => {
+    const order = oi.orders || {};
+    const orderId = order.id || oi.order_id || "unknown";
+    if (!map.has(orderId)) {
+      map.set(orderId, {
+        orderId,
+        orderNumber: order.order_number || "",
+        customerName: order.customers?.full_name || "",
+        items: [],
+      });
+    }
+    map.get(orderId).items.push(oi);
+  });
+  return Array.from(map.values());
+}
+
+function renderReservations(items) {
+  if (!reservasList) return;
+  const groups = groupReservationsByOrder(items);
+  if (groups.length === 0) {
+    reservasList.innerHTML = `<div style="color:#666;font-size:13px;padding:8px 0;">No hay reservas pendientes.</div>`;
+    return;
+  }
+
+  reservasList.innerHTML = groups
+    .map((g) => {
+      const header = `
+        <div class="reserva-order__meta">
+          <div>
+            <div class="reserva-order__customer">${_safeText(g.customerName) || "Cliente"}</div>
+            <div style="font-size:12px;color:#666;">Pedido ${_safeText(g.orderNumber) || ""}</div>
+          </div>
+          <div style="font-size:12px;color:#666; font-weight:700;">en local</div>
+        </div>
+      `;
+
+      const itemsHtml = (g.items || [])
+        .map((oi) => {
+          const name = _safeText(oi.product_name) || "Producto";
+          const color = _safeText(oi.color) || "-";
+          const size = _safeText(oi.size) || "-";
+          const qty = Number(oi.quantity || 0) || 0;
+          return `
+            <div class="reserva-item">
+              <div>
+                <div class="reserva-item__name">${name}</div>
+                <div class="reserva-item__meta">Color: <strong>${color}</strong> • Talle: <strong>${size}</strong> • Cant: <strong>${qty}</strong></div>
+              </div>
+              <div class="reserva-item__actions">
+                <button type="button" class="reserva-action-btn reserva-action-btn--ok" data-reserva-action="confirm" data-order-item-id="${oi.id}">Confirmar</button>
+                <button type="button" class="reserva-action-btn reserva-action-btn--no" data-reserva-action="reject" data-order-item-id="${oi.id}">Rechazar</button>
+              </div>
+            </div>
+          `;
+        })
+        .join("");
+
+      return `<div class="reserva-order">${header}${itemsHtml}</div>`;
+    })
+    .join("");
+}
+
+async function refreshReservas() {
+  const items = await fetchLocalReservations();
+  const totalUnits = (items || []).reduce((sum, oi) => sum + (Number(oi.quantity || 0) || 0), 0);
+  setBellCount(totalUnits);
+  renderReservations(items);
+}
+
+async function handleReservaAction(action, orderItemId) {
+  if (!supabase) throw new Error("Supabase no disponible");
+  const a = _safeText(action).trim().toLowerCase();
+  const nextStatus = a === "confirm" ? "picked" : (a === "reject" ? "missing" : null);
+  if (!nextStatus) return;
+
+  const { error } = await supabase
+    .from("order_items")
+    .update({ status: nextStatus, checked_at: new Date().toISOString() })
+    .eq("id", orderItemId);
+
+  if (error) throw error;
+  await refreshReservas();
+}
+
+// Cache y sistema de cola para QR
+let warehousesCache = null; // Cache de warehouses (general, venta-publico)
+let qrProcessingQueue = []; // Cola de códigos QR pendientes de procesar
+let isProcessingQr = false; // Flag para saber si se está procesando un QR
+let renderDebounceTimeout = null; // Timeout para debounce de renderSaleList
+let calculateTotalsDebounceTimeout = null; // Timeout para debounce de calculateTotals
+
 // Escuchar cambios en modo devoluciones
 returnMode.addEventListener("change", async (e) => {
   returnModeIndicator.style.display = e.target.checked ? "block" : "none";
@@ -517,9 +816,34 @@ returnMode.addEventListener("change", async (e) => {
 });
 
 // Buscar por SKU
+let skuSearchTimeout = null;
+skuSearch.addEventListener("input", async (e) => {
+  const sku = e.target.value.trim();
+  
+  // Si el campo tiene contenido, esperar un breve momento y luego buscar automáticamente
+  // Esto simula la lectura de QR que escribe el código completo de una vez
+  if (sku.length > 0) {
+    clearTimeout(skuSearchTimeout);
+    skuSearchTimeout = setTimeout(async () => {
+      // Solo buscar si el campo todavía tiene contenido (no fue limpiado)
+      const currentSku = skuSearch.value.trim();
+      if (currentSku.length > 0) {
+        // Si es numérico (QR code), agregar a la cola para procesamiento rápido
+        if (/^\d+$/.test(currentSku)) {
+          addToQrQueue(currentSku);
+        } else {
+          // Si no es numérico, buscar por SKU normalmente
+          await searchBySku(currentSku);
+        }
+      }
+    }, 150); // Reducido a 150ms para respuesta más rápida
+  }
+});
+
 skuSearch.addEventListener("keypress", async (e) => {
   if (e.key === "Enter") {
     e.preventDefault();
+    clearTimeout(skuSearchTimeout); // Cancelar timeout si se presiona Enter manualmente
     await searchBySku(skuSearch.value.trim());
   }
 });
@@ -539,7 +863,7 @@ let customerSearchTimeout = null;
 customerSearch.addEventListener("input", (e) => {
   clearTimeout(customerSearchTimeout);
   const term = e.target.value.trim();
-  
+
   if (term.length < 2) {
     customerSuggestions.innerHTML = "";
     return;
@@ -585,11 +909,11 @@ function highlightAutocompleteItem(index) {
 
 function selectAutocompleteProduct(product) {
   if (!product) return;
-  
+
   manualProduct.value = product.name;
   hideAutocompleteDropdown();
   autocompleteSelectedIndex = -1;
-  
+
   // Buscar y cargar el producto
   searchManualProduct();
 }
@@ -601,6 +925,25 @@ function highlightSearchTerm(text, term) {
   return text.replace(regex, '<span class="highlight">$1</span>');
 }
 
+// Ordenar productos: primero coincidencia exacta, luego "empieza por", luego "contiene"
+function sortProductsByRelevance(products, term) {
+  if (!term) return products;
+  const t = term.trim().toLowerCase();
+  return [...products].sort((a, b) => {
+    const aName = (a.name || "").trim().toLowerCase();
+    const bName = (b.name || "").trim().toLowerCase();
+    const aExact = aName === t;
+    const bExact = bName === t;
+    if (aExact && !bExact) return -1;
+    if (!aExact && bExact) return 1;
+    const aStarts = aName.startsWith(t);
+    const bStarts = bName.startsWith(t);
+    if (aStarts && !bStarts) return -1;
+    if (!aStarts && bStarts) return 1;
+    return 0;
+  });
+}
+
 // Cargar sugerencias de productos y renderizar en el dropdown
 async function loadProductSuggestions(term) {
   try {
@@ -608,8 +951,8 @@ async function loadProductSuggestions(term) {
       .from("products")
       .select("id, name, category")
       .ilike("name", `%${term}%`)
-      .eq("status", "active")
-      .limit(10);
+      .in("status", ["active", "pending_stock", "draft"]) // Incluir productos activos, con stock pendiente y en borrador
+      .limit(50);
 
     if (error) throw error;
 
@@ -629,33 +972,34 @@ async function loadProductSuggestions(term) {
           uniqueProducts.push(product);
         }
       }
-
-      autocompleteProducts = uniqueProducts;
+      // Priorizar: 1) nombre exacto, 2) empieza por término, 3) contiene
+      const sorted = sortProductsByRelevance(uniqueProducts, term).slice(0, 10);
+      autocompleteProducts = sorted;
 
       // Renderizar items en el dropdown
-      uniqueProducts.forEach((product, index) => {
+      sorted.forEach((product, index) => {
         const item = document.createElement("div");
         item.className = "autocomplete-item";
         item.setAttribute("data-product-id", product.id);
         item.setAttribute("data-index", index);
-        
+
         const nameHtml = highlightSearchTerm(escapeHtml(product.name), term);
         const categoryHtml = product.category ? `<div class="product-category">${escapeHtml(product.category)}</div>` : "";
-        
+
         item.innerHTML = `
           <div class="product-name">${nameHtml}</div>
           ${categoryHtml}
         `;
-        
+
         item.addEventListener("click", () => {
           selectAutocompleteProduct(product);
         });
-        
+
         item.addEventListener("mouseenter", () => {
           autocompleteSelectedIndex = index;
           highlightAutocompleteItem(index);
         });
-        
+
         autocompleteDropdown.appendChild(item);
       });
 
@@ -675,7 +1019,7 @@ if (manualProduct) {
   manualProduct.addEventListener("input", (e) => {
     clearTimeout(productSearchTimeout);
     const term = e.target.value.trim();
-    
+
     if (term.length < 2) {
       hideAutocompleteDropdown();
       return;
@@ -718,7 +1062,7 @@ if (manualProduct) {
         autocompleteSelectedIndex = Math.min(autocompleteSelectedIndex + 1, items.length - 1);
         highlightAutocompleteItem(autocompleteSelectedIndex);
         break;
-      
+
       case "ArrowUp":
         e.preventDefault();
         autocompleteSelectedIndex = Math.max(autocompleteSelectedIndex - 1, -1);
@@ -728,7 +1072,7 @@ if (manualProduct) {
           highlightAutocompleteItem(autocompleteSelectedIndex);
         }
         break;
-      
+
       case "Enter":
         e.preventDefault();
         // Si hay exactamente una concordancia, seleccionarla automáticamente
@@ -740,7 +1084,7 @@ if (manualProduct) {
           searchManualProduct();
         }
         break;
-      
+
       case "Escape":
         e.preventDefault();
         hideAutocompleteDropdown();
@@ -766,9 +1110,9 @@ if (manualProduct) {
 
 // Cerrar dropdown al hacer clic fuera
 document.addEventListener("click", (e) => {
-  if (autocompleteDropdown && manualProduct && 
-      !autocompleteDropdown.contains(e.target) && 
-      e.target !== manualProduct) {
+  if (autocompleteDropdown && manualProduct &&
+    !autocompleteDropdown.contains(e.target) &&
+    e.target !== manualProduct) {
     hideAutocompleteDropdown();
   }
 });
@@ -926,13 +1270,68 @@ async function applyExtras() {
   // Actualizar lista y totales
   renderSaleList();
   await calculateTotals();
+  // Volver a renderizar después de calcular totales para mostrar los valores actualizados de extras porcentuales
+  renderSaleList();
   showMessage("Extras aplicados correctamente", "success");
+}
+
+// Agregar extra especial al pedido
+async function addSpecialExtra() {
+  const name = specialExtraNameInput ? specialExtraNameInput.value.trim() : '';
+  const amount = specialExtraAmountInput ? parseFloat(specialExtraAmountInput.value) : 0;
+  
+  // Validaciones
+  if (!name) {
+    showMessage("Por favor ingrese un nombre para el extra especial", "error");
+    return;
+  }
+  if (isNaN(amount) || amount <= 0) {
+    showMessage("Por favor ingrese un monto válido mayor a 0", "error");
+    return;
+  }
+  
+  // Crear item de extra especial
+  const specialExtra = {
+    isExtra: true,
+    isSpecialExtra: true, // Flag adicional para distinguirlo de otros extras
+    extraType: 'special',
+    productName: name,
+    totalValue: amount,
+    totalQuantity: 1,
+    sku: 'EXTRA-ESPECIAL',
+    color: '-',
+    sizes: [],
+    price: amount
+  };
+  
+  saleItems.push(specialExtra);
+  
+  // Limpiar campos
+  if (specialExtraNameInput) specialExtraNameInput.value = "";
+  if (specialExtraAmountInput) specialExtraAmountInput.value = "";
+  
+  // Actualizar lista y totales
+  renderSaleList();
+  await calculateTotals();
+  showMessage(`Extra especial "${name}" agregado correctamente`, "success");
 }
 
 // Event listener para botón aplicar extras
 if (applyExtrasBtn) {
   applyExtrasBtn.addEventListener("click", async () => {
     await applyExtras();
+  });
+}
+
+// Event listener para botón agregar extra especial (deshabilitar mientras ejecuta para evitar doble clic)
+if (addSpecialExtraBtn) {
+  addSpecialExtraBtn.addEventListener("click", async () => {
+    addSpecialExtraBtn.disabled = true;
+    try {
+      await addSpecialExtra();
+    } finally {
+      addSpecialExtraBtn.disabled = false;
+    }
   });
 }
 
@@ -946,7 +1345,7 @@ if (loadAsCreditCheckbox) {
 // Buscar producto manualmente
 async function searchManualProduct() {
   const productName = manualProduct.value.trim();
-  
+
   if (!productName) {
     showMessage("Ingrese el nombre del producto", "error");
     return;
@@ -958,7 +1357,7 @@ async function searchManualProduct() {
       .from("products")
       .select("id, name")
       .ilike("name", productName)
-      .eq("status", "active")
+      .in("status", ["active", "pending_stock", "draft"]) // Incluir productos activos, con stock pendiente y en borrador
       .limit(1)
       .single();
 
@@ -978,13 +1377,13 @@ async function searchManualProduct() {
 // Cargar variantes del producto para modo manual
 async function loadManualProductVariants(productId) {
   try {
+    // Cargar variantes (sin size, ya que los talles están en variant_sizes)
     const { data: variants, error } = await supabase
       .from("product_variants")
       .select(`
         id,
         sku,
         color,
-        size,
         price,
         active,
         products!inner (
@@ -996,17 +1395,69 @@ async function loadManualProductVariants(productId) {
       `)
       .eq("product_id", productId)
       .eq("active", true)
-      .eq("products.status", "active");
+      .in("products.status", ["active", "pending_stock", "draft"]); // Incluir productos activos, con stock pendiente y en borrador
 
     if (error) throw error;
 
     if (!variants || variants.length === 0) {
-      showMessage("No se encontraron variantes activas para este producto", "error");
+      showMessage("No se encontraron variantes activas para este producto. Verifica que el producto esté activo y las variantes tengan el checkbox 'Activa' marcado.", "error");
       return;
     }
 
+    // Cargar talles desde variant_sizes para cada variante
+    const variantIds = variants.map(v => v.id);
+    const { data: sizesData, error: sizesError } = await supabase
+      .from("variant_sizes")
+      .select("variant_id, size, stock_qty, sku")
+      .in("variant_id", variantIds)
+      .order("size");
+
+    // Agrupar talles por variant_id
+    // IMPORTANTE: Normalizar los tamaños al cargarlos desde variant_sizes para asegurar consistencia
+    const sizesByVariant = new Map();
+    if (sizesData) {
+      sizesData.forEach(sizeRow => {
+        if (!sizesByVariant.has(sizeRow.variant_id)) {
+          sizesByVariant.set(sizeRow.variant_id, []);
+        }
+        // Normalizar el tamaño antes de guardarlo
+        const normalizedSize = normalizeSize(sizeRow.size);
+        if (normalizedSize) {
+          sizesByVariant.get(sizeRow.variant_id).push({
+            size: normalizedSize, // Guardar tamaño normalizado
+            stock_qty: sizeRow.stock_qty || 0,
+            sku: sizeRow.sku,
+          });
+        }
+      });
+    }
+
+    // Agregar talles a cada variante y crear variantes "virtuales" por cada talle
+    const variantsWithSizes = [];
+    variants.forEach(variant => {
+      const sizes = sizesByVariant.get(variant.id) || [];
+      if (sizes.length > 0) {
+        // Crear una variante virtual por cada talle
+        sizes.forEach(sizeData => {
+          variantsWithSizes.push({
+            ...variant,
+            size: sizeData.size, // Ya está normalizado desde sizesByVariant
+            sizeSku: sizeData.sku, // SKU completo con talle
+            qr_code: sizeData.qr_code, // Código QR numérico único
+            stock_qty: sizeData.stock_qty, // Stock del talle desde variant_sizes
+          });
+        });
+      } else {
+        // Si no tiene talles, agregar la variante sin size (modo legacy)
+        variantsWithSizes.push({
+          ...variant,
+          size: null,
+        });
+      }
+    });
+
     manualCurrentProduct = variants[0].products;
-    manualCurrentVariants = variants;
+    manualCurrentVariants = variantsWithSizes;
 
     // Mostrar información básica inmediatamente (sin esperar datos adicionales)
     manualProductName.textContent = manualCurrentProduct.name;
@@ -1015,39 +1466,66 @@ async function loadManualProductVariants(productId) {
     if (manualProductInfo) {
       manualProductInfo.style.display = "flex";
     }
-    
+
     // Renderizar colores inmediatamente con precios base
-    renderManualColorButtons();
-    
+    await renderManualColorButtons();
+
     // Obtener stock, precios efectivos e información de ofertas/promociones para cada variante EN PARALELO
     const variantPromises = manualCurrentVariants.map(async (variant) => {
       // Ejecutar todas las llamadas en paralelo para esta variante
-      const [stockData, effectivePrice, offerInfo, promotionInfo] = await Promise.all([
+      // Si la variante tiene un talle específico (viene de variant_sizes), usar su stock_qty
+      let stockData;
+      if (variant.size && variant.sizeSku) {
+        // Variante con talle específico: usar stock_qty de variant_sizes
+        // También obtener stock de warehouse para compatibilidad
+        const [warehouseStock, effectivePrice, offerInfo, promotionInfo] = await Promise.all([
         getVariantStock(variant.id),
         getEffectivePrice(variant.id),
         getOfferInfo(variant.id, manualCurrentProduct.id, variant.color),
         getPromotionInfo(variant.id)
       ]);
-      
+        
+        // Usar stock_qty de variant_sizes como base, pero también considerar warehouse stock
+        const sizeStockQty = variant.stock_qty || 0;
+        stockData = {
+          ...warehouseStock,
+          sizeStock: sizeStockQty, // Stock específico del talle desde variant_sizes
+          total: Math.max(warehouseStock.total, sizeStockQty), // Usar el mayor entre ambos
+        };
+
       variant.stockData = stockData;
       variant.effectivePrice = effectivePrice !== null ? effectivePrice : variant.price;
       variant.offerInfo = offerInfo;
       variant.promotionInfo = promotionInfo;
-      
+      } else {
+        // Variante sin talle específico: usar stock de warehouse (modo legacy)
+        const [warehouseStock, effectivePrice, offerInfo, promotionInfo] = await Promise.all([
+          getVariantStock(variant.id),
+          getEffectivePrice(variant.id),
+          getOfferInfo(variant.id, manualCurrentProduct.id, variant.color),
+          getPromotionInfo(variant.id)
+        ]);
+        
+        variant.stockData = warehouseStock;
+        variant.effectivePrice = effectivePrice !== null ? effectivePrice : variant.price;
+        variant.offerInfo = offerInfo;
+        variant.promotionInfo = promotionInfo;
+      }
+
       return variant;
     });
-    
+
     // Esperar a que todas las variantes se procesen en paralelo
     await Promise.all(variantPromises);
-    
+
     // Actualizar precio e información de oferta con datos reales después de cargar
     const updatedFirstVariant = manualCurrentVariants[0];
     const firstVariantEffectivePrice = updatedFirstVariant.effectivePrice || updatedFirstVariant.price;
     manualProductPrice.textContent = `$${firstVariantEffectivePrice.toLocaleString('es-AR')}`;
     updateProductOfferDisplay(updatedFirstVariant, manualProductOfferInfo);
-    
+
     // Re-renderizar colores con datos actualizados
-    renderManualColorButtons();
+    await renderManualColorButtons();
   } catch (error) {
     console.error("Error cargando variantes manuales:", error);
     showMessage("Error al cargar variantes: " + error.message, "error");
@@ -1055,19 +1533,25 @@ async function loadManualProductVariants(productId) {
 }
 
 // Renderizar botones de colores para modo manual
-function renderManualColorButtons() {
+async function renderManualColorButtons() {
   const colors = [...new Set(manualCurrentVariants.map(v => v.color).filter(Boolean))];
-  
+
   if (!manualColorButtons) return;
   manualColorButtons.innerHTML = "";
-  
+
   colors.forEach(color => {
     const btn = document.createElement("button");
     btn.className = "color-btn";
     btn.textContent = color;
-    btn.style.padding = "6px 12px";
-    btn.style.fontSize = "13px";
-    btn.addEventListener("click", () => {
+    btn.style.padding = "10px 20px";
+    btn.style.fontSize = "14px";
+    btn.style.minWidth = "88px";
+    btn.style.whiteSpace = "nowrap";
+    btn.style.textAlign = "center";
+    btn.style.display = "flex";
+    btn.style.alignItems = "center";
+    btn.style.justifyContent = "center";
+    btn.addEventListener("click", async () => {
       document.querySelectorAll("#manual-color-buttons .color-btn").forEach(b => {
         b.classList.remove("active");
         b.style.color = ""; // Resetear color para que use el CSS
@@ -1075,7 +1559,9 @@ function renderManualColorButtons() {
       btn.classList.add("active");
       manualSelectedColor = color;
       manualSelectedSizes = {};
-      
+      manualSelectedSizesSource = {}; // Limpiar fuente de stock al cambiar de color
+      manualSelectedSizesConfirmedWithoutStock = {};
+
       // Actualizar precio e información de oferta para el color seleccionado
       const variantsByColor = manualCurrentVariants.filter(v => v.color === color);
       if (variantsByColor.length > 0) {
@@ -1084,8 +1570,8 @@ function renderManualColorButtons() {
         manualProductPrice.textContent = `$${effectivePrice.toLocaleString('es-AR')}`;
         updateProductOfferDisplay(firstVariant, manualProductOfferInfo);
       }
-      
-      renderManualSizeButtons();
+
+      await renderManualSizeButtons();
     });
     manualColorButtons.appendChild(btn);
   });
@@ -1093,7 +1579,7 @@ function renderManualColorButtons() {
   if (colors.length > 0 && !manualSelectedColor) {
     manualSelectedColor = colors[0];
     document.querySelectorAll("#manual-color-buttons .color-btn")[0]?.classList.add("active");
-    
+
     // Actualizar precio e información de oferta para el primer color
     const variantsByColor = manualCurrentVariants.filter(v => v.color === manualSelectedColor);
     if (variantsByColor.length > 0) {
@@ -1102,13 +1588,138 @@ function renderManualColorButtons() {
       manualProductPrice.textContent = `$${effectivePrice.toLocaleString('es-AR')}`;
       updateProductOfferDisplay(firstVariant, manualProductOfferInfo);
     }
-    
-    renderManualSizeButtons();
+
+    await renderManualSizeButtons();
+  }
+}
+
+// Actualizar un botón de talle específico sin recrear toda la lista
+function updateManualSizeButton(size, generalStock, ventaPublicoStock, totalStock) {
+  if (!manualSizeButtons) return;
+  
+  const btn = manualSizeButtons.querySelector(`[data-size="${size}"]`);
+  if (!btn) return;
+  
+  const quantity = manualSelectedSizes[size] || 0;
+  const source = manualSelectedSizesSource[size] || { ventaPublico: 0, general: 0 };
+  
+  // Actualizar clases CSS según stock y cantidad
+  btn.className = "size-btn";
+  if (totalStock === 0) {
+    btn.classList.add("size-zero");
+  } else if (ventaPublicoStock > 0 && source.general === 0) {
+    btn.classList.add("size-available");
+  } else if (generalStock > 0 || source.general > 0) {
+    btn.classList.add("size-green");
+  } else {
+    btn.classList.add("size-zero");
+  }
+  
+  // Actualizar o crear contador
+  let counter = btn.querySelector(".size-counter");
+  if (quantity > 0) {
+    if (!counter) {
+      counter = document.createElement("div");
+      counter.className = "size-counter";
+      counter.style.width = "18px";
+      counter.style.height = "18px";
+      counter.style.fontSize = "11px";
+      btn.appendChild(counter);
+    }
+    counter.textContent = quantity;
+  } else if (counter) {
+    counter.remove();
+  }
+  
+  // Actualizar o crear botón de decremento
+  let decrementBtn = btn.querySelector(".size-decrement");
+  if (quantity > 0) {
+    if (!decrementBtn) {
+      decrementBtn = document.createElement("button");
+      decrementBtn.className = "size-decrement";
+      decrementBtn.textContent = "-";
+      decrementBtn.type = "button";
+      decrementBtn.style.width = "16px";
+      decrementBtn.style.height = "16px";
+      decrementBtn.style.fontSize = "12px";
+      decrementBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        if (manualSelectedSizes[size] > 0) {
+          manualSelectedSizes[size]--;
+          if (manualSelectedSizesSource[size]) {
+            if (manualSelectedSizesSource[size].general > 0) {
+              manualSelectedSizesSource[size].general--;
+            } else if (manualSelectedSizesSource[size].ventaPublico > 0) {
+              manualSelectedSizesSource[size].ventaPublico--;
+            }
+            if (manualSelectedSizesSource[size].ventaPublico === 0 && manualSelectedSizesSource[size].general === 0) {
+              delete manualSelectedSizesSource[size];
+            }
+          }
+          if (manualSelectedSizes[size] === 0) {
+            delete manualSelectedSizes[size];
+            delete manualSelectedSizesSource[size];
+          }
+          // Obtener stock actualizado para este talle (comparar talles normalizados para evitar fallos por formato)
+          const variant = manualCurrentVariants.find(v => v.color === manualSelectedColor && normalizeSize(v.size) === normalizeSize(size));
+          if (variant) {
+            const { data: warehouses } = await supabase
+              .from("warehouses")
+              .select("id, code")
+              .in("code", ["general", "venta-publico"]);
+            const warehouseMap = new Map();
+            let generalWarehouseId = null;
+            let ventaPublicoWarehouseId = null;
+            if (warehouses && warehouses.length > 0) {
+              warehouses.forEach(w => warehouseMap.set(w.code, w.id));
+              generalWarehouseId = warehouseMap.get("general");
+              ventaPublicoWarehouseId = warehouseMap.get("venta-publico");
+            }
+            let genStock = 0;
+            let ventaStock = 0;
+            if (generalWarehouseId && ventaPublicoWarehouseId) {
+              // Normalizar el tamaño antes de consultar
+              const normalizedSize = normalizeSize(size);
+              
+              // Cargar todos los registros de stock para esta variante y normalizar después
+              const { data: sizeWarehouseStocks } = await supabase
+                .from("variant_size_warehouse_stock")
+                .select("size, warehouse_id, stock_qty")
+                .eq("variant_id", variant.id)
+                .in("warehouse_id", [generalWarehouseId, ventaPublicoWarehouseId]);
+              if (sizeWarehouseStocks) {
+                // Filtrar por tamaño normalizado después de obtener los datos
+                sizeWarehouseStocks.forEach(sws => {
+                  const swsNormalizedSize = normalizeSize(sws.size);
+                  if (swsNormalizedSize !== normalizedSize) return; // Saltar si no coincide después de normalizar
+                  
+                  if (sws.warehouse_id === generalWarehouseId) {
+                    genStock = sws.stock_qty || 0;
+                  } else if (sws.warehouse_id === ventaPublicoWarehouseId) {
+                    ventaStock = sws.stock_qty || 0;
+                  }
+                });
+              }
+            }
+            updateManualSizeButton(size, genStock, ventaStock, genStock + ventaStock);
+          } else {
+            updateManualSizeButton(size, 0, 0, 0);
+          }
+          updateManualLoadButton();
+        }
+      });
+      btn.appendChild(decrementBtn);
+    }
+  } else if (decrementBtn) {
+    decrementBtn.remove();
   }
 }
 
 // Renderizar botones de talles para modo manual
-function renderManualSizeButtons() {
+async function renderManualSizeButtons() {
+  // Incrementar versión para cancelar renderizados anteriores
+  const currentVersion = ++renderManualSizeButtonsVersion;
+  
   if (!manualSelectedColor || !manualSizeButtons) return;
 
   const variantsByColor = manualCurrentVariants.filter(v => v.color === manualSelectedColor);
@@ -1118,43 +1729,150 @@ function renderManualSizeButtons() {
     return numA - numB;
   });
 
+  // Verificar versión antes de modificar DOM
+  if (currentVersion !== renderManualSizeButtonsVersion) return;
   manualSizeButtons.innerHTML = "";
 
-  sizes.forEach(size => {
-    const variant = variantsByColor.find(v => v.size === size);
-    if (!variant) return;
+  // Obtener warehouses una sola vez
+  const { data: warehouses } = await supabase
+    .from("warehouses")
+    .select("id, code")
+    .in("code", ["general", "venta-publico"]);
+  
+  const warehouseMap = new Map();
+  let generalWarehouseId = null;
+  let ventaPublicoWarehouseId = null;
+  
+  if (warehouses && warehouses.length > 0) {
+    warehouses.forEach(w => warehouseMap.set(w.code, w.id));
+    generalWarehouseId = warehouseMap.get("general");
+    ventaPublicoWarehouseId = warehouseMap.get("venta-publico");
+  }
 
-    const stock = variant.stockData || { total: 0, general: { stock: 0 }, ventaPublico: { stock: 0 } };
-    const totalStock = stock.total || 0;
-    const generalStock = stock.general?.stock || 0;
-    const ventaPublicoStock = stock.ventaPublico?.stock || 0;
+  // Normalizar todos los tamaños antes de consultar usando la función global normalizeSize
+  const normalizedSizes = sizes.map(s => normalizeSize(s)).filter(Boolean);
+  
+  // Obtener todos los stocks por talle de una vez
+  const variantIds = variantsByColor.map(v => v.id).filter(Boolean);
+  const sizeStockMap = new Map(); // key: `${variantId}_${normalizedSize}`, value: { general, ventaPublico, total }
+  
+  if (variantIds.length > 0 && normalizedSizes.length > 0 && generalWarehouseId && ventaPublicoWarehouseId) {
+    // Consultar stock por talle desde variant_size_warehouse_stock para todos los talles
+    // IMPORTANTE: Normalizar los tamaños en la consulta usando una subconsulta o cargar todos y normalizar después
+    const { data: sizeWarehouseStocks, error: sizeError } = await supabase
+      .from("variant_size_warehouse_stock")
+      .select("variant_id, size, warehouse_id, stock_qty")
+      .in("variant_id", variantIds)
+      .in("warehouse_id", [generalWarehouseId, ventaPublicoWarehouseId]);
+    
+    if (!sizeError && sizeWarehouseStocks && sizeWarehouseStocks.length > 0) {
+      // Filtrar y normalizar después de obtener los datos
+      sizeWarehouseStocks.forEach(sws => {
+        const normalizedSize = normalizeSize(sws.size);
+        if (!normalizedSize) return; // Saltar tamaños vacíos
+        
+        // Filtrar solo los tamaños que están en la lista de sizes normalizados
+        if (!normalizedSizes.includes(normalizedSize)) return;
+        
+        const key = `${sws.variant_id}_${normalizedSize}`;
+        if (!sizeStockMap.has(key)) {
+          sizeStockMap.set(key, { general: 0, ventaPublico: 0, total: 0 });
+        }
+        const stock = sizeStockMap.get(key);
+        
+        // IMPORTANTE: Si ya existe un valor, NO sumar, REEMPLAZAR
+        // (cada variante+talle+warehouse debería tener solo un registro)
+        if (sws.warehouse_id === generalWarehouseId) {
+          stock.general = sws.stock_qty || 0;
+        } else if (sws.warehouse_id === ventaPublicoWarehouseId) {
+          stock.ventaPublico = sws.stock_qty || 0;
+        }
+        stock.total = stock.general + stock.ventaPublico;
+      });
+    }
+  }
+
+  // Verificar versión después de consultas async
+  if (currentVersion !== renderManualSizeButtonsVersion) return;
+
+  sizes.forEach(size => {
+    // Normalizar el tamaño antes de buscar la variante
+    const normalizedSize = normalizeSize(size);
+    if (!normalizedSize) return; // Saltar tamaños vacíos
+    
+    // Buscar la variante usando tamaño normalizado
+    const variant = variantsByColor.find(v => {
+      const vNormalizedSize = normalizeSize(v.size);
+      return vNormalizedSize === normalizedSize;
+    });
+    if (!variant) return;
+    
+    // Obtener stock específico del talle desde el mapa usando el tamaño normalizado
+    const stockKey = `${variant.id}_${normalizedSize}`;
+    let totalStock = 0;
+    let generalStock = 0;
+    let ventaPublicoStock = 0;
+    
+    if (sizeStockMap.has(stockKey)) {
+      const sizeStock = sizeStockMap.get(stockKey);
+      generalStock = sizeStock.general || 0;
+      ventaPublicoStock = sizeStock.ventaPublico || 0;
+      totalStock = sizeStock.total || 0;
+    } else {
+      // Fallback: intentar buscar en el mapa con todas las variantes del mismo color
+      // para este tamaño (puede haber múltiples variantes con el mismo color pero diferentes IDs)
+      for (const [key, stock] of sizeStockMap.entries()) {
+        const [keyVariantId, keySize] = key.split('_');
+        if (keySize === normalizedSize && variantIds.includes(keyVariantId)) {
+          // Encontrar la variante correcta por ID
+          const matchingVariant = variantsByColor.find(v => v.id === keyVariantId);
+          if (matchingVariant && normalizeSize(matchingVariant.size) === normalizedSize) {
+            generalStock = stock.general || 0;
+            ventaPublicoStock = stock.ventaPublico || 0;
+            totalStock = stock.total || 0;
+            break;
+          }
+        }
+        }
+      }
+      
+    // FALLBACK CRÍTICO: Si no hay stock en warehouses pero hay en variant_sizes, usar variant_sizes.stock_qty
+    // Este es el mismo patrón que usa admin/stock.js (líneas 554-560) y admin/order-creator.js
+    // variant.stock_qty viene de variant_sizes (ya se carga en líneas 1185, 3086)
+    if (generalStock === 0 && ventaPublicoStock === 0 && variant.stock_qty > 0) {
+      // Si hay stock en variant_sizes pero no en variant_size_warehouse_stock,
+      // poner todo en general como fallback (esto es lo que hace admin/stock.js)
+      generalStock = variant.stock_qty || 0;
+      totalStock = generalStock;
+    }
 
     const btn = document.createElement("button");
     btn.className = "size-btn";
+    btn.setAttribute("data-size", size);
     btn.textContent = size;
     btn.style.width = "40px";
     btn.style.height = "40px";
     btn.style.fontSize = "14px";
 
-    // Determinar color del botón
-    if (totalStock === 0) {
-      btn.classList.add("size-zero");
-    } else if (ventaPublicoStock > 0) {
-      btn.classList.add("size-available");
-    } else if (generalStock > 0) {
-      btn.classList.add("size-green");
-    } else {
-      btn.classList.add("size-zero");
-    }
-
     // Mostrar contador si hay cantidad seleccionada
     const quantity = manualSelectedSizes[size] || 0;
     const source = manualSelectedSizesSource[size] || { ventaPublico: 0, general: 0 };
-    
-    // Si hay cantidad seleccionada y se está usando stock de general, cambiar a verde
-    if (quantity > 0 && source.general > 0) {
-      btn.classList.remove("size-available");
+
+    // Determinar color del botón según stock disponible y fuente actual
+    // IMPORTANTE: Si ya se está usando stock de general, el botón debe ser verde
+    if (totalStock === 0) {
+      btn.classList.add("size-zero");
+    } else if (source.general > 0) {
+      // Ya se está usando stock de general, botón verde
       btn.classList.add("size-green");
+    } else if (ventaPublicoStock > 0 && source.general === 0) {
+      // Hay stock en venta-publico y no se está usando general, botón marrón
+      btn.classList.add("size-available");
+    } else if (generalStock > 0) {
+      // Solo hay stock en general, botón verde
+      btn.classList.add("size-green");
+    } else {
+      btn.classList.add("size-zero");
     }
     if (quantity > 0) {
       const counter = document.createElement("div");
@@ -1175,7 +1893,7 @@ function renderManualSizeButtons() {
       decrementBtn.style.width = "16px";
       decrementBtn.style.height = "16px";
       decrementBtn.style.fontSize = "12px";
-      decrementBtn.addEventListener("click", (e) => {
+      decrementBtn.addEventListener("click", async (e) => {
         e.stopPropagation();
         if (manualSelectedSizes[size] > 0) {
           manualSelectedSizes[size]--;
@@ -1194,7 +1912,7 @@ function renderManualSizeButtons() {
             delete manualSelectedSizes[size];
             delete manualSelectedSizesSource[size];
           }
-          renderManualSizeButtons();
+          updateManualSizeButton(size, generalStock, ventaPublicoStock, totalStock);
           updateManualLoadButton();
         }
       });
@@ -1203,38 +1921,38 @@ function renderManualSizeButtons() {
 
     // En modo devoluciones, todos los botones están disponibles sin límite de stock
     if (returnMode.checked || totalStock > 0) {
-      btn.addEventListener("click", () => {
+      btn.addEventListener("click", async () => {
         const currentQty = manualSelectedSizes[size] || 0;
         const currentSource = manualSelectedSizesSource[size] || { ventaPublico: 0, general: 0 };
-        
+
         // En modo devoluciones, no hay límite de cantidad
         if (returnMode.checked) {
           manualSelectedSizes[size] = currentQty + 1;
-          
+
           // En devoluciones, no necesitamos rastrear la fuente del stock
           // porque se agregará al stock de venta-publico
           if (!manualSelectedSizesSource[size]) {
             manualSelectedSizesSource[size] = { ventaPublico: 0, general: 0 };
           }
-          
-          renderManualSizeButtons();
+
+          updateManualSizeButton(size, generalStock, ventaPublicoStock, totalStock);
           updateManualLoadButton();
         } else {
           // Modo venta normal: verificar stock disponible
           const totalStockAvailable = ventaPublicoStock + generalStock;
-          
+
           if (currentQty < totalStockAvailable) {
             manualSelectedSizes[size] = currentQty + 1;
-            
+
             // Asignar a la fuente correcta (priorizar venta-publico)
             if (!manualSelectedSizesSource[size]) {
               manualSelectedSizesSource[size] = { ventaPublico: 0, general: 0 };
             }
-            
+
             // Calcular cuánto stock queda disponible en cada almacén
             const remainingVentaPublico = Math.max(0, ventaPublicoStock - currentSource.ventaPublico);
             const remainingGeneral = Math.max(0, generalStock - currentSource.general);
-            
+
             if (remainingVentaPublico > 0) {
               // Aún hay stock en venta-publico, usar de ahí
               manualSelectedSizesSource[size].ventaPublico++;
@@ -1242,11 +1960,71 @@ function renderManualSizeButtons() {
               // Ya no hay en venta-publico, usar de general (el botón se volverá verde)
               manualSelectedSizesSource[size].general++;
             }
-            
-            renderManualSizeButtons();
+
+            updateManualSizeButton(size, generalStock, ventaPublicoStock, totalStock);
             updateManualLoadButton();
           } else {
-            showMessage(`Stock máximo alcanzado para talle ${size}. Disponible: ${totalStockAvailable} (Venta Público: ${ventaPublicoStock}, General: ${generalStock})`, "error", 10000);
+            // Stock máximo alcanzado: mostrar modal de confirmación
+            const modal = document.getElementById("no-stock-confirm-modal");
+            const confirmYes = document.getElementById("no-stock-confirm-yes");
+            const confirmNo = document.getElementById("no-stock-confirm-no");
+
+            if (!modal || !confirmYes || !confirmNo) {
+              showMessage(`Stock máximo alcanzado para talle ${size}. Disponible: ${totalStockAvailable} (Venta Público: ${ventaPublicoStock}, General: ${generalStock})`, "error", 10000);
+              return;
+            }
+
+            // Actualizar mensaje del modal para stock máximo alcanzado
+            const modalMessage = modal.querySelector("p");
+            if (modalMessage) {
+              modalMessage.textContent = `Stock máximo alcanzado para talle ${size}. Disponible: ${totalStockAvailable} (Venta Público: ${ventaPublicoStock}, General: ${generalStock}). ¿Desea agregarlo de todas formas? (Útil en caso de mal conteo de stock)`;
+            }
+
+            modal.classList.add("active");
+
+            // Esperar respuesta del usuario
+            const userConfirmed = await new Promise((resolve) => {
+              const handleYes = () => {
+                modal.classList.remove("active");
+                // Restaurar mensaje original del modal
+                const modalMessage = modal.querySelector("p");
+                if (modalMessage) {
+                  modalMessage.textContent = "Este producto no tiene stock disponible. ¿Está seguro de que desea agregarlo de todas formas?";
+                }
+                confirmYes.removeEventListener("click", handleYes);
+                confirmNo.removeEventListener("click", handleNo);
+                resolve(true);
+              };
+
+              const handleNo = () => {
+                modal.classList.remove("active");
+                // Restaurar mensaje original del modal
+                const modalMessage = modal.querySelector("p");
+                if (modalMessage) {
+                  modalMessage.textContent = "Este producto no tiene stock disponible. ¿Está seguro de que desea agregarlo de todas formas?";
+                }
+                confirmYes.removeEventListener("click", handleYes);
+                confirmNo.removeEventListener("click", handleNo);
+                resolve(false);
+              };
+
+              confirmYes.addEventListener("click", handleYes);
+              confirmNo.addEventListener("click", handleNo);
+            });
+
+            if (userConfirmed) {
+              // Agregar talle como si tuviera stock (para casos de mal conteo)
+              manualSelectedSizes[size] = currentQty + 1;
+              // Marcar que este talle fue confirmado para agregar sin stock
+              manualSelectedSizesConfirmedWithoutStock[size] = true;
+
+              // SIEMPRE resetear a 0,0 cuando se confirma sin stock
+              // Esto indica que el usuario aceptó agregar sin descontar de ningún warehouse
+              manualSelectedSizesSource[size] = { ventaPublico: 0, general: 0 };
+
+              updateManualSizeButton(size, generalStock, ventaPublicoStock, totalStock);
+              updateManualLoadButton();
+            }
           }
         }
       });
@@ -1257,14 +2035,14 @@ function renderManualSizeButtons() {
         const modal = document.getElementById("no-stock-confirm-modal");
         const confirmYes = document.getElementById("no-stock-confirm-yes");
         const confirmNo = document.getElementById("no-stock-confirm-no");
-        
+
         if (!modal || !confirmYes || !confirmNo) {
           console.error("Modal de confirmación sin stock no encontrado");
           return;
         }
-        
+
         modal.classList.add("active");
-        
+
         // Esperar respuesta del usuario
         const userConfirmed = await new Promise((resolve) => {
           const handleYes = () => {
@@ -1273,28 +2051,72 @@ function renderManualSizeButtons() {
             confirmNo.removeEventListener("click", handleNo);
             resolve(true);
           };
-          
+
           const handleNo = () => {
             modal.classList.remove("active");
             confirmYes.removeEventListener("click", handleYes);
             confirmNo.removeEventListener("click", handleNo);
             resolve(false);
           };
-          
+
           confirmYes.addEventListener("click", handleYes);
           confirmNo.addEventListener("click", handleNo);
         });
-        
+
         if (userConfirmed) {
           // Agregar talle como si tuviera stock
           const currentQty = manualSelectedSizes[size] || 0;
           manualSelectedSizes[size] = currentQty + 1;
-          
-          if (!manualSelectedSizesSource[size]) {
-            manualSelectedSizesSource[size] = { ventaPublico: 0, general: 0 };
+          // Marcar que este talle fue confirmado para agregar sin stock
+          manualSelectedSizesConfirmedWithoutStock[size] = true;
+
+          // SIEMPRE resetear a 0,0 cuando se confirma sin stock
+          // Esto indica que el usuario aceptó agregar sin descontar de ningún warehouse
+          manualSelectedSizesSource[size] = { ventaPublico: 0, general: 0 };
+
+          // Obtener stock para actualizar el botón
+          const variant = manualCurrentVariants.find(v => v.color === manualSelectedColor && v.size === size);
+          if (variant) {
+            const { data: warehouses } = await supabase
+              .from("warehouses")
+              .select("id, code")
+              .in("code", ["general", "venta-publico"]);
+            const warehouseMap = new Map();
+            let generalWarehouseId = null;
+            let ventaPublicoWarehouseId = null;
+            if (warehouses && warehouses.length > 0) {
+              warehouses.forEach(w => warehouseMap.set(w.code, w.id));
+              generalWarehouseId = warehouseMap.get("general");
+              ventaPublicoWarehouseId = warehouseMap.get("venta-publico");
+            }
+            let genStock = 0;
+            let ventaStock = 0;
+            if (generalWarehouseId && ventaPublicoWarehouseId) {
+              // Normalizar el tamaño antes de consultar
+              const normalizedSize = normalizeSize(size);
+              
+              // Cargar todos los registros de stock para esta variante y normalizar después
+              const { data: sizeWarehouseStocks } = await supabase
+                .from("variant_size_warehouse_stock")
+                .select("size, warehouse_id, stock_qty")
+                .eq("variant_id", variant.id)
+                .in("warehouse_id", [generalWarehouseId, ventaPublicoWarehouseId]);
+              if (sizeWarehouseStocks) {
+                // Filtrar por tamaño normalizado después de obtener los datos
+                sizeWarehouseStocks.forEach(sws => {
+                  const swsNormalizedSize = normalizeSize(sws.size);
+                  if (swsNormalizedSize !== normalizedSize) return; // Saltar si no coincide después de normalizar
+                  
+                  if (sws.warehouse_id === generalWarehouseId) {
+                    genStock = sws.stock_qty || 0;
+                  } else if (sws.warehouse_id === ventaPublicoWarehouseId) {
+                    ventaStock = sws.stock_qty || 0;
+                  }
+                });
+              }
+            }
+            updateManualSizeButton(size, genStock, ventaStock, genStock + ventaStock);
           }
-          
-          renderManualSizeButtons();
           updateManualLoadButton();
         }
       });
@@ -1324,6 +2146,23 @@ if (manualLoadBtn) {
 
     // Validar stock antes de agregar
     let hasStockError = false;
+    
+    // Obtener warehouses para consultar stock por talle
+    const { data: warehouses } = await supabase
+      .from("warehouses")
+      .select("id, code")
+      .in("code", ["general", "venta-publico"]);
+    
+    const warehouseMap = new Map();
+    let generalWarehouseId = null;
+    let ventaPublicoWarehouseId = null;
+    
+    if (warehouses && warehouses.length > 0) {
+      warehouses.forEach(w => warehouseMap.set(w.code, w.id));
+      generalWarehouseId = warehouseMap.get("general");
+      ventaPublicoWarehouseId = warehouseMap.get("venta-publico");
+    }
+    
     for (const size of Object.keys(manualSelectedSizes)) {
       const quantity = manualSelectedSizes[size];
       if (quantity <= 0) continue;
@@ -1331,10 +2170,41 @@ if (manualLoadBtn) {
       const variant = variantsByColor.find(v => v.size === size);
       if (!variant) continue;
 
-      const stock = variant.stockData || { total: 0, general: { stock: 0 }, ventaPublico: { stock: 0 } };
-      const totalStock = stock.total || 0;
-      
-      if (!isReturn && quantity > totalStock) {
+      // Consultar stock específico del talle desde variant_size_warehouse_stock
+      // IMPORTANTE: Normalizar el tamaño antes de consultar para asegurar consistencia
+      let totalStock = 0;
+      if (generalWarehouseId && ventaPublicoWarehouseId) {
+        // Normalizar el tamaño antes de consultar
+        const normalizedSize = normalizeSize(size);
+        
+        // Cargar todos los registros de stock para esta variante y normalizar después
+        const { data: sizeWarehouseStocks, error: sizeError } = await supabase
+          .from("variant_size_warehouse_stock")
+          .select("size, warehouse_id, stock_qty")
+          .eq("variant_id", variant.id)
+          .in("warehouse_id", [generalWarehouseId, ventaPublicoWarehouseId]);
+        
+        if (!sizeError && sizeWarehouseStocks && sizeWarehouseStocks.length > 0) {
+          // Filtrar por tamaño normalizado después de obtener los datos
+          sizeWarehouseStocks.forEach(sws => {
+            const swsNormalizedSize = normalizeSize(sws.size);
+            if (swsNormalizedSize !== normalizedSize) return; // Saltar si no coincide después de normalizar
+            
+            totalStock += sws.stock_qty || 0;
+          });
+        }
+        
+        // Fallback: usar stock_qty de variant_sizes si no se encontró stock en variant_size_warehouse_stock
+        if (totalStock === 0) {
+          totalStock = variant.stock_qty || 0;
+        }
+      } else {
+        // Fallback: usar stock_qty de variant_sizes si no hay warehouses
+        totalStock = variant.stock_qty || 0;
+      }
+
+      // Validar stock solo si el talle NO fue confirmado para agregar sin stock
+      if (!isReturn && quantity > totalStock && !manualSelectedSizesConfirmedWithoutStock[size]) {
         showMessage(`Error: La cantidad seleccionada (${quantity}) para talle ${size} excede el stock disponible (${totalStock})`, "error");
         hasStockError = true;
         break;
@@ -1350,24 +2220,56 @@ if (manualLoadBtn) {
       const variant = variantsByColor.find(v => v.size === size);
       if (!variant) return;
 
+      // Obtener stock disponible para este talle
+      const stock = variant.stockData || { general: { stock: 0 }, ventaPublico: { stock: 0 } };
+      const ventaPublicoStock = stock.ventaPublico?.stock || 0;
+      const generalStock = stock.general?.stock || 0;
+
       // Obtener fuente del stock para este talle
-      const source = manualSelectedSizesSource[size] || { ventaPublico: quantity, general: 0 };
-      
-      // Si no hay fuente definida, calcularla basándose en el stock disponible
-      if (!manualSelectedSizesSource[size]) {
-        const stock = variant.stockData || { general: { stock: 0 }, ventaPublico: { stock: 0 } };
-        const ventaPublicoStock = stock.ventaPublico?.stock || 0;
-        const generalStock = stock.general?.stock || 0;
+      // Si manualSelectedSizesSource existe y tiene valores válidos, usarlo
+      // Si no existe o tiene valores 0,0 (confirmado sin stock), calcular basándose en stock disponible
+      const existingSource = manualSelectedSizesSource[size];
+      const wasConfirmedWithoutStock = existingSource && 
+        existingSource.ventaPublico === 0 && 
+        existingSource.general === 0 &&
+        manualSelectedSizesConfirmedWithoutStock[size];
+
+      let source;
+      if (wasConfirmedWithoutStock) {
+        // Si fue confirmado sin stock, establecer source en 0,0 explícitamente
+        source = {
+          ventaPublico: 0,
+          general: 0
+        };
+      } else if (existingSource && 
+          (existingSource.ventaPublico > 0 || existingSource.general > 0)) {
+        // Usar fuente existente si es válida
+        source = {
+          ventaPublico: existingSource.ventaPublico || 0,
+          general: existingSource.general || 0
+        };
+      } else {
+        // Calcular fuente basándose en stock disponible (mismo patrón que processQrCodeFast)
+        // Priorizar venta-publico, luego general
+        let ventaPublicoQty = Math.min(quantity, ventaPublicoStock);
+        let generalQty = 0;
         
-        // Priorizar venta-publico
-        source.ventaPublico = Math.min(quantity, ventaPublicoStock);
-        source.general = Math.max(0, quantity - source.ventaPublico);
+        if (ventaPublicoQty < quantity) {
+          const neededFromGeneral = quantity - ventaPublicoQty;
+          generalQty = Math.min(neededFromGeneral, generalStock);
+        }
+        
+        source = {
+          ventaPublico: ventaPublicoQty,
+          general: generalQty
+        };
       }
 
-      // Buscar si ya existe este producto/color en la lista
-      const existingIndex = saleItems.findIndex(item => 
-        item.productId === manualCurrentProduct.id && 
-        item.color === manualSelectedColor
+      // Buscar si ya existe este producto/color con el mismo tipo (devolución o venta) en la lista
+      const existingIndex = saleItems.findIndex(item =>
+        item.productId === manualCurrentProduct.id &&
+        item.color === manualSelectedColor &&
+        item.isReturn === isReturn
       );
 
       if (existingIndex >= 0) {
@@ -1380,15 +2282,15 @@ if (manualLoadBtn) {
             general: (existingSize.source?.general || 0) + source.general
           };
         } else {
-          saleItems[existingIndex].sizes.push({ 
-            size, 
-            quantity, 
+          saleItems[existingIndex].sizes.push({
+            size,
+            quantity,
             variantId: variant.id,
             source: { ventaPublico: source.ventaPublico, general: source.general }
           });
         }
         saleItems[existingIndex].totalQuantity += quantity;
-        
+
         // Actualizar información de oferta/promoción y precio base si no existe
         if (!saleItems[existingIndex].basePrice) {
           saleItems[existingIndex].basePrice = variant.price;
@@ -1399,11 +2301,11 @@ if (manualLoadBtn) {
         if (!saleItems[existingIndex].promotionInfo && variant.promotionInfo) {
           saleItems[existingIndex].promotionInfo = variant.promotionInfo;
         }
-        
+
         // Actualizar isReturn según el modo actual
         const previousIsReturn = saleItems[existingIndex].isReturn;
         saleItems[existingIndex].isReturn = isReturn;
-        
+
         // Si cambió el modo de devolución, recalcular totalValue completo
         if (previousIsReturn !== isReturn) {
           // Recalcular totalValue desde cero basándose en todos los talles
@@ -1444,9 +2346,9 @@ if (manualLoadBtn) {
           basePrice: basePrice, // Guardar precio base para calcular descuentos
           offerInfo: variant.offerInfo || null,
           promotionInfo: variant.promotionInfo || null,
-          sizes: [{ 
-            size, 
-            quantity, 
+          sizes: [{
+            size,
+            quantity,
             variantId: variant.id,
             source: { ventaPublico: source.ventaPublico, general: source.general }
           }],
@@ -1460,6 +2362,7 @@ if (manualLoadBtn) {
     // Limpiar selección
     manualSelectedSizes = {};
     manualSelectedSizesSource = {};
+    manualSelectedSizesConfirmedWithoutStock = {};
     manualSelectedColor = null;
     manualCurrentProduct = null;
     manualCurrentVariants = [];
@@ -1469,20 +2372,150 @@ if (manualLoadBtn) {
     }
     renderSaleList();
     await calculateTotals();
-    showMessage("Producto(s) agregado(s) a la lista de venta", "success");
+    // Mensaje eliminado - no es necesario mostrar aviso al agregar productos
   });
 }
 
-// Buscar por SKU
-async function searchBySku(sku) {
+// Función helper para obtener warehouses con cache
+async function getWarehousesCached() {
+  if (warehousesCache) {
+    return warehousesCache;
+  }
+  
+  const { data: warehouses } = await supabase
+    .from("warehouses")
+    .select("id, code")
+    .in("code", ["general", "venta-publico"]);
+  
+  if (warehouses) {
+    const warehouseMap = {};
+    warehouses.forEach(w => {
+      if (w.code === "general") warehouseMap.generalId = w.id;
+      if (w.code === "venta-publico") warehouseMap.ventaPublicoId = w.id;
+    });
+    warehousesCache = warehouseMap;
+  }
+  
+  return warehousesCache || { generalId: null, ventaPublicoId: null };
+}
+
+// Stock disponible para variant+size restando lo ya en la lista de venta
+async function getAvailableStockForVariantSizeInSale(variantId, size) {
+  const wh = await getWarehousesCached();
+  const generalId = wh?.generalId ?? null;
+  const ventaPublicoId = wh?.ventaPublicoId ?? null;
+  const normalizedSize = normalizeSize(size);
+  if (!normalizedSize) return { total: 0, ventaPublico: 0, general: 0 };
+
+  let totalStock = 0;
+  let ventaPublicoStock = 0;
+  let generalStock = 0;
+
+  if (generalId && ventaPublicoId) {
+    const { data: rows } = await supabase
+      .from("variant_size_warehouse_stock")
+      .select("size, warehouse_id, stock_qty")
+      .eq("variant_id", variantId)
+      .in("warehouse_id", [generalId, ventaPublicoId]);
+
+    if (rows && rows.length > 0) {
+      rows.forEach((r) => {
+        if (normalizeSize(r.size) !== normalizedSize) return;
+        const qty = r.stock_qty || 0;
+        totalStock += qty;
+        if (r.warehouse_id === ventaPublicoId) ventaPublicoStock += qty;
+        else if (r.warehouse_id === generalId) generalStock += qty;
+      });
+    }
+  }
+
+  if (totalStock === 0) {
+    const { data: vsRows } = await supabase
+      .from("variant_sizes")
+      .select("size, stock_qty")
+      .eq("variant_id", variantId);
+    if (vsRows?.length) {
+      const vs = vsRows.find((r) => normalizeSize(r.size) === normalizedSize);
+      if (vs?.stock_qty) {
+        totalStock = vs.stock_qty;
+        generalStock = vs.stock_qty;
+      }
+    }
+  }
+
+  let reservedTotal = 0;
+  let reservedVentaPublico = 0;
+  let reservedGeneral = 0;
+  saleItems.forEach((item) => {
+    if (!item.sizes) return;
+    item.sizes.forEach((s) => {
+      if (s.variantId !== variantId) return;
+      if (normalizeSize(s.size) !== normalizedSize) return;
+      reservedTotal += s.quantity || 0;
+      const src = s.source || {};
+      reservedVentaPublico += src.ventaPublico || 0;
+      reservedGeneral += src.general || 0;
+    });
+  });
+
+  return {
+    total: Math.max(0, totalStock - reservedTotal),
+    ventaPublico: Math.max(0, ventaPublicoStock - reservedVentaPublico),
+    general: Math.max(0, generalStock - reservedGeneral)
+  };
+}
+
+// Sistema de cola para procesar múltiples QR seguidos
+function addToQrQueue(qrCode) {
+  // Limpiar el input inmediatamente para permitir siguiente escaneo
+  skuSearch.value = "";
+  
+  // Agregar a la cola
+  qrProcessingQueue.push(qrCode);
+  
+  // Iniciar procesamiento si no está en proceso
+  if (!isProcessingQr) {
+    processQrQueue();
+  }
+}
+
+// Procesar cola de QR
+async function processQrQueue() {
+  if (qrProcessingQueue.length === 0) {
+    isProcessingQr = false;
+    return;
+  }
+  
+  isProcessingQr = true;
+  const qrCode = qrProcessingQueue.shift();
+  
   try {
-    const { data: variant, error } = await supabase
-      .from("product_variants")
-      .select(`
+    await processQrCodeFast(qrCode);
+  } catch (error) {
+    console.error("Error procesando QR:", error);
+    showMessage(`Error al procesar código QR ${qrCode}: ${error.message}`, "error");
+  }
+  
+  // Procesar siguiente en la cola (sin await para no bloquear)
+  setTimeout(() => {
+    processQrQueue();
+  }, 0);
+}
+
+// Función optimizada para procesar QR code rápidamente
+async function processQrCodeFast(qrCode) {
+  // Consulta única optimizada que incluye todo lo necesario
+  const { data: sizeData, error: sizeError } = await supabase
+    .from("variant_sizes")
+    .select(`
+      variant_id,
+      size,
+      sku,
+      qr_code,
+      product_variants!inner (
         id,
         sku,
         color,
-        size,
         price,
         active,
         products!inner (
@@ -1491,11 +2524,624 @@ async function searchBySku(sku) {
           category,
           status
         )
-      `)
-      .eq("sku", sku)
-      .eq("active", true)
-      .eq("products.status", "active")
-      .single();
+      )
+    `)
+    .eq("qr_code", qrCode)
+    .eq("product_variants.active", true)
+    .in("product_variants.products.status", ["active", "pending_stock", "draft"])
+    .maybeSingle();
+  
+  if (!sizeData || !sizeData.product_variants) {
+    showMessage(`No se encontró el producto con el código QR "${qrCode}"`, "error");
+    return;
+  }
+  
+  const variant = {
+    ...sizeData.product_variants,
+    size: sizeData.size,
+  };
+  
+  // Obtener warehouses (con cache) y stock en paralelo
+  const [warehouses, stockData] = await Promise.all([
+    getWarehousesCached(),
+    getVariantStock(variant.id)
+  ]);
+  
+  const totalStock = stockData.total;
+  
+  if (totalStock === 0 && !returnMode.checked) {
+    showMessage(`⚠️ No hay stock disponible para el código QR ${qrCode}`, "error");
+    return;
+  }
+  
+  // Obtener stock del talle específico en paralelo con otras operaciones
+  // IMPORTANTE: Normalizar el tamaño antes de consultar para asegurar consistencia
+  // IMPORTANTE: También obtener stock_qty de variant_sizes para fallback
+  let sizeStock = { general: { stock: 0 }, ventaPublico: { stock: 0 }, total: 0 };
+  let variantSizeStockQty = 0; // Para fallback desde variant_sizes
+  
+  // Primero obtener stock_qty desde variant_sizes para el talle específico (TABLA PRINCIPAL)
+    const normalizedSize = normalizeSize(variant.size);
+  if (normalizedSize) {
+    const { data: sizeData } = await supabase
+      .from("variant_sizes")
+      .select("stock_qty")
+      .eq("variant_id", variant.id)
+      .eq("size", normalizedSize)
+      .maybeSingle();
+    
+    if (sizeData) {
+      variantSizeStockQty = sizeData.stock_qty || 0;
+    }
+  }
+  
+  // Luego obtener stock desde variant_size_warehouse_stock (DISTRIBUCIÓN POR WAREHOUSE)
+  if (warehouses.generalId && warehouses.ventaPublicoId) {
+    // Cargar todos los registros de stock para esta variante y normalizar después
+    // Esto evita problemas de comparación si el tamaño está almacenado de diferentes formas
+    const { data: sizeWarehouseStocks } = await supabase
+      .from("variant_size_warehouse_stock")
+      .select("size, warehouse_id, stock_qty")
+      .eq("variant_id", variant.id)
+      .in("warehouse_id", [warehouses.generalId, warehouses.ventaPublicoId]);
+    
+    if (sizeWarehouseStocks) {
+      // Filtrar por tamaño normalizado después de obtener los datos
+      sizeWarehouseStocks.forEach(sws => {
+        const swsNormalizedSize = normalizeSize(sws.size);
+        if (swsNormalizedSize !== normalizedSize) return; // Saltar si no coincide después de normalizar
+        
+        if (sws.warehouse_id === warehouses.generalId) {
+          sizeStock.general.stock += sws.stock_qty || 0;
+        } else if (sws.warehouse_id === warehouses.ventaPublicoId) {
+          sizeStock.ventaPublico.stock += sws.stock_qty || 0;
+        }
+      });
+      sizeStock.total = sizeStock.general.stock + sizeStock.ventaPublico.stock;
+    }
+  }
+  
+  // FALLBACK CRÍTICO: Si no hay stock en warehouses pero hay en variant_sizes, usar variant_sizes.stock_qty
+  // Este es el mismo patrón que usa admin/stock.js (líneas 554-560) y admin/order-creator.js
+  if (sizeStock.general.stock === 0 && sizeStock.ventaPublico.stock === 0 && variantSizeStockQty > 0) {
+    // Si hay stock en variant_sizes pero no en variant_size_warehouse_stock,
+    // poner todo en general como fallback (esto es lo que hace admin/stock.js)
+    sizeStock.general.stock = variantSizeStockQty;
+    sizeStock.total = variantSizeStockQty;
+  }
+  
+  // Si hay stock, agregar automáticamente a la venta
+  if (sizeStock.total > 0 || returnMode.checked) {
+    const isReturn = returnMode.checked;
+    const quantity = 1;
+    
+    // Buscar si ya existe este producto/color con el mismo tipo
+    const existingIndex = saleItems.findIndex(item =>
+      item.productId === variant.products.id &&
+      item.color === variant.color &&
+      item.isReturn === isReturn
+    );
+    
+    // Obtener fuente del stock (priorizar venta-publico, si no hay usar general)
+    let ventaPublicoQty = Math.min(quantity, sizeStock.ventaPublico.stock);
+    let generalQty = 0;
+    
+    if (ventaPublicoQty < quantity) {
+      const neededFromGeneral = quantity - ventaPublicoQty;
+      generalQty = Math.min(neededFromGeneral, sizeStock.general.stock);
+    }
+    
+    const source = {
+      ventaPublico: ventaPublicoQty,
+      general: generalQty
+    };
+    
+    // Usar precio directamente de la variante (sin cargar todas las variantes)
+    const effectivePrice = variant.price; // Precio base, se puede mejorar después con ofertas
+    const basePrice = variant.price;
+    const itemTotalValue = isReturn ? -(effectivePrice * quantity) : (effectivePrice * quantity);
+    
+    if (existingIndex >= 0) {
+      // Agregar talle a item existente
+      const existingSize = saleItems[existingIndex].sizes.find(s => s.size === variant.size);
+      if (existingSize) {
+        existingSize.quantity += quantity;
+        existingSize.source = {
+          ventaPublico: (existingSize.source?.ventaPublico || 0) + source.ventaPublico,
+          general: (existingSize.source?.general || 0) + source.general
+        };
+      } else {
+        saleItems[existingIndex].sizes.push({
+          size: variant.size,
+          quantity,
+          variantId: variant.id,
+          source: { ventaPublico: source.ventaPublico, general: source.general }
+        });
+      }
+      saleItems[existingIndex].totalQuantity += quantity;
+      
+      // Actualizar totalValue
+      if (isReturn) {
+        saleItems[existingIndex].totalValue -= effectivePrice * quantity;
+      } else {
+        saleItems[existingIndex].totalValue += effectivePrice * quantity;
+      }
+    } else {
+      // Crear nuevo item
+      saleItems.push({
+        productId: variant.products.id,
+        productName: variant.products.name,
+        sku: variant.sku.split('-')[0],
+        color: variant.color,
+        price: effectivePrice,
+        basePrice: basePrice,
+        offerInfo: null, // Se puede mejorar después
+        promotionInfo: null, // Se puede mejorar después
+        sizes: [{
+          size: variant.size,
+          quantity,
+          variantId: variant.id,
+          source: { ventaPublico: source.ventaPublico, general: source.general }
+        }],
+        totalQuantity: quantity,
+        totalValue: itemTotalValue,
+        isReturn: isReturn
+      });
+    }
+    
+    // Actualizar UI de forma optimizada (con debounce)
+    scheduleUIUpdate();
+    
+    // Refocar en el input SKU inmediatamente para siguiente lectura
+    requestAnimationFrame(() => {
+      skuSearch.focus();
+    });
+  } else {
+    showMessage(`⚠️ No hay stock disponible para el código QR ${qrCode}`, "error");
+  }
+}
+
+// Función para programar actualización de UI con debounce
+function scheduleUIUpdate() {
+  clearTimeout(renderDebounceTimeout);
+  clearTimeout(calculateTotalsDebounceTimeout);
+  
+  renderDebounceTimeout = setTimeout(() => {
+    requestAnimationFrame(() => {
+      renderSaleList();
+    });
+  }, 50);
+  
+  calculateTotalsDebounceTimeout = setTimeout(() => {
+    requestAnimationFrame(async () => {
+      await calculateTotals();
+      updateSaveOrderButtonVisibility();
+    });
+  }, 100);
+}
+
+// Función helper para procesar variante encontrada por código QR (versión original para compatibilidad)
+// NOTA: Esta función se mantiene para compatibilidad, pero el flujo optimizado usa processQrCodeFast
+async function processVariantFoundByQrCode(variant) {
+  try {
+    // Si tenemos el tamaño, usar el proceso optimizado (similar a processQrCodeFast)
+    if (variant.size) {
+      // Obtener warehouses y stock en paralelo
+      const [warehouses, stockData] = await Promise.all([
+        getWarehousesCached(),
+        getVariantStock(variant.id)
+      ]);
+      
+      const totalStock = stockData.total;
+
+      if (totalStock === 0 && !returnMode.checked) {
+        showMessage(`⚠️ Advertencia: No hay stock disponible. Stock en General: ${stockData.general.stock}, Stock en Venta Público: ${stockData.ventaPublico.stock}`, "error");
+        return;
+      }
+
+      // NO cargar todas las variantes - usar datos directos
+      // Establecer currentProduct para compatibilidad
+      currentProduct = variant.products;
+      
+      // Obtener stock del talle específico
+      // IMPORTANTE: Normalizar el tamaño antes de consultar para asegurar consistencia
+      // IMPORTANTE: También obtener stock_qty de variant_sizes para fallback
+      let sizeStock = { general: { stock: 0 }, ventaPublico: { stock: 0 }, total: 0 };
+      let variantSizeStockQty = 0; // Para fallback desde variant_sizes
+      
+      // Primero obtener stock_qty desde variant_sizes para el talle específico (TABLA PRINCIPAL)
+        const normalizedSize = normalizeSize(variant.size);
+      if (normalizedSize) {
+        const { data: sizeData } = await supabase
+          .from("variant_sizes")
+          .select("stock_qty")
+          .eq("variant_id", variant.id)
+          .eq("size", normalizedSize)
+          .maybeSingle();
+        
+        if (sizeData) {
+          variantSizeStockQty = sizeData.stock_qty || 0;
+        }
+      }
+      
+      // Luego obtener stock desde variant_size_warehouse_stock (DISTRIBUCIÓN POR WAREHOUSE)
+      if (warehouses.generalId && warehouses.ventaPublicoId) {
+        // Cargar todos los registros de stock para esta variante y normalizar después
+        const { data: sizeWarehouseStocks } = await supabase
+          .from("variant_size_warehouse_stock")
+          .select("size, warehouse_id, stock_qty")
+          .eq("variant_id", variant.id)
+          .in("warehouse_id", [warehouses.generalId, warehouses.ventaPublicoId]);
+        
+        if (sizeWarehouseStocks) {
+          // Filtrar por tamaño normalizado después de obtener los datos
+          sizeWarehouseStocks.forEach(sws => {
+            const swsNormalizedSize = normalizeSize(sws.size);
+            if (swsNormalizedSize !== normalizedSize) return; // Saltar si no coincide después de normalizar
+            
+            if (sws.warehouse_id === warehouses.generalId) {
+              sizeStock.general.stock += sws.stock_qty || 0;
+            } else if (sws.warehouse_id === warehouses.ventaPublicoId) {
+              sizeStock.ventaPublico.stock += sws.stock_qty || 0;
+            }
+          });
+          sizeStock.total = sizeStock.general.stock + sizeStock.ventaPublico.stock;
+        }
+      }
+      
+      // FALLBACK CRÍTICO: Si no hay stock en warehouses pero hay en variant_sizes, usar variant_sizes.stock_qty
+      // Este es el mismo patrón que usa admin/stock.js (líneas 554-560) y admin/order-creator.js
+      if (sizeStock.general.stock === 0 && sizeStock.ventaPublico.stock === 0 && variantSizeStockQty > 0) {
+        // Si hay stock en variant_sizes pero no en variant_size_warehouse_stock,
+        // poner todo en general como fallback (esto es lo que hace admin/stock.js)
+        sizeStock.general.stock = variantSizeStockQty;
+        sizeStock.total = variantSizeStockQty;
+      }
+      
+      // Si hay stock, agregar automáticamente a la venta
+      if (sizeStock.total > 0 || returnMode.checked) {
+        const isReturn = returnMode.checked;
+        const quantity = 1;
+        
+        const existingIndex = saleItems.findIndex(item =>
+          item.productId === variant.products.id &&
+          item.color === variant.color &&
+          item.isReturn === isReturn
+        );
+        
+        // Obtener fuente del stock
+        let ventaPublicoQty = Math.min(quantity, sizeStock.ventaPublico.stock);
+        let generalQty = 0;
+        
+        if (ventaPublicoQty < quantity) {
+          const neededFromGeneral = quantity - ventaPublicoQty;
+          generalQty = Math.min(neededFromGeneral, sizeStock.general.stock);
+        }
+        
+        const source = {
+          ventaPublico: ventaPublicoQty,
+          general: generalQty
+        };
+        
+        const effectivePrice = variant.price;
+        const basePrice = variant.price;
+        const itemTotalValue = isReturn ? -(effectivePrice * quantity) : (effectivePrice * quantity);
+        
+        if (existingIndex >= 0) {
+          const existingSize = saleItems[existingIndex].sizes.find(s => s.size === variant.size);
+          if (existingSize) {
+            existingSize.quantity += quantity;
+            existingSize.source = {
+              ventaPublico: (existingSize.source?.ventaPublico || 0) + source.ventaPublico,
+              general: (existingSize.source?.general || 0) + source.general
+            };
+          } else {
+            saleItems[existingIndex].sizes.push({
+              size: variant.size,
+              quantity,
+              variantId: variant.id,
+              source: { ventaPublico: source.ventaPublico, general: source.general }
+            });
+          }
+          saleItems[existingIndex].totalQuantity += quantity;
+          
+          if (isReturn) {
+            saleItems[existingIndex].totalValue -= effectivePrice * quantity;
+          } else {
+            saleItems[existingIndex].totalValue += effectivePrice * quantity;
+          }
+        } else {
+          saleItems.push({
+            productId: variant.products.id,
+            productName: variant.products.name,
+            sku: variant.sku.split('-')[0],
+            color: variant.color,
+            price: effectivePrice,
+            basePrice: basePrice,
+            offerInfo: null,
+            promotionInfo: null,
+            sizes: [{
+              size: variant.size,
+              quantity,
+              variantId: variant.id,
+              source: { ventaPublico: source.ventaPublico, general: source.general }
+            }],
+            totalQuantity: quantity,
+            totalValue: itemTotalValue,
+            isReturn: isReturn
+          });
+        }
+        
+        // Actualizar UI de forma optimizada
+        scheduleUIUpdate();
+        
+        // Refocar en el input SKU
+        requestAnimationFrame(() => {
+          skuSearch.focus();
+        });
+        
+        return;
+      }
+    }
+    
+    // Si no tiene tamaño o no hay stock, cargar variantes normalmente (fallback)
+    await loadProductVariants(variant.products.id);
+    
+    if (totalStock > 0 && !returnMode.checked) {
+      selectedColor = variant.color;
+      if (variant.size) {
+        selectedSizes[variant.size] = 1;
+      }
+      renderColorButtons();
+      renderSizeButtons();
+      updateLoadButton();
+    }
+    
+    skuSearch.value = "";
+  } catch (error) {
+    console.error("Error procesando variante encontrada:", error);
+    showMessage("Error al procesar producto: " + error.message, "error");
+    skuSearch.value = "";
+  }
+}
+
+// Buscar por SKU
+async function searchBySku(sku) {
+  try {
+    // Limpiar y normalizar el SKU
+    sku = sku.trim();
+    if (!sku) {
+      showMessage("Por favor ingrese un SKU válido", "error");
+      return;
+    }
+    
+    // Si el input es numérico, buscar directamente por qr_code (más rápido y confiable)
+    if (/^\d+$/.test(sku)) {
+      console.log("Buscando por código QR numérico:", sku);
+      
+      const { data: sizeData, error: sizeError } = await supabase
+        .from("variant_sizes")
+        .select(`
+          variant_id,
+          size,
+          sku,
+          qr_code,
+          product_variants!inner (
+            id,
+            sku,
+            color,
+            price,
+            active,
+            products!inner (
+              id,
+              name,
+              category,
+              status
+            )
+          )
+        `)
+        .eq("qr_code", sku)
+        .eq("product_variants.active", true)
+        .in("product_variants.products.status", ["active", "pending_stock", "draft"])
+        .maybeSingle();
+      
+      if (sizeData && sizeData.product_variants) {
+        console.log("✅ Producto encontrado por código QR:", sizeData);
+        // Usar el sistema de cola optimizado para procesamiento rápido
+        addToQrQueue(sku);
+        return;
+      } else {
+        showMessage(`No se encontró el producto con el código QR "${sku}"`, "error");
+        return;
+      }
+    }
+    
+    // Si no es numérico, buscar por SKU (comportamiento original)
+    // Generar todas las variantes posibles del SKU para buscar
+    // El QR puede generar: GI'TEVA'NEG'35-36
+    // La base de datos puede tener: GI-TEVA-NEG-35/36, GI-TEVA-NEG-35-36, etc.
+    function generateSkuVariants(originalSku) {
+      const variants = new Set();
+      
+      // Agregar el SKU original
+      variants.add(originalSku.trim());
+      
+      // Variante 1: Reemplazar comillas simples por guiones
+      let variant1 = originalSku.replace(/'/g, '-').replace(/\s+/g, '');
+      variants.add(variant1);
+      
+      // Variante 2: Reemplazar comillas simples por guiones y normalizar tamaño con barra
+      const parts1 = variant1.split('-');
+      if (parts1.length > 0) {
+        const lastPart = parts1[parts1.length - 1];
+        if (/^\d+[-\/]\d+$/.test(lastPart)) {
+          const sizeParts = lastPart.split(/[-\/]/);
+          if (sizeParts.length === 2) {
+            // Variante con barra diagonal
+            parts1[parts1.length - 1] = `${sizeParts[0]}/${sizeParts[1]}`;
+            variants.add(parts1.join('-'));
+            // Variante con guión
+            parts1[parts1.length - 1] = `${sizeParts[0]}-${sizeParts[1]}`;
+            variants.add(parts1.join('-'));
+          }
+        }
+      }
+      
+      // Variante 3: Si el SKU original tiene guiones, también probar con comillas
+      if (originalSku.includes('-')) {
+        const variant3 = originalSku.replace(/-/g, "'").replace(/\s+/g, '');
+        variants.add(variant3);
+      }
+      
+      return Array.from(variants);
+    }
+    
+    const skuVariants = generateSkuVariants(sku);
+    console.log("SKU original:", sku);
+    console.log("Variantes de SKU a probar:", skuVariants);
+    console.log("SKU length:", sku.length);
+    console.log("SKU charCodes:", Array.from(sku).map(c => c.charCodeAt(0)));
+    
+    // Primero intentar buscar por SKU base en product_variants
+    let variant = null;
+    let error = null;
+    let errorBase = null;
+    let sizeError = null;
+    
+    // Intentar búsqueda exacta en variant_sizes probando todas las variantes
+    let sizeData = null;
+    let sizeErrorQuery = null;
+    
+    for (const skuVariant of skuVariants) {
+      console.log(`Intentando buscar con variante: "${skuVariant}"`);
+      const { data: sizeDataResult, error: sizeErrorResult } = await supabase
+        .from("variant_sizes")
+        .select(`
+          variant_id,
+          size,
+          sku,
+          qr_code,
+          product_variants!inner (
+            id,
+            sku,
+            color,
+            price,
+            active,
+            products!inner (
+              id,
+              name,
+              category,
+              status
+            )
+          )
+        `)
+        .eq("sku", skuVariant)
+        .eq("product_variants.active", true)
+        .in("product_variants.products.status", ["active", "pending_stock", "draft"])
+        .maybeSingle();
+      
+      if (sizeDataResult && sizeDataResult.product_variants) {
+        console.log(`✅ Encontrado con variante: "${skuVariant}"`);
+        sizeData = sizeDataResult;
+        sizeErrorQuery = sizeErrorResult;
+        break; // Salir del loop si encontramos el producto
+      } else {
+        console.log(`❌ No encontrado con variante: "${skuVariant}"`);
+        if (!sizeErrorQuery && sizeErrorResult) {
+          sizeErrorQuery = sizeErrorResult;
+        }
+      }
+    }
+    
+    sizeError = sizeErrorQuery;
+    console.log("Búsqueda en variant_sizes:", { sizeData: sizeData ? "encontrado" : "no encontrado", error: sizeError });
+
+    if (sizeData && sizeData.product_variants) {
+      // IMPORTANTE: Normalizar el tamaño antes de usarlo
+      const normalizedSize = normalizeSize(sizeData.size);
+      variant = {
+        ...sizeData.product_variants,
+        size: normalizedSize, // Usar tamaño normalizado
+      };
+      console.log("✅ Variante encontrada en variant_sizes:", variant);
+    } else {
+      // Si no se encuentra en variant_sizes, buscar por SKU base en product_variants
+      // Extraer el SKU base (sin el tamaño) de todas las variantes
+      const baseSkuVariants = new Set();
+      skuVariants.forEach(variant => {
+        // Remover el último segmento que debería ser el tamaño (formato: XX-YY o XX/YY)
+        const parts = variant.split(/[-']/);
+        if (parts.length > 1) {
+          const lastPart = parts[parts.length - 1];
+          // Si el último segmento parece un tamaño (dos números separados por - o /)
+          if (/^\d+[-\/]\d+$/.test(lastPart)) {
+            // Es un tamaño, removerlo
+            baseSkuVariants.add(parts.slice(0, -1).join('-'));
+          } else {
+            // No es un tamaño, usar toda la variante
+            baseSkuVariants.add(variant.replace(/[']/g, '-'));
+          }
+        } else {
+          baseSkuVariants.add(variant.replace(/[']/g, '-'));
+        }
+      });
+      
+      console.log("Buscando SKU base en product_variants con variantes:", Array.from(baseSkuVariants));
+      
+      let variantByBase = null;
+      errorBase = null;
+      
+      for (const baseSku of baseSkuVariants) {
+        console.log(`Intentando buscar SKU base: "${baseSku}"`);
+        const { data: variantResult, error: errorResult } = await supabase
+          .from("product_variants")
+          .select(`
+            id,
+            sku,
+            color,
+            price,
+            active,
+            products!inner (
+              id,
+              name,
+              category,
+              status
+            )
+          `)
+          .eq("sku", baseSku)
+          .eq("active", true)
+          .in("products.status", ["active", "pending_stock", "draft"])
+          .maybeSingle();
+
+        if (variantResult) {
+          console.log(`✅ SKU base encontrado: "${baseSku}"`);
+          variantByBase = variantResult;
+          errorBase = errorResult;
+          break;
+        } else {
+          if (!errorBase && errorResult) {
+            errorBase = errorResult;
+          }
+        }
+      }
+
+      console.log("Búsqueda en product_variants:", { variantByBase: variantByBase ? "encontrado" : "no encontrado", error: errorBase });
+
+      if (variantByBase) {
+        variant = variantByBase;
+        console.log("✅ Variante encontrada en product_variants:", variant);
+      } else {
+        // Si hay error pero no es "no encontrado", lanzarlo
+        if (sizeError && sizeError.code !== 'PGRST116') {
+          error = sizeError;
+        } else if (errorBase && errorBase.code !== 'PGRST116') {
+          error = errorBase;
+        } else {
+          // Si ambos son "no encontrado", no hay error, simplemente no se encontró
+          error = null;
+        }
+      }
+    }
 
     if (error) {
       if (error.code === 'PGRST116') {
@@ -1507,11 +3153,92 @@ async function searchBySku(sku) {
     }
 
     if (!variant) {
-      showMessage("No se encontró el producto con ese SKU", "error");
-      return;
+      console.log("SKU buscado:", sku);
+      console.log("Error base:", errorBase);
+      console.log("Error size:", sizeError);
+      
+      // Intentar búsqueda alternativa más flexible (case-insensitive) con todas las variantes
+      console.log("Intentando búsqueda alternativa (case-insensitive) con todas las variantes...");
+      let sizeDataAlt = null;
+      let sizeErrorAlt = null;
+      
+      for (const skuVariant of skuVariants) {
+        const skuClean = skuVariant.trim().replace(/\s+/g, '');
+        console.log(`Intentando búsqueda alternativa con variante: "${skuClean}"`);
+        
+        const { data: sizeDataResult, error: sizeErrorResult } = await supabase
+          .from("variant_sizes")
+          .select(`
+            variant_id,
+            size,
+            sku,
+            qr_code,
+            product_variants!inner (
+              id,
+              sku,
+              color,
+              price,
+              active,
+              products!inner (
+                id,
+                name,
+                category,
+                status
+              )
+            )
+          `)
+          .ilike("sku", skuClean)
+          .eq("product_variants.active", true)
+          .in("product_variants.products.status", ["active", "pending_stock", "draft"])
+          .maybeSingle();
+        
+        if (sizeDataResult && sizeDataResult.product_variants) {
+          console.log(`✅ Encontrado con búsqueda alternativa y variante: "${skuClean}"`);
+          sizeDataAlt = sizeDataResult;
+          sizeErrorAlt = sizeErrorResult;
+          break; // Salir del loop si encontramos el producto
+        } else {
+          if (!sizeErrorAlt && sizeErrorResult) {
+            sizeErrorAlt = sizeErrorResult;
+          }
+        }
+      }
+      
+      if (sizeDataAlt && sizeDataAlt.product_variants) {
+        console.log("✅ Variante encontrada con búsqueda alternativa:", sizeDataAlt);
+        // IMPORTANTE: Normalizar el tamaño antes de usarlo
+        const normalizedSize = normalizeSize(sizeDataAlt.size);
+        variant = {
+          ...sizeDataAlt.product_variants,
+          size: normalizedSize, // Usar tamaño normalizado
+        };
+      } else {
+        // Intentar buscar SKUs similares para debugging
+        // Usar la primera variante para obtener el prefijo
+        const firstVariant = skuVariants[0] || sku;
+        const skuPrefix = firstVariant.split(/[-']/)[0]; // Tomar la primera parte antes del primer separador
+        console.log("Buscando SKUs similares con prefijo:", skuPrefix);
+        
+        const { data: similarSkus } = await supabase
+          .from("variant_sizes")
+          .select("sku, size, product_variants!inner(id, sku, color, active, products!inner(id, name, status))")
+          .ilike("sku", `${skuPrefix}%`)
+          .eq("product_variants.active", true)
+          .in("product_variants.products.status", ["active", "pending_stock", "draft"])
+          .limit(10);
+        
+        if (similarSkus && similarSkus.length > 0) {
+          console.log("SKUs similares encontrados:", similarSkus.map(s => s.sku));
+          showMessage(`No se encontró el producto con el SKU "${sku}".\n\nSKUs similares encontrados:\n${similarSkus.slice(0, 5).map(s => `- ${s.sku}`).join('\n')}\n\nVerifica que el SKU sea correcto.`, "error");
+        } else {
+          showMessage(`No se encontró el producto con el SKU "${sku}". Verifica que:\n- El SKU sea correcto\n- El producto esté activo\n- La variante tenga el checkbox 'Activa' marcado`, "error");
+        }
+        return;
+      }
     }
 
     // Verificar stock del SKU específico
+    
     const stockData = await getVariantStock(variant.id);
     const totalStock = stockData.total;
 
@@ -1522,32 +3249,234 @@ async function searchBySku(sku) {
 
     // Cargar todas las variantes del producto
     await loadProductVariants(variant.products.id);
-    
+
+    // Si el SKU viene de variant_sizes (tiene talle específico), agregar automáticamente a la venta
+    if (variant.size && totalStock > 0 && !returnMode.checked) {
+      // Buscar la variante correcta en currentVariants con el talle específico
+      const variantWithSize = currentVariants.find(v => 
+        v.color === variant.color && v.size === variant.size
+      );
+
+      if (variantWithSize) {
+        // Obtener stock del talle específico desde variant_size_warehouse_stock
+        const { data: warehouses } = await supabase
+          .from("warehouses")
+          .select("id, code")
+          .in("code", ["general", "venta-publico"]);
+
+        let generalWarehouseId = null;
+        let ventaPublicoWarehouseId = null;
+        if (warehouses) {
+          warehouses.forEach(w => {
+            if (w.code === "general") generalWarehouseId = w.id;
+            if (w.code === "venta-publico") ventaPublicoWarehouseId = w.id;
+          });
+        }
+
+        // Obtener stock del talle específico
+        // IMPORTANTE: Normalizar el tamaño antes de consultar para asegurar consistencia
+        // IMPORTANTE: También obtener stock_qty de variant_sizes para fallback
+        let sizeStock = { general: { stock: 0 }, ventaPublico: { stock: 0 }, total: 0 };
+        let variantSizeStockQty = 0; // Para fallback desde variant_sizes
+        
+        // Primero obtener stock_qty desde variant_sizes para el talle específico (TABLA PRINCIPAL)
+          const normalizedSize = normalizeSize(variant.size);
+        if (normalizedSize) {
+          const { data: sizeData } = await supabase
+            .from("variant_sizes")
+            .select("stock_qty")
+            .eq("variant_id", variant.id)
+            .eq("size", normalizedSize)
+            .maybeSingle();
+          
+          if (sizeData) {
+            variantSizeStockQty = sizeData.stock_qty || 0;
+          }
+        }
+        
+        const warehouseIds = [generalWarehouseId, ventaPublicoWarehouseId].filter(Boolean);
+        
+        // Luego obtener stock desde variant_size_warehouse_stock (DISTRIBUCIÓN POR WAREHOUSE)
+        if (warehouseIds.length > 0) {
+          // Cargar todos los registros de stock para esta variante y normalizar después
+          const { data: sizeWarehouseStocks } = await supabase
+            .from("variant_size_warehouse_stock")
+            .select("size, warehouse_id, stock_qty")
+            .eq("variant_id", variant.id)
+            .in("warehouse_id", warehouseIds);
+
+          if (sizeWarehouseStocks) {
+            // Filtrar por tamaño normalizado después de obtener los datos
+            sizeWarehouseStocks.forEach(sws => {
+              const swsNormalizedSize = normalizeSize(sws.size);
+              if (swsNormalizedSize !== normalizedSize) return; // Saltar si no coincide después de normalizar
+              
+              if (sws.warehouse_id === generalWarehouseId) {
+                sizeStock.general.stock += sws.stock_qty || 0;
+              } else if (sws.warehouse_id === ventaPublicoWarehouseId) {
+                sizeStock.ventaPublico.stock += sws.stock_qty || 0;
+              }
+            });
+            sizeStock.total = sizeStock.general.stock + sizeStock.ventaPublico.stock;
+          }
+        }
+        
+        // FALLBACK CRÍTICO: Si no hay stock en warehouses pero hay en variant_sizes, usar variant_sizes.stock_qty
+        // Este es el mismo patrón que usa admin/stock.js (líneas 554-560) y admin/order-creator.js
+        if (sizeStock.general.stock === 0 && sizeStock.ventaPublico.stock === 0 && variantSizeStockQty > 0) {
+          // Si hay stock en variant_sizes pero no en variant_size_warehouse_stock,
+          // poner todo en general como fallback (esto es lo que hace admin/stock.js)
+          sizeStock.general.stock = variantSizeStockQty;
+          sizeStock.total = variantSizeStockQty;
+        }
+
+        // Si hay stock, agregar automáticamente a la venta
+        if (sizeStock.total > 0) {
+          const isReturn = returnMode.checked;
+          const quantity = 1; // Agregar 1 unidad por defecto
+
+          // Buscar si ya existe este producto/color con el mismo tipo (devolución o venta) en la lista
+          const existingIndex = saleItems.findIndex(item =>
+            item.productId === currentProduct.id &&
+            item.color === variant.color &&
+            item.isReturn === isReturn
+          );
+
+          // Obtener fuente del stock para este talle (priorizar venta-publico, si no hay usar general)
+          let ventaPublicoQty = Math.min(quantity, sizeStock.ventaPublico.stock);
+          let generalQty = 0;
+          
+          // Si no hay suficiente stock en venta-publico, usar stock de general
+          if (ventaPublicoQty < quantity) {
+            const neededFromGeneral = quantity - ventaPublicoQty;
+            generalQty = Math.min(neededFromGeneral, sizeStock.general.stock);
+          }
+          
+          const source = {
+            ventaPublico: ventaPublicoQty,
+            general: generalQty
+          };
+
+          const effectivePrice = variantWithSize.effectivePrice || variantWithSize.price || variant.price;
+          const basePrice = variantWithSize.price || variant.price;
+          const itemTotalValue = isReturn ? -(effectivePrice * quantity) : (effectivePrice * quantity);
+
+          if (existingIndex >= 0) {
+            // Agregar talle a item existente
+            const existingSize = saleItems[existingIndex].sizes.find(s => s.size === variant.size);
+            if (existingSize) {
+              existingSize.quantity += quantity;
+              existingSize.source = {
+                ventaPublico: (existingSize.source?.ventaPublico || 0) + source.ventaPublico,
+                general: (existingSize.source?.general || 0) + source.general
+              };
+            } else {
+              saleItems[existingIndex].sizes.push({
+                size: variant.size,
+                quantity,
+                variantId: variant.id,
+                source: { ventaPublico: source.ventaPublico, general: source.general }
+              });
+            }
+            saleItems[existingIndex].totalQuantity += quantity;
+
+            // Actualizar información de oferta/promoción y precio base si no existe
+            if (!saleItems[existingIndex].basePrice) {
+              saleItems[existingIndex].basePrice = basePrice;
+            }
+            if (!saleItems[existingIndex].offerInfo && variantWithSize.offerInfo) {
+              saleItems[existingIndex].offerInfo = variantWithSize.offerInfo;
+            }
+            if (!saleItems[existingIndex].promotionInfo && variantWithSize.promotionInfo) {
+              saleItems[existingIndex].promotionInfo = variantWithSize.promotionInfo;
+            }
+
+            // Actualizar totalValue
+            if (isReturn) {
+              saleItems[existingIndex].totalValue -= effectivePrice * quantity;
+            } else {
+              saleItems[existingIndex].totalValue += effectivePrice * quantity;
+            }
+          } else {
+            // Crear nuevo item
+            saleItems.push({
+              productId: currentProduct.id,
+              productName: currentProduct.name,
+              sku: variant.sku.split('-')[0], // SKU base
+              color: variant.color,
+              price: effectivePrice,
+              basePrice: basePrice,
+              offerInfo: variantWithSize.offerInfo || null,
+              promotionInfo: variantWithSize.promotionInfo || null,
+              sizes: [{
+                size: variant.size,
+                quantity,
+                variantId: variant.id,
+                source: { ventaPublico: source.ventaPublico, general: source.general }
+              }],
+              totalQuantity: quantity,
+              totalValue: itemTotalValue,
+              isReturn: isReturn
+            });
+          }
+
+          // Actualizar UI
+          renderSaleList();
+          await calculateTotals();
+          updateSaveOrderButtonVisibility();
+
+          // Mostrar mensaje de confirmación
+          showMessage(`✅ Producto agregado: ${currentProduct.name} - ${variant.color} - Talle ${variant.size}`, "success");
+
+          // Limpiar input SKU y ocultar selección de producto
+          skuSearch.value = "";
+          productSelection.classList.remove("active");
+
+          // Refocar en el input SKU para siguiente lectura
+          setTimeout(() => {
+            skuSearch.focus();
+          }, 50);
+
+          return; // Salir de la función ya que el producto fue agregado automáticamente
+        }
+      }
+    }
+
     // Si el SKU tiene stock y no está en modo devoluciones, seleccionar automáticamente color y talle
     if (totalStock > 0 && !returnMode.checked) {
-      // Seleccionar el color y talle del SKU encontrado
+      // Seleccionar el color del SKU encontrado
       selectedColor = variant.color;
+      
+      // Si el SKU incluye un talle (viene de variant_sizes), seleccionarlo
+      if (variant.size) {
       selectedSizes[variant.size] = 1;
+      }
+      
       renderColorButtons();
       renderSizeButtons();
       updateLoadButton();
     }
+
+    // Limpiar input SKU después de buscar exitosamente (listo para siguiente código)
+    skuSearch.value = "";
   } catch (error) {
     console.error("Error buscando por SKU:", error);
     showMessage("Error al buscar producto: " + error.message, "error");
+    // Limpiar input incluso si hay error para facilitar siguiente búsqueda
+    skuSearch.value = "";
   }
 }
 
 // Cargar variantes del producto
 async function loadProductVariants(productId) {
   try {
+    // Cargar variantes (sin size, ya que los talles están en variant_sizes)
     const { data: variants, error } = await supabase
       .from("product_variants")
       .select(`
         id,
         sku,
         color,
-        size,
         price,
         active,
         products!inner (
@@ -1559,27 +3488,79 @@ async function loadProductVariants(productId) {
       `)
       .eq("product_id", productId)
       .eq("active", true)
-      .eq("products.status", "active");
+      .in("products.status", ["active", "pending_stock", "draft"]); // Incluir productos activos, con stock pendiente y en borrador
 
     if (error) throw error;
 
     if (!variants || variants.length === 0) {
-      showMessage("No se encontraron variantes activas para este producto", "error");
+      showMessage("No se encontraron variantes activas para este producto. Verifica que el producto esté activo y las variantes tengan el checkbox 'Activa' marcado.", "error");
       return;
     }
 
+    // Cargar talles desde variant_sizes para cada variante
+    const variantIds = variants.map(v => v.id);
+    const { data: sizesData, error: sizesError } = await supabase
+      .from("variant_sizes")
+      .select("variant_id, size, stock_qty, sku")
+      .in("variant_id", variantIds)
+      .order("size");
+
+    // Agrupar talles por variant_id
+    // IMPORTANTE: Normalizar los tamaños al cargarlos desde variant_sizes para asegurar consistencia
+    const sizesByVariant = new Map();
+    if (sizesData) {
+      sizesData.forEach(sizeRow => {
+        if (!sizesByVariant.has(sizeRow.variant_id)) {
+          sizesByVariant.set(sizeRow.variant_id, []);
+        }
+        // Normalizar el tamaño antes de guardarlo
+        const normalizedSize = normalizeSize(sizeRow.size);
+        if (normalizedSize) {
+          sizesByVariant.get(sizeRow.variant_id).push({
+            size: normalizedSize, // Guardar tamaño normalizado
+            stock_qty: sizeRow.stock_qty || 0,
+            sku: sizeRow.sku,
+          });
+        }
+      });
+    }
+
+    // Agregar talles a cada variante y crear variantes "virtuales" por cada talle
+    const variantsWithSizes = [];
+    variants.forEach(variant => {
+      const sizes = sizesByVariant.get(variant.id) || [];
+      if (sizes.length > 0) {
+        // Crear una variante virtual por cada talle
+        sizes.forEach(sizeData => {
+          variantsWithSizes.push({
+            ...variant,
+            size: sizeData.size, // Ya está normalizado desde sizesByVariant
+            sizeSku: sizeData.sku, // SKU completo con talle
+            qr_code: sizeData.qr_code, // Código QR numérico único
+            stock_qty: sizeData.stock_qty, // Stock del talle desde variant_sizes
+          });
+        });
+      } else {
+        // Si no tiene talles, agregar la variante sin size (modo legacy)
+        variantsWithSizes.push({
+          ...variant,
+          size: null,
+        });
+      }
+    });
+
     currentProduct = variants[0].products;
-    currentVariants = variants;
+    currentVariants = variantsWithSizes;
 
     // Mostrar información básica inmediatamente (sin esperar datos adicionales)
     productName.textContent = currentProduct.name;
     const firstVariant = currentVariants[0];
     productPrice.textContent = `$${firstVariant.price.toLocaleString('es-AR')}`;
     productSelection.classList.add("active");
-    
+
     // Renderizar colores inmediatamente con precios base
     renderColorButtons();
-    
+
     // Obtener stock, precios efectivos e información de ofertas/promociones para cada variante EN PARALELO
     const variantPromises = currentVariants.map(async (variant) => {
       // Ejecutar todas las llamadas en paralelo para esta variante
@@ -1589,24 +3570,24 @@ async function loadProductVariants(productId) {
         getOfferInfo(variant.id, currentProduct.id, variant.color),
         getPromotionInfo(variant.id)
       ]);
-      
+
       variant.stockData = stockData;
       variant.effectivePrice = effectivePrice !== null ? effectivePrice : variant.price;
       variant.offerInfo = offerInfo;
       variant.promotionInfo = promotionInfo;
-      
+
       return variant;
     });
-    
+
     // Esperar a que todas las variantes se procesen en paralelo
     await Promise.all(variantPromises);
-    
+
     // Actualizar precio e información de oferta con datos reales después de cargar
     const updatedFirstVariant = currentVariants[0];
     const firstVariantEffectivePrice = updatedFirstVariant.effectivePrice || updatedFirstVariant.price;
     productPrice.textContent = `$${firstVariantEffectivePrice.toLocaleString('es-AR')}`;
     updateProductOfferDisplay(updatedFirstVariant, productOfferInfo);
-    
+
     // Re-renderizar colores con datos actualizados
     renderColorButtons();
   } catch (error) {
@@ -1621,6 +3602,7 @@ async function getVariantStock(variantId) {
     const { data, error } = await supabase
       .rpc("get_variant_stock_by_warehouse", { p_variant_id: variantId });
 
+
     if (error) throw error;
 
     const stockMap = {};
@@ -1631,6 +3613,62 @@ async function getVariantStock(variantId) {
         stockMap[item.warehouse_code] = { stock: item.stock_qty, warehouse_id: item.warehouse_id };
         total += item.stock_qty;
       });
+    }
+
+
+    // AHORA TAMBIÉN CONSULTAR variant_size_warehouse_stock para obtener stock por talle
+    const { data: warehouses } = await supabase
+      .from("warehouses")
+      .select("id, code")
+      .in("code", ["general", "venta-publico"]);
+
+
+    if (warehouses && warehouses.length > 0) {
+      const warehouseMap = new Map();
+      warehouses.forEach(w => warehouseMap.set(w.code, w.id));
+      const generalWarehouseId = warehouseMap.get("general");
+      const ventaPublicoWarehouseId = warehouseMap.get("venta-publico");
+
+
+      // Consultar stock por talle desde variant_size_warehouse_stock
+      // IMPORTANTE: Cargar todos los registros y normalizar después para evitar problemas de comparación
+      const { data: sizeWarehouseStocks, error: sizeError } = await supabase
+        .from("variant_size_warehouse_stock")
+        .select("size, warehouse_id, stock_qty")
+        .eq("variant_id", variantId)
+        .in("warehouse_id", [generalWarehouseId, ventaPublicoWarehouseId].filter(Boolean));
+
+
+      if (!sizeError && sizeWarehouseStocks && sizeWarehouseStocks.length > 0) {
+        // Sumar stock por warehouse desde variant_size_warehouse_stock
+        // IMPORTANTE: Normalizar los tamaños para evitar problemas de comparación
+        let generalStock = 0;
+        let ventaPublicoStock = 0;
+        
+        sizeWarehouseStocks.forEach(sws => {
+          // Normalizar el tamaño antes de procesarlo
+          const normalizedSize = normalizeSize(sws.size);
+          if (!normalizedSize) return; // Saltar tamaños vacíos
+          
+          if (sws.warehouse_id === generalWarehouseId) {
+            generalStock += sws.stock_qty || 0;
+          } else if (sws.warehouse_id === ventaPublicoWarehouseId) {
+            ventaPublicoStock += sws.stock_qty || 0;
+          }
+        });
+
+        const sizeTotal = generalStock + ventaPublicoStock;
+
+
+        // Usar el stock de variant_size_warehouse_stock si es mayor que el de variant_warehouse_stock
+        if (sizeTotal > total) {
+          return {
+            general: { stock: generalStock },
+            ventaPublico: { stock: ventaPublicoStock },
+            total: sizeTotal
+          };
+        }
+      }
     }
 
     return {
@@ -1651,14 +3689,14 @@ async function getVariantStock(variantId) {
 // Renderizar botones de colores
 function renderColorButtons() {
   const colors = [...new Set(currentVariants.map(v => v.color).filter(Boolean))];
-  
+
   colorButtons.innerHTML = "";
-  
+
   colors.forEach(color => {
     const btn = document.createElement("button");
     btn.className = "color-btn";
     btn.textContent = color;
-      btn.addEventListener("click", () => {
+    btn.addEventListener("click", () => {
       document.querySelectorAll(".color-btn").forEach(b => {
         b.classList.remove("active");
         b.style.color = ""; // Resetear color para que use el CSS
@@ -1666,7 +3704,7 @@ function renderColorButtons() {
       btn.classList.add("active");
       selectedColor = color;
       selectedSizes = {};
-      
+
       // Actualizar precio e información de oferta para el color seleccionado
       const variantsByColor = currentVariants.filter(v => v.color === color);
       if (variantsByColor.length > 0) {
@@ -1675,7 +3713,7 @@ function renderColorButtons() {
         productPrice.textContent = `$${effectivePrice.toLocaleString('es-AR')}`;
         updateProductOfferDisplay(firstVariant, productOfferInfo);
       }
-      
+
       renderSizeButtons();
     });
     colorButtons.appendChild(btn);
@@ -1684,7 +3722,7 @@ function renderColorButtons() {
   if (colors.length > 0 && !selectedColor) {
     selectedColor = colors[0];
     document.querySelectorAll(".color-btn")[0].classList.add("active");
-    
+
     // Actualizar precio e información de oferta para el primer color
     const variantsByColor = currentVariants.filter(v => v.color === selectedColor);
     if (variantsByColor.length > 0) {
@@ -1693,13 +3731,16 @@ function renderColorButtons() {
       productPrice.textContent = `$${effectivePrice.toLocaleString('es-AR')}`;
       updateProductOfferDisplay(firstVariant, productOfferInfo);
     }
-    
+
     renderSizeButtons();
   }
 }
 
 // Renderizar botones de talles
-function renderSizeButtons() {
+async function renderSizeButtons() {
+  // Incrementar versión para cancelar renderizados anteriores
+  const currentVersion = ++renderSizeButtonsVersion;
+  
   if (!selectedColor) return;
 
   const variantsByColor = currentVariants.filter(v => v.color === selectedColor);
@@ -1709,43 +3750,131 @@ function renderSizeButtons() {
     return numA - numB;
   });
 
+  // Verificar versión antes de modificar DOM
+  if (currentVersion !== renderSizeButtonsVersion) return;
   sizeButtons.innerHTML = "";
 
-  sizes.forEach(size => {
-    const variant = variantsByColor.find(v => v.size === size);
-    if (!variant) return;
+  // Obtener warehouses una sola vez
+  const { data: warehouses } = await supabase
+    .from("warehouses")
+    .select("id, code")
+    .in("code", ["general", "venta-publico"]);
+  
+  const warehouseMap = new Map();
+  let generalWarehouseId = null;
+  let ventaPublicoWarehouseId = null;
+  
+  if (warehouses && warehouses.length > 0) {
+    warehouses.forEach(w => warehouseMap.set(w.code, w.id));
+    generalWarehouseId = warehouseMap.get("general");
+    ventaPublicoWarehouseId = warehouseMap.get("venta-publico");
+  }
 
-    const stock = variant.stockData || { total: 0, general: { stock: 0 }, ventaPublico: { stock: 0 } };
-    const totalStock = stock.total || 0;
-    const generalStock = stock.general?.stock || 0;
-    const ventaPublicoStock = stock.ventaPublico?.stock || 0;
+  // Obtener todos los stocks por talle de una vez
+  // IMPORTANTE: Normalizar todos los tamaños antes de consultar para asegurar consistencia
+  const variantIds = variantsByColor.map(v => v.id).filter(Boolean);
+  const normalizedSizes = sizes.map(s => normalizeSize(s)).filter(Boolean);
+  
+  const sizeStockMap = new Map(); // key: `${variantId}_${normalizedSize}`, value: { general, ventaPublico, total }
+  
+  if (variantIds.length > 0 && normalizedSizes.length > 0 && generalWarehouseId && ventaPublicoWarehouseId) {
+    // Consultar stock por talle desde variant_size_warehouse_stock para todos los talles
+    // IMPORTANTE: Cargar todos los registros de las variantes y normalizar después para evitar problemas de comparación
+    const { data: sizeWarehouseStocks, error: sizeError } = await supabase
+      .from("variant_size_warehouse_stock")
+      .select("variant_id, size, warehouse_id, stock_qty")
+      .in("variant_id", variantIds)
+      .in("warehouse_id", [generalWarehouseId, ventaPublicoWarehouseId]);
+    
+    if (!sizeError && sizeWarehouseStocks && sizeWarehouseStocks.length > 0) {
+      // IMPORTANTE: Normalizar los tamaños al crear las claves del mapa
+      sizeWarehouseStocks.forEach(sws => {
+        const normalizedSize = normalizeSize(sws.size);
+        if (!normalizedSize) return; // Saltar tamaños vacíos
+        
+        // Filtrar solo los tamaños que están en la lista de sizes normalizados (ya calculada arriba)
+        if (!normalizedSizes.includes(normalizedSize)) return; // Saltar si no está en la lista
+        
+        const key = `${sws.variant_id}_${normalizedSize}`;
+        if (!sizeStockMap.has(key)) {
+          sizeStockMap.set(key, { general: 0, ventaPublico: 0, total: 0 });
+        }
+        const stock = sizeStockMap.get(key);
+        
+        
+        // IMPORTANTE: Si ya existe un valor, NO sumar, REEMPLAZAR
+        // (cada variante+talle+warehouse debería tener solo un registro)
+        if (sws.warehouse_id === generalWarehouseId) {
+          stock.general = sws.stock_qty || 0;
+        } else if (sws.warehouse_id === ventaPublicoWarehouseId) {
+          stock.ventaPublico = sws.stock_qty || 0;
+        }
+        stock.total = stock.general + stock.ventaPublico;
+        
+      });
+    }
+  }
+
+  // Verificar versión después de consultas async
+  if (currentVersion !== renderSizeButtonsVersion) return;
+
+  for (const size of sizes) {
+    // IMPORTANTE: Normalizar el tamaño antes de buscar la variante
+    const normalizedSize = normalizeSize(size);
+    if (!normalizedSize) continue; // Saltar tamaños vacíos
+    
+    const variant = variantsByColor.find(v => {
+      const vNormalizedSize = normalizeSize(v.size);
+      return vNormalizedSize === normalizedSize;
+    });
+    if (!variant) continue;
+
+    // Obtener stock específico del talle desde el mapa usando tamaño normalizado
+    const stockKey = `${variant.id}_${normalizedSize}`;
+    let totalStock = 0;
+    let generalStock = 0;
+    let ventaPublicoStock = 0;
+    
+    if (sizeStockMap.has(stockKey)) {
+      const sizeStock = sizeStockMap.get(stockKey);
+      generalStock = sizeStock.general || 0;
+      ventaPublicoStock = sizeStock.ventaPublico || 0;
+      totalStock = sizeStock.total || 0;
+    }
+    
+    // FALLBACK CRÍTICO: Si no hay stock en warehouses pero hay en variant_sizes, usar variant_sizes.stock_qty
+    // Este es el mismo patrón que usa admin/stock.js (líneas 554-560) y admin/order-creator.js
+    if (generalStock === 0 && ventaPublicoStock === 0 && variant.stock_qty > 0) {
+      // Si hay stock en variant_sizes pero no en variant_size_warehouse_stock,
+      // poner todo en general como fallback (esto es lo que hace admin/stock.js)
+      generalStock = variant.stock_qty || 0;
+      totalStock = generalStock;
+    }
 
     const btn = document.createElement("button");
     btn.className = "size-btn";
     btn.textContent = size;
 
-    // Determinar color del botón
-    if (totalStock === 0) {
-      btn.classList.add("size-zero");
-    } else if (ventaPublicoStock > 0) {
-      btn.classList.add("size-available");
-    } else if (generalStock > 0) {
-      btn.classList.add("size-green");
-    } else {
-      btn.classList.add("size-zero");
-    }
-
     // Calcular cantidad y fuente de stock
     const quantity = selectedSizes[size] || 0;
     const source = selectedSizesSource[size] || { ventaPublico: 0, general: 0 };
     const totalFromSource = source.ventaPublico + source.general;
-    
-    // Si hay cantidad seleccionada, verificar si se está usando stock de general
-    // El botón se vuelve verde cuando se empieza a usar stock de general
-    if (quantity > 0 && source.general > 0) {
-      // Se está usando stock de general, cambiar a verde
-      btn.classList.remove("size-available");
+
+    // Determinar color del botón según stock disponible y fuente actual
+    // IMPORTANTE: Si ya se está usando stock de general, el botón debe ser verde
+    if (totalStock === 0) {
+      btn.classList.add("size-zero");
+    } else if (source.general > 0) {
+      // Ya se está usando stock de general, botón verde
       btn.classList.add("size-green");
+    } else if (ventaPublicoStock > 0 && source.general === 0) {
+      // Hay stock en venta-publico y no se está usando general, botón marrón
+      btn.classList.add("size-available");
+    } else if (generalStock > 0) {
+      // Solo hay stock en general, botón verde
+      btn.classList.add("size-green");
+    } else {
+      btn.classList.add("size-zero");
     }
 
     // Mostrar contador si hay cantidad seleccionada
@@ -1790,38 +3919,38 @@ function renderSizeButtons() {
 
     // En modo devoluciones, todos los botones están disponibles sin límite de stock
     if (returnMode.checked || totalStock > 0) {
-      btn.addEventListener("click", () => {
+      btn.addEventListener("click", async () => {
         const currentQty = selectedSizes[size] || 0;
         const currentSource = selectedSizesSource[size] || { ventaPublico: 0, general: 0 };
-        
+
         // En modo devoluciones, no hay límite de cantidad
         if (returnMode.checked) {
           selectedSizes[size] = currentQty + 1;
-          
+
           // En devoluciones, no necesitamos rastrear la fuente del stock
           // porque se agregará al stock de venta-publico
           if (!selectedSizesSource[size]) {
             selectedSizesSource[size] = { ventaPublico: 0, general: 0 };
           }
-          
+
           renderSizeButtons();
           updateLoadButton();
         } else {
           // Modo venta normal: verificar stock disponible
           const totalStockAvailable = ventaPublicoStock + generalStock;
-          
+
           if (currentQty < totalStockAvailable) {
             selectedSizes[size] = currentQty + 1;
-            
+
             // Asignar a la fuente correcta (priorizar venta-publico)
             if (!selectedSizesSource[size]) {
               selectedSizesSource[size] = { ventaPublico: 0, general: 0 };
             }
-            
+
             // Calcular cuánto stock queda disponible en cada almacén
             const remainingVentaPublico = Math.max(0, ventaPublicoStock - currentSource.ventaPublico);
             const remainingGeneral = Math.max(0, generalStock - currentSource.general);
-            
+
             if (remainingVentaPublico > 0) {
               // Aún hay stock en venta-publico, usar de ahí
               selectedSizesSource[size].ventaPublico++;
@@ -1829,11 +3958,69 @@ function renderSizeButtons() {
               // Ya no hay en venta-publico, usar de general (el botón se volverá verde)
               selectedSizesSource[size].general++;
             }
-            
+
             renderSizeButtons();
             updateLoadButton();
           } else {
-            showMessage(`Stock máximo alcanzado para talle ${size}. Disponible: ${totalStockAvailable} (Venta Público: ${ventaPublicoStock}, General: ${generalStock})`, "error", 10000);
+            // Stock máximo alcanzado: mostrar modal de confirmación
+            const modal = document.getElementById("no-stock-confirm-modal");
+            const confirmYes = document.getElementById("no-stock-confirm-yes");
+            const confirmNo = document.getElementById("no-stock-confirm-no");
+
+            if (!modal || !confirmYes || !confirmNo) {
+              showMessage(`Stock máximo alcanzado para talle ${size}. Disponible: ${totalStockAvailable} (Venta Público: ${ventaPublicoStock}, General: ${generalStock})`, "error", 10000);
+              return;
+            }
+
+            // Actualizar mensaje del modal para stock máximo alcanzado
+            const modalMessage = modal.querySelector("p");
+            if (modalMessage) {
+              modalMessage.textContent = `Stock máximo alcanzado para talle ${size}. Disponible: ${totalStockAvailable} (Venta Público: ${ventaPublicoStock}, General: ${generalStock}). ¿Desea agregarlo de todas formas? (Útil en caso de mal conteo de stock)`;
+            }
+
+            modal.classList.add("active");
+
+            // Esperar respuesta del usuario
+            const userConfirmed = await new Promise((resolve) => {
+              const handleYes = () => {
+                modal.classList.remove("active");
+                // Restaurar mensaje original del modal
+                const modalMessage = modal.querySelector("p");
+                if (modalMessage) {
+                  modalMessage.textContent = "Este producto no tiene stock disponible. ¿Está seguro de que desea agregarlo de todas formas?";
+                }
+                confirmYes.removeEventListener("click", handleYes);
+                confirmNo.removeEventListener("click", handleNo);
+                resolve(true);
+              };
+
+              const handleNo = () => {
+                modal.classList.remove("active");
+                // Restaurar mensaje original del modal
+                const modalMessage = modal.querySelector("p");
+                if (modalMessage) {
+                  modalMessage.textContent = "Este producto no tiene stock disponible. ¿Está seguro de que desea agregarlo de todas formas?";
+                }
+                confirmYes.removeEventListener("click", handleYes);
+                confirmNo.removeEventListener("click", handleNo);
+                resolve(false);
+              };
+
+              confirmYes.addEventListener("click", handleYes);
+              confirmNo.addEventListener("click", handleNo);
+            });
+
+            if (userConfirmed) {
+              // Agregar talle como si tuviera stock (para casos de mal conteo)
+              selectedSizes[size] = currentQty + 1;
+
+              // SIEMPRE resetear a 0,0 cuando se confirma sin stock
+              // Esto indica que el usuario aceptó agregar sin descontar de ningún warehouse
+              selectedSizesSource[size] = { ventaPublico: 0, general: 0 };
+
+              renderSizeButtons();
+              updateLoadButton();
+            }
           }
         }
       });
@@ -1844,14 +4031,14 @@ function renderSizeButtons() {
         const modal = document.getElementById("no-stock-confirm-modal");
         const confirmYes = document.getElementById("no-stock-confirm-yes");
         const confirmNo = document.getElementById("no-stock-confirm-no");
-        
+
         if (!modal || !confirmYes || !confirmNo) {
           console.error("Modal de confirmación sin stock no encontrado");
           return;
         }
-        
+
         modal.classList.add("active");
-        
+
         // Esperar respuesta del usuario
         const userConfirmed = await new Promise((resolve) => {
           const handleYes = () => {
@@ -1860,27 +4047,27 @@ function renderSizeButtons() {
             confirmNo.removeEventListener("click", handleNo);
             resolve(true);
           };
-          
+
           const handleNo = () => {
             modal.classList.remove("active");
             confirmYes.removeEventListener("click", handleYes);
             confirmNo.removeEventListener("click", handleNo);
             resolve(false);
           };
-          
+
           confirmYes.addEventListener("click", handleYes);
           confirmNo.addEventListener("click", handleNo);
         });
-        
+
         if (userConfirmed) {
           // Agregar talle como si tuviera stock (similar a modo devoluciones)
           const currentQty = selectedSizes[size] || 0;
           selectedSizes[size] = currentQty + 1;
-          
-          if (!selectedSizesSource[size]) {
-            selectedSizesSource[size] = { ventaPublico: 0, general: 0 };
-          }
-          
+
+          // SIEMPRE resetear a 0,0 cuando se confirma sin stock
+          // Esto indica que el usuario aceptó agregar sin descontar de ningún warehouse
+          selectedSizesSource[size] = { ventaPublico: 0, general: 0 };
+
           renderSizeButtons();
           updateLoadButton();
         }
@@ -1888,7 +4075,7 @@ function renderSizeButtons() {
     }
 
     sizeButtons.appendChild(btn);
-  });
+  }
 
   updateLoadButton();
 }
@@ -1913,21 +4100,22 @@ loadToSaleBtn.addEventListener("click", async () => {
     const variant = variantsByColor.find(v => v.size === size);
     if (!variant) return;
 
-    // Buscar si ya existe este producto/color en la lista
-    const existingIndex = saleItems.findIndex(item => 
-      item.productId === currentProduct.id && 
-      item.color === selectedColor
+    // Buscar si ya existe este producto/color con el mismo tipo (devolución o venta) en la lista
+    const existingIndex = saleItems.findIndex(item =>
+      item.productId === currentProduct.id &&
+      item.color === selectedColor &&
+      item.isReturn === isReturn
     );
 
     // Obtener fuente del stock para este talle
     const source = selectedSizesSource[size] || { ventaPublico: quantity, general: 0 };
-    
+
     // Si no hay fuente definida, calcularla basándose en el stock disponible
     if (!selectedSizesSource[size]) {
       const stock = variant.stockData || { general: { stock: 0 }, ventaPublico: { stock: 0 } };
       const ventaPublicoStock = stock.ventaPublico?.stock || 0;
       const generalStock = stock.general?.stock || 0;
-      
+
       // Priorizar venta-publico
       source.ventaPublico = Math.min(quantity, ventaPublicoStock);
       source.general = Math.max(0, quantity - source.ventaPublico);
@@ -1943,15 +4131,15 @@ loadToSaleBtn.addEventListener("click", async () => {
           general: (existingSize.source?.general || 0) + source.general
         };
       } else {
-        saleItems[existingIndex].sizes.push({ 
-          size, 
-          quantity, 
+        saleItems[existingIndex].sizes.push({
+          size,
+          quantity,
           variantId: variant.id,
           source: { ventaPublico: source.ventaPublico, general: source.general }
         });
       }
       saleItems[existingIndex].totalQuantity += quantity;
-      
+
       // Actualizar información de oferta/promoción y precio base si no existe
       if (!saleItems[existingIndex].basePrice) {
         saleItems[existingIndex].basePrice = variant.price;
@@ -1962,11 +4150,11 @@ loadToSaleBtn.addEventListener("click", async () => {
       if (!saleItems[existingIndex].promotionInfo && variant.promotionInfo) {
         saleItems[existingIndex].promotionInfo = variant.promotionInfo;
       }
-      
+
       // Actualizar isReturn según el modo actual
       const previousIsReturn = saleItems[existingIndex].isReturn;
       saleItems[existingIndex].isReturn = isReturn;
-      
+
       // Si cambió el modo de devolución, recalcular totalValue completo
       if (previousIsReturn !== isReturn) {
         // Recalcular totalValue desde cero basándose en todos los talles
@@ -2007,9 +4195,9 @@ loadToSaleBtn.addEventListener("click", async () => {
         basePrice: basePrice, // Guardar precio base para calcular descuentos
         offerInfo: variant.offerInfo || null,
         promotionInfo: variant.promotionInfo || null,
-        sizes: [{ 
-          size, 
-          quantity, 
+        sizes: [{
+          size,
+          quantity,
           variantId: variant.id,
           source: { ventaPublico: source.ventaPublico, general: source.general }
         }],
@@ -2023,26 +4211,36 @@ loadToSaleBtn.addEventListener("click", async () => {
   // Limpiar selección
   selectedSizes = {};
   selectedSizesSource = {};
+  selectedColor = null;
   renderSizeButtons();
-    renderSaleList();
-    await calculateTotals();
-    
-    // Actualizar visibilidad del botón Guardar Pedido
-    updateSaveOrderButtonVisibility();
-  });
+  renderSaleList();
+  await calculateTotals();
+
+  // Actualizar visibilidad del botón Guardar Pedido
+  updateSaveOrderButtonVisibility();
+
+  // Limpiar input SKU, ocultar selección de producto y refocar para siguiente código
+  skuSearch.value = "";
+  productSelection.classList.remove("active");
+
+  // Refocar en el input SKU para siguiente lectura
+  setTimeout(() => {
+    skuSearch.focus();
+  }, 50);
+});
 
 // Función auxiliar para calcular el descuento de un item
 function calculateItemDiscount(item) {
   if (!item.basePrice || (!item.offerInfo && !item.promotionInfo)) {
     return 0;
   }
-  
+
   // Para ofertas: descuento = (precio base - precio efectivo) * cantidad total
   if (item.offerInfo && !item.promotionInfo) {
     const discountPerUnit = item.basePrice - item.price;
     return discountPerUnit * item.totalQuantity;
   }
-  
+
   // Para promociones, calcular el descuento según el tipo
   // IMPORTANTE: Solo aplicar descuento si se cumple la condición mínima de la promoción
   if (item.promotionInfo) {
@@ -2051,10 +4249,10 @@ function calculateItemDiscount(item) {
       // Si hay menos de 2 unidades, la promoción NO se aplica, no hay descuento
       return 0;
     }
-    
+
     // Usar precio efectivo (con ofertas aplicadas) como base para calcular el descuento de la promoción
     const totalEffectiveValue = item.price * item.totalQuantity;
-    
+
     if (item.promotionInfo.promoType === '2x1') {
       // En 2x1: se cobra solo la mitad (redondeado hacia arriba)
       // Ejemplo: 2 items a $10.000 = $20.000, se cobra 1 = $10.000, descuento = $10.000
@@ -2080,7 +4278,7 @@ function calculateItemDiscount(item) {
       return discount > 0 ? discount : 0;
     }
   }
-  
+
   return 0;
 }
 
@@ -2100,22 +4298,42 @@ function renderSaleList() {
   // Construir HTML de items, agregando items de oferta después de cada producto con oferta/promoción
   let html = '';
   let itemIndex = 0;
-  
+
   saleItems.forEach((item, originalIndex) => {
     // Si es un extra, renderizar de forma especial
     if (item.isExtra) {
-      const rowClass = "extra-item";
+      // Determinar estilo según tipo de extra
+      let rowClass = "extra-item";
+      let rowStyle = "";
+      let nameDisplay = escapeHtml(item.productName);
+      
+      // Si es extra especial, aplicar estilo distintivo
+      if (item.isSpecialExtra) {
+        rowStyle = 'style="background: #f3e5f5; border-left: 4px solid #9c27b0;"';
+        nameDisplay = `<div style="display: flex; align-items: center; gap: 8px;">
+          <span style="background: #9c27b0; color: white; padding: 4px 8px; border-radius: 12px; font-size: 11px; font-weight: 600;">⭐ EXTRA</span>
+          <span>${escapeHtml(item.productName)}</span>
+        </div>`;
+      }
+      
       const valueSign = item.totalValue < 0 ? '-' : '';
       const valueDisplay = Math.abs(item.totalValue);
-      
+      const qty = item.totalQuantity ?? 1;
+
       html += `
-        <tr class="${rowClass}">
+        <tr class="${rowClass}" ${rowStyle}>
           <td>-</td>
-          <td>${escapeHtml(item.productName)}</td>
+          <td>${nameDisplay}</td>
           <td>-</td>
           <td>-</td>
           <td>-</td>
-          <td>1</td>
+          <td>
+            <div class="sale-qty-controls" style="justify-content: center;">
+              <button type="button" class="sale-qty-btn" onclick="event.stopPropagation(); decreaseExtraQuantity(${originalIndex})" title="Disminuir">−</button>
+              <span class="qty">${qty}</span>
+              <button type="button" class="sale-qty-btn" onclick="event.stopPropagation(); increaseExtraQuantity(${originalIndex})" title="Aumentar">+</button>
+            </div>
+          </td>
           <td>${valueSign}$${valueDisplay.toLocaleString('es-AR')}</td>
           <td>
             <button class="btn btn-secondary" onclick="removeSaleItem(${originalIndex})" style="padding: 6px 12px; font-size: 12px;">
@@ -2127,16 +4345,20 @@ function renderSaleList() {
       return; // Continuar con el siguiente item (no agregar item de oferta para extras)
     }
 
-    // Renderizar producto normal
-    const sizesHtml = item.sizes.map(s => `
+    // Renderizar producto normal (con − y + por talle)
+    const sizesHtml = item.sizes.map((s, sizeIndex) => `
       <div class="size-fraction">
         <div class="size">${escapeHtml(s.size)}</div>
-        <div class="qty">${s.quantity}</div>
+        <div class="sale-qty-controls">
+          <button type="button" class="sale-qty-btn" onclick="event.stopPropagation(); decreaseSaleItemQuantity(${originalIndex}, ${sizeIndex})" title="Disminuir">−</button>
+          <span class="qty">${s.quantity}</span>
+          <button type="button" class="sale-qty-btn" onclick="event.stopPropagation(); increaseSaleItemQuantity(${originalIndex}, ${sizeIndex})" title="Aumentar">+</button>
+        </div>
       </div>
     `).join("");
 
     const rowClass = item.isReturn ? "return-item" : "";
-    
+
     // Construir información de oferta/promoción
     let offerInfoHtml = '';
     if (item.promotionInfo) {
@@ -2170,17 +4392,17 @@ function renderSaleList() {
         </td>
       </tr>
     `;
-    
+
     // Si el producto tiene oferta o promoción, agregar un item "Oferta" con el descuento
     if ((item.offerInfo || item.promotionInfo) && !item.isReturn) {
       const discount = calculateItemDiscount(item);
       if (discount > 0) {
-        const discountDescription = item.promotionInfo 
-          ? item.promotionInfo.description 
-          : (item.offerInfo.discountPercent > 0 
-              ? `${item.offerInfo.discountPercent}% OFF - ${item.offerInfo.title}`
-              : item.offerInfo.title);
-        
+        const discountDescription = item.promotionInfo
+          ? item.promotionInfo.description
+          : (item.offerInfo.discountPercent > 0
+            ? `${item.offerInfo.discountPercent}% OFF - ${item.offerInfo.title}`
+            : item.offerInfo.title);
+
         html += `
           <tr class="offer-discount-item" style="background: #fff3cd; border-left: 4px solid #ffc107;">
             <td>-</td>
@@ -2198,17 +4420,131 @@ function renderSaleList() {
         `;
       }
     }
-    
+
     itemIndex++;
   });
-  
+
   saleListTbody.innerHTML = html;
 }
 
+// Aumentar cantidad de un talle en la lista de venta (con validación de stock)
+window.increaseSaleItemQuantity = async function (itemIndex, sizeIndex) {
+  const item = saleItems[itemIndex];
+  if (!item || !item.sizes || !item.sizes[sizeIndex]) return;
+  const sizeEntry = item.sizes[sizeIndex];
+  const sign = item.isReturn ? -1 : 1;
+
+  if (item.isReturn) {
+    sizeEntry.quantity = (sizeEntry.quantity || 0) + 1;
+  } else {
+    const available = await getAvailableStockForVariantSizeInSale(sizeEntry.variantId, sizeEntry.size);
+    if (available.total >= 1) {
+      sizeEntry.quantity = (sizeEntry.quantity || 0) + 1;
+      const src = sizeEntry.source || { ventaPublico: 0, general: 0 };
+      if (available.ventaPublico >= 1) src.ventaPublico = (src.ventaPublico || 0) + 1;
+      else if (available.general >= 1) src.general = (src.general || 0) + 1;
+      sizeEntry.source = src;
+    } else {
+      const modal = document.getElementById("no-stock-confirm-modal");
+      const confirmYes = document.getElementById("no-stock-confirm-yes");
+      const confirmNo = document.getElementById("no-stock-confirm-no");
+      const modalMessage = modal?.querySelector("p");
+      const originalText = modalMessage?.textContent || "";
+      if (modal && confirmYes && confirmNo && modalMessage) {
+        modalMessage.textContent = "No hay stock disponible para este talle. ¿Desea agregarlo de todos modos?";
+        modal.classList.add("active");
+        const userConfirmed = await new Promise((resolve) => {
+          const handleYes = () => {
+            modal.classList.remove("active");
+            modalMessage.textContent = originalText;
+            confirmYes.removeEventListener("click", handleYes);
+            confirmNo.removeEventListener("click", handleNo);
+            resolve(true);
+          };
+          const handleNo = () => {
+            modal.classList.remove("active");
+            modalMessage.textContent = originalText;
+            confirmYes.removeEventListener("click", handleYes);
+            confirmNo.removeEventListener("click", handleNo);
+            resolve(false);
+          };
+          confirmYes.addEventListener("click", handleYes);
+          confirmNo.addEventListener("click", handleNo);
+        });
+        if (userConfirmed) {
+          sizeEntry.quantity = (sizeEntry.quantity || 0) + 1;
+          sizeEntry.source = { ventaPublico: 0, general: 0 };
+        } else return;
+      } else {
+        showMessage("No hay stock disponible para este talle.", "error");
+        return;
+      }
+    }
+  }
+
+  item.totalQuantity = item.sizes.reduce((sum, s) => sum + (s.quantity || 0), 0);
+  item.totalValue = item.sizes.reduce((sum, s) => sum + sign * item.price * (s.quantity || 0), 0);
+  renderSaleList();
+  await calculateTotals();
+};
+
+// Disminuir cantidad de un talle en la lista de venta
+window.decreaseSaleItemQuantity = async function (itemIndex, sizeIndex) {
+  const item = saleItems[itemIndex];
+  if (!item || !item.sizes || !item.sizes[sizeIndex]) return;
+  const sizeEntry = item.sizes[sizeIndex];
+  const sign = item.isReturn ? -1 : 1;
+
+  sizeEntry.quantity = Math.max(0, (sizeEntry.quantity || 0) - 1);
+  if (sizeEntry.quantity === 0) {
+    item.sizes.splice(sizeIndex, 1);
+    if (item.sizes.length === 0) {
+      saleItems.splice(itemIndex, 1);
+      renderSaleList();
+      await calculateTotals();
+      updateSaveOrderButtonVisibility();
+      return;
+    }
+  }
+
+  item.totalQuantity = item.sizes.reduce((sum, s) => sum + (s.quantity || 0), 0);
+  item.totalValue = item.sizes.reduce((sum, s) => sum + sign * item.price * (s.quantity || 0), 0);
+  renderSaleList();
+  await calculateTotals();
+};
+
+// Aumentar cantidad de un extra (especial, numérico o porcentual)
+window.increaseExtraQuantity = async function (itemIndex) {
+  const item = saleItems[itemIndex];
+  if (!item || !item.isExtra) return;
+  item.totalQuantity = (item.totalQuantity || 1) + 1;
+  if (item.isSpecialExtra && item.price != null) {
+    item.totalValue = item.price * item.totalQuantity;
+  } else if (item.extraType === 'numeric' && item.value != null) {
+    item.totalValue = item.value * item.totalQuantity;
+  }
+  renderSaleList();
+  await calculateTotals();
+};
+
+// Disminuir cantidad de un extra (mínimo 1)
+window.decreaseExtraQuantity = async function (itemIndex) {
+  const item = saleItems[itemIndex];
+  if (!item || !item.isExtra) return;
+  item.totalQuantity = Math.max(1, (item.totalQuantity || 1) - 1);
+  if (item.isSpecialExtra && item.price != null) {
+    item.totalValue = item.price * item.totalQuantity;
+  } else if (item.extraType === 'numeric' && item.value != null) {
+    item.totalValue = item.value * item.totalQuantity;
+  }
+  renderSaleList();
+  await calculateTotals();
+};
+
 // Función global para eliminar item
-window.removeSaleItem = async function(index) {
+window.removeSaleItem = async function (index) {
   const item = saleItems[index];
-  
+
   // Si el item viene de un pedido local, liberar stock al local de venta al público
   if (item && item.fromLocalOrder && item.sizes && item.sizes.length > 0) {
     for (const size of item.sizes) {
@@ -2220,7 +4556,7 @@ window.removeSaleItem = async function(index) {
             .select("id")
             .eq("code", "venta-publico")
             .maybeSingle();
-          
+
           if (warehouseData) {
             // Obtener stock actual
             const { data: stockData } = await supabase
@@ -2229,11 +4565,11 @@ window.removeSaleItem = async function(index) {
               .eq("variant_id", size.variantId)
               .eq("warehouse_id", warehouseData.id)
               .maybeSingle();
-            
+
             // Incrementar stock en venta al público
             const currentStock = stockData?.stock_qty || 0;
             const newStock = currentStock + size.quantity;
-            
+
             // Actualizar o insertar stock
             const { error: stockError } = await supabase
               .from("variant_warehouse_stock")
@@ -2244,7 +4580,7 @@ window.removeSaleItem = async function(index) {
               }, {
                 onConflict: "variant_id,warehouse_id"
               });
-            
+
             if (stockError) {
               console.error("Error liberando stock:", stockError);
             } else {
@@ -2257,11 +4593,11 @@ window.removeSaleItem = async function(index) {
       }
     }
   }
-  
+
   saleItems.splice(index, 1);
   renderSaleList();
   await calculateTotals();
-  
+
   // Actualizar visibilidad del botón Guardar Pedido
   updateSaveOrderButtonVisibility();
 };
@@ -2271,7 +4607,7 @@ async function getEffectivePrice(variantId) {
   try {
     const { data, error } = await supabase
       .rpc('get_effective_price', { p_variant_id: variantId });
-    
+
     if (error) throw error;
     return data || null;
   } catch (error) {
@@ -2284,7 +4620,7 @@ async function getEffectivePrice(variantId) {
 async function getOfferInfo(variantId, productId, color) {
   try {
     const now = new Date().toISOString().split('T')[0];
-    
+
     // Obtener oferta de precio por color
     const { data: offer, error: offerError } = await supabase
       .from('color_price_offers')
@@ -2295,11 +4631,11 @@ async function getOfferInfo(variantId, productId, color) {
       .lte('start_date', now)
       .gte('end_date', now)
       .maybeSingle();
-    
+
     if (offerError && offerError.code !== 'PGRST116') {
       console.error('Error obteniendo oferta:', offerError);
     }
-    
+
     if (offer) {
       // Obtener precio base de la variante para calcular el descuento
       const { data: variant } = await supabase
@@ -2307,13 +4643,13 @@ async function getOfferInfo(variantId, productId, color) {
         .select('price')
         .eq('id', variantId)
         .single();
-      
+
       if (variant) {
         const basePrice = variant.price;
         const offerPrice = offer.offer_price;
         const discount = basePrice - offerPrice;
         const discountPercent = Math.round((discount / basePrice) * 100);
-        
+
         return {
           type: 'offer',
           title: offer.offer_title || 'Oferta',
@@ -2323,7 +4659,7 @@ async function getOfferInfo(variantId, productId, color) {
         };
       }
     }
-    
+
     return null;
   } catch (error) {
     console.error('Error obteniendo información de oferta:', error);
@@ -2336,9 +4672,9 @@ async function getPromotionInfo(variantId) {
   try {
     const { data: promotions, error } = await supabase
       .rpc('get_active_promotions_for_variants', { p_variant_ids: [variantId] });
-    
+
     if (error) throw error;
-    
+
     if (promotions && promotions.length > 0) {
       const promo = promotions[0]; // Tomar la primera promoción
       if (promo.promo_type === '2x1') {
@@ -2359,7 +4695,7 @@ async function getPromotionInfo(variantId) {
         };
       }
     }
-    
+
     return null;
   } catch (error) {
     console.error('Error obteniendo información de promoción:', error);
@@ -2373,7 +4709,7 @@ function updateProductOfferDisplay(variant, offerInfoElement) {
     if (offerInfoElement) offerInfoElement.style.display = 'none';
     return;
   }
-  
+
   // Priorizar promoción sobre oferta
   if (variant.promotionInfo) {
     offerInfoElement.textContent = `🔥 ${variant.promotionInfo.description}`;
@@ -2398,7 +4734,7 @@ async function getActivePromotionsForVariants(variantIds) {
   try {
     const { data, error } = await supabase
       .rpc('get_active_promotions_for_variants', { p_variant_ids: variantIds });
-    
+
     if (error) throw error;
     return data || [];
   } catch (error) {
@@ -2410,7 +4746,7 @@ async function getActivePromotionsForVariants(variantIds) {
 // Calcular totales con ofertas y promociones
 async function calculateTotals() {
   const totalItemsCount = saleItems.reduce((sum, item) => sum + item.totalQuantity, 0);
-  
+
   // Obtener todos los variant_ids de los items
   const variantIds = [];
   saleItems.forEach(item => {
@@ -2420,7 +4756,7 @@ async function calculateTotals() {
       }
     });
   });
-  
+
   // Obtener precios efectivos con ofertas
   const effectivePrices = new Map();
   for (const variantId of variantIds) {
@@ -2429,10 +4765,10 @@ async function calculateTotals() {
       effectivePrices.set(variantId, price);
     }
   }
-  
+
   // Obtener promociones activas
   const promotions = await getActivePromotionsForVariants(variantIds);
-  
+
   // Crear mapa de variant_id -> promociones
   const variantPromos = new Map();
   promotions.forEach(promo => {
@@ -2443,18 +4779,18 @@ async function calculateTotals() {
       variantPromos.get(vid).push(promo);
     });
   });
-  
+
   // Calcular subtotal considerando ofertas y promociones
   let subtotal = 0;
   const itemsInPromos = new Set();
-  
+
   // Primero procesar promociones (prioridad)
   const promoGroups = new Map(); // promotion_id -> items[]
-  
+
   saleItems.forEach(item => {
     item.sizes.forEach(size => {
       if (!size.variantId) return;
-      
+
       const promos = variantPromos.get(size.variantId) || [];
       if (promos.length > 0) {
         // Item está en promoción
@@ -2472,16 +4808,16 @@ async function calculateTotals() {
       }
     });
   });
-  
+
   // Aplicar promociones (solo si se cumple la condición mínima)
   promoGroups.forEach((items, promoId) => {
     const promo = promotions.find(p => p.promotion_id === promoId);
     if (!promo) return;
-    
+
     const totalItems = items.reduce((sum, i) => sum + i.quantity, 0);
     const groups = Math.floor(totalItems / 2); // Grupos de 2
     const isReturn = items[0]?.item?.isReturn || false;
-    
+
     // Verificar que la promoción realmente se aplica (necesita mínimo 2 unidades)
     if (totalItems < 2) {
       // Si hay menos de 2 unidades, NO aplicar la promoción
@@ -2493,7 +4829,7 @@ async function calculateTotals() {
       });
       return; // Saltar esta promoción
     }
-    
+
     if (promo.promo_type === '2x1') {
       // Cobrar solo la mitad (redondear hacia arriba si impar)
       const toCharge = Math.ceil(totalItems / 2);
@@ -2531,25 +4867,25 @@ async function calculateTotals() {
       }
     }
   });
-  
+
   // Procesar items que NO están en promociones
   // Usar directamente item.price que ya contiene el precio efectivo (con ofertas aplicadas)
   saleItems.forEach(item => {
     // Saltar extras que se procesan después
     if (item.isExtra) return;
-    
+
     item.sizes.forEach(size => {
       const itemKey = `${item.productId}-${item.color}-${size.size}`;
       if (itemsInPromos.has(itemKey)) {
         // Ya procesado en promoción
         return;
       }
-      
+
       const quantity = size.quantity;
       // item.price ya contiene el precio efectivo (con ofertas aplicadas al cargar)
       const price = item.price || 0;
       const itemValue = price * quantity;
-      
+
       if (item.isReturn) {
         subtotal -= itemValue;
       } else {
@@ -2567,11 +4903,17 @@ async function calculateTotals() {
   const productItems = saleItems.filter(item => !item.isExtra);
   const extraItems = saleItems.filter(item => item.isExtra);
 
-  // Calcular extras porcentuales sobre el subtotal después de créditos
+  // Base para porcentaje: subtotal después de créditos + monto de extras especiales
+  const specialExtrasTotal = extraItems
+    .filter(item => item.extraType === 'special')
+    .reduce((sum, e) => sum + (e.totalValue || 0), 0);
+  const baseForPercentage = finalTotal + specialExtrasTotal;
+
+  // Calcular extras porcentuales sobre (subtotal - crédito) + extras especiales (por cantidad)
   const percentageExtras = extraItems.filter(item => item.extraType === 'percentage');
   percentageExtras.forEach(extra => {
-    // Recalcular el valor porcentual sobre el subtotal actual
-    const percentageValue = (finalTotal * extra.value) / 100;
+    const qty = extra.totalQuantity || 1;
+    const percentageValue = ((baseForPercentage * extra.value) / 100) * qty;
     extra.calculatedValue = percentageValue;
     extra.totalValue = percentageValue;
     finalTotal += percentageValue;
@@ -2583,13 +4925,19 @@ async function calculateTotals() {
     finalTotal += extra.totalValue; // Ya incluye el signo negativo si corresponde
   });
 
+  // Aplicar extras especiales
+  const specialExtras = extraItems.filter(item => item.extraType === 'special');
+  specialExtras.forEach(extra => {
+    finalTotal += extra.totalValue;
+  });
+
   totalItems.textContent = totalItemsCount;
-  
+
   // Crédito aplicado siempre en rojo
   creditApplied.textContent = `$${creditToApply.toLocaleString('es-AR')}`;
   creditApplied.style.color = "#dc3545"; // Rojo
   creditApplied.style.fontWeight = "700";
-  
+
   // Mostrar el total: verde si positivo, rojo si negativo
   if (finalTotal < 0) {
     // Total negativo (devolución/saldo a favor) → rojo
@@ -2597,7 +4945,7 @@ async function calculateTotals() {
     totalAmount.style.color = "#dc3545"; // Rojo
     totalAmount.style.fontWeight = "700";
     totalAmount.style.fontSize = "20px";
-    
+
     // Mostrar casilla "Cargar como crédito" solo si hay cliente seleccionado
     if (selectedCustomer && loadAsCreditContainer) {
       loadAsCreditContainer.style.display = "block";
@@ -2608,7 +4956,7 @@ async function calculateTotals() {
     totalAmount.style.color = "#28a745"; // Verde
     totalAmount.style.fontWeight = "700";
     totalAmount.style.fontSize = "20px";
-    
+
     // Ocultar casilla si el total es positivo
     if (loadAsCreditContainer) {
       loadAsCreditContainer.style.display = "none";
@@ -2623,7 +4971,7 @@ async function calculateTotals() {
     totalAmount.style.color = "#333";
     totalAmount.style.fontWeight = "normal";
     totalAmount.style.fontSize = "inherit";
-    
+
     // Ocultar casilla si el total es cero
     if (loadAsCreditContainer) {
       loadAsCreditContainer.style.display = "none";
@@ -2633,7 +4981,7 @@ async function calculateTotals() {
       }
     }
   }
-  
+
   // Actualizar el cambio cuando cambia el total
   updateChangeAmount();
 }
@@ -2641,35 +4989,35 @@ async function calculateTotals() {
 // Función para calcular y mostrar el cambio
 function updateChangeAmount() {
   if (!moneyReceived || !changeAmount || !totalAmount) return;
-  
+
   // Obtener el dinero recibido (eliminar puntos de formato para el cálculo)
   const receivedValue = moneyReceived.value.trim();
   const receivedNumbers = receivedValue.replace(/[^0-9]/g, ''); // Eliminar puntos de formato
   const received = parseFloat(receivedNumbers) || 0;
-  
+
   // Si no se ha ingresado ningún monto (campo vacío o 0), mostrar $0
   if (!receivedValue || received === 0) {
     changeAmount.textContent = "$0";
     changeAmount.style.color = "#333";
     return;
   }
-  
+
   // Obtener el total de la compra (sin el símbolo $)
   // Manejar tanto valores positivos como negativos (devoluciones)
   let totalText = totalAmount.textContent.trim();
   const isNegative = totalText.startsWith('-');
-  
+
   // Eliminar símbolos y caracteres no numéricos, pero preservar el formato
   // En formato argentino, los puntos son separadores de miles, no decimales
   // Eliminamos todos los puntos y luego parseamos
   totalText = totalText.replace(/[^0-9]/g, ''); // Eliminar todo excepto números
   const total = parseFloat(totalText) || 0; // Ahora parseFloat funciona correctamente
   const totalValue = isNegative ? -total : total;
-  
+
   // Calcular el cambio: dinero recibido - total
   // Si el total es negativo (devolución), el cambio será positivo (dinero que debemos devolver)
   const change = received - totalValue;
-  
+
   // Mostrar el cambio
   if (change < 0) {
     // Si el dinero recibido es menor al total, mostrar en rojo (falta dinero)
@@ -2691,11 +5039,11 @@ function formatNumberWithThousands(value) {
   // Eliminar todo excepto números
   const numbers = value.replace(/[^0-9]/g, '');
   if (!numbers) return '';
-  
+
   // Convertir a número y formatear con puntos como separadores de miles
   const num = parseInt(numbers, 10);
   if (isNaN(num)) return '';
-  
+
   return num.toLocaleString('es-AR');
 }
 
@@ -2706,21 +5054,21 @@ if (moneyReceived) {
     const input = e.target;
     const cursorPosition = input.selectionStart;
     const originalValue = input.value;
-    
+
     // Contar cuántos caracteres hay antes del cursor (sin contar puntos)
     const beforeCursor = originalValue.substring(0, cursorPosition);
     const digitsBeforeCursor = beforeCursor.replace(/[^0-9]/g, '').length;
-    
+
     // Obtener solo los números
     const numbers = originalValue.replace(/[^0-9]/g, '');
-    
+
     if (numbers) {
       // Formatear el número
       const formatted = formatNumberWithThousands(numbers);
-      
+
       // Actualizar el valor formateado
       input.value = formatted;
-      
+
       // Calcular nueva posición del cursor
       // Contar dígitos hasta encontrar la posición correcta
       let newPosition = 0;
@@ -2737,10 +5085,10 @@ if (moneyReceived) {
           newPosition = i + 1;
         }
       }
-      
+
       // Asegurar que la posición no exceda la longitud
       newPosition = Math.min(newPosition, formatted.length);
-      
+
       // Restaurar la posición del cursor
       setTimeout(() => {
         input.setSelectionRange(newPosition, newPosition);
@@ -2748,27 +5096,27 @@ if (moneyReceived) {
     } else {
       input.value = '';
     }
-    
+
     // Actualizar el cambio
     updateChangeAmount();
   });
-  
+
   // Prevenir entrada de caracteres no numéricos (excepto en eventos controlados)
   moneyReceived.addEventListener("keypress", (e) => {
     // Permitir teclas de control (backspace, delete, tab, etc.)
-    if (e.ctrlKey || e.metaKey || e.key === 'Backspace' || e.key === 'Delete' || 
-        e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'Tab') {
+    if (e.ctrlKey || e.metaKey || e.key === 'Backspace' || e.key === 'Delete' ||
+      e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'Tab') {
       return;
     }
-    
+
     // Solo permitir números
     if (!/[0-9]/.test(e.key)) {
       e.preventDefault();
     }
   });
-  
+
   moneyReceived.addEventListener("change", updateChangeAmount);
-  
+
   // Permitir solo números al pegar
   moneyReceived.addEventListener("paste", (e) => {
     e.preventDefault();
@@ -2793,7 +5141,7 @@ async function searchCustomer(term) {
     if (error) throw error;
 
     const customers = data || [];
-    
+
     customerSuggestions.innerHTML = "";
     customers.forEach(customer => {
       const option = document.createElement("option");
@@ -2873,11 +5221,11 @@ async function loadCustomerLastPurchase(customerId) {
     // Calcular días transcurridos desde la última compra
     const lastPurchaseDate = new Date(lastSale.created_at);
     const today = new Date();
-    
+
     // Normalizar ambas fechas a medianoche para calcular días completos
     const lastPurchaseMidnight = new Date(lastPurchaseDate.getFullYear(), lastPurchaseDate.getMonth(), lastPurchaseDate.getDate());
     const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    
+
     const diffTime = todayMidnight - lastPurchaseMidnight;
     const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
 
@@ -2976,7 +5324,20 @@ finalizeSaleBtn.addEventListener("click", async () => {
   try {
     // Preparar items para RPC
     const items = [];
-    
+
+    // Obtener warehouses IDs una sola vez para validación de stock
+    const { data: warehouses } = await supabase
+      .from("warehouses")
+      .select("id, code")
+      .in("code", ["general", "venta-publico"]);
+
+    const warehouseMap = new Map();
+    if (warehouses && warehouses.length > 0) {
+      warehouses.forEach(w => warehouseMap.set(w.code, w.id));
+    }
+    const generalWarehouseId = warehouseMap.get("general");
+    const ventaPublicoWarehouseId = warehouseMap.get("venta-publico");
+
     // Función auxiliar para buscar variant
     async function findVariant(productId, color, sizeValue) {
       const { data: variantData, error: variantError } = await supabase
@@ -2986,13 +5347,13 @@ finalizeSaleBtn.addEventListener("click", async () => {
         .eq("color", color)
         .eq("size", sizeValue)
         .single();
-      
+
       if (!variantError && variantData) {
         return { id: variantData.id };
       }
       return null;
     }
-    
+
     // Procesar solo items de productos (excluir extras)
     const productItemsForSale = saleItems.filter(item => !item.isExtra);
     for (const item of productItemsForSale) {
@@ -3003,77 +5364,130 @@ finalizeSaleBtn.addEventListener("click", async () => {
           variant = { id: size.variantId };
         } else {
           // Buscar variant en todas las fuentes posibles
-          variant = currentVariants.find(v => 
-            v.color === item.color && 
+          variant = currentVariants.find(v =>
+            v.color === item.color &&
             v.size === size.size
           );
-          
+
           // Si no está en currentVariants, buscar en manualCurrentVariants
           if (!variant && manualCurrentVariants.length > 0) {
-            variant = manualCurrentVariants.find(v => 
-              v.color === item.color && 
+            variant = manualCurrentVariants.find(v =>
+              v.color === item.color &&
               v.size === size.size
             );
           }
-          
+
           // Si aún no está, buscar en la base de datos
           if (!variant) {
             variant = await findVariant(item.productId, item.color, size.size);
           }
         }
-        
+
         if (!variant || !variant.id) {
           throw new Error(`No se encontró la variante para ${item.productName} - ${item.color} - Talle ${size.size}`);
         }
-        
+
         // Validar stock antes de agregar (solo si no es devolución Y no viene de pedido local)
         // Los items de pedidos locales ya tienen stock reservado/descontado, no necesitan verificación
         if (!item.isReturn && !item.fromLocalOrder) {
-          // Obtener stock actualizado de la variante
+          // Consultar stock por talle desde variant_size_warehouse_stock
+          // Normalizar el tamaño antes de consultar (consistente con otras partes del código)
+          const normalizedSize = normalizeSize(size.size);
+
           const { data: stockData, error: stockError } = await supabase
-            .from("variant_warehouse_stock")
-            .select(`
-              stock_qty,
-              warehouses!inner(code)
-            `)
+            .from("variant_size_warehouse_stock")
+            .select("size, warehouse_id, stock_qty")
             .eq("variant_id", variant.id)
-            .in("warehouses.code", ["general", "venta-publico"]);
-          
+            .in("warehouse_id", [generalWarehouseId, ventaPublicoWarehouseId]);
+
           if (stockError) {
             console.warn("Error obteniendo stock:", stockError);
           }
-          
-          // Calcular stock total disponible
-          let totalStock = 0;
-          if (stockData && stockData.length > 0) {
-            totalStock = stockData.reduce((sum, s) => sum + (s.stock_qty || 0), 0);
+
+          // Filtrar por tamaño normalizado después de obtener los datos
+          // (mismo approach usado en otras partes del código - líneas 1468, 1546)
+          const filteredStockData = stockData ? stockData.filter(s => {
+            const dbNormalizedSize = normalizeSize(s.size);
+            return dbNormalizedSize === normalizedSize;
+          }) : [];
+
+          // Calcular stock por warehouse usando los datos filtrados
+          let generalStock = 0;
+          let ventaPublicoStock = 0;
+
+          if (filteredStockData && filteredStockData.length > 0) {
+            filteredStockData.forEach(s => {
+              if (s.warehouse_id === generalWarehouseId) {
+                generalStock = s.stock_qty || 0;
+              } else if (s.warehouse_id === ventaPublicoWarehouseId) {
+                ventaPublicoStock = s.stock_qty || 0;
+              }
+            });
           }
-          
-          // Verificar si hay suficiente stock
-          if (totalStock === 0) {
-            const productInfo = `${item.productName} - ${item.color} - Talle ${size.size}`;
-            throw new Error(
-              `No hay stock disponible para ${productInfo}. ` +
-              `Por favor, verifica el stock del producto antes de continuar.`
-            );
+
+          // FALLBACK CRÍTICO: Si no hay stock en warehouses, buscar en variant_sizes
+          // Este es el mismo patrón usado al renderizar botones (línea 3525-3529)
+          if (generalStock === 0 && ventaPublicoStock === 0) {
+            // Primero intentar usar stock_qty si ya está en el variant
+            if (variant.stock_qty > 0) {
+              generalStock = variant.stock_qty || 0;
+            } else {
+              // Si no está, consultar variant_sizes (caso de variants de findVariant)
+              const { data: variantSizeData } = await supabase
+                .from("variant_sizes")
+                .select("stock_qty")
+                .eq("variant_id", variant.id)
+                .eq("size", normalizedSize)
+                .single();
+              
+              if (variantSizeData && variantSizeData.stock_qty > 0) {
+                generalStock = variantSizeData.stock_qty || 0;
+              }
+            }
           }
-          
-          if (totalStock < size.quantity) {
-            const productInfo = `${item.productName} - ${item.color} - Talle ${size.size}`;
-            throw new Error(
-              `Stock insuficiente para ${productInfo}. ` +
-              `Disponible: ${totalStock}, Solicitado: ${size.quantity}`
-            );
+
+          // Obtener source del stock (de dónde se tomará el stock)
+          const sourceVentaPublico = size.source?.ventaPublico || 0;
+          const sourceGeneral = size.source?.general || 0;
+          const totalSourceRequested = sourceVentaPublico + sourceGeneral;
+
+          // Si el source total es 0 pero hay quantity, significa que el usuario confirmó agregar sin stock
+          // En ese caso, NO validar stock (ya fue confirmado previamente)
+          const wasConfirmedWithoutStock = (totalSourceRequested === 0 && size.quantity > 0);
+
+          if (!wasConfirmedWithoutStock) {
+            // Validar stock según source específico solo si NO fue confirmado sin stock
+            
+            // Solo validar si se requiere stock de venta-publico
+            if (sourceVentaPublico > 0 && ventaPublicoStock < sourceVentaPublico) {
+              const productInfo = `${item.productName} - ${item.color} - Talle ${size.size}`;
+              throw new Error(
+                `Stock insuficiente en Venta Público para ${productInfo}. ` +
+                `Disponible: ${ventaPublicoStock}, Solicitado: ${sourceVentaPublico}`
+              );
+            }
+
+            // Solo validar si se requiere stock de general
+            if (sourceGeneral > 0 && generalStock < sourceGeneral) {
+              const productInfo = `${item.productName} - ${item.color} - Talle ${size.size}`;
+              throw new Error(
+                `Stock insuficiente en General para ${productInfo}. ` +
+                `Disponible: ${generalStock}, Solicitado: ${sourceGeneral}`
+              );
+            }
           }
+
+          // Si llegamos aquí, hay stock suficiente o el usuario confirmó sin stock
         }
-        
+
         // Obtener fuente del stock (venta-publico y general)
         const source = size.source || { ventaPublico: size.quantity, general: 0 };
-        
+
         items.push({
           variant_id: variant.id,
           qty: size.quantity,
           price: item.price,
+          size: size.size ? String(size.size) : null, // Incluir tamaño como string para descontar stock por talle
           is_return: item.isReturn || false,
           from_local_order: item.fromLocalOrder || false, // Flag para indicar que viene de pedido local
           source: {
@@ -3089,27 +5503,76 @@ finalizeSaleBtn.addEventListener("click", async () => {
     const extraItems = saleItems.filter(item => item.isExtra);
 
     // Calcular el total antes de crear la venta (solo productos)
+    // totalValue ya tiene el signo correcto (negativo para devoluciones, positivo para ventas)
     const subtotal = productItems.reduce((sum, item) => {
-      if (item.isReturn) {
-        return sum - item.totalValue;
-      }
       return sum + item.totalValue;
     }, 0);
     const credit = customerCredits.reduce((sum, c) => sum + c.amount, 0);
     const creditToApply = subtotal > 0 ? Math.min(credit, subtotal) : 0;
     let finalTotal = subtotal - creditToApply;
 
-    // Aplicar extras porcentuales
+    // Separar extras por tipo
+    const numericExtras = extraItems.filter(item => item.extraType === 'numeric');
     const percentageExtras = extraItems.filter(item => item.extraType === 'percentage');
-    percentageExtras.forEach(extra => {
-      const percentageValue = (finalTotal * extra.value) / 100;
-      finalTotal += percentageValue;
+    const specialExtrasForBase = extraItems.filter(item => item.extraType === 'special');
+    const specialExtrasSum = specialExtrasForBase.reduce((s, e) => s + (e.totalValue || 0), 0);
+    const baseForPercentage = finalTotal + specialExtrasSum;
+
+    // Calcular valores de extras porcentuales sobre (subtotal - crédito) + extras especiales
+    const percentageValues = percentageExtras.map(extra => {
+      return {
+        extra: extra,
+        value: (baseForPercentage * extra.value) / 100
+      };
     });
 
-    // Aplicar extras numéricos
-    const numericExtras = extraItems.filter(item => item.extraType === 'numeric');
+    // Aplicar extras numéricos al total
     numericExtras.forEach(extra => {
       finalTotal += extra.totalValue;
+    });
+
+    // Aplicar extras porcentuales al total
+    percentageValues.forEach(({ value }) => {
+      finalTotal += value;
+    });
+
+    // Agregar todos los extras al array items para que se guarden en la base de datos y aparezcan en el ticket
+    // Extras numéricos
+    numericExtras.forEach(extra => {
+      items.push({
+        is_special_extra: true,
+        product_name: extra.productName || `Extra numérico: $${extra.totalValue.toLocaleString('es-AR')}`,
+        qty: extra.totalQuantity || 1,
+        price: extra.totalValue,
+        is_return: false
+        // No incluir variant_id para que se detecte como extra especial
+      });
+    });
+
+    // Extras porcentuales
+    percentageValues.forEach(({ extra, value }) => {
+      items.push({
+        is_special_extra: true,
+        product_name: extra.productName || `Extra ${extra.value}%: $${value.toLocaleString('es-AR')}`,
+        qty: extra.totalQuantity || 1,
+        price: value,
+        is_return: false
+        // No incluir variant_id para que se detecte como extra especial
+      });
+    });
+
+    // Extras especiales (precio unitario: backend hace qty * price)
+    const specialExtras = extraItems.filter(item => item.extraType === 'special');
+    specialExtras.forEach(extra => {
+      finalTotal += extra.totalValue;
+      const qty = extra.totalQuantity || 1;
+      items.push({
+        is_special_extra: true,
+        product_name: extra.productName,
+        qty: qty,
+        price: extra.totalValue / qty,
+        is_return: false
+      });
     });
 
     // Preparar notas con información de extras y método de pago
@@ -3118,8 +5581,10 @@ finalizeSaleBtn.addEventListener("click", async () => {
       const extrasInfo = extraItems.map(extra => {
         if (extra.extraType === 'numeric') {
           return `Extra numérico: $${extra.totalValue.toLocaleString('es-AR')}`;
-        } else {
+        } else if (extra.extraType === 'percentage') {
           return `Extra porcentual: ${extra.value}% ($${extra.totalValue.toLocaleString('es-AR')})`;
+        } else if (extra.extraType === 'special') {
+          return `${extra.productName}: $${extra.totalValue.toLocaleString('es-AR')}`;
         }
       }).join("; ");
       if (notes) {
@@ -3136,13 +5601,100 @@ finalizeSaleBtn.addEventListener("click", async () => {
       notes = `[PAYMENT_METHOD: ${paymentMethod}]`;
     }
 
+    // Caja 2 y 3: enviar compra pendiente a Caja 1 en lugar de finalizar aquí
+    if (PUBLIC_SALES_CAJA !== 1) {
+      const saleData = {
+        items,
+        customer_id: selectedCustomer?.id || null,
+        customer: selectedCustomer ? {
+          id: selectedCustomer.id,
+          first_name: selectedCustomer.first_name,
+          last_name: selectedCustomer.last_name,
+          customer_number: selectedCustomer.customer_number,
+          qr_code: selectedCustomer.qr_code
+        } : null,
+        customer_credits: customerCredits.map(c => ({
+          id: c.id,
+          amount: c.amount,
+          expires_at: c.expires_at
+        })),
+        notes: notes || null,
+        subtotal,
+        credit_to_apply: creditToApply,
+        final_total: finalTotal,
+        payment_method: paymentMethod,
+        load_as_credit: loadAsCredit,
+        sale_items: saleItems.map(item => ({
+          sku: item.sku,
+          productId: item.productId,
+          productName: item.productName,
+          color: item.color,
+          sizes: item.sizes,
+          price: item.price,
+          basePrice: item.basePrice,
+          totalQuantity: item.totalQuantity,
+          totalValue: item.totalValue,
+          isReturn: item.isReturn || false,
+          isExtra: item.isExtra || false,
+          extraType: item.extraType || null,
+          value: item.value || null,
+          offerInfo: item.offerInfo || null,
+          promotionInfo: item.promotionInfo || null
+        })),
+        money_received: moneyReceived?.value ?? null
+      };
+
+      const { error: pendingError } = await supabase.rpc("rpc_create_pending_sale", {
+        p_source_caja: PUBLIC_SALES_CAJA,
+        p_sale_data: saleData
+      });
+
+      if (pendingError) throw pendingError;
+
+      showMessage("Compra enviada exitosamente a Caja 1", "success");
+
+      saleItems = [];
+      selectedCustomer = null;
+      customerCredits = [];
+      selectedSizes = {};
+      selectedColor = null;
+      currentProduct = null;
+      currentVariants = [];
+      manualSelectedSizes = {};
+      manualSelectedSizesSource = {};
+      manualSelectedSizesConfirmedWithoutStock = {};
+      productSelection.classList.remove("active");
+      customerInfo.classList.remove("active");
+      customerSearch.value = "";
+      if (customerLastPurchase) {
+        customerLastPurchase.textContent = "";
+        customerLastPurchase.style.display = "none";
+      }
+      skuSearch.value = "";
+      if (moneyReceived) moneyReceived.value = "";
+      updateChangeAmount();
+      paymentMethod = "contado";
+      if (paymentMethodIndicator) paymentMethodIndicator.classList.remove("active");
+      if (extraNumericInput) extraNumericInput.value = "";
+      if (extraPercentageInput) extraPercentageInput.value = "";
+      loadAsCredit = false;
+      if (loadAsCreditContainer) loadAsCreditContainer.style.display = "none";
+      if (loadAsCreditCheckbox) loadAsCreditCheckbox.checked = false;
+      updateSaveOrderButtonVisibility();
+      renderSaleList();
+      await calculateTotals();
+      return;
+    }
+
     const { data, error } = await supabase
       .rpc("rpc_create_public_sale", {
         p_items: items,
         p_customer_id: selectedCustomer?.id || null,
         p_notes: notes || null,
-        p_apply_credit: true
+        p_apply_credit: true,
+        p_total_amount: finalTotal // Incluir total con extras
       });
+
 
     if (error) throw error;
 
@@ -3173,10 +5725,11 @@ finalizeSaleBtn.addEventListener("click", async () => {
     // Obtener detalles completos de la venta para el ticket
     const { data: saleDetails, error: detailsError } = await supabase
       .rpc("rpc_get_public_sale_details", { p_sale_id: data.sale_id });
-
+    
     if (!detailsError && saleDetails) {
       // Imprimir directamente sin mostrar modal
-      await printDirectly(saleDetails, selectedCustomer, creditAmount);
+      // Pasar finalTotal para que el ticket muestre el total correcto con todos los extras
+      await printDirectly(saleDetails, selectedCustomer, finalTotal);
     }
 
     // Si esta venta proviene de una compra pendiente, marcarla como completada
@@ -3185,7 +5738,7 @@ finalizeSaleBtn.addEventListener("click", async () => {
         p_pending_sale_id: currentPendingSale.id,
         p_sale_id: data.sale_id
       });
-      
+
       if (completeError) {
         console.error("Error marcando compra pendiente como completada:", completeError);
       } else {
@@ -3199,12 +5752,12 @@ finalizeSaleBtn.addEventListener("click", async () => {
     if (currentLocalOrderId) {
       const { error: localOrderError } = await supabase
         .from("local_orders")
-        .update({ 
+        .update({
           status: 'completed',
           updated_at: new Date().toISOString()
         })
         .eq("id", currentLocalOrderId);
-      
+
       if (localOrderError) {
         console.error("Error marcando pedido local como completado:", localOrderError);
       } else {
@@ -3223,7 +5776,7 @@ finalizeSaleBtn.addEventListener("click", async () => {
     selectedSizes = {};
     selectedColor = null;
     currentProduct = null;
-    
+
     // Actualizar visibilidad del botón Guardar Pedido
     updateSaveOrderButtonVisibility();
     currentVariants = [];
@@ -3271,18 +5824,18 @@ finalizeSaleBtn.addEventListener("click", async () => {
 });
 
 // Función para imprimir directamente sin mostrar modal
-async function printDirectly(saleDetails, customer, creditAmount) {
+async function printDirectly(saleDetails, customer, finalTotal = null) {
   // Intentar cargar y usar QZ Tray primero (igual que el botón Imprimir)
   try {
     await loadQZTray();
-    
+
     // Si QZ se cargó, intentar imprimir con QZ
     if (typeof qz !== 'undefined' && qz) {
       try {
         await printSaleWithQZ(
           saleDetails,
           customer,
-          creditAmount
+          finalTotal
         );
         return; // Si QZ funcionó, no hacer nada más
       } catch (error) {
@@ -3294,7 +5847,7 @@ async function printDirectly(saleDetails, customer, creditAmount) {
     // QZ no se pudo cargar, usar impresión del navegador
     console.log("ℹ️ QZ Tray no disponible, usando impresión del navegador");
   }
-  
+
   // Fallback: generar contenido del modal sin mostrarlo y luego imprimir
   // Usar la misma lógica que showPrintModal pero sin mostrar el modal
   if (!printModal || !printContent) {
@@ -3304,17 +5857,19 @@ async function printDirectly(saleDetails, customer, creditAmount) {
 
   const sale = saleDetails.sale;
   const items = saleDetails.items || [];
-  
+
   // Formatear fecha y hora
   const saleDate = new Date(sale.created_at);
   const dateStr = saleDate.toLocaleDateString('es-AR', {
     year: 'numeric',
     month: 'long',
-    day: 'numeric'
+    day: 'numeric',
+    timeZone: TIMEZONE_BUENOS_AIRES,
   });
   const timeStr = saleDate.toLocaleTimeString('es-AR', {
     hour: '2-digit',
-    minute: '2-digit'
+    minute: '2-digit',
+    timeZone: TIMEZONE_BUENOS_AIRES,
   });
 
   // Obtener crédito total del cliente si existe
@@ -3381,10 +5936,10 @@ async function printDirectly(saleDetails, customer, creditAmount) {
           </thead>
           <tbody>
             ${items.map(item => {
-              const price = parseFloat(item.price || item.price_snapshot || 0);
-              const total = price * item.qty;
-              const productText = `${item.product_name || 'N/A'}${item.color ? ` - ${item.color}` : ''}${item.size ? ` (${item.size})` : ''}`;
-              return `
+    const price = parseFloat(item.price || item.price_snapshot || 0);
+    const total = price * item.qty;
+    const productText = `${item.product_name || 'N/A'}${item.color ? ` - ${item.color}` : ''}${item.size ? ` (${item.size})` : ''}`;
+    return `
               <tr style="border-bottom: 2px dotted #999;">
                 <td style="padding: 8px 2px; font-size: 15px; word-break: break-word; width: 45%;">
                   ${productText}
@@ -3397,7 +5952,7 @@ async function printDirectly(saleDetails, customer, creditAmount) {
                 </td>
               </tr>
             `;
-            }).join('')}
+  }).join('')}
           </tbody>
         </table>
       </div>
@@ -3446,7 +6001,7 @@ async function printDirectly(saleDetails, customer, creditAmount) {
   // Generar QR code si existe cliente (esperar a que el DOM se actualice)
   if (customer?.qr_code) {
     const qrUrl = `${window.location.origin}/customer.html?code=${customer.qr_code}`;
-    
+
     // Esperar a que el DOM se actualice
     const generateQR = () => {
       const qrContainer = document.getElementById("print-qr-code-container");
@@ -3458,13 +6013,13 @@ async function printDirectly(saleDetails, customer, creditAmount) {
       // Usar API directamente (más confiable) - tamaño más grande para mejor legibilidad (aprovechando el ancho de 78mm)
       generateQRCode(qrUrl, qrContainer, 200);
     };
-    
+
     setTimeout(generateQR, 100);
-    
+
     // Esperar a que el QR se genere antes de imprimir
     await new Promise(resolve => setTimeout(resolve, 500));
   }
-  
+
   // Imprimir directamente sin mostrar el modal
   window.print();
 }
@@ -3475,17 +6030,19 @@ async function showPrintModal(saleDetails, customer, creditAmount) {
 
   const sale = saleDetails.sale;
   const items = saleDetails.items || [];
-  
+
   // Formatear fecha y hora
   const saleDate = new Date(sale.created_at);
   const dateStr = saleDate.toLocaleDateString('es-AR', {
     year: 'numeric',
     month: 'long',
-    day: 'numeric'
+    day: 'numeric',
+    timeZone: TIMEZONE_BUENOS_AIRES,
   });
   const timeStr = saleDate.toLocaleTimeString('es-AR', {
     hour: '2-digit',
-    minute: '2-digit'
+    minute: '2-digit',
+    timeZone: TIMEZONE_BUENOS_AIRES,
   });
 
   // Obtener crédito total del cliente si existe
@@ -3552,10 +6109,10 @@ async function showPrintModal(saleDetails, customer, creditAmount) {
           </thead>
           <tbody>
             ${items.map(item => {
-              const price = parseFloat(item.price || item.price_snapshot || 0);
-              const total = price * item.qty;
-              const productText = `${item.product_name || 'N/A'}${item.color ? ` - ${item.color}` : ''}${item.size ? ` (${item.size})` : ''}`;
-              return `
+    const price = parseFloat(item.price || item.price_snapshot || 0);
+    const total = price * item.qty;
+    const productText = `${item.product_name || 'N/A'}${item.color ? ` - ${item.color}` : ''}${item.size ? ` (${item.size})` : ''}`;
+    return `
               <tr style="border-bottom: 2px dotted #999;">
                 <td style="padding: 8px 2px; font-size: 15px; word-break: break-word; width: 45%;">
                   ${productText}
@@ -3568,7 +6125,7 @@ async function showPrintModal(saleDetails, customer, creditAmount) {
                 </td>
               </tr>
             `;
-            }).join('')}
+  }).join('')}
           </tbody>
         </table>
       </div>
@@ -3617,7 +6174,7 @@ async function showPrintModal(saleDetails, customer, creditAmount) {
   // Generar QR code si existe cliente (esperar a que el DOM se actualice)
   if (customer?.qr_code) {
     const qrUrl = `${window.location.origin}/customer.html?code=${customer.qr_code}`;
-    
+
     // Esperar a que el DOM se actualice
     const generateQR = () => {
       const qrContainer = document.getElementById("print-qr-code-container");
@@ -3629,7 +6186,7 @@ async function showPrintModal(saleDetails, customer, creditAmount) {
       // Usar API directamente (más confiable) - tamaño más grande para mejor legibilidad (aprovechando el ancho de 78mm)
       generateQRCode(qrUrl, qrContainer, 200);
     };
-    
+
     setTimeout(generateQR, 100);
   }
 
@@ -3639,7 +6196,7 @@ async function showPrintModal(saleDetails, customer, creditAmount) {
     customer,
     finalTotal: creditAmount
   };
-  
+
   // Mostrar modal
   printModal.classList.add("active");
 }
@@ -3654,22 +6211,23 @@ if (closePrintModal) {
 // Función para cargar QZ Tray solo cuando se necesite
 function loadQZTray() {
   return new Promise((resolve, reject) => {
-    // Si ya está cargado, resolver inmediatamente
+    // Si ya está cargado, configurar firma y resolver inmediatamente
     if (typeof qz !== 'undefined' && qz) {
-      resolve();
+      setupQZSignature().then(resolve);
       return;
     }
-    
+
     // Verificar si el script ya se está cargando
     if (document.querySelector('script[src*="qz-tray.js"]')) {
       // Esperar a que se cargue
       const checkInterval = setInterval(() => {
         if (typeof qz !== 'undefined' && qz) {
           clearInterval(checkInterval);
-          resolve();
+          // Configurar firma remota cuando QZ se carga
+          setupQZSignature().then(resolve);
         }
       }, 100);
-      
+
       // Timeout después de 3 segundos
       setTimeout(() => {
         clearInterval(checkInterval);
@@ -3677,39 +6235,41 @@ function loadQZTray() {
       }, 3000);
       return;
     }
-    
+
     // Cargar el script
+    // NOTA: Mantener demo.qz.io hasta que el certificado esté completamente configurado
     const script = document.createElement('script');
-    script.src = 'https://demo.qz.io/js/qz-tray.js';
+    script.src = 'https://cdn.jsdelivr.net/npm/qz-tray@2.2.5/qz-tray.js';
     script.async = true;
-    
+
     script.onload = () => {
       // Esperar un momento para que QZ se inicialice
       setTimeout(() => {
         if (typeof qz !== 'undefined' && qz) {
-          resolve();
+          // Configurar firma remota cuando QZ se carga
+          setupQZSignature().then(resolve);
         } else {
           reject(new Error('QZ Tray no está disponible'));
         }
       }, 500);
     };
-    
+
     script.onerror = () => {
       reject(new Error('Error cargando QZ Tray'));
     };
-    
+
     // Suprimir errores de WebSocket en la consola
     const originalError = console.error;
-    console.error = function(...args) {
+    console.error = function (...args) {
       if (args[0] && typeof args[0] === 'string' && args[0].includes('WebSocket')) {
         // No mostrar errores de WebSocket de QZ
         return;
       }
       originalError.apply(console, args);
     };
-    
+
     document.head.appendChild(script);
-    
+
     // Restaurar console.error después de 2 segundos
     setTimeout(() => {
       console.error = originalError;
@@ -3723,7 +6283,7 @@ if (printBtn) {
       // Intentar cargar y usar QZ Tray
       try {
         await loadQZTray();
-        
+
         // Si QZ se cargó, intentar imprimir con QZ
         if (typeof qz !== 'undefined' && qz) {
           try {
@@ -3743,7 +6303,7 @@ if (printBtn) {
         console.log("ℹ️ QZ Tray no disponible, usando impresión del navegador");
       }
     }
-    
+
     // Fallback: usar impresión del navegador
     window.print();
   });
@@ -3775,12 +6335,12 @@ if (noStockConfirmModal) {
 async function loadPendingSales() {
   try {
     const { data, error } = await supabase.rpc("rpc_get_pending_sales");
-    
+
     if (error) {
       console.error("Error cargando compras pendientes:", error);
       return;
     }
-    
+
     pendingSales = data || [];
     renderPendingSales();
   } catch (error) {
@@ -3791,15 +6351,15 @@ async function loadPendingSales() {
 // Renderizar cuadros numerados de compras pendientes
 function renderPendingSales() {
   if (!pendingSalesGrid) return;
-  
+
   if (pendingSales.length === 0) {
     pendingSalesContainer.style.display = "none";
     return;
   }
-  
+
   pendingSalesContainer.style.display = "block";
   pendingSalesGrid.innerHTML = "";
-  
+
   pendingSales.forEach((pendingSale, index) => {
     const box = document.createElement("div");
     box.className = "pending-sale-box";
@@ -3826,12 +6386,12 @@ async function loadPendingSaleIntoForm(pendingSaleId) {
       showMessage("Compra pendiente no encontrada", "error");
       return;
     }
-    
+
     // Marcar como procesando
     const { error: markError } = await supabase.rpc("rpc_mark_pending_sale_processing", {
       p_pending_sale_id: pendingSaleId
     });
-    
+
     if (markError) {
       if (markError.message.includes("ya está siendo procesada")) {
         showMessage("Esta compra ya está siendo procesada por otro usuario", "error");
@@ -3840,22 +6400,22 @@ async function loadPendingSaleIntoForm(pendingSaleId) {
       }
       return;
     }
-    
+
     // Guardar referencia a la compra pendiente actual
     currentPendingSale = pendingSale;
-    
+
     // Extraer datos de la compra
     const saleData = pendingSale.sale_data;
-    
+
     // Restaurar items de la venta
     saleItems = saleData.sale_items || [];
-    
+
     // Restaurar cliente
     if (saleData.customer) {
       selectedCustomer = saleData.customer;
       customerName.textContent = `${selectedCustomer.first_name} ${selectedCustomer.last_name || ''}`;
       customerInfo.classList.add("active");
-      
+
       // Cargar créditos del cliente
       if (saleData.customer_credits && saleData.customer_credits.length > 0) {
         customerCredits = saleData.customer_credits;
@@ -3872,7 +6432,7 @@ async function loadPendingSaleIntoForm(pendingSaleId) {
         customerCredits = [];
         await loadCustomerCredits(selectedCustomer.id);
       }
-      
+
       // Cargar última compra
       if (selectedCustomer.id) {
         await loadCustomerLastPurchase(selectedCustomer.id);
@@ -3882,7 +6442,7 @@ async function loadPendingSaleIntoForm(pendingSaleId) {
       customerInfo.classList.remove("active");
       customerCredits = [];
     }
-    
+
     // Restaurar método de pago
     paymentMethod = saleData.payment_method || 'contado';
     if (paymentMethod === 'tarjeta' && paymentMethodIndicator) {
@@ -3895,21 +6455,21 @@ async function loadPendingSaleIntoForm(pendingSaleId) {
         paymentMethodIndicator.classList.remove('active');
       }
     }
-    
+
     // Restaurar dinero recibido
     if (moneyReceived && saleData.money_received) {
       moneyReceived.value = saleData.money_received;
     }
-    
+
     // Restaurar loadAsCredit
     loadAsCredit = saleData.load_as_credit || false;
     if (loadAsCreditCheckbox) {
       loadAsCreditCheckbox.checked = loadAsCredit;
     }
-    
+
     // Renderizar lista de venta primero
     renderSaleList();
-    
+
     // Calcular totales y mostrar/ocultar contenedor de loadAsCredit según el total
     await calculateTotals();
     const totalValue = parseFloat(totalAmount.textContent.replace(/[^0-9]/g, '')) || 0;
@@ -3918,12 +6478,12 @@ async function loadPendingSaleIntoForm(pendingSaleId) {
     } else if (loadAsCreditContainer) {
       loadAsCreditContainer.style.display = "none";
     }
-    
+
     updateChangeAmount();
-    
+
     // Actualizar renderizado de compras pendientes
     renderPendingSales();
-    
+
     showMessage("Compra cargada correctamente", "success");
   } catch (error) {
     console.error("Error cargando compra pendiente:", error);
@@ -3948,6 +6508,31 @@ if (caja3Btn) {
     window.open('public-sales-caja3.html', '_blank');
   });
 }
+
+// Reservas (campana)
+if (reservasBellBtn) {
+  reservasBellBtn.addEventListener("click", () => {
+    toggleReservasPanel();
+  });
+}
+if (reservasRefreshBtn) {
+  reservasRefreshBtn.addEventListener("click", () => {
+    refreshReservas().catch((e) => console.warn("refreshReservas:", e?.message || e));
+  });
+}
+
+// Delegación acciones confirmar/rechazar
+document.addEventListener("click", (e) => {
+  const btn = e.target?.closest?.("[data-reserva-action]");
+  if (!btn) return;
+  const action = btn.getAttribute("data-reserva-action");
+  const itemId = btn.getAttribute("data-order-item-id");
+  if (!action || !itemId) return;
+  handleReservaAction(action, itemId).catch((err) => {
+    console.error("handleReservaAction:", err);
+    alert(err?.message || "No se pudo actualizar la reserva.");
+  });
+});
 
 // Cargar compras pendientes al iniciar y configurar polling
 loadPendingSales();
@@ -3992,7 +6577,7 @@ if (modalCustomerSearch) {
 // Función para buscar cliente en el modal
 async function searchCustomerInModal() {
   const searchTerm = modalCustomerSearch ? modalCustomerSearch.value.trim() : "";
-  
+
   if (!searchTerm || searchTerm.length < 2) {
     if (modalCustomerResults) {
       modalCustomerResults.innerHTML = "<p style='padding: 12px; color: #666; text-align: center;'>Ingrese al menos 2 caracteres para buscar</p>";
@@ -4020,7 +6605,7 @@ async function searchCustomerInModal() {
       try {
         const { data: creditData, error: creditError } = await supabase
           .rpc("rpc_get_customer_total_credit", { p_customer_id: customer.id });
-        
+
         const totalCredit = creditError ? 0 : (creditData || 0);
         return { ...customer, totalCredit };
       } catch (error) {
@@ -4065,18 +6650,18 @@ async function searchCustomerInModal() {
   }
 }
 
-window.selectCustomerFromModal = async function(customerId) {
+window.selectCustomerFromModal = async function (customerId) {
   await selectCustomer(customerId);
   customersModal.classList.remove("active");
   customerSearch.value = `${selectedCustomer.first_name} ${selectedCustomer.last_name || ''}`.trim();
 };
 
 // Mostrar QR code de un cliente existente
-window.showCustomerQR = function(qrCode, customerName) {
+window.showCustomerQR = function (qrCode, customerName) {
   const qrUrl = `${window.location.origin}/customer.html?code=${qrCode}`;
-  
+
   console.log("showCustomerQR llamado con:", { qrCode, customerName, qrUrl });
-  
+
   if (!customerQrCode) {
     console.error("customerQrCode element no encontrado");
     return;
@@ -4087,20 +6672,20 @@ window.showCustomerQR = function(qrCode, customerName) {
   if (qrTitle && customerName) {
     qrTitle.textContent = `QR Code - ${customerName}`;
   }
-  
+
   if (customerQrUrl) {
     customerQrUrl.textContent = qrUrl;
   }
-  
+
   // Mostrar el contenedor primero
   if (customerQrContainer) {
     customerQrContainer.style.display = "block";
   }
-  
+
   // Generar QR usando API directamente
   console.log("Generando QR code usando API para cliente existente...");
   generateQRCode(qrUrl, customerQrCode, 200);
-  
+
   // Scroll al QR code
   if (customerQrContainer) {
     customerQrContainer.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -4138,33 +6723,33 @@ createCustomerForm.addEventListener("submit", async (e) => {
     if (data && data.qr_code) {
       const qrUrl = `${window.location.origin}/customer.html?code=${data.qr_code}`;
       const customerName = `${firstName} ${lastName || ''}`.trim();
-      
+
       // Actualizar título
       const qrTitle = document.getElementById("customer-qr-title");
       if (qrTitle) {
         qrTitle.textContent = `Cliente creado exitosamente - ${customerName}`;
       }
-      
+
       // Mostrar el contenedor primero
       if (customerQrContainer) {
         customerQrContainer.style.display = "block";
       }
-      
+
       // Generar QR code usando API directamente
       console.log("Generando QR code para nuevo cliente usando API...");
       console.log("customerQrCode existe:", !!customerQrCode);
       console.log("URL del QR:", qrUrl);
-      
+
       if (customerQrCode) {
         generateQRCode(qrUrl, customerQrCode, 200);
       } else {
         console.error("customerQrCode element no encontrado");
       }
-      
+
       if (customerQrUrl) {
         customerQrUrl.textContent = qrUrl;
       }
-      
+
       if (customerQrContainer) {
         customerQrContainer.style.display = "block";
         // Scroll al QR code
@@ -4174,7 +6759,7 @@ createCustomerForm.addEventListener("submit", async (e) => {
 
     showMessage("Cliente creado exitosamente", "success");
     createCustomerForm.reset();
-    
+
     // Limpiar resultados de búsqueda
     if (modalCustomerResults) modalCustomerResults.innerHTML = "";
     if (modalCustomerSearch) modalCustomerSearch.value = "";
@@ -4197,7 +6782,6 @@ if (closeQrBtn) {
 // Estado del historial
 let currentHistoryDate = null;
 let currentHistoryCustomerSearch = '';
-let currentHistoryOffset = 0;
 let expandedSaleId = null;
 
 // Modal de historial
@@ -4211,7 +6795,6 @@ historyBtn.addEventListener("click", () => {
   if (customerSearch) customerSearch.value = '';
   currentHistoryDate = today;
   currentHistoryCustomerSearch = '';
-  currentHistoryOffset = 0;
   expandedSaleId = null;
   loadSalesHistory();
 });
@@ -4238,7 +6821,6 @@ if (historyFilterBtn) {
     const customerSearch = document.getElementById("history-customer-search");
     currentHistoryDate = dateFilter ? dateFilter.value || null : null;
     currentHistoryCustomerSearch = customerSearch ? customerSearch.value.trim() : '';
-    currentHistoryOffset = 0;
     expandedSaleId = null;
     loadSalesHistory();
   });
@@ -4337,7 +6919,7 @@ function switchOrdersTab(tab) {
 
   // Obtener término de búsqueda actual si existe
   const currentSearchTerm = ordersSearchInput ? ordersSearchInput.value : '';
-  
+
   if (tab === 'received') {
     if (ordersReceivedTab) {
       ordersReceivedTab.style.display = "flex";
@@ -4398,33 +6980,33 @@ async function loadLocalOrders(searchTerm = '') {
     // Separar pedidos recibidos (con source_order_id) de pedidos guardados (sin source_order_id)
     let ordersFromOrders = (allOrders || []).filter(order => order.source_order_id !== null);
     let savedOrders = (allOrders || []).filter(order => order.source_order_id === null);
-    
+
     // Aplicar filtro de búsqueda si hay término de búsqueda
     if (searchTerm && searchTerm.trim() !== '') {
       const searchLower = searchTerm.toLowerCase().trim();
-      
+
       // Función para verificar si un pedido coincide con la búsqueda
       const matchesSearch = (order) => {
         // Buscar en nombre del cliente
         const customerName = (order.customer_name || '').toLowerCase();
         if (customerName.includes(searchLower)) return true;
-        
+
         // Buscar en número de teléfono
         const customerPhone = (order.customer_phone || '').toLowerCase().replace(/\s+/g, '');
         const searchNoSpaces = searchLower.replace(/\s+/g, '');
         if (customerPhone.includes(searchNoSpaces)) return true;
-        
+
         // Buscar en DNI/document_number
         const customerDoc = (order.customer_document_number || '').toLowerCase().replace(/\s+/g, '');
         if (customerDoc.includes(searchNoSpaces)) return true;
-        
+
         return false;
       };
-      
+
       ordersFromOrders = ordersFromOrders.filter(matchesSearch);
       savedOrders = savedOrders.filter(matchesSearch);
     }
-    
+
     // Debug: Verificar filtrado
     console.log("📦 Pedidos recibidos (con source_order_id):", ordersFromOrders.length);
     console.log("📦 Pedidos guardados (sin source_order_id):", savedOrders.length);
@@ -4453,12 +7035,12 @@ async function loadLocalOrders(searchTerm = '') {
 
       // Renderizar pedidos recibidos
       ordersReceivedList.innerHTML = ordersWithItems.map(order => renderLocalOrderCard(order)).join('');
-      
-      // Agregar event listeners a los botones de pedidos recibidos
+
+      // Agregar event listeners: "Cargar en Caja 1" abre modal flotante de edición (como Pedidos Locales)
       document.querySelectorAll("#orders-received-list [data-load-order-to-sale]").forEach(btn => {
-        btn.addEventListener("click", async () => {
+        btn.addEventListener("click", () => {
           const orderId = btn.dataset.loadOrderToSale;
-          await loadLocalOrderToSale(orderId);
+          openOrderEditModal(orderId);
         });
       });
     }
@@ -4497,19 +7079,19 @@ async function loadLocalOrders(searchTerm = '') {
         console.log("🎨 HTML renderizado (primeros 500 caracteres):", renderedHTML.substring(0, 500));
         console.log("📍 Elemento ordersNewList:", ordersNewList);
         console.log("📍 ordersNewList existe?", !!ordersNewList);
-        
+
         if (ordersNewList) {
           ordersNewList.innerHTML = renderedHTML;
           console.log("✅ HTML insertado en ordersNewList");
         } else {
           console.error("❌ ordersNewList no existe!");
         }
-        
-        // Agregar event listeners a los botones de pedidos guardados
+
+        // Agregar event listeners: "Cargar en Caja 1" abre modal flotante de edición (como Pedidos Locales)
         document.querySelectorAll("#orders-new-list [data-load-order-to-sale]").forEach(btn => {
-          btn.addEventListener("click", async () => {
+          btn.addEventListener("click", () => {
             const orderId = btn.dataset.loadOrderToSale;
-            await loadLocalOrderToSale(orderId);
+            openOrderEditModal(orderId);
           });
         });
       }
@@ -4532,6 +7114,446 @@ async function loadLocalOrders(searchTerm = '') {
   }
 }
 
+// --- Modal flotante "Editar pedido" (misma vista, como Pedidos Locales) ---
+let editOrderId = null;
+let editOrder = null;
+let editOrderCustomer = null;
+let editOrderItems = [];
+let editManualProduct = null;
+let editManualVariants = [];
+let editManualSelectedColor = null;
+let editManualSelectedSize = null;
+
+async function openOrderEditModal(localOrderId) {
+  const modal = document.getElementById("order-edit-modal");
+  const msgEl = document.getElementById("order-edit-message");
+  if (!modal) return;
+  msgEl.innerHTML = "";
+  // Resetear modo devoluciones del modal
+  const returnModeEl = document.getElementById("order-edit-return-mode");
+  const returnModeIndicatorEl = document.getElementById("order-edit-return-mode-indicator");
+  if (returnModeEl) returnModeEl.checked = false;
+  if (returnModeIndicatorEl) returnModeIndicatorEl.style.display = "none";
+  editOrderId = localOrderId;
+  editOrderItems = [];
+  document.getElementById("order-edit-items-tbody").innerHTML = '<tr><td colspan="5" style="text-align: center; color: #999;">Cargando...</td></tr>';
+
+  const { data: orderData, error: orderError } = await supabase
+    .from("local_orders")
+    .select("id, order_number, customer_id, total_amount")
+    .eq("id", localOrderId)
+    .single();
+  if (orderError || !orderData) {
+    msgEl.innerHTML = '<div class="message error">Pedido no encontrado</div>';
+    modal.classList.add("active");
+    return;
+  }
+  editOrder = orderData;
+
+  const { data: customerData, error: customerError } = await supabase
+    .from("public_sales_customers")
+    .select("id, first_name, last_name, customer_number, qr_code")
+    .eq("id", orderData.customer_id)
+    .single();
+  if (customerError || !customerData) {
+    msgEl.innerHTML = '<div class="message error">Cliente no encontrado</div>';
+    modal.classList.add("active");
+    return;
+  }
+  editOrderCustomer = customerData;
+
+  const { data: itemsData, error: itemsError } = await supabase.rpc("rpc_get_local_order_items", { p_local_order_id: localOrderId });
+  if (itemsError) {
+    msgEl.innerHTML = '<div class="message error">Error al cargar ítems</div>';
+    modal.classList.add("active");
+    return;
+  }
+  editOrderItems = (itemsData || []).map((row) => ({
+    variant_id: row.variant_id,
+    product_name: row.product_name,
+    color: row.color,
+    size: row.size,
+    quantity: row.quantity,
+    price_snapshot: row.price_snapshot,
+  }));
+
+  ordersModal.classList.remove("active");
+  modal.classList.add("active");
+  renderOrderEditModal();
+}
+
+function getEditOrderTotal() {
+  return editOrderItems.reduce((sum, it) => sum + it.quantity * parseFloat(it.price_snapshot || 0), 0);
+}
+
+function buildEditOrderPayload() {
+  return editOrderItems.map((it) => ({
+    variant_id: it.variant_id || null,
+    product_name: it.product_name || "Producto",
+    color: it.color || "",
+    size: it.size || "",
+    quantity: it.quantity,
+    price_snapshot: parseFloat(it.price_snapshot || 0),
+    imagen: it.imagen || null,
+  }));
+}
+
+function renderOrderEditModal() {
+  const tbody = document.getElementById("order-edit-items-tbody");
+  const totalEl = document.getElementById("order-edit-items-total");
+  const total = getEditOrderTotal();
+  document.getElementById("order-edit-number").textContent = editOrder?.order_number || editOrderId?.slice(0, 8) || "";
+  document.getElementById("order-edit-customer-name").textContent = editOrderCustomer ? `${editOrderCustomer.first_name} ${editOrderCustomer.last_name || ""}`.trim() : "";
+  document.getElementById("order-edit-customer-number").textContent = editOrderCustomer?.customer_number ? `(Nº ${editOrderCustomer.customer_number})` : "";
+  const totalText = total < 0 ? `-$${Math.abs(total).toLocaleString("es-AR")}` : `$${total.toLocaleString("es-AR")}`;
+  const totalElMain = document.getElementById("order-edit-total");
+  if (totalElMain) {
+    totalElMain.textContent = totalText;
+    totalElMain.style.color = total < 0 ? "#dc3545" : "#CD844D";
+  }
+
+  if (editOrderItems.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: #999;">No hay ítems</td></tr>';
+  } else {
+    tbody.innerHTML = editOrderItems.map((it, idx) => {
+      const subtotal = it.quantity * parseFloat(it.price_snapshot || 0);
+      const isReturn = !it.variant_id ? false : parseFloat(it.price_snapshot || 0) < 0;
+      const isExtra = !it.variant_id;
+      const nameCell = isExtra
+        ? `<span style="font-style: italic;">${escapeHtml(it.product_name)}</span> <span style="font-size: 11px; color: #0066cc;">(Extra)</span>`
+        : `${escapeHtml(it.product_name)}${isReturn ? ' <span style="color: #dc3545; font-weight: 700; font-size: 11px; text-transform: uppercase;">[DEV]</span>' : ""}` +
+          (it.color ? ` - ${escapeHtml(it.color)}` : "") +
+          (it.size ? ` (${escapeHtml(it.size)})` : "");
+      return `<tr class="${isExtra ? "extra-item" : (isReturn ? "return-item" : "")}" data-edit-idx="${idx}">
+        <td>${nameCell}</td>
+        <td><input type="number" min="1" value="${it.quantity}" data-edit-idx="${idx}" class="order-edit-qty" style="width: 50px; padding: 4px; text-align: center;" /></td>
+        <td>${isReturn ? '-' : ''}$${Math.abs(parseFloat(it.price_snapshot || 0)).toLocaleString("es-AR")}</td>
+        <td>${subtotal < 0 ? '-' : ''}$${Math.abs(subtotal).toLocaleString("es-AR")}</td>
+        <td><button type="button" class="btn btn-secondary order-edit-remove" data-edit-idx="${idx}" style="padding: 4px 8px; font-size: 11px;">Quitar</button></td>
+      </tr>`;
+    }).join("");
+  }
+  totalEl.textContent = `Total: ${totalText}`;
+  totalEl.style.color = total < 0 ? "#dc3545" : "#CD844D";
+
+  tbody.querySelectorAll(".order-edit-qty").forEach((input) => {
+    input.addEventListener("change", (e) => {
+      const idx = parseInt(e.target.dataset.editIdx, 10);
+      const q = parseInt(e.target.value, 10);
+      if (!isNaN(q) && q >= 1 && editOrderItems[idx]) {
+        editOrderItems[idx].quantity = q;
+        renderOrderEditModal();
+      }
+    });
+  });
+  tbody.querySelectorAll(".order-edit-remove").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const idx = parseInt(btn.dataset.editIdx, 10);
+      editOrderItems.splice(idx, 1);
+      renderOrderEditModal();
+    });
+  });
+}
+
+function showOrderEditMessage(msg, type) {
+  const el = document.getElementById("order-edit-message");
+  el.innerHTML = `<div class="message ${type}">${escapeHtml(msg)}</div>`;
+}
+
+document.getElementById("close-order-edit-modal")?.addEventListener("click", () => {
+  document.getElementById("order-edit-modal").classList.remove("active");
+});
+
+// Borrar pedido local desde el modal de edición
+document.getElementById("order-edit-delete-btn")?.addEventListener("click", async () => {
+  if (!editOrderId) {
+    showOrderEditMessage("Pedido no encontrado", "error");
+    return;
+  }
+
+  const orderNumber = editOrder?.order_number || editOrderId.slice(0, 8);
+  const ok = confirm(
+    `¿Seguro que querés borrar el pedido ${orderNumber}?\n\n` +
+      `Se eliminará el pedido y TODOS los productos volverán al stock de Venta al Público.`
+  );
+  if (!ok) return;
+
+  const ok2 = confirm("Confirmación final: ¿Borrar pedido definitivamente?");
+  if (!ok2) return;
+
+  const btn = document.getElementById("order-edit-delete-btn");
+  if (btn) {
+    btn.disabled = true;
+    btn.style.opacity = "0.6";
+    btn.style.cursor = "not-allowed";
+  }
+
+  try {
+    const { error } = await supabase.rpc("rpc_delete_local_order", { p_local_order_id: editOrderId });
+    if (error) throw error;
+
+    showOrderEditMessage("Pedido borrado. Stock devuelto a Venta al Público.", "success");
+    document.getElementById("order-edit-modal").classList.remove("active");
+    await loadLocalOrders();
+  } catch (e) {
+    showOrderEditMessage("Error al borrar pedido: " + e.message, "error");
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.style.opacity = "1";
+      btn.style.cursor = "pointer";
+    }
+  }
+});
+
+// Escuchar cambios en modo devoluciones (modal editar pedido)
+document.getElementById("order-edit-return-mode")?.addEventListener("change", (e) => {
+  const ind = document.getElementById("order-edit-return-mode-indicator");
+  if (ind) ind.style.display = e.target.checked ? "block" : "none";
+});
+
+document.getElementById("order-edit-add-extra-btn")?.addEventListener("click", () => {
+  const name = document.getElementById("order-edit-extra-name").value.trim();
+  const amount = parseFloat(document.getElementById("order-edit-extra-amount").value);
+  if (!name) {
+    showOrderEditMessage("Ingrese el nombre del extra", "error");
+    return;
+  }
+  if (isNaN(amount) || amount < 0) {
+    showOrderEditMessage("Ingrese un monto válido", "error");
+    return;
+  }
+  editOrderItems.push({
+    variant_id: null,
+    product_name: `Extra: ${name}`,
+    color: "",
+    size: "",
+    quantity: 1,
+    price_snapshot: amount,
+  });
+  document.getElementById("order-edit-extra-name").value = "";
+  document.getElementById("order-edit-extra-amount").value = "";
+  renderOrderEditModal();
+  showOrderEditMessage("Extra agregado", "success");
+});
+
+document.getElementById("order-edit-save-btn")?.addEventListener("click", async () => {
+  if (!editOrderId || editOrderItems.length === 0) {
+    showOrderEditMessage("No hay ítems para guardar", "error");
+    return;
+  }
+  const btn = document.getElementById("order-edit-save-btn");
+  btn.disabled = true;
+  try {
+    const { data, error } = await supabase.rpc("rpc_update_local_order", {
+      p_local_order_id: editOrderId,
+      p_items: buildEditOrderPayload(),
+    });
+    if (error) throw error;
+    editOrder.total_amount = data.total_amount;
+    renderOrderEditModal();
+    showOrderEditMessage("Cambios guardados correctamente", "success");
+  } catch (e) {
+    showOrderEditMessage("Error al guardar: " + e.message, "error");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById("order-edit-finalize-btn")?.addEventListener("click", async () => {
+  if (!editOrderId || !editOrderCustomer || editOrderItems.length === 0) {
+    showOrderEditMessage("No hay ítems para finalizar", "error");
+    return;
+  }
+  const btn = document.getElementById("order-edit-finalize-btn");
+  btn.disabled = true;
+  try {
+    const pItems = buildEditOrderPayload();
+    const saleItems = [];
+    for (const it of pItems) {
+      if (it.variant_id) {
+        const rawPrice = parseFloat(it.price_snapshot || 0);
+        const isReturn = rawPrice < 0;
+        saleItems.push({
+          variant_id: it.variant_id,
+          qty: it.quantity,
+          price: Math.abs(rawPrice),
+          is_return: isReturn,
+          // Ventas del pedido local: stock ya reservado/descontado.
+          // Devoluciones: deben reingresar stock, así que NO deben llevar from_local_order=true.
+          from_local_order: !isReturn,
+          ...(isReturn ? {} : { source: { venta_publico: it.quantity, general: 0 } }),
+        });
+      } else {
+        saleItems.push({
+          product_name: it.product_name,
+          qty: it.quantity,
+          price: it.price_snapshot,
+          is_return: false,
+          is_special_extra: true,
+        });
+      }
+    }
+    const finalTotal = getEditOrderTotal();
+    const { data: saleData, error: saleError } = await supabase.rpc("rpc_create_public_sale", {
+      p_items: saleItems,
+      p_customer_id: editOrderCustomer.id,
+      p_notes: `Pedido local ${editOrder.order_number || editOrderId}`,
+      p_apply_credit: true,
+      p_total_amount: finalTotal,
+    });
+    if (saleError) throw saleError;
+    await supabase.from("local_orders").update({ status: "completed", updated_at: new Date().toISOString() }).eq("id", editOrderId);
+    const { data: saleDetails, error: detailsError } = await supabase.rpc("rpc_get_public_sale_details", { p_sale_id: saleData.sale_id });
+    if (!detailsError && saleDetails) {
+      try {
+        await printDirectly(saleDetails, editOrderCustomer, finalTotal);
+      } catch (printErr) {
+        console.warn("Impresión:", printErr);
+      }
+    }
+    showOrderEditMessage(`Pedido finalizado. Venta ${saleData.sale_number} registrada.`, "success");
+    document.getElementById("order-edit-modal").classList.remove("active");
+    loadLocalOrders();
+  } catch (e) {
+    showOrderEditMessage("Error al finalizar: " + e.message, "error");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+let orderEditSearchTimeout;
+document.getElementById("order-edit-manual-product")?.addEventListener("input", () => {
+  clearTimeout(orderEditSearchTimeout);
+  const q = document.getElementById("order-edit-manual-product").value.trim();
+  const drop = document.getElementById("order-edit-autocomplete");
+  drop.innerHTML = "";
+  drop.style.display = "none";
+  if (q.length < 2) return;
+  orderEditSearchTimeout = setTimeout(async () => {
+    const { data: products } = await supabase.from("products").select("id, name").ilike("name", `%${q}%`).in("status", ["active", "pending_stock", "draft"]).limit(50);
+    if (!products?.length) return;
+    const sorted = sortProductsByRelevance(products, q).slice(0, 8);
+    drop.innerHTML = sorted.map((p) => `<div class="autocomplete-item" data-id="${p.id}" data-name="${escapeHtml(p.name)}">${escapeHtml(p.name)}</div>`).join("");
+    drop.style.display = "block";
+    drop.querySelectorAll(".autocomplete-item").forEach((el) => {
+      el.addEventListener("click", () => {
+        document.getElementById("order-edit-manual-product").value = el.dataset.name;
+        drop.style.display = "none";
+        loadEditOrderProductVariants(el.dataset.id);
+      });
+    });
+  }, 300);
+});
+
+async function loadEditOrderProductVariants(productId) {
+  const { data: variants, error } = await supabase
+    .from("product_variants")
+    .select("id, sku, color, price, products!inner(id, name)")
+    .eq("product_id", productId)
+    .eq("active", true);
+  if (error || !variants?.length) {
+    showOrderEditMessage("No hay variantes activas", "error");
+    return;
+  }
+  const variantIds = variants.map((v) => v.id);
+  const { data: sizesData } = await supabase.from("variant_sizes").select("variant_id, size").in("variant_id", variantIds).order("size");
+  const sizesByVariant = new Map();
+  (sizesData || []).forEach((row) => {
+    if (!sizesByVariant.has(row.variant_id)) sizesByVariant.set(row.variant_id, []);
+    const norm = normalizeSize(row.size);
+    if (norm) sizesByVariant.get(row.variant_id).push(norm);
+  });
+  editManualProduct = variants[0].products;
+  editManualVariants = [];
+  variants.forEach((v) => {
+    const sizes = sizesByVariant.get(v.id) || [];
+    if (sizes.length) sizes.forEach((s) => editManualVariants.push({ ...v, size: s }));
+    else editManualVariants.push({ ...v, size: null });
+  });
+  editManualSelectedColor = null;
+  editManualSelectedSize = null;
+  document.getElementById("order-edit-manual-info").style.display = "block";
+  document.getElementById("order-edit-manual-name").textContent = editManualProduct.name;
+  document.getElementById("order-edit-manual-price").textContent = `$${variants[0].price.toLocaleString("es-AR")}`;
+  const addBtn = document.getElementById("order-edit-manual-add-btn");
+  if (addBtn) addBtn.disabled = true;
+  const colors = [...new Set(editManualVariants.map((x) => x.color).filter(Boolean))];
+  const colorsEl = document.getElementById("order-edit-manual-colors");
+  const sizesEl = document.getElementById("order-edit-manual-sizes");
+  colorsEl.innerHTML = colors.map((c) => `<button type="button" class="btn btn-secondary edit-manual-color" data-color="${escapeHtml(c)}" style="margin: 2px;">${escapeHtml(c)}</button>`).join("");
+  colorsEl.querySelectorAll(".edit-manual-color").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      editManualSelectedColor = btn.dataset.color;
+      editManualSelectedSize = null;
+      if (addBtn) addBtn.disabled = true;
+      colorsEl.querySelectorAll(".edit-manual-color").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      const byColor = editManualVariants.filter((v) => v.color === editManualSelectedColor);
+      const sizes = [...new Set(byColor.map((v) => v.size).filter(Boolean))];
+      sizesEl.innerHTML = sizes.map((s) => {
+        const v = byColor.find((x) => x.size === s);
+        return `<button type="button" class="btn btn-secondary edit-manual-size" data-size="${escapeHtml(s)}" data-variant-id="${v.id}" data-price="${v.price}" style="margin: 2px;">${escapeHtml(s)}</button>`;
+      }).join("");
+      sizesEl.querySelectorAll(".edit-manual-size").forEach((b) => {
+        b.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          editManualSelectedSize = { size: b.dataset.size, variantId: b.dataset.variantId, price: parseFloat(b.dataset.price) };
+          sizesEl.querySelectorAll(".edit-manual-size").forEach((x) => x.classList.remove("active"));
+          b.classList.add("active");
+          if (addBtn) addBtn.disabled = false;
+        });
+      });
+    });
+  });
+  if (colors.length) {
+    editManualSelectedColor = colors[0];
+    colorsEl.querySelector(".edit-manual-color")?.classList.add("active");
+    const byColor = editManualVariants.filter((v) => v.color === editManualSelectedColor);
+    const sizes = [...new Set(byColor.map((v) => v.size).filter(Boolean))];
+    sizesEl.innerHTML = sizes.map((s) => {
+      const v = byColor.find((x) => x.size === s);
+      return `<button type="button" class="btn btn-secondary edit-manual-size" data-size="${escapeHtml(s)}" data-variant-id="${v.id}" data-price="${v.price}" style="margin: 2px;">${escapeHtml(s)}</button>`;
+    }).join("");
+    sizesEl.querySelectorAll(".edit-manual-size").forEach((b) => {
+      b.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        editManualSelectedSize = { size: b.dataset.size, variantId: b.dataset.variantId, price: parseFloat(b.dataset.price) };
+        sizesEl.querySelectorAll(".edit-manual-size").forEach((x) => x.classList.remove("active"));
+        b.classList.add("active");
+        if (addBtn) addBtn.disabled = false;
+      });
+    });
+  }
+}
+
+document.getElementById("order-edit-manual-add-btn")?.addEventListener("click", () => {
+  if (!editManualSelectedSize || !editManualProduct) return;
+  const isReturnMode = !!document.getElementById("order-edit-return-mode")?.checked;
+  const unitPrice = Math.abs(parseFloat(editManualSelectedSize.price || 0));
+  editOrderItems.push({
+    variant_id: editManualSelectedSize.variantId,
+    product_name: editManualProduct.name,
+    color: editManualSelectedColor || "",
+    size: editManualSelectedSize.size || "",
+    quantity: 1,
+    // Persistimos devoluciones usando price_snapshot negativo (RPC no tiene is_return)
+    price_snapshot: isReturnMode ? -unitPrice : unitPrice,
+  });
+  document.getElementById("order-edit-manual-product").value = "";
+  document.getElementById("order-edit-manual-info").style.display = "none";
+  editManualProduct = null;
+  editManualVariants = [];
+  editManualSelectedColor = null;
+  editManualSelectedSize = null;
+  renderOrderEditModal();
+  showOrderEditMessage(isReturnMode ? "Devolución agregada al pedido" : "Producto agregado al pedido", "success");
+});
+
 // Función para renderizar tarjeta de pedido local
 function renderLocalOrderCard(order) {
   const statusLabels = {
@@ -4551,7 +7573,7 @@ function renderLocalOrderCard(order) {
   const statusLabel = statusLabels[order.status] || order.status;
   const statusClass = statusClasses[order.status] || 'pending';
 
-  const itemsSummary = order.items.slice(0, 3).map(item => 
+  const itemsSummary = order.items.slice(0, 3).map(item =>
     `${item.product_name}${item.color ? ` - ${item.color}` : ''}${item.size ? ` (${item.size})` : ''} x${item.quantity}`
   ).join(', ');
 
@@ -4609,13 +7631,13 @@ if (ordersSearchInput) {
   ordersSearchInput.addEventListener("input", (e) => {
     clearTimeout(searchTimeout);
     const searchTerm = e.target.value;
-    
+
     // Debounce: esperar 300ms después de que el usuario deje de escribir
     searchTimeout = setTimeout(() => {
       loadLocalOrders(searchTerm);
     }, 300);
   });
-  
+
   // También buscar al presionar Enter
   ordersSearchInput.addEventListener("keypress", (e) => {
     if (e.key === 'Enter') {
@@ -4630,11 +7652,11 @@ function openCreateLocalOrderModal() {
   // Por ahora, mostrar un mensaje indicando que se puede crear desde orders
   // En el futuro se puede implementar un modal completo similar a order-creator
   alert("Para crear un pedido local, puede usar la interfaz de creación de pedidos en la sección de Orders, o contactar al administrador para implementar la creación directa desde aquí.");
-  
+
   // Alternativa: abrir el modal de crear pedido de orders.html pero adaptado
   // Por simplicidad, vamos a crear una función básica que use la misma lógica
   // pero con public_sales_customers y rpc_create_local_order
-  
+
   // TODO: Implementar modal completo de creación de pedidos locales
   // que reutilice la interfaz de order-creator.js pero adaptada
 }
@@ -4667,17 +7689,17 @@ async function loadLocalOrderToSale(localOrderId) {
 
     // Cargar datos en el formulario (similar a loadPendingSaleIntoForm)
     const saleData = data.sale_data;
-    
+
     // Seleccionar cliente
     if (saleData.customer) {
       selectedCustomer = saleData.customer;
       customerSearch.value = `${saleData.customer.first_name} ${saleData.customer.last_name || ''}`.trim();
       customerInfo.classList.add("active");
       customerName.textContent = customerSearch.value;
-      
+
       // Actualizar visibilidad del botón Guardar Pedido
       updateSaveOrderButtonVisibility();
-      
+
       await loadCustomerCredits(saleData.customer.id);
     }
 
@@ -4700,7 +7722,7 @@ async function loadLocalOrderToSale(localOrderId) {
             const quantity = item.quantity || 1;
             const price = parseFloat(item.price_snapshot || variantData.price || 0);
             const itemTotalValue = price * quantity;
-            
+
             saleItems.push({
               product_name: item.product_name || variantData.products?.name || 'Producto',
               sku: variantData.sku ? variantData.sku.split('-')[0] : '',
@@ -4723,34 +7745,35 @@ async function loadLocalOrderToSale(localOrderId) {
             });
           }
         } else {
-          // Si no tiene variant_id, agregar como item manual
+          // Sin variant_id = extra especial (cargado desde pedido). Marcar como extra y manejar precio unitario/total.
           const quantity = item.quantity || 1;
-          const price = parseFloat(item.price_snapshot || 0);
-          const itemTotalValue = price * quantity;
-          
+          const priceSnapshot = parseFloat(item.price_snapshot || 0);
+          // BD puede tener price_snapshot como total (pedidos antiguos) o unitario; con qty=1 son iguales.
+          const unitPrice = quantity === 1 ? priceSnapshot : priceSnapshot / quantity;
+          const itemTotalValue = quantity === 1 ? priceSnapshot : priceSnapshot;
+
           saleItems.push({
+            isExtra: true,
+            isSpecialExtra: true,
+            extraType: 'special',
+            productName: item.product_name || 'Producto',
             product_name: item.product_name || 'Producto',
-            sku: '',
-            color: item.color || '',
-            price: price,
-            basePrice: price,
+            sku: 'EXTRA-ESPECIAL',
+            color: item.color || '-',
+            price: unitPrice,
+            basePrice: unitPrice,
             offerInfo: null,
             promotionInfo: null,
-            sizes: [{
-              size: item.size || '',
-              quantity: quantity,
-              variantId: null,
-              source: { ventaPublico: quantity, general: 0 }
-            }],
+            sizes: [],
             totalQuantity: quantity,
             totalValue: itemTotalValue,
             isReturn: false,
-            fromLocalOrder: true, // Flag para indicar que viene de pedido local (stock ya descontado)
-            localOrderItemId: item.id || null // ID del item del pedido local para poder liberar stock si se elimina
+            fromLocalOrder: true,
+            localOrderItemId: item.id || null
           });
         }
       }
-      
+
       // Renderizar lista y actualizar totales
       renderSaleList();
       await calculateTotals();
@@ -4785,7 +7808,7 @@ async function saveLocalOrder() {
   try {
     // Preparar items en el formato requerido por rpc_create_local_order
     const items = [];
-    
+
     for (const item of productItems) {
       // Si el item es devolución, no lo incluimos en el pedido
       if (item.isReturn) continue;
@@ -4800,7 +7823,7 @@ async function saveLocalOrder() {
               .select("imagen")
               .eq("id", item.productId)
               .maybeSingle();
-            
+
             if (productData && productData.imagen) {
               // Si imagen es un array, tomar la primera
               if (Array.isArray(productData.imagen)) {
@@ -4814,15 +7837,27 @@ async function saveLocalOrder() {
           }
         }
 
-        items.push({
+        const payloadItem = {
           variant_id: size.variantId || null,
           product_name: item.productName || item.product_name || 'Producto',
           color: item.color || '',
           size: size.size || '',
           quantity: size.quantity || 1,
           price_snapshot: item.price || item.basePrice || 0,
-          imagen: imagen
-        });
+          imagen: imagen,
+        };
+
+        // Importante:
+        // - Si NO enviamos source, el backend descuenta automáticamente (venta-publico y si no alcanza, general).
+        // - Solo enviamos source cuando existe (incluye el caso confirmado "sin stock" => 0,0).
+        if (size && size.source && (Object.prototype.hasOwnProperty.call(size.source, 'ventaPublico') || Object.prototype.hasOwnProperty.call(size.source, 'general'))) {
+          payloadItem.source = {
+            venta_publico: size.source.ventaPublico || 0,
+            general: size.source.general || 0
+          };
+        }
+
+        items.push(payloadItem);
       }
     }
 
@@ -4834,16 +7869,38 @@ async function saveLocalOrder() {
     // Preparar extras (si los hay)
     const extraItems = saleItems.filter(item => item.isExtra);
     const extras = {};
-    
-    if (extraItems.length > 0) {
-      extraItems.forEach(extra => {
-        if (extra.extraType === 'numeric') {
-          extras.extras_amount = (extras.extras_amount || 0) + extra.totalValue;
-        } else if (extra.extraType === 'percentage') {
-          extras.extras_percentage = (extras.extras_percentage || 0) + extra.value;
-        }
+
+    // Separar extras por tipo
+    const numericExtras = extraItems.filter(item => item.extraType === 'numeric');
+    const percentageExtras = extraItems.filter(item => item.extraType === 'percentage');
+    const specialExtras = extraItems.filter(item => item.extraType === 'special');
+
+    // Procesar extras numéricos y porcentuales para el objeto extras
+    if (numericExtras.length > 0) {
+      numericExtras.forEach(extra => {
+        extras.extras_amount = (extras.extras_amount || 0) + extra.totalValue;
       });
     }
+
+    if (percentageExtras.length > 0) {
+      percentageExtras.forEach(extra => {
+        extras.extras_percentage = (extras.extras_percentage || 0) + extra.value;
+      });
+    }
+
+    // Agregar extras especiales al array items (precio unitario: backend hace quantity * price_snapshot)
+    specialExtras.forEach(extra => {
+      const qty = extra.totalQuantity || 1;
+      items.push({
+        variant_id: null, // Los extras especiales no tienen variant_id
+        product_name: extra.productName || `Extra especial: $${extra.totalValue.toLocaleString('es-AR')}`,
+        color: '',
+        size: '',
+        quantity: qty,
+        price_snapshot: extra.totalValue / qty,
+        imagen: null
+      });
+    });
 
     // Deshabilitar botón mientras se procesa
     if (saveOrderBtn) {
@@ -4915,7 +7972,6 @@ if (historyResetBtn) {
     if (customerSearch) customerSearch.value = '';
     currentHistoryDate = today;
     currentHistoryCustomerSearch = '';
-    currentHistoryOffset = 0;
     expandedSaleId = null;
     loadSalesHistory();
   });
@@ -4934,11 +7990,16 @@ if (historyCustomerSearch) {
 // Cargar historial de ventas
 async function loadSalesHistory(append = false) {
   try {
+    // Si hay búsqueda por cliente, ignorar el filtro de fecha y cargar todos los pedidos
+    const hasCustomerSearch = currentHistoryCustomerSearch && currentHistoryCustomerSearch.trim().length > 0;
+    const dateFilter = hasCustomerSearch ? null : (currentHistoryDate || null);
+
+    // Cargar todos los pedidos sin paginación (límite alto para evitar demoras)
     const { data, error } = await supabase
-      .rpc("rpc_get_public_sales_history", { 
-        p_limit: 10, 
-        p_offset: append ? currentHistoryOffset : 0,
-        p_date_filter: currentHistoryDate || null,
+      .rpc("rpc_get_public_sales_history", {
+        p_limit: 10000, // Límite muy alto para cargar todos los pedidos
+        p_offset: 0, // Sin paginación
+        p_date_filter: dateFilter,
         p_customer_search: currentHistoryCustomerSearch || null
       });
 
@@ -4946,63 +8007,37 @@ async function loadSalesHistory(append = false) {
 
     const sales = data || [];
 
-    if (!append) {
-      currentHistoryOffset = 0;
-      historyList.innerHTML = "";
-    }
+    // Limpiar lista siempre (no hay append)
+    historyList.innerHTML = "";
 
-    if (sales.length === 0 && !append) {
+    if (sales.length === 0) {
       historyList.innerHTML = "<p style='padding: 20px; text-align: center; color: #666;'>No hay ventas registradas para los filtros seleccionados</p>";
       document.getElementById("history-details").style.display = "none";
       return;
     }
 
-    // Agregar ventas a la lista
+    // Agregar ventas a la lista (con botón X para anular si no está anulada)
     const salesHtml = sales.map(sale => {
       const isExpanded = expandedSaleId === sale.id;
+      const isVoided = !!sale.voided_at;
       return `
-        <div class="history-sale-item" data-sale-id="${sale.id}" style="padding: 12px; border: 1px solid #ddd; border-radius: 8px; margin-bottom: 8px; cursor: pointer; transition: background 0.2s; ${isExpanded ? 'background: #f8f9fa; border-color: #CD844D;' : ''}" onclick="toggleSaleDetails('${sale.id}')">
-          <div><strong>${escapeHtml(sale.sale_number)}</strong></div>
-          <div style="font-size: 12px; color: #666;">
-            ${new Date(sale.created_at).toLocaleString('es-AR')} | 
-            ${sale.customer_name || 'Sin cliente'} | 
-            <span style="${parseFloat(sale.total_amount) < 0 ? 'color: #dc3545; font-weight: 700;' : ''}">
-              ${parseFloat(sale.total_amount) < 0 ? '-' : ''}$${Math.abs(parseFloat(sale.total_amount)).toLocaleString('es-AR')}
-            </span>
+        <div class="history-sale-item" data-sale-id="${sale.id}" style="padding: 12px; border: 1px solid #ddd; border-radius: 8px; margin-bottom: 8px; cursor: pointer; transition: background 0.2s; display: flex; align-items: center; justify-content: space-between; gap: 8px; ${isExpanded ? 'background: #f8f9fa; border-color: #CD844D;' : ''}" onclick="toggleSaleDetails('${sale.id}')">
+          <div style="flex: 1; min-width: 0;">
+            <div><strong>${escapeHtml(sale.sale_number)}</strong>${isVoided ? ' <span class="history-sale-voided-badge">Anulada</span>' : ''}</div>
+            <div style="font-size: 12px; color: #666;">
+              ${new Date(sale.created_at).toLocaleString('es-AR')} | 
+              ${sale.customer_name || 'Sin cliente'} | 
+              <span style="${parseFloat(sale.total_amount) < 0 ? 'color: #dc3545; font-weight: 700;' : ''}">
+                ${parseFloat(sale.total_amount) < 0 ? '-' : ''}$${Math.abs(parseFloat(sale.total_amount)).toLocaleString('es-AR')}
+              </span>
+            </div>
           </div>
+          ${!isVoided ? `<button type="button" class="history-sale-void-btn" onclick="event.stopPropagation(); voidSale('${sale.id}')" title="Anular venta">×</button>` : ''}
         </div>
       `;
     }).join("");
 
-    if (append) {
-      historyList.innerHTML += salesHtml;
-    } else {
-      historyList.innerHTML = salesHtml;
-    }
-
-    // Agregar botón "Cargar más" si hay resultados
-    if (sales.length === 10) {
-      const loadMoreBtn = document.createElement("button");
-      loadMoreBtn.className = "btn btn-secondary";
-      loadMoreBtn.textContent = "Cargar más...";
-      loadMoreBtn.style.width = "100%";
-      loadMoreBtn.style.marginTop = "12px";
-      loadMoreBtn.addEventListener("click", () => {
-        currentHistoryOffset += 10;
-        loadSalesHistory(true);
-        loadMoreBtn.remove();
-      });
-      
-      // Verificar si ya existe el botón antes de agregarlo
-      if (!historyList.querySelector(".load-more-btn")) {
-        loadMoreBtn.classList.add("load-more-btn");
-        historyList.appendChild(loadMoreBtn);
-      }
-    } else {
-      // Remover botón si existe
-      const existingBtn = historyList.querySelector(".load-more-btn");
-      if (existingBtn) existingBtn.remove();
-    }
+    historyList.innerHTML = salesHtml;
 
     // Si hay una venta expandida, mostrar sus detalles
     if (expandedSaleId) {
@@ -5015,8 +8050,29 @@ async function loadSalesHistory(append = false) {
   }
 }
 
+// Anular venta y restablecer stock en venta al público
+window.voidSale = async function (saleId) {
+  if (!confirm('¿Anular esta venta? El stock se reestablecerá en venta al público.')) {
+    return;
+  }
+  try {
+    const { data, error } = await supabase.rpc('rpc_void_public_sale', { p_sale_id: saleId });
+    if (error) throw error;
+    showMessage('Venta anulada correctamente. Stock restablecido en venta al público.', 'success');
+    if (expandedSaleId === saleId) {
+      expandedSaleId = null;
+      const detailsDiv = document.getElementById('history-details');
+      if (detailsDiv) detailsDiv.style.display = 'none';
+    }
+    await loadSalesHistory();
+  } catch (error) {
+    console.error('Error anulando venta:', error);
+    showMessage('Error al anular venta: ' + (error.message || 'Error desconocido'), 'error');
+  }
+};
+
 // Alternar detalles de venta
-window.toggleSaleDetails = async function(saleId) {
+window.toggleSaleDetails = async function (saleId) {
   if (expandedSaleId === saleId) {
     // Colapsar
     expandedSaleId = null;
@@ -5044,7 +8100,7 @@ window.toggleSaleDetails = async function(saleId) {
 };
 
 // Mostrar detalles de venta
-window.showSaleDetails = async function(saleId, inModal = false) {
+window.showSaleDetails = async function (saleId, inModal = false) {
   try {
     const { data, error } = await supabase
       .rpc("rpc_get_public_sale_details", { p_sale_id: saleId });
@@ -5063,7 +8119,7 @@ window.showSaleDetails = async function(saleId, inModal = false) {
       if (!detailsDiv || !detailsTitle || !detailsContent) return;
 
       detailsTitle.textContent = `${sale.sale_number} - ${sale.customer_name || 'Sin cliente'}`;
-      
+
       // Crear tabla de items
       const itemsTable = `
         <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
@@ -5080,8 +8136,8 @@ window.showSaleDetails = async function(saleId, inModal = false) {
           </thead>
           <tbody>
             ${items.map(item => {
-              const itemTotal = parseFloat(item.price) * item.qty;
-              return `
+        const itemTotal = parseFloat(item.price) * item.qty;
+        return `
               <tr style="${item.is_return ? 'background: #fee; border-left: 4px solid #dc3545;' : 'border-bottom: 1px solid #e9ecef;'} ${item.is_return ? '' : 'border-bottom: 1px solid #e9ecef;'}">
                 <td style="padding: 12px;">
                   ${item.is_return ? '<span style="color: #dc3545; font-weight: 700; font-size: 11px; text-transform: uppercase;">DEVOLUCIÓN</span>' : '<span style="color: #28a745; font-weight: 700; font-size: 11px; text-transform: uppercase;">VENTA</span>'}
@@ -5096,7 +8152,7 @@ window.showSaleDetails = async function(saleId, inModal = false) {
                 </td>
               </tr>
             `;
-            }).join("")}
+      }).join("")}
           </tbody>
           <tfoot>
               <tr style="background: #f8f9fa; border-top: 2px solid #ddd; font-weight: 700;">
@@ -5119,7 +8175,7 @@ window.showSaleDetails = async function(saleId, inModal = false) {
 
       detailsContent.innerHTML = itemsTable;
       detailsDiv.style.display = "block";
-      
+
       // Scroll a los detalles
       detailsDiv.scrollIntoView({ behavior: "smooth", block: "nearest" });
     } else {
@@ -5207,5 +8263,18 @@ function escapeHtml(text) {
   const div = document.createElement("div");
   div.textContent = text;
   return div.innerHTML;
+}
+
+// Foco automático en el input de SKU al cargar la página (para lectoras de código)
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => {
+    setTimeout(() => {
+      if (skuSearch) skuSearch.focus();
+    }, 100);
+  });
+} else {
+  setTimeout(() => {
+    if (skuSearch) skuSearch.focus();
+  }, 100);
 }
 

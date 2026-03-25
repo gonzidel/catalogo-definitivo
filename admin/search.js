@@ -54,7 +54,7 @@ async function loadTags() {
 async function loadSizes() {
   try {
     const { data, error } = await supabase
-      .from("product_variants")
+      .from("variant_sizes")
       .select("size")
       .not("size", "is", null);
 
@@ -324,7 +324,10 @@ async function performSearch() {
     // Filtrar por estado del producto
     let filteredVariants = variants;
     if (!includeInactiveValue) {
-      filteredVariants = variants.filter(v => v.products?.status === "active" && v.active === true);
+      filteredVariants = variants.filter(v => 
+        (v.products?.status === "active" || v.products?.status === "pending_stock" || v.products?.status === "draft") 
+        && v.active === true
+      );
     } else {
       filteredVariants = variants.filter(v => v.products?.status !== "archived");
     }

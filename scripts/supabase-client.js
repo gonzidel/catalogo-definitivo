@@ -7,116 +7,302 @@ import {
   SUPABASE_ANON_KEY,
   USE_SUPABASE,
   configReady,
+  fylConfigDiagnostics,
 } from "./config.js";
 
 let supabase = null;
 
-// Esperar a que config.local.js (si existe) se cargue antes de inicializar Supabase
-await configReady;
+const LOG = "[FYL supabase]";
 
-if (USE_SUPABASE) {
-  // Verificar configuración antes de crear el cliente
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-    console.error("❌ ERROR: SUPABASE_URL o SUPABASE_ANON_KEY no están configurados");
-    console.error("   Verifica que config.local.js tenga los valores correctos");
-    console.error("   SUPABASE_URL:", SUPABASE_URL ? "✅ Configurado" : "❌ Faltante");
-    console.error("   SUPABASE_ANON_KEY:", SUPABASE_ANON_KEY ? "✅ Configurado" : "❌ Faltante");
-  } else {
-    // Verificar si ya existe una instancia global para evitar crear múltiples
-    if (typeof window !== "undefined" && window.supabase && typeof window.supabase.from === 'function') {
-      console.log("♻️ Reutilizando instancia existente de Supabase");
-      supabase = window.supabase;
-    } else {
-      try {
-        // Crear nueva instancia solo si no existe
-        console.log("🔄 Cargando módulo de Supabase...");
-        
-        // Intentar múltiples fuentes del CDN para mayor compatibilidad
-        let supabaseModule = null;
-        let createClient = null;
-        
-        // Opción 1: jsdelivr con versión específica
-        try {
-          supabaseModule = await import(
-            "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.0/+esm"
-          );
-          if (supabaseModule && supabaseModule.createClient) {
-            createClient = supabaseModule.createClient;
-            console.log("✅ Módulo cargado desde jsdelivr (v2.39.0)");
-          }
-        } catch (e1) {
-          console.warn("⚠️ Falló jsdelivr v2.39.0, intentando unpkg...", e1.message);
-          
-          // Opción 2: unpkg
-          try {
-            supabaseModule = await import(
-              "https://unpkg.com/@supabase/supabase-js@2.39.0/dist/esm/index.js"
-            );
-            if (supabaseModule && supabaseModule.createClient) {
-              createClient = supabaseModule.createClient;
-              console.log("✅ Módulo cargado desde unpkg (v2.39.0)");
-            }
-          } catch (e2) {
-            console.warn("⚠️ Falló unpkg, intentando esm.sh...", e2.message);
-            
-            // Opción 3: esm.sh
-            try {
-              supabaseModule = await import(
-                "https://esm.sh/@supabase/supabase-js@2.39.0"
-              );
-              if (supabaseModule && supabaseModule.createClient) {
-                createClient = supabaseModule.createClient;
-                console.log("✅ Módulo cargado desde esm.sh (v2.39.0)");
-              }
-            } catch (e3) {
-              throw new Error(`No se pudo cargar el módulo de Supabase desde ningún CDN. Último error: ${e3.message}`);
-            }
-          }
-        }
-        
-        if (!createClient) {
-          throw new Error("El módulo de Supabase no exporta createClient");
-        }
-        
-        // Usar la misma storageKey para evitar múltiples instancias de GoTrueClient
-        supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-          auth: {
-            storageKey: 'sb-dtfznewwvsadkorxwzft-auth-token',
-            autoRefreshToken: true,
-            persistSession: true,
-            detectSessionInUrl: true
-          }
-        });
-        
-        if (!supabase) {
-          throw new Error("createClient devolvió null o undefined");
-        }
-        
-        console.log("✅ Cliente de Supabase creado (instancia única)");
-      } catch (error) {
-        console.error("❌ ERROR al crear cliente de Supabase:", error);
-        console.error("   Detalles:", error.message);
-        console.error("   Stack:", error.stack);
-        supabase = null;
-      }
+/** Tope para cada request HTTP de PostgREST/Auth (evita colgados eternos en 4G). */
+const FYL_SUPABASE_FETCH_MS = 55000;
+
+function fylFetchWithTimeout(input, init) {
+  const base = init && typeof init === "object" ? { ...init } : {};
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), FYL_SUPABASE_FETCH_MS);
+  const incoming = base.signal;
+  if (incoming) {
+    if (incoming.aborted) ctrl.abort();
+    else incoming.addEventListener("abort", () => ctrl.abort(), { once: true });
+  }
+  base.signal = ctrl.signal;
+  return fetch(input, base).finally(() => clearTimeout(timer));
+}
+
+/** Evita que import() quede colgado indefinidamente (móvil / redes lentas). */
+function importWithTimeout(moduleUrl, ms) {
+  return Promise.race([
+    import(moduleUrl),
+    new Promise((_, reject) => {
+      setTimeout(() => {
+        reject(new Error(`Timeout ${ms}ms al cargar módulo`));
+      }, ms);
+    }),
+  ]);
+}
+
+/** Bundle ~400KB: en 3G/móvil real puede superar 8s; PC en Wi‑Fi no. */
+const SUPABASE_LOCAL_IMPORT_MS = 35000;
+/** Cada intento CDN (móvil lento / DNS). */
+const SUPABASE_CDN_IMPORT_MS = 28000;
+
+const SUPABASE_LOCAL_BUNDLE = new URL(
+  "./vendor/supabase-js.bundle.js",
+  import.meta.url
+).href;
+
+const SUPABASE_CDN_URLS = [
+  "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.0/+esm",
+  "https://unpkg.com/@supabase/supabase-js@2.39.0/dist/esm/index.js",
+  "https://esm.sh/@supabase/supabase-js@2.39.0",
+];
+
+function describeError(e) {
+  if (e == null) return { name: "Unknown", message: String(e) };
+  const name = e?.name && typeof e.name === "string" ? e.name : "Error";
+  const message =
+    e?.message != null && String(e.message) !== ""
+      ? String(e.message)
+      : String(e);
+  return {
+    name,
+    message,
+    isTimeout: /timeout/i.test(message),
+  };
+}
+
+/** @returns {{ createClient: Function, source: string }} */
+async function loadCreateClient() {
+  // Caso 1: ya cargado como UMD (script clásico en HTML)
+  if (globalThis.supabase?.createClient) {
+    console.info(`${LOG} OK: createClient desde UMD global (window.supabase).`);
+    globalThis.markBootStage?.("supabase.runtime.loaded", { source: "umd-global" });
+    return { createClient: globalThis.supabase.createClient, source: "umd-global" };
+  }
+
+  // Caso 2: bundle local ESM (fallback para entornos que soporten import() dinámico)
+  let lastErr = null;
+  console.info(`${LOG} UMD global no encontrado, intentando bundle local ESM…`);
+
+  try {
+    const mod = await importWithTimeout(SUPABASE_LOCAL_BUNDLE, SUPABASE_LOCAL_IMPORT_MS);
+    if (mod?.createClient) {
+      console.info(`${LOG} OK: createClient desde bundle local ESM.`);
+      globalThis.markBootStage?.("supabase.runtime.loaded", { source: "local-esm" });
+      return { createClient: mod.createClient, source: "local-esm" };
     }
+    lastErr = new Error("Módulo local sin export createClient");
+  } catch (e) {
+    lastErr = e;
+    const d = describeError(e);
+    console.warn(`${LOG} Bundle local ESM falló: ${d.name} — ${d.message}`);
+    globalThis.markBootStage?.("supabase.runtime.local_failed", { name: d.name, message: d.message });
+  }
+
+  // Caso 3: CDN (último recurso, puede fallar en Safari)
+  for (let i = 0; i < SUPABASE_CDN_URLS.length; i++) {
+    const url = SUPABASE_CDN_URLS[i];
+    try {
+      console.info(`${LOG} CDN ${i + 1}/${SUPABASE_CDN_URLS.length}:`, url);
+      const mod = await importWithTimeout(url, SUPABASE_CDN_IMPORT_MS);
+      if (mod?.createClient) {
+        console.info(`${LOG} OK: createClient desde CDN ${i + 1}.`);
+        const source = `cdn-${i + 1}`;
+        globalThis.markBootStage?.("supabase.runtime.loaded", { source });
+        return { createClient: mod.createClient, source };
+      }
+    } catch (e) {
+      lastErr = e;
+      const d = describeError(e);
+      console.warn(`${LOG} CDN ${i + 1} falló: ${d.name} — ${d.message}`);
+    }
+  }
+
+  const finalD = describeError(lastErr);
+  throw new Error(`No se pudo cargar @supabase/supabase-js. Último error: ${finalD.name}: ${finalD.message}`);
+}
+/*async function loadCreateClient() {
+  let lastErr = null;
+
+  console.info(`${LOG} Carga de @supabase/supabase-js: primero bundle local, luego CDN.`);
+
+  try {
+    console.info(`${LOG} Intento 1/local (${SUPABASE_LOCAL_IMPORT_MS}ms):`, SUPABASE_LOCAL_BUNDLE);
+    const mod = await importWithTimeout(
+      SUPABASE_LOCAL_BUNDLE,
+      SUPABASE_LOCAL_IMPORT_MS
+    );
+    if (mod?.createClient) {
+      console.info(`${LOG} OK: createClient desde bundle local (mismo origen).`);
+      globalThis.markBootStage?.("supabase.runtime.loaded", { source: "local" });
+      return { createClient: mod.createClient, source: "local" };
+    }
+    lastErr = new Error("Módulo local sin export createClient");
+    const d = describeError(lastErr);
+    console.warn(`${LOG} Local: ${d.name} — ${d.message}`);
+  } catch (e) {
+    lastErr = e;
+    const d = describeError(e);
+    console.warn(
+      `${LOG} Falló bundle local → fallback CDN. Tipo: ${d.name} | ${d.message}`
+    );
+    globalThis.markBootStage?.("supabase.runtime.local_failed", {
+      name: d.name,
+      message: d.message,
+    });
+  }
+
+  for (let i = 0; i < SUPABASE_CDN_URLS.length; i++) {
+    const url = SUPABASE_CDN_URLS[i];
+    try {
+      console.info(
+        `${LOG} Intento CDN ${i + 1}/${SUPABASE_CDN_URLS.length} (${SUPABASE_CDN_IMPORT_MS}ms):`,
+        url
+      );
+      const mod = await importWithTimeout(url, SUPABASE_CDN_IMPORT_MS);
+      if (mod?.createClient) {
+        console.info(`${LOG} OK: createClient desde CDN (${i + 1}).`);
+        const source = `cdn-${i + 1}`;
+        globalThis.markBootStage?.("supabase.runtime.loaded", { source });
+        return { createClient: mod.createClient, source };
+      }
+      lastErr = new Error(`CDN ${i + 1}: módulo sin createClient`);
+      console.warn(`${LOG} CDN ${i + 1}: sin createClient en namespace`);
+    } catch (e) {
+      lastErr = e;
+      const d = describeError(e);
+      console.warn(
+        `${LOG} CDN ${i + 1} falló. Tipo: ${d.name} | ${d.message}`
+      );
+      globalThis.markBootStage?.("supabase.runtime.cdn_failed", {
+        index: i + 1,
+        name: d.name,
+        message: d.message,
+      });
+    }
+  }
+
+  const finalD = describeError(lastErr);
+  globalThis.markBootStage?.("supabase.runtime.all_failed", {
+    name: finalD.name,
+    message: finalD.message,
+  });
+  throw new Error(
+    `No se pudo cargar @supabase/supabase-js (local ni CDN). Último: ${finalD.name}: ${finalD.message}`
+  );
+}*/
+
+/** Safari modo privado / cuota / restricciones: sin esto createClient puede tirar y dejar supabase null. */
+function buildSupabaseAuthOptions() {
+  const storageKey = "sb-dtfznewwvsadkorxwzft-auth-token";
+  const common = {
+    storageKey,
+    autoRefreshToken: true,
+    persistSession: true,
+    detectSessionInUrl: true,
+  };
+  if (typeof window === "undefined") return common;
+  try {
+    const k = "__fyl_ls_probe__";
+    window.localStorage.setItem(k, "1");
+    window.localStorage.removeItem(k);
+    return common;
+  } catch (_e) {
+    const mem = new Map();
+    console.warn(
+      `${LOG} localStorage no disponible; auth en memoria (esta pestaña). El catálogo público sigue funcionando.`
+    );
+    return {
+      ...common,
+      storage: {
+        getItem: (key) => (mem.has(String(key)) ? mem.get(String(key)) : null),
+        setItem: (key, value) => {
+          mem.set(String(key), String(value));
+        },
+        removeItem: (key) => {
+          mem.delete(String(key));
+        },
+      },
+    };
   }
 }
 
-// Exponer globalmente ANTES de exportar para que otros scripts puedan usarlo
+// Esperar a que config.local.js (si existe) se cargue antes de inicializar Supabase
+await configReady;
+
+if (typeof window !== "undefined") {
+  console.info(`${LOG} Tras configReady:`, {
+    configProdScriptMarker: fylConfigDiagnostics.configProdScriptMarker,
+    SUPABASE_URL: fylConfigDiagnostics.resolvedSupabaseUrl || "(vacío)",
+    SUPABASE_ANON_KEY: fylConfigDiagnostics.resolvedAnonKeyMasked,
+    USE_SUPABASE,
+  });
+}
+
+if (USE_SUPABASE) {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    console.error(`${LOG} SUPABASE_URL o SUPABASE_ANON_KEY no configurados`);
+    console.error("   SUPABASE_URL:", SUPABASE_URL ? "✅" : "❌");
+    console.error(
+      "   SUPABASE_ANON_KEY:",
+      SUPABASE_ANON_KEY ? "✅ (longitud " + SUPABASE_ANON_KEY.length + ")" : "❌"
+    );
+  } else {
+    if (
+      typeof window !== "undefined" &&
+      window.supabase &&
+      typeof window.supabase.from === "function"
+    ) {
+      console.log(`${LOG} Reutilizando instancia existente en window.supabase`);
+      supabase = window.supabase;
+      globalThis.markBootStage?.("supabase.client.reused", { from: "window" });
+    } else {
+      try {
+        console.log(`${LOG} Iniciando carga del runtime de Supabase…`);
+        const { createClient, source } = await loadCreateClient();
+
+        supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+          auth: buildSupabaseAuthOptions(),
+          global: { fetch: fylFetchWithTimeout },
+        });
+
+        if (!supabase) {
+          throw new Error("createClient devolvió null o undefined");
+        }
+
+        console.info(`${LOG} Cliente createClient() creado correctamente.`);
+        globalThis.markBootStage?.("supabase.client.ready", { source });
+      } catch (error) {
+        const d = describeError(error);
+        console.error(`${LOG} ERROR al crear cliente:`, d.name, d.message);
+        if (error?.stack) console.error(`${LOG} Stack:`, error.stack);
+        supabase = null;
+        globalThis.markBootStage?.("supabase.client.failed", {
+          name: d.name,
+          message: d.message,
+        });
+      }
+    }
+  }
+} else {
+  globalThis.markBootStage?.("supabase.client.skipped", { reason: "USE_SUPABASE_false" });
+}
+
+if (USE_SUPABASE && (!SUPABASE_URL || !SUPABASE_ANON_KEY)) {
+  globalThis.markBootStage?.("supabase.client.skipped", {
+    reason: "missing_url_or_anon",
+  });
+}
+
 if (typeof window !== "undefined") {
   window.supabaseClient = supabase;
   window.supabase = supabase;
 }
 
-// Verificar que supabase se creó correctamente antes de exportar
 if (!supabase && USE_SUPABASE) {
-  console.error("❌ CRÍTICO: Cliente de Supabase no se pudo crear");
-  console.error("   La aplicación puede no funcionar correctamente");
-  console.error("   Verifica:");
-  console.error("   1. Que config.local.js existe y tiene SUPABASE_ANON_KEY");
-  console.error("   2. Que tienes conexión a internet");
-  console.error("   3. Que la URL de Supabase es correcta");
+  console.error(`${LOG} CRÍTICO: cliente no disponible`);
+  console.error("   Revisá logs [FYL config] y [FYL supabase] arriba.");
 }
 
 export { supabase };

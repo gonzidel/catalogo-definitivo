@@ -1,41 +1,6 @@
 import { supabase } from "../scripts/supabase-client.js";
 import { checkPasskeySupport, hasRegisteredPasskeys, registerPasskey } from "../scripts/passkeys.js";
-
-// Provincias y ciudades argentinas para autocomplete
-const ARGENTINA_PROVINCES = [
-  "Buenos Aires", "Catamarca", "Chaco", "Chubut", "Córdoba", "Corrientes",
-  "Entre Ríos", "Formosa", "Jujuy", "La Pampa", "La Rioja", "Mendoza",
-  "Misiones", "Neuquén", "Río Negro", "Salta", "San Juan", "San Luis",
-  "Santa Cruz", "Santa Fe", "Santiago del Estero", "Tierra del Fuego",
-  "Tucumán", "CABA"
-];
-
-const PROVINCE_CITIES = {
-  "Buenos Aires": ["La Plata", "Mar del Plata", "Bahía Blanca", "Tandil", "Quilmes", "Lanús", "Banfield", "Lomas de Zamora", "Avellaneda", "Merlo", "San Miguel", "Moreno", "Morón", "Florencio Varela", "Berazategui", "San Isidro", "Tigre", "Pilar", "Malvinas Argentinas", "Esteban Echeverría"],
-  "Catamarca": ["San Fernando del Valle de Catamarca", "Valle Viejo", "Fray Mamerto Esquiú", "San Isidro"],
-  "Chaco": ["Resistencia", "Barranqueras", "Villa Ángela", "Presidencia Roque Sáenz Peña", "Charata", "General San Martín", "Juan José Castelli", "Machagai", "Quitilipi", "Villa Berthet"],
-  "Chubut": ["Rawson", "Comodoro Rivadavia", "Trelew", "Puerto Madryn", "Esquel", "Sarmiento", "Gaiman"],
-  "Córdoba": ["Córdoba", "Villa Carlos Paz", "Río Cuarto", "Villa María", "San Francisco", "Villa Allende", "Jesús María", "Unquillo", "La Calera", "Marcos Juárez"],
-  "Corrientes": ["Corrientes", "Goya", "Mercedes", "Curuzú Cuatiá", "Bella Vista", "Paso de los Libres", "Monte Caseros", "Esquina"],
-  "Entre Ríos": ["Paraná", "Concordia", "Gualeguaychú", "Concepción del Uruguay", "Villaguay", "Colón", "Nogoyá", "Federación"],
-  "Formosa": ["Formosa", "Clorinda", "Pirané", "El Colorado", "Comandante Fontana", "Laguna Naick Neck"],
-  "Jujuy": ["San Salvador de Jujuy", "Palpalá", "Perico", "San Pedro de Jujuy", "La Quiaca", "Humahuaca"],
-  "La Pampa": ["Santa Rosa", "General Pico", "Toay", "Realicó", "Eduardo Castex", "General Acha"],
-  "La Rioja": ["La Rioja", "Chilecito", "Arauco", "Aminga", "Chamical"],
-  "Mendoza": ["Mendoza", "San Rafael", "Godoy Cruz", "Luján de Cuyo", "Maipú", "Guaymallén", "Las Heras", "Rivadavia", "Tunuyán", "San Martín"],
-  "Misiones": ["Posadas", "Oberá", "Eldorado", "Puerto Iguazú", "Leandro N. Alem", "Apóstoles", "Montecarlo"],
-  "Neuquén": ["Neuquén", "Cutral Có", "Plottier", "Zapala", "San Martín de los Andes", "Villa La Angostura"],
-  "Río Negro": ["Viedma", "Bariloche", "General Roca", "Cipolletti", "Allen", "Cinco Saltos", "Villa Regina"],
-  "Salta": ["Salta", "San Salvador de Jujuy", "Orán", "Tartagal", "Cafayate", "Metán", "Rosario de la Frontera"],
-  "San Juan": ["San Juan", "Rawson", "Rivadavia", "Santa Lucía", "Pocito", "Chimbas", "Caucete"],
-  "San Luis": ["San Luis", "Villa Mercedes", "Merlo", "La Toma", "Justo Daract"],
-  "Santa Cruz": ["Río Gallegos", "Caleta Olivia", "El Calafate", "Puerto Deseado", "Pico Truncado"],
-  "Santa Fe": ["Santa Fe", "Rosario", "Venado Tuerto", "Rafaela", "Reconquista", "Santo Tomé", "Villa Gobernador Gálvez", "San Lorenzo"],
-  "Santiago del Estero": ["Santiago del Estero", "La Banda", "Fernández", "Frías", "Termas de Río Hondo"],
-  "Tierra del Fuego": ["Ushuaia", "Río Grande", "Tolhuin"],
-  "Tucumán": ["San Miguel de Tucumán", "Yerba Buena", "Tafí Viejo", "Concepción", "Banda del Río Salí", "Alderetes"],
-  "CABA": ["Ciudad Autónoma de Buenos Aires"]
-};
+import { ARGENTINA_PROVINCES, PROVINCE_CITIES } from "../scripts/argentina-locations-data.js";
 
 const form = document.getElementById("form");
 const emailInput = document.getElementById("email");
@@ -61,7 +26,7 @@ async function checkAuthAndRedirect() {
     // Verificar si ya tiene perfil completo
     const { data: customer, error: customerError } = await supabase
       .from("customers")
-      .select("full_name, phone, dni, province, city")
+      .select("full_name, phone, dni, province, city, address")
       .eq("id", session.user.id)
       .single();
 
@@ -72,7 +37,9 @@ async function checkAuthAndRedirect() {
         customer.phone && 
         customer.dni && 
         customer.province && 
-        customer.city;
+        customer.city &&
+        customer.address &&
+        String(customer.address).trim() !== "";
 
       if (hasCompleteProfile) {
         console.log("✅ Usuario ya tiene perfil completo, redirigiendo a dashboard");
@@ -169,7 +136,7 @@ function handleProvinceInput(value) {
       provinceDropdown.style.display = "none";
       updateCitiesList(item.dataset.value);
       cityInput.disabled = false;
-      cityInput.placeholder = "Escriba para buscar ciudad...";
+      cityInput.placeholder = "Escribí la localidad o elegí de la lista…";
       cityInput.value = "";
     });
   });
@@ -324,6 +291,7 @@ form.addEventListener("submit", async (e) => {
     const dni = document.getElementById("dni").value.trim().replace(/\D/g, ""); // Solo dígitos
     const city = sanitizeText(document.getElementById("city").value, 100);
     const province = sanitizeText(document.getElementById("province").value, 100);
+    const address = sanitizeText(document.getElementById("address")?.value || "", 500);
 
     // Validaciones
     if (!firstName || firstName.length < 2) {
@@ -374,13 +342,16 @@ form.addEventListener("submit", async (e) => {
       throw new Error("La provincia seleccionada no es válida");
     }
 
-    if (!city) {
-      throw new Error("La ciudad es obligatoria");
+    if (!city || city.length < 2) {
+      throw new Error("La localidad es obligatoria (podés escribirla aunque no esté en la lista)");
     }
 
-    const cities = PROVINCE_CITIES[province] || [];
-    if (!cities.includes(city)) {
-      throw new Error("La ciudad seleccionada no es válida para la provincia elegida");
+    if (!address || address.length < 4) {
+      throw new Error("La dirección es obligatoria (calle y número, mínimo 4 caracteres)");
+    }
+
+    if (address.length > 500) {
+      throw new Error("La dirección no puede superar los 500 caracteres");
     }
 
     // Deshabilitar botón durante el guardado
@@ -432,10 +403,11 @@ form.addEventListener("submit", async (e) => {
       province: province,
       city: city,
       email: user.email,
+      address,
     };
 
-    // Si se encontró coincidencia en admin_orders, preservar address si existe
-    if (linkResult?.found && linkResult.source === 'admin_orders' && linkResult.address) {
+    // Si se encontró coincidencia en admin_orders, preservar address admin si el usuario no cargó una
+    if (linkResult?.found && linkResult.source === 'admin_orders' && linkResult.address && !address) {
       payload.address = linkResult.address;
     }
 

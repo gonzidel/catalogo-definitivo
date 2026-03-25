@@ -2,6 +2,7 @@
 -- Esta función maneja la devolución de manera atómica: devuelve stock y cambia el estado
 
 -- Función RPC para marcar un pedido como devolución
+-- Devuelve stock por talle a variant_size_warehouse_stock (general) y, si no hay size, a variant_warehouse_stock
 drop function if exists public.rpc_mark_order_as_devolucion(uuid);
 create or replace function public.rpc_mark_order_as_devolucion(p_order_id uuid)
 returns void language plpgsql security definer as $$
@@ -10,6 +11,9 @@ declare
   v_item record;
   v_current_stock numeric;
   v_new_stock numeric;
+  v_normalized_size text;
+  v_return_rows int;
+  v_qty int;  -- cantidad a devolver por ítem (siempre explícita)
 begin
   -- Verificar que el usuario es admin
   if not exists (
@@ -47,38 +51,58 @@ begin
     raise exception 'No se encontró el almacén general';
   end if;
 
-  -- Devolver stock de todos los items del pedido que tengan variant_id
+  -- Devolver stock de todos los items del pedido (por talle en variant_size_warehouse_stock o por variante en variant_warehouse_stock)
+  -- Leer cantidad de forma explícita (quantity) y usar v_qty en todo el bucle para devolver las unidades correctas
   for v_item in
-    select oi.id, oi.variant_id, oi.quantity
+    select
+      oi.id,
+      oi.variant_id,
+      oi.size,
+      greatest(0, coalesce(oi.quantity, 0)::int) as item_qty
     from public.order_items oi
     where oi.order_id = p_order_id
       and oi.variant_id is not null
-      and oi.quantity > 0
+      and coalesce(oi.quantity, 0) > 0
   loop
-    -- Obtener el stock actual del almacén general para esta variante
-    select stock_qty into v_current_stock
-    from public.variant_warehouse_stock
-    where variant_id = v_item.variant_id
-      and warehouse_id = v_warehouse_id;
+    v_qty := v_item.item_qty;
+    if v_qty <= 0 then
+      continue;
+    end if;
 
-    -- Si no existe registro, el stock actual es 0
-    v_current_stock := coalesce(v_current_stock, 0);
-    v_new_stock := v_current_stock + v_item.quantity;
+    -- Si el ítem tiene tamaño, devolver a variant_size_warehouse_stock (stock por talle)
+    if v_item.size is not null and trim(v_item.size::text) <> '' then
+      v_normalized_size := trim(v_item.size::text);
+      if v_normalized_size ~ '^\d+(\.\d+)?$' then
+        v_normalized_size := split_part(v_normalized_size, '.', 1);
+      end if;
 
-    -- Actualizar o insertar el stock en variant_warehouse_stock
-    insert into public.variant_warehouse_stock (
-      variant_id,
-      warehouse_id,
-      stock_qty
-    ) values (
-      v_item.variant_id,
-      v_warehouse_id,
-      v_new_stock
-    )
-    on conflict (variant_id, warehouse_id)
-    do update set
-      stock_qty = v_new_stock,
-      updated_at = now();
+      -- UPDATE solo la fila (variant, size, general); INSERT si no existe
+      update public.variant_size_warehouse_stock
+      set stock_qty = stock_qty + v_qty,
+          updated_at = now()
+      where variant_id = v_item.variant_id
+        and size = v_normalized_size
+        and warehouse_id = v_warehouse_id;
+      get diagnostics v_return_rows = row_count;
+
+      if v_return_rows = 0 then
+        insert into public.variant_size_warehouse_stock (variant_id, warehouse_id, size, stock_qty)
+        values (v_item.variant_id, v_warehouse_id, v_normalized_size, v_qty);
+      end if;
+    else
+      -- Sin tamaño (legacy): devolver a variant_warehouse_stock
+      select stock_qty into v_current_stock
+      from public.variant_warehouse_stock
+      where variant_id = v_item.variant_id
+        and warehouse_id = v_warehouse_id;
+      v_current_stock := coalesce(v_current_stock, 0);
+      v_new_stock := v_current_stock + v_qty;
+
+      insert into public.variant_warehouse_stock (variant_id, warehouse_id, stock_qty)
+      values (v_item.variant_id, v_warehouse_id, v_new_stock)
+      on conflict (variant_id, warehouse_id)
+      do update set stock_qty = variant_warehouse_stock.stock_qty + v_qty, updated_at = now();
+    end if;
   end loop;
 
   -- Actualizar el estado del pedido a 'devolución'

@@ -1,0 +1,9506 @@
+[
+  {
+    "provincia": "Salta",
+    "localidad": "A. Saravia"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Aguaray"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Angastaco"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Animana"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Cachi"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Cafayate"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Campo Quijano"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Campo Santo"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Capital"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Cerrillos"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Chicoana"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Col. Sta. Rosa"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Coronel Moldes"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "El Bordo"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "El Carril"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "El Galpon"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "El Jardin"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "El Potrero"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "El Quebrachal"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "El Tala"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Embarcacion"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Gral. Ballivian"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Gral. Guemes"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Gral. Mosconi"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Gral. Pizarro"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Guachipas"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Hipolito Yrigoyen"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Iruya"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Isla De Canias"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "J. V. Gonzalez"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "La Caldera"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "La Candelaria"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "La Merced"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "La Poma"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "La Vinia"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Las Lajitas"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Los Toldos"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Metan"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Molinos"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Nazareno"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Oran"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Payogasta"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Pichanal"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Prof. S. Mazza"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Rio Piedras"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Rivadavia Banda Norte"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Rivadavia Banda Sur"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Rosario de La Frontera"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Rosario de Lerma"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Saclantas"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Salta"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "San Antonio"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "San Carlos"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "San Jose De Metan"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "San Ramon"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Santa Victoria E."
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Santa Victoria O."
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Tartagal"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Tolar Grande"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Urundel"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Vaqueros"
+  },
+  {
+    "provincia": "Salta",
+    "localidad": "Villa San Lorenzo"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "3 de febrero"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "11 de Septiembre"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "20 de Junio"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "25 de Mayo"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Acassuso"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Adrogue"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Aldo Bonzi"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "A. Alsina"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "A. Gonzales Chaves"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Aguas Verdes"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Alberti"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Arrecifes"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Ayacucho"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Azul"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Area Reserva Cinturon Ecologico"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Avellaneda"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Bahia Blanca"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Balcarce"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Baradero"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Banfield"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Barrio Parque"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Barrio Santa Teresita"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Benito Juarez"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Berisso"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Beccar"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Bella Vista"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Berazategui"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Bernal Este"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Bernal Oeste"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Billinghurst"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Bolivar"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Boulogne"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Bragado"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Brandsen"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Burzaco"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Caseros"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Castelar"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Churruca"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Ciudad Evita"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Ciudad Madero"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Ciudadela"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Claypole"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Crucecita"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Campana"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Caniuelas"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Capilla del Senior"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Capitan Sarmiento"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Carapachay"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Carhue"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Carilo"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Carlos Casares"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Carlos Tejedor"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Carmen de Areco"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Carmen de Patagones"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Castelli"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Chacabuco"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Chascomus"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Chivilcoy"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Colon"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Coronel Dorrego"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Coronel Pringles"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Coronel Rosales"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Coronel Suarez"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Costa Azul"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Costa Chica"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Costa del Este"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Costa Esmeralda"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Daireaux"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Darregueira"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Del Viso"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Dolores"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Don Torcuato"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Dock Sud"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Don Bosco"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Don Orione"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Ensenada"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Escobar"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "El Jaguel"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "El Libertador"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "El Palomar"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "El Tala"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "El Trebol"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Ezeiza"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Ezpeleta"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Exaltacion de la Cruz"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Florentino Ameghino"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Florencio Varela"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Florida"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Francisco alvarez"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Garin"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Gral. Alvarado"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Gral. Alvear"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Gral. Arenales"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Gral. Belgrano"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Gral. Guido"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Gral. Lamadrid"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Gral. Las Heras"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Gral. Lavalle"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Gral. Madariaga"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Gral. Pacheco"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Gral. Paz"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Gral. Pinto"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Gral. Pueyrredon"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Gral. Rodriguez"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Gral. Viamonte"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Gral. Villegas"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Guamini"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Guernica"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Gerli"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Glew"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Gonzalez Catan"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Grand Bourg"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Gregorio de Laferrere"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Guillermo Enrique Hudson"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Haedo"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Hipolito Yrigoyen"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Hurlingham"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Ing. Sourdeaux"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Isidro Casanova"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Ituzaingo"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Ing. Maschwitz"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Jose C. Paz"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Jose Ingenieros"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Jose Marmol"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Junin"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "La Plata"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "La Lucila"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "La Reja"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "La Tablada"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Laprida"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Las Flores"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Las Toninas"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Lanus"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Leandro N. Alem"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Lincoln"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Loberia"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Lobos"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Los Cardales"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Los Toldos"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Lucila del Mar"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Lujan"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Llavallol"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Loma Hermosa"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Lomas de Zamora"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Lomas del Millon"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Lomas del Mirador"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Longchamps"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Los Polvorines"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Luis Guillon"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Malvinas Argentinas"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Martin Coronado"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Martinez"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Merlo"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Ministro Rivadavia"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Monte Chingolo"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Monte Grande"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Moreno"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Moron"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Muniiz"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Magdalena"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Maipu"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Mar Chiquita"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Mar de Ajo"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Mar de las Pampas"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Mar del Plata"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Mar del Tuyu"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Marcos Paz"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Mercedes"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Miramar"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Monte"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Monte Hermoso"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Munro"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Navarro"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Necochea"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Olavarria"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Olivos"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Pablo Nogues"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Pablo Podesta"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Paso del Rey"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Pereyra"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Pinieiro"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Platanos"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Partido de la Costa"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Pehuajo"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Pellegrini"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Pergamino"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Pigue"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Pila"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Pilar"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Pinamar"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Pinar del Sol"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Polvorines"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Pontevedra"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Pte. Peron"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Puan"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Punta Indio"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Quilmes"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Ramallo"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Rafael Calzada"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Rafael Castillo"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Ramos Mejia"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Ranelagh"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Remedios de Escalada"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Rauch"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Rivadavia"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Rojas"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Roque Perez"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Saavedra"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Saladillo"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Salliquelo"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Salto"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Saenz Penia"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Santos Lugares"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Sarandi"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Sourigues"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "San Andres de Giles"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "San Antonio de Areco"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "San Antonio de Padua"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "San Bernardo"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "San Cayetano"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "San Clemente del Tuyu"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "San Nicolas"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "San Pedro"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "San Vicente"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "San Fernando"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "San Francisco Solano"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "San Isidro"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "San Jose"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "San Justo"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "San Martin"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "San Miguel"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Santa Teresita"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Suipacha"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Tandil"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Tapalque"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Tapiales"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Temperley"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Tigre"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Tortuguitas"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Tristan Suarez"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Trujui"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Tordillo"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Tornquist"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Trenque Lauquen"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Tres Lomas"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Turdera"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Valentin Alsina"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Vicente Lopez"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Villa Adelina"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Villa Ballester"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Villa Bosch"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Villa Caraza"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Villa Celina"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Villa Centenario"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Villa de Mayo"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Villa Diamante"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Villa Dominico"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Villa Espania"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Villa Fiorito"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Villa Guillermina"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Villa Gesell"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Villa Insuperable"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Villa Jose Leon Suarez"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Villa La Florida"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Villa Luzuriaga"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Villa Martelli"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Villa Obrera"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Villa Progreso"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Villa Raffo"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Villa Sarmiento"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Villa Tesei"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Villa Udaondo"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Villarino"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Virrey del Pino"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Wilde"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "William Morris"
+  },
+  {
+    "provincia": "Buenos Aires",
+    "localidad": "Zarate"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Alto Pelado"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Alto Pencoso"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Anchorena"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Arizona"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Bagual"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Balde"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Batavia"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Beazley"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Buena Esperanza"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Candelaria"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Capital"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Carolina"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Carpinteria"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Concaran"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Cortaderas"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "El Morro"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "El Trapiche"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "El Volcan"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Fortin El Patria"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Fortuna"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Fraga"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Juan Jorba"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Juan Llerena"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Juana Koslay"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Justo Daract"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "La Calera"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "La Florida"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "La Punilla"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "La Toma"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Lafinur"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Las Aguadas"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Las Chacras"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Las Lagunas"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Las Vertientes"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Lavaisse"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Leandro N. Alem"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Los Molles"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Lujan"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Mercedes"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Merlo"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Naschel"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Navia"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Nogoli"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Nueva Galia"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Papagayos"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Paso Grande"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Potrero de Los Funes"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Quines"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Renca"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Saladillo"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "San Francisco"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "San Geronimo"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "San Martin"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "San Pablo"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Santa Rosa de Conlara"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Talita"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Tilisarao"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Union"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Villa de La Quebrada"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Villa de Praga"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Villa del Carmen"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Villa Gral. Roca"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Villa Larca"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Villa Mercedes"
+  },
+  {
+    "provincia": "San Luis",
+    "localidad": "Zanjitas"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Alarcon"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Alcaraz"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Alcaraz N."
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Alcaraz S."
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Aldea Asuncion"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Aldea Brasilera"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Aldea Elgenfeld"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Aldea Grapschental"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Aldea Ma. Luisa"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Aldea Protestante"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Aldea Salto"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Aldea San Antonio G"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Aldea San Antonio P"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Aldea San Juan"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Aldea San Miguel"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Aldea San Rafael"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Aldea Spatzenkutter"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Aldea Sta. Maria"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Aldea Sta. Rosa"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Aldea Valle Maria"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Altamirano Sur"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Antelo"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Antonio Tomas"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Aranguren"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Arroyo Baru"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Arroyo Burgos"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Arroyo Cle"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Arroyo Corralito"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Arroyo del Medio"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Arroyo Maturrango"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Arroyo Palo Seco"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Banderas"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Basavilbaso"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Betbeder"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Bovril"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Caseros"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Ceibas"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Cerrito"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Chajari"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Chilcas"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Clodomiro Ledesma"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Col. Alemana"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Col. Avellaneda"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Col. Avigdor"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Col. Ayui"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Col. Baylina"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Col. Carrasco"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Col. Celina"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Col. Cerrito"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Col. Crespo"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Col. Elia"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Col. Ensayo"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Col. Gral. Roca"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Col. La Argentina"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Col. Merou"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Col. Oficial Nf3"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Col. Oficial N 13"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Col. Oficial N 14"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Col. Oficial N5"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Col. Reffino"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Col. Tunas"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Col. Viraro"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Colon"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Concepcion del Uruguay"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Concordia"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Conscripto Bernardi"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Costa Grande"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Costa San Antonio"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Costa Uruguay N."
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Costa Uruguay S."
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Crespo"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Crucecitas 3"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Crucecitas 7"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Crucecitas 8"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Cuchilla Redonda"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Curtiembre"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Diamante"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Distrito 6"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Distrito Chaniar"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Distrito Chiqueros"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Distrito Cuarto"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Distrito Diego Lopez"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Distrito Pajonal"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Distrito Sauce"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Distrito Tala"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Distrito Talitas"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Don Cristobal 1 Seccion"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Don Cristobal 2 Seccion"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Durazno"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "El Cimarron"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "El Gramillal"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "El Palenque"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "El Pingo"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "El Quebracho"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "El Redomon"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "El Solar"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Enrique Carbo"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Entre Rios"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Espinillo N."
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Estacion Campos"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Estacion Escrinia"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Estacion Lazo"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Estacion Raices"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Estacion Yerua"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Estancia Grande"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Estancia Libaros"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Estancia Racedo"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Estancia Sola"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Estancia Yuqueri"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Estaquitas"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Faustino M. Parera"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Febre"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Federacion"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Federal"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Gdor. Echague"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Gdor. Mansilla"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Gilbert"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Gonzalez Calderon"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Gral. Almada"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Gral. Alvear"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Gral. Campos"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Gral. Galarza"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Gral. Ramirez"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Gualeguay"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Gualeguaychu"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Gualeguaycito"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Guardamonte"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Hambis"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Hasenkamp"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Hernandarias"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Hernandez"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Herrera"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Hinojal"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Hocker"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Ing. Sajaroff"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Irazusta"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Isletas"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "J.J De Urquiza"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Jubileo"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "La Clarita"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "La Criolla"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "La Esmeralda"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "La Florida"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "La Fraternidad"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "La Hierra"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "La Ollita"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "La Paz"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "La Picada"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "La Providencia"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "La Verbena"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Laguna Benitez"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Larroque"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Las Cuevas"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Las Garzas"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Las Guachas"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Las Mercedes"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Las Moscas"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Las Mulitas"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Las Toscas"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Laurencena"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Libertador San Martin"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Loma Limpia"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Los Ceibos"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Los Charruas"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Los Conquistadores"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Lucas Gonzalez"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Lucas N."
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Lucas S. 1"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Lucas S. 2"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Macia"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Maria Grande"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Maria Grande 2"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Medanos"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Mojones N."
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Mojones S."
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Molino Doll"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Monte Redondo"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Montoya"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Mulas Grandes"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "niancay"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Nogoya"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Nueva Escocia"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Nueva Vizcaya"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Ombu"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Oro Verde"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Parana"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Pasaje Guayaquil"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Pasaje Las Tunas"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Paso de La Arena"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Paso de La Laguna"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Paso de Las Piedras"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Paso Duarte"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Pastor Britos"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Pedernal"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Perdices"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Picada Beron"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Piedras Blancas"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Primer Distrito Cuchilla"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Primero de Mayo"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Pronunciamiento"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Pto. Algarrobo"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Pto. Ibicuy"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Pueblo Brugo"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Pueblo Cazes"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Pueblo Gral. Belgrano"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Pueblo Liebig"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Puerto Yerua"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Punta del Monte"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Quebracho"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Quinto Distrito"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Raices Oeste"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Rincon de Nogoya"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Rincon del Cinto"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Rincon del Doll"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Rincon del Gato"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Rocamora"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Rosario del Tala"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "San Benito"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "San Cipriano"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "San Ernesto"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "San Gustavo"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "San Jaime"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "San Jose"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "San Jose de Feliciano"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "San Justo"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "San Marcial"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "San Pedro"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "San Ramirez"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "San Ramon"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "San Roque"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "San Salvador"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "San Victor"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Santa Ana"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Santa Anita"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Santa Elena"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Santa Lucia"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Santa Luisa"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Sauce de Luna"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Sauce Montrull"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Sauce Pinto"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Sauce Sur"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Segui"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Sir Leonard"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Sosa"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Tabossi"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Tezanos Pinto"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Ubajay"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Urdinarrain"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Veinte de Septiembre"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Viale"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Victoria"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Villa Clara"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Villa del Rosario"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Villa Dominguez"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Villa Elisa"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Villa Fontana"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Villa Gdor. Etchevehere"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Villa Mantero"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Villa Paranacito"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Villa Urquiza"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Villaguay"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Walter Moss"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Yacare"
+  },
+  {
+    "provincia": "Entre Ríos",
+    "localidad": "Yeso Oeste"
+  },
+  {
+    "provincia": "La Rioja",
+    "localidad": "Arauco"
+  },
+  {
+    "provincia": "La Rioja",
+    "localidad": "Capital"
+  },
+  {
+    "provincia": "La Rioja",
+    "localidad": "Castro Barros"
+  },
+  {
+    "provincia": "La Rioja",
+    "localidad": "Chamical"
+  },
+  {
+    "provincia": "La Rioja",
+    "localidad": "Chilecito"
+  },
+  {
+    "provincia": "La Rioja",
+    "localidad": "Coronel F. Varela"
+  },
+  {
+    "provincia": "La Rioja",
+    "localidad": "Famatina"
+  },
+  {
+    "provincia": "La Rioja",
+    "localidad": "Gral. A.V.Penialoza"
+  },
+  {
+    "provincia": "La Rioja",
+    "localidad": "Gral. Belgrano"
+  },
+  {
+    "provincia": "La Rioja",
+    "localidad": "Gral. J.F. Quiroga"
+  },
+  {
+    "provincia": "La Rioja",
+    "localidad": "Gral. Lamadrid"
+  },
+  {
+    "provincia": "La Rioja",
+    "localidad": "Gral. Ocampo"
+  },
+  {
+    "provincia": "La Rioja",
+    "localidad": "Gral. San Martin"
+  },
+  {
+    "provincia": "La Rioja",
+    "localidad": "Independencia"
+  },
+  {
+    "provincia": "La Rioja",
+    "localidad": "Rosario Penaloza"
+  },
+  {
+    "provincia": "La Rioja",
+    "localidad": "San Blas de Los Sauces"
+  },
+  {
+    "provincia": "La Rioja",
+    "localidad": "Sanagasta"
+  },
+  {
+    "provincia": "La Rioja",
+    "localidad": "Vinchina"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Aniatuya"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Arraga"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Bandera"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Bandera Bajada"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Beltran"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Brea Pozo"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Campo Gallo"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Capital"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Chilca Juliana"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Choya"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Clodomira"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Col. Alpina"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Col. Dora"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Col. El Simbolar Robles"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "El Bobadal"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "El Charco"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "El Mojon"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Estacion Atamisqui"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Estacion Simbolar"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Fernandez"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Fortin Inca"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Frias"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Garza"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Gramilla"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Guardia Escolta"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Herrera"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Icanio"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Ing. Forres"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "La Banda"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "La Caniada"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Laprida"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Lavalle"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Loreto"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Los Juries"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Los Nuniez"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Los Pirpintos"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Los Quiroga"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Los Telares"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Lugones"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Malbran"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Matara"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Medellin"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Monte Quemado"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Nueva Esperanza"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Nueva Francia"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Palo Negro"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Pampa de Los Guanacos"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Pinto"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Pozo Hondo"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Quimili"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Real Sayana"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Sachayoj"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "San Pedro de Guasayan"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Selva"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Sol de Julio"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Sumampa"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Suncho Corral"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Taboada"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Tapso"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Termas de Rio Hondo"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Tintina"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Tomas Young"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Vilelas"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Villa Atamisqui"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Villa La Punta"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Villa Ojo de Agua"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Villa Rio Hondo"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Villa Salavina"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Villa Union"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Vilmer"
+  },
+  {
+    "provincia": "Santiago del Estero",
+    "localidad": "Weisburd"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Avia Terai"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Barranqueras"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Basail"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Campo Largo"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Capital"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Capitan Solari"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Charadai"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Charata"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Chorotis"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Ciervo Petiso"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Cnel. Du Graty"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Col. Benitez"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Col. Elisa"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Col. Popular"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Colonias Unidas"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Concepcion"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Corzuela"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Cote Lai"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "El Sauzalito"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Enrique Urien"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Fontana"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Fte. Esperanza"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Gancedo"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Gral. Capdevila"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Gral. Pinero"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Gral. San Martin"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Gral. Vedia"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Hermoso Campo"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "I. del Cerrito"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "J.J. Castelli"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "La Clotilde"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "La Eduvigis"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "La Escondida"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "La Leonesa"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "La Tigra"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "La Verde"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Laguna Blanca"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Laguna Limpia"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Lapachito"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Las Brenias"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Las Garcitas"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Las Palmas"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Los Frentones"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Machagai"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Makalle"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Margarita Belen"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Miraflores"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Mision N. Pompeya"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Napenay"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Pampa Almiron"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Pampa del Indio"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Pampa del Infierno"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Pdcia. de La Plaza"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Pdcia. Roca"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Pdcia. Roque Saenz Penia"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Pto. Bermejo"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Pto. Eva Peron"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Puero Tirol"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Puerto Vilelas"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Quitilipi"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Resistencia"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Saenz Penia"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Samuhu"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "San Bernardo"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Santa Sylvina"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Taco Pozo"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Tres Isletas"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Villa angela"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Villa Berthet"
+  },
+  {
+    "provincia": "Chaco",
+    "localidad": "Villa R. Bermejito"
+  },
+  {
+    "provincia": "San Juan",
+    "localidad": "Albardon"
+  },
+  {
+    "provincia": "San Juan",
+    "localidad": "Angaco"
+  },
+  {
+    "provincia": "San Juan",
+    "localidad": "Calingasta"
+  },
+  {
+    "provincia": "San Juan",
+    "localidad": "Capital"
+  },
+  {
+    "provincia": "San Juan",
+    "localidad": "Caucete"
+  },
+  {
+    "provincia": "San Juan",
+    "localidad": "Chimbas"
+  },
+  {
+    "provincia": "San Juan",
+    "localidad": "Iglesia"
+  },
+  {
+    "provincia": "San Juan",
+    "localidad": "Jachal"
+  },
+  {
+    "provincia": "San Juan",
+    "localidad": "Nueve de Julio"
+  },
+  {
+    "provincia": "San Juan",
+    "localidad": "Pocito"
+  },
+  {
+    "provincia": "San Juan",
+    "localidad": "Rawson"
+  },
+  {
+    "provincia": "San Juan",
+    "localidad": "Rivadavia"
+  },
+  {
+    "provincia": "San Juan",
+    "localidad": "San Juan"
+  },
+  {
+    "provincia": "San Juan",
+    "localidad": "San Martin"
+  },
+  {
+    "provincia": "San Juan",
+    "localidad": "Santa Lucia"
+  },
+  {
+    "provincia": "San Juan",
+    "localidad": "Sarmiento"
+  },
+  {
+    "provincia": "San Juan",
+    "localidad": "Ullum"
+  },
+  {
+    "provincia": "San Juan",
+    "localidad": "Valle Fertil"
+  },
+  {
+    "provincia": "San Juan",
+    "localidad": "Veinticinco de Mayo"
+  },
+  {
+    "provincia": "San Juan",
+    "localidad": "Zonda"
+  },
+  {
+    "provincia": "Catamarca",
+    "localidad": "Aconquija"
+  },
+  {
+    "provincia": "Catamarca",
+    "localidad": "Ancasti"
+  },
+  {
+    "provincia": "Catamarca",
+    "localidad": "Andalgala"
+  },
+  {
+    "provincia": "Catamarca",
+    "localidad": "Antofagasta"
+  },
+  {
+    "provincia": "Catamarca",
+    "localidad": "Belen"
+  },
+  {
+    "provincia": "Catamarca",
+    "localidad": "Capayan"
+  },
+  {
+    "provincia": "Catamarca",
+    "localidad": "Capital"
+  },
+  {
+    "provincia": "Catamarca",
+    "localidad": "Catamarca"
+  },
+  {
+    "provincia": "Catamarca",
+    "localidad": "Corral Quemado"
+  },
+  {
+    "provincia": "Catamarca",
+    "localidad": "El Alto"
+  },
+  {
+    "provincia": "Catamarca",
+    "localidad": "El Rodeo"
+  },
+  {
+    "provincia": "Catamarca",
+    "localidad": "F.Mamerto Esquiu"
+  },
+  {
+    "provincia": "Catamarca",
+    "localidad": "Fiambala"
+  },
+  {
+    "provincia": "Catamarca",
+    "localidad": "Hualfin"
+  },
+  {
+    "provincia": "Catamarca",
+    "localidad": "Huillapima"
+  },
+  {
+    "provincia": "Catamarca",
+    "localidad": "Icanio"
+  },
+  {
+    "provincia": "Catamarca",
+    "localidad": "La Puerta"
+  },
+  {
+    "provincia": "Catamarca",
+    "localidad": "Las Juntas"
+  },
+  {
+    "provincia": "Catamarca",
+    "localidad": "Londres"
+  },
+  {
+    "provincia": "Catamarca",
+    "localidad": "Los Altos"
+  },
+  {
+    "provincia": "Catamarca",
+    "localidad": "Los Varela"
+  },
+  {
+    "provincia": "Catamarca",
+    "localidad": "Mutquin"
+  },
+  {
+    "provincia": "Catamarca",
+    "localidad": "Paclin"
+  },
+  {
+    "provincia": "Catamarca",
+    "localidad": "Poman"
+  },
+  {
+    "provincia": "Catamarca",
+    "localidad": "Pozo de La Piedra"
+  },
+  {
+    "provincia": "Catamarca",
+    "localidad": "Puerta de Corral"
+  },
+  {
+    "provincia": "Catamarca",
+    "localidad": "Puerta San Jose"
+  },
+  {
+    "provincia": "Catamarca",
+    "localidad": "Recreo"
+  },
+  {
+    "provincia": "Catamarca",
+    "localidad": "S.F.V de Catamarca"
+  },
+  {
+    "provincia": "Catamarca",
+    "localidad": "San Fernando"
+  },
+  {
+    "provincia": "Catamarca",
+    "localidad": "San Fernando del Valle"
+  },
+  {
+    "provincia": "Catamarca",
+    "localidad": "San Jose"
+  },
+  {
+    "provincia": "Catamarca",
+    "localidad": "Santa Maria"
+  },
+  {
+    "provincia": "Catamarca",
+    "localidad": "Santa Rosa"
+  },
+  {
+    "provincia": "Catamarca",
+    "localidad": "Saujil"
+  },
+  {
+    "provincia": "Catamarca",
+    "localidad": "Tapso"
+  },
+  {
+    "provincia": "Catamarca",
+    "localidad": "Tinogasta"
+  },
+  {
+    "provincia": "Catamarca",
+    "localidad": "Valle Viejo"
+  },
+  {
+    "provincia": "Catamarca",
+    "localidad": "Villa Vil"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Abramo"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Adolfo Van Praet"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Agustoni"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Algarrobo del Aguila"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Alpachiri"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Alta Italia"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Anguil"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Arata"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Ataliva Roca"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Bernardo Larroude"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Bernasconi"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Caleufu"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Carro Quemado"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Catrilo"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Ceballos"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Chacharramendi"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Col. Baron"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Col. Santa Maria"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Conhelo"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Coronel Hilario Lagos"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Cuchillo-Co"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Doblas"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Dorila"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Eduardo Castex"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Embajador Martini"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Falucho"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Gral. Acha"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Gral. Manuel Campos"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Gral. Pico"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Guatrache"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Ing. Luiggi"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Intendente Alvear"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Jacinto Arauz"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "La Adela"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "La Humada"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "La Maruja"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "La Pampa"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "La Reforma"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Limay Mahuida"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Lonquimay"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Loventuel"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Luan Toro"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Macachin"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Maisonnave"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Mauricio Mayer"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Metileo"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Miguel Cane"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Miguel Riglos"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Monte Nievas"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Parera"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Peru"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Pichi-Huinca"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Puelches"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Puelen"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Quehue"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Quemu Quemu"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Quetrequen"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Rancul"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Realico"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Relmo"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Rolon"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Rucanelo"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Sarah"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Speluzzi"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Sta. Isabel"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Sta. Rosa"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Sta. Teresa"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Telen"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Toay"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Tomas M. de Anchorena"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Trenel"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Unanue"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Uriburu"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Veinticinco de Mayo"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Vertiz"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Victorica"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Villa Mirasol"
+  },
+  {
+    "provincia": "La Pampa",
+    "localidad": "Winifreda"
+  },
+  {
+    "provincia": "Mendoza",
+    "localidad": "Capital"
+  },
+  {
+    "provincia": "Mendoza",
+    "localidad": "Chacras de Coria"
+  },
+  {
+    "provincia": "Mendoza",
+    "localidad": "Dorrego"
+  },
+  {
+    "provincia": "Mendoza",
+    "localidad": "Gllen"
+  },
+  {
+    "provincia": "Mendoza",
+    "localidad": "Godoy Cruz"
+  },
+  {
+    "provincia": "Mendoza",
+    "localidad": "Gral. Alvear"
+  },
+  {
+    "provincia": "Mendoza",
+    "localidad": "Guaymallen"
+  },
+  {
+    "provincia": "Mendoza",
+    "localidad": "Junin"
+  },
+  {
+    "provincia": "Mendoza",
+    "localidad": "La Paz"
+  },
+  {
+    "provincia": "Mendoza",
+    "localidad": "Las Heras"
+  },
+  {
+    "provincia": "Mendoza",
+    "localidad": "Lavalle"
+  },
+  {
+    "provincia": "Mendoza",
+    "localidad": "Lujan"
+  },
+  {
+    "provincia": "Mendoza",
+    "localidad": "Lujan De Cuyo"
+  },
+  {
+    "provincia": "Mendoza",
+    "localidad": "Maipu"
+  },
+  {
+    "provincia": "Mendoza",
+    "localidad": "Malargue"
+  },
+  {
+    "provincia": "Mendoza",
+    "localidad": "Rivadavia"
+  },
+  {
+    "provincia": "Mendoza",
+    "localidad": "San Carlos"
+  },
+  {
+    "provincia": "Mendoza",
+    "localidad": "San Martin"
+  },
+  {
+    "provincia": "Mendoza",
+    "localidad": "San Rafael"
+  },
+  {
+    "provincia": "Mendoza",
+    "localidad": "Sta. Rosa"
+  },
+  {
+    "provincia": "Mendoza",
+    "localidad": "Tunuyan"
+  },
+  {
+    "provincia": "Mendoza",
+    "localidad": "Tupungato"
+  },
+  {
+    "provincia": "Mendoza",
+    "localidad": "Villa Nueva"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Alba Posse"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Almafuerte"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Apostoles"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Aristobulo Del Valle"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Arroyo Del Medio"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Azara"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Bdo. De Irigoyen"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Bonpland"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Caa Yari"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Campo Grande"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Campo Ramon"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Campo Viera"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Candelaria"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Capiovi"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Caraguatay"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Cdte. Guacurari"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Cerro Azul"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Cerro Cora"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Col. Alberdi"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Col. Aurora"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Col. Delicia"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Col. Polana"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Col. Victoria"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Col. Wanda"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Concepcion De La Sierra"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Corpus"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Dos Arroyos"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Dos de Mayo"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "El Alcazar"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "El Dorado"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "El Soberbio"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Esperanza"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "F. Ameghino"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Fachinal"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Garuhape"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Garupa"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Gdor. Lopez"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Gdor. Roca"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Gral. Alvear"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Gral. Urquiza"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Guarani"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "H. Yrigoyen"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Iguazu"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Itacaruare"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Jardin America"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Leandro N. Alem"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Libertad"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Loreto"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Los Helechos"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Martires"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Misiones"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Mojon Grande"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Montecarlo"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Nueve de Julio"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Obera"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Olegario V. Andrade"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Panambi"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Posadas"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Profundidad"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Pto. Iguazu"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Pto. Leoni"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Pto. Piray"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Pto. Rico"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Ruiz de Montoya"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "San Antonio"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "San Ignacio"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "San Javier"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "San Jose"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "San Martin"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "San Pedro"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "San Vicente"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Santiago De Liniers"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Santo Pipo"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Sta. Ana"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Sta. Maria"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Tres Capones"
+  },
+  {
+    "provincia": "Misiones",
+    "localidad": "Veinticinco de Mayo"
+  },
+  {
+    "provincia": "Formosa",
+    "localidad": "Buena Vista"
+  },
+  {
+    "provincia": "Formosa",
+    "localidad": "Clorinda"
+  },
+  {
+    "provincia": "Formosa",
+    "localidad": "Col. Pastoril"
+  },
+  {
+    "provincia": "Formosa",
+    "localidad": "Cte. Fontana"
+  },
+  {
+    "provincia": "Formosa",
+    "localidad": "El Colorado"
+  },
+  {
+    "provincia": "Formosa",
+    "localidad": "El Espinillo"
+  },
+  {
+    "provincia": "Formosa",
+    "localidad": "Estanislao Del Campo"
+  },
+  {
+    "provincia": "Formosa",
+    "localidad": "Formosa"
+  },
+  {
+    "provincia": "Formosa",
+    "localidad": "Fortin Lugones"
+  },
+  {
+    "provincia": "Formosa",
+    "localidad": "Gral. Lucio V. Mansilla"
+  },
+  {
+    "provincia": "Formosa",
+    "localidad": "Gral. Manuel Belgrano"
+  },
+  {
+    "provincia": "Formosa",
+    "localidad": "Gral. Mosconi"
+  },
+  {
+    "provincia": "Formosa",
+    "localidad": "Gran Guardia"
+  },
+  {
+    "provincia": "Formosa",
+    "localidad": "Herradura"
+  },
+  {
+    "provincia": "Formosa",
+    "localidad": "Ibarreta"
+  },
+  {
+    "provincia": "Formosa",
+    "localidad": "Ing. Juarez"
+  },
+  {
+    "provincia": "Formosa",
+    "localidad": "Laguna Blanca"
+  },
+  {
+    "provincia": "Formosa",
+    "localidad": "Laguna Naick Neck"
+  },
+  {
+    "provincia": "Formosa",
+    "localidad": "Laguna Yema"
+  },
+  {
+    "provincia": "Formosa",
+    "localidad": "Las Lomitas"
+  },
+  {
+    "provincia": "Formosa",
+    "localidad": "Los Chiriguanos"
+  },
+  {
+    "provincia": "Formosa",
+    "localidad": "Mayor V. Villafanie"
+  },
+  {
+    "provincia": "Formosa",
+    "localidad": "Mision San Fco."
+  },
+  {
+    "provincia": "Formosa",
+    "localidad": "Palo Santo"
+  },
+  {
+    "provincia": "Formosa",
+    "localidad": "Pirane"
+  },
+  {
+    "provincia": "Formosa",
+    "localidad": "Pozo del Maza"
+  },
+  {
+    "provincia": "Formosa",
+    "localidad": "Riacho He-He"
+  },
+  {
+    "provincia": "Formosa",
+    "localidad": "San Hilario"
+  },
+  {
+    "provincia": "Formosa",
+    "localidad": "San Martin II"
+  },
+  {
+    "provincia": "Formosa",
+    "localidad": "Siete Palmas"
+  },
+  {
+    "provincia": "Formosa",
+    "localidad": "Subteniente Perin"
+  },
+  {
+    "provincia": "Formosa",
+    "localidad": "Tres Lagunas"
+  },
+  {
+    "provincia": "Formosa",
+    "localidad": "Villa Dos Trece"
+  },
+  {
+    "provincia": "Formosa",
+    "localidad": "Villa Escolar"
+  },
+  {
+    "provincia": "Formosa",
+    "localidad": "Villa Gral. Guemes"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Aguada San Roque"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Alumine"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Andacollo"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Anielo"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Bajada del Agrio"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Barrancas"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Buta Ranquil"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Capital"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Caviahue"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Centenario"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Chorriaca"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Chos Malal"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Cipolletti"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Covunco Abajo"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Coyuco Cochico"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Cutral Co"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "El Cholar"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "El Huecu"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "El Sauce"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Guaniacos"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Huinganco"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Las Coloradas"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Las Lajas"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Las Ovejas"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Loncopue"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Los Catutos"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Los Chihuidos"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Los Miches"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Manzano Amargo"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Neuquen"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Octavio Pico"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Paso Aguerre"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Picun Leufu"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Piedra del Aguila"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Pilo Lil"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Plaza Huincul"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Plottier"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Quili Malal"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Ramon Castro"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Rincon de Los Sauces"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "San Martin de Los Andes"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "San Patricio del Chaniar"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Santo Tomas"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Sauzal Bonito"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Senillosa"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Taquimilan"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Tricao Malal"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Varvarco"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Villa Curi Leuvu"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Villa del Nahueve"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Villa del Puente Picun Leuvu"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Villa El Chocon"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Villa La Angostura"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Villa Pehuenia"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Villa Traful"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Vista Alegre"
+  },
+  {
+    "provincia": "Neuquén",
+    "localidad": "Zapala"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Aguada Cecilio"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Aguada de Guerra"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Allen"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Arroyo de La Ventana"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Arroyo Los Berros"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Bariloche"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Calte. Cordero"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Campo Grande"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Catriel"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Cerro Policia"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Cervantes"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Chelforo"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Chimpay"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Chinchinales"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Chipauquil"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Choele Choel"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Cinco Saltos"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Cipolletti"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Clemente Onelli"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Colan Conhue"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Comallo"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Comico"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Cona Niyeu"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Coronel Belisle"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Cubanea"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Darwin"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Dina Huapi"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "El Bolson"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "El Cain"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "El Manso"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Gral. Conesa"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Gral. Enrique Godoy"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Gral. Fernandez Oro"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Gral. Roca"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Guardia Mitre"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Ing. Huergo"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Ing. Jacobacci"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Laguna Blanca"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Lamarque"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Las Grutas"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Los Menucos"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Luis Beltran"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Mainque"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Mamuel Choique"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Maquinchao"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Mencue"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Mtro. Ramos Mexia"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Nahuel Niyeu"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Naupa Huen"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "niorquinco"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Ojos de Agua"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Paso de Agua"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Paso Flores"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Penias Blancas"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Pichi Mahuida"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Pilcaniyeu"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Pomona"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Prahuaniyeu"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Rincon Treneta"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Rio Chico"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Rio Colorado"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Roca"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "San Antonio Oeste"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "San Javier"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Sierra Colorada"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Sierra Grande"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Sierra Paileman"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Valcheta"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Valle Azul"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Viedma"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Villa Llanquin"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Villa Mascardi"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Villa Regina"
+  },
+  {
+    "provincia": "Río Negro",
+    "localidad": "Yaminue"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Aaron Castellanos"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Acebal"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Aguara Grande"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Albarellos"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Alcorta"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Aldao"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Alejandra"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "alvarez"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Ambrosetti"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Amenabar"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Angelica"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Angeloni"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Arequito"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Arminda"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Armstrong"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Arocena"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Arroyo Aguiar"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Arroyo Ceibal"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Arroyo Leyes"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Arroyo Seco"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Arrufo"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Arteaga"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Ataliva"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Aurelia"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Avellaneda"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Barrancas"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Bauer Y Sigel"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Bella Italia"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Berabevu"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Berna"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Bernardo de Irigoyen"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Bigand"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Bombal"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Bouquet"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Bustinza"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Cabal"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Cacique Ariacaiquin"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Cafferata"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Calchaqui"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Campo Andino"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Campo Piaggio"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Caniada de Gomez"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Caniada del Ucle"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Caniada Rica"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Caniada Rosquin"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Candioti"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Capital"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Capitan Bermudez"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Capivara"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Carcarania"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Carlos Pellegrini"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Carmen"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Carmen Del Sauce"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Carreras"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Carrizales"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Casalegno"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Casas"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Casilda"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Castelar"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Castellanos"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Cayasta"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Cayastacito"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Centeno"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Cepeda"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Ceres"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Chabas"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Chaniar Ladeado"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Chapuy"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Chovet"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Christophersen"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Classon"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Cnel. Arnold"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Cnel. Bogado"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Cnel. Dominguez"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Cnel. Fraga"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Col. Aldao"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Col. Ana"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Col. Belgrano"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Col. Bicha"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Col. Bigand"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Col. Bossi"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Col. Cavour"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Col. Cello"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Col. Dolores"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Col. Dos Rosas"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Col. Duran"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Col. Iturraspe"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Col. Margarita"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Col. Mascias"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Col. Raquel"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Col. Rosa"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Col. San Jose"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Constanza"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Coronda"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Correa"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Crispi"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Cululu"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Curupayti"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Desvio Arijon"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Diaz"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Diego de Alvear"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Egusquiza"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "El Araza"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "El Rabon"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "El Sombrerito"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "El Trebol"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Elisa"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Elortondo"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Emilia"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Empalme San Carlos"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Empalme Villa Constitucion"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Esmeralda"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Esperanza"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Estacion Alvear"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Estacion Clucellas"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Esteban Rams"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Esther"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Esustolia"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Eusebia"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Felicia"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Fidela"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Fighiera"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Firmat"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Florencia"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Fortin Olmos"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Franck"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Fray Luis Beltran"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Frontera"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Fuentes"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Funes"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Gaboto"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Galisteo"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Galvez"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Garabalto"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Garibaldi"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Gato Colorado"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Gdor. Crespo"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Gessler"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Godoy"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Golondrina"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Gral. Gelly"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Gral. Lagos"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Granadero Baigorria"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Gregoria Perez De Denis"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Grutly"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Guadalupe N."
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "G?deken"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Helvecia"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Hersilia"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Hipatia"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Huanqueros"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Hugentobler"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Hughes"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Humberto 1"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Humboldt"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Ibarlucea"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Ing. Chanourdie"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Intiyaco"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Ituzaingo"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Jacinto L. Arauz"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Josefina"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Juan B. Molina"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Juan de Garay"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Juncal"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "La Brava"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "La Cabral"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "La Camila"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "La Chispa"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "La Clara"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "La Criolla"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "La Gallareta"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "La Lucila"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "La Pelada"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "La Penca"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "La Rubia"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "La Sarita"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "La Vanguardia"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Labordeboy"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Laguna Paiva"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Landeta"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Lanteri"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Larrechea"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Las Avispas"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Las Bandurrias"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Las Garzas"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Las Palmeras"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Las Parejas"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Las Petacas"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Las Rosas"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Las Toscas"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Las Tunas"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Lazzarino"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Lehmann"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Llambi Campbell"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Logronio"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Loma Alta"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Lopez"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Los Amores"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Los Cardos"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Los Laureles"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Los Molinos"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Los Quirquinchos"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Lucio V. Lopez"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Luis Palacios"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Ma. Juana"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Ma. Luisa"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Ma. Susana"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Ma. Teresa"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Maciel"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Maggiolo"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Malabrigo"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Marcelino Escalada"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Margarita"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Matilde"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Maua"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Maximo Paz"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Melincue"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Miguel Torres"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Moises Ville"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Monigotes"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Monje"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Monte Obscuridad"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Monte Vera"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Montefiore"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Montes de Oca"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Murphy"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "nianducita"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Nare"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Nelson"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Nicanor E. Molinas"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Nuevo Torino"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Oliveros"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Palacios"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Pavon"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Pavon Arriba"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Pedro Gomez Cello"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Perez"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Peyrano"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Piamonte"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Pilar"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Piniero"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Plaza Clucellas"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Portugalete"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Pozo Borrado"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Progreso"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Providencia"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Pte. Roca"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Pueblo Andino"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Pueblo Esther"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Pueblo Gral. San Martin"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Pueblo Irigoyen"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Pueblo Marini"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Pueblo Munioz"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Pueblo Uranga"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Pujato"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Pujato N."
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Rafaela"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Ramayon"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Ramona"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Reconquista"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Recreo"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Ricardone"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Rivadavia"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Roldan"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Romang"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Rosario"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Rueda"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Rufino"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Sa Pereira"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Saguier"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Saladero M. Cabal"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Salto Grande"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "San Agustin"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "San Antonio de Obligado"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "San Bernardo N.J."
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "San Bernardo S.J."
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "San Carlos Centro"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "San Carlos N."
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "San Carlos S."
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "San Cristobal"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "San Eduardo"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "San Eugenio"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "San Fabian"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "San Fco. de Santa Fe"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "San Genaro"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "San Genaro N."
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "San Gregorio"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "San Guillermo"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "San Javier"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "San Jeronimo del Sauce"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "San Jeronimo N."
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "San Jeronimo S."
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "San Jorge"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "San Jose de La Esquina"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "San Jose del Rincon"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "San Justo"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "San Lorenzo"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "San Mariano"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "San Martin de Las Escobas"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "San Martin N."
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "San Vicente"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Sancti Spititu"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Sanford"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Santo Domingo"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Santo Tome"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Santurce"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Sargento Cabral"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Sarmiento"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Sastre"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Sauce Viejo"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Serodino"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Silva"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Soldini"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Soledad"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Soutomayor"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Sta. Clara de Buena Vista"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Sta. Clara de Saguier"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Sta. Isabel"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Sta. Margarita"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Sta. Maria Centro"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Sta. Maria N."
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Sta. Rosa"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Sta. Teresa"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Suardi"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Sunchales"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Susana"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Tacuarendi"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Tacural"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Tartagal"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Teodelina"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Theobald"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Timbues"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Toba"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Tortugas"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Tostado"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Totoras"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Traill"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Venado Tuerto"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Vera"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Vera y Pintado"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Videla"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Vila"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Villa Amelia"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Villa Ana"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Villa Canias"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Villa Constitucion"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Villa Eloisa"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Villa Gdor. Galvez"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Villa Guillermina"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Villa Minetti"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Villa Mugueta"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Villa Ocampo"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Villa San Jose"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Villa Saralegui"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Villa Trinidad"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Villada"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Virginia"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Wheelwright"
+  },
+  {
+    "provincia": "Santa Fe",
+    "localidad": "Zavalla"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Acheral"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Agua Dulce"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Aguilares"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Alderetes"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Alpachiri"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Alto Verde"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Amaicha del Valle"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Amberes"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Ancajuli"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Arcadia"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Atahona"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Banda del Rio Sali"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Bella Vista"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Buena Vista"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Burruyacu"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Capitan Caceres"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Cevil Redondo"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Choromoro"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Ciudacita"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Colalao del Valle"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Colombres"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Concepcion"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Delfin Gallo"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "El Bracho"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "El Cadillal"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "El Cercado"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "El Chaniar"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "El Manantial"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "El Mojon"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "El Mollar"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "El Naranjito"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "El Naranjo"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "El Polear"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "El Puestito"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "El Sacrificio"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "El Timbo"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Escaba"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Esquina"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Estacion Araoz"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Famailla"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Gastone"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Gdor. Garmendia"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Gdor. Piedrabuena"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Graneros"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Huasa Pampa"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "J. B. Alberdi"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "La Cocha"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "La Esperanza"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "La Florida"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "La Ramada"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "La Trinidad"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Lamadrid"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Las Cejas"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Las Talas"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Las Talitas"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Los Bulacio"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Los Gomez"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Los Nogales"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Los Pereyra"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Los Perez"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Los Puestos"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Los Ralos"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Los Sarmientos"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Los Sosa"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Lules"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "M. Garcia Fernandez"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Manuela Pedraza"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Medinas"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Monte Bello"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Monteagudo"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Monteros"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Padre Monti"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Pampa Mayo"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Quilmes"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Raco"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Ranchillos"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Rio Chico"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Rio Colorado"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Rio Seco"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Rumi Punco"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "San Andres"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "San Felipe"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "San Ignacio"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "San Javier"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "San Jose"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "San Miguel de Tucuman"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "San Pedro"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "San Pedro de Colalao"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Santa Rosa de Leales"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Sgto. Moya"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Siete de Abril"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Simoca"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Soldado Maldonado"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Sta. Ana"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Sta. Cruz"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Sta. Lucia"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Taco Ralo"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Tafi del Valle"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Tafi Viejo"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Tapia"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Teniente Berdina"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Trancas"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Villa Belgrano"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Villa Benjamin Araoz"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Villa Chiligasta"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Villa de Leales"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Villa Quinteros"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Yanima"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Yerba Buena"
+  },
+  {
+    "provincia": "Tucumán",
+    "localidad": "Yerba Buena S"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Aldea Apeleg"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Aldea Beleiro"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Aldea Epulef"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Alto Rio Sengerr"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Buen Pasto"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Camarones"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Carrenleufu"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Cholila"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Co. Centinela"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Colan Conhue"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Comodoro Rivadavia"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Corcovado"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Cushamen"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Dique F. Ameghino"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Dolavon"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Dr. R. Rojas"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "El Hoyo"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "El Maiten"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Epuyen"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Esquel"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Facundo"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Gaiman"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Gan Gan"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Gastre"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Gdor. Costa"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Gualjaina"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "J. de San Martin"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Lago Blanco"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Lago Puelo"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Lagunita Salada"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Las Plumas"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Los Altares"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Paso de los Indios"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Paso del Sapo"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Pto. Madryn"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Pto. Piramides"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Rada Tilly"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Rawson"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Rio Mayo"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Rio Pico"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Sarmiento"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Tecka"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Telsen"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Trelew"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Trevelin"
+  },
+  {
+    "provincia": "Chubut",
+    "localidad": "Veintiocho de Julio"
+  },
+  {
+    "provincia": "Tierra del Fuego, Antártida e Islas del Atlántico Sur",
+    "localidad": "Rio Grande"
+  },
+  {
+    "provincia": "Tierra del Fuego, Antártida e Islas del Atlántico Sur",
+    "localidad": "Tolhuin"
+  },
+  {
+    "provincia": "Tierra del Fuego, Antártida e Islas del Atlántico Sur",
+    "localidad": "Ushuaia"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Alvear"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Bella Vista"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Beron de Astrada"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Bonpland"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Caa Cati"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Capital"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Chavarria"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Col. C. Pellegrini"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Col. Libertad"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Col. Liebig"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Col. Sta Rosa"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Concepcion"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Cruz de Los Milagros"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Curuzu-Cuatia"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Empedrado"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Esquina"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Estacion Torrent"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Felipe Yofre"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Garruchos"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Gdor. Agronomo"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Gdor. Martinez"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Goya"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Guaviravi"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Herlitzka"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Ita-Ibate"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Itati"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Ituzaingo"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Jose Rafael Gomez"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Juan Pujol"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "La Cruz"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Lavalle"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Lomas de Vallejos"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Loreto"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Mariano I. Loza"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Mburucuya"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Mercedes"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Mocoreta"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Mte. Caseros"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Nueve de Julio"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Palmar Grande"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Parada Pucheta"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Paso de La Patria"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Paso de Los Libres"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Pedro R. Fernandez"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Perugorria"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Pueblo Libertador"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Ramada Paso"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Riachuelo"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Saladas"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "San Antonio"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "San Carlos"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "San Cosme"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "San Lorenzo"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "San Luis del Palmar"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "San Miguel"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "San Roque"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Santa Ana"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Santa Lucia"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Santo Tome"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Sauce"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Tabay"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Tapebicua"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Tatacua"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Virasoro"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Yapeyu"
+  },
+  {
+    "provincia": "Corrientes",
+    "localidad": "Yataiti Calle"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Achiras"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Adelia Maria"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Agua de Oro"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Alcira Gigena"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Aldea Santa Maria"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Alejandro Roca"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Alejo Ledesma"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Alicia"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Almafuerte"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Alpa Corral"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Alta Gracia"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Alto Alegre"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Alto de Los Quebrachos"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Altos de Chipion"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Amboy"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Ambul"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Ana Zumaran"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Anisacate"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Arguello"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Arias"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Arroyito"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Arroyo Algodon"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Arroyo Cabral"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Arroyo Los Patos"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Assunta"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Atahona"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Ausonia"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Avellaneda"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Ballesteros"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Ballesteros Sud"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Balnearia"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Baniado de Soto"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Bell Ville"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Bengolea"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Benjamin Gould"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Berrotaran"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Bialet Masse"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Bouwer"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Brinkmann"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Buchardo"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Bulnes"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Cabalango"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Calamuchita"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Calchin"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Calchin Oeste"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Calmayo"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Camilo Aldao"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Caminiaga"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Caniada de Luque"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Caniada de Machado"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Caniada de Rio Pinto"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Caniada del Sauce"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Canals"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Candelaria Sud"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Capilla de Remedios"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Capilla de Siton"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Capilla del Carmen"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Capilla del Monte"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Capital"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Capitan Gral B. O?Higgins"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Carnerillo"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Carrilobo"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Casa Grande"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Cavanagh"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Cerro Colorado"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Chajan"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Chalacea"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Chaniar Viejo"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Chancani"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Charbonier"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Charras"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Chazon"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Chilibroste"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Chucul"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Chunia"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Chunia Huasi"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Churqui Caniada"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Cienaga Del Coro"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Cintra"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Col. Almada"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Col. Anita"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Col. Barge"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Col. Bismark"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Col. Bremen"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Col. Caroya"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Col. Italiana"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Col. Iturraspe"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Col. Las Cuatro Esquinas"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Col. Las Pichanas"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Col. Marina"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Col. Prosperidad"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Col. San Bartolome"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Col. San Pedro"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Col. Tirolesa"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Col. Vicente Aguero"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Col. Videla"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Col. Vignaud"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Col. Waltelina"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Colazo"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Comechingones"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Conlara"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Copacabana"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Cordoba"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Coronel Baigorria"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Coronel Moldes"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Corral de Bustos"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Corralito"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Cosquin"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Costa Sacate"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Cruz Alta"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Cruz de Cania"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Cruz del Eje"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Cuesta Blanca"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Dean Funes"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Del Campillo"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Despeniaderos"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Devoto"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Diego de Rojas"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Dique Chico"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "El Araniado"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "El Brete"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "El Chacho"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "El Crispin"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "El Fortin"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "El Manzano"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "El Rastreador"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "El Rodeo"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "El Tio"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Elena"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Embalse"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Esquina"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Estacion Gral. Paz"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Estacion Juarez Celman"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Estancia de Guadalupe"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Estancia Vieja"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Etruria"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Eufrasio Loza"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Falda del Carmen"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Freyre"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Gral. Baldissera"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Gral. Cabrera"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Gral. Deheza"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Gral. Fotheringham"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Gral. Levalle"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Gral. Roca"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Guanaco Muerto"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Guasapampa"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Guatimozin"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Gutenberg"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Hernando"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Huanchillas"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Huerta Grande"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Huinca Renanco"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Idiazabal"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Impira"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Inriville"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Isla Verde"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Italo"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "James Craik"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Jesus Maria"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Jovita"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Justiniano Posse"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Km 658"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "L. V. Mansilla"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "La Batea"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "La Calera"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "La Carlota"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "La Carolina"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "La Cautiva"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "La Cesira"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "La Cruz"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "La Cumbre"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "La Cumbrecita"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "La Falda"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "La Francia"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "La Granja"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "La Higuera"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "La Laguna"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "La Paisanita"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "La Palestina"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "La Pampa"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "La Paquita"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "La Para"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "La Paz"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "La Playa"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "La Playosa"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "La Poblacion"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "La Posta"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "La Puerta"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "La Quinta"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "La Rancherita"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "La Rinconada"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "La Serranita"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "La Tordilla"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Laborde"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Laboulaye"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Laguna Larga"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Las Acequias"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Las Albahacas"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Las Arrias"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Las Bajadas"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Las Caleras"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Las Calles"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Las Caniadas"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Las Gramillas"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Las Higueras"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Las Isletillas"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Las Junturas"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Las Palmas"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Las Penias"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Las Penias Sud"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Las Perdices"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Las Playas"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Las Rabonas"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Las Saladas"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Las Tapias"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Las Varas"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Las Varillas"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Las Vertientes"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Leguizamon"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Leones"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Los Cedros"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Los Cerrillos"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Los Chaniaritos C.E"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Los Chanaritos R.S"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Los Cisnes"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Los Cocos"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Los Condores"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Los Hornillos"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Los Hoyos"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Los Mistoles"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Los Molinos"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Los Pozos"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Los Reartes"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Los Surgentes"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Los Talares"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Los Zorros"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Lozada"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Luca"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Luque"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Luyaba"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Malaguenio"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Malena"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Malvinas Argentinas"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Manfredi"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Maquinista Gallini"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Marcos Juarez"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Marull"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Matorrales"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Mattaldi"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Mayu Sumaj"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Media Naranja"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Melo"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Mendiolaza"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Mi Granja"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Mina Clavero"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Miramar"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Morrison"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Morteros"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Mte. Buey"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Mte. Cristo"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Mte. De Los Gauchos"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Mte. Lenia"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Mte. Maiz"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Mte. Ralo"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Nicolas Bruzone"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Noetinger"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Nono"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Nueva Cordoba"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Obispo Trejo"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Olaeta"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Oliva"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Olivares San Nicolas"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Onagolty"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Oncativo"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Ordoniez"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Pacheco De Melo"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Pampayasta N."
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Pampayasta S."
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Panaholma"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Pascanas"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Pasco"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Paso del Durazno"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Paso Viejo"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Pilar"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Pincen"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Piquillin"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Plaza de Mercedes"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Plaza Luxardo"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Portenia"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Potrero de Garay"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Pozo del Molle"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Pozo Nuevo"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Pueblo Italiano"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Puesto de Castro"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Punta del Agua"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Quebracho Herrado"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Quilino"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Rafael Garcia"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Ranqueles"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Rayo Cortado"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Reduccion"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Rincon"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Rio Bamba"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Rio Ceballos"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Rio Cuarto"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Rio de Los Sauces"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Rio Primero"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Rio Segundo"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Rio Tercero"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Rosales"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Rosario del Saladillo"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Sacanta"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Sagrada Familia"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Saira"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Saladillo"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Saldan"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Salsacate"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Salsipuedes"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Sampacho"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "San Agustin"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "San Antonio de Arredondo"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "San Antonio de Litin"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "San Basilio"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "San Carlos Minas"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "San Clemente"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "San Esteban"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "San Francisco"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "San Ignacio"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "San Javier"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "San Jeronimo"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "San Joaquin"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "San Jose de La Dormida"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "San Jose de Las Salinas"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "San Lorenzo"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "San Marcos Sierras"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "San Marcos Sud"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "San Pedro"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "San Pedro N."
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "San Roque"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "San Vicente"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Santa Catalina"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Santa Elena"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Santa Eufemia"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Santa Maria"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Sarmiento"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Saturnino M.Laspiur"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Sauce Arriba"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Sebastian Elcano"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Seeber"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Segunda Usina"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Serrano"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Serrezuela"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Sgo. Temple"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Silvio Pellico"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Simbolar"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Sinsacate"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Sta. Rosa de Calamuchita"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Sta. Rosa de Rio Primero"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Suco"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Tala Caniada"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Tala Huasi"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Talaini"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Tancacha"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Tanti"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Ticino"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Tinoco"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Tio Pujio"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Toledo"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Toro Pujio"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Tosno"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Tosquita"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Transito"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Tuclame"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Tutti"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Ucacha"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Unquillo"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Valle de Anisacate"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Valle Hermoso"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Velez Sarfield"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Viamonte"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Vicunia Mackenna"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa Allende"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa Amancay"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa Ascasubi"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa Candelaria N."
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa Carlos Paz"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa Cerro Azul"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa Ciudad de America"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa Ciudad Pque Los Reartes"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa Concepcion del Tio"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa Cura Brochero"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa de Las Rosas"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa de Maria"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa de Pocho"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa de Soto"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa del Dique"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa del Prado"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa del Rosario"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa del Totoral"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa Dolores"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa El Chancay"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa Elisa"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa Flor Serrana"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa Fontana"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa Giardino"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa Gral. Belgrano"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa Gutierrez"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa Huidobro"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa La Bolsa"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa Los Aromos"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa Los Patos"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa Maria"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa Nueva"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa Pque. Santa Ana"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa Pque. Siquiman"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa Quillinzo"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa Rossi"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa Rumipal"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa San Esteban"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa San Isidro"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa Santa Cruz"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa Sarmiento G.R"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa Sarmiento S.A"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa Tulumba"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa Valeria"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Villa Yacanto"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Washington"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Wenceslao Escalante"
+  },
+  {
+    "provincia": "Córdoba",
+    "localidad": "Ycho Cruz Sierras"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Abdon Castro Tolay"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Abra Pampa"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Abralaite"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Aguas Calientes"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Arrayanal"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Barrios"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Caimancito"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Calilegua"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Cangrejillos"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Caspala"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Catua"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Cieneguillas"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Coranzulli"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Cusi-Cusi"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "El Aguilar"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "El Carmen"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "El Condor"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "El Fuerte"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "El Piquete"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "El Talar"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Fraile Pintado"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Hipolito Yrigoyen"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Huacalera"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Humahuaca"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "La Esperanza"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "La Mendieta"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "La Quiaca"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Ledesma"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Libertador Gral. San Martin"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Maimara"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Mina Pirquitas"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Monterrico"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Palma Sola"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Palpala"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Pampa Blanca"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Pampichuela"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Perico"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Puesto del Marques"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Puesto Viejo"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Pumahuasi"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Purmamarca"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Rinconada"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Rodeitos"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Rosario de Rio Grande"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "San Antonio"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "San Francisco"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "San Pedro"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "San Rafael"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "San Salvador"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Santa Ana"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Santa Catalina"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Santa Clara"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Susques"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Tilcara"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Tres Cruces"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Tumbaya"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Valle Grande"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Vinalito"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Volcan"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Yala"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Yavi"
+  },
+  {
+    "provincia": "Jujuy",
+    "localidad": "Yuto"
+  },
+  {
+    "provincia": "Santa Cruz",
+    "localidad": "Calafate"
+  },
+  {
+    "provincia": "Santa Cruz",
+    "localidad": "Caleta Olivia"
+  },
+  {
+    "provincia": "Santa Cruz",
+    "localidad": "Caniadon Seco"
+  },
+  {
+    "provincia": "Santa Cruz",
+    "localidad": "Comandante Piedrabuena"
+  },
+  {
+    "provincia": "Santa Cruz",
+    "localidad": "El Calafate"
+  },
+  {
+    "provincia": "Santa Cruz",
+    "localidad": "El Chalten"
+  },
+  {
+    "provincia": "Santa Cruz",
+    "localidad": "Gdor. Gregores"
+  },
+  {
+    "provincia": "Santa Cruz",
+    "localidad": "Hipolito Yrigoyen"
+  },
+  {
+    "provincia": "Santa Cruz",
+    "localidad": "Jaramillo"
+  },
+  {
+    "provincia": "Santa Cruz",
+    "localidad": "Koluel Kaike"
+  },
+  {
+    "provincia": "Santa Cruz",
+    "localidad": "Las Heras"
+  },
+  {
+    "provincia": "Santa Cruz",
+    "localidad": "Los Antiguos"
+  },
+  {
+    "provincia": "Santa Cruz",
+    "localidad": "Perito Moreno"
+  },
+  {
+    "provincia": "Santa Cruz",
+    "localidad": "Pico Truncado"
+  },
+  {
+    "provincia": "Santa Cruz",
+    "localidad": "Pto. Deseado"
+  },
+  {
+    "provincia": "Santa Cruz",
+    "localidad": "Pto. San Julian"
+  },
+  {
+    "provincia": "Santa Cruz",
+    "localidad": "Pto. Santa Cruz"
+  },
+  {
+    "provincia": "Santa Cruz",
+    "localidad": "Rio Cuarto"
+  },
+  {
+    "provincia": "Santa Cruz",
+    "localidad": "Rio Gallegos"
+  },
+  {
+    "provincia": "Santa Cruz",
+    "localidad": "Rio Turbio"
+  },
+  {
+    "provincia": "Santa Cruz",
+    "localidad": "Tres Lagos"
+  },
+  {
+    "provincia": "Santa Cruz",
+    "localidad": "Veintiocho De Noviembre"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Agronomia"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Almagro"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Balvanera"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Barracas"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Belgrano"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Boca"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Boedo"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Caballito"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Chacarita"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Coghlan"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Colegiales"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Constitucion"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Flores"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Floresta"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "La Paternal"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Liniers"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Mataderos"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Monserrat"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Monte Castro"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Nueva Pompeya"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Nuniez"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Palermo"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Parque Avellaneda"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Parque Chacabuco"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Parque Chas"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Parque Patricios"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Puerto Madero"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Recoleta"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Retiro"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Saavedra"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "San Cristobal"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "San Nicolas"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "San Telmo"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Velez Sarsfield"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Versalles"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Villa Crespo"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Villa del Parque"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Villa Devoto"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Villa Gral. Mitre"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Villa Lugano"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Villa Luro"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Villa Ortuzar"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Villa Pueyrredon"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Villa Real"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Villa Riachuelo"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Villa Santa Rita"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Villa Soldati"
+  },
+  {
+    "provincia": "Capital Federal",
+    "localidad": "Villa Urquiza"
+  }
+]

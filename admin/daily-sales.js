@@ -1,8 +1,16 @@
 // daily-sales.js - Gestión de ventas diarias
+// Zona horaria: America/Argentina/Buenos_Aires (alineado con Supabase/triggers)
+
+const TIMEZONE_BUENOS_AIRES = 'America/Argentina/Buenos_Aires';
+
+/** Devuelve la fecha de hoy en formato YYYY-MM-DD según hora de Buenos Aires (no UTC). */
+function getTodayBuenosAires() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: TIMEZONE_BUENOS_AIRES });
+}
 
 let supabase = null;
 let currentAdminUser = null;
-let currentDate = new Date().toISOString().split('T')[0];
+let currentDate = getTodayBuenosAires();
 let currentFilter = 'all';
 let sales = [];
 
@@ -133,14 +141,15 @@ async function initDailySales() {
   }
 }
 
-// Configurar selector de fecha
+// Configurar selector de fecha (todo en hora Buenos Aires)
 function setupDateSelector() {
   const dateInput = document.getElementById("sale-date");
   if (!dateInput) return;
   
-  // Establecer fecha actual por defecto
+  const todayBA = getTodayBuenosAires();
+  currentDate = todayBA;
   dateInput.value = currentDate;
-  dateInput.max = currentDate; // No permitir fechas futuras
+  dateInput.max = todayBA; // No permitir fechas futuras (según Buenos Aires)
   
   dateInput.addEventListener("change", async (e) => {
     currentDate = e.target.value;
@@ -203,6 +212,19 @@ async function loadSales() {
   }
   if (!supabase) {
     console.error("❌ Supabase no disponible en loadSales");
+    const container = document.getElementById("sales-content");
+    if (container) {
+      container.innerHTML = `<div class="empty-state">
+        <h2>Error de conexión</h2>
+        <p>No se pudo conectar con Supabase. Por favor, verifica:</p>
+        <ul style="text-align: left; display: inline-block; margin-top: 8px;">
+          <li>Tu conexión a internet</li>
+          <li>Que config.local.js esté configurado correctamente</li>
+          <li>Recarga la página</li>
+        </ul>
+      </div>`;
+    }
+    showMessage("Error: No se pudo conectar con la base de datos. Verifica tu conexión y recarga la página.", "error");
     return;
   }
 
@@ -220,21 +242,32 @@ async function loadSales() {
 
     if (error) {
       console.error("❌ Error cargando ventas:", error);
-      showMessage("Error al cargar las ventas. Por favor, intenta de nuevo.", "error");
+      console.error("   Detalles:", JSON.stringify(error, null, 2));
+      showMessage(`Error al cargar las ventas: ${error.message || 'Error desconocido'}. Por favor, intenta de nuevo.`, "error");
       if (container) {
-        container.innerHTML = '<div class="empty-state"><p>Error al cargar las ventas</p></div>';
+        container.innerHTML = `<div class="empty-state">
+          <h2>Error al cargar las ventas</h2>
+          <p>${error.message || 'Error desconocido'}</p>
+          <p style="font-size: 12px; color: #666; margin-top: 8px;">Si el problema persiste, verifica la conexión a internet y recarga la página.</p>
+        </div>`;
       }
       return;
     }
 
     sales = data || [];
+    console.log(`✅ Ventas cargadas para ${currentDate}:`, sales.length, "registros");
     displaySales();
     updateSummary();
   } catch (error) {
     console.error("❌ Error en loadSales:", error);
-    showMessage("Error al cargar las ventas.", "error");
+    console.error("   Stack:", error.stack);
+    showMessage(`Error al cargar las ventas: ${error.message || 'Error desconocido'}.`, "error");
     if (container) {
-      container.innerHTML = '<div class="empty-state"><p>Error al cargar las ventas</p></div>';
+      container.innerHTML = `<div class="empty-state">
+        <h2>Error al cargar las ventas</h2>
+        <p>${error.message || 'Error desconocido'}</p>
+        <p style="font-size: 12px; color: #666; margin-top: 8px;">Verifica la consola para más detalles.</p>
+      </div>`;
     }
   }
 }
@@ -275,7 +308,7 @@ function displaySales() {
       <tbody>
         ${filteredSales.map(sale => `
           <tr>
-            <td>${formatTime(sale.sale_time)}</td>
+            <td>${formatTime(sale.sale_time, sale.sale_date)}</td>
             <td><span class="sale-type-badge sale-type-${sale.sale_type}">${sale.sale_type === 'local' ? 'Local' : 'Envíos'}</span></td>
             <td>${escapeHtml(sale.customer_name)}</td>
             <td>${sale.product_quantity}</td>
@@ -481,11 +514,15 @@ function formatCurrency(value) {
   return `$${amount.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-// Formatear hora
-function formatTime(time) {
+// Formatear hora almacenada en daily_sales (sale_time) que ya está en hora Buenos Aires (time sin zona)
+function formatTime(time, saleDate) {
   if (!time) return "";
-  // time viene como "HH:MM:SS" o "HH:MM"
-  return time.substring(0, 5);
+  const timeStr = typeof time === "string" ? time.trim() : String(time);
+  let hhmmss = timeStr.substring(0, 8);
+  if (hhmmss.length === 5) hhmmss += ":00";
+  if (hhmmss.length < 8) hhmmss = "00:00:00";
+  // Devolvemos HH:MM directamente, evitando una segunda conversión de zona horaria
+  return hhmmss.substring(0, 5);
 }
 
 // Escapar HTML

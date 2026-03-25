@@ -1,0 +1,2 @@
+[functions.qz-sign]
+verify_jwt = false

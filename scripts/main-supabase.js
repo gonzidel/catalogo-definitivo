@@ -8,7 +8,8 @@ import {
   USE_OPEN_SHEET_FALLBACK as CONFIG_USE_OPEN_SHEET_FALLBACK,
   configReady,
 } from "./config.js";
-import { supabase as supabaseClient } from "./supabase-client.js";
+import { supabase as supabaseClient } from "./supabase-client.js?v=m250324";
+import { normalizeSize } from "./utils/size-normalizer.js";
 
 await configReady;
 
@@ -37,6 +38,38 @@ let modalEventsInitialized = false;
 let gridEventsInitialized = false;
 let escInit = false;
 let ultimoTabSlug = null; // Para trackear cambios de tab en popstate
+let productosActualesMap = new Map(); // Articulo -> producto (para Bottom Sheet)
+// Variables para paginación incremental
+let productosPendientes = []; // Array de productos pendientes de renderizar
+let productosRenderizados = 0; // Cantidad de productos ya renderizados
+let offersCardsPendientes = []; // Ofertas pendientes de renderizar
+let isLoadingMore = false; // Flag para evitar múltiples cargas simultáneas
+const PRODUCTOS_INICIALES = 20; // Cantidad de productos en la primera carga
+const PRODUCTOS_POR_PAGINA = 14; // Cantidad de productos a cargar por página con el botón
+
+/** Oculta el overlay de arranque (index2) y restaura scroll del body. */
+function hideCatalogBootOverlay() {
+  const el = document.getElementById("catalog-boot-overlay");
+  if (el) {
+    el.classList.add("catalog-boot-overlay--hidden");
+    el.setAttribute("aria-busy", "false");
+    el.setAttribute("aria-hidden", "true");
+    // Android/WebView: visibility/opacity a veces dejan la capa o el scroll bloqueado
+    el.style.display = "none";
+  }
+  document.body.classList.remove("catalog-boot-active");
+  window.dispatchEvent(new CustomEvent("fyl-catalog-boot-done"));
+}
+
+/** Evita que consultas Supabase queden colgadas sin tope (red lenta / Android). */
+function fylAwaitWithTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error(`fyl_timeout:${label}`)), ms);
+    }),
+  ]);
+}
 
 // Constantes para slugs de categorías
 const TAB_SLUGS = {
@@ -74,15 +107,124 @@ function cloudinaryOptimized(url, w) {
   return url.replace("/upload/", `/upload/f_auto,q_auto,c_scale,w_${w}/`);
 }
 
+// Helpers para imágenes: generan URL optimizada desde public_id si existe, sino usan url
+const CLOUDINARY_CLOUD_NAME_SUPABASE = "dnuedzuzm";
+
+/**
+ * Genera URL optimizada de Cloudinary desde public_id
+ * @param {string} public_id - public_id de Cloudinary (sin extensión)
+ * @param {number} width - Ancho deseado en px
+ * @returns {string} URL optimizada
+ */
+function cloudinaryOptimizedFromPublicId(public_id, width) {
+  if (!public_id) return "";
+  return `https://res.cloudinary.com/${CLOUDINARY_CLOUD_NAME_SUPABASE}/image/upload/f_auto,q_auto,c_scale,w_${width}/${public_id}`;
+}
+
+/**
+ * Obtiene URL de thumbnail (200px) desde objeto imagen
+ * @param {Object|string} img - Objeto con public_id y/o url/secure_url, o string URL
+ * @returns {string} URL optimizada
+ */
+function getImgThumb(img) {
+  if (!img) return "";
+  // Si es string (legacy), usar directamente con cloudinaryOptimized
+  if (typeof img === "string") {
+    return cloudinaryOptimized(img, 200);
+  }
+  // Si es objeto con public_id, usar desde public_id
+  if (img.public_id) {
+    return cloudinaryOptimizedFromPublicId(img.public_id, 200);
+  }
+  // Fallback a url (legacy) - aplicar transformación si es URL de Cloudinary
+  const url = img.url || img.secure_url || "";
+  if (!url) return "";
+  return cloudinaryOptimized(url, 200);
+}
+
+/**
+ * Obtiene URL de imagen completa (800px) desde objeto imagen
+ * @param {Object|string} img - Objeto con public_id y/o url/secure_url, o string URL
+ * @returns {string} URL optimizada
+ */
+function getImgFull(img) {
+  if (!img) return "";
+  // Si es string (legacy), usar directamente con cloudinaryOptimized
+  if (typeof img === "string") {
+    return cloudinaryOptimized(img, 800);
+  }
+  // Si es objeto con public_id, usar desde public_id
+  if (img.public_id) {
+    return cloudinaryOptimizedFromPublicId(img.public_id, 800);
+  }
+  // Fallback a url (legacy) - aplicar transformación si es URL de Cloudinary
+  const url = img.url || img.secure_url || "";
+  if (!url) return "";
+  return cloudinaryOptimized(url, 800);
+}
+
+/** Resuelve URL de imagen (string o objeto con public_id) para cualquier ancho */
+function getImgUrl(img, width) {
+  if (!img) return "";
+  if (typeof img === "string") return cloudinaryOptimized(img, width);
+  if (img.public_id) return cloudinaryOptimizedFromPublicId(img.public_id, width);
+  const url = img.url || img.secure_url || "";
+  return url ? cloudinaryOptimized(url, width) : "";
+}
+
+/**
+ * Lista ordenada de URLs de imagen para una card: principal primero, luego el resto (para fallback si la principal falla).
+ * @param {Object} producto - producto con VariantePrincipal y DetalleColor[].images
+ * @param {number} width - ancho para Cloudinary (ej. 800)
+ * @returns {string[]} URLs únicas, sin vacías
+ */
+function getMainImageFallbackUrls(producto, width = 800) {
+  const seen = new Set();
+  const urls = [];
+  const add = (img) => {
+    const url = getImgUrl(img, width);
+    if (url && !seen.has(url)) {
+      seen.add(url);
+      urls.push(url);
+    }
+  };
+  add(producto.VariantePrincipal);
+  (producto.DetalleColor || []).forEach((d) => (d.images || []).forEach(add));
+  return urls;
+}
+
+/** Si la imagen principal falla, intenta la siguiente URL de data-fallback-urls (JSON array). */
+function mainImageFallback(imgEl) {
+  const raw = imgEl.getAttribute("data-fallback-urls");
+  if (!raw) return;
+  try {
+    const urls = JSON.parse(raw);
+    if (urls.length) {
+      imgEl.src = urls.shift();
+      imgEl.setAttribute("data-fallback-urls", JSON.stringify(urls));
+    }
+  } catch (_) {}
+}
+
 // Inicializar Supabase
 async function inicializarSupabase() {
+  const setFail = (code, hint) => {
+    if (typeof globalThis !== "undefined") {
+      globalThis.__FYL_SUPABASE_INIT_FAIL__ = { code, hint: hint || "", t: Date.now() };
+    }
+    return false;
+  };
   try {
+    if (typeof globalThis !== "undefined") {
+      delete globalThis.__FYL_SUPABASE_INIT_FAIL__;
+    }
+
     // Verificar configuración
     if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
       console.error(
-        "❌ Configuración de Supabase no encontrada. Verifica config.js o config.local.js"
+        "❌ Configuración de Supabase no encontrada. En producción: /config.prod.js y deploy; en local: scripts/config.local.js"
       );
-      return false;
+      return setFail("missing_config", "Faltan SUPABASE_URL o SUPABASE_ANON_KEY.");
     }
 
     console.log("🔧 Configuración Supabase cargada:", {
@@ -94,8 +236,13 @@ async function inicializarSupabase() {
 
     // Usar SOLO el cliente importado de supabase-client.js (evitar crear múltiples instancias)
     if (!supabase || !supabase.from) {
-      console.error("❌ Cliente de Supabase no disponible. Verifica que supabase-client.js se cargue correctamente.");
-      return false;
+      console.error(
+        "❌ Cliente de Supabase no disponible (p. ej. Safari bloqueó la carga del script o falló la red). Revisá [FYL supabase] en consola."
+      );
+      return setFail(
+        "no_client",
+        "El navegador no pudo cargar la librería de Supabase. Probá recargar, otra red Wi‑Fi/datos, o ventana privada."
+      );
     }
     
     // Asegurar que el cliente esté disponible globalmente
@@ -105,11 +252,28 @@ async function inicializarSupabase() {
     }
     console.log("✅ Cliente de Supabase disponible (usando instancia única de supabase-client.js)");
 
-    // Verificar que el cliente funciona haciendo una consulta de prueba
-    const { data: testData, error: testError } = await supabase
-      .from("catalog_public_view")
-      .select("count", { count: "exact", head: true })
-      .limit(1);
+    // Red móvil real + CPU lenta: 22s generaba falsos timeout con internet “bien”.
+    const PROBE_MS = 60000;
+    let testError;
+    try {
+      const res = await fylAwaitWithTimeout(
+        supabase
+          .from("catalog_public_view")
+          // Evitar count exact (caro en vistas grandes): solo validar que responde.
+          .select("Articulo", { head: true })
+          .limit(1),
+        PROBE_MS,
+        "init_head_probe"
+      );
+      testError = res.error;
+    } catch (e) {
+      const msg = String(e?.message || e);
+      testError = {
+        message:
+          msg.includes("fyl_timeout:") ? "Sin respuesta a tiempo (revisá la red)." : msg,
+        code: "TIMEOUT",
+      };
+    }
 
     if (testError) {
       console.error("❌ Error verificando conexión a Supabase:", testError);
@@ -118,15 +282,24 @@ async function inicializarSupabase() {
         details: testError.details,
         hint: testError.hint,
       });
-      return false;
+      return setFail(
+        "view_probe_failed",
+        testError.message ? String(testError.message).slice(0, 180) : "Error al consultar el catálogo."
+      );
     }
 
     console.log("✅ Supabase inicializado y verificado correctamente");
+    if (typeof globalThis !== "undefined") {
+      delete globalThis.__FYL_SUPABASE_INIT_FAIL__;
+    }
     return true;
   } catch (error) {
     console.error("❌ Error inicializando Supabase:", error);
     console.error("Stack:", error.stack);
-    return false;
+    return setFail(
+      "exception",
+      error?.message ? String(error.message).slice(0, 180) : String(error)
+    );
   }
 }
 
@@ -201,8 +374,175 @@ async function cargarDesdeSupabase(cat) {
         console.log(`🔥 Productos en ofertas: ${items.length}`);
       }
 
+      if (cat === "all") {
+        // Filtrar por Mostrar también para "all"
+        items = items.filter((i) => {
+          const mostrar = i.Mostrar;
+          return mostrar === "TRUE" || mostrar === true || mostrar === "true" || mostrar === 1;
+        });
+        console.log(`📦 Productos en "all" (filtrados por Mostrar): ${items.length}`);
+      }
+
       return items;
     } else {
+      // Caso especial: "Lenceria" y otros tags de "Otros" deben mostrar productos de "Otros" con Filtro1 correspondiente
+      // Primero, verificar si es un tag de "Otros" obteniendo todos los tags únicos
+      let isOtrosTag = false;
+      let tagValue = null;
+      
+      if (cat === "Lenceria") {
+        isOtrosTag = true;
+        tagValue = "lenceria";
+      } else {
+        // Verificar si la categoría corresponde a un tag de "Otros"
+        // Obtener todos los tags únicos de "Otros" (Filtro1, Filtro2, Filtro3)
+        try {
+          const { data: otrosTags, error: tagsError } = await supabase
+            .from("catalog_public_view")
+            .select("Filtro1, Filtro2, Filtro3")
+            .eq("Categoria", "Otros");
+          
+          if (!tagsError && otrosTags && otrosTags.length > 0) {
+            // Recolectar todos los tags únicos de todos los filtros
+            const allTags = new Set();
+            otrosTags.forEach(item => {
+              if (item.Filtro1) allTags.add(item.Filtro1.trim().toLowerCase());
+              if (item.Filtro2) allTags.add(item.Filtro2.trim().toLowerCase());
+              if (item.Filtro3) {
+                item.Filtro3.split(',').forEach(tag => {
+                  const trimmedTag = tag.trim().toLowerCase();
+                  if (trimmedTag) allTags.add(trimmedTag);
+                });
+              }
+            });
+            
+            const uniqueTags = Array.from(allTags);
+            console.log(`🔍 Tags únicos encontrados en "Otros":`, uniqueTags);
+            
+            // Verificar si la categoría coincide con algún tag (case-insensitive)
+            const catLower = cat.toLowerCase();
+            const matchingTag = uniqueTags.find(tag => 
+              tag === catLower || 
+              tag.replace(/\s+/g, '-') === catLower ||
+              tag.replace(/\s+/g, '') === catLower
+            );
+            
+            if (matchingTag) {
+              isOtrosTag = true;
+              tagValue = matchingTag;
+              console.log(`📋 Detectado tag de "Otros": "${cat}" -> "${tagValue}"`);
+            } else {
+              console.log(`⚠️ Tag "${cat}" no encontrado en tags de "Otros"`);
+            }
+          }
+        } catch (error) {
+          console.warn("⚠️ Error verificando tags de Otros:", error);
+        }
+      }
+      
+      if (isOtrosTag && tagValue) {
+        console.log(`📦 Filtrando por tag "${tagValue}" en TODAS las categorías`);
+        
+        // Obtener TODOS los productos (no limitar a "Otros")
+        const { data: todosProductos, error: errorProductos } = await query;
+        
+        if (errorProductos) {
+          console.error("❌ Error en consulta de productos:", errorProductos);
+          console.error("Detalles del error:", {
+            message: errorProductos.message,
+            details: errorProductos.details,
+            hint: errorProductos.hint
+          });
+          throw errorProductos;
+        }
+
+        console.log(`📊 Registros obtenidos (todas las categorías): ${todosProductos?.length || 0}`);
+        
+        // Filtrar en memoria para usar búsqueda más flexible (como en custom-banner.js)
+        const tagValueNormalized = tagValue.toLowerCase().trim();
+        console.log(`🔍 Buscando productos con tag normalizado: "${tagValueNormalized}"`);
+        
+        // Primero, ver TODOS los productos y sus tags
+        if (todosProductos && todosProductos.length > 0) {
+          const ejemplos = todosProductos.slice(0, 5);
+          console.log(`📋 Ejemplos de productos (primeros 5):`, ejemplos.map(p => ({
+            Articulo: p.Articulo,
+            Categoria: p.Categoria,
+            Filtro1: p.Filtro1,
+            Filtro2: p.Filtro2,
+            Filtro3: p.Filtro3
+          })));
+        }
+        
+        const dataFiltrada = (todosProductos || []).filter((i) => {
+          // Normalizar tags para comparación
+          const filtro1 = (i.Filtro1 || '').toLowerCase().trim();
+          const filtro2 = (i.Filtro2 || '').toLowerCase().trim();
+          const filtro3Tags = (i.Filtro3 || '')
+            .split(',')
+            .map(tag => tag.trim().toLowerCase())
+            .filter(tag => tag.length > 0);
+          
+          // Buscar coincidencia en cualquiera de los filtros
+          const match = filtro1.includes(tagValueNormalized) ||
+                        filtro2.includes(tagValueNormalized) ||
+                        filtro3Tags.some(tag => tag.includes(tagValueNormalized));
+          
+          if (match) {
+            console.log(`✓ INCLUIDO: ${i.Articulo} - F1:"${i.Filtro1}" F2:"${i.Filtro2}" F3:"${i.Filtro3}"`);
+          }
+          
+          return match;
+        });
+        
+        console.log(`📋 Registros filtrados por tag "${tagValue}": ${dataFiltrada.length} de ${todosProductos?.length || 0}`);
+        
+        // Mostrar algunos productos que NO coincidieron (para debug)
+        const noCoincidieron = (todosProductos || []).filter((i) => {
+          const filtro1 = (i.Filtro1 || '').toLowerCase().trim();
+          const filtro2 = (i.Filtro2 || '').toLowerCase().trim();
+          const filtro3Tags = (i.Filtro3 || '')
+            .split(',')
+            .map(tag => tag.trim().toLowerCase())
+            .filter(tag => tag.length > 0);
+          
+          return !(filtro1.includes(tagValueNormalized) ||
+                   filtro2.includes(tagValueNormalized) ||
+                   filtro3Tags.some(tag => tag.includes(tagValueNormalized)));
+        });
+        
+        if (noCoincidieron.length > 0) {
+          console.log(`❌ Productos excluidos (primeros 10):`, noCoincidieron.slice(0, 10).map(p => ({
+            Articulo: p.Articulo,
+            Filtro1: p.Filtro1,
+            Filtro2: p.Filtro2,
+            Filtro3: p.Filtro3
+          })));
+        }
+        
+        // La vista devuelve Mostrar como booleano true, no como string "TRUE"
+        // Aceptar ambos: true (booleano) y "TRUE" (string)
+        const filtered = dataFiltrada.filter((i) => {
+          const mostrar = i.Mostrar;
+          return mostrar === "TRUE" || mostrar === true || mostrar === "true" || mostrar === 1;
+        });
+        console.log(`✅ Registros después de filtrar Mostrar: ${filtered.length}`);
+        
+        if (filtered.length === 0 && dataFiltrada.length > 0) {
+          console.warn(`⚠️ Hay ${dataFiltrada.length} registros pero ninguno pasa el filtro de Mostrar`);
+          console.warn(`📋 Primeros registros (mostrando valor de Mostrar):`, dataFiltrada.slice(0, 3).map(r => ({
+            Articulo: r.Articulo,
+            Mostrar: r.Mostrar,
+            MostrarType: typeof r.Mostrar,
+            Categoria: r.Categoria,
+            Filtro1: r.Filtro1
+          })));
+          console.warn(`💡 La vista devuelve Mostrar como: ${typeof dataFiltrada[0]?.Mostrar} (valor: ${dataFiltrada[0]?.Mostrar})`);
+        }
+        
+        return filtered;
+      }
+      
       // Para categorías normales, filtrar por categoría
       console.log(`📦 Filtrando por categoría: "${cat}"`);
       const { data, error } = await query.eq("Categoria", cat);
@@ -298,15 +638,211 @@ async function cargarDesdeGoogleSheets(cat) {
   }
 }
 
+// Función para intercalar productos según el patrón especificado
+function intercalarProductosPorCategoria(productos) {
+  // Separar productos por categoría y filtro, y ordenarlos por fecha (más nuevos primero)
+  const calzado = productos
+    .filter(p => (p.Categoria || "").trim().toLowerCase() === "calzado")
+    .sort((a, b) => {
+      const fechaA = parseFecha(a.FechaIngreso);
+      const fechaB = parseFecha(b.FechaIngreso);
+      return fechaB - fechaA; // Más reciente primero
+    });
+  
+  const ropa = productos
+    .filter(p => (p.Categoria || "").trim().toLowerCase() === "ropa")
+    .sort((a, b) => {
+      const fechaA = parseFecha(a.FechaIngreso);
+      const fechaB = parseFecha(b.FechaIngreso);
+      return fechaB - fechaA; // Más reciente primero
+    });
+  
+  const otrosMarroquineria = productos
+    .filter(p => 
+      (p.Categoria || "").trim().toLowerCase() === "otros" && 
+      (p.Filtro1 || "").trim().toLowerCase() === "marroquineria"
+    )
+    .sort((a, b) => {
+      const fechaA = parseFecha(a.FechaIngreso);
+      const fechaB = parseFecha(b.FechaIngreso);
+      return fechaB - fechaA; // Más reciente primero
+    });
+  
+  const otrosLenceria = productos
+    .filter(p => 
+      (p.Categoria || "").trim().toLowerCase() === "otros" && 
+      (p.Filtro1 || "").trim().toLowerCase() === "lenceria"
+    )
+    .sort((a, b) => {
+      const fechaA = parseFecha(a.FechaIngreso);
+      const fechaB = parseFecha(b.FechaIngreso);
+      return fechaB - fechaA; // Más reciente primero
+    });
+  
+  // Índices para rastrear qué productos ya se han usado
+  let idxCalzado = 0;
+  let idxRopa = 0;
+  let idxOtrosMarroquineria = 0;
+  let idxOtrosLenceria = 0;
+  
+  const resultado = [];
+  let patronCompleto = 0; // Contador para rastrear cuántas veces se ha completado el patrón
+  
+  // Función helper para obtener los siguientes N productos de un array
+  const obtenerSiguientes = (array, indice, cantidad) => {
+    const productos = [];
+    for (let i = 0; i < cantidad && indice + i < array.length; i++) {
+      productos.push(array[indice + i]);
+    }
+    return { productos, nuevoIndice: indice + productos.length };
+  };
+  
+  // Continuar hasta que no haya más productos en ninguna categoría
+  while (idxCalzado < calzado.length || 
+         idxRopa < ropa.length || 
+         idxOtrosMarroquineria < otrosMarroquineria.length || 
+         idxOtrosLenceria < otrosLenceria.length) {
+    
+    // Patrón: 3 Calzado, 2 Ropa, 3 Calzado, 2 Otros(Marroquineria), 2 Calzado, 2 Otros(Lenceria)
+    
+    // 1. 3 Calzado
+    if (idxCalzado < calzado.length) {
+      const { productos: productosCalzado, nuevoIndice } = obtenerSiguientes(calzado, idxCalzado, 3);
+      resultado.push(...productosCalzado);
+      idxCalzado = nuevoIndice;
+    }
+    
+    // 2. 2 Ropa
+    if (idxRopa < ropa.length) {
+      const { productos: productosRopa, nuevoIndice } = obtenerSiguientes(ropa, idxRopa, 2);
+      resultado.push(...productosRopa);
+      idxRopa = nuevoIndice;
+    }
+    
+    // 3. 3 Calzado
+    if (idxCalzado < calzado.length) {
+      const { productos: productosCalzado, nuevoIndice } = obtenerSiguientes(calzado, idxCalzado, 3);
+      resultado.push(...productosCalzado);
+      idxCalzado = nuevoIndice;
+    }
+    
+    // 4. 2 Otros(Marroquineria)
+    if (idxOtrosMarroquineria < otrosMarroquineria.length) {
+      const { productos: productosOtrosMarroquineria, nuevoIndice } = obtenerSiguientes(otrosMarroquineria, idxOtrosMarroquineria, 2);
+      resultado.push(...productosOtrosMarroquineria);
+      idxOtrosMarroquineria = nuevoIndice;
+    }
+    
+    // 5. 2 Calzado
+    if (idxCalzado < calzado.length) {
+      const { productos: productosCalzado, nuevoIndice } = obtenerSiguientes(calzado, idxCalzado, 2);
+      resultado.push(...productosCalzado);
+      idxCalzado = nuevoIndice;
+    }
+    
+    // 6. 2 Otros(Lenceria)
+    if (idxOtrosLenceria < otrosLenceria.length) {
+      const { productos: productosOtrosLenceria, nuevoIndice } = obtenerSiguientes(otrosLenceria, idxOtrosLenceria, 2);
+      resultado.push(...productosOtrosLenceria);
+      idxOtrosLenceria = nuevoIndice;
+    }
+    
+    patronCompleto++;
+    
+    // Si no se agregó ningún producto en este ciclo, salir para evitar loop infinito
+    const longitudAntes = resultado.length;
+    // Verificar si algún producto se agregó en este ciclo
+    if (idxCalzado >= calzado.length && 
+        idxRopa >= ropa.length && 
+        idxOtrosMarroquineria >= otrosMarroquineria.length && 
+        idxOtrosLenceria >= otrosLenceria.length) {
+      break;
+    }
+  }
+  
+  console.log(`🔄 Productos intercalados: ${resultado.length} productos siguiendo el patrón`);
+  console.log(`📊 Distribución: Calzado=${idxCalzado}, Ropa=${idxRopa}, Otros(Marroquineria)=${idxOtrosMarroquineria}, Otros(Lenceria)=${idxOtrosLenceria}`);
+  
+  return resultado;
+}
+
+/** Agrupar filas crudas (variantes) en productos por Articulo. Reutilizable por cargarCategoria y ensureAllCacheLoadedGrouped. */
+function agruparProductos(rows) {
+  if (!rows || rows.length === 0) return [];
+  const grupos = rows.reduce((acc, i) => {
+    const art = i.Articulo?.trim();
+    if (!art) return acc;
+    if (!acc[art]) {
+      acc[art] = {
+        Articulo: art,
+        Descripcion: i.Descripcion || "",
+        Precio: i.Precio || "",
+        VariantePrincipal: i["Imagen Principal"],
+        Oferta: i.Oferta || "",
+        FechaIngreso: i.FechaIngreso || "",
+        Categoria: i.Categoria || "",
+        Filtro1: i.Filtro1 || "",
+        Filtro2: i.Filtro2 || "",
+        Filtro3: i.Filtro3 || "",
+        OfertaActiva: false,
+        PrecioOferta: '',
+        PromoActiva: '',
+        DetalleColor: [],
+      };
+    }
+    if (i.OfertaActiva === true || i.OfertaActiva === 'true') {
+      acc[art].OfertaActiva = true;
+      if (i["Imagen Principal"] && i["Imagen Principal"] === acc[art].VariantePrincipal) {
+        acc[art].PrecioOferta = i.PrecioOferta || acc[art].PrecioOferta;
+      } else if (!acc[art].PrecioOferta) {
+        acc[art].PrecioOferta = i.PrecioOferta || '';
+      }
+    }
+    if (i.PromoActiva && i.PromoActiva !== '') acc[art].PromoActiva = i.PromoActiva;
+    acc[art].DetalleColor.push({
+      color: i.Color || "Sin color",
+      hex_color: i.ColorHex || null,
+      ColorDisplayNumber: i.ColorDisplayNumber || null,
+      talles: i.Numeracion?.split(",").map((t) => t.trim()) || ["Único"],
+      images: Object.keys(i)
+        .filter((k) => k.toLowerCase().startsWith("imagen"))
+        .map((k) => i[k])
+        .filter(Boolean),
+      OfertaActiva: i.OfertaActiva === true || i.OfertaActiva === 'true',
+      PrecioOferta: i.PrecioOferta || '',
+      PromoActiva: i.PromoActiva || '',
+    });
+    return acc;
+  }, {});
+  return Object.values(grupos);
+}
+
 // Función principal de carga de categoría
 async function cargarCategoria(cat) {
   console.log("🔄 Cargando categoría:", cat);
 
+  // Actualizar categoría actual
+  categoriaActual = cat || 'all';
+  // Sincronizar con el filtro de talles (misma categoría que ve el usuario; incluye Lencería/Otros por tag)
+  window.__fylCategoriaActual = categoriaActual;
+
   const loader = document.getElementById("loader");
   const cont = document.getElementById("catalogo");
 
+  // Ocultar indicador de scroll infinito al cambiar de categoría
+  ocultarIndicadorCarga();
+  
+  // Ocultar indicador de carga inferior al cambiar de categoría
+  ocultarIndicadorCargaInferior();
+  indicadorCargaActivo = false;
+
   if (loader) loader.classList.add("show");
   if (cont) cont.innerHTML = "";
+  
+  // Ocultar banner dinámico si no estamos en inicio (solo se muestra en index puro)
+  if (cat !== "all" && typeof window.hideCustomBanner === 'function') {
+    window.hideCustomBanner();
+  }
 
   try {
     let data = [];
@@ -372,19 +908,19 @@ async function cargarCategoria(cat) {
       return fechaB - fechaA;
     });
 
-    // Agrupar productos por artículo
-    const grupos = data.reduce((acc, i) => {
-      const art = i.Articulo?.trim();
-      if (!art) return acc;
+    // Agrupar productos por artículo (función reutilizable)
+    const gruposArray = agruparProductos(data);
+    const grupos = gruposArray.reduce((acc, p) => {
+      acc[p.Articulo] = p;
+      return acc;
+    }, {});
 
-      if (!acc[art]) {
-        acc[art] = {
-          Articulo: art,
-          Descripcion: i.Descripcion || "",
-          Precio: i.Precio || "",
+    // (agrupación en agruparProductos)
+    /*
           VariantePrincipal: i["Imagen Principal"],
           Oferta: i.Oferta || "",
           FechaIngreso: i.FechaIngreso || "",
+          Categoria: i.Categoria || "",
           Filtro1: i.Filtro1 || "",
           Filtro2: i.Filtro2 || "",
           Filtro3: i.Filtro3 || "",
@@ -416,6 +952,8 @@ async function cargarCategoria(cat) {
 
       acc[art].DetalleColor.push({
         color: i.Color || "Sin color",
+        hex_color: i.ColorHex || null,
+        ColorDisplayNumber: i.ColorDisplayNumber || null,
         talles: i.Numeracion?.split(",").map((t) => t.trim()) || ["Único"],
         images: Object.keys(i)
           .filter((k) => k.toLowerCase().startsWith("imagen"))
@@ -427,10 +965,8 @@ async function cargarCategoria(cat) {
         PromoActiva: i.PromoActiva || '',
       });
 
-      return acc;
-    }, {});
-
-    console.log(`📦 Productos agrupados: ${Object.keys(grupos).length}`);
+    */
+    console.log(`📦 Productos agrupados: ${gruposArray.length}`);
 
     // Obtener ofertas activas con imágenes
     let offersCards = [];
@@ -454,11 +990,64 @@ async function cargarCategoria(cat) {
       console.warn('Error obteniendo ofertas con imágenes:', error);
     }
 
-    // Renderizar productos y ofertas
-    await renderizarProductos(Object.values(grupos), cont, offersCards);
-
+    // Ordenar productos por fecha de ingreso
+    let productosOrdenados = Object.values(grupos).sort((a, b) => {
+      const fechaA = parseFecha(a.FechaIngreso);
+      const fechaB = parseFecha(b.FechaIngreso);
+      return fechaB - fechaA;
+    });
+    
+    // Si es vista "all" (Inicio), aplicar intercalado de categorías
+    if (cat === "all") {
+      productosOrdenados = intercalarProductosPorCategoria(productosOrdenados);
+    }
+    
+    // Almacenar todos los productos para paginación y recomendados PDP
+    productosPendientes = productosOrdenados;
+    window.__allProductsCache = productosOrdenados;
+    productosRenderizados = 0;
+    offersCardsPendientes = offersCards;
+    
+    // Limpiar contenedor
+    cont.innerHTML = "";
+    
+    // Renderizar los primeros 20 productos
+    await renderizarProductosPagina(productosPendientes, cont, offersCardsPendientes, 0, PRODUCTOS_INICIALES);
+    productosRenderizados = PRODUCTOS_INICIALES;
+    
     // Configurar eventos
     configurarEventos();
+    
+    // Mostrar botón "Ver más modelos" si hay más productos
+    mostrarBotonVerMas();
+    
+    // Reiniciar verificación de carga de imágenes
+    iniciarVerificacionCargaImagenes();
+    
+    // Si estamos en vista Inicio, cargar banners
+    if (cat === "all") {
+      // Mostrar banner FYL Originals
+      if (typeof window.loadAndShowFYLBanner === "function") {
+        window.loadAndShowFYLBanner();
+      }
+      // Mostrar banner promocional (con un pequeño delay para asegurar que esté cargado)
+      setTimeout(() => {
+        if (typeof window.showPromotionalBanner === "function") {
+          window.showPromotionalBanner();
+        }
+      }, 200);
+      // Mostrar info-banner mayorista
+      syncInfoBannerVisibility();
+    } else {
+      // Ocultar banners si no estamos en Inicio
+      if (typeof window.hideFYLOriginalsBanner === "function") {
+        window.hideFYLOriginalsBanner();
+      }
+      if (typeof window.hidePromotionalBanner === "function") {
+        window.hidePromotionalBanner();
+      }
+      syncInfoBannerVisibility();
+    }
     
     // Si hay un SKU en la URL y el modal ya está abierto, verificar si ahora está en skuIndex
     // y actualizar si es necesario (para mejorar la experiencia cuando se carga la categoría)
@@ -533,6 +1122,20 @@ function renderOfferFireIcon(producto) {
   return '';
 }
 
+// Función para formatear precios al formato $25.000 (ARS con separador de miles)
+function formatPrice(precio) {
+  return formatARS(precio);
+}
+
+// Helper ARS: siempre muestra $X.XXX con Intl.NumberFormat
+function formatARS(n) {
+  if (n == null || n === '') return '$0';
+  const str = String(n).replace(/[^\d.,]/g, '').replace(',', '.');
+  const num = parseFloat(str);
+  if (isNaN(num)) return '$0';
+  return '$' + new Intl.NumberFormat('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(Math.round(num));
+}
+
 function renderPriceWithOffer(producto) {
   const hasOffer = producto.OfertaActiva === true || producto.OfertaActiva === 'true';
   const hasPromo = producto.PromoActiva && producto.PromoActiva !== '';
@@ -542,28 +1145,22 @@ function renderPriceWithOffer(producto) {
   // Si hay promo, mostrar precio original con badge de promo (sin oferta)
   if (hasPromo) {
     return `
-      <div class="price">${originalPrice}</div>
+      <div class="price">${formatPrice(originalPrice)}</div>
     `;
   }
   
   // Si hay oferta, mostrar precio original tachado y precio de oferta
   if (hasOffer && offerPrice) {
-    // Formatear precio de oferta si no tiene símbolo de peso
-    let formattedOfferPrice = offerPrice;
-    if (offerPrice && !offerPrice.includes('$')) {
-      formattedOfferPrice = `$${offerPrice}`;
-    }
-    
     return `
       <div class="price">
-        <span class="price-original">${originalPrice}</span>
-        <span class="price-offer">${formattedOfferPrice}</span>
+        <span class="price-original">${formatPrice(originalPrice)}</span>
+        <span class="price-offer">${formatPrice(offerPrice)}</span>
       </div>
     `;
   }
   
   // Precio normal
-  return `<div class="price">${originalPrice}</div>`;
+  return `<div class="price">${formatPrice(originalPrice)}</div>`;
 }
 
 // Función para renderizar card de oferta
@@ -589,101 +1186,381 @@ function renderOfferCard(offer) {
   `;
 }
 
-// Función para renderizar productos (igual que antes)
-async function renderizarProductos(productos, container, offersCards = []) {
-  await enrichProductsWithStock(productos);
+// Variable global para rastrear la categoría actual
+let categoriaActual = 'all';
+window.__fylCategoriaActual = 'all';
+
+/** Mostrar/ocultar #info-banner-top-container según categoriaActual === "all".
+ *  Expuesto en window para que como-comprar.js lo llame al volver de #/como-comprar. */
+function syncInfoBannerVisibility() {
+  const el = document.getElementById("info-banner-top-container");
+  if (!el) return;
+  if (categoriaActual === "all") {
+    el.classList.remove("is-hidden");
+  } else {
+    el.classList.add("is-hidden");
+  }
+}
+if (typeof window !== "undefined") window.syncInfoBannerVisibility = syncInfoBannerVisibility;
+
+// Función auxiliar para renderizar un conjunto de productos
+// options.skipBanner: si true, no insertar el banner dinámico (solo debe mostrarse en index puro)
+async function renderizarProductosPagina(productos, container, offersCards = [], startIndex = 0, count = null, options = {}) {
+  if (productos.length === 0 && offersCards.length === 0) return;
+  
+  // Enriquecer productos con stock (solo los que vamos a renderizar)
+  const productosARenderizar = count !== null 
+    ? productos.slice(startIndex, startIndex + count)
+    : productos.slice(startIndex);
+  
+  if (productosARenderizar.length > 0) {
+    await enrichProductsWithStock(productosARenderizar);
+  }
   
   // Crear array combinado de productos y ofertas
   const allItems = [];
   
-  // Agregar ofertas al inicio (destacadas)
-  offersCards.forEach(offer => {
-    allItems.push({ type: 'offer', data: offer });
+  // Agregar ofertas solo si es la primera página (startIndex === 0)
+  if (startIndex === 0) {
+    offersCards.forEach(offer => {
+      allItems.push({ type: 'offer', data: offer });
+    });
+  }
+  
+  // Agregar productos a renderizar
+  productosARenderizar.forEach((producto) => {
+    allItems.push({ type: 'product', data: producto });
   });
   
-  // Agregar productos
-  productos
-    .sort((a, b) => {
-      const fechaA = parseFecha(a.FechaIngreso);
-      const fechaB = parseFecha(b.FechaIngreso);
-      return fechaB - fechaA;
-    })
-    .forEach((producto) => {
-      allItems.push({ type: 'product', data: producto });
-    });
-  
-  // Renderizar todos los items
-  allItems.forEach((item) => {
+  // Renderizar items
+  let productosRenderizadosEnEstaPagina = 0;
+  let bannerInsertado = false;
+  allItems.forEach((item, index) => {
     if (item.type === 'offer') {
       const offerCardHTML = renderOfferCard(item.data);
       container.insertAdjacentHTML('beforeend', offerCardHTML);
     } else {
       const producto = item.data;
+      productosRenderizadosEnEstaPagina++;
       const gal = renderizarGaleria(producto);
       const colores = renderizarColores(producto);
       const variants = renderizarVariantes(producto);
-      const tags = renderizarTags(producto);
       
       // Obtener SKU por defecto para la card
       const skuDefecto = obtenerSKUDefecto(producto);
+      const mainImageUrls = getMainImageFallbackUrls(producto, 800);
+      const mainSrc = mainImageUrls[0] || cloudinaryOptimized(producto.VariantePrincipal, 800);
+      const fallbackUrls = mainImageUrls.slice(1);
+      const fallbackUrlsAttr = fallbackUrls.length
+        ? JSON.stringify(fallbackUrls).replace(/"/g, "&quot;")
+        : "";
 
       const productoHTML = `
         <div class="card producto"
              data-filtro1="${producto.Filtro1 || ""}"
              data-filtro2="${producto.Filtro2 || ""}"
              data-filtro3="${producto.Filtro3 || ""}"
-             data-sku="${skuDefecto || ''}">
-          <div class="download-container">
-            <button class="download-btn" onclick="window.downloadImage(this)">
-              <svg xmlns='http://www.w3.org/2000/svg' width='22' height='22' viewBox='0 0 24 24' fill='none' stroke='#fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>
-                <path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'/>
-                <polyline points='7 10 12 15 17 10'/>
-                <line x1='12' y1='15' x2='12' y2='3'/>
-              </svg>
-            </button>
-            <button class="download-btn share-btn" title="Compartir imagen" style="margin-top:8px;">
-              <svg xmlns='http://www.w3.org/2000/svg' width='22' height='22' viewBox='0 0 24 24' fill='none' stroke='#fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>
-                <circle cx='18' cy='5' r='3'/>
-                <circle cx='6' cy='12' r='3'/>
-                <circle cx='18' cy='19' r='3'/>
-                <line x1='8.59' y1='13.51' x2='15.42' y2='17.49'/>
-                <line x1='15.41' y1='6.51' x2='8.59' y2='10.49'/>
-              </svg>
-            </button>
+             data-sku="${skuDefecto || ''}"
+             data-name="${(producto.name || producto.Articulo || '').toLowerCase()}">
+          <div class="main-image-wrapper">
+            <img class="main-image" loading="lazy" 
+                 src="${mainSrc}" 
+                 alt="${producto.Articulo}"
+                 data-sku="${skuDefecto || ''}"
+                 ${fallbackUrlsAttr ? `data-fallback-urls="${fallbackUrlsAttr}" onerror="window.mainImageFallback&&window.mainImageFallback(this)"` : ""}/>
+            <div class="product-name-badge">${producto.Articulo || producto.Descripcion || 'Producto'}</div>
           </div>
-          <img class="main-image" loading="lazy" 
-               src="${cloudinaryOptimized(producto.VariantePrincipal, 800)}" 
-               alt="${producto.Articulo}"
-               data-sku="${skuDefecto || ''}"/>
           <div class="image-loader"><div class="spinner"></div></div>
-          <div class="gallery">${gal}</div>
           ${renderOfferAndPromoBadges(producto)}
-          ${tags}
           <div class="title-row">
-            <h3>Art: <span class="article-box">${producto.Articulo}</span>${renderOfferFireIcon(producto)}</h3>
-            <div class="colors">${colores}</div>
+            <h3>${renderOfferFireIcon(producto)}</h3>
           </div>
-          <div class="description">${producto.Descripcion || ""}</div>
-          <div class="price-container">
-            ${renderPriceWithOffer(producto)}
+          <div class="card-footer">
+            <div class="card-footer-top">
+              <div class="card-price">
+                ${renderPriceWithOffer(producto)}
+                <div class="price-wholesale">Precio por mayor</div>
+              </div>
+            </div>
+            <div class="colors-row">
+              <div class="colors">${colores}</div>
+            </div>
+            <div class="card-footer-size" data-articulo="${producto.Articulo}" data-color-selected="${producto.DetalleColor?.[0]?.color || ''}">${obtenerSizeBadgeHTML(producto, producto.DetalleColor?.[0]?.color)}</div>
+            ${window.__CATALOG_ONLY__ ? '' : `<button class="cart-icon-btn" 
+                    data-articulo="${producto.Articulo}"
+                    title="Agregar al carrito"
+                    onclick="event.stopPropagation(); if(window.BottomSheet && window.productosActualesMap) { const producto = window.productosActualesMap.get('${producto.Articulo}'); if(producto) window.BottomSheet.open(producto); }">
+              <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>
+                <circle cx='9' cy='21' r='1'></circle>
+                <circle cx='20' cy='21' r='1'></circle>
+                <path d='M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6'></path>
+              </svg>
+            </button>`}
           </div>
-          ${variants}
         </div>
       `;
 
-      container.innerHTML += productoHTML;
+      container.insertAdjacentHTML('beforeend', productoHTML);
+      
+      // Almacenar producto en productosActualesMap para Bottom Sheet
+      productosActualesMap.set(producto.Articulo, producto);
+      
+      // Exponer productosActualesMap globalmente para el icono de carrito
+      if (typeof window !== 'undefined') {
+        window.productosActualesMap = productosActualesMap;
+      }
+      
+      // Insertar banner personalizado después de la segunda fila (4 productos en desktop, 2 en mobile)
+      // SOLO en index puro: categoría "all", sin búsqueda, sin filtros, sin oferta/colección
+      const hayBusquedaActiva = !!document.getElementById("searchInput")?.value?.trim();
+      const hayFiltroActivo = !!document.querySelector('#filtroMenu input[type="checkbox"]:checked');
+      const debeOmitirBanner = options.skipBanner || hayBusquedaActiva || hayFiltroActivo;
+      if (location.hash === "#/coleccion/fyl-originals") {
+        // No insertar banners editables en vista colección
+      } else if (!debeOmitirBanner && categoriaActual === "all" && startIndex === 0 && productosRenderizadosEnEstaPagina === 4 && !bannerInsertado && typeof window.loadAndShowCustomBanner === 'function') {
+        bannerInsertado = true;
+        // Insertar el banner después del cuarto producto dentro del contenedor del catálogo
+        const productosCards = container.querySelectorAll('.card.producto');
+        if (productosCards.length >= 4) {
+          const cuartoProducto = productosCards[productosCards.length - 1];
+          const bannerContainer = document.getElementById('custom-banner-container');
+          if (bannerContainer && cuartoProducto.parentNode) {
+            // Crear un wrapper para el banner que ocupe todo el ancho del grid
+            const bannerWrapper = document.createElement('div');
+            bannerWrapper.id = 'custom-banner-wrapper';
+            bannerWrapper.className = 'custom-banner-wrapper';
+            bannerWrapper.style.cssText = 'grid-column: 1 / -1; width: 100%; padding: 0; margin: 0;';
+            
+            // Clonar el banner y agregarlo al wrapper
+            const clonedBanner = bannerContainer.cloneNode(true);
+            clonedBanner.id = 'custom-banner-container-inline';
+            clonedBanner.style.display = 'block';
+            bannerWrapper.appendChild(clonedBanner);
+            
+            // Insertar el wrapper después del cuarto producto dentro del grid
+            cuartoProducto.parentNode.insertBefore(bannerWrapper, cuartoProducto.nextSibling);
+          }
+        }
+        // Usar setTimeout para asegurar que el DOM se haya actualizado
+        setTimeout(() => {
+          const inlineBanner = document.getElementById('custom-banner-container-inline');
+          if (inlineBanner && typeof window.loadAndShowCustomBanner === 'function') {
+            // Cargar y mostrar el banner en el contenedor inline
+            window.loadAndShowCustomBanner();
+          }
+        }, 200);
+      }
     }
   });
   
-  // Agregar event listeners a los cards de oferta
-  container.querySelectorAll('.offer-card').forEach(card => {
-    card.addEventListener('click', () => {
-      const campaignId = card.dataset.offerCampaignId;
-      if (campaignId) {
-        filterByOffer(campaignId);
+  // Agregar event listeners a los cards de oferta (solo para los nuevos)
+  if (startIndex === 0 || allItems.some(item => item.type === 'offer')) {
+    container.querySelectorAll('.offer-card').forEach(card => {
+      if (!card.dataset.listenerAdded) {
+        card.dataset.listenerAdded = 'true';
+        card.addEventListener('click', () => {
+          const campaignId = card.dataset.offerCampaignId;
+          if (campaignId) {
+            filterByOffer(campaignId);
+          }
+        });
       }
     });
+  }
+  
+  return productosARenderizar.length;
+}
+
+// Función para crear/obtener el indicador de carga
+function obtenerIndicadorCarga() {
+  let loader = document.getElementById("infinite-scroll-loader");
+  if (!loader) {
+    loader = document.createElement("div");
+    loader.id = "infinite-scroll-loader";
+    loader.className = "infinite-scroll-loader";
+    loader.innerHTML = `
+      <div class="infinite-scroll-spinner">
+        <div class="spinner-circle"></div>
+        <div class="spinner-circle"></div>
+        <div class="spinner-circle"></div>
+      </div>
+      <p class="infinite-scroll-text">Cargando más productos...</p>
+    `;
+  }
+  return loader;
+}
+
+// Función para mostrar el indicador de carga (en el lugar del botón)
+function mostrarIndicadorCarga() {
+  const cont = document.getElementById("catalogo");
+  if (!cont) return;
+  
+  const loader = obtenerIndicadorCarga();
+  
+  // Si el loader ya está en otro lugar, removerlo
+  if (loader.parentNode && loader.parentNode !== cont) {
+    loader.parentNode.removeChild(loader);
+  }
+  
+  // Si el loader ya está en el contenedor, removerlo para reinsertarlo al final
+  if (cont.contains(loader)) {
+    cont.removeChild(loader);
+  }
+  
+  // Agregar el loader al final del contenedor (en el lugar donde estaba el botón)
+  cont.appendChild(loader);
+  loader.style.visibility = "visible";
+  loader.style.opacity = "1";
+  loader.style.display = "flex";
+  loader.classList.add("show");
+}
+
+// Función para ocultar el indicador de carga
+function ocultarIndicadorCarga() {
+  const loader = document.getElementById("infinite-scroll-loader");
+  if (loader) {
+    loader.style.display = "none";
+    loader.classList.remove("show");
+    // Asegurar que esté completamente oculto
+    loader.style.visibility = "hidden";
+    loader.style.opacity = "0";
+  }
+}
+
+// Función auxiliar para verificar si estamos cerca del final de la página
+function estaCercaDelFinal(threshold = 500) {
+  const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+  const windowHeight = window.innerHeight;
+  const documentHeight = document.documentElement.scrollHeight;
+  return documentHeight - (scrollTop + windowHeight) < threshold;
+}
+
+// Función para asegurar que el botón "Ver más modelos" esté al final del listado (#catalogo),
+// dentro del flujo (no flotante) y visible solo si hay más productos.
+function ensureLoadMoreButtonAtEnd() {
+  const cont = document.getElementById("catalogo");
+  if (!cont) return;
+  
+  ocultarIndicadorCarga();
+  
+  const hayMas = productosRenderizados < productosPendientes.length;
+  
+  let wrap = cont.querySelector(".load-more-wrap");
+  if (!wrap) {
+    wrap = document.createElement("div");
+    wrap.className = "load-more-wrap";
+    const boton = document.createElement("button");
+    boton.id = "btn-ver-mas-modelos";
+    boton.className = "btn-ver-mas-modelos";
+    boton.textContent = "Ver más modelos";
+    boton.addEventListener("click", cargarMasProductos);
+    wrap.appendChild(boton);
+    cont.appendChild(wrap);
+  } else {
+    cont.appendChild(wrap);
+  }
+  
+  wrap.style.display = hayMas ? "flex" : "none";
+}
+
+// Función para mostrar el botón "Ver más modelos" (delega a ensureLoadMoreButtonAtEnd)
+function mostrarBotonVerMas() {
+  ensureLoadMoreButtonAtEnd();
+}
+
+// Función para ocultar el botón "Ver más modelos" (delega a ensureLoadMoreButtonAtEnd)
+function ocultarBotonVerMas() {
+  ensureLoadMoreButtonAtEnd();
+}
+
+// Obtención del botón (para compatibilidad)
+function obtenerBotonVerMas() {
+  const wrap = document.querySelector(".load-more-wrap");
+  return wrap ? wrap.querySelector("#btn-ver-mas-modelos") : document.getElementById("btn-ver-mas-modelos");
+}
+
+// Función para cargar más productos cuando se hace clic en el botón
+async function cargarMasProductos() {
+  if (isLoadingMore) return;
+  if (productosRenderizados >= productosPendientes.length) {
+    ocultarBotonVerMas();
+    return;
+  }
+  
+  isLoadingMore = true;
+  const cont = document.getElementById("catalogo");
+  if (!cont) {
+    isLoadingMore = false;
+    return;
+  }
+  
+  // Remover el wrapper del botón antes de cargar nuevos productos
+  // para que los nuevos productos se agreguen después de donde estaba
+  const wrap = cont.querySelector(".load-more-wrap");
+  if (wrap && wrap.parentNode) {
+    wrap.parentNode.removeChild(wrap);
+  }
+  
+  // Mostrar indicador de carga
+  mostrarIndicadorCarga();
+  
+  try {
+    const siguientePagina = productosPendientes.slice(
+      productosRenderizados,
+      productosRenderizados + PRODUCTOS_POR_PAGINA
+    );
+    
+    if (siguientePagina.length > 0) {
+      await renderizarProductosPagina(
+        productosPendientes,
+        cont,
+        [],
+        productosRenderizados,
+        PRODUCTOS_POR_PAGINA
+      );
+      
+      productosRenderizados += siguientePagina.length;
+      
+      // Configurar eventos para los nuevos productos
+      configurarEventos();
+      
+      // Reiniciar verificación de carga de imágenes para los nuevos productos
+      iniciarVerificacionCargaImagenes();
+      
+      // Ocultar indicador de carga después de que los productos se hayan renderizado
+      ocultarIndicadorCarga();
+      
+      setTimeout(() => ensureLoadMoreButtonAtEnd(), 200);
+    } else {
+      ocultarIndicadorCarga();
+      ensureLoadMoreButtonAtEnd();
+    }
+  } catch (error) {
+    console.error('Error cargando más productos:', error);
+    ocultarIndicadorCarga();
+    ensureLoadMoreButtonAtEnd();
+  } finally {
+    isLoadingMore = false;
+  }
+}
+
+// Función para inicializar el sistema de paginación (ya no usa scroll infinito, usa botón)
+function inicializarScrollInfinito(container) {
+  // Desactivado: ahora usamos botón "Ver más modelos" en lugar de scroll infinito
+  // Esta función se mantiene por compatibilidad pero no hace nada
+  ocultarIndicadorCarga();
+}
+
+// Función wrapper para renderizar productos (compatibilidad)
+async function renderizarProductos(productos, container, offersCards = []) {
+  // Ordenar productos por fecha de ingreso
+  const productosOrdenados = productos.slice().sort((a, b) => {
+    const fechaA = parseFecha(a.FechaIngreso);
+    const fechaB = parseFecha(b.FechaIngreso);
+    return fechaB - fechaA;
   });
+  
+  return await renderizarProductosPagina(productosOrdenados, container, offersCards, 0, null);
 }
 
 // Función para filtrar productos por oferta
@@ -695,6 +1572,7 @@ async function filterByOffer(campaignId) {
   
   if (loader) loader.classList.add("show");
   if (cont) cont.innerHTML = "";
+  if (typeof window.hideCustomBanner === 'function') window.hideCustomBanner();
   
   try {
     // Cargar todos los productos con ofertas activas
@@ -749,6 +1627,8 @@ async function filterByOffer(campaignId) {
       if (!colorExists) {
         acc[art].DetalleColor.push({
           color: i.Color,
+          hex_color: i.ColorHex || null,
+          ColorDisplayNumber: i.ColorDisplayNumber || null,
           talles: i.Numeracion?.split(",").map(t => t.trim()).filter(Boolean) || [],
           images: [
             i["Imagen Principal"],
@@ -777,13 +1657,35 @@ async function filterByOffer(campaignId) {
         <button onclick="location.reload()" style="margin-top: 12px; padding: 8px 16px; background: #CD844D; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;">Ver todos los productos</button>
       </div>
     `;
+    
+    // Ordenar productos por fecha de ingreso
+    const productosOrdenados = Object.values(grupos).sort((a, b) => {
+      const fechaA = parseFecha(a.FechaIngreso);
+      const fechaB = parseFecha(b.FechaIngreso);
+      return fechaB - fechaA;
+    });
+    
+    // Almacenar todos los productos para paginación y recomendados PDP
+    productosPendientes = productosOrdenados;
+    window.__allProductsCache = productosOrdenados;
+    productosRenderizados = 0;
+    offersCardsPendientes = [];
+    
+    // Limpiar contenedor y mostrar mensaje
     cont.innerHTML = messageHTML;
     
-    // Renderizar productos
-    await renderizarProductos(Object.values(grupos), cont, []);
+    // Renderizar los primeros 20 productos (sin banner dinámico)
+    await renderizarProductosPagina(productosPendientes, cont, [], 0, PRODUCTOS_INICIALES, { skipBanner: true });
+    productosRenderizados = PRODUCTOS_INICIALES;
     
     // Configurar eventos
     configurarEventos();
+    
+    // Mostrar botón "Ver más modelos" si hay más productos
+    mostrarBotonVerMas();
+    
+    // Reiniciar verificación de carga de imágenes
+    iniciarVerificacionCargaImagenes();
   } catch (error) {
     console.error('Error filtrando por oferta:', error);
     cont.innerHTML = '<div class="no-data">Error al cargar productos en oferta</div>';
@@ -792,15 +1694,224 @@ async function filterByOffer(campaignId) {
   }
 }
 
+// Función para filtrar productos por proveedor FYL
+// options.forCollectionView: si true, no muestra la card redundante y actualiza #collection-count
+async function filterBySupplierFYL(options = {}) {
+  const forCollectionView = !!options.forCollectionView;
+  console.log('🏭 Filtrando productos por proveedor FYL', forCollectionView ? '(vista colección)' : '');
+  
+  const loader = document.getElementById("loader");
+  const cont = document.getElementById("catalogo");
+  
+  if (loader) loader.classList.add("show");
+  if (cont) cont.innerHTML = "";
+  if (typeof window.hideCustomBanner === 'function') window.hideCustomBanner();
+  
+  try {
+    // Ocultar banners (incl. info-banner: en vista FYL no mostramos el banner mayorista)
+    if (typeof window.hideFYLOriginalsBanner === 'function') {
+      window.hideFYLOriginalsBanner();
+    }
+    if (typeof window.hidePromotionalBanner === 'function') {
+      window.hidePromotionalBanner();
+    }
+    document.getElementById("info-banner-top-container")?.classList.add("is-hidden");
+
+    // Cargar todos los productos desde Supabase
+    const data = await cargarDesdeSupabase('all');
+    
+    // Filtrar solo productos del proveedor FYL
+    const productosFYL = data.filter(p => 
+      p.SupplierCode === "FYL" || p.SupplierCode === "fyl"
+    );
+    
+    if (productosFYL.length === 0) {
+      cont.innerHTML = '<div class="no-data">No hay productos disponibles del proveedor F&L Originals</div>';
+      if (forCollectionView) {
+        const countEl = document.getElementById("collection-count");
+        if (countEl) countEl.textContent = "0";
+      }
+      return;
+    }
+    
+    // Ordenar por fecha de ingreso
+    productosFYL.sort((a, b) => {
+      const fechaA = parseFecha(a.FechaIngreso);
+      const fechaB = parseFecha(b.FechaIngreso);
+      return fechaB - fechaA;
+    });
+    
+    // Agrupar productos por artículo (igual que en cargarCategoria)
+    const grupos = productosFYL.reduce((acc, i) => {
+      const art = i.Articulo?.trim();
+      if (!art) return acc;
+
+      if (!acc[art]) {
+        acc[art] = {
+          Articulo: art,
+          Descripcion: i.Descripcion || "",
+          Precio: i.Precio || "",
+          VariantePrincipal: i["Imagen Principal"],
+          Oferta: i.Oferta || "",
+          FechaIngreso: i.FechaIngreso || "",
+          Filtro1: i.Filtro1 || "",
+          Filtro2: i.Filtro2 || "",
+          Filtro3: i.Filtro3 || "",
+          OfertaActiva: false,
+          PrecioOferta: '',
+          PromoActiva: '',
+          DetalleColor: [],
+        };
+      }
+
+      // Actualizar información de ofertas
+      if (i.OfertaActiva === true || i.OfertaActiva === 'true') {
+        acc[art].OfertaActiva = true;
+        if (!acc[art].PrecioOferta) {
+          acc[art].PrecioOferta = i.PrecioOferta || '';
+        }
+      }
+
+      if (i.PromoActiva && i.PromoActiva !== '') {
+        acc[art].PromoActiva = i.PromoActiva;
+      }
+
+      // Agregar color si no existe
+      const colorExists = acc[art].DetalleColor.find(c => 
+        (c.color || "").trim().toLowerCase() === (i.Color || "").trim().toLowerCase()
+      );
+
+      if (!colorExists) {
+        acc[art].DetalleColor.push({
+          color: i.Color || "Sin color",
+          hex_color: i.ColorHex || null,
+          ColorDisplayNumber: i.ColorDisplayNumber || null,
+          talles: i.Numeracion?.split(",").map((t) => t.trim()).filter(Boolean) || ["Único"],
+          images: [
+            i["Imagen Principal"],
+            i["Imagen 1"],
+            i["Imagen 2"],
+            i["Imagen 3"],
+          ].filter(Boolean),
+          OfertaActiva: i.OfertaActiva === true || i.OfertaActiva === 'true',
+          PrecioOferta: i.PrecioOferta || '',
+          PromoActiva: i.PromoActiva || '',
+        });
+      } else {
+        // Si el color ya existe, agregar talles que no estén
+        const talles = i.Numeracion?.split(",").map((t) => t.trim()).filter(Boolean) || [];
+        talles.forEach(talle => {
+          if (!colorExists.talles.includes(talle)) {
+            colorExists.talles.push(talle);
+          }
+        });
+      }
+
+      return acc;
+    }, {});
+    
+    const modelCount = Object.keys(grupos).length;
+    
+    // En vista colección: header compacto externo, sin card redundante
+    if (forCollectionView) {
+      const countEl = document.getElementById("collection-count");
+      if (countEl) countEl.textContent = String(modelCount);
+    } else {
+      // Vista legacy: card lateral con mensaje
+      const messageHTML = `
+      <div style="background: #fff3e0; border-left: 4px solid #CD844D; padding: 16px; margin-bottom: 20px; border-radius: 8px;">
+        <h3 style="margin: 0 0 8px; color: #CD844D; font-size: 18px;">F&L Originals</h3>
+        <p style="margin: 0; color: #666;">Mostrando ${modelCount} producto${modelCount !== 1 ? 's' : ''} del proveedor F&L Originals</p>
+        <button onclick="if(typeof window.cargarCategoria === 'function') window.cargarCategoria('all')" style="margin-top: 12px; padding: 8px 16px; background: #CD844D; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;">Ver todos los productos</button>
+      </div>
+    `;
+      cont.innerHTML = messageHTML;
+    }
+    
+    // Ordenar productos por fecha de ingreso
+    const productosOrdenados = Object.values(grupos).sort((a, b) => {
+      const fechaA = parseFecha(a.FechaIngreso);
+      const fechaB = parseFecha(b.FechaIngreso);
+      return fechaB - fechaA;
+    });
+    
+    // Almacenar todos los productos para paginación y recomendados PDP
+    productosPendientes = productosOrdenados;
+    window.__allProductsCache = productosOrdenados;
+    productosRenderizados = 0;
+    offersCardsPendientes = [];
+    
+    // Renderizar los primeros 20 productos (sin banner dinámico)
+    await renderizarProductosPagina(productosPendientes, cont, [], 0, PRODUCTOS_INICIALES, { skipBanner: true });
+    productosRenderizados = PRODUCTOS_INICIALES;
+    
+    // Configurar eventos
+    configurarEventos();
+    
+    // Mostrar botón "Ver más modelos" si hay más productos
+    mostrarBotonVerMas();
+    
+    // Reiniciar verificación de carga de imágenes
+    iniciarVerificacionCargaImagenes();
+  } catch (error) {
+    console.error('Error filtrando por proveedor FYL:', error);
+    cont.innerHTML = '<div class="no-data">Error al cargar productos del proveedor F&L Originals</div>';
+  } finally {
+    if (loader) loader.classList.remove("show");
+  }
+}
+
+// Exportar función globalmente para que sea accesible desde otros scripts
+if (typeof window !== 'undefined') {
+  window.filterBySupplierFYL = filterBySupplierFYL;
+}
+
 // Funciones auxiliares de renderizado (igual que antes)
-function renderizarGaleria(producto) {
-  return producto.DetalleColor.flatMap((v) => v.images)
-    .map((src) => {
-      const thumb = cloudinaryOptimized(src, 200);
-      const full = cloudinaryOptimized(src, 800);
-      return `<img loading="lazy" src="${thumb}" data-full="${full}" alt="Miniatura de producto" class="miniatura">`;
+function renderizarGaleria(producto, mainImageSrc) {
+  const images = producto.DetalleColor?.flatMap((v) => v.images) || [];
+  return images
+    .map((img, i) => {
+      const thumb = getImgUrl(img, 200);
+      const full = getImgUrl(img, 1200);
+      const isActive = mainImageSrc ? (img === mainImageSrc) : i === 0;
+      if (!thumb) return '';
+      return `<img loading="lazy" src="${thumb}" data-full="${full}" alt="Miniatura de producto" class="miniatura${isActive ? ' active' : ''}">`;
     })
     .join("");
+}
+
+/**
+ * Obtiene la galería HTML y la URL de la imagen principal para el PDP.
+ * Retorna { gal, mainImgUrl } donde mainImgUrl es la URL 1200px de la imagen a mostrar.
+ * Fallback mainImgUrl: (1) full del color seleccionado, (2) primera full válida, (3) VariantePrincipal.
+ */
+function obtenerGaleriaYImagenPrincipal(producto, colorSeleccionado) {
+  const images = producto.DetalleColor?.flatMap((v) => v.images) || [];
+  let mainImgUrl = '';
+  const detalleColor = producto.DetalleColor?.find(d =>
+    (d.color || "").trim().toLowerCase() === (colorSeleccionado || "").trim().toLowerCase()
+  ) || producto.DetalleColor?.[0];
+  const preferida = detalleColor?.images?.[0];
+
+  const gal = images
+    .map((img, i) => {
+      const thumb = getImgUrl(img, 200);
+      if (!thumb) return '';
+
+      const full = getImgUrl(img, 1200);
+      const isActive = preferida ? (img === preferida) : i === 0;
+
+      if (full) {
+        if (!mainImgUrl) mainImgUrl = full;
+        if (isActive) mainImgUrl = full;
+      }
+
+      return `<img loading="lazy" src="${thumb}" data-full="${full || thumb}" alt="Miniatura" class="miniatura pdp-thumb${isActive ? ' active' : ''}">`;
+    })
+    .join("");
+
+  if (!mainImgUrl) mainImgUrl = getImgUrl(producto.VariantePrincipal || '', 1200);
+  return { gal, mainImgUrl };
 }
 
 async function enrichProductsWithStock(productos = []) {
@@ -818,10 +1929,11 @@ async function enrichProductsWithStock(productos = []) {
 
     if (!nombres.length) return;
 
+    // IMPORTANTE: No consultar product_variants.size (deprecado). Los talles están en variant_sizes
     const { data, error } = await supabase
       .from("products")
       .select(
-        "name, product_variants(id, color, size, reserved_qty, active, sku)"
+        "name, product_variants(id, color, reserved_qty, active, sku)"
       )
       .in("name", nombres);
 
@@ -846,73 +1958,267 @@ async function enrichProductsWithStock(productos = []) {
       );
     });
 
-    // Obtener stock total de todas las variantes de una vez
-    const stockMap = new Map();
+    // Obtener warehouses "general" y "venta-publico" una sola vez
+    let generalWarehouseId = null;
+    let ventaPublicoWarehouseId = null;
+    
+    try {
+      const { data: warehouses, error: warehousesError } = await supabase
+        .from("warehouses")
+        .select("id, code")
+        .in("code", ["general", "venta-publico"]);
+
+      if (warehousesError) {
+        console.warn("⚠️ Error obteniendo warehouses:", warehousesError);
+      } else if (warehouses && warehouses.length > 0) {
+        const warehouseMap = new Map();
+        warehouses.forEach(w => warehouseMap.set(w.code, w.id));
+        generalWarehouseId = warehouseMap.get("general");
+        ventaPublicoWarehouseId = warehouseMap.get("venta-publico");
+        console.log(`📦 Warehouses obtenidos: general=${generalWarehouseId}, venta-publico=${ventaPublicoWarehouseId}`);
+      } else {
+        console.warn("⚠️ No se encontraron warehouses 'general' o 'venta-publico'. Continuando sin stock por warehouse.");
+      }
+    } catch (e) {
+      console.warn("⚠️ Excepción obteniendo warehouses:", e);
+    }
+
+    // Obtener talles desde variant_sizes para todas las variantes (TABLA PRINCIPAL)
+    // IMPORTANTE: También obtener stock_qty para fallback
+    // IMPORTANTE: Obtener TODOS los talles (no filtrar aquí) para que podamos hacer el fallback correctamente
+    // catalog_public_view ya filtra por stock > 0 en Numeracion, así que solo procesaremos talles que vienen de allí
+    const variantSizesMap = new Map(); // key: variant_id -> Array<{size, stock_qty}>
     if (allVariantIds.length > 0) {
       try {
-        const { data: stockData, error: stockError } = await supabase
-          .from("variant_warehouse_stock")
-          .select("variant_id, stock_qty")
+        const { data: sizesData, error: sizesError } = await supabase
+          .from("variant_sizes")
+          .select("variant_id, size, stock_qty")
           .in("variant_id", allVariantIds);
+        // NO filtrar por stock_qty aquí - necesitamos todos los talles para el fallback
 
-        if (!stockError && stockData) {
-          stockData.forEach(row => {
-            const current = stockMap.get(row.variant_id) || 0;
-            stockMap.set(row.variant_id, current + (Number(row.stock_qty) || 0));
+        if (!sizesError && sizesData) {
+          sizesData.forEach(sizeRow => {
+            const normalizedSize = normalizeSize(sizeRow.size);
+            if (!normalizedSize) return; // Saltar tamaños vacíos
+
+            if (!variantSizesMap.has(sizeRow.variant_id)) {
+              variantSizesMap.set(sizeRow.variant_id, []);
+            }
+            variantSizesMap.get(sizeRow.variant_id).push({
+              size: normalizedSize,
+              stock_qty: sizeRow.stock_qty || 0
+            });
           });
+          console.log(`📊 Se obtuvieron ${sizesData.length} registros de variant_sizes para ${allVariantIds.length} variantes. Variantes con talles: ${variantSizesMap.size}`);
+        } else if (sizesError) {
+          console.error("❌ Error obteniendo talles desde variant_sizes:", sizesError);
+        } else {
+          console.warn(`⚠️ No se obtuvieron datos de variant_sizes para ${allVariantIds.length} variantes. Esto puede indicar que no hay talles registrados.`);
         }
       } catch (e) {
-        console.warn("Error obteniendo stock de almacenes:", e);
+        console.warn("⚠️ Error obteniendo talles desde variant_sizes:", e);
+      }
+    }
+
+    // Obtener stock por talle desde variant_size_warehouse_stock (DISTRIBUCIÓN POR WAREHOUSE)
+    // IMPORTANTE: Stock por talle específico, no stock total por variante
+    // IMPORTANTE: Normalizar todos los tamaños al crear el mapa para asegurar consistencia
+    const sizeStockMap = new Map(); // key: `${variant_id}_${normalizedSize}_${warehouse_id}` -> stock_qty
+    if (allVariantIds.length > 0 && generalWarehouseId && ventaPublicoWarehouseId) {
+      try {
+        console.log(`📊 Consultando variant_size_warehouse_stock para ${allVariantIds.length} variantes...`);
+        const { data: sizeWarehouseStocks, error: sizeStockError } = await supabase
+          .from("variant_size_warehouse_stock")
+          .select("variant_id, size, warehouse_id, stock_qty")
+          .in("variant_id", allVariantIds)
+          .in("warehouse_id", [generalWarehouseId, ventaPublicoWarehouseId]);
+
+        if (sizeStockError) {
+          console.error("❌ Error obteniendo stock desde variant_size_warehouse_stock:", sizeStockError);
+          console.error("   Detalles:", sizeStockError.message, sizeStockError.hint);
+        } else if (sizeWarehouseStocks) {
+          sizeWarehouseStocks.forEach(sws => {
+            // CRÍTICO: Normalizar el tamaño antes de crear la clave del mapa
+            const normalizedSize = normalizeSize(sws.size);
+            if (!normalizedSize) return; // Saltar tamaños vacíos
+
+            const key = `${sws.variant_id}_${normalizedSize}_${sws.warehouse_id}`;
+            // Si ya existe una entrada para esta clave, sumar (aunque no debería haber duplicados)
+            const existingStock = sizeStockMap.get(key) || 0;
+            sizeStockMap.set(key, existingStock + (sws.stock_qty || 0));
+          });
+          console.log(`✅ Se obtuvieron ${sizeWarehouseStocks.length} registros de variant_size_warehouse_stock`);
+        } else {
+          console.warn("⚠️ variant_size_warehouse_stock retornó null o undefined");
+        }
+      } catch (e) {
+        console.error("❌ Excepción obteniendo stock por talle desde variant_size_warehouse_stock:", e);
+        console.error("   Stack:", e.stack);
+      }
+    } else {
+      if (allVariantIds.length === 0) {
+        console.warn("⚠️ No hay variantIds para consultar variant_size_warehouse_stock");
+      } else {
+        console.warn(`⚠️ Warehouses no disponibles (general=${generalWarehouseId}, venta-publico=${ventaPublicoWarehouseId}). Continuando sin stock por warehouse.`);
       }
     }
 
     productos.forEach((producto) => {
       const clave = (producto.Articulo || "").trim().toLowerCase();
       const variantes = variantesPorProducto.get(clave);
-      if (!variantes) return;
+      if (!variantes) {
+        console.warn(`⚠️ No se encontraron variantes para producto: ${producto.Articulo}`);
+        return;
+      }
 
       producto.DetalleColor = (producto.DetalleColor || []).map((detalle) => {
-        const variantDetails = (detalle.talles || []).map((talle) => {
-          const variante = variantes.find((v) => {
-            const colorVar = (v.color || "").trim().toLowerCase();
-            const sizeVar = (v.size || "").trim().toLowerCase();
-            return (
-              colorVar === (detalle.color || "").trim().toLowerCase() &&
-              sizeVar === (talle || "").trim().toLowerCase()
-            );
-          });
+        // Buscar variante solo por color (NO por size, ya que los talles están en variant_sizes)
+        const colorBuscado = (detalle.color || "").trim().toLowerCase();
+        const variante = variantes.find((v) => {
+          const colorVar = (v.color || "").trim().toLowerCase();
+          return colorVar === colorBuscado;
+        });
 
-          const isActive = variante?.active !== false;
-          // Obtener stock total de todos los almacenes desde el mapa
-          const stock = isActive && variante?.id ? (stockMap.get(variante.id) || 0) : 0;
-          const reserved = isActive ? Number(variante?.reserved_qty ?? 0) : 0;
-          const available = Math.max(0, stock - reserved);
+        if (!variante || !variante.id) {
+          // Si no hay variante para este color, retornar detalle con variantDetails pero sin stock
+          // IMPORTANTE: Mostrar los talles aunque no haya variante, para que el usuario pueda verlos
+          console.warn(`⚠️ No se encontró variante para producto: ${producto.Articulo}, color: ${detalle.color}. Colores disponibles: ${variantes.map(v => v.color).join(', ')}`);
+          return {
+            ...detalle,
+            variantDetails: (detalle.talles || []).map(talle => {
+              const normalizedTalle = normalizeSize(talle) || talle;
+              return {
+                talle: normalizedTalle,
+                stock: null,
+                reserved: null,
+                available: null, // null = disponibilidad por confirmar (no "sin stock", no tachado)
+                variant_id: null,
+                sku: null,
+              };
+            })
+          };
+        }
+
+        const isActive = variante.active !== false;
+        const variantId = variante.id;
+        const reserved = isActive ? Number(variante.reserved_qty ?? 0) : 0;
+
+        // Obtener talles para esta variante desde variantSizesMap
+        const variantSizes = variantSizesMap.get(variantId) || [];
+        const variantSizesBySize = new Map();
+        variantSizes.forEach(vs => {
+          variantSizesBySize.set(vs.size, vs.stock_qty);
+        });
+        
+        // DEBUG: Si variantSizesBySize está vacío pero hay talles en detalle.talles, puede ser un problema
+        // Usar console.debug en lugar de console.warn para reducir ruido en la consola
+        if (variantSizes.length === 0 && (detalle.talles || []).length > 0) {
+          console.debug(`🔍 [DEBUG] No se encontraron talles en variant_sizes para producto ${producto.Articulo}, color ${detalle.color}, variantId ${variantId}, pero catalog_public_view muestra talles: ${detalle.talles.join(', ')}. Esto puede indicar una inconsistencia de datos o un problema de RLS.`);
+        }
+
+        // Para cada talle del producto, obtener stock específico
+        // IMPORTANTE: Los talles vienen de catalog_public_view.Numeracion (ya filtrados por stock_qty > 0 en la vista)
+        // pero debemos normalizarlos de nuevo para asegurar consistencia al buscar en variantSizesBySize
+        const variantDetails = (detalle.talles || []).map((talle) => {
+          const normalizedSize = normalizeSize(talle);
+          if (!normalizedSize) {
+            // Si no se puede normalizar, retornar con available: null (disponibilidad por confirmar)
+            // Usar console.debug en lugar de console.warn para reducir ruido
+            console.debug(`🔍 [DEBUG] No se pudo normalizar talle "${talle}" para producto ${producto.Articulo}, color ${detalle.color}`);
+            return {
+              talle: talle, // Mantener original si no se puede normalizar
+              stock: null,
+              reserved: null,
+              available: null, // null = disponibilidad por confirmar
+              variant_id: null,
+              sku: null,
+            };
+          }
+
+          // Verificar si este talle existe en variant_sizes para esta variante
+          // IMPORTANTE: Si el talle viene de catalog_public_view.Numeracion, significa que tiene stock > 0 según la vista
+          const sizeStockQty = variantSizesBySize.get(normalizedSize) || 0;
+          
+          // Obtener stock por talle desde variant_size_warehouse_stock
+          let stockGeneral = 0;
+          let stockVentaPublico = 0;
+
+          if (isActive && generalWarehouseId && ventaPublicoWarehouseId) {
+            const generalKey = `${variantId}_${normalizedSize}_${generalWarehouseId}`;
+            const ventaPublicoKey = `${variantId}_${normalizedSize}_${ventaPublicoWarehouseId}`;
+
+            stockGeneral = sizeStockMap.get(generalKey) || 0;
+            stockVentaPublico = sizeStockMap.get(ventaPublicoKey) || 0;
+          }
+
+          // FALLBACK CRÍTICO: Si no hay stock en warehouses pero hay en variant_sizes, usar variant_sizes.stock_qty
+          // Este es el mismo patrón que usa admin/stock.js (líneas 554-560) y admin/order-creator.js
+          if (stockGeneral === 0 && stockVentaPublico === 0 && sizeStockQty > 0) {
+            // Si hay stock en variant_sizes pero no en variant_size_warehouse_stock,
+            // poner todo en general como fallback (esto es lo que hace admin/stock.js)
+            stockGeneral = sizeStockQty;
+          }
+          
+          const stockTotal = stockGeneral + stockVentaPublico;
+          const hasTalleInVariantSizes = variantSizesBySize.has(normalizedSize);
+          
+          // IMPORTANTE: Calcular available correctamente
+          // PRIORIDAD 1: Si el talle está en variant_sizes, usar el stock real (puede ser 0 para tachar)
+          // PRIORIDAD 2: Si tiene stock en warehouses, usar ese stock
+          // PRIORIDAD 3: Si no está en variant_sizes pero está en catalog_public_view.Numeracion, usar null (inconsistencia)
+          let available;
+          if (hasTalleInVariantSizes) {
+            // El talle está en variant_sizes - usar el stock real (puede ser 0 para mostrar tachado)
+            available = Math.max(0, stockTotal - reserved);
+          } else if (stockTotal > 0) {
+            // Tiene stock en warehouses aunque no esté en variant_sizes (raro pero posible)
+            available = Math.max(0, stockTotal - reserved);
+          } else if (stockTotal === 0 && sizeStockQty === 0 && !hasTalleInVariantSizes && variantSizes.length === 0) {
+            // Si variantSizesBySize está completamente vacío (no se encontraron talles para esta variante),
+            // pero el talle está en catalog_public_view.Numeracion, es una inconsistencia de datos.
+            // Mostrar como "disponibilidad por confirmar" (available: null) en lugar de "sin stock" (available: 0)
+            available = null;
+            console.debug(`🔍 [DEBUG] Talle "${normalizedSize}" está en catalog_public_view.Numeracion para ${producto.Articulo} ${detalle.color} pero no se encontraron talles en variant_sizes para variantId ${variantId}. Mostrando como "disponibilidad por confirmar".`);
+          } else if (stockTotal === 0 && sizeStockQty === 0 && !hasTalleInVariantSizes) {
+            // Si el talle específico no se encontró en variantSizesBySize, pero hay otros talles para esta variante,
+            // puede ser un problema de normalización. Usar null para "disponibilidad por confirmar"
+            available = null;
+            console.debug(`🔍 [DEBUG] Talle "${normalizedSize}" (original: "${talle}") no encontrado en variantSizesBySize para producto ${producto.Articulo}, color ${detalle.color}, variantId ${variantId}. Talles disponibles: ${Array.from(variantSizesBySize.keys()).join(', ') || 'ninguno'}.`);
+          } else {
+            // Fallback: calcular available normalmente (puede ser 0)
+            available = Math.max(0, stockTotal - reserved);
+          }
 
           // Construir skuIndex solo con variantes activas que tengan SKU
-          if (isActive && variante?.sku && variante.sku.trim()) {
+          // IMPORTANTE: El SKU puede estar en el nivel de variante, no por talle específico
+          if (isActive && variante.sku && variante.sku.trim()) {
             const sku = variante.sku.trim();
-            const detalleColor = producto.DetalleColor.find(d => 
-              (d.color || "").trim().toLowerCase() === (variante.color || "").trim().toLowerCase()
-            );
-            const image = detalleColor?.images?.[0] || producto.VariantePrincipal || '';
-            
-            skuIndex.set(sku, {
-              producto,
-              color: detalleColor?.color || variante.color || "",
-              talle,
-              variant_id: variante.id,
-              available,
-              image
-            });
+            // Verificar si ya existe en skuIndex, si no existe o el talle tiene mejor stock, actualizar
+            const existingEntry = skuIndex.get(sku);
+            if (!existingEntry || (available > 0 && (existingEntry.available === null || existingEntry.available <= 0))) {
+              const detalleColor = producto.DetalleColor.find(d => 
+                (d.color || "").trim().toLowerCase() === (variante.color || "").trim().toLowerCase()
+              );
+              const image = detalleColor?.images?.[0] || producto.VariantePrincipal || '';
+              
+              skuIndex.set(sku, {
+                producto,
+                color: detalleColor?.color || variante.color || "",
+                talle: normalizedSize,
+                variant_id: variantId,
+                available,
+                image
+              });
+            }
           }
 
           return {
-            talle,
-            stock,
-            reserved,
-            available,
-            variant_id: variante?.id || null,
-            sku: variante?.sku || null,
+            talle: normalizedSize, // Usar tamaño normalizado
+            stock: available === null ? null : stockTotal, // Si available es null, stock también debe ser null
+            reserved: available === null ? null : reserved, // Si available es null, reserved también debe ser null
+            available: available, // Puede ser null (disponibilidad por confirmar) o un número
+            variant_id: isActive ? variantId : null,
+            sku: isActive && variante.sku ? variante.sku.trim() : null,
           };
         });
 
@@ -991,71 +2297,151 @@ async function buscarPorSKUEnSupabase(sku) {
   if (!sku || !supabase) return null;
   
   try {
-    // 1. Consultar product_variants por sku (y active=true)
-    const { data: variantData, error: variantError } = await supabase
-      .from("product_variants")
-      .select("id, color, size, reserved_qty, product_id, name")
+    // 1. Primero intentar buscar por SKU completo en variant_sizes (SKU con talle específico)
+    const { data: sizeData, error: sizeError } = await supabase
+      .from("variant_sizes")
+      .select("variant_id, size, stock_qty")
       .eq("sku", sku.trim())
-      .eq("active", true)
-      .limit(1);
+      .limit(1)
+      .maybeSingle();
     
-    if (variantError || !variantData || variantData.length === 0) {
-      return null;
+    let variantId = null;
+    let talle = null;
+    let sizeStockQty = 0;
+    
+    if (!sizeError && sizeData) {
+      // SKU encontrado en variant_sizes (SKU con talle específico)
+      variantId = sizeData.variant_id;
+      talle = normalizeSize(sizeData.size);
+      sizeStockQty = sizeData.stock_qty || 0;
     }
     
-    const variant = variantData[0];
-    const variantId = variant.id;
-    
-    // 2. Consultar variant_warehouse_stock y sumar stock_qty
-    const { data: stockData, error: stockError } = await supabase
-      .from("variant_warehouse_stock")
-      .select("stock_qty")
-      .eq("variant_id", variantId);
-    
-    let stockTotal = 0;
-    if (!stockError && stockData) {
-      stockTotal = stockData.reduce((sum, row) => sum + (Number(row.stock_qty) || 0), 0);
-    }
-    
-    // 3. Calcular available = max(0, stock_total - reserved_qty)
-    const reserved = Number(variant.reserved_qty || 0);
-    const available = Math.max(0, stockTotal - reserved);
-    
-    // 4. Consultar producto padre
-    const productId = variant.product_id;
-    
-    let productoData = null;
-    if (productId) {
-      const { data: prodData, error: prodError } = await supabase
-        .from("products")
-        .select("*")
-        .eq("id", productId)
-        .limit(1);
+    // 2. Si no se encontró en variant_sizes, buscar por SKU base en product_variants (SKU sin talle)
+    if (!variantId) {
+      const { data: variantData, error: variantError } = await supabase
+        .from("product_variants")
+        .select("id, color, reserved_qty, product_id")
+        .eq("sku", sku.trim())
+        .eq("active", true)
+        .limit(1)
+        .maybeSingle();
       
-      if (!prodError && prodData && prodData.length > 0) {
-        productoData = prodData[0];
+      if (variantError || !variantData) {
+        return null;
+      }
+      
+      variantId = variantData.id;
+      
+      // Si no hay talle específico, usar el primer talle disponible de la variante
+      const { data: firstSize, error: firstSizeError } = await supabase
+        .from("variant_sizes")
+        .select("size, stock_qty")
+        .eq("variant_id", variantId)
+        .limit(1)
+        .maybeSingle();
+      
+      if (!firstSizeError && firstSize) {
+        talle = normalizeSize(firstSize.size);
+        sizeStockQty = firstSize.stock_qty || 0;
       }
     }
     
-    if (!productoData) return null;
+    if (!variantId) {
+      return null;
+    }
     
-    // 5. Determinar image (preferir imagen del color si existe; fallback a VariantePrincipal)
-    // Necesitamos consultar variant_images o usar una imagen por defecto
-    let image = productoData.VariantePrincipal || '';
+    // 3. Obtener información completa de la variante
+    const { data: variantData, error: variantError } = await supabase
+      .from("product_variants")
+      .select("id, color, reserved_qty, product_id, products!inner(name, description)")
+      .eq("id", variantId)
+      .eq("active", true)
+      .limit(1)
+      .maybeSingle();
+    
+    if (variantError || !variantData) {
+      return null;
+    }
+    
+    const variant = variantData;
+    const productId = variant.product_id;
+    
+    // 4. Obtener warehouses "general" y "venta-publico"
+    const { data: warehouses } = await supabase
+      .from("warehouses")
+      .select("id, code")
+      .in("code", ["general", "venta-publico"]);
+    
+    const warehouseMap = new Map();
+    let generalWarehouseId = null;
+    let ventaPublicoWarehouseId = null;
+    
+    if (warehouses && warehouses.length > 0) {
+      warehouses.forEach(w => warehouseMap.set(w.code, w.id));
+      generalWarehouseId = warehouseMap.get("general");
+      ventaPublicoWarehouseId = warehouseMap.get("venta-publico");
+    }
+    
+    // 5. Consultar stock por talle desde variant_size_warehouse_stock (DISTRIBUCIÓN POR WAREHOUSE)
+    let stockGeneral = 0;
+    let stockVentaPublico = 0;
+    
+    if (talle && generalWarehouseId && ventaPublicoWarehouseId) {
+      const { data: sizeWarehouseStocks, error: sizeStockError } = await supabase
+        .from("variant_size_warehouse_stock")
+        .select("warehouse_id, stock_qty")
+        .eq("variant_id", variantId)
+        .eq("size", talle)
+        .in("warehouse_id", [generalWarehouseId, ventaPublicoWarehouseId]);
+      
+      if (!sizeStockError && sizeWarehouseStocks) {
+        sizeWarehouseStocks.forEach(sws => {
+          if (sws.warehouse_id === generalWarehouseId) {
+            stockGeneral = sws.stock_qty || 0;
+          } else if (sws.warehouse_id === ventaPublicoWarehouseId) {
+            stockVentaPublico = sws.stock_qty || 0;
+          }
+        });
+      }
+    }
+    
+    // FALLBACK CRÍTICO: Si no hay stock en warehouses pero hay en variant_sizes, usar variant_sizes.stock_qty
+    // Este es el mismo patrón que usa admin/stock.js (líneas 554-560) y admin/order-creator.js
+    if (stockGeneral === 0 && stockVentaPublico === 0 && sizeStockQty > 0) {
+      // Si hay stock en variant_sizes pero no en variant_size_warehouse_stock,
+      // poner todo en general como fallback (esto es lo que hace admin/stock.js)
+      stockGeneral = sizeStockQty;
+    }
+    
+    const stockTotal = stockGeneral + stockVentaPublico;
+    const reserved = Number(variant.reserved_qty || 0);
+    const available = Math.max(0, stockTotal - reserved);
+    
+    // 6. Usar datos del producto desde la relación (ya obtenidos en variant)
+    const productoData = {
+      name: variant.products?.name || '',
+      description: variant.products?.description || '',
+      VariantePrincipal: '' // Se obtendrá de variant_images
+    };
+    
+    // 7. Determinar image (preferir imagen del color si existe; fallback a VariantePrincipal)
+    let image = '';
     
     // Intentar obtener imagen del color desde variant_images
+    // La tabla tiene columna "url" (no "image_url"); secure_url es alternativa Cloudinary
     const { data: variantImages, error: imgError } = await supabase
       .from("variant_images")
-      .select("image_url")
+      .select("url, secure_url")
       .eq("variant_id", variantId)
       .order("position", { ascending: true })
       .limit(1);
     
     if (!imgError && variantImages && variantImages.length > 0) {
-      image = variantImages[0].image_url || image;
+      const vi = variantImages[0];
+      image = vi.url || vi.secure_url || '';
     }
     
-    // 6. Construir "producto mínimo compatible"
+    // 8. Construir "producto mínimo compatible"
     const producto = {
       Articulo: productoData.name || productoData.Articulo || '',
       Descripcion: productoData.description || productoData.Descripcion || '',
@@ -1064,7 +2450,7 @@ async function buscarPorSKUEnSupabase(sku) {
         color: variant.color || '',
         images: [image].filter(Boolean),
         variantDetails: [{
-          talle: variant.size || '',
+          talle: talle || '',
           sku: sku.trim(),
           variant_id: variantId,
           available: available,
@@ -1074,11 +2460,11 @@ async function buscarPorSKUEnSupabase(sku) {
       }]
     };
     
-    // 7. Retornar resultado
+    // 9. Retornar resultado
     return {
       producto,
       color: variant.color || '',
-      talle: variant.size || '',
+      talle: talle || '',
       variant_id: variantId,
       available,
       image
@@ -1155,11 +2541,197 @@ function updateURL({tab, sku}, {mode = 'replace'} = {}) {
   }
 }
 
+// PDP historial (botón Atrás del celular)
+function buildPdpUrl(sku) {
+  const base = location.pathname + (location.search || '');
+  return base + '#/pdp/' + encodeURIComponent(sku);
+}
+
+function parsePdpFromUrl() {
+  const hash = location.hash || '';
+  const m = hash.match(/^#\/pdp\/(.+)$/);
+  if (m) return decodeURIComponent(m[1]);
+  return new URLSearchParams(location.search).get('sku');
+}
+
+function pushPdpState(sku) {
+  const newUrl = buildPdpUrl(sku);
+  if (history.state?.pdp) {
+    history.replaceState({ pdp: true, sku }, '', newUrl);
+  } else {
+    history.pushState({ pdp: true, sku }, '', newUrl);
+  }
+}
+
+function replacePdpState(sku) {
+  history.replaceState({ pdp: true, sku }, '', buildPdpUrl(sku));
+}
+
 // Funciones de modal
 function updateSKUEnURL(sku) {
-  // Usar undefined para tab para preservar tab existente automáticamente
-  updateURL({ tab: undefined, sku }, { mode: 'replace' });
+  const modal = document.getElementById('product-modal');
+  if (modal?.classList.contains('active') && history.state?.pdp) {
+    replacePdpState(sku);
+  } else {
+    updateURL({ tab: undefined, sku }, { mode: 'replace' });
+  }
 }
+
+/** Obtener cache de productos "all" agrupados. Si no existe, carga desde Supabase y agrupa. */
+async function ensureAllCacheLoadedGrouped() {
+  if (window.__allProductsCache && Array.isArray(window.__allProductsCache) && window.__allProductsCache.length > 0) {
+    return window.__allProductsCache;
+  }
+  const rows = await cargarDesdeSupabase('all');
+  const gruposArray = agruparProductos(rows);
+  let productosOrdenados = gruposArray.sort((a, b) => {
+    const fechaA = parseFecha(a.FechaIngreso);
+    const fechaB = parseFecha(b.FechaIngreso);
+    return fechaB - fechaA;
+  });
+  productosOrdenados = intercalarProductosPorCategoria(productosOrdenados);
+  window.__allProductsCache = productosOrdenados;
+  return productosOrdenados;
+}
+
+/** Filtrar productos agrupados por tag (Filtro1, Filtro2, Filtro3). F1/F2: includes. F3: exacto por tag. */
+function filterProductsByTag(allGrouped, tagValue) {
+  const q = (tagValue || '').toLowerCase().trim();
+  if (!q) return allGrouped;
+  return allGrouped.filter((p) => {
+    const f1 = (p.Filtro1 || '').toLowerCase().trim();
+    const f2 = (p.Filtro2 || '').toLowerCase().trim();
+    const f3 = (p.Filtro3 || '').toLowerCase();
+    const f3Tags = f3.split(',').map((t) => t.trim().toLowerCase()).filter(Boolean);
+    return (f1 && f1.includes(q)) || (f2 && f2.includes(q)) || f3Tags.includes(q);
+  });
+}
+
+/** Mostrar barra de filtro arriba del grid. type: 'tag' (hash) o 'search' (buscador). */
+function renderTagFilterBar(tagValue, { type = 'tag' } = {}) {
+  const cont = document.getElementById('catalogo');
+  if (!cont) return;
+  let bar = document.getElementById('tag-filter-bar');
+  const label = type === 'search' ? 'Buscando' : 'Filtrado';
+  const safeVal = (tagValue || '').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  if (bar) {
+    const textEl = bar.querySelector('.tag-filter-text');
+    const valEl = bar.querySelector('.tag-filter-value');
+    if (textEl) textEl.innerHTML = `${label}: <strong class="tag-filter-value">${safeVal}</strong>`;
+    else if (valEl) valEl.textContent = tagValue || '';
+    bar.dataset.filterType = type;
+    return;
+  }
+  const html = `
+    <div id="tag-filter-bar" class="tag-filter-bar" data-filter-type="${type}">
+      <span class="tag-filter-text">${label}: <strong class="tag-filter-value">${safeVal}</strong></span>
+      <button type="button" class="tag-filter-clear" aria-label="Quitar filtro">✕</button>
+    </div>
+  `;
+  cont.insertAdjacentHTML('afterbegin', html);
+}
+
+/** Ocultar barra de filtro por tag. */
+function clearTagFilterBar() {
+  const bar = document.getElementById('tag-filter-bar');
+  if (bar) bar.remove();
+}
+
+function initTagFilterClearDelegation() {
+  if (window.__tagFilterDelegationInit) return;
+  window.__tagFilterDelegationInit = true;
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('.tag-filter-clear');
+    if (!btn) return;
+    const bar = document.getElementById('tag-filter-bar');
+    const isSearch = bar?.dataset?.filterType === 'search';
+    if (isSearch) {
+      const input = document.getElementById('searchInput') || document.getElementById('search-bar-mobile');
+      if (input) input.value = '';
+      clearTagFilterBar();
+      if (typeof window.buscarProductosEnTodos === 'function') window.buscarProductosEnTodos('');
+    } else {
+      location.hash = '#/';
+    }
+  });
+}
+
+/** Click en .tag-chip o .pdp-tag-chip: llenar buscador y filtrar como si tipearas (sin cambiar hash). */
+function initTagToSearch() {
+  if (window.__tagToSearchInit) return;
+  window.__tagToSearchInit = true;
+  document.addEventListener('click', (e) => {
+    const chip = e.target.closest('.tag-chip, .pdp-tag-chip');
+    if (!chip) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const tag = (chip.dataset.tag || chip.textContent || '').trim();
+    if (!tag) return;
+    const fromPdp = chip.classList.contains('pdp-tag-chip');
+    if (fromPdp) {
+      window.__tagSearchFromPdp = true;
+      cerrarModal(true);
+    }
+    const input = document.getElementById('searchInput') || document.getElementById('search-bar-mobile');
+    if (input) input.value = tag;
+    if (typeof window.buscarProductosEnTodos === 'function') {
+      window.buscarProductosEnTodos(tag);
+    } else if (input) {
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    if (fromPdp) {
+      const u = new URL(location.href);
+      if (u.hash.match(/^#\/pdp\//)) {
+        u.hash = '#/';
+        history.replaceState(history.state || {}, '', u);
+      }
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, true);
+}
+
+/** Aplicar filtro por tag y renderizar catálogo. Oculta banners de Home. */
+async function applyTagFilterAndRender(tagValue, { pushHash = true } = {}) {
+  const cont = document.getElementById('catalogo');
+  if (!cont) return;
+  const all = await ensureAllCacheLoadedGrouped();
+  const filtrados = filterProductsByTag(all, tagValue);
+  productosPendientes = filtrados;
+  productosRenderizados = 0;
+  offersCardsPendientes = [];
+  if (typeof window.hideFYLOriginalsBanner === 'function') window.hideFYLOriginalsBanner();
+  if (typeof window.hideCustomBanner === 'function') window.hideCustomBanner();
+  if (typeof window.hidePromotionalBanner === 'function') window.hidePromotionalBanner();
+  document.querySelectorAll('#filtroMenu input[type="checkbox"]').forEach((cb) => { cb.checked = false; });
+  const searchInput = document.getElementById('searchInput');
+  if (searchInput) searchInput.value = '';
+  cont.innerHTML = '';
+  initTagFilterClearDelegation();
+  renderTagFilterBar(tagValue);
+  if (filtrados.length === 0) {
+    cont.insertAdjacentHTML('beforeend', '<div class="no-data" style="text-align:center;padding:2rem;color:#666;">No hay productos con el tag seleccionado</div>');
+    ocultarBotonVerMas();
+    if (pushHash) {
+      try { location.hash = '#/tag/' + encodeURIComponent(tagValue); } catch (_) {}
+    }
+    return;
+  }
+  await renderizarProductosPagina(productosPendientes, cont, [], 0, PRODUCTOS_INICIALES, { skipBanner: true });
+  productosRenderizados = PRODUCTOS_INICIALES;
+  configurarEventos();
+  mostrarBotonVerMas();
+  iniciarVerificacionCargaImagenes();
+  if (pushHash) {
+    try { location.hash = '#/tag/' + encodeURIComponent(tagValue); } catch (_) {}
+  }
+}
+
+// Tags clickeables: navegar a #/tag/<value> para que onNavChange dispare el render
+window.setQuickFilter = function(level, value) {
+  if (!value) return;
+  window.__quickFilter = { level, value };
+  try { location.hash = '#/tag/' + encodeURIComponent(value); } catch (_) {}
+};
 
 function abrirModalPorSKU(sku, { pushState = true } = {}) {
   if (!sku) return false;
@@ -1171,16 +2743,17 @@ function abrirModalPorSKU(sku, { pushState = true } = {}) {
   const modal = document.getElementById('product-modal');
   if (!modal) return false;
   
-  // Guardar SKU en dataset
   modal.dataset.sku = sku;
-  
   renderizarModalProducto(resultado.producto, resultado.color, resultado.talle);
   
-  // Usar updateURL preservando tab existente
-  updateURL({ tab: undefined, sku }, { mode: pushState ? 'push' : 'replace' });
+  if (pushState) pushPdpState(sku);
   
   modal.classList.add('active');
   document.body.classList.add('modal-open');
+
+  // Scroll al área de la imagen (parte superior del PDP)
+  const modalBody = document.getElementById('product-modal-body');
+  if (modalBody) modalBody.scrollTop = 0;
   
   return true;
 }
@@ -1192,37 +2765,50 @@ function abrirModalConResultado(resultado, { pushState = true } = {}) {
   const modal = document.getElementById('product-modal');
   if (!modal) return false;
   
-  // Obtener SKU del resultado
-  const sku = resultado.producto.DetalleColor?.[0]?.variantDetails?.[0]?.sku || '';
-  
-  // Guardar SKU en dataset
-  if (sku) {
-    modal.dataset.sku = sku;
+  // SKU: explícito en resultado, o del color/talle seleccionado, o primer disponible
+  let sku = resultado.sku || '';
+  if (!sku && resultado.color) {
+    const r = obtenerPrimerSkuConStock(resultado.producto, resultado.color);
+    sku = r?.sku || '';
   }
+  if (!sku) {
+    sku = resultado.producto.DetalleColor?.[0]?.variantDetails?.[0]?.sku || '';
+  }
+  
+  if (sku) modal.dataset.sku = sku;
   
   renderizarModalProducto(resultado.producto, resultado.color, resultado.talle);
   
-  // Usar updateURL preservando tab existente
-  if (sku) {
-    updateURL({ tab: undefined, sku }, { mode: pushState ? 'push' : 'replace' });
-  }
+  if (sku && pushState) pushPdpState(sku);
   
   modal.classList.add('active');
   document.body.classList.add('modal-open');
+
+  // Scroll al área de la imagen (parte superior del PDP)
+  const modalBody = document.getElementById('product-modal-body');
+  if (modalBody) modalBody.scrollTop = 0;
   
   return true;
 }
 
-function cerrarModal() {
+function cerrarModal(skipHistory = false) {
   const modal = document.getElementById('product-modal');
   if (modal) {
     modal.classList.remove('active');
-    modal.dataset.sku = ''; // Limpiar SKU del dataset
+    modal.dataset.sku = '';
   }
   document.body.classList.remove('modal-open');
   productoActualEnModal = null;
-  // Eliminar solo sku, preservar tab con undefined
-  updateURL({ tab: undefined, sku: '' }, { mode: 'replace' });
+
+  if (skipHistory) return;
+  if (history.state?.pdp) {
+    history.back();
+  } else {
+    const u = new URL(location.href);
+    if (u.hash.match(/^#\/pdp\//)) u.hash = '#/';
+    u.searchParams.delete('sku');
+    history.replaceState(history.state || {}, '', u);
+  }
 }
 
 // Función helper para mostrar toast
@@ -1264,10 +2850,7 @@ function showToast(message, type = 'error') {
 }
 
 async function inicializarModalDesdeURL() {
-  const urlParams = new URLSearchParams(window.location.search);
-  const sku = urlParams.get('sku');
-  
-  // SKU es fuente de verdad - si existe, siempre abrir modal
+  const sku = parsePdpFromUrl();
   if (!sku) return;
   
   // Si está en skuIndex, abrir normal
@@ -1309,46 +2892,243 @@ async function inicializarModalDesdeURL() {
   }
 }
 
+// Recomendados: fuente robusta (__allProductsCache > productosPendientes > Supabase)
+async function getRecoCandidates(productoActual, limit = 8) {
+  const artActual = productoActual?.Articulo || '';
+  const f1 = (productoActual?.Filtro1 || '').trim();
+  const f2 = (productoActual?.Filtro2 || '').trim();
+  const f3Raw = (productoActual?.Filtro3 || '').trim();
+  const f3Parts = f3Raw ? f3Raw.split(/[,;]/).map(s => s.trim().toLowerCase()).filter(Boolean) : [];
+
+  let candidates = [];
+  if (window.__allProductsCache && Array.isArray(window.__allProductsCache) && window.__allProductsCache.length > 0) {
+    candidates = window.__allProductsCache;
+  } else if (productosPendientes && productosPendientes.length > 0) {
+    candidates = productosPendientes;
+  } else if (supabase && (f1 || f2)) {
+    try {
+      const parts = [];
+      if (f1) parts.push(`Filtro1.eq.${JSON.stringify(f1)}`);
+      if (f2) parts.push(`Filtro2.eq.${JSON.stringify(f2)}`);
+      const { data, error } = await supabase
+        .from('catalog_public_view')
+        .select('*')
+        .or(parts.join(','))
+        .limit(20);
+      if (!error && data) candidates = data;
+    } catch (e) { console.warn('getRecoCandidates Supabase:', e); }
+  }
+
+  const scored = candidates
+    .filter(p => (p?.Articulo || '') !== artActual)
+    .map(p => {
+      let score = 0;
+      const pf1 = (p?.Filtro1 || '').trim();
+      const pf2 = (p?.Filtro2 || '').trim();
+      const pf3Raw = (p?.Filtro3 || '').trim();
+      if (f1 && pf1 && pf1.toLowerCase() === f1.toLowerCase()) score += 3;
+      if (f2 && pf2 && pf2.toLowerCase() === f2.toLowerCase()) score += 2;
+      if (f3Parts.length && pf3Raw) {
+        const pp = pf3Raw.split(/[,;]/).map(s => s.trim().toLowerCase()).filter(Boolean);
+        if (pp.some(ppv => f3Parts.includes(ppv))) score += 1;
+      }
+      return { producto: p, score, fecha: p?.FechaIngreso || '' };
+    })
+    .filter(x => x.score > 0)
+    .sort((a, b) => b.score - a.score || String(b.fecha).localeCompare(String(a.fecha)))
+    .slice(0, limit)
+    .map(x => x.producto);
+
+  return scored;
+}
+
 // Funciones de renderizado del modal
 function renderizarModalProducto(producto, colorSeleccionado, talleSeleccionado) {
   const modalBody = document.getElementById('product-modal-body');
-  if (!modalBody) return;
+  const modal = document.getElementById('product-modal');
+  if (!modalBody || !modal) return;
   
   const detalleColor = producto.DetalleColor?.find(d => 
     (d.color || "").trim().toLowerCase() === (colorSeleccionado || "").trim().toLowerCase()
   ) || producto.DetalleColor?.[0];
-  
-  const imagenPrincipal = detalleColor?.images?.[0] || producto.VariantePrincipal || '';
-  const gal = renderizarGaleria(producto);
+
+  // Galería e imagen principal desde la misma fuente
+  const { gal, mainImgUrl } = obtenerGaleriaYImagenPrincipal(producto, colorSeleccionado);
   const colores = renderizarColoresModal(producto, colorSeleccionado);
   const variantes = renderizarVariantesModal(producto, colorSeleccionado, talleSeleccionado);
   const tags = renderizarTags(producto);
+  // Filtro3 puede contener varios tags separados por coma o punto y coma
+  const tagChips = [
+    producto.Filtro1 && { level: 'filtro1', tag: String(producto.Filtro1).trim() },
+    producto.Filtro2 && { level: 'filtro2', tag: String(producto.Filtro2).trim() },
+    ...(producto.Filtro3
+      ? String(producto.Filtro3)
+          .split(/[,;]/)
+          .map((t) => t.trim())
+          .filter(Boolean)
+          .map((tag) => ({ level: 'filtro3', tag }))
+      : []),
+  ].filter(Boolean);
   
+  // Obtener SKU actual del modal o calcularlo
+  let skuActual = modal.dataset.sku || '';
+  if (!skuActual) {
+    const resultadoSKU = obtenerPrimerSkuConStock(producto, colorSeleccionado);
+    skuActual = resultadoSKU?.sku || '';
+    // Si encontramos un SKU, guardarlo en el dataset del modal
+    if (skuActual) {
+      modal.dataset.sku = skuActual;
+    }
+  }
+  
+  // Si aún no hay SKU, intentar obtenerlo del primer variant detail disponible
+  if (!skuActual && detalleColor?.variantDetails && detalleColor.variantDetails.length > 0) {
+    const primerVariant = detalleColor.variantDetails.find(vd => vd.sku) || detalleColor.variantDetails[0];
+    skuActual = primerVariant?.sku || '';
+  }
+  
+  const variantesPDP = renderizarVariantesModalPDP(producto, colorSeleccionado, detalleColor?.color || '');
+  const featuresHtml = renderizarCaracteristicasPDP(producto);
+  const hasOffer = producto.OfertaActiva === true || producto.OfertaActiva === 'true';
+  const offerPrice = producto.PrecioOferta || '';
+  const precioUnidad = hasOffer && offerPrice ? parseFloat(String(offerPrice).replace(/[^\d.,]/g, '').replace(',', '.')) : parseFloat(String(producto.Precio || '0').replace(/[^\d.,]/g, '').replace(',', '.')) || 0;
+
+  const modalFooter = document.getElementById('product-modal-footer');
+
   modalBody.innerHTML = `
-    <div class="product-modal-main-content">
-      <div class="product-modal-images">
-        <img class="product-modal-main-image" 
-             src="${cloudinaryOptimized(imagenPrincipal, 1200)}" 
-             alt="${producto.Articulo}"/>
-        <div class="product-modal-gallery">${gal}</div>
+    <div class="pdp-header product-modal-header">
+      <div class="pdp-header__row1">
+        <button class="pdp-back product-modal-back" aria-label="Volver">←</button>
+        <div class="pdp-title product-modal-title"><span class="pdp-title__name">${(producto.Articulo || '').replace(/</g, '&lt;')}</span>${detalleColor?.color ? `<span class="pdp-title__sep">•</span><span class="pdp-title__color">${(detalleColor.color || '').replace(/</g, '&lt;')}</span>` : ''}</div>
+        <div class="pdp-price product-modal-price-container">${renderPriceWithOffer(producto)}</div>
+        <button class="pdp-close product-modal-close-inner" aria-label="Cerrar">✕</button>
       </div>
-      <div class="product-modal-info">
-        <h2>Art: <span class="article-box">${producto.Articulo}</span>${renderOfferFireIcon(producto)}</h2>
-        ${renderOfferAndPromoBadges(producto)}
-        ${tags}
-        <div class="product-modal-description">${producto.Descripcion || ""}</div>
-        <div class="product-modal-price-container">
-          ${renderPriceWithOffer(producto)}
-        </div>
-        <div class="product-modal-colors">
-          ${colores}
-        </div>
-        <div class="product-modal-variants">
-          ${variantes}
+      <div class="pdp-header__row2">
+        <div class="pdp-header__tags">${tagChips.map(t => `<button type="button" class="pdp-chip pdp-tag-chip" data-tag-level="${t.level}" data-tag="${t.tag.replace(/"/g, '&quot;')}">${t.tag}</button>`).join('')}</div>
+        <div class="pdp-header-actions">
+          <button type="button" class="pdp-action-btn pdp-download" aria-label="Descargar imagen"><svg width="14" height="14" stroke="currentColor" stroke-width="1.8" fill="none" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Descargar</button>
+          <button type="button" class="pdp-action-btn pdp-share" aria-label="Compartir imagen"><svg width="14" height="14" stroke="currentColor" stroke-width="1.8" fill="none" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>Compartir</button>
         </div>
       </div>
     </div>
-  `;
+    <div class="product-modal-main-content">
+      <div class="pdp-media">
+        <div class="pdp-main-image-wrap">
+          <img class="product-modal-main-image" 
+               src="${mainImgUrl}" 
+               alt="${producto.Articulo}"
+               loading="eager"/>
+        </div>
+        <div class="pdp-thumbs">${gal}</div>
+      </div>
+      <div class="product-modal-info">
+        <div class="product-modal-section product-modal-colors-section">
+          <div class="product-modal-colors-row">
+            <span class="product-modal-color-label">Color: <strong>${detalleColor?.color || ''}</strong></span>
+            <div class="product-modal-colors">${colores}</div>
+          </div>
+        </div>
+        ${featuresHtml}
+        <div class="product-modal-section product-modal-sizes-section">
+          <div class="product-modal-section-label">TALLES</div>
+          <div class="product-modal-variants pdp-size-section">${variantesPDP}</div>
+        </div>
+      </div>
+      <div class="pdp-reco">
+        <div class="pdp-reco-head">
+          <h3>Recomendados</h3>
+          <button class="pdp-reco-more" type="button" data-action="go-reco-filter">Ver más</button>
+        </div>
+        <div class="pdp-reco-row" id="pdp-reco-row"></div>
+      </div>
+    </div>`;
+
+  if (modalFooter) {
+    if (window.__CATALOG_ONLY__) {
+      const waText = encodeURIComponent(`Hola, consulto por: ${producto.Articulo || ''}${detalleColor?.color ? ' - ' + detalleColor.color : ''}`);
+      const waUrl = `https://wa.me/5493624118637?text=${waText}`;
+      modalFooter.innerHTML = `
+        <a class="pdp-whatsapp-cta" href="${waUrl}" target="_blank" rel="noopener" data-action="wa">Consultar por WhatsApp</a>`;
+    } else {
+      modalFooter.innerHTML = `
+        <div class="product-modal-cta" data-precio-unidad="${precioUnidad}">
+          <div class="product-modal-cta-summary">
+            <div class="product-modal-cta-pairs">Seleccioná talles para agregar</div>
+            <div class="product-modal-cta-total">$0</div>
+          </div>
+          <button class="product-modal-cta-btn reserve-btn pdp-add-btn is-empty" 
+                  data-articulo="${producto.Articulo}" 
+                  data-color="${detalleColor?.color || ''}">Agregar al borrador</button>
+        </div>`;
+    }
+  }
+
+  // La imagen principal debe usar la MISMA URL que las miniaturas (que sí cargan).
+  const mainImg = modalBody.querySelector('.product-modal-main-image');
+  const miniatura = modalBody.querySelector('.pdp-thumbs .miniatura.active') || modalBody.querySelector('.pdp-thumbs .miniatura');
+  if (mainImg) {
+    const url = miniatura?.getAttribute('data-full') || miniatura?.getAttribute('src') || mainImgUrl;
+    if (url) mainImg.src = url;
+  }
+
+  // PDP IMG DIAG: diagnóstico automático (onload/onerror + rects + elementsFromPoint)
+  if (mainImg) {
+    const wrap = modalBody.querySelector('.pdp-main-image-wrap');
+    let logged = false;
+    const logDiag = (ev) => {
+      if (logged) return;
+      logged = true;
+      const rect = wrap?.getBoundingClientRect();
+      const cx = rect ? rect.left + rect.width / 2 : 0;
+      const cy = rect ? rect.top + rect.height / 2 : 0;
+      const els = (document.elementsFromPoint && document.elementsFromPoint(cx, cy) || []).slice(0, 6).map(e => ({ tag: e.tagName, class: e.className, id: e.id }));
+      console.log('PDP IMG DIAG', {
+        event: ev,
+        srcAttr: mainImg.getAttribute('src'),
+        srcResolved: mainImg.src,
+        complete: mainImg.complete,
+        naturalWidth: mainImg.naturalWidth,
+        naturalHeight: mainImg.naturalHeight,
+        mainRect: mainImg.getBoundingClientRect(),
+        wrapRect: wrap?.getBoundingClientRect(),
+        elementsAtCenter: els,
+      });
+    };
+    mainImg.onload = () => logDiag('load');
+    mainImg.onerror = () => logDiag('error');
+    if (mainImg.complete) logDiag('cached');
+  }
+
+  // Popular recomendados (async)
+  (async () => {
+    const row = document.getElementById('pdp-reco-row');
+    if (!row) return;
+    const recos = await getRecoCandidates(producto, 8);
+    row.innerHTML = recos.map((p, idx) => {
+      const sku = obtenerSKUDefecto(p) || '';
+      const img = p?.DetalleColor?.[0]?.images?.[0] || p?.VariantePrincipal || '';
+      const nombre = p?.Articulo || '';
+      const precio = renderPriceWithOffer(p);
+      const articulo = (p?.Articulo || '').replace(/"/g, '&quot;');
+      return `<div class="pdp-reco-card" data-sku="${sku}" data-reco-index="${idx}" data-articulo="${articulo}"><img src="${cloudinaryOptimized(img, 400)}" alt="${nombre}"/><div class="pdp-reco-name">${nombre}</div><div class="pdp-reco-price">${precio}</div></div>`;
+    }).join('');
+    row.querySelectorAll('.pdp-reco-card').forEach((el, idx) => {
+      el.addEventListener('click', () => {
+        const sku = el.dataset.sku;
+        if (sku && abrirModalPorSKU(sku)) return;
+        // Fallback: abrir por producto cuando no hay SKU en skuIndex
+        const p = recos[idx];
+        if (p) {
+          const color = p.DetalleColor?.[0]?.color;
+          const r = obtenerPrimerSkuConStock(p, color);
+          const resultado = r ? { producto: p, color, sku: r.sku, talle: r.talle } : { producto: p, color };
+          abrirModalConResultado(resultado);
+        }
+      });
+    });
+  })();
+
+  // "Ver más" y tags: delegado en initModalEvents
 }
 
 function renderizarColoresModal(producto, colorSeleccionado) {
@@ -1359,12 +3139,92 @@ function renderizarColoresModal(producto, colorSeleccionado) {
     const sku = resultado?.sku || null;
     const imagen = detalle.images?.[0] || '';
     const selected = (detalle.color || "").trim().toLowerCase() === (colorSeleccionado || "").trim().toLowerCase() ? 'selected' : '';
+    const hexColor = detalle.hex_color || "#CD844D"; // Color por defecto si no hay hex_color
+    const displayNumber = detalle.ColorDisplayNumber || detalle.display_number;
+    // Calcular si el color es claro u oscuro para ajustar el color del texto
+    const rgb = hexToRgb(hexColor);
+    const brightness = rgb ? (rgb.r * 299 + rgb.g * 587 + rgb.b * 114) / 1000 : 128;
+    const textColor = brightness > 128 ? "#000000" : "#FFFFFF";
+    const borderColor = selected ? "#fff" : hexColor;
+    const borderWidth = selected ? "2px" : "1px";
     
+    // Agregar el número si existe
+    const numberHtml = displayNumber 
+      ? `<span class="color-number" style="color: ${textColor}; font-weight: bold; font-size: 0.85em; pointer-events: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);">${displayNumber}</span>` 
+      : "";
+    
+    const imgUrl = getImgUrl(imagen, 1200);
     return `<button class="color-btn ${selected}" 
                     data-color="${detalle.color}" 
-                    data-src="${imagen}" 
-                    data-sku="${sku || ''}">${detalle.color}</button>`;
+                    data-src="${imgUrl}" 
+                    data-sku="${sku || ''}"
+                    data-number="${displayNumber || ''}"
+                    style="background-color: ${hexColor}; color: ${textColor}; border: ${borderWidth} solid ${borderColor}; position: relative; display: flex; align-items: center; justify-content: center;">${numberHtml}</button>`;
   }).join('');
+}
+
+function formatTalleDisplay(talle) {
+  return (talle || '').replace(/\//g, '–');
+}
+
+/**
+ * Parsea Descripcion en bullets para el bloque Características.
+ * Soporta: newlines, pipes (|), guiones al inicio.
+ * Si no hay contenido, retorna '' (bloque oculto).
+ */
+function renderizarCaracteristicasPDP(producto) {
+  const raw = (producto.Descripcion || '').trim();
+  if (!raw) return '';
+
+  const items = raw
+    .split(/\n|(?:\s*\|\s*)/)
+    .map(s => s.replace(/^[-•*]\s*/, '').trim())
+    .filter(Boolean);
+  if (items.length === 0) return '';
+
+  const listHtml = items.map(i => `<li>${i.replace(/</g, '&lt;')}</li>`).join('');
+  return `
+    <div class="pdp-features product-modal-section">
+      <button type="button" class="pdp-features-toggle" aria-expanded="true" aria-controls="pdp-features-list">
+        <span class="pdp-features-title">Características</span>
+        <span class="pdp-features-icon" aria-hidden="true">▼</span>
+      </button>
+      <ul id="pdp-features-list" class="pdp-features-list">${listHtml}</ul>
+    </div>`;
+}
+
+function renderizarVariantesModalPDP(producto, colorSeleccionado, colorActual) {
+  const detalleColor = producto.DetalleColor?.find(d =>
+    (d.color || "").trim().toLowerCase() === (colorSeleccionado || "").trim().toLowerCase()
+  ) || producto.DetalleColor?.[0];
+  if (!detalleColor) return '';
+
+  const variantDetails = detalleColor.variantDetails || [];
+  const chips = variantDetails.map((vd) => {
+    const key = `${colorActual}_${vd.talle}`;
+    const sinStock = vd.available !== null && vd.available <= 0;
+    const max = vd.available !== null ? vd.available : 999;
+    const stockText = sinStock ? 'Sin stock' : (vd.available !== null ? `${vd.available} disp.` : '—');
+    const sizeDisplay = formatTalleDisplay(vd.talle);
+
+    if (sinStock) {
+      return `
+        <button type="button" class="size-chip size-chip--disabled" disabled data-key="${key}" data-size="${sizeDisplay}" data-max="0" data-qty="0" aria-disabled="true">
+          <div class="size-chip__top">
+            <div class="size-chip__size">${sizeDisplay}</div>
+            <div class="size-chip__stock">${stockText}</div>
+          </div>
+        </button>`;
+    }
+    return `
+      <button type="button" class="size-chip" data-key="${key}" data-size="${sizeDisplay}" data-max="${max}" data-qty="0" aria-disabled="false">
+        <div class="size-chip__top">
+          <div class="size-chip__size">${sizeDisplay}</div>
+          <div class="size-chip__stock">${stockText}</div>
+        </div>
+      </button>`;
+  }).join('');
+  return `<div class="size-grid">${chips}</div><div class="size-stepper-panel is-hidden" id="pdp-size-stepper"></div>`;
 }
 
 function renderizarVariantesModal(producto, colorSeleccionado, talleSeleccionado) {
@@ -1417,108 +3277,278 @@ function renderizarVariantesModal(producto, colorSeleccionado, talleSeleccionado
                     ${selected}>${etiqueta}</option>`;
   }).join('');
   
-  const hayStock = variantDetails.some(vd => vd.available === null || Number(vd.available) > 0);
-  
   return `
     <div class="variant">
       <strong>${detalleColor.color}:</strong>
       <div class="talles">${chips}</div>
-      <div class="reserve-controls" style="display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap;">
-        <label>Talle: <select class="res-size">${sizeOptions}</select></label>
-        <label>Cant: <input type="number" class="res-qty" min="1" value="1" style="width:64px" ${hayStock ? '' : 'disabled'}/></label>
-        <button class="reserve-btn" 
-                data-articulo="${producto.Articulo}" 
-                data-color="${detalleColor.color}" 
-                ${hayStock ? '' : 'disabled'}>Agregar</button>
-      </div>
     </div>
   `;
 }
 
 function renderizarColores(producto) {
-  return producto.DetalleColor.map(
-    (v) =>
-      `<button class='color-btn' data-src="${v.images[0] || ""}">${
-        v.color
-      }</button>`
-  ).join("");
+  if (!producto.DetalleColor || producto.DetalleColor.length === 0) return "";
+  const MAX_VISIBLE = 4;
+  const colores = producto.DetalleColor;
+
+  const swatchHtml = (v, hidden = false) => {
+    const hexColor = v.hex_color || "#CD844D";
+    const displayNumber = v.ColorDisplayNumber || v.display_number;
+    const rgb = hexToRgb(hexColor);
+    let textColor = "#000000";
+    if (rgb) {
+      const brightness = (rgb.r * 299 + rgb.g * 587 + rgb.b * 114) / 1000;
+      textColor = brightness > 128 ? "#000000" : "#FFFFFF";
+    }
+    const numberHtml = displayNumber 
+      ? `<span class="color-number" style="color: ${textColor}; font-weight: bold; font-size: 0.85em; pointer-events: none;">${displayNumber}</span>` 
+      : "";
+    const hiddenClass = hidden ? " color-btn-hidden" : "";
+    return `<button class='color-btn${hiddenClass}' 
+                    data-src="${v.images[0] || ""}"
+                    data-color="${v.color || ''}"
+                    data-number="${displayNumber || ''}"
+                    title="${v.color || ''}"
+                    style="background-color: ${hexColor}; border: 1.5px solid rgba(0, 0, 0, 0.1); position: relative; display: flex; align-items: center; justify-content: center;">${numberHtml}</button>`;
+  };
+
+  const visibles = colores.slice(0, MAX_VISIBLE).map(v => swatchHtml(v));
+  const ocultos = colores.slice(MAX_VISIBLE).map(v => swatchHtml(v, true));
+  const restantes = ocultos.length;
+  const moreChip = restantes > 0
+    ? `<span class="color-more-chip" title="Ver ${restantes} colores más" role="button" tabindex="0">+${restantes}</span>`
+    : "";
+  return visibles.join("") + ocultos.join("") + moreChip;
+}
+
+// Función auxiliar para convertir hex a RGB
+function hexToRgb(hex) {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return result ? {
+    r: parseInt(result[1], 16),
+    g: parseInt(result[2], 16),
+    b: parseInt(result[3], 16)
+  } : null;
+}
+
+// Formato compacto de talles para la card (progressive disclosure)
+function formatSizeRange(sizes) {
+  if (!sizes || sizes.length === 0) return "";
+  const raw = sizes.map(s => String(s).trim()).filter(Boolean);
+  const uniq = [...new Set(raw)];
+  if (uniq.length === 0) return "";
+
+  const allNums = [];
+  for (const s of uniq) {
+    const matches = s.match(/\d+/g);
+    if (matches) matches.forEach(m => allNums.push(parseInt(m, 10)));
+  }
+
+  if (allNums.length > 0) {
+    const min = Math.min(...allNums);
+    const max = Math.max(...allNums);
+    return min === max ? `${min}` : `${min}\u2013${max}`;
+  }
+
+  if (uniq.length === 1) return uniq[0];
+  return `${uniq.length} talles`;
+}
+
+function obtenerSizeBadgeHTML(producto, colorSeleccionado = null) {
+  const text = formatearSizeBadgeParaCard(producto, colorSeleccionado);
+  if (!text) return "";
+  return `<span class="card-size-badge">${text}</span>`;
+}
+
+/** Texto para chip de talle en card: Único (solo si se llama así) | 36 | 36–40 | Talles + */
+function formatearSizeBadgeParaCard(producto, colorSeleccionado = null) {
+  const raw = obtenerTallesSetParaCard(producto, colorSeleccionado);
+  const talles = [...raw];
+  if (talles.length === 0) return "";
+  if (talles.length === 1) {
+    const talle = String(talles[0]).trim();
+    return /^unico$/i.test(talle) ? "Único" : talle;
+  }
+  const allNums = [];
+  for (const s of talles) {
+    const m = String(s).match(/\d+/g);
+    if (m) m.forEach(n => allNums.push(parseInt(n, 10)));
+  }
+  if (allNums.length > 0) {
+    const min = Math.min(...allNums);
+    const max = Math.max(...allNums);
+    return min === max ? `${min}` : `${min}\u2013${max}`;
+  }
+  return "Talles +";
+}
+
+function obtenerTallesSetParaCard(producto, colorSeleccionado = null) {
+  if (!producto?.DetalleColor?.length) return new Set();
+  const coloresAFiltrar = colorSeleccionado
+    ? producto.DetalleColor.filter(d => (d.color || "").trim().toLowerCase() === (colorSeleccionado || "").trim().toLowerCase())
+    : producto.DetalleColor;
+  if (coloresAFiltrar.length === 0) return new Set();
+  const tallesSet = new Set();
+  coloresAFiltrar.forEach(detalle => {
+    if (detalle.variantDetails?.length) detalle.variantDetails.forEach(vd => { if (vd.talle) tallesSet.add(vd.talle); });
+    else if (detalle.talles?.length) detalle.talles.forEach(t => tallesSet.add(t));
+  });
+  return tallesSet;
+}
+
+function obtenerSizesCompactoParaCard(producto, colorSeleccionado = null) {
+  if (!producto.DetalleColor || producto.DetalleColor.length === 0) return "";
+  const coloresAFiltrar = colorSeleccionado
+    ? producto.DetalleColor.filter(d => (d.color || "").trim().toLowerCase() === (colorSeleccionado || "").trim().toLowerCase())
+    : producto.DetalleColor;
+  if (coloresAFiltrar.length === 0) return "";
+
+  const tallesSet = new Set();
+  coloresAFiltrar.forEach(detalle => {
+    if (detalle.variantDetails && detalle.variantDetails.length > 0) {
+      detalle.variantDetails.forEach(vd => { if (vd.talle) tallesSet.add(vd.talle); });
+    } else if (detalle.talles && detalle.talles.length > 0) {
+      detalle.talles.forEach(t => tallesSet.add(t));
+    }
+  });
+  return formatSizeRange([...tallesSet]);
+}
+
+// Función para obtener todos los talles disponibles con su estado de stock
+function obtenerRangoTalles(producto, colorSeleccionado = null) {
+  if (!producto.DetalleColor || producto.DetalleColor.length === 0) {
+    return '';
+  }
+  
+  // Si se especifica un color, filtrar solo ese color; si no, usar todos los colores
+  const coloresAFiltrar = colorSeleccionado 
+    ? producto.DetalleColor.filter(d => (d.color || "").trim().toLowerCase() === (colorSeleccionado || "").trim().toLowerCase())
+    : producto.DetalleColor;
+  
+  if (coloresAFiltrar.length === 0) {
+    return '';
+  }
+  
+  // Obtener todos los talles con su información de stock
+  const tallesConStock = [];
+  coloresAFiltrar.forEach(detalle => {
+    if (detalle.variantDetails && detalle.variantDetails.length > 0) {
+      detalle.variantDetails.forEach(vd => {
+        if (vd.talle) {
+          // Verificar si ya existe este talle (puede estar en múltiples colores)
+          const existente = tallesConStock.find(t => t.talle === vd.talle);
+          if (!existente) {
+            tallesConStock.push({
+              talle: vd.talle,
+              available: vd.available !== null && vd.available !== undefined ? vd.available : null
+            });
+          } else {
+            // Si ya existe, actualizar el stock si este tiene más disponibilidad
+            if (vd.available !== null && vd.available !== undefined) {
+              if (existente.available === null || vd.available > existente.available) {
+                existente.available = vd.available;
+              }
+            }
+          }
+        }
+      });
+    } else if (detalle.talles && detalle.talles.length > 0) {
+      detalle.talles.forEach(talle => {
+        const existente = tallesConStock.find(t => t.talle === talle);
+        if (!existente) {
+          tallesConStock.push({
+            talle: talle,
+            available: null // Disponibilidad por confirmar
+          });
+        }
+      });
+    }
+  });
+  
+  if (tallesConStock.length === 0) {
+    return '';
+  }
+  
+  // Normalizar talles y convertir a números para ordenar
+  const tallesNumericos = tallesConStock
+    .map(t => {
+      const num = parseInt(t.talle);
+      if (!isNaN(num)) {
+        return { ...t, num };
+      }
+      // Si normalizeSize existe, intentar normalizar
+      if (typeof normalizeSize === 'function') {
+        const normalized = normalizeSize(t.talle);
+        const numNormalized = parseInt(normalized);
+        if (!isNaN(numNormalized)) {
+          return { ...t, num: numNormalized };
+        }
+      }
+      return { ...t, num: Infinity }; // Colocar al final si no es numérico
+    })
+    .sort((a, b) => a.num - b.num);
+  
+  // Renderizar cada talle con su estado
+  return tallesNumericos.map(({ talle, available }) => {
+    const sinStock = available !== null && available <= 0;
+    const clase = sinStock ? 'size-item size-out' : 'size-item';
+    return `<span class="${clase}">${talle}</span>`;
+  }).join(',');
 }
 
 function renderizarVariantes(producto) {
-  return producto.DetalleColor.map((v) => {
-    const detalles =
-      v.variantDetails && v.variantDetails.length
-        ? v.variantDetails
-        : (v.talles || []).map((talle) => ({
-            talle,
-            stock: null,
-            reserved: null,
-            available: null,
-            variant_id: null,
-          }));
+  // Solo mostrar talles del primer color por defecto
+  const primerDetalleColor = producto.DetalleColor?.[0];
+  if (!primerDetalleColor) {
+    return '';
+  }
 
-    const chips = detalles
-      .map(({ talle, available }) => {
-        const sinStock = available !== null && available <= 0;
-        const clase = `talle${sinStock ? " talle-out" : ""}`;
-        const titulo =
-          available === null
-            ? "Disponibilidad por confirmar"
-            : sinStock
-            ? "Sin stock"
-            : `Disponible: ${available}`;
-        return `<div class="${clase}" data-size="${talle}" data-available="${available ?? ""}" title="${titulo}">${talle}</div>`;
-      })
-      .join("");
+  // IMPORTANTE: Usar variantDetails si existe (viene de enrichProductsWithStock)
+  // Si no existe, crear variantDetails desde talles con available: null (disponibilidad por confirmar)
+  const detalles =
+    primerDetalleColor.variantDetails && primerDetalleColor.variantDetails.length > 0
+      ? primerDetalleColor.variantDetails
+      : (primerDetalleColor.talles || []).map((talle) => ({
+          talle: normalizeSize(talle) || talle, // Normalizar talle
+          stock: null,
+          reserved: null,
+          available: null, // null = disponibilidad por confirmar (no "sin stock")
+          variant_id: null,
+          sku: null,
+        }));
 
-    let primeraSeleccion = false;
-    const sizeOptions = detalles
-      .map(({ talle, available, variant_id }) => {
-        const sinStock = available !== null && available <= 0;
-        let selected = "";
-        if (!sinStock && !primeraSeleccion) {
-          selected = "selected";
-          primeraSeleccion = true;
-        }
-        const etiqueta =
-          available === null
-            ? talle
-            : sinStock
-            ? `${talle} (sin stock)`
-            : `${talle} (disp. ${available})`;
-        return `<option value="${talle}" data-variant-id="${variant_id || ""}" data-available="${available ?? ""}" ${
-          sinStock ? "disabled" : ""
-        } ${selected}>${etiqueta}</option>`;
-      })
-      .join("");
+  // Renderizar talles como chips (solo visualización)
+  const chips = detalles
+    .map(({ talle, available }) => {
+      const sinStock = available !== null && available <= 0;
+      const clase = `talle${sinStock ? " talle-out" : ""}`;
+      const titulo =
+        available === null
+          ? "Disponibilidad por confirmar"
+          : sinStock
+          ? "Sin stock"
+          : `Disponible: ${available}`;
+      return `<div class="${clase}" data-size="${talle}" data-available="${available ?? ""}" title="${titulo}">${talle}</div>`;
+    })
+    .join("");
 
-    const hayStock = detalles.some(
-      (detalle) =>
-        detalle.available === null || Number(detalle.available) > 0
-    );
-
-    return `
-      <div class="variant">
-        <strong>${v.color}:</strong>
-        <div class="talles">${chips}</div>
-        <div class="reserve-controls" style="display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap;">
-          <label>Talle: <select class="res-size">${sizeOptions}</select></label>
-          <label>Cant: <input type="number" class="res-qty" min="1" value="1" style="width:64px" ${
-            hayStock ? "" : "disabled"
-          }/></label>
-          <button class="reserve-btn" data-articulo="${
-            producto.Articulo
-          }" data-color="${v.color}" ${hayStock ? "" : "disabled"}>Agregar</button>
-        </div>
-      </div>
-    `;
-  }).join("");
+  return `
+    <div class="variant-info">
+      <div class="talles-display">${chips}</div>
+    </div>
+  `;
 }
 
 function renderizarTags(producto) {
-  const tagList = [producto.Filtro1, producto.Filtro2, producto.Filtro3].filter(
-    (t) => t && t.trim()
-  );
+  const tags = [];
+  if (producto.Filtro1?.trim()) tags.push(producto.Filtro1.trim());
+  if (producto.Filtro2?.trim()) tags.push(producto.Filtro2.trim());
+  if (producto.Filtro3?.trim()) {
+    producto.Filtro3.split(/[,;]/).forEach((part) => {
+      const t = part.trim();
+      if (t) tags.push(t);
+    });
+  }
+  const tagList = tags;
 
   return tagList.length
     ? `
@@ -1529,6 +3559,29 @@ function renderizarTags(producto) {
     : "";
 }
 
+function updateModalPDPTotal(modal) {
+  if (!modal) return;
+  let total = 0;
+  const chips = modal.querySelectorAll('.size-chip[data-size][data-max]:not(.size-chip--disabled)');
+  chips.forEach((chip) => {
+    const qty = parseInt(chip.dataset.qty || '0', 10) || 0;
+    total += qty;
+  });
+  const cta = modal.querySelector('.product-modal-cta');
+  const precioUnidad = parseFloat(cta?.dataset.precioUnidad || '0') || 0;
+  const totalPrecio = total * precioUnidad;
+  const pairsEl = modal.querySelector('.product-modal-cta-pairs');
+  const totalEl = modal.querySelector('.product-modal-cta-total');
+  if (pairsEl) {
+    pairsEl.innerHTML = total === 0
+      ? 'Seleccioná talles para agregar'
+      : `<span class="pdp-cta-count">${total}</span> pares seleccionados`;
+  }
+  if (totalEl) totalEl.textContent = formatPrice(totalPrecio);
+  const addBtn = modal.querySelector('.pdp-add-btn');
+  if (addBtn) addBtn.classList.toggle('is-empty', total === 0);
+}
+
 // Inicialización de eventos del modal (UNA sola vez)
 function initModalEvents() {
   if (modalEventsInitialized) return;
@@ -1537,17 +3590,110 @@ function initModalEvents() {
   const modal = document.getElementById('product-modal');
   if (!modal) return;
   
+  // CTA WhatsApp en modo catálogo: interceptar en capture para no disparar carrito/bottom-sheet
+  if (!window.__pdpWaClickInit) {
+    window.__pdpWaClickInit = true;
+    document.addEventListener('click', (e) => {
+      const wa = e.target.closest('.pdp-whatsapp-cta');
+      if (wa) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        window.open(wa.href, '_blank', 'noopener');
+        return;
+      }
+    }, true);
+  }
+  
   modal.addEventListener('click', (e) => {
+    // CTA WhatsApp (modo catálogo): evitar que el resto del handler toque carrito
+    if (e.target.closest('.pdp-whatsapp-cta')) return;
     // Click en backdrop (el modal mismo)
     if (e.target === modal) {
       cerrarModal();
       return;
     }
     
-    // Click en botón cerrar
-    if (e.target.classList.contains('product-modal-close')) {
+    // Click en botón cerrar (externo o interno)
+    if (e.target.classList.contains('product-modal-close') || e.target.classList.contains('product-modal-close-inner')) {
       cerrarModal();
       return;
+    }
+    
+    // Click en botón volver
+    if (e.target.classList.contains('product-modal-back')) {
+      cerrarModal();
+      return;
+    }
+
+    // Tags clickeables
+    const tagChip = e.target.closest('.pdp-tag-chip');
+    if (tagChip) {
+      const level = tagChip.dataset.tagLevel;
+      const tag = tagChip.dataset.tag;
+      if (!tag) return;
+      // Modo solo catálogo: usar buscador en lugar de #/tag y setQuickFilter
+      if (window.__CATALOG_ONLY__) {
+        const tagValue = (tag || '').trim();
+        if (tagValue) {
+          cerrarModal(true);
+          const input = document.getElementById('searchInput') || document.querySelector('#searchInput');
+          if (input) {
+            input.value = tagValue;
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+          const catalogo = document.getElementById('catalogo');
+          if (catalogo) catalogo.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+        return;
+      }
+      if (level && tag) {
+        cerrarModal();
+        window.setQuickFilter?.(level, tag);
+      }
+      return;
+    }
+
+    // Ver más recomendados
+    const recoMore = e.target.closest('[data-action="go-reco-filter"]');
+    if (recoMore && productoActualEnModal) {
+      const f1 = (productoActualEnModal.Filtro1 || '').trim();
+      cerrarModal();
+      if (f1) window.setQuickFilter?.('filtro1', f1);
+      return;
+    }
+
+    // Botones descargar/compartir PDP
+    const pdpDownload = e.target.closest('.pdp-download');
+    if (pdpDownload) {
+      e.preventDefault();
+      const imgUrl = modal.querySelector('.product-modal-main-image')?.src;
+      if (imgUrl) downloadImageFromUrl(imgUrl);
+      return;
+    }
+    const pdpShare = e.target.closest('.pdp-share');
+    if (pdpShare) {
+      e.preventDefault();
+      const imgUrl = modal.querySelector('.product-modal-main-image')?.src;
+      if (imgUrl) shareImageUrl(imgUrl);
+      return;
+    }
+
+    // Botones descargar/compartir (delegación con data-action, fallback)
+    const actionBtn = e.target.closest('.pm-action-btn');
+    if (actionBtn) {
+      const action = actionBtn.dataset.action;
+      const imgUrl = modal.querySelector('.product-modal-main-image')?.src;
+      if (imgUrl && action === 'pm-download') {
+        e.preventDefault();
+        downloadImageFromUrl(imgUrl);
+        return;
+      }
+      if (imgUrl && action === 'pm-share') {
+        e.preventDefault();
+        shareImageUrl(imgUrl);
+        return;
+      }
     }
     
     // Click en botón de color
@@ -1556,68 +3702,140 @@ function initModalEvents() {
       const color = btn.dataset.color;
       if (!productoActualEnModal || !color) return;
       
-      // NO usar talle[0]: usar obtenerPrimerSkuConStock
       const resultado = obtenerPrimerSkuConStock(productoActualEnModal, color);
-      if (!resultado) return;
+      const sku = resultado?.sku || '';
       
-      const { sku, talle } = resultado;
-      
-      // Actualizar imagen principal
       const mainImage = modal.querySelector('.product-modal-main-image');
       if (mainImage && btn.dataset.src) {
-        mainImage.src = cloudinaryOptimized(btn.dataset.src, 1200);
+        mainImage.src = btn.dataset.src;
       }
       
-      // Re-renderizar variantes con talle elegido
-      const detalleColor = productoActualEnModal.DetalleColor?.find(d => 
+      const detalleColor = productoActualEnModal.DetalleColor?.find(d =>
         (d.color || "").trim().toLowerCase() === (color || "").trim().toLowerCase()
       );
       if (detalleColor) {
-        const variantesHTML = renderizarVariantesModal(productoActualEnModal, color, talle);
+        const variantesHTML = renderizarVariantesModalPDP(productoActualEnModal, color, color);
         const variantsContainer = modal.querySelector('.product-modal-variants');
-        if (variantsContainer) {
-          variantsContainer.innerHTML = variantesHTML;
+        if (variantsContainer) variantsContainer.innerHTML = variantesHTML;
+        const titleEl = modal.querySelector('.pdp-title') || modal.querySelector('.product-modal-title');
+        if (titleEl) {
+          const nameEl = titleEl.querySelector('.pdp-title__name');
+          const sepEl = titleEl.querySelector('.pdp-title__sep');
+          const colorEl = titleEl.querySelector('.pdp-title__color');
+          if (nameEl) nameEl.textContent = productoActualEnModal.Articulo || '';
+          if (color) {
+            if (!sepEl) {
+              const sep = document.createElement('span');
+              sep.className = 'pdp-title__sep';
+              sep.textContent = '•';
+              nameEl?.after(sep);
+            }
+            if (!colorEl) {
+              const col = document.createElement('span');
+              col.className = 'pdp-title__color';
+              col.textContent = color;
+              titleEl.querySelector('.pdp-title__sep')?.after(col);
+            } else colorEl.textContent = color;
+          } else {
+            sepEl?.remove();
+            colorEl?.remove();
+          }
         }
+        const colorLabelEl = modal.querySelector('.product-modal-color-label strong');
+        if (colorLabelEl) colorLabelEl.textContent = color;
+        const addBtn = modal.querySelector('.pdp-add-btn');
+        if (addBtn) addBtn.dataset.color = color;
+        updateModalPDPTotal(modal);
       }
       
-      // Actualizar URL con replaceState
-      updateSKUEnURL(sku);
-      
-      // Actualizar dataset del modal
-      modal.dataset.sku = sku;
-      
-      // Actualizar botones de color seleccionado
+      // Si no encontramos SKU con stock, igual mostramos talles para que el usuario pueda elegir.
+      // Solo tocamos URL/dataset si tenemos un SKU válido.
+      if (sku) {
+        updateSKUEnURL(sku);
+        modal.dataset.sku = sku;
+      }
       modal.querySelectorAll('.color-btn').forEach(b => b.classList.remove('selected'));
       btn.classList.add('selected');
-      
       return;
     }
     
-    // Click en chip de talle
-    if (e.target.classList.contains('talle') && !e.target.classList.contains('tag-chip')) {
-      const chip = e.target;
-      const sku = chip.dataset.sku;
-      const size = chip.dataset.size;
-      
-      if (!sku) return;
-      
-      // Marcar chip como seleccionado
-      const variantContainer = chip.closest('.variant');
-      if (variantContainer) {
-        variantContainer.querySelectorAll('.talle').forEach(t => t.classList.remove('selected'));
-        chip.classList.add('selected');
-        
-        // Sincronizar select
-        const select = variantContainer.querySelector('.res-size');
-        if (select) {
-          select.value = size;
-        }
+    /* Panel stepper: +/- actualiza chip activo */
+    const stepperPanel = e.target.closest('.size-stepper-panel');
+    if (stepperPanel && !stepperPanel.classList.contains('is-hidden')) {
+      const btn = e.target.closest('.size-stepper-btn');
+      if (!btn || btn.disabled) return;
+
+      e.preventDefault();
+      const sizeGrid = modal.querySelector('.size-grid');
+      const activeChip = sizeGrid?.querySelector('.size-chip.is-active');
+      if (!activeChip) return;
+
+      let qty = parseInt(activeChip.dataset.qty || '0', 10) || 0;
+      const max = parseInt(activeChip.dataset.max || '0', 10) || 999;
+      const action = btn.dataset.action;
+
+      if (action === 'dec') qty = Math.max(qty - 1, 0);
+      else if (action === 'inc') qty = Math.min(qty + 1, max);
+
+      activeChip.dataset.qty = String(qty);
+      activeChip.classList.toggle('size-chip--active', qty > 0);
+
+      const qtyEl = stepperPanel.querySelector('.size-stepper-qty');
+      if (qtyEl) qtyEl.textContent = qty;
+
+      const decBtn = stepperPanel.querySelector('.size-stepper-btn[data-action="dec"]');
+      const incBtn = stepperPanel.querySelector('.size-stepper-btn[data-action="inc"]');
+      if (decBtn) decBtn.disabled = qty <= 0;
+      if (incBtn) incBtn.disabled = qty >= max;
+
+      updateModalPDPTotal(modal);
+      return;
+    }
+
+    /* Size chips: tap marca activo y muestra panel */
+    const sizeGrid = e.target.closest('.size-grid');
+    if (sizeGrid) {
+      const chip = e.target.closest('.size-chip');
+      if (!chip || chip.classList.contains('size-chip--disabled')) return;
+
+      e.preventDefault();
+      const sizeDisplay = chip.dataset.size || '';
+      const stockText = chip.querySelector('.size-chip__stock')?.textContent || '';
+      const max = parseInt(chip.dataset.max || '0', 10) || 999;
+      let qty = parseInt(chip.dataset.qty || '0', 10) || 0;
+
+      /* Si ya está activo, no hacer nada */
+      if (chip.classList.contains('is-active')) return;
+
+      sizeGrid.querySelectorAll('.size-chip').forEach(c => c.classList.remove('is-active'));
+      chip.classList.add('is-active');
+
+      const panel = modal.querySelector('#pdp-size-stepper') || modal.querySelector('.size-stepper-panel');
+      if (panel) {
+        const safeSize = (sizeDisplay || '').replace(/</g, '&lt;');
+        const labelText = (!stockText || stockText.trim() === '—') 
+          ? `${safeSize} (stock a confirmar)` 
+          : `${safeSize} (${stockText.replace(/</g, '&lt;')})`;
+        panel.classList.remove('is-hidden');
+        panel.innerHTML = `
+          <div class="size-stepper-label">${labelText}</div>
+          <div class="size-stepper-controls">
+            <button type="button" class="size-stepper-btn" data-action="dec" aria-label="Menos" ${qty <= 0 ? 'disabled' : ''}>−</button>
+            <div class="size-stepper-qty">${qty}</div>
+            <button type="button" class="size-stepper-btn" data-action="inc" aria-label="Más" ${qty >= max ? 'disabled' : ''}>+</button>
+          </div>`;
       }
-      
-      // Actualizar URL
-      updateSKUEnURL(sku);
-      modal.dataset.sku = sku;
-      
+      return;
+    }
+
+    // Accordion Características
+    if (e.target.closest('.pdp-features-toggle')) {
+      const toggle = e.target.closest('.pdp-features-toggle');
+      const list = document.getElementById('pdp-features-list');
+      if (!toggle || !list) return;
+      const expanded = toggle.getAttribute('aria-expanded') === 'true';
+      toggle.setAttribute('aria-expanded', !expanded);
+      list.classList.toggle('is-collapsed', expanded);
       return;
     }
     
@@ -1629,91 +3847,117 @@ function initModalEvents() {
       if (mainImage) {
         mainImage.src = fullSrc;
       }
+      modal.querySelectorAll('.pdp-thumbs .miniatura').forEach(m => m.classList.remove('active'));
+      img.classList.add('active');
       return;
     }
     
-    // Click en botón agregar
-    if (e.target.classList.contains('reserve-btn')) {
+    // Click en botón agregar PDP (múltiples talles con +/-)
+    if (e.target.classList.contains('pdp-add-btn')) {
+      if (window.__CATALOG_ONLY__) return;
       const btn = e.target;
-      const controls = btn.closest('.reserve-controls');
-      if (!controls) return;
-      
-      const sizeSelect = controls.querySelector('.res-size');
-      const qtyInput = controls.querySelector('.res-qty');
-      
-      if (!sizeSelect || !qtyInput) return;
-      
-      const selectedOption = sizeSelect.options[sizeSelect.selectedIndex];
-      if (!selectedOption || selectedOption.disabled) {
-        alert('Este talle no tiene stock disponible');
-        return;
-      }
-      
-      const available = parseInt(selectedOption.dataset.available ?? '', 10);
-      let qty = parseInt(qtyInput.value || '1', 10);
-      if (!Number.isFinite(qty) || qty <= 0) qty = 1;
-      
-      // Validar stock
-      if (Number.isFinite(available) && available <= 0) {
-        alert('Este talle no tiene stock disponible');
-        return;
-      }
-      
-      if (Number.isFinite(available) && qty > available) {
-        alert(`Solo hay ${available} unidades disponibles para este talle.`);
-        qty = available;
-        qtyInput.value = available;
-      }
-      
-      const size = selectedOption.value;
-      const variantId = selectedOption.dataset.variantId || null;
+      if (btn.disabled) return;
       const articulo = btn.dataset.articulo;
       const color = btn.dataset.color;
-      
-      const precio = modal.querySelector('.product-modal-price-container .price')?.textContent || '0';
-      const descripcion = modal.querySelector('.product-modal-description')?.textContent || '';
-      const imagen = modal.querySelector('.product-modal-main-image')?.src || '';
-      
-      const productData = {
-        articulo,
-        color,
-        talle: size,
-        cantidad: qty,
-        precio: parseFloat(precio.replace(/[^0-9.,]/g, '').replace(',', '.')) || 0,
-        imagen,
-        descripcion,
-        variant_id: variantId,
-      };
-      
-      if (window.addToCart) {
-        window.addToCart(productData);
-        btn.textContent = 'Agregado';
-        btn.style.background = '#4CAF50';
-        setTimeout(() => {
-          btn.textContent = 'Agregar';
-          btn.style.background = '';
-        }, 1200);
-      } else {
-        alert('Sistema de carrito no disponible');
-      }
-      
+      if (!articulo || !color || !window.addToCart) return;
+
+      btn.disabled = true;
+      (async () => {
+        try {
+        const countAntes = window.getCartCount?.() ?? 0;
+        const precioStr = modal.querySelector('.product-modal-price-container .price')?.textContent || modal.querySelector('.product-modal-price-container')?.textContent || '0';
+        const precio = parseFloat(precioStr.replace(/[^0-9.,]/g, '').replace(',', '.')) || 0;
+        const imagen = modal.querySelector('.product-modal-main-image')?.src || '';
+        const descripcion = (modal.querySelector('.pdp-title') || modal.querySelector('.product-modal-title'))?.textContent || '';
+
+        const detalleColor = productoActualEnModal?.DetalleColor?.find(d =>
+          (d.color || "").trim().toLowerCase() === (color || "").trim().toLowerCase()
+        );
+        const variantDetails = detalleColor?.variantDetails || [];
+
+        const itemsToAdd = [];
+        const chips = modal.querySelectorAll('.size-chip[data-size][data-max]:not(.size-chip--disabled)');
+        chips.forEach((chip) => {
+          const qty = parseInt(chip.dataset.qty || '0', 10) || 0;
+          if (qty <= 0) return;
+          const talle = chip.dataset.size?.trim();
+          const key = chip.dataset.key;
+          if (!talle || !key) return;
+          itemsToAdd.push({ talle, key, qty });
+        });
+
+        let rowsAdded = 0;
+        let pairsAdded = 0;
+        for (const { talle, key, qty } of itemsToAdd) {
+          const vd = variantDetails.find(v => `${color}_${v.talle}` === key);
+          const productData = {
+            articulo,
+            color,
+            talle,
+            cantidad: qty,
+            precio,
+            imagen: detalleColor?.images?.[0] || imagen,
+            descripcion,
+            variant_id: vd?.variant_id || null,
+          };
+          const ok = await window.addToCart(productData, { suppressNotification: true });
+          if (ok) {
+            rowsAdded++;
+            pairsAdded += qty;
+          }
+        }
+
+        if (rowsAdded > 0) {
+          btn.textContent = 'Agregado';
+          btn.style.background = '#4CAF50';
+          setTimeout(() => {
+            updateModalPDPTotal(modal);
+            btn.style.background = '';
+          }, 1200);
+        }
+
+          const countDespues = window.getCartCount?.() ?? 0;
+          if (pairsAdded > 0 && typeof window.showToast === 'function') {
+            const paresLabel = pairsAdded === 1 ? '1 par' : `${pairsAdded} pares`;
+            if (countAntes === 0 && countDespues > 0) {
+              window.showToast({
+                message: `Agregado al carrito (${paresLabel})`,
+                primaryLabel: 'Ver carrito',
+                onPrimary: () => {
+                  if (typeof window.cerrarModal === 'function') window.cerrarModal();
+                  if (typeof window.goToCart === 'function') window.goToCart();
+                },
+                secondaryLabel: 'Seguir agregando',
+                onSecondary: () => {},
+                autoCloseMs: 5000,
+              });
+            } else {
+              window.showToast({ message: `Agregado (${paresLabel})`, autoCloseMs: 2000 });
+            }
+          }
+        } finally {
+          btn.disabled = false;
+        }
+      })();
       return;
     }
   });
   
-  // Change en select de talles
+  // Change en select de talles (compatibilidad con controles antiguos)
   modal.addEventListener('change', (e) => {
     if (e.target.classList.contains('res-size')) {
       const select = e.target;
       const selectedOption = select.options[select.selectedIndex];
-      if (!selectedOption) return;
+      if (!selectedOption || selectedOption.disabled) return;
       
       const sku = selectedOption.dataset.sku;
       const size = select.value;
       
       if (!sku) return;
       
-      // Sincronizar chips
+      updateSKUEnURL(sku);
+      modal.dataset.sku = sku;
+      
       const variantContainer = select.closest('.variant');
       if (variantContainer) {
         variantContainer.querySelectorAll('.talle').forEach(chip => {
@@ -1723,10 +3967,6 @@ function initModalEvents() {
           }
         });
       }
-      
-      // Actualizar URL
-      updateSKUEnURL(sku);
-      modal.dataset.sku = sku;
     }
   });
 }
@@ -1739,11 +3979,23 @@ function initGridEvents() {
   if (!catalogo) return;
   
   catalogo.addEventListener('click', (e) => {
-    // Ignorar clicks en botones, controles de reserva, botones de color, y download-container
+    // Expandir colores ocultos al clicar en chip +N
+    if (e.target.closest('.color-more-chip')) {
+      e.preventDefault();
+      e.stopPropagation();
+      const colorsDiv = e.target.closest('.colors');
+      if (colorsDiv) colorsDiv.classList.add('expanded');
+      return;
+    }
+    // Feedback háptico al tocar carrito (PWA)
+    if (e.target.closest('.cart-icon-btn')) {
+      navigator.vibrate?.(10);
+      return;
+    }
+    // Ignorar clicks en botones, controles de reserva, botones de color
     if (e.target.tagName === 'BUTTON' || 
         e.target.closest('.reserve-controls') ||
-        e.target.closest('.color-btn') ||
-        e.target.closest('.download-container')) {
+        e.target.closest('.color-btn')) {
       return;
     }
     
@@ -1751,11 +4003,43 @@ function initGridEvents() {
     const card = e.target.closest('.card.producto');
     if (!card) return;
     
-    // Obtener SKU de card o .main-image
-    const sku = card.dataset.sku || card.querySelector('.main-image')?.dataset.sku;
-    if (!sku) return;
+    let sku = (card.dataset.sku || card.querySelector('.main-image')?.dataset.sku || '').trim();
     
-    abrirModalPorSKU(sku);
+    // 1) SKU en skuIndex → abrir al instante con URL
+    if (sku && abrirModalPorSKU(sku)) return;
+    
+    // 2) Producto en página → usar datos completos (colores, imágenes), rápido
+    const articulo = card.querySelector('[data-articulo]')?.dataset?.articulo;
+    if (articulo && window.productosActualesMap) {
+      const producto = window.productosActualesMap.get(articulo);
+      if (producto) {
+        let color = null, talle = null;
+        if (sku) {
+          for (const d of producto.DetalleColor || []) {
+            const vd = d.variantDetails?.find(v => v.sku === sku);
+            if (vd) { color = d.color; talle = vd.talle; break; }
+          }
+        }
+        if (!color) {
+          const d0 = producto.DetalleColor?.[0];
+          color = d0?.color; talle = d0?.variantDetails?.[0]?.talle;
+        }
+        abrirModalConResultado({
+          producto,
+          color,
+          talle,
+          sku: sku || obtenerSKUDefecto(producto)
+        }, { pushState: true });
+        return;
+      }
+    }
+    
+    // 3) Solo si no está en página → buscar en Supabase (lento, datos mínimos)
+    if (sku) {
+      buscarPorSKUEnSupabase(sku).then(resultado => {
+        if (resultado) abrirModalConResultado(resultado, { pushState: true });
+      });
+    }
   });
 }
 
@@ -1773,40 +4057,225 @@ function initEscClose() {
   });
 }
 
-// Handler popstate para navegación con botón atrás
-window.addEventListener('popstate', async (e) => {
-  const urlParams = new URLSearchParams(window.location.search);
-  const sku = urlParams.get('sku');
-  const tabSlug = getTabFromURL();
-  const modal = document.getElementById('product-modal');
-  
-  if (!modal) return;
-  
-  // Solo llamar cargarCategoria() si cambió realmente el tab slug
-  if (tabSlug !== ultimoTabSlug) {
-    ultimoTabSlug = tabSlug;
-    if (tabSlug) {
-      const categoria = slugToCategoria(tabSlug);
-      if (categoria) {
-        // Actualizar grid sin cerrar modal
-        await cargarCategoria(categoria);
-      }
-    }
+// Handler popstate + hashchange: back nativo cierra PDP sin salir de la web
+async function resetHomeState() {
+  // Estado actual de filtros
+  const hasTagBar = !!document.getElementById('tag-filter-bar');
+  const hasQuickFilter = !!window.__quickFilter;
+  const isAlreadyAll = (categoriaActual || 'all') === 'all' && !hasTagBar && !hasQuickFilter;
+
+  // Siempre limpiar filtros visibles/flags (aunque ya estemos en all)
+  window.__quickFilter = null;
+  clearTagFilterBar();
+  // Desmarcar acciones rápidas (si el usuario venía desde una categoría/tag)
+  document.querySelectorAll(".quick-action-btn").forEach((btn) => btn.classList.remove("active"));
+
+  // Evitar recargar desde Supabase si ya estamos en "all" y no había filtros activos
+  if (!isAlreadyAll) {
+    await cambiarCategoria('all');
+  } else {
+    // Asegurar que el menú desktop no marque ninguna categoría específica
+    document.querySelectorAll(".menu button").forEach((btn) => btn.classList.remove("active"));
   }
-  
-  // Manejar cambios de SKU
-  if (sku) {
-    if (modal.dataset.sku === sku && modal.classList.contains('active')) {
-      // Ya está renderizado con este SKU, no re-renderizar
+
+  // Forzar URL limpia para que no se "reaplique" categoría al volver a buscar/filtar
+  updateURL({ tab: '', sku: '' }, { mode: 'replace' });
+}
+
+async function onNavChange() {
+  const modal = document.getElementById('product-modal');
+  const isPdpOpen = modal?.classList.contains('active');
+
+  if (isPdpOpen) {
+    cerrarModal(true);
+    return;
+  }
+
+  const hash = location.hash || '#/';
+  const tagMatch = hash.match(/^#\/tag\/(.+)$/);
+  if (tagMatch) {
+    const tagValue = decodeURIComponent(tagMatch[1]);
+    await applyTagFilterAndRender(tagValue, { pushHash: false });
+    return;
+  }
+
+  const isHomeHash = hash === '#/' || hash === '#/all' || hash === '';
+  if (isHomeHash && !location.hash?.match(/^#\/coleccion\/fyl-originals$/)) {
+    if (window.__tagSearchFromPdp) {
+      window.__tagSearchFromPdp = false;
       return;
     }
+    await resetHomeState();
+    return;
+  }
+
+  const sku = parsePdpFromUrl();
+  const tabSlug = getTabFromURL();
+
+  if (tabSlug !== ultimoTabSlug) {
+    ultimoTabSlug = tabSlug;
+    if (tabSlug && slugToCategoria(tabSlug)) {
+      await cargarCategoria(slugToCategoria(tabSlug));
+    }
+  }
+
+  if (sku && !isPdpOpen) {
     abrirModalPorSKU(sku, { pushState: false });
-  } else {
-    cerrarModal();
+  }
+}
+
+window.addEventListener('popstate', onNavChange);
+window.addEventListener('hashchange', onNavChange);
+
+// Resetear estado si el usuario "vuelve al inicio" tocando un link a "#/".
+// Importante: si el hash ya es "#/", el navegador no dispara "hashchange"
+// y por eso había que forzar el reset desde el click.
+document.addEventListener('click', (e) => {
+  const a = e.target.closest('a');
+  if (!a) return;
+  const href = a.getAttribute('href');
+  if (href !== '#/' && href !== '#/all') return;
+
+  // Solo tocar si estamos en el mismo documento (evita comportamientos raros con links externos)
+  // y si existe el handler (para no romper en carga parcial).
+  if (typeof resetHomeState === 'function') {
+    resetHomeState().catch((err) => console.error('resetHomeState:', err));
   }
 });
 
+
 // Configurar eventos (igual que antes)
+// Función para crear/obtener el indicador de carga inferior
+function obtenerIndicadorCargaInferior() {
+  let indicator = document.getElementById("bottom-loading-indicator");
+  if (!indicator) {
+    indicator = document.createElement("div");
+    indicator.id = "bottom-loading-indicator";
+    indicator.className = "bottom-loading-indicator";
+    indicator.innerHTML = `
+      <div class="bottom-loading-spinner">
+        <div class="spinner-circle"></div>
+        <div class="spinner-circle"></div>
+        <div class="spinner-circle"></div>
+      </div>
+    `;
+    document.body.appendChild(indicator);
+  }
+  return indicator;
+}
+
+// Timeout para ocultar el indicador inferior si las imágenes no completan (evitar carga infinita)
+let bottomIndicatorTimeoutId = null;
+const BOTTOM_INDICATOR_MAX_MS = 10000;
+
+// Función para mostrar el indicador de carga inferior
+function mostrarIndicadorCargaInferior() {
+  if (bottomIndicatorTimeoutId) {
+    clearTimeout(bottomIndicatorTimeoutId);
+    bottomIndicatorTimeoutId = null;
+  }
+  const indicator = obtenerIndicadorCargaInferior();
+  indicator.style.display = "flex";
+  indicator.classList.add("show");
+  bottomIndicatorTimeoutId = setTimeout(() => {
+    bottomIndicatorTimeoutId = null;
+    ocultarIndicadorCargaInferior();
+    indicadorCargaActivo = false;
+    bottomIndicatorGaveUp = true;
+  }, BOTTOM_INDICATOR_MAX_MS);
+}
+
+// Función para ocultar el indicador de carga inferior
+function ocultarIndicadorCargaInferior() {
+  if (bottomIndicatorTimeoutId) {
+    clearTimeout(bottomIndicatorTimeoutId);
+    bottomIndicatorTimeoutId = null;
+  }
+  const indicator = document.getElementById("bottom-loading-indicator");
+  if (indicator) {
+    indicator.style.display = "none";
+    indicator.classList.remove("show");
+  }
+}
+
+// Función para detectar si hay imágenes lazy cargándose en el viewport
+function detectarImagenesCargando() {
+  const images = document.querySelectorAll(".main-image[loading='lazy']");
+  let hayImagenesCargando = false;
+  
+  images.forEach((img) => {
+    // Verificar si la imagen está en el viewport
+    const rect = img.getBoundingClientRect();
+    const isInViewport = rect.top < window.innerHeight && rect.bottom > 0;
+    
+    if (isInViewport) {
+      // Verificar si la imagen está cargándose
+      // Una imagen está cargando si no está completa o si no tiene dimensiones naturales
+      if (!img.complete || img.naturalWidth === 0) {
+        hayImagenesCargando = true;
+      }
+    }
+  });
+  
+  return hayImagenesCargando;
+}
+
+// Variable para rastrear el estado del indicador
+let indicadorCargaActivo = false;
+let checkLoadingInterval = null;
+// Si se ocultó por tiempo máximo, no volver a mostrar hasta la siguiente carga de categoría
+let bottomIndicatorGaveUp = false;
+
+// Función para iniciar la verificación de carga de imágenes
+function iniciarVerificacionCargaImagenes() {
+  bottomIndicatorGaveUp = false;
+  // Limpiar intervalo anterior si existe
+  if (checkLoadingInterval) {
+    clearInterval(checkLoadingInterval);
+  }
+  
+  // Verificar cada 200ms si hay imágenes cargándose
+  checkLoadingInterval = setInterval(() => {
+    if (bottomIndicatorGaveUp) return;
+    const hayCargando = detectarImagenesCargando();
+    
+    if (hayCargando && !indicadorCargaActivo) {
+      mostrarIndicadorCargaInferior();
+      indicadorCargaActivo = true;
+    } else if (!hayCargando && indicadorCargaActivo) {
+      ocultarIndicadorCargaInferior();
+      indicadorCargaActivo = false;
+    }
+  }, 200);
+  
+  // También verificar cuando las imágenes terminan de cargar
+  document.querySelectorAll(".main-image[loading='lazy']").forEach((img) => {
+    if (!img.hasAttribute('data-load-listener')) {
+      img.setAttribute('data-load-listener', 'true');
+      img.addEventListener('load', () => {
+        // Verificar nuevamente después de que una imagen carga
+        setTimeout(() => {
+          const hayCargando = detectarImagenesCargando();
+          if (!hayCargando && indicadorCargaActivo) {
+            ocultarIndicadorCargaInferior();
+            indicadorCargaActivo = false;
+          }
+        }, 100);
+      });
+      img.addEventListener('error', () => {
+        // También ocultar si hay error
+        setTimeout(() => {
+          const hayCargando = detectarImagenesCargando();
+          if (!hayCargando && indicadorCargaActivo) {
+            ocultarIndicadorCargaInferior();
+            indicadorCargaActivo = false;
+          }
+        }, 100);
+      });
+    }
+  });
+}
+
 function configurarEventos() {
   // Galería de imágenes
   document.querySelectorAll(".card .gallery .miniatura").forEach((img) => {
@@ -1819,224 +4288,61 @@ function configurarEventos() {
   // Botones de color
   document.querySelectorAll(".card .color-btn").forEach((btn) => {
     btn.addEventListener("click", function () {
-      const main = this.closest(".card").querySelector(".main-image");
+      const card = this.closest(".card.producto");
+      if (!card) return;
+      
+      // Cambiar imagen principal
+      const main = card.querySelector(".main-image");
       if (main) main.src = this.dataset.src;
+      
+      // Actualizar badge de talle según el color seleccionado
+      const colorSeleccionado = this.dataset.color;
+      const sizeContainer = card.querySelector(".card-footer-size");
+      
+      if (sizeContainer && window.productosActualesMap) {
+        const articulo = sizeContainer.dataset.articulo;
+        if (articulo) {
+          const producto = window.productosActualesMap.get(articulo);
+          if (producto) {
+            sizeContainer.innerHTML = obtenerSizeBadgeHTML(producto, colorSeleccionado);
+            sizeContainer.dataset.colorSelected = colorSeleccionado || '';
+          }
+        }
+      }
     });
   });
 
-  // Configurar controles de variante (stock, límites)
-  document.querySelectorAll(".card .reserve-controls").forEach((controls) => {
-    const sizeSelect = controls.querySelector(".res-size");
-    const qtyInput = controls.querySelector(".res-qty");
-    const reserveBtn = controls.querySelector(".reserve-btn");
 
-    const updateState = () => {
-      if (!sizeSelect || !qtyInput || !reserveBtn) return;
-      const options = Array.from(sizeSelect.options);
-      const primeraDisponible = options.find((opt) => !opt.disabled);
+  // Tags: manejado por initTagToSearch() (delegación en document)
 
-      if (!primeraDisponible) {
-        reserveBtn.disabled = true;
-        qtyInput.disabled = true;
-        qtyInput.value = 0;
-        return;
-      }
-
-      if (
-        !sizeSelect.value ||
-        sizeSelect.options[sizeSelect.selectedIndex]?.disabled
-      ) {
-        sizeSelect.value = primeraDisponible.value;
-      }
-
-      const seleccionada = sizeSelect.options[sizeSelect.selectedIndex];
-      const disponible = parseInt(
-        seleccionada?.dataset.available ?? "",
-        10
-      );
-
-      const hayStock =
-        Number.isFinite(disponible) ? disponible > 0 : true;
-
-      reserveBtn.disabled = !hayStock;
-      qtyInput.disabled = !hayStock;
-
-      if (hayStock && Number.isFinite(disponible)) {
-        qtyInput.max = disponible;
-        if (!qtyInput.value || Number(qtyInput.value) <= 0) {
-          qtyInput.value = Math.min(1, disponible);
-        }
-        if (Number(qtyInput.value) > disponible) {
-          qtyInput.value = disponible;
-        }
-      } else {
-        qtyInput.max = "";
-        if (!qtyInput.value || Number(qtyInput.value) <= 0) {
-          qtyInput.value = hayStock ? 1 : 0;
-        }
-      }
-    };
-
-    updateState();
-
-    if (sizeSelect) {
-      sizeSelect.addEventListener("change", updateState);
-    }
-
-    controls.__updateVariantState = updateState;
-  });
-
-  // Botones de reserva
-  document.querySelectorAll(".card .reserve-btn").forEach((btn) => {
-    btn.addEventListener("click", async function () {
-      const controls = this.closest(".reserve-controls");
-      const sizeSelect = controls.querySelector(".res-size");
-      const qtyInput = controls.querySelector(".res-qty");
-      const updateState = controls.__updateVariantState;
-
-      if (!sizeSelect || !qtyInput) return;
-
-      const selectedOption =
-        sizeSelect.options[sizeSelect.selectedIndex];
-      if (!selectedOption || selectedOption.disabled) {
-        // Mostrar modal de alternativas
-        const talle = selectedOption?.value || "";
-        const articulo = this.dataset.articulo;
-        const card = this.closest(".card");
-        const producto = {
-          articulo,
-          talle,
-          tags: [
-            card.dataset.filtro1,
-            card.dataset.filtro2,
-            card.dataset.filtro3,
-          ].filter((t) => t && t.trim()),
-          color: this.dataset.color || null,
-        };
-        
-        mostrarAlternativasParaTalleSinStock(producto);
-        if (typeof updateState === "function") updateState();
-        return;
-      }
-
-      const available = parseInt(
-        selectedOption.dataset.available ?? "",
-        10
-      );
-
-      let qty = parseInt(qtyInput.value || "1", 10);
-      if (!Number.isFinite(qty) || qty <= 0) qty = 1;
-
-      if (Number.isFinite(available) && available <= 0) {
-        // Mostrar modal de alternativas
-        const talle = selectedOption?.value || "";
-        const articulo = this.dataset.articulo;
-        const card = this.closest(".card");
-        const producto = {
-          articulo,
-          talle,
-          tags: [
-            card.dataset.filtro1,
-            card.dataset.filtro2,
-            card.dataset.filtro3,
-          ].filter((t) => t && t.trim()),
-          color: this.dataset.color || null,
-        };
-        
-        mostrarAlternativasParaTalleSinStock(producto);
-        if (typeof updateState === "function") updateState();
-        return;
-      }
-
-      if (Number.isFinite(available) && qty > available) {
-        alert(
-          `Solo hay ${available} unidades disponibles para este talle.`
-        );
-        qty = available;
-        qtyInput.value = available;
-      }
-
-      const size = selectedOption.value;
-      const variantId = selectedOption.dataset.variantId || null;
-      const articulo = this.dataset.articulo;
-      const color = this.dataset.color;
-
+  // Botón "Agregar al carrito" - Abre Bottom Sheet
+  document.querySelectorAll(".card .add-to-cart-btn").forEach((btn) => {
+    btn.addEventListener("click", function () {
       const card = this.closest(".card");
-      const precio = card.querySelector(".price")?.textContent || "0";
-      const descripcion = card.querySelector(".description")?.textContent || "";
-      const imagen = card.querySelector(".main-image")?.src || "";
-
-      const productData = {
-        articulo,
-        color,
-        talle: size,
-        cantidad: qty,
-        precio:
-          parseFloat(precio.replace(/[^0-9.,]/g, "").replace(",", ".")) || 0,
-        imagen,
-        descripcion,
-        variant_id: variantId,
-        // Agregar tags para que addToCart pueda usarlos para buscar alternativas
-        tags: [
-          card.dataset.filtro1,
-          card.dataset.filtro2,
-          card.dataset.filtro3,
-        ].filter((t) => t && t.trim()),
-      };
-
-      if (window.addToCart) {
-        // Intentar agregar al carrito (addToCart ahora manejará mostrar alternativas si no hay stock)
-        const result = await window.addToCart(productData);
-        // Si addToCart retorna false, significa que no se pudo agregar (probablemente sin stock)
-        // y ya se mostró el modal de alternativas
-        if (result !== false) {
-          this.textContent = "Agregado";
-          this.style.background = "#4CAF50";
-          setTimeout(() => {
-            this.textContent = "Agregar";
-            this.style.background = "";
-          }, 1200);
+      const articulo = card.querySelector(".article-box")?.textContent;
+      
+      if (articulo && window.BottomSheet) {
+        const producto = productosActualesMap.get(articulo);
+        if (producto) {
+          window.BottomSheet.open(producto);
+        } else {
+          console.error("Producto no encontrado en productosActualesMap:", articulo);
         }
-      } else {
-        alert("Sistema de carrito no disponible");
-      }
-
-      if (typeof updateState === "function") {
-        updateState();
       }
     });
   });
-
-  // Tags
-  document.querySelectorAll(".card .tag-chip").forEach((chip) => {
-    chip.addEventListener("click", function () {
-      const tag = this.dataset.tag || this.textContent.trim();
-      const input = document.getElementById("searchInput");
-      if (input) {
-        input.value = tag;
-        input.dispatchEvent(new Event("input"));
-      }
-    });
-  });
-
-  // Botones de compartir
-  document.querySelectorAll(".card .share-btn").forEach((btn) => {
-    btn.addEventListener("click", async function () {
-      const card = this.closest(".card");
-      const mainImg = card.querySelector(".main-image");
-      const imgUrl = mainImg.src;
-
-      if (navigator.share) {
-        try {
-          await navigator.share({ url: imgUrl });
-        } catch (e) {
-          console.log("Compartir cancelado");
-        }
-      } else {
-        alert("La función de compartir no está disponible en este dispositivo");
-      }
-    });
-  });
+  
+  // Iniciar verificación de carga de imágenes lazy
+  iniciarVerificacionCargaImagenes();
+  
+  // También verificar al hacer scroll
+  let scrollTimeout;
+  window.addEventListener('scroll', () => {
+    clearTimeout(scrollTimeout);
+    scrollTimeout = setTimeout(() => {
+      iniciarVerificacionCargaImagenes();
+    }, 100);
+  }, { passive: true });
 }
 
 // Función para cambiar categoría
@@ -2070,21 +4376,19 @@ async function cambiarCategoria(cat) {
   updateURL({ tab: cat, sku: undefined }, { mode: 'replace' });
 }
 
-// Función para descargar imagen
-async function downloadImage(btn) {
+// Descargar imagen desde URL (reutilizable desde card o modal)
+async function downloadImageFromUrl(imgUrl) {
+  if (!imgUrl) return;
+  const filename = imgUrl
+    .split("/")
+    .pop()
+    .split("?")[0]
+    .replace(/\.\w+$/, ".jpg");
+
   try {
-    const card = btn.closest(".card");
-    const src = card.querySelector(".main-image").src;
-
-    const filename = src
-      .split("/")
-      .pop()
-      .split("?")[0]
-      .replace(/\.\w+$/, ".jpg");
-
     const img = new Image();
     img.crossOrigin = "anonymous";
-    img.src = src;
+    img.src = imgUrl;
 
     await new Promise((resolve, reject) => {
       img.onload = resolve;
@@ -2112,15 +4416,46 @@ async function downloadImage(btn) {
       0.92
     );
   } catch (error) {
-    console.error("Error descargando imagen:", error);
-    // Fallback directo
+    console.error("Error descargando imagen (canvas CORS?):", error);
     const a = document.createElement("a");
-    a.href = src;
+    a.href = imgUrl;
     a.download = filename;
     document.body.appendChild(a);
     a.click();
     a.remove();
   }
+}
+
+async function shareImageUrl(imgUrl) {
+  if (!imgUrl) return;
+  try {
+    const resp = await fetch(imgUrl, { mode: 'cors' });
+    const blob = await resp.blob();
+    const file = new File([blob], 'producto.jpg', { type: blob.type || 'image/jpeg' });
+    if (navigator.canShare?.({ files: [file] })) {
+      await navigator.share({ files: [file], title: 'Producto FYL' });
+      return;
+    }
+  } catch (e) {
+    // continuar fallback silencioso
+  }
+  if (navigator.share) {
+    try { await navigator.share({ url: imgUrl, title: 'Producto FYL' }); return; } catch (e) {}
+  }
+  try {
+    await navigator.clipboard.writeText(imgUrl);
+    if (typeof showToast === 'function') showToast('Link de imagen copiado', 'success');
+    else alert('Link copiado');
+  } catch (e) {
+    alert('Copiá este link: ' + imgUrl);
+  }
+}
+
+// Función legacy para card (mantener por si se usa desde otro lado)
+async function downloadImage(btn) {
+  const card = btn?.closest(".card");
+  const src = card?.querySelector(".main-image")?.src;
+  if (src) await downloadImageFromUrl(src);
 }
 
 // Verificar si hay novedades
@@ -2213,42 +4548,82 @@ function ejecutarDiagnostico() {
 }
 
 // Inicialización
-window.addEventListener("DOMContentLoaded", async () => {
-  console.log("🚀 Inicializando catálogo con Supabase...");
+async function inicializarCatalogo() {
+  window.__FYL_BOOT_SUPPRESS_ROUTE = true;
+  globalThis.markBootStage?.("catalog.init.start");
+  try {
+    console.log("🚀 Inicializando catálogo con Supabase...");
 
-  // Inicializar Supabase
-  const supabaseInicializado = await inicializarSupabase();
+    // Inicializar Supabase
+    const supabaseInicializado = await inicializarSupabase();
+    globalThis.markBootStage?.("catalog.supabase.verify", {
+      ok: !!supabaseInicializado,
+    });
 
-  if (!supabaseInicializado) {
-    console.error("❌ No se pudo inicializar Supabase. El catálogo no funcionará correctamente.");
-    const cont = document.getElementById("catalogo");
-    if (cont) {
-      cont.innerHTML = `
+    if (!supabaseInicializado) {
+      console.error("❌ No se pudo inicializar Supabase. El catálogo no funcionará correctamente.");
+      const fail = globalThis.__FYL_SUPABASE_INIT_FAIL__ || {};
+      const code = fail.code || "unknown";
+      const hint = fail.hint
+        ? String(fail.hint).replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        : "";
+      const cont = document.getElementById("catalogo");
+      if (cont) {
+        cont.innerHTML = `
         <div class="error-message" style="text-align: center; padding: 40px; color: #666; background: #f8f9fa; border-radius: 8px; margin: 20px;">
-          <h3>❌ Error de Configuración</h3>
-          <p>No se pudo conectar a Supabase. Por favor verifica:</p>
-          <ul style="text-align: left; margin: 20px 0; max-width: 600px; margin-left: auto; margin-right: auto;">
-            <li>Que el archivo <code>scripts/config.local.js</code> exista y tenga la configuración correcta</li>
-            <li>Que <code>SUPABASE_URL</code> y <code>SUPABASE_ANON_KEY</code> estén configurados</li>
-            <li>Revisa la consola del navegador para más detalles</li>
+          <h3>❌ No se pudo iniciar el catálogo</h3>
+          <p style="margin-bottom: 12px;">No pudimos conectar con la base de datos. Esto no suele deberse a un archivo en tu teléfono.</p>
+          ${
+            hint
+              ? `<p style="color:#555;font-size:14px;margin:12px 0;"><strong>Detalle:</strong> ${hint}</p>`
+              : ""
+          }
+          <p style="font-size:12px;color:#888;margin-bottom:8px;">Código: <code>${code}</code></p>
+          <ul style="text-align: left; margin: 20px 0; max-width: 600px; margin-left: auto; margin-right: auto; font-size: 14px;">
+            <li>Proba <strong>Recargar</strong>, usar <strong>otra red</strong> (Wi‑Fi o datos) o una <strong>ventana privada</strong> (especialmente en Safari/iPhone).</li>
+            <li>En el sitio publicado debe existir <code>/config.prod.js</code> (deploy con variables de entorno). Si falta, el servidor puede devolver HTML en su lugar.</li>
+            <li>Si sos desarrollador en tu PC: entonces sí podés usar <code>scripts/config.local.js</code> como override.</li>
+            <li>En consola buscá mensajes <code>[FYL boot]</code>, <code>[FYL config]</code> y <code>[FYL supabase]</code>. Con <code>?debug_boot=1</code> en la URL ves un panel de diagnóstico.</li>
           </ul>
           <button onclick="location.reload()" style="background: #CD844D; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; margin-top: 15px;">Reintentar</button>
         </div>
       `;
+      }
+      globalThis.markBootStage?.("catalog.aborted", { reason: "supabase_verify_failed" });
+      hideCatalogBootOverlay();
+      return;
     }
-    return;
-  }
 
-  // Ejecutar diagnóstico
-  ejecutarDiagnostico();
+    // Ejecutar diagnóstico
+    ejecutarDiagnostico();
 
-  try {
+    try {
     // Verificar que podemos consultar la vista antes de cargar
     console.log("🔍 Verificando acceso a catalog_public_view...");
-    const { data: testData, error: testError } = await supabase
-      .from("catalog_public_view")
-      .select("Articulo, Categoria, Color")
-      .limit(10);
+    const VIEW_PROBE_MS = 60000;
+    let testData;
+    let testError;
+    try {
+      const res = await fylAwaitWithTimeout(
+        supabase
+          .from("catalog_public_view")
+          // Probe mínimo para móviles: una columna y una fila.
+          .select("Articulo")
+          .limit(1),
+        VIEW_PROBE_MS,
+        "catalog_view_sample"
+      );
+      testData = res.data;
+      testError = res.error;
+    } catch (e) {
+      const msg = String(e?.message || e);
+      testError = {
+        message:
+          msg.includes("fyl_timeout:") ? "Sin respuesta a tiempo (revisá la red)." : msg,
+        code: "TIMEOUT",
+      };
+      testData = null;
+    }
     
     if (testError) {
       console.error("❌ Error accediendo a catalog_public_view:", testError);
@@ -2257,6 +4632,11 @@ window.addEventListener("DOMContentLoaded", async () => {
         details: testError.details,
         hint: testError.hint,
         code: testError.code
+      });
+      globalThis.markBootStage?.("catalog.view.probe", {
+        ok: false,
+        code: testError.code,
+        message: testError.message ? String(testError.message).slice(0, 200) : "",
       });
       const cont = document.getElementById("catalogo");
       if (cont) {
@@ -2270,9 +4650,19 @@ window.addEventListener("DOMContentLoaded", async () => {
           </div>
         `;
       }
+      globalThis.markBootStage?.("catalog.aborted", { reason: "view_probe_error" });
+      hideCatalogBootOverlay();
       return;
     }
     
+    globalThis.markBootStage?.("catalog.view.probe", {
+      ok: true,
+      rows: testData?.length ?? 0,
+    });
+    // Quitar overlay de 3 puntos antes de cargar categoría / banners (puede tardar mucho en Android)
+    hideCatalogBootOverlay();
+    globalThis.markBootStage?.("catalog.overlay.dismissed", { phase: "after_view_ok" });
+
     console.log(`✅ Acceso a vista OK. Total de productos en vista: ${testData?.length || 0}`);
     if (testData && testData.length > 0) {
       console.log("📋 Primeros productos en la vista:", testData.slice(0, 5).map(p => ({
@@ -2295,32 +4685,170 @@ window.addEventListener("DOMContentLoaded", async () => {
     initGridEvents();
     initModalEvents();
     initEscClose();
+    initTagToSearch();
     
-    // Resolver categoría inicial por ?tab=
+    // Resolver categoría inicial por ?tab=, ?banner=, ?similares=1&articulo=&talle= o #/coleccion/fyl-originals
+    // NO pisar hash si ya viene seteado (deep link a colección)
+    const urlParams = new URLSearchParams(window.location.search);
     const tabSlug = getTabFromURL();
+    const bannerParam = urlParams.get('banner');
+    const similaresParam = urlParams.get('similares');
+    const articuloParam = urlParams.get('articulo');
+    const talleParam = urlParams.get('talle');
+    const isCollectionFYL = location.hash === "#/coleccion/fyl-originals";
     let categoriaInicial;
-    
-    if (tabSlug) {
+    let similaresFirstTag = null; // tag para filtrar cuando viene de "Ver similares"
+
+    console.log(`🔍 URL actual: ${window.location.href}`);
+    console.log(`🔍 Tab slug desde URL: ${tabSlug || '(ninguno)'}`);
+    console.log(`🔍 Banner param desde URL: ${bannerParam || '(ninguno)'}`);
+
+    // "Ver similares": obtener tags del producto para filtrar por similares
+    if (similaresParam === '1' && articuloParam && articuloParam.trim()) {
+      try {
+        const { data: productoData } = await supabase
+          .from("catalog_public_view")
+          .select("Filtro1, Filtro2, Filtro3")
+          .eq("Articulo", articuloParam.trim())
+          .maybeSingle();
+        if (productoData) {
+          const tags = [];
+          if (productoData.Filtro1) tags.push(productoData.Filtro1);
+          if (productoData.Filtro2) tags.push(productoData.Filtro2);
+          if (productoData.Filtro3) tags.push(productoData.Filtro3);
+          if (tags.length > 0) similaresFirstTag = tags[0];
+        }
+      } catch (e) {
+        console.warn("⚠️ No se pudieron obtener tags del producto para similares:", e?.message || e);
+      }
+    }
+
+    // Si hay parámetro banner, cargar productos de "Otros" filtrados por ese tag
+    if (bannerParam) {
+      const bannerTag = bannerParam.trim().toLowerCase();
+      console.log(`📋 Detectado parámetro banner: "${bannerTag}"`);
+      
+      // Verificar si es un tag de "Otros" (buscar en Filtro1, Filtro2, Filtro3)
+      try {
+        const { data: otrosTags, error: tagsError } = await supabase
+          .from("catalog_public_view")
+          .select("Filtro1, Filtro2, Filtro3")
+          .eq("Categoria", "Otros");
+        
+        if (!tagsError && otrosTags && otrosTags.length > 0) {
+          // Recolectar todos los tags únicos de todos los filtros
+          const allTags = new Set();
+          otrosTags.forEach(item => {
+            if (item.Filtro1) allTags.add(item.Filtro1.trim().toLowerCase());
+            if (item.Filtro2) allTags.add(item.Filtro2.trim().toLowerCase());
+            if (item.Filtro3) {
+              item.Filtro3.split(',').forEach(tag => {
+                const trimmedTag = tag.trim().toLowerCase();
+                if (trimmedTag) allTags.add(trimmedTag);
+              });
+            }
+          });
+          
+          const uniqueTags = Array.from(allTags);
+          console.log(`📋 Tags únicos encontrados en "Otros":`, uniqueTags);
+          
+          // Buscar el tag que coincida
+          const matchingTag = uniqueTags.find(tag => 
+            tag === bannerTag || 
+            tag.replace(/\s+/g, '-') === bannerTag ||
+            tag.replace(/\s+/g, '') === bannerTag
+          );
+          
+          if (matchingTag) {
+            // Usar el tag como categoría (el sistema ya lo maneja en cargarDesdeSupabase)
+            categoriaInicial = matchingTag.charAt(0).toUpperCase() + matchingTag.slice(1);
+            console.log(`✅ Cargando productos de "Otros" con tag: ${matchingTag}`);
+            console.log(`🎯 Tag seleccionado: "${matchingTag}" -> categoriaInicial: "${categoriaInicial}"`);
+          } else {
+            categoriaInicial = "all";
+            console.log(`⚠️ Tag no encontrado en "Otros", usando "all" (Inicio)`);
+            console.log(`📋 Tags disponibles:`, uniqueTags);
+            console.log(`🔍 Tag buscado: "${bannerTag}"`);
+          }
+        } else {
+          categoriaInicial = "all";
+        }
+      } catch (error) {
+        console.error("❌ Error verificando tags de Otros:", error);
+        categoriaInicial = "all";
+      }
+    } else if (tabSlug) {
       const categoria = slugToCategoria(tabSlug);
       if (categoria) {
         categoriaInicial = categoria;
+        console.log(`✅ Categoría encontrada desde slug: ${categoria}`);
       } else {
-        // Slug inválido, usar fallback
-        categoriaInicial = (await existeNovedades()) ? "Novedades" : "Calzado";
+        // Slug inválido, usar "Inicio" (all)
+        categoriaInicial = "all";
+        console.log(`⚠️ Slug inválido, usando "all" (Inicio)`);
       }
     } else {
-      // No hay tab en URL, usar fallback
-      categoriaInicial = (await existeNovedades()) ? "Novedades" : "Calzado";
+      // No hay tab ni banner en URL, usar "Inicio" por defecto
+      categoriaInicial = "all";
+      console.log(`🏠 No hay tab/banner en URL, usando "all" (Inicio) por defecto`);
     }
     
-    console.log(`📦 Cargando categoría inicial: ${categoriaInicial}`);
+    // Si el hash apunta a colección FYL, NO cargar Home (el router en como-comprar.js lo maneja)
+    if (isCollectionFYL) {
+      console.log(`📂 Deep link a colección FYL detectado: no cargar categoría inicial`);
+      // Saltar cargarCategoria; applyHashRoute (como-comprar) aplicará filterBySupplierFYL
+    } else if (similaresParam === '1' && articuloParam?.trim()) {
+      if (similaresFirstTag) {
+        console.log(`📋 Ver similares: filtrando por tag "${similaresFirstTag}"`);
+        await applyTagFilterAndRender(similaresFirstTag, { pushHash: false });
+      } else {
+        console.log(`📋 Ver similares: sin tags del producto, cargando Inicio`);
+        await cargarCategoria('all');
+      }
+      if (talleParam && typeof window.applySizeFilterFromURL === 'function') {
+        setTimeout(() => window.applySizeFilterFromURL(talleParam), 200);
+      }
+    } else {
+      const tagMatch = (location.hash || '').match(/^#\/tag\/(.+)$/);
+      if (tagMatch) {
+        const tagValue = decodeURIComponent(tagMatch[1]);
+        console.log(`📋 Deep link a filtro por tag: "${tagValue}"`);
+        await applyTagFilterAndRender(tagValue, { pushHash: false });
+      } else {
+        console.log(`📦 Cargando categoría inicial: ${categoriaInicial}`);
+        await cargarCategoria(categoriaInicial);
+      }
+    }
+
+    globalThis.markBootStage?.("catalog.first_load.done", {
+      isCollectionFYL,
+      categoriaInicial: categoriaInicial ?? null,
+    });
     
-    // Cargar categoría inicial (esto construye skuIndex)
-    await cargarCategoria(categoriaInicial);
+    if (isCollectionFYL) {
+      window.__CATALOG_READY__ = true;
+      const collHeader = document.getElementById("collection-header");
+      const alreadyShown = collHeader && !collHeader.classList.contains("is-hidden");
+      window.__FYL_BOOT_SUPPRESS_ROUTE = false;
+      if (!alreadyShown && typeof window.applyHashRoute === "function") {
+        await window.applyHashRoute();
+      }
+    }
     
-    // Actualizar botón activo
+    // Si estamos filtrando por banner, ocultar el banner dinámico para evitar redundancia
+    if (bannerParam) {
+      if (typeof window.hideCustomBanner === "function") {
+        window.hideCustomBanner();
+      }
+    }
+    
+    // Actualizar botón activo en menú desktop (si existe)
     document.querySelectorAll(".menu button").forEach((btn) => {
       btn.classList.remove("active");
+      if (categoriaInicial === "all") {
+        // En "Inicio", no activar ningún botón del menú desktop
+        return;
+      }
       const buttonText = btn.textContent.trim();
       let shouldActivate = false;
 
@@ -2337,13 +4865,31 @@ window.addEventListener("DOMContentLoaded", async () => {
       }
     });
     
+    // Activar botón "Inicio" en quick actions si no hay categoría específica
+    // Usar setTimeout para asegurar que los quick actions ya se renderizaron
+    if (categoriaInicial === "all") {
+      setTimeout(() => {
+        const inicioBtn = document.getElementById("quick-action-inicio");
+        if (inicioBtn) {
+          // Remover active de todos primero
+          document.querySelectorAll(".quick-action-btn").forEach((btn) => {
+            btn.classList.remove("active");
+          });
+          inicioBtn.classList.add("active");
+        }
+      }, 100);
+    }
+    
     // Actualizar URL con tab (sin sku, solo para restaurar UI)
     if (tabSlug) {
       updateURL({ tab: categoriaInicial, sku: undefined }, { mode: 'replace' });
+    } else if (categoriaInicial === "all") {
+      // Limpiar URL para que muestre la vista de Inicio
+      updateURL({ tab: '', sku: undefined }, { mode: 'replace' });
     }
     
     // Inicializar tab slug para popstate (usar slug actual de URL o convertir categoría)
-    ultimoTabSlug = tabSlug || categoriaToSlug(categoriaInicial);
+    ultimoTabSlug = tabSlug || null;
     
     // Ahora inicializar modal desde URL (skuIndex ya está construido)
     // SKU manda - siempre abre modal si existe
@@ -2355,14 +4901,57 @@ window.addEventListener("DOMContentLoaded", async () => {
       btnNovedades.style.display = "none";
     }
 
+    if (!isCollectionFYL) {
+      window.__CATALOG_READY__ = true;
+    }
+    // En vista Inicio (#/), forzar scroll al inicio tras cargar para evitar que la página quede scrolleada
+    if (categoriaInicial === "all" && (location.hash === "#/" || location.hash === "")) {
+      setTimeout(() => {
+        if (location.hash === "#/" || location.hash === "") {
+          window.scrollTo(0, 0);
+        }
+      }, 350);
+    }
     console.log("✅ Catálogo inicializado correctamente");
     console.log("📊 Fuente de datos: Supabase (ÚNICA FUENTE)");
     console.log("🚫 Google Sheets: DESHABILITADO");
-  } catch (error) {
-    console.error("❌ Error inicializando catálogo:", error);
-    console.error("Stack:", error.stack);
+    globalThis.markBootStage?.("catalog.ready", { ok: true });
+    } catch (error) {
+      console.error("❌ Error inicializando catálogo:", error);
+      console.error("Stack:", error.stack);
+      globalThis.markBootStage?.("catalog.init.error", {
+        name: error?.name,
+        message: error?.message ? String(error.message).slice(0, 240) : String(error),
+      });
+      const cont = document.getElementById("catalogo");
+      const safeMsg = (error?.message ? String(error.message) : String(error))
+        .slice(0, 220)
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+      if (cont && !cont.querySelector(".error-message")) {
+        cont.innerHTML = `
+          <div class="error-message" style="text-align:center;padding:40px 20px;color:#666;background:#f8f9fa;border-radius:8px;margin:20px;">
+            <h3>No se pudo completar la carga</h3>
+            <p style="color:#c0392b;font-weight:bold;margin:12px 0;">${safeMsg}</p>
+            <p style="font-size:14px;">Si estás en el celular, probá recargar o cambiar entre Wi‑Fi y datos.</p>
+            <button type="button" onclick="location.reload()" style="background:#CD844D;color:#fff;border:none;padding:10px 20px;border-radius:5px;margin-top:16px;cursor:pointer;">Reintentar</button>
+          </div>`;
+      }
+    }
+  } finally {
+    window.__FYL_BOOT_SUPPRESS_ROUTE = false;
+    hideCatalogBootOverlay();
+    globalThis.markBootStage?.("catalog.boot.finished");
   }
-});
+}
+
+// Ejecutar inicialización cuando el DOM esté listo o si ya está listo
+if (document.readyState === "loading") {
+  window.addEventListener("DOMContentLoaded", inicializarCatalogo);
+} else {
+  // El DOM ya está listo, ejecutar inmediatamente
+  inicializarCatalogo();
+}
 
 // Configurar eventos de la interfaz
 document.addEventListener("DOMContentLoaded", () => {
@@ -2487,12 +5076,94 @@ async function mostrarAlternativasParaTalleSinStock(producto) {
   }
 }
 
+// Función para buscar productos en todos los productos pendientes
+async function buscarProductosEnTodos(term) {
+  if (!term || term.trim() === '') {
+    // Si no hay término, restaurar vista paginada normal y mostrar banners
+    clearTagFilterBar();
+    const cont = document.getElementById("catalogo");
+    if (cont) {
+      cont.innerHTML = "";
+      productosRenderizados = 0;
+      await renderizarProductosPagina(productosPendientes, cont, offersCardsPendientes, 0, PRODUCTOS_INICIALES);
+      productosRenderizados = PRODUCTOS_INICIALES;
+      configurarEventos();
+      mostrarBotonVerMas();
+      if (categoriaActual === 'all') {
+        if (typeof window.loadAndShowFYLBanner === 'function') window.loadAndShowFYLBanner();
+        if (typeof window.showPromotionalBanner === 'function') window.showPromotionalBanner();
+        syncInfoBannerVisibility();
+      }
+    }
+    return;
+  }
+
+  const termLower = term.trim().toLowerCase();
+  const cont = document.getElementById("catalogo");
+  if (!cont || !productosPendientes || productosPendientes.length === 0) {
+    return;
+  }
+
+  // Filtrar productos que coincidan con el término de búsqueda
+  const productosFiltrados = productosPendientes.filter(producto => {
+    const art = (producto.Articulo || '').toLowerCase();
+    const descripcion = (producto.Descripcion || '').toLowerCase();
+    const nombre = ((producto.name || producto.Articulo) || '').toLowerCase();
+    const filtros = [
+      (producto.Filtro1 || '').toLowerCase(),
+      (producto.Filtro2 || '').toLowerCase(),
+      (producto.Filtro3 || '').toLowerCase()
+    ].join(' ');
+
+    return art.includes(termLower) || 
+           descripcion.includes(termLower) || 
+           nombre.includes(termLower) ||
+           filtros.includes(termLower);
+  });
+
+  // Limpiar contenedor y ocultar banners cuando hay filtro de búsqueda
+  cont.innerHTML = "";
+  if (typeof window.hideFYLOriginalsBanner === 'function') window.hideFYLOriginalsBanner();
+  if (typeof window.hideCustomBanner === 'function') window.hideCustomBanner();
+  if (typeof window.hidePromotionalBanner === 'function') window.hidePromotionalBanner();
+  document.getElementById("info-banner-top-container")?.classList.add("is-hidden");
+  if (productosFiltrados.length > 0) {
+    await renderizarProductosPagina(productosFiltrados, cont, [], 0, null, { skipBanner: true });
+    configurarEventos();
+  } else {
+    cont.insertAdjacentHTML('beforeend', '<div class="no-results" style="text-align: center; padding: 2rem; color: #666;">No se encontraron productos</div>');
+  }
+  initTagFilterClearDelegation();
+  renderTagFilterBar(term, { type: 'search' });
+}
+
 // Exportar funciones globales
 window.cargarCategoria = cargarCategoria;
 window.cambiarCategoria = cambiarCategoria;
+window.cargarDesdeSupabase = cargarDesdeSupabase;
 window.downloadImage = downloadImage;
+window.downloadImageFromUrl = downloadImageFromUrl;
+window.shareImageUrl = shareImageUrl;
 window.existeNovedades = existeNovedades;
 window.parseFecha = parseFecha;
 window.cloudinaryOptimized = cloudinaryOptimized;
+window.getImgThumb = getImgThumb;
+window.getImgFull = getImgFull;
 window.mostrarAlternativasParaTalleSinStock = mostrarAlternativasParaTalleSinStock;
 window.cerrarModal = cerrarModal;
+window.abrirModalPorSKU = abrirModalPorSKU;
+window.abrirModalConResultado = abrirModalConResultado;
+window.enrichProductsWithStock = enrichProductsWithStock;
+window.formatPrice = formatPrice;
+window.formatARS = formatARS;
+window.buscarProductosEnTodos = buscarProductosEnTodos;
+window.renderizarProductosPagina = renderizarProductosPagina;
+window.configurarEventos = configurarEventos;
+window.mainImageFallback = mainImageFallback;
+
+// Exponer productosPendientes para acceso desde otros módulos (solo lectura)
+Object.defineProperty(window, 'productosPendientes', {
+  get: function() { return productosPendientes; },
+  enumerable: true,
+  configurable: false
+});

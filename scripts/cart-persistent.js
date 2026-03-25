@@ -1,10 +1,13 @@
 import { supabase } from "./supabase-client.js";
+import { normalizeSize } from "./utils/size-normalizer.js";
 
 let cartItems = [];
 let cartCount = 0;
 let isInitialized = false;
 let isDedupingSupabase = false;
 let isSyncing = false;
+let authListenerAttached = false;
+let loadCartFromSupabaseInFlight = null;
 
 async function ensureCustomerRecord(user) {
   try {
@@ -122,94 +125,90 @@ async function fetchPrimaryImage(articulo, color) {
   return null;
 }
 
+/** Obtener stock real desde variant_sizes y variant_size_warehouse_stock (NO desde product_variants) */
 async function fetchVariantInfo(articulo, color, talle, variantId = null) {
   try {
     const normalizedArticulo = articulo?.trim();
-    const normalizedColor = color?.trim();
-    const normalizedSize = talle?.trim();
+    const normalizedColor = (color || "Único")?.trim();
+    const normalizedSize = normalizeSize(talle) || (talle || "").trim();
 
     if (!normalizedArticulo || !normalizedColor || !normalizedSize) {
       return null;
     }
 
-    if (variantId) {
-      const { data: variantById, error: variantByIdError } = await supabase
+    let vid = variantId;
+    let price = 0;
+    let reserved = 0;
+
+    if (vid) {
+      const { data: pv, error: pvErr } = await supabase
         .from("product_variants")
-        .select("id, stock_qty, reserved_qty, price, color, size")
-        .eq("id", variantId)
+        .select("id, reserved_qty, price, color")
+        .eq("id", vid)
         .maybeSingle();
-
-      if (variantByIdError) {
-        console.warn(
-          "⚠️ Error obteniendo variante por ID:",
-          variantByIdError.message
-        );
+      if (!pvErr && pv) {
+        price = Number(pv.price ?? 0) || 0;
+        reserved = Number(pv.reserved_qty ?? 0);
       }
+    } else {
+      const { data: product, error: prodErr } = await supabase
+        .from("products")
+        .select("id")
+        .ilike("name", normalizedArticulo)
+        .maybeSingle();
+      if (prodErr || !product) return null;
 
-      if (variantById) {
-        const stock = Number(variantById.stock_qty ?? 0);
-        const reserved = Number(variantById.reserved_qty ?? 0);
-        return {
-          id: variantById.id,
-          stock,
-          reserved,
-          available: Math.max(0, stock - reserved),
-          price: Number(variantById.price ?? 0) || 0,
-          color: variantById.color,
-          size: variantById.size,
-        };
-      }
+      const { data: pv, error: pvErr } = await supabase
+        .from("product_variants")
+        .select("id, reserved_qty, price, color")
+        .eq("product_id", product.id)
+        .ilike("color", normalizedColor)
+        .eq("active", true)
+        .maybeSingle();
+      if (pvErr || !pv) return null;
+      vid = pv.id;
+      price = Number(pv.price ?? 0) || 0;
+      reserved = Number(pv.reserved_qty ?? 0);
     }
 
-    const { data: product, error: productError } = await supabase
-      .from("products")
-      .select("id")
-      .ilike("name", normalizedArticulo)
-      .maybeSingle();
+    // Stock desde variant_sizes (tabla principal de talles)
+    const { data: sizeData, error: sizeErr } = await supabase
+      .from("variant_sizes")
+      .select("variant_id, size, stock_qty")
+      .eq("variant_id", vid);
+    if (sizeErr) return null;
 
-    if (productError) {
-      console.warn("⚠️ Error obteniendo producto:", productError.message);
-      return null;
+    const sizeRow = (sizeData || []).find((r) => normalizeSize(r.size) === normalizedSize);
+    let sizeStockQty = sizeRow ? (sizeRow.stock_qty || 0) : 0;
+
+    // Fallback/enriquecimiento desde variant_size_warehouse_stock (general + venta-publico)
+    const { data: whs } = await supabase.from("warehouses").select("id, code").in("code", ["general", "venta-publico"]);
+    const whMap = new Map((whs || []).map((w) => [w.code, w.id]));
+    const generalId = whMap.get("general");
+    const ventaId = whMap.get("venta-publico");
+
+    let stockTotal = 0;
+    if (generalId && ventaId) {
+      const { data: sws } = await supabase
+        .from("variant_size_warehouse_stock")
+        .select("size, warehouse_id, stock_qty")
+        .eq("variant_id", vid)
+        .in("warehouse_id", [generalId, ventaId]);
+      (sws || []).forEach((s) => {
+        if (normalizeSize(s.size) === normalizedSize) stockTotal += s.stock_qty || 0;
+      });
     }
-    if (!product) {
-      console.warn("⚠️ Producto no encontrado para", normalizedArticulo);
-      return null;
-    }
-
-    const { data: variant, error: variantError } = await supabase
-      .from("product_variants")
-      .select("id, stock_qty, reserved_qty, price, color, size")
-      .eq("product_id", product.id)
-      .ilike("color", normalizedColor)
-      .eq("size", normalizedSize)
-      .maybeSingle();
-
-    if (variantError) {
-      console.warn("⚠️ Error obteniendo variante:", variantError.message);
-      return null;
-    }
-
-    if (!variant) {
-      console.warn(
-        "⚠️ Variante no encontrada:",
-        normalizedArticulo,
-        normalizedColor,
-        normalizedSize
-      );
-      return null;
-    }
-
-    const stock = Number(variant.stock_qty ?? 0);
-    const reserved = Number(variant.reserved_qty ?? 0);
+    if (stockTotal === 0 && sizeStockQty > 0) stockTotal = sizeStockQty;
+    const available = Math.max(0, stockTotal - reserved);
 
     return {
-      id: variant.id,
-      stock,
+      id: vid,
+      stock: stockTotal,
       reserved,
-      available: Math.max(0, stock - reserved),
-      price: Number(variant.price ?? 0) || 0,
-      color: variant.color,
-      size: variant.size,
+      available,
+      price,
+      color: normalizedColor,
+      size: normalizedSize,
     };
   } catch (error) {
     console.error("❌ Error obteniendo información de variante:", error);
@@ -217,20 +216,28 @@ async function fetchVariantInfo(articulo, color, talle, variantId = null) {
   }
 }
 
+/** Clave estable misma línea (evita duplicar al fusionar local + Supabase por espacios/casing menor) */
+function buildCartLineKey(item = {}) {
+  const art = String(item.articulo ?? item.product_name ?? "").trim();
+  const col = String(item.color ?? "").trim();
+  const rawTalle = item.talle ?? item.size ?? "";
+  const sizeKey = normalizeSize(rawTalle) || String(rawTalle).trim();
+  return [art, col, sizeKey].join("__");
+}
+
 function normalizeCartItems(items = []) {
   const map = new Map();
   items.forEach((item) => {
-    const key = [
-      item.articulo || item.product_name || "",
-      item.color || "",
-      item.talle || item.size || "",
-    ].join("__");
+    const rawTalle = item.talle ?? item.size ?? "";
+    const sizeKey = normalizeSize(rawTalle) || String(rawTalle).trim();
+    const key = buildCartLineKey(item);
     const cantidad =
       Number(item.cantidad ?? item.quantity ?? item.qty ?? 0) || 0;
     const precio = Number(item.precio ?? item.price_snapshot ?? 0) || 0;
     if (!map.has(key)) {
       map.set(key, {
         ...item,
+        talle: sizeKey || item.talle || item.size,
         cantidad: cantidad,
         precio,
         supabaseIds: item.id ? [item.id] : [],
@@ -256,6 +263,100 @@ function normalizeCartItems(items = []) {
     }
   });
   return Array.from(map.values());
+}
+
+function getCartItemKey(item = {}) {
+  return buildCartLineKey(item);
+}
+
+/** Actualiza carrito en memoria al instante (UI sticky) antes de persistir en Supabase */
+function applyOptimisticCartAdd(productData, variantInfo) {
+  const articulo = productData.articulo;
+  const color = productData.color || "Único";
+  const rawTalle = productData.talle ?? productData.size ?? "Único";
+  const sizeKey = normalizeSize(rawTalle) || String(rawTalle).trim();
+  const qty = Number(productData.cantidad || 1) || 1;
+  const price = Number(productData.precio || 0) || 0;
+  const priceToUse =
+    price > 0 ? price : Number(variantInfo?.price || 0) || 0;
+  const incomingKey = getCartItemKey({ articulo, color, talle: sizeKey });
+
+  const existingItem = cartItems.find(
+    (item) => getCartItemKey(item) === incomingKey
+  );
+  if (existingItem) {
+    existingItem.cantidad =
+      (Number(existingItem.cantidad) || 0) + qty;
+    if (!existingItem.variant_id && variantInfo?.id) {
+      existingItem.variant_id = variantInfo.id;
+    }
+    if (priceToUse > 0) existingItem.precio = priceToUse;
+    if (productData.imagen && !existingItem.imagen) {
+      existingItem.imagen = productData.imagen;
+    }
+  } else {
+    cartItems.push({
+      id: Date.now(),
+      articulo,
+      color,
+      talle: sizeKey,
+      cantidad: qty,
+      precio: priceToUse,
+      imagen: productData.imagen,
+      descripcion: productData.descripcion,
+      variant_id: productData.variant_id || variantInfo?.id || null,
+    });
+  }
+  cartItems = normalizeCartItems(cartItems);
+}
+
+function mergeCartItemsWithoutDoubleCount(remoteItems = [], localItems = []) {
+  const mergedMap = new Map();
+
+  const upsert = (item, source) => {
+    const key = getCartItemKey(item);
+    const qty = Number(item.cantidad ?? item.quantity ?? item.qty ?? 0) || 0;
+    if (qty <= 0) return;
+
+    if (!mergedMap.has(key)) {
+      mergedMap.set(key, {
+        ...item,
+        cantidad: qty,
+        _source: source,
+      });
+      return;
+    }
+
+    const existing = mergedMap.get(key);
+    const existingQty =
+      Number(existing.cantidad ?? existing.quantity ?? existing.qty ?? 0) || 0;
+
+    // Critical for login merge: same SKU in local+remote must not be summed.
+    // Keep the larger quantity to avoid 1->2->4 inflation on repeated merges.
+    if (qty > existingQty) {
+      mergedMap.set(key, {
+        ...existing,
+        ...item,
+        cantidad: qty,
+        _source: source,
+      });
+      return;
+    }
+
+    // Keep useful metadata without changing qty.
+    if (!existing.imagen && item.imagen) existing.imagen = item.imagen;
+    if (!existing.descripcion && item.descripcion)
+      existing.descripcion = item.descripcion;
+    if (!existing.variant_id && (item.variant_id || item.variantId)) {
+      existing.variant_id = item.variant_id ?? item.variantId ?? null;
+    }
+    if (!existing.id && item.id) existing.id = item.id;
+  };
+
+  remoteItems.forEach((item) => upsert(item, "remote"));
+  localItems.forEach((item) => upsert(item, "local"));
+
+  return Array.from(mergedMap.values()).map(({ _source, ...item }) => item);
 }
 
 function loadCartFromStorage() {
@@ -287,6 +388,91 @@ function saveCartToStorage() {
   }
 }
 
+function getCartCount() {
+  return cartItems.reduce((t, item) => t + Number(item.cantidad || 0), 0);
+}
+
+function getCartTotal() {
+  let total = cartItems.reduce((total, item) => {
+    const qty = Number(item.cantidad || 0);
+    const raw = item.precio ?? item.price_snapshot ?? 0;
+    let precio = parseFloat(String(raw).replace(/[^\d.,]/g, "").replace(",", ".")) || 0;
+    /* Si precio parece "miles abreviados" (ej. 16.5 = $16.500): típico cuando DB guarda 16.5 */
+    if (precio > 0 && precio < 1000 && precio % 1 !== 0) {
+      precio = precio * 1000;
+    }
+    return total + qty * precio;
+  }, 0);
+  return total;
+}
+
+function formatPriceLocal(precio) {
+  if (precio == null || precio === '') return '$0';
+  let n = parseFloat(String(precio).replace(/[^\d.,]/g, '').replace(',', '.'));
+  if (isNaN(n)) return '$0';
+  return (typeof window.formatARS === 'function' ? window.formatARS(n) : null) ||
+    (typeof window.formatPrice === 'function' ? window.formatPrice(n) : null) ||
+    ('$' + new Intl.NumberFormat('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(Math.round(n)));
+}
+
+function createFloatingCartButton() {
+  if (window.__DASHBOARD__ === true) return;
+  if (document.getElementById("sticky-cart")) return;
+  const btn = document.createElement("button");
+  btn.id = "sticky-cart";
+  btn.type = "button";
+  btn.className = "sticky-cart";
+  btn.setAttribute("aria-label", "Ver carrito");
+  btn.innerHTML = `
+    <span class="sticky-cart__left">
+      <span class="sticky-cart__icon-wrap">
+        <svg class="sticky-cart__icon" viewBox="-2 -2 28 28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" preserveAspectRatio="xMidYMid meet">
+          <circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/>
+          <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>
+        </svg>
+      </span>
+      <span class="sticky-cart__label"></span>
+    </span>
+    <span class="sticky-cart__right">
+      <span class="sticky-cart__total"></span>
+      <svg class="sticky-cart__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+    </span>
+  `;
+  btn.addEventListener("click", () => {
+    if (typeof window.goToCart === "function") window.goToCart();
+  });
+  document.body.appendChild(btn);
+}
+
+function updateFloatingCartCta() {
+  if (window.__DASHBOARD__ === true) return;
+  const btn = document.getElementById("sticky-cart");
+  if (!btn) return;
+  const count = typeof window.getCartCount === "function" ? window.getCartCount() : 0;
+  let total = typeof getCartTotal === "function" ? getCartTotal() : 0;
+
+  /* DIAG: log antes/después para diagnosticar total "$37" sin miles */
+  if (typeof console !== "undefined" && console.debug && count > 0) {
+    const _fmt = (window.formatARS || formatPriceLocal);
+    console.debug("[sticky-cart] render:", { totalNumerico: total, count, formatted: _fmt(total), cartItems: cartItems.map(i => ({ articulo: i.articulo, cantidad: i.cantidad, precio: i.precio, raw: i.precio ?? i.price_snapshot })) });
+  }
+
+  const formatted = window.formatARS ? window.formatARS(total) : formatPriceLocal(total);
+  const labelEl = btn.querySelector(".sticky-cart__label");
+  const totalEl = btn.querySelector(".sticky-cart__total");
+  if (labelEl) labelEl.textContent = count === 1 ? "1 par en carrito" : `${count} pares en carrito`;
+  if (totalEl) totalEl.textContent = formatted;
+  btn.classList.toggle("is-visible", count > 0);
+  document.body.classList.toggle("has-cart-bar", count > 0);
+  const root = document.documentElement;
+  if (count > 0 && btn) {
+    const h = btn.getBoundingClientRect().height;
+    root.style.setProperty("--sticky-cart-h", h > 0 ? `${Math.round(h)}px` : "48px");
+  } else {
+    root.style.setProperty("--sticky-cart-h", "0px");
+  }
+}
+
 function updateCartCount() {
   cartCount = cartItems.reduce(
     (total, item) => total + (item.cantidad || 0),
@@ -303,9 +489,20 @@ function updateCartCount() {
   if (cartCountElement) {
     cartCountElement.textContent = cartCount;
   }
+
+  if (typeof window.updateFloatingCartCta === "function") {
+    window.updateFloatingCartCta();
+  }
+
+  /* Señal de reserva activa en Pedidos (punto naranja o badge) */
+  const navPedidos = document.getElementById("nav-pedidos");
+  if (navPedidos) {
+    navPedidos.classList.toggle("has-reserva", cartCount > 0);
+  }
 }
 
-async function syncCartWithSupabase() {
+async function syncCartWithSupabase(options = {}) {
+  const { mergeWithRemote = false } = options;
   if (isSyncing) {
     return;
   }
@@ -324,10 +521,37 @@ async function syncCartWithSupabase() {
     const ready = await ensureCustomerRecord(user);
     if (!ready) return;
 
-    cartItems = normalizeCartItems(cartItems);
-
     const cartId = await getOrCreateOpenCart(user);
     if (!cartId) return;
+
+    cartItems = normalizeCartItems(cartItems);
+
+    if (mergeWithRemote) {
+      const { data: remoteItems, error: remoteItemsError } = await supabase
+        .from("cart_items")
+        .select("*")
+        .eq("cart_id", cartId);
+
+      if (!remoteItemsError && Array.isArray(remoteItems) && remoteItems.length > 0) {
+        const normalizedRemote = normalizeCartItems(
+          remoteItems.map((row) => ({
+            id: row.id,
+            articulo: row.product_name,
+            color: row.color,
+            talle: row.size,
+            cantidad: row.quantity,
+            precio: row.price_snapshot,
+            imagen: row.imagen,
+            descripcion: null,
+            variant_id: row.variant_id,
+          }))
+        );
+        // Merge login-safe: avoid adding local+remote qty for the same key.
+        cartItems = normalizeCartItems(
+          mergeCartItemsWithoutDoubleCount(normalizedRemote, cartItems)
+        );
+      }
+    }
 
     if (!cartItems.length) {
       await supabase.from("cart_items").delete().eq("cart_id", cartId);
@@ -349,7 +573,7 @@ async function syncCartWithSupabase() {
           cart_id: cartId,
           product_name: item.articulo,
           color: item.color,
-          size: item.talle,
+          size: normalizeSize(item.talle ?? item.size ?? "") || (item.talle ?? item.size),
           quantity: item.cantidad,
           qty: item.cantidad,
           price_snapshot: item.precio,
@@ -404,65 +628,73 @@ async function syncCartWithSupabase() {
 }
 
 async function loadCartFromSupabase() {
-  try {
-    if (!supabase) return;
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return;
-
-    const { data: cart } = await supabase
-      .from("carts")
-      .select("id, created_at")
-      .eq("customer_id", user.id)
-      .eq("status", "open")
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (!cart) return;
-
-    const { data: items, error: itemsError } = await supabase
-      .from("cart_items")
-      .select("*")
-      .eq("cart_id", cart.id);
-
-    if (itemsError || !items) return;
-
-    const supabaseItems = items.map((item) => ({
-      id: item.id,
-      articulo: item.product_name,
-      color: item.color,
-      talle: item.size,
-      cantidad: item.quantity,
-      precio: item.price_snapshot,
-      imagen: item.imagen,
-      descripcion: null,
-      variant_id: item.variant_id,
-    }));
-
-    const normalized = normalizeCartItems(supabaseItems);
-    const hadDuplicates = normalized.length < supabaseItems.length;
-    cartItems = normalized;
-    saveCartToStorage();
-    updateCartCount();
-
-    if (hadDuplicates && !isDedupingSupabase) {
-      try {
-        isDedupingSupabase = true;
-        await syncCartWithSupabase();
-      } finally {
-        isDedupingSupabase = false;
-      }
-    }
-  } catch (error) {
-    console.error("❌ Error cargando carrito desde Supabase:", error);
+  if (loadCartFromSupabaseInFlight) {
+    return loadCartFromSupabaseInFlight;
   }
+  loadCartFromSupabaseInFlight = (async () => {
+    try {
+      if (!supabase) return;
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { data: cart } = await supabase
+        .from("carts")
+        .select("id, created_at")
+        .eq("customer_id", user.id)
+        .eq("status", "open")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (!cart) return;
+
+      const { data: items, error: itemsError } = await supabase
+        .from("cart_items")
+        .select("*")
+        .eq("cart_id", cart.id);
+
+      if (itemsError || !items) return;
+
+      const supabaseItems = items.map((item) => ({
+        id: item.id,
+        articulo: item.product_name,
+        color: item.color,
+        talle: item.size,
+        cantidad: item.quantity,
+        precio: item.price_snapshot,
+        imagen: item.imagen,
+        descripcion: null,
+        variant_id: item.variant_id,
+      }));
+
+      const normalized = normalizeCartItems(supabaseItems);
+      const hadDuplicates = normalized.length < supabaseItems.length;
+      cartItems = normalized;
+      saveCartToStorage();
+      updateCartCount();
+
+      if (hadDuplicates && !isDedupingSupabase) {
+        try {
+          isDedupingSupabase = true;
+          await syncCartWithSupabase();
+        } finally {
+          isDedupingSupabase = false;
+        }
+      }
+    } catch (error) {
+      console.error("❌ Error cargando carrito desde Supabase:", error);
+    } finally {
+      loadCartFromSupabaseInFlight = null;
+    }
+  })();
+  return loadCartFromSupabaseInFlight;
 }
 
-async function ensureCartItemInDatabase(productData, authUser = null) {
+async function ensureCartItemInDatabase(productData, authUser = null, options = {}) {
   try {
-    if (!productData) return;
+    if (!productData) return false;
 
     let user = authUser;
     if (!user) {
@@ -474,18 +706,18 @@ async function ensureCartItemInDatabase(productData, authUser = null) {
 
     if (!user) {
       console.warn("⚠️ No hay usuario autenticado, no se puede guardar en DB");
-      return;
+      return false;
     }
 
     const ready = await ensureCustomerRecord(user);
-    if (!ready) return;
+    if (!ready) return false;
 
     const cartId = await getOrCreateOpenCart(user);
-    if (!cartId) return;
+    if (!cartId) return false;
 
     const articulo = productData.articulo;
     const color = productData.color || "Único";
-    const size = productData.talle || "Único";
+    const size = normalizeSize(productData.talle ?? productData.size ?? "") || "Único";
     const quantity = Number(productData.cantidad || 1) || 1;
     const price = Number(productData.precio || 0) || 0;
     let imagen = productData.imagen;
@@ -493,18 +725,21 @@ async function ensureCartItemInDatabase(productData, authUser = null) {
       imagen = await fetchPrimaryImage(articulo, color);
     }
 
-    const variantInfo = await fetchVariantInfo(
-      articulo,
-      color,
-      size,
-      productData.variant_id
-    );
+    let variantInfo = options.variantInfo || null;
+    if (!variantInfo) {
+      variantInfo = await fetchVariantInfo(
+        articulo,
+        color,
+        size,
+        productData.variant_id
+      );
+    }
 
     if (!variantInfo) {
       alert(
         `⚠️ No se encontró stock para ${articulo} (${color} • ${size}). Revisa la disponibilidad.`
       );
-      return;
+      return false;
     }
 
     // Verificar stock REAL disponible (sin contar lo que está en el carrito)
@@ -515,20 +750,22 @@ async function ensureCartItemInDatabase(productData, authUser = null) {
       alert(
         `⚠️ Este producto está agotado. No hay unidades disponibles de ${articulo} (${color} • ${size}).`
       );
-      return;
+      return false;
     }
 
     const priceToUse = price > 0 ? price : variantInfo.price || 0;
 
+    // Buscar por variant_id Y size: mismo variant puede tener varios talles (36, 37...) por separado
     const { data: existingRows, error: existingError } = await supabase
       .from("cart_items")
-      .select("id, quantity")
+      .select("id, quantity, size")
       .eq("cart_id", cartId)
-      .eq("variant_id", variantInfo.id);
+      .eq("variant_id", variantInfo.id)
+      .eq("size", size);
 
     if (existingError) {
       console.error("❌ Error consultando item existente:", existingError);
-      return;
+      return false;
     }
 
     let candidateRows = existingRows;
@@ -564,7 +801,7 @@ async function ensureCartItemInDatabase(productData, authUser = null) {
       alert(
         `⚠️ Solo hay ${stockRealDisponible} unidad(es) disponible(s) de ${articulo} (${color} • ${size}). No se puede agregar ${cantidadDeseada} unidad(es).`
       );
-      return;
+      return false;
     }
 
     // Calcular el máximo permitido considerando lo que ya está en el carrito
@@ -578,7 +815,7 @@ async function ensureCartItemInDatabase(productData, authUser = null) {
       alert(
         `⚠️ No queda stock disponible para ${articulo} (${color} • ${size}). Ya tienes ${currentQuantity} unidad(es) en tu carrito y no hay más disponibles.`
       );
-      return;
+      return false;
     }
 
     const desiredTotal = currentQuantity + quantity;
@@ -589,7 +826,7 @@ async function ensureCartItemInDatabase(productData, authUser = null) {
       alert(
         `Solo puedes reservar ${maxAllowed} unidades de ${articulo} (${color} • ${size}).`
       );
-      return;
+      return false;
     }
 
     if (quantityToAdd < quantity) {
@@ -614,7 +851,7 @@ async function ensureCartItemInDatabase(productData, authUser = null) {
         .eq("id", primary.id);
       if (updateError) {
         console.error("❌ Error actualizando item del carrito:", updateError);
-        return;
+        return false;
       }
 
       if (duplicates.length > 0) {
@@ -628,33 +865,52 @@ async function ensureCartItemInDatabase(productData, authUser = null) {
         }
       }
     } else {
-      const { error: insertError } = await supabase.from("cart_items").insert({
-        cart_id: cartId,
-        product_name: articulo,
-        color,
-        size,
-        quantity: finalTotal,
-        qty: finalTotal,
-        price_snapshot: priceToUse,
-        status: "reserved",
-        imagen: imagen || null,
-        variant_id: variantInfo.id,
-      });
+      // Evitar duplicado por doble clic: reconsultar por si otro request acaba de insertar; si ya existe, actualizar a finalTotal (no sumar de nuevo)
+      const { data: recheck } = await supabase
+        .from("cart_items")
+        .select("id, quantity")
+        .eq("cart_id", cartId)
+        .eq("variant_id", variantInfo.id)
+        .eq("size", size);
+      const recheckRow = recheck?.[0];
+      if (recheckRow) {
+        const existingQty = Number(recheckRow.quantity) || 0;
+        const targetQty = Math.max(existingQty, finalTotal);
+        await supabase
+          .from("cart_items")
+          .update({ quantity: targetQty, qty: targetQty, price_snapshot: priceToUse || null, variant_id: variantInfo.id, imagen: imagen || null })
+          .eq("id", recheckRow.id);
+      } else {
+        const { error: insertError } = await supabase.from("cart_items").insert({
+          cart_id: cartId,
+          product_name: articulo,
+          color,
+          size,
+          quantity: finalTotal,
+          qty: finalTotal,
+          price_snapshot: priceToUse,
+          status: "reserved",
+          imagen: imagen || null,
+          variant_id: variantInfo.id,
+        });
 
-      if (insertError) {
-        console.error("❌ Error insertando item en Supabase:", insertError);
-        return;
+        if (insertError) {
+          console.error("❌ Error insertando item en Supabase:", insertError);
+          return false;
+        }
       }
     }
 
     await loadCartFromSupabase();
     window.dispatchEvent(new CustomEvent("cart:synced"));
+    return true;
   } catch (error) {
     console.error("❌ Error asegurando item en Supabase:", error);
+    return false;
   }
 }
 
-async function addToCart(productData) {
+async function addToCart(productData, options = {}) {
   try {
     // VALIDACIÓN DE STOCK ANTES DE AGREGAR AL CARRITO
     // Verificar stock REAL disponible (sin contar lo que está en el carrito)
@@ -737,53 +993,63 @@ async function addToCart(productData) {
     }
     
     // Si hay stock suficiente, proceder con agregar al carrito
-    const authResult = window.requireAuth ? await window.requireAuth() : null;
-    const user = authResult?.user;
-
-    let usedDatabase = false;
-
-    if (user) {
-      await ensureCartItemInDatabase(productData, user);
-      usedDatabase = true;
-    } else {
+    let dbUser = null;
+    if (supabase) {
       const {
         data: { user: sessionUser },
       } = await supabase.auth.getUser();
+      dbUser = sessionUser || null;
+    }
 
-      if (sessionUser) {
-        await ensureCartItemInDatabase(productData, sessionUser);
-        usedDatabase = true;
+    let usedDatabase = false;
+
+    if (dbUser) {
+      applyOptimisticCartAdd(productData, variantInfo);
+      saveCartToStorage();
+      updateCartCount();
+      if (!options.suppressNotification) {
+        showCartNotification(productData.articulo);
+      }
+      const persisted = await ensureCartItemInDatabase(productData, dbUser, {
+        variantInfo,
+      });
+      if (!persisted) {
+        await loadCartFromSupabase();
+        return false;
+      }
+      usedDatabase = true;
+    } else {
+      // Fallback local (invitado)
+      const existingItem = cartItems.find(
+        (item) =>
+          item.articulo === productData.articulo &&
+          item.color === productData.color &&
+          item.talle === productData.talle
+      );
+
+      if (existingItem) {
+        existingItem.cantidad += productData.cantidad || 1;
       } else {
-        // Fallback local
-        const existingItem = cartItems.find(
-          (item) =>
-            item.articulo === productData.articulo &&
-            item.color === productData.color &&
-            item.talle === productData.talle
-        );
+        cartItems.push({
+          id: Date.now(),
+          articulo: productData.articulo,
+          color: productData.color || "Único",
+          talle: productData.talle || "Único",
+          cantidad: productData.cantidad || 1,
+          precio: productData.precio,
+          imagen: productData.imagen,
+          descripcion: productData.descripcion,
+        });
+      }
 
-        if (existingItem) {
-          existingItem.cantidad += productData.cantidad || 1;
-        } else {
-          cartItems.push({
-            id: Date.now(),
-            articulo: productData.articulo,
-            color: productData.color || "Único",
-            talle: productData.talle || "Único",
-            cantidad: productData.cantidad || 1,
-            precio: productData.precio,
-            imagen: productData.imagen,
-            descripcion: productData.descripcion,
-          });
-        }
-
-        cartItems = normalizeCartItems(cartItems);
-        saveCartToStorage();
-        updateCartCount();
+      cartItems = normalizeCartItems(cartItems);
+      saveCartToStorage();
+      updateCartCount();
+      if (!options.suppressNotification) {
+        showCartNotification(productData.articulo);
       }
     }
 
-    showCartNotification(productData.articulo);
     if (!usedDatabase) {
       await syncCartWithSupabase();
     }
@@ -858,16 +1124,50 @@ function showCartNotification(productName) {
 }
 
 function setupAuthListener() {
-  if (!supabase) return;
+  if (!supabase || authListenerAttached) return;
+  authListenerAttached = true;
   supabase.auth.onAuthStateChange((event, session) => {
     if (event === "SIGNED_IN" && session) {
-      loadCartFromSupabase();
+      const mergeSessionKey = `fyl_cart_merged_for_${session.user.id}`;
+      const hasLocalGuestCart = (() => {
+        try {
+          const raw = localStorage.getItem("fyl_cart");
+          const parsed = raw ? JSON.parse(raw) : [];
+          return Array.isArray(parsed) && parsed.length > 0;
+        } catch (_e) {
+          return false;
+        }
+      })();
+
+      const alreadyMergedInSession =
+        sessionStorage.getItem(mergeSessionKey) === "1";
+
+      if (hasLocalGuestCart && !alreadyMergedInSession) {
+        sessionStorage.setItem(mergeSessionKey, "1");
+        syncCartWithSupabase({ mergeWithRemote: true });
+      } else {
+        loadCartFromSupabase();
+      }
     }
   });
 }
 
+function setBottomNavHeightVar() {
+  const bottomNav = document.getElementById("bottom-nav");
+  if (bottomNav && window.innerWidth <= 768) {
+    const h = bottomNav.offsetHeight || 56;
+    document.documentElement.style.setProperty("--bottom-nav-h", `${h}px`);
+  }
+}
+
 function initPersistentCart() {
+  if (window.__CATALOG_ONLY__) return;
   if (isInitialized) return;
+  isInitialized = true;
+  setBottomNavHeightVar();
+  createFloatingCartButton();
+  window.updateFloatingCartCta = updateFloatingCartCta;
+  updateFloatingCartCta();
   loadCartFromStorage();
   setupAuthListener();
 
@@ -875,6 +1175,17 @@ function initPersistentCart() {
   if (cartButton) cartButton.addEventListener("click", goToCart);
 
   window.addToCart = addToCart;
+  window.getCartCount = getCartCount;
+  window.getCartTotal = getCartTotal;
+  window.__cartDiag = () => ({
+    total: getCartTotal(),
+    count: getCartCount(),
+    formatARS_37000: window.formatARS?.(37000),
+    formatARS_37: window.formatARS?.(37),
+    formatARS_str: window.formatARS?.("37000"),
+    fyl_cart: JSON.parse(localStorage.getItem("fyl_cart") || "null"),
+    stickyTotalText: document.querySelector(".sticky-cart__total")?.textContent,
+  });
   window.removeFromCart = removeFromCart;
   window.goToCart = goToCart;
   window.updateCartCount = updateCartCount;
@@ -902,7 +1213,10 @@ function initPersistentCart() {
   }, 1000);
   window.addEventListener("focus", loadCartFromSupabase);
 
-  isInitialized = true;
+  window.addEventListener("resize", () => {
+    setBottomNavHeightVar();
+    if (typeof window.updateFloatingCartCta === "function") window.updateFloatingCartCta();
+  });
 }
 
 document.addEventListener("DOMContentLoaded", initPersistentCart);
@@ -912,6 +1226,7 @@ if (document.readyState !== "loading") {
 
 export {
   addToCart,
+  getCartCount,
   removeFromCart,
   goToCart,
   updateCartCount,

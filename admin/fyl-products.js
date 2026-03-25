@@ -118,14 +118,13 @@ async function loadProducts() {
       return;
     }
     
-    // Obtener todas las variantes de estos productos
+    // Obtener todas las variantes de estos productos (sin usar size que está deprecado)
     const productIds = products.map(p => p.id);
     const { data: variants, error: variantsError } = await supabase
       .from("product_variants")
-      .select("id, product_id, color, size, sku, price, active")
+      .select("id, product_id, color, sku, price, active")
       .in("product_id", productIds)
-      .order("color", { ascending: true })
-      .order("size", { ascending: true });
+      .order("color", { ascending: true });
     
     if (variantsError) {
       showError(`Error cargando variantes: ${variantsError.message}`);
@@ -133,8 +132,41 @@ async function loadProducts() {
       return;
     }
     
-    // Obtener imágenes de variantes
+    // Obtener talles desde variant_sizes para todas las variantes
     const variantIds = (variants || []).map(v => v.id);
+    let sizesData = [];
+    if (variantIds.length > 0) {
+      const { data: sizes, error: sizesError } = await supabase
+        .from("variant_sizes")
+        .select("variant_id, size, stock_qty, sku")
+        .in("variant_id", variantIds)
+        .order("size");
+      
+      if (sizesError) {
+        console.error("Error cargando talles desde variant_sizes:", sizesError);
+      } else {
+        sizesData = sizes || [];
+      }
+    }
+    
+    // Agrupar talles por variant_id
+    const sizesByVariant = new Map();
+    sizesData.forEach(sizeRow => {
+      if (!sizeRow.variant_id) return;
+      if (!sizesByVariant.has(sizeRow.variant_id)) {
+        sizesByVariant.set(sizeRow.variant_id, []);
+      }
+      const sizeValue = String(sizeRow.size || "").trim();
+      if (sizeValue) {
+        sizesByVariant.get(sizeRow.variant_id).push({
+          size: sizeValue,
+          stock_qty: sizeRow.stock_qty || 0,
+          sku: sizeRow.sku || null,
+        });
+      }
+    });
+    
+    // Obtener imágenes de variantes
     let images = [];
     if (variantIds.length > 0) {
       const { data: imagesData, error: imagesError } = await supabase
@@ -163,7 +195,31 @@ async function loadProducts() {
       }
     });
     
-    // Obtener stocks de todas las variantes
+    // Obtener stocks por talle y almacén desde variant_size_warehouse_stock
+    let sizeWarehouseStocks = [];
+    if (variantIds.length > 0) {
+      const { data: sizeStocksData, error: sizeStocksError } = await supabase
+        .from("variant_size_warehouse_stock")
+        .select("variant_id, size, warehouse_id, stock_qty")
+        .in("variant_id", variantIds)
+        .in("warehouse_id", [warehouseIds.general, warehouseIds.ventaPublico]);
+      
+      if (sizeStocksError) {
+        console.error("Error cargando stock por talle:", sizeStocksError);
+      } else {
+        sizeWarehouseStocks = sizeStocksData || [];
+      }
+    }
+    
+    // Crear mapa de stocks por variante, talle y almacén
+    // key: `${variant_id}_${size}_${warehouse_id}` -> stock_qty
+    const sizeWarehouseStockMap = new Map();
+    sizeWarehouseStocks.forEach(sws => {
+      const key = `${sws.variant_id}_${sws.size}_${sws.warehouse_id}`;
+      sizeWarehouseStockMap.set(key, sws.stock_qty || 0);
+    });
+    
+    // También obtener stocks generales de variantes (fallback para variantes sin talles)
     let stocks = [];
     if (variantIds.length > 0) {
       const { data: stocksData, error: stocksError } = await supabase
@@ -173,41 +229,71 @@ async function loadProducts() {
         .in("warehouse_id", [warehouseIds.general, warehouseIds.ventaPublico]);
       
       if (stocksError) {
-        console.error("Error cargando stocks:", stocksError);
+        console.error("Error cargando stocks generales:", stocksError);
       } else {
         stocks = stocksData || [];
       }
     }
     
-    // Crear mapa de stocks
+    // Crear mapa de stocks generales (fallback)
     const stockMap = new Map();
     stocks.forEach(s => {
       const key = `${s.variant_id}_${s.warehouse_id}`;
       stockMap.set(key, s.stock_qty || 0);
     });
     
-    // Agrupar variantes por producto y agregar stocks
+    // Agrupar variantes por producto y expandir con talles
     allProducts = products.map(product => {
       const productVariants = (variants || [])
-        .filter(v => v.product_id === product.id)
-        .map(variant => {
+        .filter(v => v.product_id === product.id);
+      
+      // Expandir cada variante con sus talles
+      const expandedVariants = [];
+      productVariants.forEach(variant => {
+        const sizes = sizesByVariant.get(variant.id) || [];
+        
+        // Si no hay talles en variant_sizes, crear una entrada sin talle (comportamiento legacy)
+        if (sizes.length === 0) {
           const stockGeneralKey = `${variant.id}_${warehouseIds.general}`;
           const stockVentaPublicoKey = `${variant.id}_${warehouseIds.ventaPublico}`;
           const stock_general = stockMap.get(stockGeneralKey) || 0;
           const stock_venta_publico = stockMap.get(stockVentaPublicoKey) || 0;
           const stock_total = stock_general + stock_venta_publico;
           
-          return {
+          expandedVariants.push({
             ...variant,
+            size: null, // Sin talle
+            sizeSku: variant.sku, // Usar SKU de variante como fallback
             stock_general,
             stock_venta_publico,
-            stock_total
-          };
-        });
+            stock_total,
+            isSizeRow: false // Indica que es una variante sin talles
+          });
+        } else {
+          // Crear una entrada por cada talle
+          sizes.forEach(sizeData => {
+            const stockGeneralKey = `${variant.id}_${sizeData.size}_${warehouseIds.general}`;
+            const stockVentaPublicoKey = `${variant.id}_${sizeData.size}_${warehouseIds.ventaPublico}`;
+            const stock_general = sizeWarehouseStockMap.get(stockGeneralKey) || 0;
+            const stock_venta_publico = sizeWarehouseStockMap.get(stockVentaPublicoKey) || 0;
+            const stock_total = stock_general + stock_venta_publico;
+            
+            expandedVariants.push({
+              ...variant,
+              size: sizeData.size,
+              sizeSku: sizeData.sku || variant.sku, // SKU específico del talle
+              stock_general,
+              stock_venta_publico,
+              stock_total,
+              isSizeRow: true // Indica que es un talle individual
+            });
+          });
+        }
+      });
       
       return {
         ...product,
-        variants: productVariants,
+        variants: expandedVariants,
         image_url: productImages.get(product.id) || null
       };
     });
@@ -276,9 +362,13 @@ function renderProducts() {
         const allActive = variants.every(v => v.active);
         
         const sizesHtml = variants.map(variant => {
+          const sizeDisplay = variant.size || "Sin talle";
+          const skuDisplay = variant.sizeSku || variant.sku || "N/A";
+          const uniqueId = variant.size ? `${variant.id}-${variant.size}` : variant.id;
           return `
-            <div class="mobile-size-item" data-variant-id="${variant.id}">
-              <div class="mobile-size-name">Talle ${variant.size || "N/A"}</div>
+            <div class="mobile-size-item" data-variant-id="${variant.id}" data-size="${variant.size || ''}" data-unique-id="${uniqueId}">
+              <div class="mobile-size-name">Talle ${sizeDisplay}</div>
+              <div class="mobile-size-sku" style="font-size: 11px; color: #666; margin-bottom: 4px;">SKU: ${skuDisplay}</div>
               <div class="mobile-size-stocks">
                 <div class="mobile-stock-item">
                   <span class="mobile-stock-label">General:</span>
@@ -288,6 +378,8 @@ function renderProducts() {
                     value="${variant.stock_general}" 
                     class="mobile-stock-input mobile-stock-general"
                     data-variant-id="${variant.id}"
+                    data-size="${variant.size || ''}"
+                    data-unique-id="${uniqueId}"
                     ${!canEditStock ? 'disabled' : ''}
                   />
                 </div>
@@ -299,12 +391,14 @@ function renderProducts() {
                     value="${variant.stock_venta_publico}" 
                     class="mobile-stock-input mobile-stock-venta"
                     data-variant-id="${variant.id}"
+                    data-size="${variant.size || ''}"
+                    data-unique-id="${uniqueId}"
                     ${!canEditStock ? 'disabled' : ''}
                   />
                 </div>
                 <div class="mobile-stock-item mobile-stock-total">
                   <span class="mobile-stock-label">Total:</span>
-                  <span class="mobile-stock-total-value" data-variant-id="${variant.id}">${variant.stock_total}</span>
+                  <span class="mobile-stock-total-value" data-unique-id="${uniqueId}">${variant.stock_total}</span>
                 </div>
               </div>
               <div class="mobile-size-status">
@@ -370,33 +464,77 @@ function renderProducts() {
         </div>
       `;
     } else {
-      // Layout desktop: tabla completa
-      const variantsHtml = product.variants.map(variant => {
-        const lowStockClass = variant.stock_total <= 3 ? "low-stock" : "";
-        const variantPrice = variant.price ? formatPrice(variant.price) : "N/A";
+      // Layout desktop: agrupar por color
+      const variantsByColor = {};
+      product.variants.forEach(variant => {
+        const color = variant.color || "Sin color";
+        if (!variantsByColor[color]) {
+          variantsByColor[color] = [];
+        }
+        variantsByColor[color].push(variant);
+      });
+      
+      const colorsHtml = Object.entries(variantsByColor).map(([color, variants]) => {
+        const colorTotalGeneral = variants.reduce((sum, v) => sum + v.stock_general, 0);
+        const colorTotalVenta = variants.reduce((sum, v) => sum + v.stock_venta_publico, 0);
+        const colorTotal = colorTotalGeneral + colorTotalVenta;
+        const colorId = `color-${product.id}-${color.replace(/\s+/g, '-')}`;
+        const allActive = variants.every(v => v.active);
+        const colorPrice = variants[0]?.price ? formatPrice(variants[0].price) : "N/A";
+        
+        const variantsHtml = variants.map(variant => {
+          const lowStockClass = variant.stock_total <= 3 ? "low-stock" : "";
+          const variantPrice = variant.price ? formatPrice(variant.price) : "N/A";
+          const sizeDisplay = variant.size || "Sin talle";
+          const skuDisplay = variant.sizeSku || variant.sku || "N/A";
+          const uniqueId = variant.size ? `${variant.id}-${variant.size}` : variant.id;
+          return `
+            <div class="variant-item ${lowStockClass}" data-variant-id="${variant.id}" data-size="${variant.size || ''}" data-unique-id="${uniqueId}">
+              <div class="variant-info">
+                <div class="variant-color-size">${sizeDisplay}</div>
+                <div class="variant-sku">SKU: ${skuDisplay}</div>
+              </div>
+              <div class="variant-price">${variantPrice}</div>
+              <div class="stock-info">
+                <div class="stock-label">General</div>
+                <div class="stock-value">${variant.stock_general}</div>
+              </div>
+              <div class="stock-info">
+                <div class="stock-label">Venta Público</div>
+                <div class="stock-value">${variant.stock_venta_publico}</div>
+              </div>
+              <div class="stock-info">
+                <div class="stock-label">Total</div>
+                <div class="stock-value stock-total">${variant.stock_total}</div>
+              </div>
+              <div class="variant-status">
+                <span class="status-badge ${variant.active ? 'status-active' : 'status-inactive'}">
+                  ${variant.active ? 'Activo' : 'Inactivo'}
+                </span>
+              </div>
+            </div>
+          `;
+        }).join("");
+        
         return `
-          <div class="variant-item ${lowStockClass}">
-            <div class="variant-info">
-              <div class="variant-color-size">${variant.color || "Sin color"} - ${variant.size || "Sin talle"}</div>
-              <div class="variant-sku">SKU: ${variant.sku || "N/A"}</div>
+          <div class="color-group">
+            <div class="color-group-header" data-color-id="${colorId}">
+              <div class="color-group-name">
+                <span class="color-group-expand-icon">▼</span>
+                ${escapeHtml(color)}
+              </div>
+              <div class="color-group-summary">${colorPrice}</div>
+              <div class="color-group-summary">${colorTotalGeneral}</div>
+              <div class="color-group-summary">${colorTotalVenta}</div>
+              <div class="color-group-summary"><strong>${colorTotal}</strong></div>
+              <div class="variant-status">
+                <span class="status-badge ${allActive ? 'status-active' : 'status-inactive'}">
+                  ${allActive ? 'Activo' : 'Inactivo'}
+                </span>
+              </div>
             </div>
-            <div class="variant-price">${variantPrice}</div>
-            <div class="stock-info">
-              <div class="stock-label">General</div>
-              <div class="stock-value">${variant.stock_general}</div>
-            </div>
-            <div class="stock-info">
-              <div class="stock-label">Venta Público</div>
-              <div class="stock-value">${variant.stock_venta_publico}</div>
-            </div>
-            <div class="stock-info">
-              <div class="stock-label">Total</div>
-              <div class="stock-value stock-total">${variant.stock_total}</div>
-            </div>
-            <div class="variant-status">
-              <span class="status-badge ${variant.active ? 'status-active' : 'status-inactive'}">
-                ${variant.active ? 'Activo' : 'Inactivo'}
-              </span>
+            <div class="color-group-details" id="${colorId}">
+              ${variantsHtml}
             </div>
           </div>
         `;
@@ -427,7 +565,7 @@ function renderProducts() {
               <div class="variant-header-col variant-header-status">Estado</div>
             </div>
             <div class="variants-list">
-              ${variantsHtml}
+              ${colorsHtml}
             </div>
           </div>
         </div>
@@ -456,14 +594,15 @@ function renderProducts() {
     productsContainer.querySelectorAll(".mobile-stock-input").forEach(input => {
       input.addEventListener("input", (e) => {
         const variantId = input.getAttribute("data-variant-id");
+        const uniqueId = input.getAttribute("data-unique-id");
         const generalInput = productsContainer.querySelector(
-          `.mobile-stock-general[data-variant-id="${variantId}"]`
+          `.mobile-stock-general[data-unique-id="${uniqueId}"]`
         );
         const ventaInput = productsContainer.querySelector(
-          `.mobile-stock-venta[data-variant-id="${variantId}"]`
+          `.mobile-stock-venta[data-unique-id="${uniqueId}"]`
         );
         const totalEl = productsContainer.querySelector(
-          `.mobile-stock-total-value[data-variant-id="${variantId}"]`
+          `.mobile-stock-total-value[data-unique-id="${uniqueId}"]`
         );
         
         if (generalInput && ventaInput && totalEl) {
@@ -486,10 +625,35 @@ function renderProducts() {
       });
     });
   } else {
+    // Event listeners para expandir/colapsar colores en desktop
+    productsContainer.querySelectorAll(".color-group-header").forEach(header => {
+      header.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const colorId = header.getAttribute("data-color-id");
+        const details = document.getElementById(colorId);
+        const icon = header.querySelector(".color-group-expand-icon");
+        if (details) {
+          const isExpanded = details.classList.contains("expanded");
+          if (isExpanded) {
+            details.classList.remove("expanded");
+            header.classList.remove("expanded");
+            icon.textContent = "▼";
+          } else {
+            details.classList.add("expanded");
+            header.classList.add("expanded");
+            icon.textContent = "▲";
+          }
+        }
+      });
+    });
+    
     // Event listeners para abrir modal en desktop
     productsContainer.querySelectorAll(".product-card").forEach(card => {
       card.addEventListener("click", (e) => {
-        if (e.target.closest(".variant-item")) return;
+        // No abrir modal si se hace clic en un grupo de color o variante
+        if (e.target.closest(".color-group-header") || 
+            e.target.closest(".color-group-details") ||
+            e.target.closest(".variant-item")) return;
         
         const productId = card.getAttribute("data-product-id");
         const product = filteredProducts.find(p => p.id === productId);
@@ -509,10 +673,13 @@ function openEditModal(product) {
   
   product.variants.forEach(variant => {
     const row = document.createElement("tr");
+    const sizeDisplay = variant.size || "Sin talle";
+    const skuDisplay = variant.sizeSku || variant.sku || "N/A";
+    const uniqueId = variant.size ? `${variant.id}-${variant.size}` : variant.id;
     row.innerHTML = `
       <td data-label="Color">${escapeHtml(variant.color || "Sin color")}</td>
-      <td data-label="Talle">${escapeHtml(variant.size || "Sin talle")}</td>
-      <td data-label="SKU">${escapeHtml(variant.sku || "N/A")}</td>
+      <td data-label="Talle">${escapeHtml(sizeDisplay)}</td>
+      <td data-label="SKU">${escapeHtml(skuDisplay)}</td>
       <td class="cell-center" data-label="Precio">
         <input 
           type="number" 
@@ -520,6 +687,8 @@ function openEditModal(product) {
           step="0.01"
           value="${variant.price || 0}" 
           data-variant-id="${variant.id}"
+          data-size="${variant.size || ''}"
+          data-unique-id="${uniqueId}"
           data-field="price"
           ${!canEditStock ? 'disabled' : ''}
           style="width: 100px;"
@@ -531,6 +700,8 @@ function openEditModal(product) {
           min="0" 
           value="${variant.stock_general}" 
           data-variant-id="${variant.id}"
+          data-size="${variant.size || ''}"
+          data-unique-id="${uniqueId}"
           data-field="stock_general"
           ${!canEditStock ? 'disabled' : ''}
         />
@@ -541,12 +712,14 @@ function openEditModal(product) {
           min="0" 
           value="${variant.stock_venta_publico}" 
           data-variant-id="${variant.id}"
+          data-size="${variant.size || ''}"
+          data-unique-id="${uniqueId}"
           data-field="stock_venta_publico"
           ${!canEditStock ? 'disabled' : ''}
         />
       </td>
       <td class="cell-center" data-label="Total">
-        <strong id="total-${variant.id}">${variant.stock_total}</strong>
+        <strong id="total-${uniqueId}">${variant.stock_total}</strong>
       </td>
       <td class="cell-center" data-label="Activo">
         <input 
@@ -564,14 +737,14 @@ function openEditModal(product) {
   // Agregar event listeners para recalcular totales
   modalVariantsTbody.querySelectorAll("input[type='number']").forEach(input => {
     input.addEventListener("input", () => {
-      const variantId = input.getAttribute("data-variant-id");
+      const uniqueId = input.getAttribute("data-unique-id");
       const stockGeneralInput = modalVariantsTbody.querySelector(
-        `input[data-variant-id="${variantId}"][data-field="stock_general"]`
+        `input[data-unique-id="${uniqueId}"][data-field="stock_general"]`
       );
       const stockVentaInput = modalVariantsTbody.querySelector(
-        `input[data-variant-id="${variantId}"][data-field="stock_venta_publico"]`
+        `input[data-unique-id="${uniqueId}"][data-field="stock_venta_publico"]`
       );
-      const totalEl = document.getElementById(`total-${variantId}`);
+      const totalEl = document.getElementById(`total-${uniqueId}`);
       
       if (stockGeneralInput && stockVentaInput && totalEl) {
         const total = parseInt(stockGeneralInput.value || 0) + parseInt(stockVentaInput.value || 0);
@@ -608,6 +781,8 @@ async function saveModalChanges() {
     // Recopilar todos los cambios
     modalVariantsTbody.querySelectorAll("tr").forEach(row => {
       const variantId = row.querySelector("input[data-field='stock_general']")?.getAttribute("data-variant-id");
+      const size = row.querySelector("input[data-field='stock_general']")?.getAttribute("data-size") || null;
+      const uniqueId = row.querySelector("input[data-field='stock_general']")?.getAttribute("data-unique-id");
       if (!variantId) return;
       
       const price = parseFloat(row.querySelector("input[data-field='price']")?.value || 0);
@@ -615,11 +790,15 @@ async function saveModalChanges() {
       const stockVentaPublico = parseInt(row.querySelector("input[data-field='stock_venta_publico']")?.value || 0);
       const active = row.querySelector("input[data-field='active']")?.checked || false;
       
-      const originalVariant = currentEditingProduct.variants.find(v => v.id === variantId);
+      const originalVariant = currentEditingProduct.variants.find(v => {
+        const vUniqueId = v.size ? `${v.id}-${v.size}` : v.id;
+        return vUniqueId === uniqueId;
+      });
       if (!originalVariant) return;
       
-      // Actualizar precio
-      if (price !== (originalVariant.price || 0)) {
+      // Actualizar precio (solo una vez por variante, no por talle)
+      if (price !== (originalVariant.price || 0) && !size) {
+        // Solo actualizar precio si es la primera fila de la variante (sin talle) o si no hay talles
         variantUpdates.push(
           supabase
             .from("product_variants")
@@ -628,40 +807,75 @@ async function saveModalChanges() {
         );
       }
       
-      // Actualizar stock general
-      if (stockGeneral !== originalVariant.stock_general) {
-        updates.push(
-          supabase
-            .from("variant_warehouse_stock")
-            .upsert(
-              { 
-                variant_id: variantId, 
-                warehouse_id: warehouseIds.general, 
-                stock_qty: stockGeneral 
-              },
-              { onConflict: "variant_id,warehouse_id" }
-            )
-        );
+      // Actualizar stock: usar variant_size_warehouse_stock si hay talle, sino variant_warehouse_stock
+      if (size) {
+        // Stock por talle usando variant_size_warehouse_stock
+        if (stockGeneral !== originalVariant.stock_general) {
+          updates.push(
+            supabase
+              .from("variant_size_warehouse_stock")
+              .upsert(
+                { 
+                  variant_id: variantId,
+                  size: size,
+                  warehouse_id: warehouseIds.general, 
+                  stock_qty: stockGeneral 
+                },
+                { onConflict: "variant_id,size,warehouse_id" }
+              )
+          );
+        }
+        
+        if (stockVentaPublico !== originalVariant.stock_venta_publico) {
+          updates.push(
+            supabase
+              .from("variant_size_warehouse_stock")
+              .upsert(
+                { 
+                  variant_id: variantId,
+                  size: size,
+                  warehouse_id: warehouseIds.ventaPublico, 
+                  stock_qty: stockVentaPublico 
+                },
+                { onConflict: "variant_id,size,warehouse_id" }
+              )
+          );
+        }
+      } else {
+        // Stock general de variante (sin talles) usando variant_warehouse_stock
+        if (stockGeneral !== originalVariant.stock_general) {
+          updates.push(
+            supabase
+              .from("variant_warehouse_stock")
+              .upsert(
+                { 
+                  variant_id: variantId, 
+                  warehouse_id: warehouseIds.general, 
+                  stock_qty: stockGeneral 
+                },
+                { onConflict: "variant_id,warehouse_id" }
+              )
+          );
+        }
+        
+        if (stockVentaPublico !== originalVariant.stock_venta_publico) {
+          updates.push(
+            supabase
+              .from("variant_warehouse_stock")
+              .upsert(
+                { 
+                  variant_id: variantId, 
+                  warehouse_id: warehouseIds.ventaPublico, 
+                  stock_qty: stockVentaPublico 
+                },
+                { onConflict: "variant_id,warehouse_id" }
+              )
+          );
+        }
       }
       
-      // Actualizar stock venta público
-      if (stockVentaPublico !== originalVariant.stock_venta_publico) {
-        updates.push(
-          supabase
-            .from("variant_warehouse_stock")
-            .upsert(
-              { 
-                variant_id: variantId, 
-                warehouse_id: warehouseIds.ventaPublico, 
-                stock_qty: stockVentaPublico 
-              },
-              { onConflict: "variant_id,warehouse_id" }
-            )
-        );
-      }
-      
-      // Actualizar estado activo
-      if (active !== originalVariant.active) {
+      // Actualizar estado activo (solo una vez por variante)
+      if (active !== originalVariant.active && !size) {
         variantUpdates.push(
           supabase
             .from("product_variants")
@@ -713,8 +927,9 @@ function filterProducts(searchTerm) {
              product.handle?.toLowerCase().includes(term) ||
              product.variants.some(v => 
                v.color?.toLowerCase().includes(term) ||
-               v.size?.toLowerCase().includes(term) ||
-               v.sku?.toLowerCase().includes(term)
+               (v.size && v.size.toLowerCase().includes(term)) ||
+               (v.sizeSku && v.sizeSku.toLowerCase().includes(term)) ||
+               (v.sku && v.sku.toLowerCase().includes(term))
              );
     });
   }
@@ -724,27 +939,49 @@ function filterProducts(searchTerm) {
 // Guardar cambio de stock en móvil
 async function saveMobileStockChange(input) {
   const variantId = input.getAttribute("data-variant-id");
+  const size = input.getAttribute("data-size") || null;
   const isGeneral = input.classList.contains("mobile-stock-general");
   const stockValue = parseInt(input.value || 0);
   
   const warehouseId = isGeneral ? warehouseIds.general : warehouseIds.ventaPublico;
   
-  const { error } = await supabase
-    .from("variant_warehouse_stock")
-    .upsert(
-      { 
-        variant_id: variantId, 
-        warehouse_id: warehouseId, 
-        stock_qty: stockValue 
-      },
-      { onConflict: "variant_id,warehouse_id" }
-    );
-  
-  if (error) {
-    console.error("Error guardando stock:", error);
-    alert(`Error al guardar: ${error.message}`);
-    // Recargar para restaurar valores
-    loadProducts();
+  if (size) {
+    // Stock por talle usando variant_size_warehouse_stock
+    const { error } = await supabase
+      .from("variant_size_warehouse_stock")
+      .upsert(
+        { 
+          variant_id: variantId,
+          size: size,
+          warehouse_id: warehouseId, 
+          stock_qty: stockValue 
+        },
+        { onConflict: "variant_id,size,warehouse_id" }
+      );
+    
+    if (error) {
+      console.error("Error guardando stock por talle:", error);
+      alert(`Error al guardar: ${error.message}`);
+      loadProducts();
+    }
+  } else {
+    // Stock general de variante usando variant_warehouse_stock
+    const { error } = await supabase
+      .from("variant_warehouse_stock")
+      .upsert(
+        { 
+          variant_id: variantId, 
+          warehouse_id: warehouseId, 
+          stock_qty: stockValue 
+        },
+        { onConflict: "variant_id,warehouse_id" }
+      );
+    
+    if (error) {
+      console.error("Error guardando stock:", error);
+      alert(`Error al guardar: ${error.message}`);
+      loadProducts();
+    }
   }
 }
 

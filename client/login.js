@@ -1,6 +1,15 @@
 import { supabase } from "../scripts/supabase-client.js";
 import { checkPasskeySupport, authenticateWithPasskey } from "../scripts/passkeys.js";
 import { hasInitialProfileComplete } from "./auth-helper.js";
+import {
+  getPostLoginRedirectUrl,
+  initLoginPageReturnPath,
+  clearOAuthReturnPath,
+  savePreAuthReturnTarget,
+} from "../scripts/auth-redirect-url.js";
+import { maybeShowProfileOnboardingModal } from "../scripts/profile-onboarding-modal.js";
+
+initLoginPageReturnPath();
 
 const btn = document.getElementById("google-btn");
 const msg = document.getElementById("msg");
@@ -16,11 +25,12 @@ btn?.addEventListener("click", async () => {
 
   try {
     console.log("🔐 Iniciando login con Google...");
+    savePreAuthReturnTarget();
 
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: `${window.location.origin}/client/dashboard.html`,
+        redirectTo: getPostLoginRedirectUrl(),
         queryParams: {
           prompt: "select_account",
           access_type: "offline",
@@ -126,13 +136,20 @@ window.addEventListener("load", async () => {
     const hasInitialProfile = await hasInitialProfileComplete();
 
     if (!hasInitialProfile) {
-      console.log("📝 Sin perfil inicial completo, redirigiendo a complete-profile");
-      window.location.href = "./complete-profile.html";
+      console.log("📝 Sin perfil inicial completo: completá datos en el modal");
+      await maybeShowProfileOnboardingModal({
+        onComplete: () => {
+          clearOAuthReturnPath();
+          window.location.href = getPostLoginRedirectUrl();
+        },
+      });
       return;
     }
 
-    console.log("✅ Perfil inicial completo, redirigiendo a dashboard");
-    window.location.href = "./dashboard.html";
+    const nextUrl = getPostLoginRedirectUrl();
+    clearOAuthReturnPath();
+    console.log("✅ Perfil inicial completo, redirigiendo a:", nextUrl);
+    window.location.href = nextUrl;
   } catch (error) {
     console.error("❌ Error verificando sesión:", error);
   }

@@ -14,23 +14,25 @@
     .counter{font-variant-numeric:tabular-nums}
     .mini-btn{font-size:12px;line-height:1;padding:3px 6px;margin-left:6px;border:1px solid #ddd;border-radius:4px;background:#f8f8f8;cursor:pointer}
     .mini-btn:hover{background:#f1f1f1}
+    .stock-history-btn{font-size:14px;padding:2px 6px;border:1px solid #ddd;border-radius:4px;background:#f8f8f8;cursor:pointer;line-height:1;transition:background 0.2s}
+    .stock-history-btn:hover{background:#e8e8e8;border-color:#bbb}
     
     /* Contenedor de productos */
-    #products-container{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;margin-top:16px}
+    #products-container{display:grid;grid-template-columns:1fr;gap:16px;margin-top:16px;max-width:100%}
     
     /* Tarjeta de producto */
-    .product-card{border:1px solid #ddd;border-radius:8px;background:#fff;padding:16px;transition:box-shadow 0.2s;cursor:pointer}
+    .product-card{border:1px solid #ddd;border-radius:8px;background:#fff;padding:12px;transition:box-shadow 0.2s;cursor:pointer;width:100%;box-sizing:border-box}
     .product-card:hover{box-shadow:0 2px 8px rgba(0,0,0,0.1)}
     .product-card.expanded{box-shadow:0 4px 12px rgba(0,0,0,0.15)}
-    .product-card-header{display:flex;gap:12px;margin-bottom:12px}
+    .product-card-header{display:flex;gap:10px;margin-bottom:10px}
     .product-card-image{width:80px;height:80px;object-fit:cover;border-radius:6px;border:1px solid #eee;flex-shrink:0}
     .product-card-image.placeholder{background:#f5f5f5;display:flex;align-items:center;justify-content:center;color:#999;font-size:12px}
     .product-card-info{flex:1;min-width:0}
-    .product-card-title{font-weight:600;font-size:16px;margin:0 0 4px 0;word-wrap:break-word}
-    .product-card-meta{font-size:13px;color:#666;margin:4px 0}
-    .product-card-body{margin-top:12px}
-    .product-card-section{margin-bottom:12px}
-    .product-card-section-title{font-size:12px;font-weight:600;color:#666;margin-bottom:6px;text-transform:uppercase}
+    .product-card-title{font-weight:600;font-size:15px;margin:0 0 3px 0;word-wrap:break-word}
+    .product-card-meta{font-size:12px;color:#666;margin:3px 0}
+    .product-card-body{margin-top:10px}
+    .product-card-section{margin-bottom:10px}
+    .product-card-section-title{font-size:11px;font-weight:600;color:#666;margin-bottom:4px;text-transform:uppercase}
     .product-colors{display:flex;flex-wrap:wrap;gap:6px}
     .color-chip{display:inline-block;padding:4px 10px;border-radius:16px;background:#f4f4f4;border:1px solid #e5e5e5;font-size:12px}
     .product-sizes{display:flex;flex-wrap:wrap;gap:6px}
@@ -39,8 +41,8 @@
     .stock-table th,.stock-table td{padding:6px;border:1px solid #eee;text-align:left}
     .stock-table th{background:#f9f9f9;font-weight:600;font-size:12px}
     .stock-table .stock-total{font-weight:600;background:#f0f0f0}
-    .product-card-footer{display:flex;justify-content:space-between;align-items:center;margin-top:12px;padding-top:12px;border-top:1px solid #eee}
-    .product-price{font-size:18px;font-weight:600;color:#2c3e50}
+    .product-card-footer{display:flex;justify-content:space-between;align-items:center;margin-top:10px;padding-top:10px;border-top:1px solid #eee}
+    .product-price{font-size:16px;font-weight:600;color:#2c3e50}
     .product-status{display:flex;align-items:center;gap:6px}
     .supplier-section{display:flex;align-items:center;gap:8px;margin-top:8px}
     .supplier-name{font-size:13px;color:#666}
@@ -49,19 +51,53 @@
     /* Variantes (colores) expandidas */
     .variants-container{display:none;margin-top:12px;padding-top:12px;border-top:1px solid #eee}
     .variants-container.expanded{display:block}
-    .variant-card{border:1px solid #ddd;border-radius:6px;padding:12px;margin-bottom:12px;background:#fafafa}
-    .variant-card-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;cursor:pointer}
-    .variant-color{font-weight:600;font-size:14px}
-    .variant-toggle{font-size:12px;color:#666}
+    .variant-card{border:1px solid #ddd;border-radius:6px;padding:10px;margin-bottom:10px;background:#fafafa;width:100%;box-sizing:border-box}
+    .variant-card-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;cursor:pointer;padding:6px 8px;border-radius:4px;transition:background 0.2s}
+    .variant-card-header:hover{background:#f0f0f0}
+    .variant-color{font-weight:600;font-size:13px}
+    .variant-toggle{font-size:11px;color:#666;user-select:none}
     
     /* Tabla de talles expandida */
-    .sizes-detail{display:none;margin-top:12px}
+    .sizes-detail{display:none;margin-top:8px;overflow-x:auto}
     .sizes-detail.expanded{display:block}
-    .sizes-table{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}
-    .sizes-table th,.sizes-table td{padding:8px;border:1px solid #ddd;text-align:center}
-    .sizes-table th{background:#f0f0f0;font-weight:600}
-    .sizes-table input[type="number"]{width:80px;padding:4px;border:1px solid #ddd;border-radius:4px}
-    .btn-save-row{font-size:11px;padding:4px 8px;margin-left:4px}
+    .sizes-table{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px;min-width:100%;table-layout:fixed}
+    .sizes-table th:nth-child(1){width:60px}
+    .sizes-table th:nth-child(2){width:140px;font-size:10px}
+    .sizes-table td:nth-child(2){font-size:10px;overflow:hidden;text-overflow:ellipsis}
+    .sizes-table th:nth-child(3){width:90px}
+    .sizes-table th:nth-child(4){width:95px}
+    .sizes-table th:nth-child(5){width:90px}
+    .sizes-table th:nth-child(6){width:85px}
+    .sizes-table th:nth-child(7){width:85px}
+    .sizes-table th:nth-child(8){width:85px}
+    .sizes-table th:nth-child(9){width:70px}
+    .sizes-table th:nth-child(10){width:auto;min-width:80px}
+    
+    /* Botón imprimir */
+    .print-label-btn{font-size:10px;padding:3px 6px;background:#155724;color:#fff;border:1px solid #0f3f1e;border-radius:3px;cursor:pointer;white-space:nowrap}
+    .print-label-btn:hover{background:#0f3f1e}
+    .print-label-btn:disabled{opacity:0.5;cursor:not-allowed;background:#6c757d;border-color:#6c757d}
+    
+    /* Input readonly */
+    .sizes-table input[type="number"]:read-only{background:#f5f5f5;color:#666;cursor:not-allowed;border-color:#e0e0e0}
+    
+    /* Columna carga */
+    .carga-input{width:55px!important;padding:3px!important;font-size:11px!important}
+    .carga-btn{font-size:10px;padding:3px 5px;margin-left:2px;background:#28a745;color:#fff;border:1px solid #28a745;border-radius:3px;cursor:pointer;white-space:nowrap}
+    .carga-btn:hover{background:#218838;border-color:#1e7e34}
+    .carga-btn:disabled{opacity:0.5;cursor:not-allowed;background:#6c757d;border-color:#6c757d}
+    
+    /* Botón editar variante */
+    .edit-variant-btn{font-size:10px;padding:2px 6px;margin-left:8px;border:1px solid #007bff;background:#007bff;color:#fff;border-radius:3px;cursor:pointer;white-space:nowrap}
+    .edit-variant-btn:hover{background:#0056b3;border-color:#004085}
+    .sizes-table th,.sizes-table td{padding:6px 8px;border:1px solid #ddd;text-align:center;white-space:nowrap;font-size:12px}
+    .sizes-table th{background:#f0f0f0;font-weight:600;position:sticky;top:0;z-index:5;font-size:11px;text-transform:uppercase}
+    .sizes-table input[type="number"]{width:70px;padding:4px;border:1px solid #ddd;border-radius:4px;text-align:center;font-size:12px}
+    .sizes-table input[type="checkbox"]{cursor:pointer;transform:scale(0.9)}
+    .sizes-table button{font-size:10px;padding:3px 6px;border:1px solid #ddd;border-radius:3px;background:#f8f8f8;cursor:pointer;white-space:nowrap}
+    .sizes-table button:hover{background:#e8e8e8}
+    .sizes-table button:disabled{opacity:0.5;cursor:not-allowed}
+    .btn-save-row{font-size:10px;padding:3px 6px;margin-left:4px}
     
     /* Estados */
     .low-stock{border-left:4px solid #ff6b6b}
@@ -93,6 +129,12 @@
     .list table{width:100%;border-collapse:collapse}
     .list th,.list td{padding:8px;border-bottom:1px solid #f0f0f0;text-align:left}
     .chip{display:inline-block;padding:2px 8px;border-radius:999px;background:#f4f4f4;border:1px solid #e5e5e5}
+    .history-badge{display:inline-block;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600}
+    .history-load{background:#d4edda;color:#155724;border:1px solid #c3e6cb}
+    .history-move{background:#d1ecf1;color:#0c5460;border:1px solid #bee5eb}
+    .history-adjust{background:#fff3cd;color:#856404;border:1px solid #ffeaa7}
+    .history-positive{color:#155724;font-weight:600}
+    .history-negative{color:#721c24;font-weight:600}
     
     /* Modal editar proveedor */
     .supplier-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);align-items:center;justify-content:center;z-index:1001}
@@ -104,7 +146,7 @@
   </style>
 </head>
 <body>
-  <div class="container" style="max-width:980px;margin:24px auto;">
+  <div class="container" style="max-width:1600px;margin:24px auto;">
     <h1>Control de Stock</h1>
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
       <a href="./index.html">← Volver al panel</a>
@@ -121,7 +163,7 @@
           <span style="font-size:24px;">⚠️</span>
           <div>
             <strong style="display:block;margin-bottom:4px;color:#856404;">Productos incompletos detectados</strong>
-            <span style="font-size:14px;color:#856404;">Hay <span id="incomplete-count">0</span> producto(s) que requieren completar tags y stock antes de activarse.</span>
+            <span style="font-size:14px;color:#856404;">Hay <span id="incomplete-count">0</span> producto(s) nuevos que requieren completar stock antes de activarse.</span>
           </div>
         </div>
         <a href="./incomplete-products.html" style="padding:10px 20px;background:#ffc107;color:#856404;border:none;border-radius:8px;text-decoration:none;font-weight:600;transition:all 0.3s ease;">
@@ -131,7 +173,8 @@
     </div>
 
     <div class="toolbar">
-      <input id="q" placeholder="Buscar por nombre, SKU, color o talle..." style="flex:1;" />
+      <input id="q" placeholder="Buscar por nombre de producto..." list="product-names" style="flex:1;" />
+      <datalist id="product-names"></datalist>
       <select id="f-category" class="pill">
         <option value="">Categoría: todas</option>
       </select>
@@ -176,8 +219,8 @@
           <th>Color</th>
           <th>Talle</th>
           <th>Stock Total</th>
-          <th>Stock General</th>
-          <th>Stock Venta al Público</th>
+          <th>Depósito</th>
+          <th>Local</th>
           <th>Precio</th>
           <th>Activa</th>
           <th>Acción</th>
@@ -234,6 +277,33 @@
     </div>
   </div>
 
+  <!-- Modal historial de stock -->
+  <div id="overlay-history" class="overlay" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="history-title">
+      <header>
+        <h3 id="history-title">Historial de Stock</h3>
+        <button id="close-overlay-history" class="close-btn">Cerrar</button>
+      </header>
+      <div id="history-summary" style="margin-bottom: 8px; font-size: 14px; color: #666;"></div>
+      <div class="list">
+        <table>
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>Tipo</th>
+              <th>Variante/Talle</th>
+              <th>Almacén</th>
+              <th>Stock Antes</th>
+              <th>Stock Después</th>
+              <th>Cambio</th>
+            </tr>
+          </thead>
+          <tbody id="history-list"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal productos antiguos -->
   <div id="overlay-old" class="overlay" aria-hidden="true">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="old-title">
@@ -262,6 +332,10 @@
       </div>
     </div>
   </div>
+
+  <!-- QZ Tray script -->
+  <script src="https://cdn.jsdelivr.net/npm/qz-tray@2.2.5/qz-tray.js"></script>
+  <script src="/config.local.js"></script>
 
   <script type="module" src="../scripts/config.js"></script>
   <script type="module" src="../scripts/supabase-client.js"></script>

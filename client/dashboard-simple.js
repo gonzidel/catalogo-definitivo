@@ -90,6 +90,12 @@ async function loadUserData() {
   }
 }
 
+function getFirstNameForGreeting(displayName) {
+  const s = String(displayName || "").trim();
+  if (!s) return "Usuario";
+  return s.split(/\s+/)[0] || "Usuario";
+}
+
 // Función para mostrar información del usuario
 function displayUserInfo(user) {
   try {
@@ -97,8 +103,9 @@ function displayUserInfo(user) {
     const userEmail = document.getElementById("user-email");
 
     if (userName) {
-      userName.textContent =
+      const displayName =
         user.user_metadata?.full_name || user.email?.split("@")[0] || "Usuario";
+      userName.textContent = getFirstNameForGreeting(displayName);
     }
 
     if (userEmail) {

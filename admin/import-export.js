@@ -102,16 +102,34 @@ async function exportVariants() {
   msg.textContent = "Exportando…";
   msg.className = "message";
   try {
+    // Obtener variantes sin size ni stock_qty (ya no están en product_variants)
     const { data: variants, error } = await supabase
       .from("product_variants")
       .select(
-        "id, product_id, sku, color, size, price, stock_qty, active, products(id, handle, name, category, status, description)"
+        "id, product_id, sku, color, price, active, products(id, handle, name, category, status, description)"
       )
       .order("sku");
     if (error) throw error;
 
     const vIds = variants.map((v) => v.id);
     const pIds = [...new Set(variants.map((v) => v.product_id))];
+
+    // Obtener talles desde variant_sizes
+    const { data: variantSizes, error: sizesError } = await supabase
+      .from("variant_sizes")
+      .select("variant_id, size, stock_qty")
+      .in("variant_id", vIds)
+      .order("variant_id, size");
+    if (sizesError) throw sizesError;
+
+    // Agrupar talles por variant_id
+    const sizesByVariant = new Map();
+    (variantSizes || []).forEach((vs) => {
+      if (!sizesByVariant.has(vs.variant_id)) {
+        sizesByVariant.set(vs.variant_id, []);
+      }
+      sizesByVariant.get(vs.variant_id).push({ size: vs.size, stock_qty: vs.stock_qty });
+    });
 
     const [{ data: imgs }] = await Promise.all([
       supabase
@@ -133,7 +151,9 @@ async function exportVariants() {
       (tagsByProduct[r.product_id] ||= new Set()).add(n);
     });
 
-    const rows = variants.map((v) => {
+    // Crear una fila por cada variante y cada talle
+    const rows = [];
+    variants.forEach((v) => {
       const p = v.products || {};
       const images = (imgs || [])
         .filter((i) => i.variant_id === v.id)
@@ -143,21 +163,46 @@ async function exportVariants() {
       const tags = Array.from(tagsByProduct[v.product_id] || [])
         .slice(0, 3)
         .join("|");
-      return {
-        handle: p.handle || "",
-        name: p.name || "",
-        category: p.category || "",
-        status: p.status || "",
-        description: p.description || "",
-        sku: v.sku || "",
-        color: v.color || "",
-        size: v.size || "",
-        price: v.price ?? 0,
-        stock: v.stock_qty ?? 0,
-        active: v.active ? "true" : "false",
-        images,
-        tags,
-      };
+      
+      const sizes = sizesByVariant.get(v.id) || [];
+      
+      // Si no hay talles, crear una fila sin talle (compatibilidad)
+      if (sizes.length === 0) {
+        rows.push({
+          handle: p.handle || "",
+          name: p.name || "",
+          category: p.category || "",
+          status: p.status || "",
+          description: p.description || "",
+          sku: v.sku || "",
+          color: v.color || "",
+          size: "",
+          price: v.price ?? 0,
+          stock: 0,
+          active: v.active ? "true" : "false",
+          images,
+          tags,
+        });
+      } else {
+        // Crear una fila por cada talle
+        sizes.forEach((sizeData) => {
+          rows.push({
+            handle: p.handle || "",
+            name: p.name || "",
+            category: p.category || "",
+            status: p.status || "",
+            description: p.description || "",
+            sku: v.sku || "",
+            color: v.color || "",
+            size: sizeData.size || "",
+            price: v.price ?? 0,
+            stock: sizeData.stock_qty ?? 0,
+            active: v.active ? "true" : "false",
+            images,
+            tags,
+          });
+        });
+      }
     });
 
     const headers = ["handle","name","category","status","description","sku","color","size","price","stock","active","images","tags"];
@@ -166,7 +211,7 @@ async function exportVariants() {
     const csvBody = toCSV(ordered);
     const content = "\ufeff" + "sep=,\n" + csvBody; // BOM + separador + CSV
     download(`catalogo_${Date.now()}.csv`, content);
-    msg.textContent = `✅ Exportadas ${rows.length} variantes`;
+    msg.textContent = `✅ Exportadas ${rows.length} filas (variantes con talles)`;
     msg.className = "message ok";
   } catch (e) {
     msg.textContent = `❌ Error exportando: ${e.message}`;
@@ -289,18 +334,58 @@ async function exportInventory() {
   msg.textContent = "Exportando…";
   msg.className = "message";
   try {
-    const { data, error } = await supabase
+    // Obtener variantes (sin size ni stock_qty)
+    const { data: variants, error: variantsError } = await supabase
       .from("product_variants")
-      .select("sku, size, stock_qty, price, active")
+      .select("id, sku, price, active")
       .order("sku");
-    if (error) throw error;
-    const rows = (data || []).map((v) => ({
-      sku: v.sku || "",
-      size: v.size || "",
-      stock: v.stock_qty ?? 0,
-      price: v.price ?? 0,
-      active: v.active ? "true" : "false",
-    }));
+    if (variantsError) throw variantsError;
+
+    const vIds = variants.map((v) => v.id);
+    
+    // Obtener talles y stock desde variant_sizes
+    const { data: variantSizes, error: sizesError } = await supabase
+      .from("variant_sizes")
+      .select("variant_id, size, stock_qty")
+      .in("variant_id", vIds)
+      .order("variant_id, size");
+    if (sizesError) throw sizesError;
+
+    // Crear mapa de variantes por ID
+    const variantsMap = new Map();
+    variants.forEach((v) => {
+      variantsMap.set(v.id, v);
+    });
+
+    // Crear una fila por cada talle
+    const rows = [];
+    (variantSizes || []).forEach((vs) => {
+      const variant = variantsMap.get(vs.variant_id);
+      if (variant) {
+        rows.push({
+          sku: variant.sku || "",
+          size: vs.size || "",
+          stock: vs.stock_qty ?? 0,
+          price: variant.price ?? 0,
+          active: variant.active ? "true" : "false",
+        });
+      }
+    });
+
+    // Si hay variantes sin talles, agregarlas también (compatibilidad)
+    variants.forEach((v) => {
+      const hasSizes = variantSizes?.some((vs) => vs.variant_id === v.id);
+      if (!hasSizes) {
+        rows.push({
+          sku: v.sku || "",
+          size: "",
+          stock: 0,
+          price: v.price ?? 0,
+          active: v.active ? "true" : "false",
+        });
+      }
+    });
+
     const content = toCSVWithBOM(rows);
     download(`inventario_${Date.now()}.csv`, content);
     msg.textContent = `✅ Exportadas ${rows.length} filas de inventario`;
@@ -899,13 +984,63 @@ document.getElementById("parse-inv").addEventListener("click", async () => {
         const price = parseARS(r.price);
         const stock = parseInt(r.stock || "0", 10) || 0;
         const active = bool(r.active);
-        const { data, error } = await supabase
+        const size = (r.size || "").trim();
+        
+        // Obtener la variante por SKU
+        const { data: variantData, error: variantError } = await supabase
           .from("product_variants")
-          .update({ price, stock_qty: stock, active })
+          .select("id")
           .eq("sku", sku)
-          .select("id");
-        if (error) throw error;
-        if (data && data.length) updated++; else notFound++;
+          .maybeSingle();
+        
+        if (variantError) throw variantError;
+        if (!variantData) {
+          notFound++;
+          continue;
+        }
+        
+        const variantId = variantData.id;
+        
+        // Actualizar precio y active en product_variants
+        const { error: updateError } = await supabase
+          .from("product_variants")
+          .update({ price, active })
+          .eq("id", variantId);
+        if (updateError) throw updateError;
+        
+        // Si hay size, actualizar stock en variant_sizes
+        if (size) {
+          // Buscar o crear registro en variant_sizes
+          const { data: existingSize, error: sizeCheckError } = await supabase
+            .from("variant_sizes")
+            .select("id")
+            .eq("variant_id", variantId)
+            .eq("size", size)
+            .maybeSingle();
+          
+          if (sizeCheckError) throw sizeCheckError;
+          
+          if (existingSize) {
+            // Actualizar stock existente
+            const { error: updateSizeError } = await supabase
+              .from("variant_sizes")
+              .update({ stock_qty: stock })
+              .eq("id", existingSize.id);
+            if (updateSizeError) throw updateSizeError;
+          } else {
+            // Crear nuevo registro en variant_sizes
+            const { error: insertSizeError } = await supabase
+              .from("variant_sizes")
+              .insert({
+                variant_id: variantId,
+                size: size,
+                stock_qty: stock,
+              });
+            if (insertSizeError) throw insertSizeError;
+          }
+        }
+        
+        updated++;
       }
       
       hideProgress("progress-container-inv");
@@ -1188,7 +1323,7 @@ async function importNewProducts(rows, category) {
             handle,
             name,
             category: category || "Calzado",
-            status: "incomplete",
+            status: "pending_stock",
             description: "",
           },
         ])
@@ -1279,7 +1414,7 @@ async function importNewProducts(rows, category) {
     }
     
     hideProgress("progress-container-new");
-    msg.textContent = `✅ Importación completada: ${createdProducts} productos, ${createdVariants} variantes creadas. Los productos están en estado "incomplete" y requieren completar tags y stock.`;
+    msg.textContent = `✅ Importación completada: ${createdProducts} productos, ${createdVariants} variantes creadas. Los productos están en estado "completar stock" y requieren completar stock antes de activarse.`;
     msg.className = "message ok";
     
     // Redirigir a incomplete-products después de 2 segundos

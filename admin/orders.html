@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Gestión de Pedidos - Catálogo FYL</title>
     <link rel="stylesheet" href="../styles.css">
     <script>
@@ -34,6 +34,24 @@
             flex-wrap: wrap;
             gap: 8px;
             margin-bottom: 16px;
+            align-items: center;
+        }
+        @media (max-width: 768px) {
+            .orders-filters {
+                flex-direction: row;
+                flex-wrap: wrap;
+                align-items: stretch;
+            }
+            /* Los botones de filtro en grid de 2 columnas */
+            .orders-filters > .filter-btn {
+                width: calc(50% - 4px);
+                flex: 0 0 calc(50% - 4px);
+            }
+            /* El div con búsqueda y ordenamiento ocupa todo el ancho */
+            .orders-filters > div {
+                width: 100%;
+                flex: 0 0 100%;
+            }
         }
         .filter-btn {
             padding: 6px 12px;
@@ -44,6 +62,13 @@
             font-size: 14px;
             transition: all 0.3s;
             position: relative;
+        }
+        @media (max-width: 768px) {
+            .filter-btn {
+                padding: 6px 4px;
+                font-size: 11px;
+                border-radius: 16px;
+            }
         }
         .filter-btn.active {
             background: #CD844D;
@@ -153,11 +178,26 @@
             gap: 12px;
             align-items: center;
         }
+        @media (max-width: 768px) {
+            .customer-details {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 6px;
+            }
+        }
         .customer-details span {
             display: inline-flex;
             align-items: center;
             gap: 4px;
             white-space: nowrap;
+        }
+        @media (max-width: 768px) {
+            .customer-details span {
+                display: block;
+                white-space: normal;
+                width: 100%;
+                padding: 2px 0;
+            }
         }
         .order-items {
             margin-bottom: 12px;
@@ -291,6 +331,13 @@
             font-weight: 500;
             transition: transform 0.2s, box-shadow 0.2s;
         }
+        @media (max-width: 768px) {
+            .btn {
+                padding: 8px;
+                font-size: 13px;
+                border-radius: 6px;
+            }
+        }
         .btn:hover {
             transform: translateY(-1px);
             box-shadow: 0 4px 12px rgba(0,0,0,0.12);
@@ -330,6 +377,49 @@
         @keyframes spin {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
+        }
+        .order-loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(255, 255, 255, 0.95);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            border-radius: 8px;
+        }
+        .order-loading-spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #CD844D;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 10px;
+        }
+        .loading-small {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 40px;
+            color: #666;
+        }
+        .loading-spinner-small {
+            width: 30px;
+            height: 30px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #CD844D;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 10px;
+        }
+        .filter-btn:disabled {
+            pointer-events: none;
         }
         /* Notificación toast */
         .toast-notification {
@@ -400,6 +490,159 @@
             font-weight: 600;
             font-size: 14px;
         }
+        /* Modal de confirmación sin stock */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 10001;
+            overflow-y: auto;
+            padding: 20px;
+            align-items: center;
+            justify-content: center;
+        }
+        .modal.active {
+            display: flex;
+        }
+        .modal-content {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            animation: modalFadeIn 0.3s ease;
+        }
+        @keyframes modalFadeIn {
+            from {
+                opacity: 0;
+                transform: scale(0.9);
+            }
+            to {
+                opacity: 1;
+                transform: scale(1);
+            }
+        }
+        .order-summary-item {
+            display: flex;
+            gap: 12px;
+            padding: 12px;
+            border-bottom: 1px solid #eee;
+            align-items: center;
+        }
+        .order-summary-item-image {
+            width: 50px;
+            height: 50px;
+            object-fit: cover;
+            border-radius: 6px;
+            flex-shrink: 0;
+        }
+        .order-summary-item-details {
+            flex: 1;
+        }
+        .order-summary-item-details-horizontal {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex: 1;
+            font-size: 14px;
+            flex-wrap: nowrap;
+            white-space: nowrap;
+        }
+        .order-summary-item-name {
+            font-weight: 600;
+            color: #333;
+            min-width: 120px;
+            max-width: 200px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            margin-right: 4px;
+        }
+        .order-summary-item-color {
+            color: #666;
+            min-width: 60px;
+            text-transform: capitalize;
+            margin-left: 4px;
+        }
+        .order-summary-item-size {
+            color: #666;
+            min-width: 35px;
+            text-align: center;
+            margin-left: 4px;
+        }
+        .order-summary-item-quantity {
+            color: #333;
+            font-weight: 600;
+            min-width: 25px;
+            text-align: center;
+            margin-left: 8px;
+        }
+        .order-summary-item-unit-price {
+            color: #666;
+            min-width: 80px;
+            text-align: right;
+            margin-left: 8px;
+        }
+        .order-summary-item-total {
+            font-weight: 700;
+            font-size: 15px;
+            color: #CD844D;
+            min-width: 90px;
+            text-align: right;
+            margin-left: 8px;
+        }
+        .order-summary-section {
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 2px solid #eee;
+        }
+        .order-summary-total {
+            font-size: 20px;
+            font-weight: 700;
+            color: #CD844D;
+            text-align: right;
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 2px solid #CD844D;
+        }
+        @media (max-width: 768px) {
+            .order-summary-item {
+                flex-direction: row;
+                align-items: center;
+                padding: 8px;
+                gap: 8px;
+            }
+            .order-summary-item-image {
+                width: 40px;
+                height: 40px;
+            }
+            .order-summary-item-details-horizontal {
+                font-size: 12px;
+                gap: 4px;
+                flex-wrap: nowrap;
+                overflow-x: auto;
+            }
+            .order-summary-item-name {
+                min-width: 100px;
+                max-width: 150px;
+            }
+            .order-summary-item-color,
+            .order-summary-item-size,
+            .order-summary-item-quantity,
+            .order-summary-item-unit-price,
+            .order-summary-item-total {
+                min-width: auto;
+                margin-left: 4px;
+            }
+            #order-summary-modal .modal-content {
+                max-width: 95% !important;
+                padding: 16px !important;
+            }
+        }
+
         /* Modal para crear/editar pedido */
         .order-modal {
             display: none;
@@ -413,19 +656,43 @@
             overflow-y: auto;
             padding: 20px;
         }
+        @media (max-width: 768px) {
+            .order-modal {
+                padding: 0;
+                align-items: flex-end;
+            }
+        }
         .order-modal.active {
             display: flex;
             align-items: center;
             justify-content: center;
+        }
+        @media (max-width: 768px) {
+            .order-modal.active {
+                align-items: flex-end;
+            }
         }
         .order-modal-content {
             background: white;
             border-radius: 12px;
             box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
             width: 100%;
-            max-width: 900px;
+            max-width: 1200px;
             position: relative;
             animation: modalFadeIn 0.3s ease;
+            max-height: 98vh;
+            height: 98vh;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+        }
+        @media (max-width: 768px) {
+            .order-modal-content {
+                max-width: 100%;
+                max-height: 98vh;
+                height: 98vh;
+                border-radius: 16px 16px 0 0;
+            }
         }
         @keyframes modalFadeIn {
             from {
@@ -444,10 +711,20 @@
             padding: 20px 24px;
             border-bottom: 1px solid #e9ecef;
         }
+        @media (max-width: 768px) {
+            .order-modal-header {
+                padding: 16px;
+            }
+        }
         .order-modal-header h2 {
             margin: 0;
             font-size: 22px;
             color: #333;
+        }
+        @media (max-width: 768px) {
+            .order-modal-header h2 {
+                font-size: 18px;
+            }
         }
         .order-modal-close {
             background: none;
@@ -470,9 +747,54 @@
         }
         .order-modal-body {
             padding: 24px;
+            flex: 1;
+            overflow-y: auto;
+            min-height: 0;
+        }
+        @media (max-width: 768px) {
+            .order-modal-body {
+                padding: 16px;
+                min-height: auto;
+            }
+        }
+        .order-modal-layout {
+            display: flex;
+            gap: 24px;
+            align-items: flex-start;
+            flex: 1;
+            min-height: 0;
+        }
+        .order-modal-left {
+            flex: 0 0 32%;
+            max-width: 380px;
+            min-width: 0;
+        }
+        .order-modal-right {
+            flex: 1;
+            min-width: 0;
+        }
+        @media (max-width: 768px) {
+            .order-modal-layout {
+                flex-direction: column;
+                gap: 16px;
+            }
+            .order-modal-left {
+                flex: 1;
+                max-width: 100%;
+                width: 100%;
+            }
+            .order-modal-right {
+                flex: 1;
+                width: 100%;
+            }
         }
         .order-form-section {
             margin-bottom: 24px;
+        }
+        @media (max-width: 768px) {
+            .order-form-section {
+                margin-bottom: 20px;
+            }
         }
         .order-form-section h3 {
             margin: 0 0 16px 0;
@@ -480,6 +802,12 @@
             color: #333;
             border-bottom: 2px solid #CD844D;
             padding-bottom: 8px;
+        }
+        @media (max-width: 768px) {
+            .order-form-section h3 {
+                font-size: 16px;
+                margin-bottom: 12px;
+            }
         }
         .order-form-section label {
             display: block;
@@ -494,6 +822,18 @@
             padding: 20px 24px;
             border-top: 1px solid #e9ecef;
             background: #f8f9fa;
+        }
+        @media (max-width: 768px) {
+            .order-modal-footer {
+                flex-direction: column-reverse;
+                padding: 12px 16px;
+                gap: 8px;
+            }
+            .order-modal-footer .btn {
+                width: 100%;
+                padding: 12px;
+                font-size: 16px;
+            }
         }
         .customer-result-item, .product-result-item {
             padding: 12px;
@@ -528,52 +868,247 @@
 
         @media (max-width: 768px) {
             .orders-container {
-                padding: 12px;
+                padding: 4px;
+                max-width: 100%;
             }
             .orders-header {
                 flex-direction: column;
                 align-items: stretch;
-                gap: 16px;
+                gap: 8px;
+                padding: 8px;
+                margin-bottom: 12px;
             }
             .orders-header h1 {
-                font-size: 20px;
+                font-size: 16px;
+                margin: 0;
             }
             .orders-header div {
                 display: flex;
                 flex-direction: column;
-                gap: 8px;
+                gap: 6px;
+                width: 100%;
+            }
+            .orders-header .btn {
+                width: 100%;
+                margin-left: 0 !important;
+                margin-bottom: 0;
+                padding: 8px;
+                font-size: 13px;
             }
             .orders-filters {
+                display: flex !important;
+                flex-direction: row !important;
+                flex-wrap: wrap !important;
                 gap: 6px;
+                margin-bottom: 10px;
             }
-            .filter-btn {
-                flex: 1;
+            .orders-filters .filter-btn {
+                flex: 0 0 calc(50% - 3px);
                 text-align: center;
+                padding: 6px 4px;
+                font-size: 11px;
+                min-width: 0;
+                border-radius: 16px;
+                width: calc(50% - 3px);
+                box-sizing: border-box;
+            }
+            .orders-filters > div {
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+                width: 100%;
+                margin-left: 0 !important;
+            }
+            .orders-filters #search-input {
+                width: 100% !important;
+                min-width: 0 !important;
+                font-size: 16px; /* Evita zoom en iOS */
+                padding: 8px;
+                border-radius: 6px;
+            }
+            .orders-filters label {
+                font-size: 12px;
+            }
+            .orders-filters #sort-select {
+                width: 100% !important;
+                font-size: 16px; /* Evita zoom en iOS */
+                padding: 8px;
+                border-radius: 6px;
             }
             .order-card {
-                padding: 14px;
+                padding: 10px;
+                margin-bottom: 10px;
+                border-radius: 8px;
             }
             .order-header {
                 flex-direction: column;
                 align-items: flex-start;
+                gap: 6px;
+                margin-bottom: 8px;
+                padding-bottom: 8px;
+            }
+            .order-id {
+                font-size: 14px;
+                width: 100%;
+                line-height: 1.3;
+            }
+            .order-status {
+                font-size: 10px;
+                padding: 3px 6px;
+            }
+            .customer-info {
+                font-size: 12px;
+                margin-bottom: 8px;
+            }
+            .customer-name {
+                font-size: 13px;
+                margin-bottom: 4px;
+                flex-direction: column !important;
+                align-items: flex-start !important;
+                gap: 8px;
+            }
+            .customer-name > div {
+                width: 100%;
+            }
+            .customer-name [data-view-summary] {
+                width: 100%;
+                margin-top: 4px;
+            }
+            .customer-details {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 4px;
+                font-size: 11px;
+            }
+            .customer-details span {
+                white-space: normal;
+                word-break: break-word;
+                display: block;
+                width: 100%;
+                padding: 2px 0;
+                line-height: 1.4;
             }
             .order-item {
-                flex-direction: column;
+                flex-direction: row;
+                gap: 10px;
+                padding: 10px;
+                border-radius: 6px;
+                align-items: flex-start;
             }
             .item-thumb {
-                width: 72px;
-                height: 72px;
+                width: 80px;
+                height: 80px;
+                flex-shrink: 0;
+                border-radius: 6px;
+                object-fit: cover;
+            }
+            .item-main {
+                flex: 1;
+                min-width: 0;
+            }
+            .item-name {
+                font-size: 15px;
+                font-weight: 600;
+                margin-bottom: 6px;
+                line-height: 1.3;
+            }
+            .item-details {
+                font-size: 11px;
+                margin-bottom: 3px;
             }
             .item-actions {
                 width: 100%;
-                justify-content: flex-end;
+                justify-content: space-between;
+                flex-wrap: wrap;
+                gap: 4px;
+                margin-top: 8px;
+                padding-top: 8px;
+                border-top: 1px solid #eee;
+            }
+            .item-action-btn {
+                flex: 1 1 calc(20% - 4px);
+                min-width: 32px;
+                height: 32px;
+                font-size: 12px;
+                max-width: 40px;
+                border-radius: 50%;
+            }
+            /* Asegurar que el precio se vea bien */
+            .item-price {
+                font-size: 16px !important;
+                font-weight: 700 !important;
+                color: #CD844D !important;
+                margin-top: 6px;
+            }
+            .order-total {
+                font-size: 14px;
+                padding-top: 8px;
+                font-weight: 600;
             }
             .order-actions {
                 flex-direction: column;
+                gap: 6px;
+                margin-top: 8px;
             }
             .btn {
                 width: 100%;
                 justify-content: center;
+                padding: 8px;
+                font-size: 13px;
+                border-radius: 6px;
+            }
+            .order-items {
+                margin-top: 6px;
+            }
+            .cancelled-warning {
+                font-size: 11px;
+                padding: 6px;
+                margin-bottom: 6px;
+            }
+            /* Estilos para elementos generados dinámicamente */
+            .order-card > div[style*="display:flex"] {
+                flex-direction: column !important;
+                align-items: stretch !important;
+                gap: 6px !important;
+                margin: 6px 0 !important;
+            }
+            .order-card > div[style*="display:flex"] > button {
+                width: 100% !important;
+                padding: 6px !important;
+                font-size: 12px !important;
+            }
+            .order-card > div[style*="display:flex"] > div {
+                text-align: center;
+                font-size: 11px !important;
+            }
+            /* Mejorar visualización de badges en móvil */
+            .filter-btn-badge {
+                font-size: 9px;
+                min-width: 16px;
+                height: 16px;
+                top: -5px;
+                right: -5px;
+            }
+            /* Ajustar botón de toggle items */
+            .btn-outline {
+                width: 100% !important;
+                margin-bottom: 6px;
+                padding: 6px !important;
+                font-size: 12px !important;
+            }
+            /* Reducir tamaño de badges de estado */
+            .item-status {
+                font-size: 10px;
+                padding: 2px 6px;
+            }
+            .status-badge {
+                font-size: 10px;
+                padding: 2px 6px;
+            }
+            /* Reducir precio del item */
+            .item-price {
+                font-size: 13px;
+                margin-top: 4px;
             }
         }
     </style>
@@ -613,9 +1148,9 @@
             </button>
             <button class="filter-btn" data-status="all">Todos</button>
             <div style="margin-left:auto; display:flex; align-items:center; gap:8px;">
-                <input id="search-input" type="text" placeholder="Buscar (nombre, DNI, teléfono)" style="padding:6px 10px; border:1px solid #ddd; border-radius:8px; font-size:13px; min-width: 260px;" />
+                <input id="search-input" type="text" placeholder="Buscar (nombre, DNI, teléfono)" style="padding:10px; border:1px solid #ddd; border-radius:8px; font-size:16px; min-width: 260px;" />
                 <label for="sort-select" style="font-size:13px; color:#666;">Ordenar:</label>
-                <select id="sort-select" class="btn" style="padding:6px 10px; background:white; border:1px solid #ddd; border-radius:8px; font-size:13px;">
+                <select id="sort-select" class="btn" style="padding:10px; background:white; border:1px solid #ddd; border-radius:8px; font-size:16px;">
                     <option value="recent" selected>Más recientes</option>
                     <option value="oldest">Más antiguos</option>
                     <option value="name_az">Nombre (A-Z)</option>
@@ -634,74 +1169,150 @@
 
     <!-- Modal para crear/editar pedido -->
     <div id="create-order-modal" class="order-modal" style="display: none;">
-        <div class="order-modal-content" style="max-width: 900px; max-height: 90vh; overflow-y: auto;">
+        <div class="order-modal-content" style="max-width: 1200px; max-height: 98vh; height: 98vh; overflow-y: auto; display: flex; flex-direction: column;">
             <div class="order-modal-header">
                 <h2 id="modal-title">➕ Crear Nuevo Pedido</h2>
                 <button id="close-order-modal" class="order-modal-close">&times;</button>
             </div>
             <div class="order-modal-body">
-                <!-- Selección de Cliente -->
-                <div class="order-form-section">
-                    <h3>👤 Cliente</h3>
-                    <div style="display: flex; gap: 12px; margin-bottom: 16px;">
-                        <div style="flex: 1;">
-                            <label for="customer-search">Buscar Cliente:</label>
-                            <input type="text" id="customer-search" placeholder="Buscar por nombre, DNI, email..." style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
-                            <div id="customer-results" style="max-height: 200px; overflow-y: auto; border: 1px solid #ddd; border-radius: 6px; margin-top: 8px; display: none; background: white; position: absolute; z-index: 1000; width: 100%; max-width: 400px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);"></div>
+                <div class="order-modal-layout">
+                    <!-- Columna Izquierda -->
+                    <div class="order-modal-left">
+                        <!-- Selección de Cliente -->
+                        <div class="order-form-section">
+                            <h3>👤 Cliente</h3>
+                            <div style="display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap;">
+                                <div style="flex: 1; min-width: 200px; position: relative;">
+                                    <label for="customer-search">Buscar Cliente:</label>
+                                    <input type="text" id="customer-search" placeholder="Buscar por nombre, DNI, email..." style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 16px;">
+                                    <div id="customer-results" style="max-height: 200px; overflow-y: auto; border: 1px solid #ddd; border-radius: 6px; margin-top: 8px; display: none; background: white; position: absolute; z-index: 1000; width: 100%; max-width: 400px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);"></div>
+                                </div>
+                                <div style="width: 100%;">
+                                    <label>&nbsp;</label>
+                                    <button id="create-customer-btn" class="btn" style="background: #17a2b8; color: white; padding: 10px 16px; width: 100%;">➕ Crear Cliente</button>
+                                </div>
+                            </div>
+                            <style>
+                                @media (max-width: 768px) {
+                                    #customer-search {
+                                        font-size: 16px !important; /* Evita zoom en iOS */
+                                    }
+                                    #create-customer-btn {
+                                        width: 100% !important;
+                                    }
+                                }
+                            </style>
+                            <div id="selected-customer" style="display: none; padding: 12px; background: #f8f9fa; border-radius: 6px; margin-top: 8px;">
+                                <strong>Cliente seleccionado:</strong> <span id="selected-customer-name"></span>
+                                <button id="remove-customer-btn" style="margin-left: 12px; padding: 4px 8px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">Cambiar</button>
+                            </div>
                         </div>
-                        <div>
-                            <label>&nbsp;</label>
-                            <button id="create-customer-btn" class="btn" style="background: #17a2b8; color: white; padding: 8px 16px;">➕ Crear Cliente</button>
-                        </div>
-                    </div>
-                    <div id="selected-customer" style="display: none; padding: 12px; background: #f8f9fa; border-radius: 6px; margin-top: 8px;">
-                        <strong>Cliente seleccionado:</strong> <span id="selected-customer-name"></span>
-                        <button id="remove-customer-btn" style="margin-left: 12px; padding: 4px 8px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">Cambiar</button>
-                    </div>
-                </div>
 
-                <!-- Valores Extra del Pedido -->
-                <div class="order-form-section">
-                    <h3>💰 Valores Extra</h3>
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
-                        <div>
-                            <label for="shipping-amount">🚚 Envío ($):</label>
-                            <input type="number" id="shipping-amount" placeholder="Ej: 4000" min="0" step="0.01" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
+                        <!-- Valores Extra del Pedido -->
+                        <div class="order-form-section">
+                            <h3>💰 Valores Extra</h3>
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+                                <div>
+                                    <label for="shipping-amount">🚚 Envío ($):</label>
+                                    <input type="number" id="shipping-amount" placeholder="Ej: 4000" min="0" step="0.01" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 16px;">
+                                </div>
+                                <div>
+                                    <label for="discount-amount">💸 Descuento ($):</label>
+                                    <input type="number" id="discount-amount" placeholder="Ej: 5000" min="0" step="0.01" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 16px;">
+                                </div>
+                                <div>
+                                    <label for="extras-amount">➕ Extras ($):</label>
+                                    <input type="number" id="extras-amount" placeholder="Ej: 6000" min="0" step="0.01" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 16px;">
+                                </div>
+                                <div>
+                                    <label for="extras-percentage">➕ Extras (%):</label>
+                                    <input type="number" id="extras-percentage" placeholder="Ej: 5" min="0" max="100" step="0.01" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 16px;">
+                                </div>
+                            </div>
+                            <style>
+                                @media (max-width: 768px) {
+                                    .order-form-section > div[style*="grid-template-columns"] {
+                                        grid-template-columns: 1fr !important;
+                                        gap: 12px !important;
+                                    }
+                                    #shipping-amount, #discount-amount, #extras-amount, #extras-percentage {
+                                        font-size: 16px !important; /* Evita zoom en iOS */
+                                    }
+                                }
+                            </style>
                         </div>
-                        <div>
-                            <label for="discount-amount">💸 Descuento ($):</label>
-                            <input type="number" id="discount-amount" placeholder="Ej: 5000" min="0" step="0.01" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
-                        </div>
-                        <div>
-                            <label for="extras-amount">➕ Extras ($):</label>
-                            <input type="number" id="extras-amount" placeholder="Ej: 6000" min="0" step="0.01" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
-                        </div>
-                        <div>
-                            <label for="extras-percentage">➕ Extras (%):</label>
-                            <input type="number" id="extras-percentage" placeholder="Ej: 5" min="0" max="100" step="0.01" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
-                        </div>
-                    </div>
-                </div>
 
-                <!-- Búsqueda de Productos -->
-                <div class="order-form-section">
-                    <h3>🛍️ Agregar Productos</h3>
-                    <div style="margin-bottom: 16px;">
-                        <label for="product-search">Buscar Producto:</label>
-                        <input type="text" id="product-search" placeholder="Buscar producto por nombre..." style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
-                        <div id="product-results" style="max-height: 300px; overflow-y: auto; border: 1px solid #ddd; border-radius: 6px; margin-top: 8px; display: none; background: white; position: absolute; z-index: 1000; width: 100%; max-width: 600px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);"></div>
-                    </div>
-                </div>
+                        <!-- Extra Especial -->
+                        <div class="order-form-section">
+                            <h3>⭐ Extra Especial</h3>
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+                                <div>
+                                    <label for="special-extra-name">📝 Nombre del Extra:</label>
+                                    <input type="text" id="special-extra-name" placeholder="Ej: Caja de regalo" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 16px;">
+                                </div>
+                                <div>
+                                    <label for="special-extra-amount">💵 Monto ($):</label>
+                                    <input type="number" id="special-extra-amount" placeholder="Ej: 1500" min="0" step="0.01" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 16px;">
+                                </div>
+                            </div>
+                            <button id="add-special-extra-btn" class="btn" style="background: #9c27b0; color: white; width: 100%; padding: 10px; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: 600;">
+                                ➕ Agregar al Pedido
+                            </button>
+                            <style>
+                                @media (max-width: 768px) {
+                                    #special-extra-name, #special-extra-amount {
+                                        font-size: 16px !important; /* Evita zoom en iOS */
+                                    }
+                                }
+                            </style>
+                        </div>
 
-                <!-- Productos Agregados al Pedido -->
-                <div class="order-form-section">
-                    <h3>📦 Productos del Pedido</h3>
-                    <div id="order-items-list" style="min-height: 100px; padding: 12px; background: #f8f9fa; border-radius: 6px; margin-bottom: 16px;">
-                        <p style="color: #666; text-align: center; padding: 20px;">No hay productos agregados aún</p>
+                        <!-- Contador de Productos -->
+                        <div class="order-form-section">
+                            <div id="products-counter" style="padding: 16px; background: #f0f7ff; border: 2px solid #17a2b8; border-radius: 8px; text-align: center;">
+                                <div style="font-size: 14px; color: #666; margin-bottom: 4px;">Productos en el pedido</div>
+                                <div style="font-size: 28px; font-weight: 700; color: #17a2b8;" id="products-count">0</div>
+                                <div style="font-size: 12px; color: #666; margin-top: 4px;">unidades agregadas</div>
+                            </div>
+                        </div>
                     </div>
-                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px; background: #e9ecef; border-radius: 6px;">
-                        <strong style="font-size: 18px;">Total:</strong>
-                        <strong style="font-size: 20px; color: #CD844D;" id="order-total">$0</strong>
+
+                    <!-- Columna Derecha -->
+                    <div class="order-modal-right">
+                        <!-- Búsqueda de Productos -->
+                        <div class="order-form-section">
+                            <h3>🛍️ Agregar Productos</h3>
+                            <!-- Campo de búsqueda por QR -->
+                            <div style="margin-bottom: 16px; position: relative;">
+                                <label for="qr-search">Buscar por QR:</label>
+                                <input type="text" id="qr-search" placeholder="Escanear código QR..." style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 16px;">
+                            </div>
+                            <!-- Campo de búsqueda por nombre -->
+                            <div style="margin-bottom: 16px; position: relative;">
+                                <label for="product-search">Buscar Producto:</label>
+                                <input type="text" id="product-search" placeholder="Buscar producto por nombre..." style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 16px;">
+                                <div id="product-results" style="max-height: 700px; overflow-y: auto; border: 1px solid #ddd; border-radius: 6px; margin-top: 8px; display: none; background: white; position: absolute; z-index: 1000; width: 100%; max-width: 100%; box-shadow: 0 4px 8px rgba(0,0,0,0.1);"></div>
+                            </div>
+                            <style>
+                                @media (max-width: 768px) {
+                                    #qr-search, #product-search {
+                                        font-size: 16px !important; /* Evita zoom en iOS */
+                                    }
+                                }
+                            </style>
+                        </div>
+
+                        <!-- Productos Agregados al Pedido -->
+                        <div class="order-form-section">
+                            <h3>📦 Productos del Pedido</h3>
+                            <div id="order-items-list" style="min-height: 100px; padding: 12px; background: #f8f9fa; border-radius: 6px; margin-bottom: 16px;">
+                                <p style="color: #666; text-align: center; padding: 20px;">No hay productos agregados aún</p>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px; background: #e9ecef; border-radius: 6px;">
+                                <strong style="font-size: 18px;">Total:</strong>
+                                <strong style="font-size: 20px; color: #CD844D;" id="order-total">$0</strong>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -724,41 +1335,53 @@
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
                         <div>
                             <label for="customer-first-name">Nombre <span style="color: red;">*</span>:</label>
-                            <input type="text" id="customer-first-name" required placeholder="Ej: Juan" autocomplete="off" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
+                            <input type="text" id="customer-first-name" required placeholder="Ej: Juan" autocomplete="off" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 16px;">
                         </div>
                         <div>
                             <label for="customer-last-name">Apellido <span style="color: red;">*</span>:</label>
-                            <input type="text" id="customer-last-name" required placeholder="Ej: Pérez" autocomplete="off" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
+                            <input type="text" id="customer-last-name" required placeholder="Ej: Pérez" autocomplete="off" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 16px;">
                         </div>
                     </div>
                     <div>
                         <label for="customer-dni">DNI (opcional):</label>
-                        <input type="text" id="customer-dni" placeholder="Ej: 12345678" autocomplete="off" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
+                        <input type="text" id="customer-dni" placeholder="Ej: 12345678" autocomplete="off" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 16px;">
                     </div>
                     <div>
                         <label for="customer-phone">Teléfono <span style="color: red;">*</span>:</label>
-                        <input type="text" id="customer-phone" required placeholder="Ej: 1123456789" autocomplete="off" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
+                        <input type="text" id="customer-phone" required placeholder="Ej: 1123456789" autocomplete="off" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 16px;">
                     </div>
                     <div>
                         <label for="customer-email">Email (opcional):</label>
-                        <input type="email" id="customer-email" placeholder="Ej: juan@example.com" autocomplete="off" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
+                        <input type="email" id="customer-email" placeholder="Ej: juan@example.com" autocomplete="off" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 16px;">
                     </div>
                     <div>
                         <label for="customer-address">Dirección <span style="color: red;">*</span>:</label>
-                        <input type="text" id="customer-address" required placeholder="Ej: Av. Corrientes 1234" autocomplete="off" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
+                        <input type="text" id="customer-address" required placeholder="Ej: Av. Corrientes 1234" autocomplete="off" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 16px;">
                     </div>
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
                         <div style="position: relative;">
                             <label for="customer-province">Provincia <span style="color: red;">*</span>:</label>
-                            <input type="text" id="customer-province" required placeholder="Escriba para buscar provincia..." autocomplete="new-password" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
+                            <input type="text" id="customer-province" required placeholder="Escriba para buscar provincia..." autocomplete="new-password" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 16px;">
                             <div id="province-dropdown" class="custom-dropdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: white; border: 1px solid #ddd; border-radius: 6px; max-height: 200px; overflow-y: auto; z-index: 1000; box-shadow: 0 4px 8px rgba(0,0,0,0.1); margin-top: 4px;"></div>
                         </div>
                         <div style="position: relative;">
                             <label for="customer-city">Ciudad <span style="color: red;">*</span>:</label>
-                            <input type="text" id="customer-city" required placeholder="Seleccione provincia primero..." autocomplete="new-password" disabled style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
+                            <input type="text" id="customer-city" required placeholder="Seleccione provincia primero..." autocomplete="new-password" disabled style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 16px;">
                             <div id="city-dropdown" class="custom-dropdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: white; border: 1px solid #ddd; border-radius: 6px; max-height: 200px; overflow-y: auto; z-index: 1000; box-shadow: 0 4px 8px rgba(0,0,0,0.1); margin-top: 4px;"></div>
                         </div>
                     </div>
+                    <style>
+                        @media (max-width: 768px) {
+                            #customer-form > div[style*="grid-template-columns"] {
+                                grid-template-columns: 1fr !important;
+                                gap: 12px !important;
+                            }
+                            #customer-first-name, #customer-last-name, #customer-dni, #customer-phone, 
+                            #customer-email, #customer-address, #customer-province, #customer-city {
+                                font-size: 16px !important; /* Evita zoom en iOS */
+                            }
+                        }
+                    </style>
                     <div id="customer-form-error" style="display: none; padding: 12px; background: #ffebee; color: #c62828; border-radius: 6px; border: 1px solid #ef5350;"></div>
                 </form>
             </div>
@@ -779,20 +1402,27 @@
             <div class="order-modal-body">
                 <div style="margin-bottom: 16px;">
                     <label for="payment-method-select" style="display: block; margin-bottom: 8px; font-weight: 600;">Método de pago:</label>
-                    <select id="payment-method-select" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px;">
+                    <select id="payment-method-select" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 16px;">
                         <option value="">-- Seleccione un método --</option>
                     </select>
                 </div>
                 <div style="margin-bottom: 16px; padding: 12px; background: #f8f9fa; border-radius: 6px;">
                     <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                        <input type="checkbox" id="create-new-payment-method" style="width: 18px; height: 18px;">
+                        <input type="checkbox" id="create-new-payment-method" style="width: 20px; height: 20px;">
                         <span>Crear nuevo método de pago</span>
                     </label>
                 </div>
                 <div id="new-payment-method-container" style="display: none; margin-top: 16px;">
                     <label for="new-payment-method-input" style="display: block; margin-bottom: 8px; font-weight: 600;">Nombre del nuevo método:</label>
-                    <input type="text" id="new-payment-method-input" placeholder="Ej: Transferencia, Efectivo..." style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px;">
+                    <input type="text" id="new-payment-method-input" placeholder="Ej: Transferencia, Efectivo..." style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 16px;">
                 </div>
+                <style>
+                    @media (max-width: 768px) {
+                        #payment-method-select, #new-payment-method-input {
+                            font-size: 16px !important; /* Evita zoom en iOS */
+                        }
+                    }
+                </style>
                 <div id="payment-method-error" style="display: none; padding: 12px; background: #ffebee; color: #c62828; border-radius: 6px; border: 1px solid #ef5350; margin-top: 12px;"></div>
             </div>
             <div class="order-modal-footer">
@@ -800,6 +1430,47 @@
                 <button id="confirm-payment-btn" class="btn" style="background: #28a745; color: white;">Confirmar</button>
             </div>
         </div>
+    </div>
+
+    <!-- Modal de confirmación sin stock -->
+    <div class="modal" id="no-stock-confirm-modal">
+      <div class="modal-content" style="max-width: 400px; text-align: center;">
+        <h3 style="margin: 0 0 16px; font-size: 18px; color: #333; font-weight: 600;">⚠️ Stock Máximo Alcanzado</h3>
+        <p id="no-stock-confirm-message" style="margin: 0 0 24px; color: #666; font-size: 14px;">
+          Este producto no tiene stock disponible. ¿Está seguro de que desea agregarlo de todas formas?
+        </p>
+        <div style="display: flex; gap: 12px; justify-content: center;">
+          <button class="btn btn-primary" id="no-stock-confirm-yes" style="padding: 10px 24px; font-size: 14px;">Sí, Agregar</button>
+          <button class="btn btn-secondary" id="no-stock-confirm-no" style="padding: 10px 24px; font-size: 14px;">Cancelar</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal flujo aceptar parcial (pedidos del cliente: varias unidades del mismo producto) -->
+    <div class="modal" id="partial-accept-modal">
+      <div class="modal-content" style="max-width: 440px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+          <h3 id="partial-accept-title" style="margin: 0; font-size: 18px; color: #333;">Disponibilidad</h3>
+          <button type="button" id="partial-accept-close" class="order-modal-close" aria-label="Cerrar">&times;</button>
+        </div>
+        <div id="partial-accept-body">
+          <!-- Contenido por pasos (paso 1: ¿todas disponibles?, paso 2: cuántas, paso 3: apartado vs espera) -->
+        </div>
+        <div id="partial-accept-footer" style="margin-top: 16px; display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap;"></div>
+      </div>
+    </div>
+
+    <!-- Modal de resumen del pedido para cliente -->
+    <div class="modal" id="order-summary-modal">
+      <div class="modal-content" style="max-width: 600px; text-align: left;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+          <h2 style="margin: 0; font-size: 20px; color: #333;">Resumen del Pedido</h2>
+          <button id="close-summary-modal" class="order-modal-close">&times;</button>
+        </div>
+        <div id="order-summary-content">
+          <!-- Contenido se llenará dinámicamente -->
+        </div>
+      </div>
     </div>
 
     <script type="module" src="../scripts/supabase-client.js"></script>

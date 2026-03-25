@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex" />
+  <title>Editar Pedido Local | Admin</title>
+  <link rel="stylesheet" href="../styles.css" />
+  <script src="./suppress-extension-errors.js"></script>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; background: #f5f5f5; margin: 0; padding: 12px; }
+    .container { max-width: 900px; margin: 0 auto; }
+    .header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+    .header h1 { margin: 0; font-size: 20px; color: #333; }
+    .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-weight: 500; font-size: 13px; }
+    .btn-primary { background: #CD844D; color: white; }
+    .btn-primary:hover { background: #B8734A; }
+    .btn-secondary { background: #f0f0f0; color: #333; border: 1px solid #ddd; }
+    .btn-secondary:hover { background: #e0e0e0; }
+    .btn-danger { background: #dc3545; color: white; }
+    .btn-danger:hover { background: #c82333; }
+    .card { background: white; padding: 16px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 16px; }
+    .card h2 { margin: 0 0 12px; font-size: 16px; color: #333; }
+    .order-info { margin-bottom: 16px; }
+    .order-info p { margin: 4px 0; font-size: 14px; }
+    .order-total { font-size: 18px; font-weight: 700; color: #CD844D; margin-top: 8px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 8px; text-align: left; border-bottom: 1px solid #eee; }
+    th { background: #f8f9fa; font-weight: 600; }
+    .item-extra { background: #f0f8ff; border-left: 4px solid #0066cc; }
+    .qty-cell { display: flex; align-items: center; gap: 6px; }
+    .qty-cell input { width: 50px; padding: 4px; text-align: center; }
+    .message { padding: 12px; border-radius: 6px; margin-bottom: 16px; }
+    .message.success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+    .message.error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+    .search-group { margin-bottom: 10px; }
+    .search-group label { display: block; font-weight: 600; font-size: 12px; margin-bottom: 4px; }
+    .search-group input { width: 100%; padding: 8px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; }
+    .autocomplete-dropdown { position: absolute; z-index: 1000; background: white; border: 2px solid #CD844D; border-top: none; border-radius: 0 0 8px 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); max-height: 280px; overflow-y: auto; }
+    .autocomplete-item { padding: 10px; cursor: pointer; border-bottom: 1px solid #f0f0f0; }
+    .autocomplete-item:hover { background: #fff8f0; }
+    .actions-row { display: flex; gap: 12px; margin-top: 16px; flex-wrap: wrap; }
+    .extras-row { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; margin-top: 8px; }
+    .extras-row input { padding: 6px 8px; border: 2px solid #ddd; border-radius: 6px; }
+    .manual-product-row { position: relative; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1 id="page-title">Editar Pedido</h1>
+      <div>
+        <button type="button" class="btn btn-secondary" id="close-btn">Cerrar ventana</button>
+      </div>
+    </div>
+
+    <div id="message-container"></div>
+
+    <div class="card order-info" id="order-info-card" style="display: none;">
+      <h2>Pedido <span id="order-number"></span></h2>
+      <p><strong>Cliente:</strong> <span id="customer-name"></span> <span id="customer-number" style="color: #666;"></span></p>
+      <p><strong>Total:</strong> <span id="order-total-display" class="order-total">$0</span></p>
+    </div>
+
+    <div class="card">
+      <h2>Productos del pedido</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Producto</th>
+            <th>Cant.</th>
+            <th>Precio</th>
+            <th>Subtotal</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="items-tbody">
+          <tr><td colspan="5" style="text-align: center; color: #999;">Cargando...</td></tr>
+        </tbody>
+      </table>
+      <p id="items-total-line" style="margin-top: 12px; font-weight: 700; font-size: 16px; color: #CD844D;"></p>
+    </div>
+
+    <div class="card">
+      <h2>Extras especiales</h2>
+      <div class="extras-row">
+        <div class="search-group" style="min-width: 180px;">
+          <label>Nombre del extra</label>
+          <input type="text" id="special-extra-name" placeholder="Ej: Caja de regalo" />
+        </div>
+        <div class="search-group" style="min-width: 120px;">
+          <label>Monto ($)</label>
+          <input type="number" id="special-extra-amount" placeholder="Ej: 1500" min="0" step="0.01" />
+        </div>
+        <button type="button" class="btn btn-primary" id="add-special-extra-btn">Agregar especial</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Agregar producto (buscador manual)</h2>
+      <div class="manual-product-row">
+        <div class="search-group">
+          <label>Buscar producto por nombre</label>
+          <input type="text" id="manual-product" placeholder="Nombre del producto..." />
+          <div id="autocomplete-dropdown" class="autocomplete-dropdown" style="display: none;"></div>
+        </div>
+        <div id="manual-product-info" style="display: none; margin-top: 12px;">
+          <div style="font-weight: 700; margin-bottom: 8px;" id="manual-product-name"></div>
+          <div style="margin-bottom: 8px;" id="manual-product-price"></div>
+          <div id="manual-color-buttons" style="display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px;"></div>
+          <div id="manual-size-buttons" style="display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px;"></div>
+          <button type="button" class="btn btn-primary" id="manual-add-btn" disabled>Agregar al pedido</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="actions-row">
+        <button type="button" class="btn btn-primary" id="save-btn" style="padding: 10px 24px;">Guardar cambios</button>
+        <button type="button" class="btn btn-primary" id="finalize-btn" style="padding: 10px 24px; background: #28a745;">Finalizar pedido e imprimir</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="../scripts/config.js"></script>
+  <script type="module" src="../scripts/supabase-client.js"></script>
+  <script type="module" src="./admin-auth.js"></script>
+  <script type="module" src="./local-order-edit.js"></script>
+</body>
+</html>

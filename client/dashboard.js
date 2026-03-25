@@ -2,6 +2,14 @@
 import { supabase } from "../scripts/supabase-client.js";
 import { hasRegisteredPasskeys, registerPasskey, checkPasskeySupport } from "../scripts/passkeys.js";
 import { hasInitialProfileComplete } from "./auth-helper.js";
+import { maybeShowProfileOnboardingModal } from "../scripts/profile-onboarding-modal.js";
+
+/** @returns {Promise<boolean>} true solo si el usuario guardó desde el modal (viene recarga) */
+async function showProfileOnboardingIfNeeded() {
+  return await maybeShowProfileOnboardingModal({
+    onComplete: () => window.location.reload(),
+  });
+}
 
 // Función para verificar autenticación y perfil
 async function checkAuthAndProfile() {
@@ -34,13 +42,13 @@ async function checkAuthAndProfile() {
     const hasInitialProfile = await hasInitialProfileComplete();
     
     if (!hasInitialProfile) {
-      console.log("📝 Usuario no tiene perfil inicial completo, redirigiendo a complete-profile.html");
-      window.location.replace("./complete-profile.html");
+      console.log("📝 Usuario sin perfil completo: modal de datos");
+      const saved = await showProfileOnboardingIfNeeded();
       return {
         hasSession: true,
         hasProfile: false,
         user: session.user,
-        redirecting: true,
+        redirecting: saved === true,
       };
     }
 
@@ -75,24 +83,24 @@ async function checkAuthAndProfile() {
 
     // Si no hay perfil, redirigir a complete-profile
     if (customerError && customerError.code !== "PGRST116") {
-      console.log("📝 Error obteniendo perfil, redirigiendo a complete-profile");
-      window.location.replace("./complete-profile.html");
+      console.log("📝 Error obteniendo perfil, modal de datos");
+      const saved = await showProfileOnboardingIfNeeded();
       return {
         hasSession: true,
         hasProfile: false,
         user: session.user,
-        redirecting: true,
+        redirecting: saved === true,
       };
     }
 
     if (!customer) {
-      console.log("📝 Sin perfil, redirigiendo a complete-profile");
-      window.location.replace("./complete-profile.html");
+      console.log("📝 Sin perfil, modal de datos");
+      const saved = await showProfileOnboardingIfNeeded();
       return {
         hasSession: true,
         hasProfile: false,
         user: session.user,
-        redirecting: true,
+        redirecting: saved === true,
       };
     }
 
@@ -102,7 +110,9 @@ async function checkAuthAndProfile() {
       customer.phone && 
       customer.dni && 
       customer.province && 
-      customer.city;
+      customer.city &&
+      customer.address &&
+      String(customer.address).trim() !== "";
 
     console.log("📋 Campos del cliente:");
     console.log("- full_name:", customer.full_name);
@@ -113,14 +123,14 @@ async function checkAuthAndProfile() {
     console.log("- hasAllInitialFields:", hasAllInitialFields);
 
     if (!hasAllInitialFields) {
-      console.log("📝 Perfil inicial incompleto, redirigiendo a complete-profile");
-      window.location.replace("./complete-profile.html");
+      console.log("📝 Perfil inicial incompleto, modal de datos");
+      const saved = await showProfileOnboardingIfNeeded();
       return {
         hasSession: true,
         hasProfile: false,
         user: session.user,
         customer: customer,
-        redirecting: true,
+        redirecting: saved === true,
       };
     }
 
@@ -194,6 +204,13 @@ async function checkAuthAndProfile() {
   }
 }
 
+/** Primer nombre para el saludo corto del header (B2B / operativo). */
+function getFirstNameForGreeting(displayName) {
+  const s = String(displayName || "").trim();
+  if (!s) return "Usuario";
+  return s.split(/\s+/)[0] || "Usuario";
+}
+
 // Función para mostrar información del usuario
 function displayUserInfo(user, customer) {
   try {
@@ -207,13 +224,28 @@ function displayUserInfo(user, customer) {
       userProfile.style.display = "flex";
     }
 
-    if (userAvatar && user.avatar_url) {
-      userAvatar.src = user.avatar_url;
+    if (userAvatar) {
+      const displayName =
+        customer?.full_name ||
+        user.user_metadata?.full_name ||
+        user.email?.split("@")[0] ||
+        "Usuario";
+      const primaryAvatarUrl =
+        user.avatar_url || user.user_metadata?.avatar_url || user.user_metadata?.picture;
+      const fallbackAvatarUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(
+        displayName
+      )}&background=CD844D&color=fff&size=96`;
+      userAvatar.onerror = () => {
+        userAvatar.onerror = null;
+        userAvatar.src = fallbackAvatarUrl;
+      };
+      userAvatar.src = primaryAvatarUrl || fallbackAvatarUrl;
       userAvatar.style.display = "block";
     }
 
     if (userName && customer) {
-      userName.textContent = customer.full_name || user.email;
+      const raw = customer.full_name || user.email || "";
+      userName.textContent = getFirstNameForGreeting(raw);
     }
 
     console.log("✅ Información del usuario mostrada");
@@ -222,148 +254,9 @@ function displayUserInfo(user, customer) {
   }
 }
 
-// Función para cargar items del carrito
-async function loadCartItems(customerId) {
-  try {
-    console.log("🛒 Cargando items del carrito...");
-
-    // Timeout para evitar carga infinita
-    const cartPromise = supabase
-      .from("cart_items")
-      .select("*")
-      .eq("cart_id", customerId);
-
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error("Timeout cargando carrito")), 3000)
-    );
-
-    const { data: cartItems, error } = await Promise.race([
-      cartPromise,
-      timeoutPromise,
-    ]);
-
-    if (error) {
-      console.error("❌ Error cargando items del carrito:", error);
-      showCartError();
-      return;
-    }
-
-    console.log("📦 Items del carrito cargados:", cartItems);
-
-    // Mostrar información del carrito
-    const cartInfo = document.getElementById("cart-info");
-    if (cartInfo) {
-      if (cartItems && cartItems.length > 0) {
-        const totalItems = cartItems.reduce(
-          (sum, item) => sum + (item.quantity || 0),
-          0
-        );
-        cartInfo.innerHTML = `
-          <h3>Carrito Actual</h3>
-          <p>Total de items: ${totalItems}</p>
-          <p>Items: ${cartItems.length}</p>
-        `;
-      } else {
-        cartInfo.innerHTML = `
-          <h3>Carrito Actual</h3>
-          <p>No hay items en el carrito</p>
-        `;
-      }
-    }
-  } catch (error) {
-    console.error("❌ Error cargando items del carrito:", error);
-    showCartError();
-  }
-}
-
-// Función para mostrar error del carrito
-function showCartError() {
-  const cartInfo = document.getElementById("cart-info");
-  if (cartInfo) {
-    cartInfo.innerHTML = `
-      <h3>Carrito Actual</h3>
-      <p style="color: #dc3545;">Error cargando carrito</p>
-      <button onclick="window.location.reload()" style="padding: 5px 10px; background: #6c757d; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 12px;">Reintentar</button>
-    `;
-  }
-}
-
-// Función para cargar pedidos
-async function loadOrders(customerId) {
-  try {
-    console.log("📋 Cargando pedidos...");
-
-    // Timeout para evitar carga infinita
-    const ordersPromise = supabase
-      .from("orders")
-      .select("*")
-      .eq("customer_id", customerId)
-      .order("created_at", { ascending: false });
-
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error("Timeout cargando pedidos")), 3000)
-    );
-
-    const { data: orders, error } = await Promise.race([
-      ordersPromise,
-      timeoutPromise,
-    ]);
-
-    if (error) {
-      console.error("❌ Error cargando pedidos:", error);
-      showOrdersError();
-      return;
-    }
-
-    console.log("📋 Pedidos cargados:", orders);
-
-    // Mostrar pedidos
-    const ordersSection = document.getElementById("orders-section");
-    if (ordersSection) {
-      if (orders && orders.length > 0) {
-        ordersSection.innerHTML = `
-          <h3>Mis Pedidos</h3>
-          <div class="orders-list">
-            ${orders
-              .map(
-                (order) => `
-              <div class="order-item">
-                <p><strong>Pedido #${order.id}</strong></p>
-                <p>Estado: ${order.status || "Pendiente"}</p>
-                <p>Total: $${order.total_amount || "0"}</p>
-                <p>Fecha: ${new Date(order.created_at).toLocaleDateString()}</p>
-              </div>
-            `
-              )
-              .join("")}
-          </div>
-        `;
-      } else {
-        ordersSection.innerHTML = `
-          <h3>Mis Pedidos</h3>
-          <p>No tienes pedidos aún.</p>
-        `;
-      }
-    }
-  } catch (error) {
-    console.error("❌ Error cargando pedidos:", error);
-    showOrdersError();
-  }
-}
-
-// Función para mostrar error de pedidos
-function showOrdersError() {
-  const ordersSection = document.getElementById("orders-section");
-  if (ordersSection) {
-    ordersSection.innerHTML = `
-      <h3>Mis Pedidos</h3>
-      <p style="color: #dc3545;">Error cargando pedidos</p>
-      <button onclick="window.location.reload()" style="padding: 5px 10px; background: #6c757d; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 12px;">Reintentar</button>
-    `;
-  }
-}
-
 // Función principal para inicializar el dashboard
+// IMPORTANTE: No reemplazar .dashboard-content ni cargar carrito/pedidos aquí.
+// El contenido lo pinta únicamente dashboard-instant.js (loadCart, loadOrders).
 async function initDashboard() {
   console.log("🏠 Inicializando dashboard...");
 
@@ -373,165 +266,31 @@ async function initDashboard() {
     loader.style.display = "none";
   }
 
-  // Mostrar contenido básico inmediatamente
-  showBasicDashboard();
+  // NO llamar showBasicDashboard() — dashboard-instant.js es el único que controla el DOM.
+  // NO cargar cart/orders desde aquí (loadCartItems usa cart_id = userId, incorrecto).
 
-  // Intentar cargar datos en segundo plano (sin bloquear)
   setTimeout(async () => {
     try {
       const authResult = await checkAuthAndProfile();
 
-      if (authResult.hasSession) {
-        console.log("✅ Usuario autenticado, actualizando información...");
+      if (authResult.redirecting) return;
+
+      if (authResult.hasSession && authResult.hasProfile) {
+        console.log("✅ Usuario autenticado, actualizando header...");
         displayUserInfo(authResult.user, authResult.customer);
-
-        // Cargar datos en segundo plano
-        loadDataInBackground(authResult.user.id);
-
-        if (authResult.allowBasicAccess && !authResult.hasProfile) {
-          showBasicAccessMessage();
-        }
-      } else {
-        console.log("👤 No hay sesión, mostrando dashboard básico");
-        showNoSessionMessage();
       }
+      // Mensajes de no-sesión y errores los muestra dashboard-instant.js (withAuth fallback).
     } catch (error) {
-      console.warn(
-        "⚠️ Error cargando datos, continuando con dashboard básico:",
-        error
-      );
-      showErrorMessage(error.message);
+      console.warn("⚠️ Error en checkAuthAndProfile:", error);
     }
   }, 100);
 
-  console.log("✅ Dashboard inicializado (modo no bloqueante)");
+  console.log("✅ Dashboard inicializado (solo auth/header; contenido por dashboard-instant)");
 }
 
-// Función para mostrar dashboard básico
-function showBasicDashboard() {
-  const dashboardContent = document.querySelector(".dashboard-content");
-  if (dashboardContent) {
-    dashboardContent.innerHTML = `
-      <div class="cart-section">
-        <h2 class="section-title">🛒 Carrito Actual</h2>
-        <div id="cart-info">
-          <p>Cargando información del carrito...</p>
-        </div>
-      </div>
-      
-      <div class="orders-section">
-        <h2 class="section-title">📋 Mis Pedidos</h2>
-        <div id="orders-section">
-          <p>Cargando historial de pedidos...</p>
-        </div>
-      </div>
-    `;
-  }
-}
-
-// Función para cargar datos en segundo plano
-async function loadDataInBackground(userId) {
-  // Cargar carrito
-  try {
-    await loadCartItems(userId);
-  } catch (error) {
-    console.warn("⚠️ Error cargando carrito:", error);
-    showCartError();
-  }
-
-  // Cargar pedidos
-  try {
-    await loadOrders(userId);
-  } catch (error) {
-    console.warn("⚠️ Error cargando pedidos:", error);
-    showOrdersError();
-  }
-}
-
-// Función para mostrar mensaje de no sesión
-function showNoSessionMessage() {
-  const dashboardContent = document.querySelector(".dashboard-content");
-  if (dashboardContent) {
-    const messageDiv = document.createElement("div");
-    messageDiv.style.cssText = `
-      background: #f8d7da;
-      border: 1px solid #f5c6cb;
-      border-radius: 8px;
-      padding: 15px;
-      margin-bottom: 20px;
-      color: #721c24;
-    `;
-    messageDiv.innerHTML = `
-      <div style="display: flex; align-items: center; gap: 10px;">
-        <span style="font-size: 20px;">🔒</span>
-        <div>
-          <strong>No hay sesión activa</strong>
-          <p style="margin: 5px 0 0 0; font-size: 14px;">
-            <a href="./login.html" style="color: #CD844D; text-decoration: underline;">Inicia sesión</a> para acceder a tu área personal.
-          </p>
-        </div>
-      </div>
-    `;
-    dashboardContent.insertBefore(messageDiv, dashboardContent.firstChild);
-  }
-}
-
-// Función para mostrar mensaje de error
-function showErrorMessage(errorMessage) {
-  const dashboardContent = document.querySelector(".dashboard-content");
-  if (dashboardContent) {
-    const messageDiv = document.createElement("div");
-    messageDiv.style.cssText = `
-      background: #fff3cd;
-      border: 1px solid #ffeaa7;
-      border-radius: 8px;
-      padding: 15px;
-      margin-bottom: 20px;
-      color: #856404;
-    `;
-    messageDiv.innerHTML = `
-      <div style="display: flex; align-items: center; gap: 10px;">
-        <span style="font-size: 20px;">⚠️</span>
-        <div>
-          <strong>Error cargando datos</strong>
-          <p style="margin: 5px 0 0 0; font-size: 14px;">
-            ${errorMessage}. <button onclick="window.location.reload()" style="color: #CD844D; text-decoration: underline; background: none; border: none; cursor: pointer;">Reintentar</button>
-          </p>
-        </div>
-      </div>
-    `;
-    dashboardContent.insertBefore(messageDiv, dashboardContent.firstChild);
-  }
-}
-
-// Función para mostrar mensaje de acceso básico
-function showBasicAccessMessage() {
-  const dashboardContent = document.querySelector(".dashboard-content");
-  if (dashboardContent) {
-    const messageDiv = document.createElement("div");
-    messageDiv.style.cssText = `
-      background: #fff3cd;
-      border: 1px solid #ffeaa7;
-      border-radius: 8px;
-      padding: 15px;
-      margin-bottom: 20px;
-      color: #856404;
-    `;
-    messageDiv.innerHTML = `
-      <div style="display: flex; align-items: center; gap: 10px;">
-        <span style="font-size: 20px;">⚠️</span>
-        <div>
-          <strong>Acceso Básico</strong>
-          <p style="margin: 5px 0 0 0; font-size: 14px;">
-            Para una experiencia completa, completa tu perfil 
-            <a href="./profile.html" style="color: #CD844D; text-decoration: underline;">aquí</a>.
-          </p>
-        </div>
-      </div>
-    `;
-    dashboardContent.insertBefore(messageDiv, dashboardContent.firstChild);
-  }
-}
+// showBasicDashboard / loadDataInBackground / loadCartItems / loadOrders eliminados como
+// controladores del DOM: dashboard-instant.js es el único que pinta #cart-info y #orders-section.
+// Mensajes de no-sesión/error los muestra dashboard-instant (withAuth fallback).
 
 // Función para verificar y mostrar modal de passkey
 async function checkAndShowPasskeyModal() {

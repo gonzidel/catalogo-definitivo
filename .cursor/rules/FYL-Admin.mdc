@@ -1,0 +1,15 @@
+---
+alwaysApply: true
+---
+
+Admin area rules:
+
+Main admin code is inside admin/.
+
+Keep admin logic separate from catalog and client dashboard.
+
+Do not introduce frameworks.
+
+Preserve compatibility with existing Supabase tables, RPCs and admin flows.
+
+Prefer minimal targeted changes inside admin/ without affecting public catalog behavior.

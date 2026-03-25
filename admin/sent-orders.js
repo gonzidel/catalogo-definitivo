@@ -1,4 +1,7 @@
 // Importar dinámicamente para asegurar que se cargue después
+// Importar configuración de Supabase y QZ
+import { SUPABASE_URL, QZ_SIGN_SECRET } from "../scripts/config.js";
+
 let supabase = null;
 
 // Función para obtener supabase, esperando a que esté disponible
@@ -11,7 +14,7 @@ async function getSupabase() {
     supabase = window.supabase;
     return supabase;
   }
-  
+
   // Esperar hasta que window.supabase esté disponible (supabase-client.js lo asigna)
   let attempts = 0;
   const maxAttempts = 50; // 5 segundos máximo
@@ -19,30 +22,30 @@ async function getSupabase() {
     await new Promise(resolve => setTimeout(resolve, 100));
     attempts++;
   }
-  
+
   if (window.supabase) {
     supabase = window.supabase;
     return supabase;
   }
-  
+
   // Si aún no está disponible, intentar importar
   try {
     const module = await import("../scripts/supabase-client.js");
     supabase = module.supabase || window.supabase;
-    
+
     // Esperar un poco más
     if (!supabase) {
       await new Promise(resolve => setTimeout(resolve, 500));
       supabase = module.supabase || window.supabase;
     }
-    
+
     if (supabase) {
       if (!window.supabase) {
         window.supabase = supabase;
       }
       return supabase;
     }
-    
+
     console.error("❌ Supabase no disponible");
     return null;
   } catch (error) {
@@ -62,44 +65,46 @@ async function initSentOrders() {
   try {
     // Obtener Supabase, esperando a que esté disponible
     supabase = await getSupabase();
-    
+
     if (!supabase) {
       // Intentar una vez más después de un delay
       await new Promise(resolve => setTimeout(resolve, 1000));
       supabase = window.supabase;
-      
+
       if (!supabase) {
         console.error("❌ Supabase no disponible");
         alert("Error: Supabase no disponible. Por favor, recarga la página.");
         return;
       }
     }
-    
+
     // Verificar autenticación primero
     const { data: { user }, error: authError } = await supabase.auth.getUser();
-    
+
     if (authError || !user) {
       // Usuario no autenticado: redirigir a index.html para login
       window.location.href = "index.html";
       return;
     }
-    
+
     // Usuario autenticado, verificar si es admin
     const isAdmin = await verifyAdminAuth();
-    
+
     if (!isAdmin) {
       // Usuario autenticado pero no es admin: redirigir
       window.location.href = "index.html";
       return;
     }
-    
+
     // Usuario es admin, continuar con la carga
     setupSearch();
     setupModal();
+    setupPaymentMethodModalForLabel();
     await loadWarehouses();
     await loadScheduledTransports();
     await loadSentOrders();
     setupPrintLabelsButtons();
+    setupPrintTicketButtons();
     setupDeleteItemButtons();
     setupDevolucionButtons();
   } catch (error) {
@@ -114,7 +119,7 @@ async function verifyAdminAuth() {
     if (!supabase) {
       supabase = await getSupabase();
     }
-    
+
     if (!supabase) {
       return false;
     }
@@ -153,7 +158,7 @@ async function verifyAdminAuth() {
 async function loadSentOrders() {
   const customersContent = document.getElementById("customers-content");
   if (!customersContent) return;
-  
+
   if (!supabase) {
     supabase = await getSupabase();
   }
@@ -223,7 +228,7 @@ async function loadSentOrders() {
 
     // Obtener customer_ids únicos
     const customerIds = [...new Set(orders.map(order => order.customer_id).filter(Boolean))];
-    
+
     // Obtener información de customers (incluyendo transport_id)
     const { data: customersData, error: customersError } = await supabase
       .from("customers")
@@ -243,7 +248,7 @@ async function loadSentOrders() {
 
     // Agrupar pedidos por cliente y obtener la fecha más reciente
     const customersMap = new Map();
-    
+
     // Inicializar mapa de clientes
     if (customersData) {
       customersData.forEach(customer => {
@@ -303,18 +308,18 @@ function renderCustomers(customers) {
   // Filtrar por término de búsqueda
   const filteredCustomers = searchTerm
     ? customers.filter(customer => {
-        const searchLower = searchTerm.toLowerCase();
-        const name = (customer.full_name || "").toLowerCase();
-        const parts = name.split(/\s+/);
-        let combined = name;
-        if (parts.length > 1) {
-          const last = parts[parts.length-1];
-          const first = parts.slice(0,-1).join(' ');
-          combined = `${last}, ${first}`.toLowerCase();
-        }
-        const customerNumber = (customer.customer_number || "").toLowerCase();
-        return name.includes(searchLower) || combined.includes(searchLower) || customerNumber.includes(searchLower);
-      })
+      const searchLower = searchTerm.toLowerCase();
+      const name = (customer.full_name || "").toLowerCase();
+      const parts = name.split(/\s+/);
+      let combined = name;
+      if (parts.length > 1) {
+        const last = parts[parts.length - 1];
+        const first = parts.slice(0, -1).join(' ');
+        combined = `${last}, ${first}`.toLowerCase();
+      }
+      const customerNumber = (customer.customer_number || "").toLowerCase();
+      return name.includes(searchLower) || combined.includes(searchLower) || customerNumber.includes(searchLower);
+    })
     : customers;
 
   if (filteredCustomers.length === 0) {
@@ -331,7 +336,7 @@ function renderCustomers(customers) {
     .map(customer => {
       const location = [customer.city, customer.province].filter(Boolean).join(" - ") || "Sin ubicación";
       const ordersCount = customer.orders.length;
-      
+
       return `
         <div class="customer-card" data-customer-id="${customer.id}">
           <div class="customer-card-header">
@@ -372,7 +377,7 @@ function setupSearch() {
 function setupModal() {
   const modal = document.getElementById("customer-modal");
   const closeBtn = document.getElementById("modal-close-btn");
-  
+
   if (!modal || !closeBtn) return;
 
   // Cerrar modal al hacer click en el botón de cerrar
@@ -405,15 +410,57 @@ function openCustomerModal(customer) {
 
   // Mostrar información del cliente
   modalCustomerName.textContent = formatCustomerDisplayName(customer);
-  
+
   const location = [customer.city, customer.province].filter(Boolean).join(" - ") || "Sin ubicación";
+  
+  // Preparar selector de transporte
+  const transportOptions = scheduledTransports.map(t => 
+    `<option value="${t.id}" ${customer.transport_id === t.id ? 'selected' : ''}>${t.name}</option>`
+  ).join('');
+  
   modalCustomerInfo.innerHTML = `
     <p><strong>Número de Cliente:</strong> #${customer.customer_number || "N/A"}</p>
     <p><strong>Email:</strong> ${customer.email || "Sin email"}</p>
     <p><strong>Teléfono:</strong> ${customer.phone || "Sin teléfono"}</p>
     <p><strong>DNI:</strong> ${customer.dni || "Sin DNI"}</p>
     <p><strong>Ubicación:</strong> ${location}</p>
+    <div class="transport-section" style="margin-top: 16px; padding: 12px; background: #f8f9fa; border-radius: 8px;">
+      <strong>🚚 Transporte:</strong>
+      <div class="transport-selector" style="margin-top: 8px;">
+        <select class="transport-select" data-customer-id="${customer.id}" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px;">
+          <option value="">Sin transporte</option>
+          ${transportOptions}
+        </select>
+      </div>
+    </div>
   `;
+
+  // Event listener para selector de transporte
+  const transportSelect = modal.querySelector('.transport-select');
+  if (transportSelect) {
+    transportSelect.addEventListener('change', async (e) => {
+      const customerId = e.target.dataset.customerId;
+      const transportId = e.target.value || null;
+      
+      e.target.disabled = true;
+      const originalValue = e.target.value;
+      
+      try {
+        const success = await saveTransportForCustomer(customerId, transportId);
+        if (!success) {
+          e.target.value = originalValue;
+        } else {
+          console.log(`✅ Transporte actualizado para cliente ${customerId}`);
+        }
+      } catch (error) {
+        console.error("❌ Error al guardar transporte:", error);
+        e.target.value = originalValue;
+        alert("Error al guardar el transporte: " + (error.message || 'Error desconocido'));
+      } finally {
+        e.target.disabled = false;
+      }
+    });
+  }
 
   // Ordenar pedidos por fecha más reciente primero (usar sent_at, o updated_at como fallback)
   const sortedOrders = [...customer.orders].sort((a, b) => {
@@ -443,7 +490,7 @@ function openCustomerModal(customer) {
         });
         const orderNumber = order.order_number || order.id.substring(0, 8);
         const orderItems = order.order_items || [];
-        
+
         // Calcular subtotal excluyendo items faltantes
         const validItems = orderItems.filter(item => item.status !== 'missing');
         const subtotal = validItems.reduce((sum, item) => {
@@ -451,7 +498,7 @@ function openCustomerModal(customer) {
           const price = Number(item.price_snapshot || 0);
           return sum + (quantity * price);
         }, 0);
-        
+
         // Calcular extras desde notes si existen
         let extrasTotal = 0;
         if (order.notes) {
@@ -462,27 +509,27 @@ function openCustomerModal(customer) {
             const extrasAmount = parseFloat(extraValues.extras_amount) || 0;
             const extrasPercentage = parseFloat(extraValues.extras_percentage) || 0;
             const extrasFromPercentage = extrasPercentage > 0 ? (subtotal * extrasPercentage / 100) : 0;
-            
+
             extrasTotal = shipping - discount + extrasAmount + extrasFromPercentage;
           } catch (e) {
             console.warn("⚠️ Error parseando notes del pedido:", e);
           }
         }
-        
+
         // Usar total_amount del pedido (que incluye extras) o calcularlo
         const total = order.total_amount ? Number(order.total_amount) : (subtotal + extrasTotal);
-        
+
         // Generar HTML de items del pedido
         const itemsHtml = orderItems.length > 0
           ? orderItems.map(item => {
-              const itemImage = item.imagen || "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%23f2f2f2'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='.3em' fill='%23999' font-size='12'%3ESin imagen%3C/text%3E%3C/svg%3E";
-              const itemQuantity = Number(item.quantity || 0);
-              const itemPrice = Number(item.price_snapshot || 0);
-              const itemSubtotal = itemQuantity * itemPrice;
-              const isMissing = item.status === 'missing';
-              const itemClass = isMissing ? 'order-item-detail missing' : 'order-item-detail';
-              
-              return `
+            const itemImage = item.imagen || "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%23f2f2f2'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='.3em' fill='%23999' font-size='12'%3ESin imagen%3C/text%3E%3C/svg%3E";
+            const itemQuantity = Number(item.quantity || 0);
+            const itemPrice = Number(item.price_snapshot || 0);
+            const itemSubtotal = itemQuantity * itemPrice;
+            const isMissing = item.status === 'missing';
+            const itemClass = isMissing ? 'order-item-detail missing' : 'order-item-detail';
+
+            return `
                 <div class="${itemClass}">
                   <img src="${itemImage}" alt="${item.product_name || 'Producto'}" class="order-item-detail-image" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'64\\' height=\\'64\\' viewBox=\\'0 0 64 64\\'%3E%3Crect width=\\'64\\' height=\\'64\\' fill=\\'%23f2f2f2\\'/%3E%3Ctext x=\\'50%25\\' y=\\'50%25\\' text-anchor=\\'middle\\' dy=\\'.3em\\' fill=\\'%23999\\' font-size=\\'12\\'%3ESin imagen%3C/text%3E%3C/svg%3E'">
                   <div class="order-item-detail-info">
@@ -496,13 +543,13 @@ function openCustomerModal(customer) {
                   </div>
                 </div>
               `;
-            }).join("")
+          }).join("")
           : "<p style='color: #666; font-size: 14px;'>No hay productos en este pedido.</p>";
-        
+
         // Determinar si el pedido está en devolución
         const isDevolucion = order.status === 'devolución';
         const orderItemClass = isDevolucion ? 'order-date-item devolucion' : 'order-date-item';
-        
+
         return `
           <div class="${orderItemClass}" data-order-id="${order.id}">
             <div class="order-card-layout">
@@ -512,9 +559,10 @@ function openCustomerModal(customer) {
                   <span class="order-number">#${orderNumber}</span>
                 </div>
                 <div class="order-total">Total: $${total.toLocaleString("es-AR")}</div>
-                <div style="display: flex; gap: 8px; margin-top: 8px;">
+                <div style="display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap;">
                   <button class="modify-order-btn" data-modify-order="${order.id}">✏️ Modificar</button>
-                  <button class="btn btn-warning" data-print-labels="${order.id}" style="background: #ffc107; color: #000; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: background 0.2s;">Imprimir rótulos</button>
+                  <button class="btn btn-warning" data-print-labels="${order.id}" style="background: #ffc107; color: #000; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: background 0.2s; white-space: nowrap;">Imprimir rótulos</button>
+                  <button class="btn btn-primary" data-print-ticket="${order.id}" style="background: #17a2b8; color: #000; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: background 0.2s; white-space: nowrap;">Imprimir ticket</button>
                 </div>
               </div>
               <div class="order-card-right">
@@ -537,16 +585,16 @@ function openCustomerModal(customer) {
       .join("");
 
     modalOrdersList.innerHTML = ordersHtml;
-    
+
     // Agregar event listeners para expandir/contraer pedidos
     document.querySelectorAll("[data-order-toggle]").forEach(toggleBtn => {
       toggleBtn.addEventListener("click", (e) => {
         e.stopPropagation(); // Evitar que se propague el evento
-        
+
         const orderId = toggleBtn.dataset.orderToggle;
         const orderItem = document.querySelector(`[data-order-id="${orderId}"]`);
         const itemsDetail = document.getElementById(`order-items-${orderId}`);
-        
+
         if (orderItem && itemsDetail) {
           // Toggle expanded
           if (orderItem.classList.contains("expanded")) {
@@ -562,7 +610,7 @@ function openCustomerModal(customer) {
                 expandedDetail.classList.remove("visible");
               }
             });
-            
+
             // Expandir este pedido
             orderItem.classList.add("expanded");
             itemsDetail.classList.add("visible");
@@ -570,7 +618,7 @@ function openCustomerModal(customer) {
         }
       });
     });
-    
+
     // Agregar event listeners para botones Modificar
     document.querySelectorAll("[data-modify-order]").forEach(modifyBtn => {
       modifyBtn.addEventListener("click", (e) => {
@@ -610,23 +658,23 @@ async function initWhenReady() {
       document.addEventListener("DOMContentLoaded", resolve);
     });
   }
-  
+
   // Esperar a que Supabase esté disponible
   supabase = await getSupabase();
-  
+
   if (!supabase) {
     console.error("❌ No se pudo obtener Supabase");
     alert("Error: No se pudo conectar con Supabase. Por favor, recarga la página.");
     return;
   }
-  
+
   await initSentOrders();
 }
 
 // Función para manejar el clic en el botón Modificar
 function handleModifyOrder(orderId) {
   console.log("🔵 handleModifyOrder: orderId:", orderId);
-  
+
   // Esperar a que window.openEditOrderModal esté disponible
   if (typeof window.openEditOrderModal === 'function') {
     window.openEditOrderModal(orderId);
@@ -649,10 +697,10 @@ function handleModifyOrder(orderId) {
 
 // Función para recargar pedidos enviados después de editar
 // Exponer globalmente para que order-creator.js pueda llamarla
-window.loadSentOrders = async function() {
+window.loadSentOrders = async function () {
   console.log("🔄 Recargando pedidos enviados...");
   await loadSentOrders();
-  
+
   // Si hay un modal abierto, cerrarlo y reabrirlo para mostrar los cambios
   const modal = document.getElementById("customer-modal");
   if (modal && modal.classList.contains("active")) {
@@ -677,16 +725,185 @@ window.loadSentOrders = async function() {
 // QZ Tray - Funciones helper para TSC
 // ============================================================================
 
+// Función helper para configurar firma remota de QZ Tray
+async function setupQZSignature() {
+  if (typeof qz === 'undefined' || !qz || !qz.security) {
+    console.warn("⚠️ QZ Tray no disponible");
+    return;
+  }
+
+  try {
+    console.log("🔧 Configurando certificado y firma remota de QZ Tray...");
+
+    // PASO 1: Precargar y configurar certificado público (ANTES de la firma)
+    console.log("📜 setCertificatePromise: cargando /certs/qz-site.crt");
+    let certText = null;
+    try {
+      const certResponse = await fetch("/certs/qz-site.crt", { cache: "no-store" });
+      if (!certResponse.ok) {
+        throw new Error(`HTTP ${certResponse.status}: ${certResponse.statusText}`);
+      }
+      
+      // Verificar Content-Type para detectar si se está sirviendo HTML
+      const contentType = certResponse.headers.get("content-type") || "";
+      if (contentType.includes("text/html")) {
+        throw new Error("El servidor está sirviendo HTML en lugar del certificado. Verifica que /certs/qz-site.crt esté desplegado correctamente en Firebase Hosting.");
+      }
+      
+      certText = await certResponse.text();
+      
+      // Verificar que no sea HTML antes de procesar
+      if (certText.trim().startsWith("<!DOCTYPE") || certText.trim().startsWith("<html")) {
+        throw new Error("Se recibió HTML en lugar del certificado. El archivo /certs/qz-site.crt no está disponible o Firebase está sirviendo index.html en su lugar.");
+      }
+      
+      console.log("✅ cert cargado, len=", certText.length, "begin=", certText.includes("BEGIN CERTIFICATE"));
+    } catch (certError) {
+      console.error("❌ Error cargando certificado desde /certs/qz-site.crt:", certError);
+      console.warn("⚠️ Intentando cargar certificado desde ruta alternativa...");
+      
+      // Intentar rutas alternativas
+      const alternativePaths = [
+        "/qz-site.crt",
+        "./qz-site.crt",
+        "../qz-site.crt",
+        "qz-site.crt"
+      ];
+      
+      for (const path of alternativePaths) {
+        try {
+          const altResponse = await fetch(path, { cache: "no-store" });
+          if (altResponse.ok) {
+            certText = await altResponse.text();
+            // Verificar que no sea HTML
+            if (!certText.trim().startsWith("<!DOCTYPE") && !certText.trim().startsWith("<html")) {
+              console.log(`✅ Certificado cargado desde ruta alternativa: ${path}`);
+              break;
+            }
+          }
+        } catch (e) {
+          console.warn(`⚠️ No se pudo cargar desde ${path}:`, e.message);
+        }
+      }
+      
+      if (!certText) {
+        console.error("❌ No se pudo cargar el certificado desde ninguna ruta");
+        throw new Error(`No se pudo cargar el certificado. Error original: ${certError.message}`);
+      }
+    }
+
+    qz.security.setCertificatePromise((resolve, reject) => {
+      console.log("📜 setCertificatePromise: resolviendo certificado precargado");
+      if (certText) {
+        const match = certText.match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/);
+        if (match) {
+          console.log("✅ Certificado sanitizado encontrado");
+          resolve(match[0]);
+        } else {
+          console.warn("⚠️ No se pudo extraer bloque limpio, usando texto original");
+          resolve(certText);
+        }
+      } else {
+        reject(new Error("Certificado vacío"));
+      }
+    });
+
+    console.log("✅ Certificado público configurado");
+
+    // IMPORTANTE: Configurar algoritmo SHA-512 (requerido por QZ Tray 2.1+)
+    qz.security.setSignatureAlgorithm("SHA512");
+    console.log("✅ Algoritmo de firma configurado: SHA512");
+
+    // PASO 2: Configurar firma remota (DESPUÉS del certificado)
+    qz.security.setSignaturePromise(async (toSign) => {
+      console.log("🔐 QZ Tray solicitó firma. Longitud:", toSign?.length || 0);
+
+      if (!toSign || typeof toSign !== 'string') {
+        throw new Error("toSign inválido o vacío");
+      }
+
+      // Obtener secret y URL desde config (con fallback)
+      const secret = QZ_SIGN_SECRET || 
+        (typeof window !== 'undefined' ? window.QZ_SIGN_SECRET : "") ||
+        "a8cc79b81b8552702d7deccbef31c1eea7a30043b032d136a8eb4671614b5b75";
+
+      const supabaseUrl = SUPABASE_URL || 
+        (typeof window !== 'undefined' ? window.SUPABASE_URL : "");
+
+      if (!supabaseUrl) {
+        console.error("❌ SUPABASE_URL no definido");
+        throw new Error("SUPABASE_URL no definido");
+      }
+
+      console.log("📡 Enviando request de firma a Edge Function...");
+      console.log("📤 toSign a enviar (len=" + toSign.length + "):", toSign.substring(0, 50) + "...");
+
+      // IMPORTANTE: Enviar toSign como text/plain (no JSON) para evitar alteraciones
+      // QZ Tray requiere que el string llegue exactamente igual, sin JSON.stringify
+      const res = await fetch(`${supabaseUrl}/functions/v1/qz-sign`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "text/plain;charset=utf-8",
+          "x-qz-secret": secret
+        },
+        body: toSign // Enviar directamente, sin JSON.stringify
+      });
+
+      console.log("📥 Respuesta recibida. Status:", res.status);
+
+      if (!res.ok) {
+        const errorText = await res.text();
+        console.error("❌ Error HTTP:", res.status, errorText);
+        throw new Error(`Error en firma: ${res.status} - ${errorText}`);
+      }
+
+      const signature = (await res.text()).trim();
+      console.log("✅ Firma generada correctamente. Longitud:", signature.length);
+      return signature;
+    });
+
+    console.log("✅ Certificado y firma remota configurados para QZ Tray");
+    console.log("✅ QZ Security Configured");
+  } catch (e) {
+    console.error("❌ Error setupQZSignature:", e);
+  }
+}
+
 async function qzConnect() {
   if (typeof qz === 'undefined' || !qz || !qz.websocket) {
     throw new Error("QZ Tray no está disponible");
   }
-  
+
+  // Asegurar que el certificado y la firma estén configurados ANTES de conectar
+  await setupQZSignature();
+
   if (!qz.websocket.isActive()) {
     try {
+      console.log("🚀 conectando QZ...");
       await qz.websocket.connect();
       console.log("✅ QZ Tray conectado");
     } catch (error) {
+      console.error("❌ Error conectando QZ Tray:", error);
+      
+      // Mejorar mensaje de error para "Connection blocked"
+      if (error.message && error.message.includes("Connection blocked")) {
+        const improvedError = new Error("No se pudo establecer conexión con QZ Tray.\n\n" +
+          "El sitio web está bloqueado por QZ Tray.\n\n" +
+          "Para solucionarlo:\n" +
+          "1. Abrí QZ Tray (buscalo en la bandeja del sistema)\n" +
+          "2. Click derecho en el ícono de QZ Tray\n" +
+          "3. Seleccioná 'Site Manager' o 'Administrador de Sitios'\n" +
+          "4. Agregá esta URL a la lista de sitios permitidos:\n" +
+          `   ${window.location.origin}\n\n` +
+          "5. Guardá los cambios y recargá esta página\n\n" +
+          "Si el problema persiste, verificá que:\n" +
+          "- QZ Tray esté instalado y corriendo\n" +
+          "- El certificado /certs/qz-site.crt esté disponible en el servidor\n" +
+          "- No haya firewall o antivirus bloqueando la conexión");
+        improvedError.stack = error.stack;
+        throw improvedError;
+      }
+      
       throw error;
     }
   }
@@ -717,6 +934,92 @@ async function qzGetPrinterConfigTsc() {
   return qz.configs.create(printerName);
 }
 
+/**
+ * Obtiene la configuración de la impresora POS-80 específicamente para tickets
+ * @returns {Promise<Object>} Configuración de QZ para la impresora POS-80
+ */
+async function qzGetPrinterConfigPos80() {
+  await qzConnect();
+
+  const printers = await qz.printers.find();
+  console.log("🖨️ Impresoras disponibles en QZ:", printers);
+
+  // Buscar impresora POS-80 (case-insensitive)
+  const printerName = printers.find(p => /pos-80/i.test(p) || /pos80/i.test(p));
+
+  if (!printerName) {
+    console.error("❌ No se encontró la impresora POS-80 en la lista:", printers);
+    throw new Error(
+      "No se encontró la impresora POS-80 en la lista de QZ Tray. " +
+      "Verificá que la POS-80 aparezca en el menú Printers de QZ."
+    );
+  }
+
+  console.log("✅ Impresora POS-80 seleccionada:", printerName);
+  return qz.configs.create(printerName);
+}
+
+// ============================================================================
+// Funciones helper para formateo de tickets
+// ============================================================================
+
+const TICKET_WIDTH = 42;
+
+/**
+ * Convierte un valor a string de forma segura
+ * @param {any} text - Valor a convertir
+ * @returns {string}
+ */
+function toStr(text) {
+  return (text === null || text === undefined) ? "" : text.toString();
+}
+
+/**
+ * Rellena texto a la derecha hasta el ancho especificado
+ * @param {string} text - Texto a rellenar
+ * @param {number} width - Ancho deseado
+ * @returns {string}
+ */
+function padRight(text, width) {
+  text = toStr(text);
+  if (width <= 0) return "";
+  if (text.length >= width) {
+    return text.slice(0, width);
+  }
+  return text + " ".repeat(width - text.length);
+}
+
+/**
+ * Rellena texto a la izquierda hasta el ancho especificado
+ * @param {string} text - Texto a rellenar
+ * @param {number} width - Ancho deseado
+ * @returns {string}
+ */
+function padLeft(text, width) {
+  text = toStr(text);
+  if (width <= 0) return "";
+  if (text.length >= width) {
+    return text.slice(0, width);
+  }
+  return " ".repeat(width - text.length) + text;
+}
+
+/**
+ * Centra texto en el ancho especificado
+ * @param {string} text - Texto a centrar
+ * @param {number} width - Ancho deseado (por defecto TICKET_WIDTH)
+ * @returns {string}
+ */
+function center(text, width = TICKET_WIDTH) {
+  text = toStr(text);
+  if (width <= 0) return "";
+  if (text.length >= width) {
+    return text.slice(0, width);
+  }
+  const left = Math.floor((width - text.length) / 2);
+  return " ".repeat(left) + text;
+}
+
 function buildTsplShippingLabel(shippingLabel, packageNumber = 1, totalPackages = 1) {
   const clean = (v) =>
     (v ?? "")
@@ -724,14 +1027,14 @@ function buildTsplShippingLabel(shippingLabel, packageNumber = 1, totalPackages 
       .replace(/[\r\n]+/g, " ")
       .replace(/"/g, "'");
 
-  const fullName   = clean(shippingLabel.fullName).toUpperCase();
-  const address    = clean(shippingLabel.address);
-  const locality   = clean(shippingLabel.locality);
-  const province   = clean(shippingLabel.province);
-  const phone      = clean(shippingLabel.phone);
-  const carrier    = clean(shippingLabel.carrier);
+  const fullName = clean(shippingLabel.fullName).toUpperCase();
+  const address = clean(shippingLabel.address);
+  const locality = clean(shippingLabel.locality);
+  const province = clean(shippingLabel.province);
+  const phone = clean(shippingLabel.phone);
+  const carrier = clean(shippingLabel.carrier);
   const itemsCount = clean(shippingLabel.itemsCount);
-  const amount     = clean(shippingLabel.amount);
+  const amount = clean(shippingLabel.amount);
   const paymentMethod = clean(shippingLabel.paymentMethod || '');
   const packagesText = totalPackages > 1 ? `${packageNumber} / ${totalPackages}` : "1";
 
@@ -773,7 +1076,7 @@ function buildTsplShippingLabel(shippingLabel, packageNumber = 1, totalPackages 
 
   let currentY = 30;
   lines.push(`TEXT 20,${currentY},"3",0,2.0,2.0,"${nameLine1}"`);
-  
+
   if (nameLine2) {
     currentY += 40;
     lines.push(`TEXT 20,${currentY},"3",0,2.0,2.0,"${nameLine2}"`);
@@ -784,7 +1087,7 @@ function buildTsplShippingLabel(shippingLabel, packageNumber = 1, totalPackages 
 
   currentY += 20;
   lines.push(`TEXT 20,${currentY},"3",0,2,2,"${addressLine1}"`);
-  
+
   if (addressLine2) {
     currentY += 45;
     lines.push(`TEXT 20,${currentY},"3",0,2,2,"${addressLine2}"`);
@@ -802,35 +1105,35 @@ function buildTsplShippingLabel(shippingLabel, packageNumber = 1, totalPackages 
   currentY += 10; // Espacio adicional después de línea
   const cityProvText = `${locality} - ${province}`;
   lines.push(`TEXT 20,${currentY},"2",0,2.5,2.5,"${cityProvText}"`);
-  
+
   currentY += 50;
   lines.push(`TEXT 20,${currentY},"2",0,2.5,2.5,"Tel: ${phone}"`);
-  
+
   // Línea horizontal después del teléfono (usando guiones)
   currentY += 40; // Espacio más grande antes de la línea para no atravesar el teléfono
   const lineDashes2 = "-".repeat(50); // Crear línea con guiones
   lines.push(`TEXT 20,${currentY},"1",0,1,1,"${lineDashes2}"`);
   currentY += 15; // Espacio después de la línea
-  
+
   currentY += 75; // Espacio después de la línea (ajustado desde 100)
   lines.push(`TEXT 20,${currentY},"2",0,2.5,2.5,"Transporte: ${carrier}"`);
-  
+
   currentY += 50;
   lines.push(`TEXT 20,${currentY},"2",0,2.5,2.5,"Productos: ${itemsCount}"`);
-  
+
   currentY += 50;
   lines.push(`TEXT 20,${currentY},"2",0,2.5,2.5,"Total: $${amount}"`);
-  
+
   currentY += 100;
   lines.push(`TEXT 20,${currentY},"2",0,2.5,2.5,"Paquetes: ${packagesText}"`);
-  
+
   const remitenteX = 550;
   const remitenteY = 550;
-  
+
   // Método de pago arriba de Rte. (sin etiqueta, solo el método, en mayúsculas y letra más grande)
   if (paymentMethod) {
     const paymentMethodUpper = paymentMethod.toUpperCase();
-    
+
     // Si es "Contra Reembolso", dividir en dos líneas
     if (paymentMethodUpper.includes("CONTRA") && paymentMethodUpper.includes("REEMBOLSO")) {
       // Dividir "CONTRA REEMBOLSO" en dos líneas con más separación
@@ -843,11 +1146,11 @@ function buildTsplShippingLabel(shippingLabel, packageNumber = 1, totalPackages 
       lines.push(`TEXT ${remitenteX},${remitenteY - 80},"3",0,2.0,2.0,"${paymentMethodUpper}"`);
     }
   }
-  
+
   lines.push(`TEXT ${remitenteX},${remitenteY},"1",0,1,1,"Rte. FyL Moda"`);
   lines.push(`TEXT ${remitenteX},${remitenteY + 25},"1",0,1,1,"Av. Alberdi 1099"`);
   lines.push(`TEXT ${remitenteX},${remitenteY + 50},"1",0,1,1,"Resistencia - Chaco"`);
-  
+
   lines.push('PRINT 1');
 
   return lines.join('\r\n') + '\r\n';
@@ -868,12 +1171,12 @@ async function printTscShippingLabel(shippingLabel, copies = 1) {
     for (let i = 0; i < copies; i++) {
       const packageNumber = i + 1;
       const tspl = buildTsplShippingLabel(shippingLabel, packageNumber, copies);
-      
+
       if (i === 0) {
         console.log("📄 TSPL generado (primeras líneas):");
         console.log(tspl.split('\r\n').slice(0, 10));
       }
-      
+
       jobs.push({
         type: "raw",
         format: "command",
@@ -894,8 +1197,8 @@ async function printTscShippingLabel(shippingLabel, copies = 1) {
 
 function prepareShippingLabelFromOrder(order, customer) {
   // Obtener transporte asignado
-  const transportId = (customer.transport_id !== undefined ? customer.transport_id : null) || 
-                      (order.transport_id !== undefined ? order.transport_id : null);
+  const transportId = (customer.transport_id !== undefined ? customer.transport_id : null) ||
+    (order.transport_id !== undefined ? order.transport_id : null);
   const transport = scheduledTransports.find(t => t.id === transportId);
   const carrier = transport ? transport.name : (customer.transport_id ? 'Sin transporte' : 'Sin transporte asignado');
 
@@ -909,9 +1212,9 @@ function prepareShippingLabelFromOrder(order, customer) {
   const total = typeof order.total_amount === "number"
     ? order.total_amount
     : (order.order_items || []).reduce(
-        (sum, item) => sum + (item.quantity || 0) * ((item.price_snapshot || 0)),
-        0
-      );
+      (sum, item) => sum + (item.quantity || 0) * ((item.price_snapshot || 0)),
+      0
+    );
 
   // Formatear monto sin símbolo de moneda para el rótulo
   const amount = total.toLocaleString("es-AR", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
@@ -930,23 +1233,101 @@ function prepareShippingLabelFromOrder(order, customer) {
   };
 }
 
+// Función para guardar transporte del cliente
+async function saveTransportForCustomer(customerId, transportId) {
+  if (!supabase) {
+    supabase = await getSupabase();
+  }
+  if (!supabase) {
+    console.error("❌ Supabase no disponible");
+    return false;
+  }
+
+  try {
+    console.log(`💾 Guardando transporte para cliente ${customerId}: ${transportId || 'null'}`);
+    
+    // Usar función RPC rpc_update_customer_transport
+    const { data, error } = await supabase.rpc('rpc_update_customer_transport', {
+      p_customer_id: customerId,
+      p_transport_id: transportId || null
+    });
+    
+    if (error) {
+      console.error("❌ Error guardando transporte:", error);
+      alert("No se pudo guardar el transporte: " + (error.message || 'Error desconocido'));
+      return false;
+    }
+    
+    // Actualizar datos en memoria
+    const customer = allCustomersData.find(c => c.id === customerId);
+    if (customer) {
+      customer.transport_id = transportId;
+      console.log(`✅ Transporte actualizado en memoria para cliente ${customerId}`);
+    }
+    
+    return true;
+  } catch (error) {
+    console.error("❌ Error en saveTransportForCustomer:", error);
+    alert("Error al guardar el transporte: " + (error.message || 'Error desconocido'));
+    return false;
+  }
+}
+
+// Función para reprogramar fecha de envío de un pedido
+async function rescheduleOrder(orderId, newDate) {
+  if (!supabase) {
+    supabase = await getSupabase();
+  }
+  if (!supabase) {
+    console.error("❌ Supabase no disponible");
+    return false;
+  }
+
+  try {
+    // Convertir fecha a ISO timestamp (asumiendo que newDate es YYYY-MM-DD)
+    // Mantener la hora actual o usar mediodía para evitar problemas de zona horaria
+    const [year, month, day] = newDate.split('-').map(Number);
+    const timestamp = new Date(year, month - 1, day, 12, 0, 0).toISOString();
+    
+    console.log(`📅 Reprogramando pedido ${orderId} para ${newDate} (${timestamp})`);
+    
+    const { error } = await supabase.rpc('rpc_reschedule_sent_order', {
+      p_order_id: orderId,
+      p_new_sent_at: timestamp
+    });
+    
+    if (error) {
+      console.error("❌ Error reprogramando pedido:", error);
+      alert("No se pudo reprogramar la fecha de envío: " + (error.message || 'Error desconocido'));
+      return false;
+    }
+    
+    console.log(`✅ Pedido ${orderId} reprogramado para ${newDate}`);
+    return true;
+  } catch (error) {
+    console.error("❌ Error en rescheduleOrder:", error);
+    alert("Error al reprogramar el pedido: " + (error.message || 'Error desconocido'));
+    return false;
+  }
+}
+
 // Función para cargar almacenes
 async function loadWarehouses() {
   if (!supabase) {
     supabase = await getSupabase();
   }
   if (!supabase) return;
-  
+
   try {
     const { data, error } = await supabase
       .from("warehouses")
       .select("id, code");
-    
+
     if (error) {
       console.error("❌ Error cargando almacenes:", error);
       return;
     }
-    
+
     if (data) {
       data.forEach(w => {
         if (w.code === "general") warehouses.general = w.id;
@@ -956,6 +1337,195 @@ async function loadWarehouses() {
     }
   } catch (error) {
     console.error("❌ Error en loadWarehouses:", error);
+  }
+}
+
+// ============================================================================
+// Métodos de pago (para modal al reimprimir rótulo)
+// ============================================================================
+
+async function loadPaymentMethods() {
+  if (!supabase) {
+    supabase = await getSupabase();
+  }
+  if (!supabase) {
+    console.error("❌ Supabase no disponible en loadPaymentMethods");
+    return [];
+  }
+  try {
+    const { data, error } = await supabase
+      .from("payment_methods")
+      .select("id, name")
+      .order("name", { ascending: true });
+    if (error) {
+      console.error("❌ Error cargando métodos de pago:", error);
+      return [];
+    }
+    return data || [];
+  } catch (err) {
+    console.error("❌ Error al cargar métodos de pago:", err);
+    return [];
+  }
+}
+
+async function createPaymentMethod(name) {
+  if (!supabase) {
+    supabase = await getSupabase();
+  }
+  if (!supabase) return null;
+  if (!name || !name.trim()) return null;
+  try {
+    const { data, error } = await supabase
+      .from("payment_methods")
+      .insert({ name: name.trim() })
+      .select()
+      .single();
+    if (error) {
+      console.error("❌ Error creando método de pago:", error);
+      return null;
+    }
+    return data;
+  } catch (err) {
+    console.error("❌ Error al crear método de pago:", err);
+    return null;
+  }
+}
+
+/**
+ * Muestra el modal de método de pago y retorna una Promise con el método seleccionado
+ * @param {string} currentPaymentMethod - Método actual del pedido (para preseleccionar)
+ * @returns {Promise<string|null>} - Nombre del método seleccionado, o null si canceló
+ */
+function showPaymentMethodModalForLabel(currentPaymentMethod = "") {
+  return new Promise((resolve) => {
+    const modal = document.getElementById("payment-method-modal");
+    const select = document.getElementById("payment-method-select");
+    const createNewCheckbox = document.getElementById("create-new-payment-method");
+    const newMethodContainer = document.getElementById("new-payment-method-container");
+    const newMethodInput = document.getElementById("new-payment-method-input");
+    const errorDiv = document.getElementById("payment-method-error");
+    const closeBtn = document.getElementById("close-payment-modal");
+    const cancelBtn = document.getElementById("cancel-payment-btn");
+    const confirmBtn = document.getElementById("confirm-payment-btn");
+
+    if (!modal || !select) {
+      resolve(null);
+      return;
+    }
+
+    const closeModal = (result = null) => {
+      modal.style.display = "none";
+      modal.classList.remove("active");
+      resolve(result);
+    };
+
+    const handleConfirm = async () => {
+      errorDiv.style.display = "none";
+      errorDiv.textContent = "";
+      let paymentMethod = null;
+
+      if (createNewCheckbox.checked) {
+        const newMethodName = newMethodInput.value.trim();
+        if (!newMethodName) {
+          errorDiv.textContent = "Por favor, ingrese un nombre para el nuevo método de pago.";
+          errorDiv.style.display = "block";
+          return;
+        }
+        const newMethod = await createPaymentMethod(newMethodName);
+        if (!newMethod) {
+          errorDiv.textContent = "No se pudo crear el nuevo método de pago. Intente nuevamente.";
+          errorDiv.style.display = "block";
+          return;
+        }
+        paymentMethod = newMethod.name;
+      } else {
+        paymentMethod = select.value;
+        if (!paymentMethod) {
+          errorDiv.textContent = "Por favor, seleccione un método de pago.";
+          errorDiv.style.display = "block";
+          return;
+        }
+      }
+      closeModal(paymentMethod);
+    };
+
+    const handleCancel = () => closeModal(null);
+
+    closeBtn.onclick = handleCancel;
+    cancelBtn.onclick = handleCancel;
+    confirmBtn.onclick = () => handleConfirm();
+
+    modal.onclick = (e) => {
+      if (e.target === modal) handleCancel();
+    };
+
+    createNewCheckbox.checked = false;
+    newMethodContainer.style.display = "none";
+    newMethodInput.value = "";
+    errorDiv.style.display = "none";
+    select.innerHTML = '<option value="">-- Seleccione un método --</option>';
+
+    loadPaymentMethods().then((methods) => {
+      methods.forEach((m) => {
+        const opt = document.createElement("option");
+        opt.value = m.name;
+        opt.textContent = m.name;
+        if (m.name === (currentPaymentMethod || "").trim()) {
+          opt.selected = true;
+        }
+        select.appendChild(opt);
+      });
+      if (!currentPaymentMethod && methods.length > 0) {
+        select.selectedIndex = 0;
+      }
+    });
+
+    modal.style.display = "flex";
+    modal.classList.add("active");
+  });
+}
+
+function setupPaymentMethodModalForLabel() {
+  const createNewCheckbox = document.getElementById("create-new-payment-method");
+  const newMethodContainer = document.getElementById("new-payment-method-container");
+  const newMethodInput = document.getElementById("new-payment-method-input");
+  const select = document.getElementById("payment-method-select");
+
+  if (!createNewCheckbox) return;
+
+  createNewCheckbox.addEventListener("change", (e) => {
+    if (e.target.checked) {
+      newMethodContainer.style.display = "block";
+      if (select) select.disabled = true;
+    } else {
+      newMethodContainer.style.display = "none";
+      if (select) select.disabled = false;
+      if (newMethodInput) newMethodInput.value = "";
+    }
+  });
+}
+
+async function updateOrderPaymentMethod(orderId, paymentMethod) {
+  if (!supabase) {
+    supabase = await getSupabase();
+  }
+  if (!supabase || !orderId || !paymentMethod) return false;
+  try {
+    const { error } = await supabase
+      .from("orders")
+      .update({
+        payment_method: paymentMethod,
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", orderId);
+    if (error) {
+      console.error("❌ Error actualizando método de pago:", error);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error("❌ Error en updateOrderPaymentMethod:", err);
+    return false;
   }
 }
 
@@ -996,13 +1566,13 @@ function setupPrintLabelsButtons() {
     if (e.target.hasAttribute('data-print-labels')) {
       e.preventDefault();
       e.stopPropagation();
-      
+
       const orderId = e.target.getAttribute('data-print-labels');
-      
+
       // Buscar el pedido en los datos cargados
       let order = null;
       let customer = null;
-      
+
       for (const cust of allCustomersData) {
         const foundOrder = cust.orders.find(o => o.id === orderId);
         if (foundOrder) {
@@ -1012,19 +1582,103 @@ function setupPrintLabelsButtons() {
           break;
         }
       }
-      
+
       if (!order || !customer) {
         alert("No se pudo encontrar el pedido.");
         return;
       }
 
-      // Pedir cantidad de rótulos a imprimir
+      // Verificar si hay transporte asignado
+      const transportId = customer.transport_id || order.transport_id;
+      const transport = transportId ? scheduledTransports.find(t => t.id === transportId) : null;
+      
+      // Preguntar si quiere reprogramar el envío (solo si hay transporte)
+      let shouldReschedule = false;
+      let shippingDate = null;
+      
+      if (transport) {
+        // Si hay transporte, ofrecer la opción de reprogramar
+        const wantsToReschedule = confirm(
+          `🚚 Transporte asignado: ${transport.name}\n\n` +
+          `¿Desea reprogramar la fecha de envío?\n\n` +
+          `• SÍ: El pedido aparecerá en la lista de envíos de "Pedidos Cerrados" para la nueva fecha\n` +
+          `• NO: Solo imprimirá los rótulos sin cambiar la fecha`
+        );
+        
+        if (wantsToReschedule) {
+          // Preguntar nueva fecha
+          const today = new Date().toISOString().split('T')[0];
+          shippingDate = prompt(
+            `📅 Nueva fecha de envío para ${transport.name}\n\nFormato: YYYY-MM-DD (ejemplo: ${today})`,
+            today
+          );
+
+          if (!shippingDate) {
+            return; // Usuario canceló
+          }
+
+          // Validar formato de fecha
+          const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+          if (!dateRegex.test(shippingDate)) {
+            alert("❌ Formato de fecha inválido.\n\nDebe usar el formato YYYY-MM-DD (ejemplo: 2026-01-20)");
+            return;
+          }
+
+          // Validar que la fecha no sea muy antigua
+          const selectedDate = new Date(shippingDate);
+          const oneYearAgo = new Date();
+          oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+          
+          if (selectedDate < oneYearAgo) {
+            if (!confirm(`⚠️ La fecha seleccionada (${shippingDate}) es de hace más de un año.\n\n¿Está seguro de que desea continuar?`)) {
+              return;
+            }
+          }
+          
+          shouldReschedule = true;
+        }
+      }
+
+      // Preguntar método de pago (para confirmar o modificar)
+      const currentPaymentMethod = order.payment_method || "";
+      const selectedPaymentMethod = await showPaymentMethodModalForLabel(currentPaymentMethod);
+      if (selectedPaymentMethod === null) {
+        return; // Usuario canceló
+      }
+
+      // Actualizar pedido si el método de pago cambió
+      if (selectedPaymentMethod !== (currentPaymentMethod || "").trim()) {
+        const updated = await updateOrderPaymentMethod(order.id, selectedPaymentMethod);
+        if (updated) {
+          order.payment_method = selectedPaymentMethod;
+          console.log(`✅ Método de pago actualizado en pedido: ${selectedPaymentMethod}`);
+        } else {
+          if (!confirm("⚠️ No se pudo actualizar el método de pago en el pedido.\n\n¿Desea continuar con la impresión usando el método seleccionado en el rótulo?")) {
+            return;
+          }
+        }
+      }
+
+      // Preguntar cantidad de rótulos a imprimir
       const labelsCount = prompt("¿Cuántos rótulos deseas imprimir?", "1");
       if (!labelsCount || isNaN(labelsCount) || parseInt(labelsCount) < 1) {
         return;
       }
 
       try {
+        // Reprogramar fecha si el usuario lo solicitó
+        if (shouldReschedule && shippingDate) {
+          console.log(`🔄 Reprogramando pedido ${order.order_number || order.id.substring(0, 8)} para ${shippingDate}...`);
+          const rescheduleSuccess = await rescheduleOrder(order.id, shippingDate);
+          
+          if (!rescheduleSuccess) {
+            console.error("❌ No se pudo reprogramar el pedido");
+            if (!confirm("⚠️ No se pudo reprogramar la fecha.\n\n¿Desea continuar con la impresión de todas formas?")) {
+              return;
+            }
+          }
+        }
+
         // Preparar datos del rótulo
         const shippingLabel = prepareShippingLabelFromOrder(order, customer);
 
@@ -1040,6 +1694,17 @@ function setupPrintLabelsButtons() {
 
         if (printSuccess) {
           console.log("✅ Rótulos impresos correctamente");
+          
+          // Mensaje de confirmación
+          let successMessage = `✅ Rótulos impresos exitosamente\n\n`;
+          
+          if (shouldReschedule && shippingDate && transport) {
+            successMessage += `📅 Pedido reprogramado para: ${shippingDate}\n` +
+                            `🚚 Transporte: ${transport.name}\n\n` +
+                            `El pedido ahora aparecerá en la lista de envíos de "Pedidos Cerrados" para esta fecha y transporte.`;
+          }
+          
+          alert(successMessage);
         }
       } catch (error) {
         console.error("❌ Error al imprimir rótulos:", error);
@@ -1063,7 +1728,7 @@ async function deleteOrderItem(itemId, orderId) {
     // Obtener el item completo de la base de datos
     const { data: item, error: itemError } = await supabase
       .from("order_items")
-      .select("id, order_id, status, quantity, price_snapshot, variant_id")
+      .select("id, order_id, status, quantity, price_snapshot, variant_id, size")
       .eq("id", itemId)
       .maybeSingle();
 
@@ -1078,79 +1743,95 @@ async function deleteOrderItem(itemId, orderId) {
 
     // Devolver stock al stock general si el item tiene variant_id
     if (item.variant_id) {
-      console.log(`🔄 Intentando devolver stock para variant_id: ${item.variant_id}, cantidad: ${qty}`);
-      
+      const itemSize = (item.size || "").trim();
+      console.log(`🔄 Intentando devolver stock para variant_id: ${item.variant_id}, size: ${itemSize || 'sin talle'}, cantidad: ${qty}`);
+
       // Asegurar que los almacenes estén cargados
       if (!warehouses.general) {
         await loadWarehouses();
       }
-      
+
       if (!warehouses.general) {
         console.error("❌ No se pudo cargar el almacén 'general'");
         alert("Error: No se pudo encontrar el almacén 'general'. El producto fue eliminado pero el stock no se actualizó.");
       } else {
         try {
           console.log(`✅ Usando almacén 'general': ${warehouses.general}`);
-          
-          // Obtener el stock actual del almacén general para esta variante
-          const { data: stockRow, error: stockError } = await supabase
-            .from("variant_warehouse_stock")
-            .select("stock_qty")
-            .eq("variant_id", item.variant_id)
-            .eq("warehouse_id", warehouses.general)
-            .maybeSingle();
 
-          // Si no existe el registro, currentStock será 0
-          const currentStock = stockError && stockError.code === 'PGRST116' 
-            ? 0 
-            : Number(stockRow?.stock_qty || 0);
-          
-          const newStock = currentStock + qty;
-          
-          console.log(`📦 Stock actual: ${currentStock}, Cantidad a devolver: ${qty}, Nuevo stock: ${newStock}`);
+          // Si el item tiene size, usar variant_size_warehouse_stock
+          if (itemSize) {
+            // Obtener el stock actual del talle específico en el almacén general
+            const { data: sizeStockRow, error: sizeStockError } = await supabase
+              .from("variant_size_warehouse_stock")
+              .select("stock_qty")
+              .eq("variant_id", item.variant_id)
+              .eq("size", itemSize)
+              .eq("warehouse_id", warehouses.general)
+              .maybeSingle();
 
-          // Actualizar o insertar el stock en variant_warehouse_stock
-          const { data: upsertData, error: updateError } = await supabase
-            .from("variant_warehouse_stock")
-            .upsert({
-              variant_id: item.variant_id,
-              warehouse_id: warehouses.general,
-              stock_qty: newStock
-            }, {
-              onConflict: 'variant_id,warehouse_id'
-            })
-            .select();
+            // Si no existe el registro, currentStock será 0
+            const currentStock = sizeStockError && sizeStockError.code === 'PGRST116'
+              ? 0
+              : Number(sizeStockRow?.stock_qty || 0);
 
-          if (updateError) {
-            console.error("❌ Error actualizando stock en variant_warehouse_stock:", updateError);
-            console.error("❌ Detalles completos:", JSON.stringify(updateError, null, 2));
-            console.error("❌ Datos del upsert:", {
-              variant_id: item.variant_id,
-              warehouse_id: warehouses.general,
-              stock_qty: newStock
-            });
-            alert(`Error al devolver el stock: ${updateError.message || 'Error desconocido'}. El producto fue eliminado pero el stock no se actualizó. Por favor, verifica manualmente el stock del producto.`);
+            const newStock = currentStock + qty;
+
+            console.log(`📦 Stock actual (talle ${itemSize}): ${currentStock}, Cantidad a devolver: ${qty}, Nuevo stock: ${newStock}`);
+
+            // Actualizar o insertar el stock en variant_size_warehouse_stock
+            const { data: upsertData, error: updateError } = await supabase
+              .from("variant_size_warehouse_stock")
+              .upsert({
+                variant_id: item.variant_id,
+                size: itemSize,
+                warehouse_id: warehouses.general,
+                stock_qty: newStock
+              }, {
+                onConflict: 'variant_id,size,warehouse_id'
+              })
+              .select();
+
+            if (updateError) {
+              console.error("❌ Error actualizando stock en variant_size_warehouse_stock:", updateError);
+              alert(`Error al devolver el stock: ${updateError.message || 'Error desconocido'}. El producto fue eliminado pero el stock no se actualizó.`);
+            } else {
+              console.log(`✅ Stock devuelto exitosamente: ${qty} unidades agregadas al almacén 'general' para la variante ${item.variant_id}, talle ${itemSize}`);
+            }
           } else {
-            console.log(`✅ Stock devuelto exitosamente: ${qty} unidades agregadas al almacén 'general' para la variante ${item.variant_id}`);
-            console.log(`   Stock anterior: ${currentStock}, Nuevo stock: ${newStock}`);
-            console.log(`   Resultado del upsert:`, upsertData);
-            
-            // Verificar que el stock se actualizó correctamente
-            const { data: verifyStock, error: verifyError } = await supabase
+            // Si no tiene size, usar variant_warehouse_stock (compatibilidad con items antiguos)
+            const { data: stockRow, error: stockError } = await supabase
               .from("variant_warehouse_stock")
               .select("stock_qty")
               .eq("variant_id", item.variant_id)
               .eq("warehouse_id", warehouses.general)
               .maybeSingle();
-            
-            if (!verifyError && verifyStock) {
-              const verifiedStock = Number(verifyStock.stock_qty || 0);
-              console.log(`✅ Verificación: Stock actual en BD: ${verifiedStock}`);
-              if (verifiedStock !== newStock) {
-                console.warn(`⚠️ Discrepancia: Stock esperado ${newStock} pero BD tiene ${verifiedStock}`);
-              }
+
+            // Si no existe el registro, currentStock será 0
+            const currentStock = stockError && stockError.code === 'PGRST116'
+              ? 0
+              : Number(stockRow?.stock_qty || 0);
+
+            const newStock = currentStock + qty;
+
+            console.log(`📦 Stock actual (sin talle): ${currentStock}, Cantidad a devolver: ${qty}, Nuevo stock: ${newStock}`);
+
+            // Actualizar o insertar el stock en variant_warehouse_stock
+            const { data: upsertData, error: updateError } = await supabase
+              .from("variant_warehouse_stock")
+              .upsert({
+                variant_id: item.variant_id,
+                warehouse_id: warehouses.general,
+                stock_qty: newStock
+              }, {
+                onConflict: 'variant_id,warehouse_id'
+              })
+              .select();
+
+            if (updateError) {
+              console.error("❌ Error actualizando stock en variant_warehouse_stock:", updateError);
+              alert(`Error al devolver el stock: ${updateError.message || 'Error desconocido'}. El producto fue eliminado pero el stock no se actualizó.`);
             } else {
-              console.warn(`⚠️ No se pudo verificar el stock después del upsert:`, verifyError);
+              console.log(`✅ Stock devuelto exitosamente: ${qty} unidades agregadas al almacén 'general' para la variante ${item.variant_id} (sin talle específico)`);
             }
           }
         } catch (e) {
@@ -1186,10 +1867,10 @@ async function deleteOrderItem(itemId, orderId) {
         const newTotal = Math.max(0, Number(orderRow.total_amount || 0) - itemTotal);
         await supabase
           .from("orders")
-          .update({ 
-            total_amount: newTotal, 
+          .update({
+            total_amount: newTotal,
             sent_at: new Date().toISOString(), // Actualizar sent_at cuando se modifica
-            updated_at: new Date().toISOString() 
+            updated_at: new Date().toISOString()
           })
           .eq("id", item.order_id);
         console.log(`✅ Total del pedido actualizado: $${newTotal}`);
@@ -1238,14 +1919,14 @@ function setupDeleteItemButtons() {
     if (e.target.hasAttribute('data-delete-item') || e.target.closest('[data-delete-item]')) {
       e.preventDefault();
       e.stopPropagation();
-      
-      const deleteBtn = e.target.hasAttribute('data-delete-item') 
-        ? e.target 
+
+      const deleteBtn = e.target.hasAttribute('data-delete-item')
+        ? e.target
         : e.target.closest('[data-delete-item]');
-      
+
       const itemId = deleteBtn.getAttribute('data-delete-item');
       const orderId = deleteBtn.getAttribute('data-order-id');
-      
+
       if (!itemId || !orderId) {
         console.error("❌ No se pudo obtener itemId u orderId");
         return;
@@ -1316,14 +1997,14 @@ async function markOrderAsDevolucion(orderId) {
 
     if (rpcError) {
       console.error("❌ Error en función RPC rpc_mark_order_as_devolucion:", rpcError);
-      
+
       // Si la función RPC no existe, mostrar mensaje instructivo
       if (rpcError.code === '42883' || rpcError.message?.includes('does not exist')) {
         alert("⚠️ La función de devolución no está disponible. Por favor, ejecuta el script SQL '20_mark_order_as_devolucion.sql' en la base de datos.");
         console.error("❌ La función RPC rpc_mark_order_as_devolucion no existe. Ejecuta el script SQL correspondiente.");
         return;
       }
-      
+
       alert("Error al procesar la devolución: " + (rpcError.message || "Error desconocido"));
       return;
     }
@@ -1359,18 +2040,18 @@ async function markOrderAsDevolucion(orderId) {
       console.error("❌ Error en verificación final después de delay:", finalCheckError);
     } else if (finalCheck && finalCheck.status !== 'devolución') {
       console.error(`❌ ADVERTENCIA CRÍTICA: Después de delay, el estado cambió a ${finalCheck.status}`);
-      
+
       // Intentar restaurar el estado a devolución
       console.log(`🔄 Intentando restaurar estado a 'devolución'...`);
       const { error: restoreError } = await supabase
         .from("orders")
-        .update({ 
+        .update({
           status: 'devolución',
           updated_at: new Date().toISOString()
         })
         .eq("id", orderId)
         .in("status", ["picked", "active", "closed", "sent"]);
-      
+
       if (restoreError) {
         console.error("❌ Error restaurando estado:", restoreError);
         alert(`⚠️ Error crítico: El estado del pedido cambió a "${finalCheck.status}" después de marcarlo como devolución. No se pudo restaurar automáticamente. Por favor, verifica manualmente.`);
@@ -1424,13 +2105,13 @@ function setupDevolucionButtons() {
     if (e.target.hasAttribute('data-devolucion-order') || e.target.closest('[data-devolucion-order]')) {
       e.preventDefault();
       e.stopPropagation();
-      
-      const devolucionBtn = e.target.hasAttribute('data-devolucion-order') 
-        ? e.target 
+
+      const devolucionBtn = e.target.hasAttribute('data-devolucion-order')
+        ? e.target
         : e.target.closest('[data-devolucion-order]');
-      
+
       const orderId = devolucionBtn.getAttribute('data-devolucion-order');
-      
+
       if (!orderId) {
         console.error("❌ No se pudo obtener orderId");
         return;
@@ -1498,6 +2179,347 @@ function setupDevolucionButtons() {
       } finally {
         // Remover el flag de procesamiento
         processingDevolucion.delete(orderId);
+      }
+    }
+  });
+}
+
+// ============================================================================
+// Funciones de impresión de ticket para pedidos enviados
+// ============================================================================
+
+/**
+ * Construye el ticket en formato ESC/POS a partir de los datos del pedido
+ * @param {Object} order - Objeto del pedido completo
+ * @returns {Promise<string>} Ticket formateado en texto plano
+ */
+async function buildEscposTicketOrder(order) {
+  const items = order.order_items || [];
+  
+  // Obtener cliente desde allCustomersData
+  let customer = null;
+  for (const customerData of allCustomersData) {
+    const foundOrder = customerData.orders.find(o => o.id === order.id);
+    if (foundOrder) {
+      customer = customerData;
+      break;
+    }
+  }
+
+  // Parsear valores extra desde order.notes
+  let shippingAmount = parseFloat(order.shipping_amount || 0);
+  let discountAmount = parseFloat(order.discount_amount || 0);
+  let extrasAmount = parseFloat(order.extras_amount || 0);
+  let extrasPercentage = parseFloat(order.extras_percentage || 0);
+
+  if (order.notes) {
+    try {
+      const extraValues = JSON.parse(order.notes);
+      shippingAmount = parseFloat(extraValues.shipping) || shippingAmount;
+      discountAmount = parseFloat(extraValues.discount) || discountAmount;
+      extrasAmount = parseFloat(extraValues.extras_amount) || extrasAmount;
+      extrasPercentage = parseFloat(extraValues.extras_percentage) || extrasPercentage;
+    } catch (e) {
+      console.warn('Error parseando valores extra del pedido:', e);
+    }
+  }
+
+  // Formatear fecha y hora
+  const orderDate = new Date(order.created_at || order.sent_at || order.updated_at);
+  const dateStr = orderDate.toLocaleDateString('es-AR', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    timeZone: 'America/Argentina/Buenos_Aires',
+  });
+  const timeStr = orderDate.toLocaleTimeString('es-AR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'America/Argentina/Buenos_Aires',
+  });
+
+  let ticket = [];
+
+  // Encabezado centrado (sin líneas vacías al inicio)
+  ticket.push(center("FYL moda"));
+  ticket.push("-".repeat(TICKET_WIDTH));
+  ticket.push("");
+
+  // Datos del pedido
+  ticket.push(`Pedido: ${order.order_number || order.id}`);
+  ticket.push(`Fecha: ${dateStr}`);
+  ticket.push(`Hora: ${timeStr}`);
+  if (customer) {
+    // Obtener nombre del cliente
+    let customerName = customer.full_name || customer.name || '';
+    if (!customerName) {
+      customerName = `${customer.first_name || ''} ${customer.last_name || ''}`.trim();
+    }
+    customerName = customerName.trim();
+    
+    if (customerName) {
+      const maxNameLength = TICKET_WIDTH - 9; // "Cliente: " = 9 caracteres
+      ticket.push(`Cliente: ${customerName.substring(0, maxNameLength)}`);
+    }
+  }
+  ticket.push("");
+  ticket.push("-".repeat(TICKET_WIDTH));
+
+  // Sección DETALLE DEL PEDIDO (centrada)
+  ticket.push(center("DETALLE DEL PEDIDO"));
+  ticket.push("-".repeat(TICKET_WIDTH));
+
+  // Cabecera de columnas con anchos: Producto 22, Cant 4, Precio 8, Total 8
+  const colProducto = 22;
+  const colCant = 4;
+  const colPrecio = 8;
+  const colTotal = 8;
+
+  const header = padRight("Producto", colProducto) +
+    padLeft("Cant", colCant) +
+    padLeft("Precio", colPrecio) +
+    padLeft("Total", colTotal);
+  ticket.push(header);
+  ticket.push("-".repeat(TICKET_WIDTH));
+
+  // Items del pedido (solo los que no están faltantes)
+  const validItems = items.filter(item => item.status !== 'missing');
+  validItems.forEach(item => {
+    const price = parseFloat(item.price_snapshot || 0);
+    const qty = parseInt(item.quantity || 0);
+    const total = price * qty;
+
+    // Nombre del producto (truncar a 22 caracteres)
+    let productName = `${item.product_name || 'N/A'}`;
+    if (item.color) productName += ` - ${item.color}`;
+    if (item.size) productName += ` (${item.size})`;
+
+    // Truncar a 22 caracteres
+    const name = productName.slice(0, colProducto);
+
+    // Formatear valores
+    const qtyStr = padLeft(String(qty), colCant);
+    const priceStr = `$${price.toLocaleString('es-AR')}`;
+    const totalStr = `$${total.toLocaleString('es-AR')}`;
+    const priceFormatted = padLeft(priceStr, colPrecio);
+    const totalFormatted = padLeft(totalStr, colTotal);
+
+    // Línea del item con columnas alineadas
+    ticket.push(
+      padRight(name, colProducto) +
+      qtyStr +
+      priceFormatted +
+      totalFormatted
+    );
+  });
+
+  ticket.push("-".repeat(TICKET_WIDTH));
+  ticket.push("");
+
+  // Subtotal productos
+  const productsSubtotal = validItems.reduce((sum, item) => {
+    const price = parseFloat(item.price_snapshot || 0);
+    const qty = parseInt(item.quantity || 0);
+    return sum + (price * qty);
+  }, 0);
+
+  // Envío (si existe)
+  if (shippingAmount > 0) {
+    ticket.push(`Envio: ${padLeft(`$${shippingAmount.toLocaleString('es-AR')}`, TICKET_WIDTH - 7)}`);
+    ticket.push("");
+  }
+
+  // Descuento (si existe)
+  if (discountAmount > 0) {
+    ticket.push(`Descuento: ${padLeft(`-$${discountAmount.toLocaleString('es-AR')}`, TICKET_WIDTH - 11)}`);
+    ticket.push("");
+  }
+
+  // Extras (si existen)
+  if (extrasAmount > 0) {
+    ticket.push(`Extras: ${padLeft(`$${extrasAmount.toLocaleString('es-AR')}`, TICKET_WIDTH - 8)}`);
+    ticket.push("");
+  }
+
+  // Extras porcentuales (si existen)
+  if (extrasPercentage > 0) {
+    const extrasPercentAmount = productsSubtotal * extrasPercentage / 100;
+    ticket.push(`Extras (${extrasPercentage}%): ${padLeft(`$${extrasPercentAmount.toLocaleString('es-AR')}`, TICKET_WIDTH - 18)}`);
+    ticket.push("");
+  }
+
+  // TOTAL alineado a la derecha
+  const totalAmount = parseFloat(order.total_amount || 0);
+  const totalStr = `$${totalAmount.toLocaleString('es-AR')}`;
+  ticket.push(padLeft(`TOTAL: ${totalStr}`, TICKET_WIDTH));
+  ticket.push("");
+
+  // Footer: DOCUMENTO NO VALIDO / COMO FACTURA
+  ticket.push("-".repeat(TICKET_WIDTH));
+  ticket.push(center("DOCUMENTO NO VALIDO"));
+  ticket.push(center("COMO FACTURA"));
+  ticket.push("");
+
+  // Texto previo al QR (si existe cliente con QR)
+  if (customer?.qr_code) {
+    ticket.push(center("Escanea para ver tu"));
+    ticket.push(center("historial y creditos:"));
+  }
+
+  return ticket.join("\n");
+}
+
+/**
+ * Imprime el ticket del pedido usando QZ Tray
+ * @param {Object} order - Objeto del pedido completo
+ * @returns {Promise<void>}
+ */
+async function printOrderTicketWithQZ(order) {
+  // Verificar si QZ está disponible antes de intentar
+  if (typeof qz === 'undefined' || !qz) {
+    throw new Error("QZ Tray no está disponible");
+  }
+
+  try {
+    // Conectar a QZ
+    await qzConnect();
+
+    // Obtener configuración de impresora POS-80 específicamente para tickets
+    const config = await qzGetPrinterConfigPos80();
+
+    // Construir ticket de texto
+    const ticketText = await buildEscposTicketOrder(order);
+
+    // Preparar datos para QZ
+    const data = [];
+
+    // Reset impresora y ticket de texto (sin espacios adicionales)
+    data.push("\x1B\x40" + ticketText);
+
+    // QR Code como imagen (si existe cliente con QR)
+    let customer = null;
+    for (const customerData of allCustomersData) {
+      const foundOrder = customerData.orders.find(o => o.id === order.id);
+      if (foundOrder) {
+        customer = customerData;
+        break;
+      }
+    }
+
+    if (customer && customer.qr_code) {
+      const url = `${window.location.origin}/customer.html?code=${customer.qr_code}`;
+      const size = 180;
+      const qrApiUrl = `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&margin=10&data=${encodeURIComponent(url)}`;
+
+      // Alineación centrada antes del QR
+      data.push("\x1B\x61\x01");  // ESC a 1
+
+      data.push({
+        type: "raw",
+        format: "image",
+        flavor: "file",
+        data: qrApiUrl,
+        options: {
+          language: "ESCPOS"
+        }
+      });
+
+      // Alimentar un poco después del QR
+      data.push("\x1B\x64\x03");  // ESC d 3 -> 3 líneas
+
+      // Volver a alineación izquierda
+      data.push("\x1B\x61\x00");  // ESC a 0
+    }
+
+    // Corte total
+    data.push("\x1D\x56\x42\x00");   // GS V 66 0
+
+    // Imprimir
+    await qz.print(config, data);
+    console.log("✅ Ticket del pedido enviado a impresora");
+
+  } catch (error) {
+    console.error("❌ Error imprimiendo con QZ Tray:", error);
+    throw error;
+  }
+}
+
+/**
+ * Imprime el ticket del pedido directamente usando QZ Tray
+ * @param {Object} order - Objeto del pedido completo
+ * @returns {Promise<void>}
+ */
+async function printOrderTicketDirectly(order) {
+  // Verificar que QZ Tray esté disponible
+  if (typeof qz === 'undefined' || !qz || !qz.websocket) {
+    alert("⚠️ QZ Tray no está disponible. Por favor, instala QZ Tray para imprimir tickets.");
+    return;
+  }
+
+  try {
+    await printOrderTicketWithQZ(order);
+  } catch (error) {
+    console.error("❌ Error al imprimir ticket:", error);
+    throw error;
+  }
+}
+
+// Función para configurar botones de imprimir ticket
+function setupPrintTicketButtons() {
+  // Usar event delegation para manejar botones que se agregan dinámicamente
+  document.addEventListener('click', async (e) => {
+    if (e.target.hasAttribute('data-print-ticket')) {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const orderId = e.target.getAttribute('data-print-ticket');
+
+      // Buscar el pedido en los datos cargados
+      let order = null;
+      for (const customer of allCustomersData) {
+        const foundOrder = customer.orders.find(o => o.id === orderId);
+        if (foundOrder) {
+          order = foundOrder;
+          break;
+        }
+      }
+
+      if (!order) {
+        alert("Pedido no encontrado.");
+        return;
+      }
+
+      // Deshabilitar el botón mientras se imprime
+      e.target.disabled = true;
+      const originalText = e.target.textContent;
+      e.target.textContent = 'Imprimiendo...';
+
+      try {
+        await printOrderTicketDirectly(order);
+        // No mostrar alert, solo actualizar el botón
+      } catch (error) {
+        console.error("❌ Error al imprimir ticket:", error);
+        
+        // Mensaje de error mejorado para "Connection blocked"
+        let errorMessage = "Error al imprimir el ticket: " + (error.message || "Error desconocido");
+        
+        if (error.message && error.message.includes("Connection blocked")) {
+          errorMessage = "No se pudo conectar con QZ Tray.\n\n" +
+            "El sitio web está bloqueado por QZ Tray.\n\n" +
+            "Para solucionarlo:\n" +
+            "1. Abrí QZ Tray (buscalo en la bandeja del sistema)\n" +
+            "2. Click derecho en el ícono de QZ Tray\n" +
+            "3. Seleccioná 'Site Manager' o 'Administrador de Sitios'\n" +
+            "4. Agregá esta URL a la lista de sitios permitidos:\n" +
+            `   ${window.location.origin}\n\n` +
+            "5. Guardá los cambios y volvé a intentar";
+        }
+        
+        alert(errorMessage);
+      } finally {
+        // Rehabilitar el botón
+        e.target.disabled = false;
+        e.target.textContent = originalText;
       }
     }
   });

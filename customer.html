@@ -265,7 +265,28 @@
       padding: 40px;
       color: #999;
     }
+    .btn {
+      transition: all 0.2s;
+    }
+    .btn:hover {
+      background: #B8734A !important;
+      transform: translateY(-1px);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    }
+    .btn-secondary {
+      background: #CD844D;
+      color: white;
+      border: none;
+    }
   </style>
+  <!-- Microsoft Clarity -->
+  <script type="text/javascript">
+    (function(c,l,a,r,i,t,y){
+        c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
+        t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
+        y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
+    })(window, document, "clarity", "script", "vuuq665971");
+  </script>
 </head>
 <body>
   <div class="container">
@@ -502,13 +523,20 @@
           document.getElementById("credits-section").style.display = "block";
         }
 
-        // Mostrar historial de compras
+        // Mostrar historial de compras (limitado a 5 inicialmente)
         if (sales.length === 0) {
           document.getElementById("sales-list").innerHTML = `
             <div class="no-data">No hay compras registradas</div>
           `;
         } else {
-          document.getElementById("sales-list").innerHTML = sales.map(sale => `
+          // Guardar todas las ventas en una variable global para poder cargar más después
+          window.allSales = sales;
+          window.displayedSalesCount = Math.min(5, sales.length);
+          
+          // Mostrar solo los primeros 5 pedidos
+          const salesToShow = sales.slice(0, window.displayedSalesCount);
+          
+          let salesHtml = salesToShow.map(sale => `
             <div class="sale-item" onclick="toggleSaleDetails('${sale.id}')">
               <div class="sale-header">
                 <div>
@@ -524,9 +552,66 @@
             </div>
           `).join("");
 
-          // Cargar detalles de cada venta
-          for (const sale of sales) {
+          // Agregar botón "Cargar más" si hay más de 5 pedidos
+          if (sales.length > window.displayedSalesCount) {
+            salesHtml += `
+              <button id="load-more-sales-btn" class="btn btn-secondary" style="width: 100%; padding: 12px; margin-top: 12px; background: #CD844D; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 14px;">
+                Cargar más pedidos (${sales.length - window.displayedSalesCount} restantes)
+              </button>
+            `;
+          }
+
+          document.getElementById("sales-list").innerHTML = salesHtml;
+
+          // Cargar detalles solo de los pedidos mostrados inicialmente
+          for (const sale of salesToShow) {
             await loadSaleDetails(sale.id);
+          }
+
+          // Agregar event listener al botón "Cargar más" si existe
+          const loadMoreBtn = document.getElementById("load-more-sales-btn");
+          if (loadMoreBtn) {
+            loadMoreBtn.addEventListener("click", async () => {
+              // Cargar 5 pedidos más
+              const nextBatch = sales.slice(window.displayedSalesCount, window.displayedSalesCount + 5);
+              
+              if (nextBatch.length > 0) {
+                // Crear HTML para los nuevos pedidos
+                const newSalesHtml = nextBatch.map(sale => `
+                  <div class="sale-item" onclick="toggleSaleDetails('${sale.id}')">
+                    <div class="sale-header">
+                      <div>
+                        <div class="sale-number">${escapeHtml(sale.sale_number)}</div>
+                        <div class="sale-date">${new Date(sale.created_at).toLocaleString('es-AR')}</div>
+                      </div>
+                      <div class="sale-total" style="${parseFloat(sale.total_amount) < 0 ? 'color: #dc3545;' : ''}">
+                        ${parseFloat(sale.total_amount) < 0 ? '-' : ''}$${Math.abs(parseFloat(sale.total_amount)).toLocaleString('es-AR')}
+                      </div>
+                    </div>
+                    ${sale.credit_used > 0 ? `<div style="font-size: 14px; color: #28a745; font-weight: 700; margin-top: 6px;">Crédito aplicado: $${parseFloat(sale.credit_used).toLocaleString('es-AR')}</div>` : ''}
+                    <div class="sale-details" id="sale-details-${sale.id}"></div>
+                  </div>
+                `).join("");
+
+                // Insertar antes del botón
+                loadMoreBtn.insertAdjacentHTML("beforebegin", newSalesHtml);
+
+                // Cargar detalles de los nuevos pedidos
+                for (const sale of nextBatch) {
+                  await loadSaleDetails(sale.id);
+                }
+
+                // Actualizar contador
+                window.displayedSalesCount += nextBatch.length;
+
+                // Actualizar o remover el botón
+                if (window.displayedSalesCount >= sales.length) {
+                  loadMoreBtn.remove();
+                } else {
+                  loadMoreBtn.textContent = `Cargar más pedidos (${sales.length - window.displayedSalesCount} restantes)`;
+                }
+              }
+            });
           }
         }
 

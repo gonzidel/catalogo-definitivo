@@ -4,14 +4,19 @@ alter table public.products enable row level security;
 alter table public.product_variants enable row level security;
 alter table public.variant_images enable row level security;
 
--- Products (solo activos)
+-- Products (activos y pending_stock)
 do $$
 begin
   if not exists (
     select 1 from pg_policies where schemaname='public' and tablename='products' and policyname='anon_select_products'
   ) then
     create policy anon_select_products on public.products
-      for select to anon using (status = 'active');
+      for select to anon using (status IN ('active', 'pending_stock'));
+  else
+    -- Actualizar política existente
+    drop policy if exists anon_select_products on public.products;
+    create policy anon_select_products on public.products
+      for select to anon using (status IN ('active', 'pending_stock'));
   end if;
 end $$;
 
@@ -44,7 +49,12 @@ begin
     select 1 from pg_policies where schemaname='public' and tablename='products' and policyname='auth_select_products'
   ) then
     create policy auth_select_products on public.products
-      for select to authenticated using (status = 'active');
+      for select to authenticated using (status IN ('active', 'pending_stock'));
+  else
+    -- Actualizar política existente
+    drop policy if exists auth_select_products on public.products;
+    create policy auth_select_products on public.products
+      for select to authenticated using (status IN ('active', 'pending_stock'));
   end if;
 end $$;
 

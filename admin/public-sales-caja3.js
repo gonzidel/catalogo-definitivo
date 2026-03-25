@@ -1,6 +1,10 @@
-// admin/public-sales.js
+// admin/public-sales-caja3.js
 import { requireAuth } from "./admin-auth.js";
 import { supabase } from "../scripts/supabase-client.js";
+import { SUPABASE_URL, QZ_SIGN_SECRET } from "../scripts/config.js";
+import { normalizeSize } from "../scripts/utils/size-normalizer.js";
+
+const TIMEZONE_BUENOS_AIRES = "America/Argentina/Buenos_Aires";
 
 await requireAuth();
 
@@ -11,6 +15,92 @@ await requireAuth();
 // Ancho del ticket en caracteres (80mm ≈ 42 caracteres con fuente estándar)
 const TICKET_WIDTH = 42;
 
+// Función helper para configurar firma remota de QZ Tray
+async function setupQZSignature() {
+  if (typeof qz === 'undefined' || !qz || !qz.security) {
+    console.warn("⚠️ QZ Tray no disponible");
+    return;
+  }
+
+  try {
+    console.log("🔧 Configurando certificado y firma remota de QZ Tray...");
+
+    // PASO 1: Precargar y configurar certificado público (ANTES de la firma)
+    console.log("📜 setCertificatePromise: cargando /certs/qz-site.crt");
+    const certResponse = await fetch("/certs/qz-site.crt", { cache: "no-store" });
+    const certText = await certResponse.text();
+    console.log("✅ cert cargado, len=", certText.length, "begin=", certText.includes("BEGIN CERTIFICATE"));
+
+    qz.security.setCertificatePromise((resolve, reject) => {
+      console.log("📜 setCertificatePromise: resolviendo certificado precargado");
+      if (certText) {
+        const match = certText.match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/);
+        if (match) {
+          console.log("✅ Certificado sanitizado encontrado");
+          resolve(match[0]);
+        } else {
+          console.warn("⚠️ No se pudo extraer bloque limpio, usando texto original");
+          resolve(certText);
+        }
+      } else {
+        reject(new Error("Certificado vacío"));
+      }
+    });
+
+    console.log("✅ Certificado público configurado");
+
+    // IMPORTANTE: Configurar algoritmo SHA-512 (requerido por QZ Tray 2.1+)
+    qz.security.setSignatureAlgorithm("SHA512");
+    console.log("✅ Algoritmo de firma configurado: SHA512");
+
+    // PASO 2: Configurar firma remota (DESPUÉS del certificado)
+    qz.security.setSignaturePromise(async (toSign) => {
+      console.log("🔐 QZ Tray solicitó firma. Longitud:", toSign?.length || 0);
+
+      if (!toSign || typeof toSign !== 'string') {
+        throw new Error("toSign inválido o vacío");
+      }
+
+      // Obtener secret desde config (con fallback)
+      const secret = QZ_SIGN_SECRET || 
+        (typeof window !== 'undefined' ? window.QZ_SIGN_SECRET : "") ||
+        "a8cc79b81b8552702d7deccbef31c1eea7a30043b032d136a8eb4671614b5b75";
+
+      console.log("📡 Enviando request de firma a Edge Function...");
+      console.log("📤 toSign a enviar (len=" + toSign.length + "):", toSign.substring(0, 50) + "...");
+
+      // IMPORTANTE: Enviar toSign como text/plain (no JSON) para evitar alteraciones
+      // QZ Tray requiere que el string llegue exactamente igual, sin JSON.stringify
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/qz-sign`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "text/plain;charset=utf-8",
+          "x-qz-secret": secret
+        },
+        body: toSign // Enviar directamente, sin JSON.stringify
+      });
+
+      console.log("📥 Respuesta recibida. Status:", res.status);
+
+      if (!res.ok) {
+        const errorText = await res.text();
+        console.error("❌ Error HTTP:", res.status, errorText);
+        throw new Error(`Error en firma: ${res.status} - ${errorText}`);
+      }
+
+      const signature = (await res.text()).trim();
+      console.log("✅ Firma generada correctamente. Longitud:", signature.length);
+      return signature;
+    });
+
+    console.log("✅ Certificado y firma remota configurados para QZ Tray");
+  } catch (e) {
+    console.error("❌ Error setupQZSignature:", e);
+  }
+}
+
+// NO configurar firma aquí - se configurará cuando QZ esté disponible en qzConnect() o loadQZTray()
+
 /**
  * Conecta al websocket de QZ Tray si no está activo
  * @returns {Promise<void>}
@@ -20,7 +110,10 @@ async function qzConnect() {
   if (typeof qz === 'undefined' || !qz || !qz.websocket) {
     throw new Error("QZ Tray no está disponible");
   }
-  
+
+  // Asegurar que la firma esté configurada antes de conectar
+  setupQZSignature();
+
   if (!qz.websocket.isActive()) {
     try {
       await qz.websocket.connect();
@@ -116,26 +209,28 @@ function center(text, width = TICKET_WIDTH) {
 function buildEscposTicket(saleDetails, customer, finalTotal) {
   const sale = saleDetails.sale;
   const items = saleDetails.items || [];
-  
+
   // Formatear fecha y hora
   const saleDate = new Date(sale.created_at);
   const dateStr = saleDate.toLocaleDateString('es-AR', {
     year: 'numeric',
     month: '2-digit',
-    day: '2-digit'
+    day: '2-digit',
+    timeZone: TIMEZONE_BUENOS_AIRES,
   });
   const timeStr = saleDate.toLocaleTimeString('es-AR', {
     hour: '2-digit',
-    minute: '2-digit'
+    minute: '2-digit',
+    timeZone: TIMEZONE_BUENOS_AIRES,
   });
-  
+
   let ticket = [];
-  
+
   // Encabezado centrado
   ticket.push(center("FYL moda"));
   ticket.push("-".repeat(TICKET_WIDTH));
   ticket.push("");
-  
+
   // Datos de venta
   ticket.push(`Venta: ${sale.sale_number}`);
   ticket.push(`Fecha: ${dateStr}`);
@@ -147,46 +242,46 @@ function buildEscposTicket(saleDetails, customer, finalTotal) {
   }
   ticket.push("");
   ticket.push("-".repeat(TICKET_WIDTH));
-  
+
   // Sección DETALLE DE LA COMPRA (centrada)
   ticket.push(center("DETALLE DE LA COMPRA"));
   ticket.push("-".repeat(TICKET_WIDTH));
-  
+
   // Cabecera de columnas con anchos: Producto 22, Cant 4, Precio 8, Total 8
   const colProducto = 22;
   const colCant = 4;
   const colPrecio = 8;
   const colTotal = 8;
-  
+
   const header = padRight("Producto", colProducto) +
-                 padLeft("Cant", colCant) +
-                 padLeft("Precio", colPrecio) +
-                 padLeft("Total", colTotal);
+    padLeft("Cant", colCant) +
+    padLeft("Precio", colPrecio) +
+    padLeft("Total", colTotal);
   ticket.push(header);
   ticket.push("-".repeat(TICKET_WIDTH));
-  
+
   // Items de la venta
   items.forEach(item => {
     const price = parseFloat(item.price || item.price_snapshot || 0);
     const total = price * item.qty;
     const isReturn = item.is_return || false;
-    
+
     // Nombre del producto (truncar a 22 caracteres)
     let productName = `${item.product_name || 'N/A'}`;
     if (item.color) productName += ` - ${item.color}`;
     if (item.size) productName += ` (${item.size})`;
     if (isReturn) productName += " [DEV]";
-    
+
     // Truncar a 22 caracteres
     const name = productName.slice(0, colProducto);
-    
+
     // Formatear valores
     const qty = padLeft(String(item.qty), colCant);
     const priceStr = `$${price.toLocaleString('es-AR')}`;
     const totalStr = `${isReturn ? '-' : ''}$${total.toLocaleString('es-AR')}`;
     const priceFormatted = padLeft(priceStr, colPrecio);
     const totalFormatted = padLeft(totalStr, colTotal);
-    
+
     // Línea del item con columnas alineadas
     ticket.push(
       padRight(name, colProducto) +
@@ -195,10 +290,10 @@ function buildEscposTicket(saleDetails, customer, finalTotal) {
       totalFormatted
     );
   });
-  
+
   ticket.push("-".repeat(TICKET_WIDTH));
   ticket.push("");
-  
+
   // Crédito aplicado (si existe) - sin tilde
   if (sale.credit_used > 0) {
     const creditAmount = parseFloat(sale.credit_used);
@@ -206,32 +301,32 @@ function buildEscposTicket(saleDetails, customer, finalTotal) {
     ticket.push(`Credito Aplicado: ${padLeft(creditStr, TICKET_WIDTH - 20)}`);
     ticket.push("");
   }
-  
+
   // TOTAL alineado a la derecha
   const totalAmount = parseFloat(sale.total_amount);
   const totalStr = `${totalAmount < 0 ? '-' : ''}$${Math.abs(totalAmount).toLocaleString('es-AR')}`;
   ticket.push(padLeft(`TOTAL: ${totalStr}`, TICKET_WIDTH));
   ticket.push("");
-  
+
   // Saldo a favor (si el total es negativo) - sin tilde
   if (totalAmount < 0) {
     ticket.push("Saldo a favor (Credito):");
     ticket.push(padLeft(totalStr, TICKET_WIDTH));
     ticket.push("");
   }
-  
+
   // Footer primero: DOCUMENTO NO VALIDO / COMO FACTURA
   ticket.push("-".repeat(TICKET_WIDTH));
   ticket.push(center("DOCUMENTO NO VALIDO"));
   ticket.push(center("COMO FACTURA"));
   ticket.push("");
-  
+
   // Texto previo al QR (si existe cliente con QR) - sin tilde
   if (customer?.qr_code) {
     ticket.push(center("Escanea para ver tu"));
     ticket.push(center("historial y creditos:"));
   }
-  
+
   return ticket.join("\n");
 }
 
@@ -247,35 +342,35 @@ async function printSaleWithQZ(saleDetails, customer, finalTotal) {
   if (typeof qz === 'undefined' || !qz) {
     throw new Error("QZ Tray no está disponible");
   }
-  
+
   try {
     // Conectar a QZ
     await qzConnect();
-    
+
     // Obtener configuración de impresora
     const config = await qzGetPrinterConfig();
-    
+
     // Construir ticket de texto
     const ticketText = buildEscposTicket(saleDetails, customer, finalTotal);
-    
+
     // Preparar datos para QZ
     const data = [];
-    
+
     // Reset impresora
     data.push("\x1B\x40");
-    
+
     // Ticket de texto
     data.push(ticketText + "\n\n");
-    
+
     // QR Code como imagen (si existe cliente con QR)
     if (customer && customer.qr_code) {
       const url = `${window.location.origin}/customer.html?code=${customer.qr_code}`;
       const size = 180;
       const qrApiUrl = `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&margin=10&data=${encodeURIComponent(url)}`;
-      
+
       // Alineacion centrada antes del QR
       data.push("\x1B\x61\x01");  // ESC a 1
-      
+
       data.push({
         type: "raw",
         format: "image",
@@ -285,21 +380,21 @@ async function printSaleWithQZ(saleDetails, customer, finalTotal) {
           language: "ESCPOS"
         }
       });
-      
+
       // Alimentar un poco despues del QR (pero no tanto)
       data.push("\x1B\x64\x03");  // ESC d 3 -> 3 lineas
-      
+
       // Volver a alineacion izquierda
       data.push("\x1B\x61\x00");  // ESC a 0
     }
-    
+
     // Corte total
     data.push("\x1D\x56\x42\x00");   // GS V 66 0
-    
+
     // Imprimir
     await qz.print(config, data);
     console.log("✅ Ticket enviado a impresora");
-    
+
   } catch (error) {
     console.error("❌ Error imprimiendo con QZ Tray:", error);
     throw error; // Re-lanzar para que el fallback funcione
@@ -309,26 +404,26 @@ async function printSaleWithQZ(saleDetails, customer, finalTotal) {
 // Función principal para generar QR usando API (más confiable que librería)
 function generateQRCode(url, container, size = 200) {
   console.log("generateQRCode llamado con:", { url, container: !!container, size });
-  
+
   if (!container) {
     console.error("❌ Container no encontrado para generar QR");
     return;
   }
-  
+
   if (!url) {
     console.error("❌ URL no proporcionada para generar QR");
     return;
   }
-  
+
   console.log("🔄 Generando QR code usando API para:", url);
-  
+
   // Limpiar contenedor primero
   container.innerHTML = "";
-  
+
   // Usar API de QR Server (más confiable que librerías CDN)
   const qrApiUrl = `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(url)}`;
   console.log("📡 URL de API QR:", qrApiUrl);
-  
+
   const img = document.createElement('img');
   img.src = qrApiUrl;
   img.alt = "QR Code";
@@ -338,18 +433,18 @@ function generateQRCode(url, container, size = 200) {
   img.style.margin = "0 auto";
   img.style.border = "1px solid #ddd";
   img.style.borderRadius = "4px";
-  
+
   img.onload = () => {
     console.log("✅ QR code generado exitosamente usando API");
     console.log("✅ Imagen cargada correctamente, dimensiones:", img.width, "x", img.height);
   };
-  
+
   img.onerror = (error) => {
     console.error("❌ Error cargando QR desde API:", error);
     console.error("❌ URL que falló:", qrApiUrl);
     container.innerHTML = `<p style="word-break: break-all; font-size: 12px; text-align: center; color: #dc3545;">Error al cargar QR. URL: ${url}</p>`;
   };
-  
+
   container.appendChild(img);
   console.log("📝 Imagen agregada al contenedor");
 }
@@ -361,12 +456,12 @@ function generateQRWithLibrary(url, container, size = 200) {
     generateQRCode(url, container, size);
     return;
   }
-  
+
   try {
     const canvas = document.createElement('canvas');
     container.innerHTML = "";
     container.appendChild(canvas);
-    
+
     QRCode.toCanvas(canvas, url, {
       width: size,
       margin: 2,
@@ -449,6 +544,9 @@ const autocompleteDropdown = document.getElementById("autocomplete-dropdown");
 const extraNumericInput = document.getElementById("extra-numeric");
 const extraPercentageInput = document.getElementById("extra-percentage");
 const applyExtrasBtn = document.getElementById("apply-extras-btn");
+const specialExtraNameInput = document.getElementById("special-extra-name");
+const specialExtraAmountInput = document.getElementById("special-extra-amount");
+const addSpecialExtraBtn = document.getElementById("add-special-extra-btn");
 const paymentMethodIndicator = document.getElementById("payment-method-indicator");
 const paymentMethodText = document.getElementById("payment-method-text");
 const loadAsCreditContainer = document.getElementById("load-as-credit-container");
@@ -522,7 +620,7 @@ let customerSearchTimeout = null;
 customerSearch.addEventListener("input", (e) => {
   clearTimeout(customerSearchTimeout);
   const term = e.target.value.trim();
-  
+
   if (term.length < 2) {
     customerSuggestions.innerHTML = "";
     return;
@@ -568,11 +666,11 @@ function highlightAutocompleteItem(index) {
 
 function selectAutocompleteProduct(product) {
   if (!product) return;
-  
+
   manualProduct.value = product.name;
   hideAutocompleteDropdown();
   autocompleteSelectedIndex = -1;
-  
+
   // Buscar y cargar el producto
   searchManualProduct();
 }
@@ -591,7 +689,7 @@ async function loadProductSuggestions(term) {
       .from("products")
       .select("id, name, category")
       .ilike("name", `%${term}%`)
-      .eq("status", "active")
+      .in("status", ["active", "pending_stock", "draft"])
       .limit(10);
 
     if (error) throw error;
@@ -621,24 +719,24 @@ async function loadProductSuggestions(term) {
         item.className = "autocomplete-item";
         item.setAttribute("data-product-id", product.id);
         item.setAttribute("data-index", index);
-        
+
         const nameHtml = highlightSearchTerm(escapeHtml(product.name), term);
         const categoryHtml = product.category ? `<div class="product-category">${escapeHtml(product.category)}</div>` : "";
-        
+
         item.innerHTML = `
           <div class="product-name">${nameHtml}</div>
           ${categoryHtml}
         `;
-        
+
         item.addEventListener("click", () => {
           selectAutocompleteProduct(product);
         });
-        
+
         item.addEventListener("mouseenter", () => {
           autocompleteSelectedIndex = index;
           highlightAutocompleteItem(index);
         });
-        
+
         autocompleteDropdown.appendChild(item);
       });
 
@@ -658,7 +756,7 @@ if (manualProduct) {
   manualProduct.addEventListener("input", (e) => {
     clearTimeout(productSearchTimeout);
     const term = e.target.value.trim();
-    
+
     if (term.length < 2) {
       hideAutocompleteDropdown();
       return;
@@ -701,7 +799,7 @@ if (manualProduct) {
         autocompleteSelectedIndex = Math.min(autocompleteSelectedIndex + 1, items.length - 1);
         highlightAutocompleteItem(autocompleteSelectedIndex);
         break;
-      
+
       case "ArrowUp":
         e.preventDefault();
         autocompleteSelectedIndex = Math.max(autocompleteSelectedIndex - 1, -1);
@@ -711,7 +809,7 @@ if (manualProduct) {
           highlightAutocompleteItem(autocompleteSelectedIndex);
         }
         break;
-      
+
       case "Enter":
         e.preventDefault();
         // Si hay exactamente una concordancia, seleccionarla automáticamente
@@ -723,7 +821,7 @@ if (manualProduct) {
           searchManualProduct();
         }
         break;
-      
+
       case "Escape":
         e.preventDefault();
         hideAutocompleteDropdown();
@@ -749,9 +847,9 @@ if (manualProduct) {
 
 // Cerrar dropdown al hacer clic fuera
 document.addEventListener("click", (e) => {
-  if (autocompleteDropdown && manualProduct && 
-      !autocompleteDropdown.contains(e.target) && 
-      e.target !== manualProduct) {
+  if (autocompleteDropdown && manualProduct &&
+    !autocompleteDropdown.contains(e.target) &&
+    e.target !== manualProduct) {
     hideAutocompleteDropdown();
   }
 });
@@ -912,10 +1010,58 @@ async function applyExtras() {
   showMessage("Extras aplicados correctamente", "success");
 }
 
+// Agregar extra especial al pedido
+async function addSpecialExtra() {
+  const name = specialExtraNameInput ? specialExtraNameInput.value.trim() : '';
+  const amount = specialExtraAmountInput ? parseFloat(specialExtraAmountInput.value) : 0;
+  
+  // Validaciones
+  if (!name) {
+    showMessage("Por favor ingrese un nombre para el extra especial", "error");
+    return;
+  }
+  if (isNaN(amount) || amount <= 0) {
+    showMessage("Por favor ingrese un monto válido mayor a 0", "error");
+    return;
+  }
+  
+  // Crear item de extra especial
+  const specialExtra = {
+    isExtra: true,
+    isSpecialExtra: true, // Flag adicional para distinguirlo de otros extras
+    extraType: 'special',
+    productName: name,
+    totalValue: amount,
+    totalQuantity: 1,
+    sku: 'EXTRA-ESPECIAL',
+    color: '-',
+    sizes: [],
+    price: amount
+  };
+  
+  saleItems.push(specialExtra);
+  
+  // Limpiar campos
+  if (specialExtraNameInput) specialExtraNameInput.value = "";
+  if (specialExtraAmountInput) specialExtraAmountInput.value = "";
+  
+  // Actualizar lista y totales
+  renderSaleList();
+  await calculateTotals();
+  showMessage(`Extra especial "${name}" agregado correctamente`, "success");
+}
+
 // Event listener para botón aplicar extras
 if (applyExtrasBtn) {
   applyExtrasBtn.addEventListener("click", async () => {
     await applyExtras();
+  });
+}
+
+// Event listener para botón agregar extra especial
+if (addSpecialExtraBtn) {
+  addSpecialExtraBtn.addEventListener("click", async () => {
+    await addSpecialExtra();
   });
 }
 
@@ -929,7 +1075,7 @@ if (loadAsCreditCheckbox) {
 // Buscar producto manualmente
 async function searchManualProduct() {
   const productName = manualProduct.value.trim();
-  
+
   if (!productName) {
     showMessage("Ingrese el nombre del producto", "error");
     return;
@@ -941,7 +1087,7 @@ async function searchManualProduct() {
       .from("products")
       .select("id, name")
       .ilike("name", productName)
-      .eq("status", "active")
+      .in("status", ["active", "pending_stock", "draft"])
       .limit(1)
       .single();
 
@@ -958,16 +1104,16 @@ async function searchManualProduct() {
   }
 }
 
-// Cargar variantes del producto para modo manual
+// Cargar variantes del producto para modo manual (talles desde variant_sizes)
 async function loadManualProductVariants(productId) {
   try {
+    // Cargar variantes sin size (los talles están en variant_sizes)
     const { data: variants, error } = await supabase
       .from("product_variants")
       .select(`
         id,
         sku,
         color,
-        size,
         price,
         active,
         products!inner (
@@ -979,7 +1125,7 @@ async function loadManualProductVariants(productId) {
       `)
       .eq("product_id", productId)
       .eq("active", true)
-      .eq("products.status", "active");
+      .in("products.status", ["active", "pending_stock", "draft"]);
 
     if (error) throw error;
 
@@ -988,8 +1134,51 @@ async function loadManualProductVariants(productId) {
       return;
     }
 
+    // Cargar talles desde variant_sizes para cada variante
+    const variantIds = variants.map(v => v.id);
+    const { data: sizesData, error: sizesError } = await supabase
+      .from("variant_sizes")
+      .select("variant_id, size, stock_qty, sku")
+      .in("variant_id", variantIds)
+      .order("size");
+
+    const sizesByVariant = new Map();
+    if (sizesData) {
+      sizesData.forEach(sizeRow => {
+        if (!sizesByVariant.has(sizeRow.variant_id)) {
+          sizesByVariant.set(sizeRow.variant_id, []);
+        }
+        const normalizedSize = normalizeSize(sizeRow.size);
+        if (normalizedSize) {
+          sizesByVariant.get(sizeRow.variant_id).push({
+            size: normalizedSize,
+            stock_qty: sizeRow.stock_qty || 0,
+            sku: sizeRow.sku,
+          });
+        }
+      });
+    }
+
+    // Construir variantes "virtuales" (una por cada variante + talle)
+    const variantsWithSizes = [];
+    variants.forEach(variant => {
+      const sizes = sizesByVariant.get(variant.id) || [];
+      if (sizes.length > 0) {
+        sizes.forEach(sizeData => {
+          variantsWithSizes.push({
+            ...variant,
+            size: sizeData.size,
+            sizeSku: sizeData.sku,
+            stock_qty: sizeData.stock_qty,
+          });
+        });
+      } else {
+        variantsWithSizes.push({ ...variant, size: null });
+      }
+    });
+
     manualCurrentProduct = variants[0].products;
-    manualCurrentVariants = variants;
+    manualCurrentVariants = variantsWithSizes;
 
     // Mostrar información básica inmediatamente (sin esperar datos adicionales)
     manualProductName.textContent = manualCurrentProduct.name;
@@ -998,38 +1187,45 @@ async function loadManualProductVariants(productId) {
     if (manualProductInfo) {
       manualProductInfo.style.display = "flex";
     }
-    
+
     // Renderizar colores inmediatamente con precios base
     renderManualColorButtons();
-    
-    // Obtener stock, precios efectivos e información de ofertas/promociones para cada variante EN PARALELO
+
+    // Obtener stock, precios efectivos e información de ofertas para cada variante EN PARALELO
     const variantPromises = manualCurrentVariants.map(async (variant) => {
-      // Ejecutar todas las llamadas en paralelo para esta variante
-      const [stockData, effectivePrice, offerInfo, promotionInfo] = await Promise.all([
+      const [warehouseStock, effectivePrice, offerInfo, promotionInfo] = await Promise.all([
         getVariantStock(variant.id),
         getEffectivePrice(variant.id),
         getOfferInfo(variant.id, manualCurrentProduct.id, variant.color),
         getPromotionInfo(variant.id)
       ]);
-      
+
+      let stockData;
+      if (variant.size != null && variant.size !== "" && (variant.stock_qty != null || variant.sizeSku)) {
+        const sizeStockQty = variant.stock_qty || 0;
+        stockData = {
+          ...warehouseStock,
+          sizeStock: sizeStockQty,
+          total: Math.max(warehouseStock.total, sizeStockQty),
+        };
+      } else {
+        stockData = warehouseStock;
+      }
+
       variant.stockData = stockData;
       variant.effectivePrice = effectivePrice !== null ? effectivePrice : variant.price;
       variant.offerInfo = offerInfo;
       variant.promotionInfo = promotionInfo;
-      
       return variant;
     });
-    
-    // Esperar a que todas las variantes se procesen en paralelo
+
     await Promise.all(variantPromises);
-    
-    // Actualizar precio e información de oferta con datos reales después de cargar
+
     const updatedFirstVariant = manualCurrentVariants[0];
     const firstVariantEffectivePrice = updatedFirstVariant.effectivePrice || updatedFirstVariant.price;
     manualProductPrice.textContent = `$${firstVariantEffectivePrice.toLocaleString('es-AR')}`;
     updateProductOfferDisplay(updatedFirstVariant, manualProductOfferInfo);
-    
-    // Re-renderizar colores con datos actualizados
+
     renderManualColorButtons();
   } catch (error) {
     console.error("Error cargando variantes manuales:", error);
@@ -1040,10 +1236,10 @@ async function loadManualProductVariants(productId) {
 // Renderizar botones de colores para modo manual
 function renderManualColorButtons() {
   const colors = [...new Set(manualCurrentVariants.map(v => v.color).filter(Boolean))];
-  
+
   if (!manualColorButtons) return;
   manualColorButtons.innerHTML = "";
-  
+
   colors.forEach(color => {
     const btn = document.createElement("button");
     btn.className = "color-btn";
@@ -1058,7 +1254,7 @@ function renderManualColorButtons() {
       btn.classList.add("active");
       manualSelectedColor = color;
       manualSelectedSizes = {};
-      
+
       // Actualizar precio e información de oferta para el color seleccionado
       const variantsByColor = manualCurrentVariants.filter(v => v.color === color);
       if (variantsByColor.length > 0) {
@@ -1067,7 +1263,7 @@ function renderManualColorButtons() {
         manualProductPrice.textContent = `$${effectivePrice.toLocaleString('es-AR')}`;
         updateProductOfferDisplay(firstVariant, manualProductOfferInfo);
       }
-      
+
       renderManualSizeButtons();
     });
     manualColorButtons.appendChild(btn);
@@ -1076,7 +1272,7 @@ function renderManualColorButtons() {
   if (colors.length > 0 && !manualSelectedColor) {
     manualSelectedColor = colors[0];
     document.querySelectorAll("#manual-color-buttons .color-btn")[0]?.classList.add("active");
-    
+
     // Actualizar precio e información de oferta para el primer color
     const variantsByColor = manualCurrentVariants.filter(v => v.color === manualSelectedColor);
     if (variantsByColor.length > 0) {
@@ -1085,7 +1281,7 @@ function renderManualColorButtons() {
       manualProductPrice.textContent = `$${effectivePrice.toLocaleString('es-AR')}`;
       updateProductOfferDisplay(firstVariant, manualProductOfferInfo);
     }
-    
+
     renderManualSizeButtons();
   }
 }
@@ -1133,7 +1329,7 @@ function renderManualSizeButtons() {
     // Mostrar contador si hay cantidad seleccionada
     const quantity = manualSelectedSizes[size] || 0;
     const source = manualSelectedSizesSource[size] || { ventaPublico: 0, general: 0 };
-    
+
     // Si hay cantidad seleccionada y se está usando stock de general, cambiar a verde
     if (quantity > 0 && source.general > 0) {
       btn.classList.remove("size-available");
@@ -1189,35 +1385,35 @@ function renderManualSizeButtons() {
       btn.addEventListener("click", () => {
         const currentQty = manualSelectedSizes[size] || 0;
         const currentSource = manualSelectedSizesSource[size] || { ventaPublico: 0, general: 0 };
-        
+
         // En modo devoluciones, no hay límite de cantidad
         if (returnMode.checked) {
           manualSelectedSizes[size] = currentQty + 1;
-          
+
           // En devoluciones, no necesitamos rastrear la fuente del stock
           // porque se agregará al stock de venta-publico
           if (!manualSelectedSizesSource[size]) {
             manualSelectedSizesSource[size] = { ventaPublico: 0, general: 0 };
           }
-          
+
           renderManualSizeButtons();
           updateManualLoadButton();
         } else {
           // Modo venta normal: verificar stock disponible
           const totalStockAvailable = ventaPublicoStock + generalStock;
-          
+
           if (currentQty < totalStockAvailable) {
             manualSelectedSizes[size] = currentQty + 1;
-            
+
             // Asignar a la fuente correcta (priorizar venta-publico)
             if (!manualSelectedSizesSource[size]) {
               manualSelectedSizesSource[size] = { ventaPublico: 0, general: 0 };
             }
-            
+
             // Calcular cuánto stock queda disponible en cada almacén
             const remainingVentaPublico = Math.max(0, ventaPublicoStock - currentSource.ventaPublico);
             const remainingGeneral = Math.max(0, generalStock - currentSource.general);
-            
+
             if (remainingVentaPublico > 0) {
               // Aún hay stock en venta-publico, usar de ahí
               manualSelectedSizesSource[size].ventaPublico++;
@@ -1225,7 +1421,7 @@ function renderManualSizeButtons() {
               // Ya no hay en venta-publico, usar de general (el botón se volverá verde)
               manualSelectedSizesSource[size].general++;
             }
-            
+
             renderManualSizeButtons();
             updateManualLoadButton();
           } else {
@@ -1271,7 +1467,7 @@ if (manualLoadBtn) {
 
       const stock = variant.stockData || { total: 0, general: { stock: 0 }, ventaPublico: { stock: 0 } };
       const totalStock = stock.total || 0;
-      
+
       if (!isReturn && quantity > totalStock) {
         showMessage(`Error: La cantidad seleccionada (${quantity}) para talle ${size} excede el stock disponible (${totalStock})`, "error");
         hasStockError = true;
@@ -1290,21 +1486,21 @@ if (manualLoadBtn) {
 
       // Obtener fuente del stock para este talle
       const source = manualSelectedSizesSource[size] || { ventaPublico: quantity, general: 0 };
-      
+
       // Si no hay fuente definida, calcularla basándose en el stock disponible
       if (!manualSelectedSizesSource[size]) {
         const stock = variant.stockData || { general: { stock: 0 }, ventaPublico: { stock: 0 } };
         const ventaPublicoStock = stock.ventaPublico?.stock || 0;
         const generalStock = stock.general?.stock || 0;
-        
+
         // Priorizar venta-publico
         source.ventaPublico = Math.min(quantity, ventaPublicoStock);
         source.general = Math.max(0, quantity - source.ventaPublico);
       }
 
       // Buscar si ya existe este producto/color en la lista
-      const existingIndex = saleItems.findIndex(item => 
-        item.productId === manualCurrentProduct.id && 
+      const existingIndex = saleItems.findIndex(item =>
+        item.productId === manualCurrentProduct.id &&
         item.color === manualSelectedColor
       );
 
@@ -1318,15 +1514,15 @@ if (manualLoadBtn) {
             general: (existingSize.source?.general || 0) + source.general
           };
         } else {
-          saleItems[existingIndex].sizes.push({ 
-            size, 
-            quantity, 
+          saleItems[existingIndex].sizes.push({
+            size,
+            quantity,
             variantId: variant.id,
             source: { ventaPublico: source.ventaPublico, general: source.general }
           });
         }
         saleItems[existingIndex].totalQuantity += quantity;
-        
+
         // Actualizar información de oferta/promoción y precio base si no existe
         if (!saleItems[existingIndex].basePrice) {
           saleItems[existingIndex].basePrice = variant.price;
@@ -1337,11 +1533,11 @@ if (manualLoadBtn) {
         if (!saleItems[existingIndex].promotionInfo && variant.promotionInfo) {
           saleItems[existingIndex].promotionInfo = variant.promotionInfo;
         }
-        
+
         // Actualizar isReturn según el modo actual
         const previousIsReturn = saleItems[existingIndex].isReturn;
         saleItems[existingIndex].isReturn = isReturn;
-        
+
         // Si cambió el modo de devolución, recalcular totalValue completo
         if (previousIsReturn !== isReturn) {
           // Recalcular totalValue desde cero basándose en todos los talles
@@ -1382,9 +1578,9 @@ if (manualLoadBtn) {
           basePrice: basePrice, // Guardar precio base para calcular descuentos
           offerInfo: variant.offerInfo || null,
           promotionInfo: variant.promotionInfo || null,
-          sizes: [{ 
-            size, 
-            quantity, 
+          sizes: [{
+            size,
+            quantity,
             variantId: variant.id,
             source: { ventaPublico: source.ventaPublico, general: source.general }
           }],
@@ -1432,7 +1628,7 @@ async function searchBySku(sku) {
       `)
       .eq("sku", sku)
       .eq("active", true)
-      .eq("products.status", "active")
+      .in("products.status", ["active", "pending_stock", "draft"])
       .single();
 
     if (error) {
@@ -1460,7 +1656,7 @@ async function searchBySku(sku) {
 
     // Cargar todas las variantes del producto
     await loadProductVariants(variant.products.id);
-    
+
     // Si el SKU tiene stock y no está en modo devoluciones, seleccionar automáticamente color y talle
     if (totalStock > 0 && !returnMode.checked) {
       // Seleccionar el color y talle del SKU encontrado
@@ -1497,7 +1693,7 @@ async function loadProductVariants(productId) {
       `)
       .eq("product_id", productId)
       .eq("active", true)
-      .eq("products.status", "active");
+      .in("products.status", ["active", "pending_stock", "draft"]);
 
     if (error) throw error;
 
@@ -1514,10 +1710,10 @@ async function loadProductVariants(productId) {
     const firstVariant = currentVariants[0];
     productPrice.textContent = `$${firstVariant.price.toLocaleString('es-AR')}`;
     productSelection.classList.add("active");
-    
+
     // Renderizar colores inmediatamente con precios base
     renderColorButtons();
-    
+
     // Obtener stock, precios efectivos e información de ofertas/promociones para cada variante EN PARALELO
     const variantPromises = currentVariants.map(async (variant) => {
       // Ejecutar todas las llamadas en paralelo para esta variante
@@ -1527,24 +1723,24 @@ async function loadProductVariants(productId) {
         getOfferInfo(variant.id, currentProduct.id, variant.color),
         getPromotionInfo(variant.id)
       ]);
-      
+
       variant.stockData = stockData;
       variant.effectivePrice = effectivePrice !== null ? effectivePrice : variant.price;
       variant.offerInfo = offerInfo;
       variant.promotionInfo = promotionInfo;
-      
+
       return variant;
     });
-    
+
     // Esperar a que todas las variantes se procesen en paralelo
     await Promise.all(variantPromises);
-    
+
     // Actualizar precio e información de oferta con datos reales después de cargar
     const updatedFirstVariant = currentVariants[0];
     const firstVariantEffectivePrice = updatedFirstVariant.effectivePrice || updatedFirstVariant.price;
     productPrice.textContent = `$${firstVariantEffectivePrice.toLocaleString('es-AR')}`;
     updateProductOfferDisplay(updatedFirstVariant, productOfferInfo);
-    
+
     // Re-renderizar colores con datos actualizados
     renderColorButtons();
   } catch (error) {
@@ -1589,14 +1785,14 @@ async function getVariantStock(variantId) {
 // Renderizar botones de colores
 function renderColorButtons() {
   const colors = [...new Set(currentVariants.map(v => v.color).filter(Boolean))];
-  
+
   colorButtons.innerHTML = "";
-  
+
   colors.forEach(color => {
     const btn = document.createElement("button");
     btn.className = "color-btn";
     btn.textContent = color;
-      btn.addEventListener("click", () => {
+    btn.addEventListener("click", () => {
       document.querySelectorAll(".color-btn").forEach(b => {
         b.classList.remove("active");
         b.style.color = ""; // Resetear color para que use el CSS
@@ -1604,7 +1800,7 @@ function renderColorButtons() {
       btn.classList.add("active");
       selectedColor = color;
       selectedSizes = {};
-      
+
       // Actualizar precio e información de oferta para el color seleccionado
       const variantsByColor = currentVariants.filter(v => v.color === color);
       if (variantsByColor.length > 0) {
@@ -1613,7 +1809,7 @@ function renderColorButtons() {
         productPrice.textContent = `$${effectivePrice.toLocaleString('es-AR')}`;
         updateProductOfferDisplay(firstVariant, productOfferInfo);
       }
-      
+
       renderSizeButtons();
     });
     colorButtons.appendChild(btn);
@@ -1622,7 +1818,7 @@ function renderColorButtons() {
   if (colors.length > 0 && !selectedColor) {
     selectedColor = colors[0];
     document.querySelectorAll(".color-btn")[0].classList.add("active");
-    
+
     // Actualizar precio e información de oferta para el primer color
     const variantsByColor = currentVariants.filter(v => v.color === selectedColor);
     if (variantsByColor.length > 0) {
@@ -1631,7 +1827,7 @@ function renderColorButtons() {
       productPrice.textContent = `$${effectivePrice.toLocaleString('es-AR')}`;
       updateProductOfferDisplay(firstVariant, productOfferInfo);
     }
-    
+
     renderSizeButtons();
   }
 }
@@ -1677,7 +1873,7 @@ function renderSizeButtons() {
     const quantity = selectedSizes[size] || 0;
     const source = selectedSizesSource[size] || { ventaPublico: 0, general: 0 };
     const totalFromSource = source.ventaPublico + source.general;
-    
+
     // Si hay cantidad seleccionada, verificar si se está usando stock de general
     // El botón se vuelve verde cuando se empieza a usar stock de general
     if (quantity > 0 && source.general > 0) {
@@ -1731,35 +1927,35 @@ function renderSizeButtons() {
       btn.addEventListener("click", () => {
         const currentQty = selectedSizes[size] || 0;
         const currentSource = selectedSizesSource[size] || { ventaPublico: 0, general: 0 };
-        
+
         // En modo devoluciones, no hay límite de cantidad
         if (returnMode.checked) {
           selectedSizes[size] = currentQty + 1;
-          
+
           // En devoluciones, no necesitamos rastrear la fuente del stock
           // porque se agregará al stock de venta-publico
           if (!selectedSizesSource[size]) {
             selectedSizesSource[size] = { ventaPublico: 0, general: 0 };
           }
-          
+
           renderSizeButtons();
           updateLoadButton();
         } else {
           // Modo venta normal: verificar stock disponible
           const totalStockAvailable = ventaPublicoStock + generalStock;
-          
+
           if (currentQty < totalStockAvailable) {
             selectedSizes[size] = currentQty + 1;
-            
+
             // Asignar a la fuente correcta (priorizar venta-publico)
             if (!selectedSizesSource[size]) {
               selectedSizesSource[size] = { ventaPublico: 0, general: 0 };
             }
-            
+
             // Calcular cuánto stock queda disponible en cada almacén
             const remainingVentaPublico = Math.max(0, ventaPublicoStock - currentSource.ventaPublico);
             const remainingGeneral = Math.max(0, generalStock - currentSource.general);
-            
+
             if (remainingVentaPublico > 0) {
               // Aún hay stock en venta-publico, usar de ahí
               selectedSizesSource[size].ventaPublico++;
@@ -1767,7 +1963,7 @@ function renderSizeButtons() {
               // Ya no hay en venta-publico, usar de general (el botón se volverá verde)
               selectedSizesSource[size].general++;
             }
-            
+
             renderSizeButtons();
             updateLoadButton();
           } else {
@@ -1807,20 +2003,20 @@ loadToSaleBtn.addEventListener("click", async () => {
     if (!variant) return;
 
     // Buscar si ya existe este producto/color en la lista
-    const existingIndex = saleItems.findIndex(item => 
-      item.productId === currentProduct.id && 
+    const existingIndex = saleItems.findIndex(item =>
+      item.productId === currentProduct.id &&
       item.color === selectedColor
     );
 
     // Obtener fuente del stock para este talle
     const source = selectedSizesSource[size] || { ventaPublico: quantity, general: 0 };
-    
+
     // Si no hay fuente definida, calcularla basándose en el stock disponible
     if (!selectedSizesSource[size]) {
       const stock = variant.stockData || { general: { stock: 0 }, ventaPublico: { stock: 0 } };
       const ventaPublicoStock = stock.ventaPublico?.stock || 0;
       const generalStock = stock.general?.stock || 0;
-      
+
       // Priorizar venta-publico
       source.ventaPublico = Math.min(quantity, ventaPublicoStock);
       source.general = Math.max(0, quantity - source.ventaPublico);
@@ -1836,15 +2032,15 @@ loadToSaleBtn.addEventListener("click", async () => {
           general: (existingSize.source?.general || 0) + source.general
         };
       } else {
-        saleItems[existingIndex].sizes.push({ 
-          size, 
-          quantity, 
+        saleItems[existingIndex].sizes.push({
+          size,
+          quantity,
           variantId: variant.id,
           source: { ventaPublico: source.ventaPublico, general: source.general }
         });
       }
       saleItems[existingIndex].totalQuantity += quantity;
-      
+
       // Actualizar información de oferta/promoción y precio base si no existe
       if (!saleItems[existingIndex].basePrice) {
         saleItems[existingIndex].basePrice = variant.price;
@@ -1855,11 +2051,11 @@ loadToSaleBtn.addEventListener("click", async () => {
       if (!saleItems[existingIndex].promotionInfo && variant.promotionInfo) {
         saleItems[existingIndex].promotionInfo = variant.promotionInfo;
       }
-      
+
       // Actualizar isReturn según el modo actual
       const previousIsReturn = saleItems[existingIndex].isReturn;
       saleItems[existingIndex].isReturn = isReturn;
-      
+
       // Si cambió el modo de devolución, recalcular totalValue completo
       if (previousIsReturn !== isReturn) {
         // Recalcular totalValue desde cero basándose en todos los talles
@@ -1900,9 +2096,9 @@ loadToSaleBtn.addEventListener("click", async () => {
         basePrice: basePrice, // Guardar precio base para calcular descuentos
         offerInfo: variant.offerInfo || null,
         promotionInfo: variant.promotionInfo || null,
-        sizes: [{ 
-          size, 
-          quantity, 
+        sizes: [{
+          size,
+          quantity,
           variantId: variant.id,
           source: { ventaPublico: source.ventaPublico, general: source.general }
         }],
@@ -1926,13 +2122,13 @@ function calculateItemDiscount(item) {
   if (!item.basePrice || (!item.offerInfo && !item.promotionInfo)) {
     return 0;
   }
-  
+
   // Para ofertas: descuento = (precio base - precio efectivo) * cantidad total
   if (item.offerInfo && !item.promotionInfo) {
     const discountPerUnit = item.basePrice - item.price;
     return discountPerUnit * item.totalQuantity;
   }
-  
+
   // Para promociones, calcular el descuento según el tipo
   // IMPORTANTE: Solo aplicar descuento si se cumple la condición mínima de la promoción
   if (item.promotionInfo) {
@@ -1941,10 +2137,10 @@ function calculateItemDiscount(item) {
       // Si hay menos de 2 unidades, la promoción NO se aplica, no hay descuento
       return 0;
     }
-    
+
     // Usar precio efectivo (con ofertas aplicadas) como base para calcular el descuento de la promoción
     const totalEffectiveValue = item.price * item.totalQuantity;
-    
+
     if (item.promotionInfo.promoType === '2x1') {
       // En 2x1: se cobra solo la mitad (redondeado hacia arriba)
       // Ejemplo: 2 items a $10.000 = $20.000, se cobra 1 = $10.000, descuento = $10.000
@@ -1970,7 +2166,7 @@ function calculateItemDiscount(item) {
       return discount > 0 ? discount : 0;
     }
   }
-  
+
   return 0;
 }
 
@@ -1990,18 +2186,31 @@ function renderSaleList() {
   // Construir HTML de items, agregando items de oferta después de cada producto con oferta/promoción
   let html = '';
   let itemIndex = 0;
-  
+
   saleItems.forEach((item, originalIndex) => {
     // Si es un extra, renderizar de forma especial
     if (item.isExtra) {
-      const rowClass = "extra-item";
+      // Determinar estilo según tipo de extra
+      let rowClass = "extra-item";
+      let rowStyle = "";
+      let nameDisplay = escapeHtml(item.productName);
+      
+      // Si es extra especial, aplicar estilo distintivo
+      if (item.isSpecialExtra) {
+        rowStyle = 'style="background: #f3e5f5; border-left: 4px solid #9c27b0;"';
+        nameDisplay = `<div style="display: flex; align-items: center; gap: 8px;">
+          <span style="background: #9c27b0; color: white; padding: 4px 8px; border-radius: 12px; font-size: 11px; font-weight: 600;">⭐ EXTRA</span>
+          <span>${escapeHtml(item.productName)}</span>
+        </div>`;
+      }
+      
       const valueSign = item.totalValue < 0 ? '-' : '';
       const valueDisplay = Math.abs(item.totalValue);
-      
+
       html += `
-        <tr class="${rowClass}">
+        <tr class="${rowClass}" ${rowStyle}>
           <td>-</td>
-          <td>${escapeHtml(item.productName)}</td>
+          <td>${nameDisplay}</td>
           <td>-</td>
           <td>-</td>
           <td>-</td>
@@ -2026,7 +2235,7 @@ function renderSaleList() {
     `).join("");
 
     const rowClass = item.isReturn ? "return-item" : "";
-    
+
     // Construir información de oferta/promoción
     let offerInfoHtml = '';
     if (item.promotionInfo) {
@@ -2060,17 +2269,17 @@ function renderSaleList() {
         </td>
       </tr>
     `;
-    
+
     // Si el producto tiene oferta o promoción, agregar un item "Oferta" con el descuento
     if ((item.offerInfo || item.promotionInfo) && !item.isReturn) {
       const discount = calculateItemDiscount(item);
       if (discount > 0) {
-        const discountDescription = item.promotionInfo 
-          ? item.promotionInfo.description 
-          : (item.offerInfo.discountPercent > 0 
-              ? `${item.offerInfo.discountPercent}% OFF - ${item.offerInfo.title}`
-              : item.offerInfo.title);
-        
+        const discountDescription = item.promotionInfo
+          ? item.promotionInfo.description
+          : (item.offerInfo.discountPercent > 0
+            ? `${item.offerInfo.discountPercent}% OFF - ${item.offerInfo.title}`
+            : item.offerInfo.title);
+
         html += `
           <tr class="offer-discount-item" style="background: #fff3cd; border-left: 4px solid #ffc107;">
             <td>-</td>
@@ -2088,15 +2297,15 @@ function renderSaleList() {
         `;
       }
     }
-    
+
     itemIndex++;
   });
-  
+
   saleListTbody.innerHTML = html;
 }
 
 // Función global para eliminar item
-window.removeSaleItem = async function(index) {
+window.removeSaleItem = async function (index) {
   saleItems.splice(index, 1);
   renderSaleList();
   await calculateTotals();
@@ -2107,7 +2316,7 @@ async function getEffectivePrice(variantId) {
   try {
     const { data, error } = await supabase
       .rpc('get_effective_price', { p_variant_id: variantId });
-    
+
     if (error) throw error;
     return data || null;
   } catch (error) {
@@ -2120,7 +2329,7 @@ async function getEffectivePrice(variantId) {
 async function getOfferInfo(variantId, productId, color) {
   try {
     const now = new Date().toISOString().split('T')[0];
-    
+
     // Obtener oferta de precio por color
     const { data: offer, error: offerError } = await supabase
       .from('color_price_offers')
@@ -2131,11 +2340,11 @@ async function getOfferInfo(variantId, productId, color) {
       .lte('start_date', now)
       .gte('end_date', now)
       .maybeSingle();
-    
+
     if (offerError && offerError.code !== 'PGRST116') {
       console.error('Error obteniendo oferta:', offerError);
     }
-    
+
     if (offer) {
       // Obtener precio base de la variante para calcular el descuento
       const { data: variant } = await supabase
@@ -2143,13 +2352,13 @@ async function getOfferInfo(variantId, productId, color) {
         .select('price')
         .eq('id', variantId)
         .single();
-      
+
       if (variant) {
         const basePrice = variant.price;
         const offerPrice = offer.offer_price;
         const discount = basePrice - offerPrice;
         const discountPercent = Math.round((discount / basePrice) * 100);
-        
+
         return {
           type: 'offer',
           title: offer.offer_title || 'Oferta',
@@ -2159,7 +2368,7 @@ async function getOfferInfo(variantId, productId, color) {
         };
       }
     }
-    
+
     return null;
   } catch (error) {
     console.error('Error obteniendo información de oferta:', error);
@@ -2172,9 +2381,9 @@ async function getPromotionInfo(variantId) {
   try {
     const { data: promotions, error } = await supabase
       .rpc('get_active_promotions_for_variants', { p_variant_ids: [variantId] });
-    
+
     if (error) throw error;
-    
+
     if (promotions && promotions.length > 0) {
       const promo = promotions[0]; // Tomar la primera promoción
       if (promo.promo_type === '2x1') {
@@ -2195,7 +2404,7 @@ async function getPromotionInfo(variantId) {
         };
       }
     }
-    
+
     return null;
   } catch (error) {
     console.error('Error obteniendo información de promoción:', error);
@@ -2209,7 +2418,7 @@ function updateProductOfferDisplay(variant, offerInfoElement) {
     if (offerInfoElement) offerInfoElement.style.display = 'none';
     return;
   }
-  
+
   // Priorizar promoción sobre oferta
   if (variant.promotionInfo) {
     offerInfoElement.textContent = `🔥 ${variant.promotionInfo.description}`;
@@ -2234,7 +2443,7 @@ async function getActivePromotionsForVariants(variantIds) {
   try {
     const { data, error } = await supabase
       .rpc('get_active_promotions_for_variants', { p_variant_ids: variantIds });
-    
+
     if (error) throw error;
     return data || [];
   } catch (error) {
@@ -2246,7 +2455,7 @@ async function getActivePromotionsForVariants(variantIds) {
 // Calcular totales con ofertas y promociones
 async function calculateTotals() {
   const totalItemsCount = saleItems.reduce((sum, item) => sum + item.totalQuantity, 0);
-  
+
   // Obtener todos los variant_ids de los items
   const variantIds = [];
   saleItems.forEach(item => {
@@ -2256,7 +2465,7 @@ async function calculateTotals() {
       }
     });
   });
-  
+
   // Obtener precios efectivos con ofertas
   const effectivePrices = new Map();
   for (const variantId of variantIds) {
@@ -2265,10 +2474,10 @@ async function calculateTotals() {
       effectivePrices.set(variantId, price);
     }
   }
-  
+
   // Obtener promociones activas
   const promotions = await getActivePromotionsForVariants(variantIds);
-  
+
   // Crear mapa de variant_id -> promociones
   const variantPromos = new Map();
   promotions.forEach(promo => {
@@ -2279,18 +2488,18 @@ async function calculateTotals() {
       variantPromos.get(vid).push(promo);
     });
   });
-  
+
   // Calcular subtotal considerando ofertas y promociones
   let subtotal = 0;
   const itemsInPromos = new Set();
-  
+
   // Primero procesar promociones (prioridad)
   const promoGroups = new Map(); // promotion_id -> items[]
-  
+
   saleItems.forEach(item => {
     item.sizes.forEach(size => {
       if (!size.variantId) return;
-      
+
       const promos = variantPromos.get(size.variantId) || [];
       if (promos.length > 0) {
         // Item está en promoción
@@ -2308,16 +2517,16 @@ async function calculateTotals() {
       }
     });
   });
-  
+
   // Aplicar promociones (solo si se cumple la condición mínima)
   promoGroups.forEach((items, promoId) => {
     const promo = promotions.find(p => p.promotion_id === promoId);
     if (!promo) return;
-    
+
     const totalItems = items.reduce((sum, i) => sum + i.quantity, 0);
     const groups = Math.floor(totalItems / 2); // Grupos de 2
     const isReturn = items[0]?.item?.isReturn || false;
-    
+
     // Verificar que la promoción realmente se aplica (necesita mínimo 2 unidades)
     if (totalItems < 2) {
       // Si hay menos de 2 unidades, NO aplicar la promoción
@@ -2329,7 +2538,7 @@ async function calculateTotals() {
       });
       return; // Saltar esta promoción
     }
-    
+
     if (promo.promo_type === '2x1') {
       // Cobrar solo la mitad (redondear hacia arriba si impar)
       const toCharge = Math.ceil(totalItems / 2);
@@ -2367,25 +2576,25 @@ async function calculateTotals() {
       }
     }
   });
-  
+
   // Procesar items que NO están en promociones
   // Usar directamente item.price que ya contiene el precio efectivo (con ofertas aplicadas)
   saleItems.forEach(item => {
     // Saltar extras que se procesan después
     if (item.isExtra) return;
-    
+
     item.sizes.forEach(size => {
       const itemKey = `${item.productId}-${item.color}-${size.size}`;
       if (itemsInPromos.has(itemKey)) {
         // Ya procesado en promoción
         return;
       }
-      
+
       const quantity = size.quantity;
       // item.price ya contiene el precio efectivo (con ofertas aplicadas al cargar)
       const price = item.price || 0;
       const itemValue = price * quantity;
-      
+
       if (item.isReturn) {
         subtotal -= itemValue;
       } else {
@@ -2419,13 +2628,19 @@ async function calculateTotals() {
     finalTotal += extra.totalValue; // Ya incluye el signo negativo si corresponde
   });
 
+  // Aplicar extras especiales
+  const specialExtras = extraItems.filter(item => item.extraType === 'special');
+  specialExtras.forEach(extra => {
+    finalTotal += extra.totalValue;
+  });
+
   totalItems.textContent = totalItemsCount;
-  
+
   // Crédito aplicado siempre en rojo
   creditApplied.textContent = `$${creditToApply.toLocaleString('es-AR')}`;
   creditApplied.style.color = "#dc3545"; // Rojo
   creditApplied.style.fontWeight = "700";
-  
+
   // Mostrar el total: verde si positivo, rojo si negativo
   if (finalTotal < 0) {
     // Total negativo (devolución/saldo a favor) → rojo
@@ -2433,7 +2648,7 @@ async function calculateTotals() {
     totalAmount.style.color = "#dc3545"; // Rojo
     totalAmount.style.fontWeight = "700";
     totalAmount.style.fontSize = "20px";
-    
+
     // Mostrar casilla "Cargar como crédito" solo si hay cliente seleccionado
     if (selectedCustomer && loadAsCreditContainer) {
       loadAsCreditContainer.style.display = "block";
@@ -2444,7 +2659,7 @@ async function calculateTotals() {
     totalAmount.style.color = "#28a745"; // Verde
     totalAmount.style.fontWeight = "700";
     totalAmount.style.fontSize = "20px";
-    
+
     // Ocultar casilla si el total es positivo
     if (loadAsCreditContainer) {
       loadAsCreditContainer.style.display = "none";
@@ -2459,7 +2674,7 @@ async function calculateTotals() {
     totalAmount.style.color = "#333";
     totalAmount.style.fontWeight = "normal";
     totalAmount.style.fontSize = "inherit";
-    
+
     // Ocultar casilla si el total es cero
     if (loadAsCreditContainer) {
       loadAsCreditContainer.style.display = "none";
@@ -2469,7 +2684,7 @@ async function calculateTotals() {
       }
     }
   }
-  
+
   // Actualizar el cambio cuando cambia el total
   updateChangeAmount();
 }
@@ -2477,35 +2692,35 @@ async function calculateTotals() {
 // Función para calcular y mostrar el cambio
 function updateChangeAmount() {
   if (!moneyReceived || !changeAmount || !totalAmount) return;
-  
+
   // Obtener el dinero recibido (eliminar puntos de formato para el cálculo)
   const receivedValue = moneyReceived.value.trim();
   const receivedNumbers = receivedValue.replace(/[^0-9]/g, ''); // Eliminar puntos de formato
   const received = parseFloat(receivedNumbers) || 0;
-  
+
   // Si no se ha ingresado ningún monto (campo vacío o 0), mostrar $0
   if (!receivedValue || received === 0) {
     changeAmount.textContent = "$0";
     changeAmount.style.color = "#333";
     return;
   }
-  
+
   // Obtener el total de la compra (sin el símbolo $)
   // Manejar tanto valores positivos como negativos (devoluciones)
   let totalText = totalAmount.textContent.trim();
   const isNegative = totalText.startsWith('-');
-  
+
   // Eliminar símbolos y caracteres no numéricos, pero preservar el formato
   // En formato argentino, los puntos son separadores de miles, no decimales
   // Eliminamos todos los puntos y luego parseamos
   totalText = totalText.replace(/[^0-9]/g, ''); // Eliminar todo excepto números
   const total = parseFloat(totalText) || 0; // Ahora parseFloat funciona correctamente
   const totalValue = isNegative ? -total : total;
-  
+
   // Calcular el cambio: dinero recibido - total
   // Si el total es negativo (devolución), el cambio será positivo (dinero que debemos devolver)
   const change = received - totalValue;
-  
+
   // Mostrar el cambio
   if (change < 0) {
     // Si el dinero recibido es menor al total, mostrar en rojo (falta dinero)
@@ -2527,11 +2742,11 @@ function formatNumberWithThousands(value) {
   // Eliminar todo excepto números
   const numbers = value.replace(/[^0-9]/g, '');
   if (!numbers) return '';
-  
+
   // Convertir a número y formatear con puntos como separadores de miles
   const num = parseInt(numbers, 10);
   if (isNaN(num)) return '';
-  
+
   return num.toLocaleString('es-AR');
 }
 
@@ -2542,21 +2757,21 @@ if (moneyReceived) {
     const input = e.target;
     const cursorPosition = input.selectionStart;
     const originalValue = input.value;
-    
+
     // Contar cuántos caracteres hay antes del cursor (sin contar puntos)
     const beforeCursor = originalValue.substring(0, cursorPosition);
     const digitsBeforeCursor = beforeCursor.replace(/[^0-9]/g, '').length;
-    
+
     // Obtener solo los números
     const numbers = originalValue.replace(/[^0-9]/g, '');
-    
+
     if (numbers) {
       // Formatear el número
       const formatted = formatNumberWithThousands(numbers);
-      
+
       // Actualizar el valor formateado
       input.value = formatted;
-      
+
       // Calcular nueva posición del cursor
       // Contar dígitos hasta encontrar la posición correcta
       let newPosition = 0;
@@ -2573,10 +2788,10 @@ if (moneyReceived) {
           newPosition = i + 1;
         }
       }
-      
+
       // Asegurar que la posición no exceda la longitud
       newPosition = Math.min(newPosition, formatted.length);
-      
+
       // Restaurar la posición del cursor
       setTimeout(() => {
         input.setSelectionRange(newPosition, newPosition);
@@ -2584,27 +2799,27 @@ if (moneyReceived) {
     } else {
       input.value = '';
     }
-    
+
     // Actualizar el cambio
     updateChangeAmount();
   });
-  
+
   // Prevenir entrada de caracteres no numéricos (excepto en eventos controlados)
   moneyReceived.addEventListener("keypress", (e) => {
     // Permitir teclas de control (backspace, delete, tab, etc.)
-    if (e.ctrlKey || e.metaKey || e.key === 'Backspace' || e.key === 'Delete' || 
-        e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'Tab') {
+    if (e.ctrlKey || e.metaKey || e.key === 'Backspace' || e.key === 'Delete' ||
+      e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'Tab') {
       return;
     }
-    
+
     // Solo permitir números
     if (!/[0-9]/.test(e.key)) {
       e.preventDefault();
     }
   });
-  
+
   moneyReceived.addEventListener("change", updateChangeAmount);
-  
+
   // Permitir solo números al pegar
   moneyReceived.addEventListener("paste", (e) => {
     e.preventDefault();
@@ -2629,7 +2844,7 @@ async function searchCustomer(term) {
     if (error) throw error;
 
     const customers = data || [];
-    
+
     customerSuggestions.innerHTML = "";
     customers.forEach(customer => {
       const option = document.createElement("option");
@@ -2705,11 +2920,11 @@ async function loadCustomerLastPurchase(customerId) {
     // Calcular días transcurridos desde la última compra
     const lastPurchaseDate = new Date(lastSale.created_at);
     const today = new Date();
-    
+
     // Normalizar ambas fechas a medianoche para calcular días completos
     const lastPurchaseMidnight = new Date(lastPurchaseDate.getFullYear(), lastPurchaseDate.getMonth(), lastPurchaseDate.getDate());
     const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    
+
     const diffTime = todayMidnight - lastPurchaseMidnight;
     const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
 
@@ -2808,7 +3023,20 @@ finalizeSaleBtn.addEventListener("click", async () => {
   try {
     // Preparar items para RPC
     const items = [];
-    
+
+    // Obtener warehouses IDs una sola vez para validación de stock
+    const { data: warehouses } = await supabase
+      .from("warehouses")
+      .select("id, code")
+      .in("code", ["general", "venta-publico"]);
+
+    const warehouseMap = new Map();
+    if (warehouses && warehouses.length > 0) {
+      warehouses.forEach(w => warehouseMap.set(w.code, w.id));
+    }
+    const generalWarehouseId = warehouseMap.get("general");
+    const ventaPublicoWarehouseId = warehouseMap.get("venta-publico");
+
     // Función auxiliar para buscar variant
     async function findVariant(productId, color, sizeValue) {
       const { data: variantData, error: variantError } = await supabase
@@ -2818,83 +3046,105 @@ finalizeSaleBtn.addEventListener("click", async () => {
         .eq("color", color)
         .eq("size", sizeValue)
         .single();
-      
+
       if (!variantError && variantData) {
         return { id: variantData.id };
       }
       return null;
     }
-    
+
     // Procesar solo items de productos (excluir extras)
     const productItemsForSale = saleItems.filter(item => !item.isExtra);
     for (const item of productItemsForSale) {
       for (const size of item.sizes) {
         // Buscar variant en todas las fuentes posibles
-        let variant = currentVariants.find(v => 
-          v.color === item.color && 
+        let variant = currentVariants.find(v =>
+          v.color === item.color &&
           v.size === size.size
         );
-        
+
         // Si no está en currentVariants, buscar en manualCurrentVariants
         if (!variant && manualCurrentVariants.length > 0) {
-          variant = manualCurrentVariants.find(v => 
-            v.color === item.color && 
+          variant = manualCurrentVariants.find(v =>
+            v.color === item.color &&
             v.size === size.size
           );
         }
-        
+
         // Si aún no está, buscar en la base de datos
         if (!variant) {
           variant = await findVariant(item.productId, item.color, size.size);
         }
-        
+
         if (!variant) {
           throw new Error(`No se encontró la variante para ${item.productName} - ${item.color} - Talle ${size.size}`);
         }
-        
+
         // Validar stock antes de agregar (solo si no es devolución)
         if (!item.isReturn) {
-          // Obtener stock actualizado de la variante
+          // Consultar stock por talle desde variant_size_warehouse_stock
           const { data: stockData, error: stockError } = await supabase
-            .from("variant_warehouse_stock")
-            .select(`
-              stock_qty,
-              warehouses!inner(code)
-            `)
+            .from("variant_size_warehouse_stock")
+            .select("size, warehouse_id, stock_qty")
             .eq("variant_id", variant.id)
-            .in("warehouses.code", ["general", "venta-publico"]);
-          
+            .eq("size", size.size)
+            .in("warehouse_id", [generalWarehouseId, ventaPublicoWarehouseId]);
+
           if (stockError) {
             console.warn("Error obteniendo stock:", stockError);
           }
-          
-          // Calcular stock total disponible
-          let totalStock = 0;
+
+          // Calcular stock por warehouse
+          let generalStock = 0;
+          let ventaPublicoStock = 0;
+
           if (stockData && stockData.length > 0) {
-            totalStock = stockData.reduce((sum, s) => sum + (s.stock_qty || 0), 0);
+            stockData.forEach(s => {
+              if (s.warehouse_id === generalWarehouseId) {
+                generalStock = s.stock_qty || 0;
+              } else if (s.warehouse_id === ventaPublicoWarehouseId) {
+                ventaPublicoStock = s.stock_qty || 0;
+              }
+            });
           }
-          
-          // Verificar si hay suficiente stock
-          if (totalStock === 0) {
-            const productInfo = `${item.productName} - ${item.color} - Talle ${size.size}`;
-            throw new Error(
-              `No hay stock disponible para ${productInfo}. ` +
-              `Por favor, verifica el stock del producto antes de continuar.`
-            );
+
+          // Obtener source del stock (de dónde se tomará el stock)
+          const sourceVentaPublico = size.source?.ventaPublico || 0;
+          const sourceGeneral = size.source?.general || 0;
+          const totalSourceRequested = sourceVentaPublico + sourceGeneral;
+
+          // Si el source total es 0 pero hay quantity, significa que el usuario confirmó agregar sin stock
+          // En ese caso, NO validar stock (ya fue confirmado previamente)
+          const wasConfirmedWithoutStock = (totalSourceRequested === 0 && size.quantity > 0);
+
+          if (!wasConfirmedWithoutStock) {
+            // Validar stock según source específico solo si NO fue confirmado sin stock
+            
+            // Solo validar si se requiere stock de venta-publico
+            if (sourceVentaPublico > 0 && ventaPublicoStock < sourceVentaPublico) {
+              const productInfo = `${item.productName} - ${item.color} - Talle ${size.size}`;
+              throw new Error(
+                `Stock insuficiente en Venta Público para ${productInfo}. ` +
+                `Disponible: ${ventaPublicoStock}, Solicitado: ${sourceVentaPublico}`
+              );
+            }
+
+            // Solo validar si se requiere stock de general
+            if (sourceGeneral > 0 && generalStock < sourceGeneral) {
+              const productInfo = `${item.productName} - ${item.color} - Talle ${size.size}`;
+              throw new Error(
+                `Stock insuficiente en General para ${productInfo}. ` +
+                `Disponible: ${generalStock}, Solicitado: ${sourceGeneral}`
+              );
+            }
           }
-          
-          if (totalStock < size.quantity) {
-            const productInfo = `${item.productName} - ${item.color} - Talle ${size.size}`;
-            throw new Error(
-              `Stock insuficiente para ${productInfo}. ` +
-              `Disponible: ${totalStock}, Solicitado: ${size.quantity}`
-            );
-          }
+
+          // Si llegamos aquí, hay stock suficiente o el usuario confirmó sin stock
         }
-        
+
         // Obtener fuente del stock (venta-publico y general)
         const source = size.source || { ventaPublico: size.quantity, general: 0 };
-        
+
         items.push({
           variant_id: variant.id,
           qty: size.quantity,
@@ -2936,14 +3186,22 @@ finalizeSaleBtn.addEventListener("click", async () => {
       finalTotal += extra.totalValue;
     });
 
+    // Aplicar extras especiales
+    const specialExtras = extraItems.filter(item => item.extraType === 'special');
+    specialExtras.forEach(extra => {
+      finalTotal += extra.totalValue;
+    });
+
     // Preparar notas con información de extras y método de pago
     let notes = "";
     if (extraItems.length > 0) {
       const extrasInfo = extraItems.map(extra => {
         if (extra.extraType === 'numeric') {
           return `Extra numérico: $${extra.totalValue.toLocaleString('es-AR')}`;
-        } else {
+        } else if (extra.extraType === 'percentage') {
           return `Extra porcentual: ${extra.value}% ($${extra.totalValue.toLocaleString('es-AR')})`;
+        } else if (extra.extraType === 'special') {
+          return `${extra.productName}: $${extra.totalValue.toLocaleString('es-AR')}`;
         }
       }).join("; ");
       if (notes) {
@@ -3067,7 +3325,7 @@ async function printDirectly(saleDetails, customer, creditAmount) {
   // Intentar cargar y usar QZ Tray primero (igual que el botón Imprimir)
   try {
     await loadQZTray();
-    
+
     // Si QZ se cargó, intentar imprimir con QZ
     if (typeof qz !== 'undefined' && qz) {
       try {
@@ -3086,7 +3344,7 @@ async function printDirectly(saleDetails, customer, creditAmount) {
     // QZ no se pudo cargar, usar impresión del navegador
     console.log("ℹ️ QZ Tray no disponible, usando impresión del navegador");
   }
-  
+
   // Fallback: generar contenido del modal sin mostrarlo y luego imprimir
   // Usar la misma lógica que showPrintModal pero sin mostrar el modal
   if (!printModal || !printContent) {
@@ -3096,17 +3354,19 @@ async function printDirectly(saleDetails, customer, creditAmount) {
 
   const sale = saleDetails.sale;
   const items = saleDetails.items || [];
-  
+
   // Formatear fecha y hora
   const saleDate = new Date(sale.created_at);
   const dateStr = saleDate.toLocaleDateString('es-AR', {
     year: 'numeric',
     month: 'long',
-    day: 'numeric'
+    day: 'numeric',
+    timeZone: TIMEZONE_BUENOS_AIRES,
   });
   const timeStr = saleDate.toLocaleTimeString('es-AR', {
     hour: '2-digit',
-    minute: '2-digit'
+    minute: '2-digit',
+    timeZone: TIMEZONE_BUENOS_AIRES,
   });
 
   // Obtener crédito total del cliente si existe
@@ -3173,10 +3433,10 @@ async function printDirectly(saleDetails, customer, creditAmount) {
           </thead>
           <tbody>
             ${items.map(item => {
-              const price = parseFloat(item.price || item.price_snapshot || 0);
-              const total = price * item.qty;
-              const productText = `${item.product_name || 'N/A'}${item.color ? ` - ${item.color}` : ''}${item.size ? ` (${item.size})` : ''}`;
-              return `
+    const price = parseFloat(item.price || item.price_snapshot || 0);
+    const total = price * item.qty;
+    const productText = `${item.product_name || 'N/A'}${item.color ? ` - ${item.color}` : ''}${item.size ? ` (${item.size})` : ''}`;
+    return `
               <tr style="border-bottom: 2px dotted #999;">
                 <td style="padding: 8px 2px; font-size: 15px; word-break: break-word; width: 45%;">
                   ${productText}
@@ -3189,7 +3449,7 @@ async function printDirectly(saleDetails, customer, creditAmount) {
                 </td>
               </tr>
             `;
-            }).join('')}
+  }).join('')}
           </tbody>
         </table>
       </div>
@@ -3238,7 +3498,7 @@ async function printDirectly(saleDetails, customer, creditAmount) {
   // Generar QR code si existe cliente (esperar a que el DOM se actualice)
   if (customer?.qr_code) {
     const qrUrl = `${window.location.origin}/customer.html?code=${customer.qr_code}`;
-    
+
     // Esperar a que el DOM se actualice
     const generateQR = () => {
       const qrContainer = document.getElementById("print-qr-code-container");
@@ -3250,13 +3510,13 @@ async function printDirectly(saleDetails, customer, creditAmount) {
       // Usar API directamente (más confiable) - tamaño más grande para mejor legibilidad (aprovechando el ancho de 78mm)
       generateQRCode(qrUrl, qrContainer, 200);
     };
-    
+
     setTimeout(generateQR, 100);
-    
+
     // Esperar a que el QR se genere antes de imprimir
     await new Promise(resolve => setTimeout(resolve, 500));
   }
-  
+
   // Imprimir directamente sin mostrar el modal
   window.print();
 }
@@ -3267,17 +3527,19 @@ async function showPrintModal(saleDetails, customer, creditAmount) {
 
   const sale = saleDetails.sale;
   const items = saleDetails.items || [];
-  
+
   // Formatear fecha y hora
   const saleDate = new Date(sale.created_at);
   const dateStr = saleDate.toLocaleDateString('es-AR', {
     year: 'numeric',
     month: 'long',
-    day: 'numeric'
+    day: 'numeric',
+    timeZone: TIMEZONE_BUENOS_AIRES,
   });
   const timeStr = saleDate.toLocaleTimeString('es-AR', {
     hour: '2-digit',
-    minute: '2-digit'
+    minute: '2-digit',
+    timeZone: TIMEZONE_BUENOS_AIRES,
   });
 
   // Obtener crédito total del cliente si existe
@@ -3344,10 +3606,10 @@ async function showPrintModal(saleDetails, customer, creditAmount) {
           </thead>
           <tbody>
             ${items.map(item => {
-              const price = parseFloat(item.price || item.price_snapshot || 0);
-              const total = price * item.qty;
-              const productText = `${item.product_name || 'N/A'}${item.color ? ` - ${item.color}` : ''}${item.size ? ` (${item.size})` : ''}`;
-              return `
+    const price = parseFloat(item.price || item.price_snapshot || 0);
+    const total = price * item.qty;
+    const productText = `${item.product_name || 'N/A'}${item.color ? ` - ${item.color}` : ''}${item.size ? ` (${item.size})` : ''}`;
+    return `
               <tr style="border-bottom: 2px dotted #999;">
                 <td style="padding: 8px 2px; font-size: 15px; word-break: break-word; width: 45%;">
                   ${productText}
@@ -3360,7 +3622,7 @@ async function showPrintModal(saleDetails, customer, creditAmount) {
                 </td>
               </tr>
             `;
-            }).join('')}
+  }).join('')}
           </tbody>
         </table>
       </div>
@@ -3409,7 +3671,7 @@ async function showPrintModal(saleDetails, customer, creditAmount) {
   // Generar QR code si existe cliente (esperar a que el DOM se actualice)
   if (customer?.qr_code) {
     const qrUrl = `${window.location.origin}/customer.html?code=${customer.qr_code}`;
-    
+
     // Esperar a que el DOM se actualice
     const generateQR = () => {
       const qrContainer = document.getElementById("print-qr-code-container");
@@ -3421,7 +3683,7 @@ async function showPrintModal(saleDetails, customer, creditAmount) {
       // Usar API directamente (más confiable) - tamaño más grande para mejor legibilidad (aprovechando el ancho de 78mm)
       generateQRCode(qrUrl, qrContainer, 200);
     };
-    
+
     setTimeout(generateQR, 100);
   }
 
@@ -3431,7 +3693,7 @@ async function showPrintModal(saleDetails, customer, creditAmount) {
     customer,
     finalTotal: creditAmount
   };
-  
+
   // Mostrar modal
   printModal.classList.add("active");
 }
@@ -3446,22 +3708,23 @@ if (closePrintModal) {
 // Función para cargar QZ Tray solo cuando se necesite
 function loadQZTray() {
   return new Promise((resolve, reject) => {
-    // Si ya está cargado, resolver inmediatamente
+    // Si ya está cargado, configurar firma y resolver inmediatamente
     if (typeof qz !== 'undefined' && qz) {
-      resolve();
+      setupQZSignature().then(resolve);
       return;
     }
-    
+
     // Verificar si el script ya se está cargando
     if (document.querySelector('script[src*="qz-tray.js"]')) {
       // Esperar a que se cargue
       const checkInterval = setInterval(() => {
         if (typeof qz !== 'undefined' && qz) {
           clearInterval(checkInterval);
-          resolve();
+          // Configurar firma remota cuando QZ se carga
+          setupQZSignature().then(resolve);
         }
       }, 100);
-      
+
       // Timeout después de 3 segundos
       setTimeout(() => {
         clearInterval(checkInterval);
@@ -3469,39 +3732,41 @@ function loadQZTray() {
       }, 3000);
       return;
     }
-    
+
     // Cargar el script
+    // NOTA: Mantener demo.qz.io hasta que el certificado esté completamente configurado
     const script = document.createElement('script');
-    script.src = 'https://demo.qz.io/js/qz-tray.js';
+    script.src = 'https://cdn.jsdelivr.net/npm/qz-tray@2.2.5/qz-tray.js';
     script.async = true;
-    
+
     script.onload = () => {
       // Esperar un momento para que QZ se inicialice
       setTimeout(() => {
         if (typeof qz !== 'undefined' && qz) {
-          resolve();
+          // Configurar firma remota cuando QZ se carga
+          setupQZSignature().then(resolve);
         } else {
           reject(new Error('QZ Tray no está disponible'));
         }
       }, 500);
     };
-    
+
     script.onerror = () => {
       reject(new Error('Error cargando QZ Tray'));
     };
-    
+
     // Suprimir errores de WebSocket en la consola
     const originalError = console.error;
-    console.error = function(...args) {
+    console.error = function (...args) {
       if (args[0] && typeof args[0] === 'string' && args[0].includes('WebSocket')) {
         // No mostrar errores de WebSocket de QZ
         return;
       }
       originalError.apply(console, args);
     };
-    
+
     document.head.appendChild(script);
-    
+
     // Restaurar console.error después de 2 segundos
     setTimeout(() => {
       console.error = originalError;
@@ -3515,7 +3780,7 @@ if (printBtn) {
       // Intentar cargar y usar QZ Tray
       try {
         await loadQZTray();
-        
+
         // Si QZ se cargó, intentar imprimir con QZ
         if (typeof qz !== 'undefined' && qz) {
           try {
@@ -3535,7 +3800,7 @@ if (printBtn) {
         console.log("ℹ️ QZ Tray no disponible, usando impresión del navegador");
       }
     }
-    
+
     // Fallback: usar impresión del navegador
     window.print();
   });
@@ -3588,7 +3853,7 @@ if (modalCustomerSearch) {
 // Función para buscar cliente en el modal
 async function searchCustomerInModal() {
   const searchTerm = modalCustomerSearch ? modalCustomerSearch.value.trim() : "";
-  
+
   if (!searchTerm || searchTerm.length < 2) {
     if (modalCustomerResults) {
       modalCustomerResults.innerHTML = "<p style='padding: 12px; color: #666; text-align: center;'>Ingrese al menos 2 caracteres para buscar</p>";
@@ -3616,7 +3881,7 @@ async function searchCustomerInModal() {
       try {
         const { data: creditData, error: creditError } = await supabase
           .rpc("rpc_get_customer_total_credit", { p_customer_id: customer.id });
-        
+
         const totalCredit = creditError ? 0 : (creditData || 0);
         return { ...customer, totalCredit };
       } catch (error) {
@@ -3661,18 +3926,18 @@ async function searchCustomerInModal() {
   }
 }
 
-window.selectCustomerFromModal = async function(customerId) {
+window.selectCustomerFromModal = async function (customerId) {
   await selectCustomer(customerId);
   customersModal.classList.remove("active");
   customerSearch.value = `${selectedCustomer.first_name} ${selectedCustomer.last_name || ''}`.trim();
 };
 
 // Mostrar QR code de un cliente existente
-window.showCustomerQR = function(qrCode, customerName) {
+window.showCustomerQR = function (qrCode, customerName) {
   const qrUrl = `${window.location.origin}/customer.html?code=${qrCode}`;
-  
+
   console.log("showCustomerQR llamado con:", { qrCode, customerName, qrUrl });
-  
+
   if (!customerQrCode) {
     console.error("customerQrCode element no encontrado");
     return;
@@ -3683,20 +3948,20 @@ window.showCustomerQR = function(qrCode, customerName) {
   if (qrTitle && customerName) {
     qrTitle.textContent = `QR Code - ${customerName}`;
   }
-  
+
   if (customerQrUrl) {
     customerQrUrl.textContent = qrUrl;
   }
-  
+
   // Mostrar el contenedor primero
   if (customerQrContainer) {
     customerQrContainer.style.display = "block";
   }
-  
+
   // Generar QR usando API directamente
   console.log("Generando QR code usando API para cliente existente...");
   generateQRCode(qrUrl, customerQrCode, 200);
-  
+
   // Scroll al QR code
   if (customerQrContainer) {
     customerQrContainer.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -3734,33 +3999,33 @@ createCustomerForm.addEventListener("submit", async (e) => {
     if (data && data.qr_code) {
       const qrUrl = `${window.location.origin}/customer.html?code=${data.qr_code}`;
       const customerName = `${firstName} ${lastName || ''}`.trim();
-      
+
       // Actualizar título
       const qrTitle = document.getElementById("customer-qr-title");
       if (qrTitle) {
         qrTitle.textContent = `Cliente creado exitosamente - ${customerName}`;
       }
-      
+
       // Mostrar el contenedor primero
       if (customerQrContainer) {
         customerQrContainer.style.display = "block";
       }
-      
+
       // Generar QR code usando API directamente
       console.log("Generando QR code para nuevo cliente usando API...");
       console.log("customerQrCode existe:", !!customerQrCode);
       console.log("URL del QR:", qrUrl);
-      
+
       if (customerQrCode) {
         generateQRCode(qrUrl, customerQrCode, 200);
       } else {
         console.error("customerQrCode element no encontrado");
       }
-      
+
       if (customerQrUrl) {
         customerQrUrl.textContent = qrUrl;
       }
-      
+
       if (customerQrContainer) {
         customerQrContainer.style.display = "block";
         // Scroll al QR code
@@ -3770,7 +4035,7 @@ createCustomerForm.addEventListener("submit", async (e) => {
 
     showMessage("Cliente creado exitosamente", "success");
     createCustomerForm.reset();
-    
+
     // Limpiar resultados de búsqueda
     if (modalCustomerResults) modalCustomerResults.innerHTML = "";
     if (modalCustomerSearch) modalCustomerSearch.value = "";
@@ -3869,8 +4134,8 @@ if (historyCustomerSearch) {
 async function loadSalesHistory(append = false) {
   try {
     const { data, error } = await supabase
-      .rpc("rpc_get_public_sales_history", { 
-        p_limit: 10, 
+      .rpc("rpc_get_public_sales_history", {
+        p_limit: 10,
         p_offset: append ? currentHistoryOffset : 0,
         p_date_filter: currentHistoryDate || null,
         p_customer_search: currentHistoryCustomerSearch || null
@@ -3926,7 +4191,7 @@ async function loadSalesHistory(append = false) {
         loadSalesHistory(true);
         loadMoreBtn.remove();
       });
-      
+
       // Verificar si ya existe el botón antes de agregarlo
       if (!historyList.querySelector(".load-more-btn")) {
         loadMoreBtn.classList.add("load-more-btn");
@@ -3950,7 +4215,7 @@ async function loadSalesHistory(append = false) {
 }
 
 // Alternar detalles de venta
-window.toggleSaleDetails = async function(saleId) {
+window.toggleSaleDetails = async function (saleId) {
   if (expandedSaleId === saleId) {
     // Colapsar
     expandedSaleId = null;
@@ -3978,7 +4243,7 @@ window.toggleSaleDetails = async function(saleId) {
 };
 
 // Mostrar detalles de venta
-window.showSaleDetails = async function(saleId, inModal = false) {
+window.showSaleDetails = async function (saleId, inModal = false) {
   try {
     const { data, error } = await supabase
       .rpc("rpc_get_public_sale_details", { p_sale_id: saleId });
@@ -3997,7 +4262,7 @@ window.showSaleDetails = async function(saleId, inModal = false) {
       if (!detailsDiv || !detailsTitle || !detailsContent) return;
 
       detailsTitle.textContent = `${sale.sale_number} - ${sale.customer_name || 'Sin cliente'}`;
-      
+
       // Crear tabla de items
       const itemsTable = `
         <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
@@ -4014,8 +4279,8 @@ window.showSaleDetails = async function(saleId, inModal = false) {
           </thead>
           <tbody>
             ${items.map(item => {
-              const itemTotal = parseFloat(item.price) * item.qty;
-              return `
+        const itemTotal = parseFloat(item.price) * item.qty;
+        return `
               <tr style="${item.is_return ? 'background: #fee; border-left: 4px solid #dc3545;' : 'border-bottom: 1px solid #e9ecef;'} ${item.is_return ? '' : 'border-bottom: 1px solid #e9ecef;'}">
                 <td style="padding: 12px;">
                   ${item.is_return ? '<span style="color: #dc3545; font-weight: 700; font-size: 11px; text-transform: uppercase;">DEVOLUCIÓN</span>' : '<span style="color: #28a745; font-weight: 700; font-size: 11px; text-transform: uppercase;">VENTA</span>'}
@@ -4030,7 +4295,7 @@ window.showSaleDetails = async function(saleId, inModal = false) {
                 </td>
               </tr>
             `;
-            }).join("")}
+      }).join("")}
           </tbody>
           <tfoot>
               <tr style="background: #f8f9fa; border-top: 2px solid #ddd; font-weight: 700;">
@@ -4053,7 +4318,7 @@ window.showSaleDetails = async function(saleId, inModal = false) {
 
       detailsContent.innerHTML = itemsTable;
       detailsDiv.style.display = "block";
-      
+
       // Scroll a los detalles
       detailsDiv.scrollIntoView({ behavior: "smooth", block: "nearest" });
     } else {

@@ -1,5 +1,7 @@
-﻿import { supabase } from "../scripts/supabase-client.js";
+import { supabase } from "../scripts/supabase-client.js";
+import { clearProfileOnboardingSessionFlag } from "../scripts/profile-onboarding-modal.js";
 import { requireAuth } from "./auth-helper.js";
+import { getTransportesDisponibles, getTransporte, guardarTransporteElegido } from "./transportes-data.js";
 
 // Validar formato de teléfono argentino
 function validatePhone(phone) {
@@ -119,6 +121,13 @@ const emailSpan = document.getElementById("email");
 const logoutBtn = document.getElementById("logout");
 const errorMessage = document.getElementById("error-message");
 const successMessage = document.getElementById("success-message");
+const editBtn = document.getElementById("edit-btn");
+const cancelBtn = document.getElementById("cancel-btn");
+const saveBtn = document.getElementById("save-btn");
+
+const EDITABLE_FIELD_IDS = ["first_name", "last_name", "address", "province", "city", "phone", "dni"];
+let isEditingProfile = false;
+let profileSnapshot = {};
 
 async function getUserOrRedirect() {
   const { data } = await supabase.auth.getSession();
@@ -128,6 +137,62 @@ async function getUserOrRedirect() {
   }
   emailSpan.textContent = data.session.user?.email || "";
   return data.session.user;
+}
+
+function takeProfileSnapshot() {
+  const snapshot = {};
+  EDITABLE_FIELD_IDS.forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) snapshot[id] = el.value;
+  });
+  return snapshot;
+}
+
+function restoreProfileSnapshot(snapshot) {
+  if (!snapshot) return;
+  EDITABLE_FIELD_IDS.forEach((id) => {
+    const el = document.getElementById(id);
+    if (el && Object.prototype.hasOwnProperty.call(snapshot, id)) {
+      el.value = snapshot[id] ?? "";
+    }
+  });
+}
+
+function setEditingMode(enabled) {
+  isEditingProfile = !!enabled;
+  const provinceInput = document.getElementById("province");
+  const cityInput = document.getElementById("city");
+  const provinceDropdown = document.getElementById("province-dropdown");
+  const cityDropdown = document.getElementById("city-dropdown");
+
+  EDITABLE_FIELD_IDS.forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (id === "city") return;
+    el.disabled = !isEditingProfile;
+  });
+
+  if (cityInput) {
+    if (!isEditingProfile) {
+      cityInput.disabled = true;
+    } else {
+      cityInput.disabled = !(provinceInput && provinceInput.value.trim().length > 0);
+      cityInput.placeholder = cityInput.disabled
+        ? "Selecciona provincia primero..."
+        : "Escriba para buscar ciudad...";
+    }
+  }
+
+  if (!isEditingProfile) {
+    if (provinceDropdown) provinceDropdown.style.display = "none";
+    if (cityDropdown) cityDropdown.style.display = "none";
+  }
+
+  if (saveBtn) saveBtn.hidden = !isEditingProfile;
+  if (cancelBtn) cancelBtn.hidden = !isEditingProfile;
+  if (editBtn) editBtn.hidden = isEditingProfile;
+
+  document.body.classList.toggle("profile-readonly", !isEditingProfile);
 }
 
 // Inicializar autocomplete de provincias y ciudades
@@ -161,6 +226,10 @@ function initializeAutocomplete() {
     if (!cityInput.disabled && cityInput.value.length > 0) {
       handleCityInput(cityInput.value);
     }
+  });
+
+  cityInput.addEventListener("blur", () => {
+    if (typeof updateProfileShippingBlock === "function") updateProfileShippingBlock();
   });
   
   // Cerrar dropdowns al hacer clic fuera
@@ -210,8 +279,9 @@ function handleProvinceInput(value) {
       provinceDropdown.style.display = "none";
       updateCitiesList(item.dataset.value);
       cityInput.disabled = false;
-      cityInput.placeholder = "Escriba para buscar ciudad...";
+      cityInput.placeholder = "Escribí la localidad o elegí de la lista…";
       cityInput.value = "";
+      if (typeof updateProfileShippingBlock === "function") updateProfileShippingBlock();
     });
   });
 }
@@ -267,6 +337,7 @@ function handleCityInput(value) {
     item.addEventListener("click", () => {
       cityInput.value = item.dataset.value;
       cityDropdown.style.display = "none";
+      if (typeof updateProfileShippingBlock === "function") updateProfileShippingBlock();
     });
   });
 }
@@ -328,10 +399,14 @@ async function loadProfile(user) {
   
   // Inicializar autocomplete después de cargar datos
   initializeAutocomplete();
+  // Actualizar bloque de método de envío con provincia y localidad del perfil
+  if (typeof updateProfileShippingBlock === "function") updateProfileShippingBlock();
 }
 
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
+
+  if (!isEditingProfile) return;
   
   // Ocultar mensajes anteriores
   if (errorMessage) errorMessage.classList.remove("show");
@@ -410,13 +485,8 @@ form.addEventListener("submit", async (e) => {
       throw new Error("La provincia seleccionada no es válida");
     }
 
-    if (!city) {
-      throw new Error("La ciudad es obligatoria");
-    }
-
-    const cities = PROVINCE_CITIES[province] || [];
-    if (!cities.includes(city)) {
-      throw new Error("La ciudad seleccionada no es válida para la provincia elegida");
+    if (!city || city.length < 2) {
+      throw new Error("La localidad es obligatoria (podés escribirla aunque no esté en la lista)");
     }
 
     if (!dni) {
@@ -555,9 +625,62 @@ form.addEventListener("submit", async (e) => {
   }
 });
 
+editBtn?.addEventListener("click", () => {
+  profileSnapshot = takeProfileSnapshot();
+  setEditingMode(true);
+});
+
+cancelBtn?.addEventListener("click", () => {
+  restoreProfileSnapshot(profileSnapshot);
+  const provinceValue = (document.getElementById("province")?.value || "").trim();
+  if (provinceValue && PROVINCE_CITIES[provinceValue]) {
+    updateCitiesList(provinceValue);
+  }
+  if (errorMessage) errorMessage.classList.remove("show");
+  if (successMessage) successMessage.classList.remove("show");
+  setEditingMode(false);
+});
+
 logoutBtn?.addEventListener("click", async () => {
+  clearProfileOnboardingSessionFlag();
   await supabase.auth.signOut();
   window.location.replace("./login.html");
+});
+
+// Método de envío integrado en Mi Perfil: actualizar solo transporte asignado (provincia/localidad ya están en el formulario)
+const profileShippingSingle = document.getElementById("profile-shipping-transporte-single");
+const profileShippingSelect = document.getElementById("profile-shipping-transporte-select");
+
+function updateProfileShippingBlock() {
+  const province = (document.getElementById("province")?.value || "").trim();
+  const city = (document.getElementById("city")?.value || "").trim();
+  const opciones = getTransportesDisponibles(province, city);
+  const efectivo = getTransporte(province, city);
+
+  if (profileShippingSingle && profileShippingSelect) {
+    // Solo SEDE único: texto fijo. Cualquier otro caso (varias opciones o un solo no-SEDE): lista desplegable.
+    const soloSedeUnico = opciones.length === 1 && opciones[0] === "SEDE";
+    if (!soloSedeUnico && opciones.length > 0) {
+      profileShippingSingle.style.display = "none";
+      profileShippingSelect.style.display = "block";
+      profileShippingSelect.disabled = false;
+      profileShippingSelect.innerHTML = opciones
+        .map((t) => `<option value="${t}" ${t === efectivo ? "selected" : ""}>${t}</option>`)
+        .join("");
+      profileShippingSelect.value = opciones.includes(efectivo) ? efectivo : opciones[0];
+    } else {
+      profileShippingSingle.style.display = "block";
+      profileShippingSelect.style.display = "none";
+      profileShippingSingle.textContent = soloSedeUnico ? "SEDE" : opciones.length ? opciones[0] : "—";
+    }
+  }
+}
+
+profileShippingSelect?.addEventListener("change", () => {
+  const province = (document.getElementById("province")?.value || "").trim();
+  const city = (document.getElementById("city")?.value || "").trim();
+  const transporte = profileShippingSelect.value;
+  if (province && city && transporte) guardarTransporteElegido(province, city, transporte);
 });
 
 // Agregar formateo automático mientras se escribe
@@ -595,7 +718,9 @@ function setupPhoneInputFormatting() {
 (async () => {
   const user = await getUserOrRedirect();
   if (user) {
-    loadProfile(user);
+    await loadProfile(user);
+    profileSnapshot = takeProfileSnapshot();
+    setEditingMode(false);
     setupPhoneInputFormatting();
   } else {
     setupPhoneInputFormatting();

@@ -1,0 +1,16 @@
+---
+alwaysApply: true
+---
+
+CSS must follow the existing styling system.
+
+styles.css is the main stylesheet.
+
+Rules:
+
+- reuse existing classes whenever possible
+- avoid creating new design systems
+- maintain mobile-first approach
+- avoid fixed widths
+- use flex or grid for layout
+- keep spacing consistent

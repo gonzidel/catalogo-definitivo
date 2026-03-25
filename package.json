@@ -4,16 +4,24 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "bundle:supabase": "npx --yes esbuild scripts/supabase-vendor-entry.js --bundle --format=esm --platform=browser --outfile=scripts/vendor/supabase-js.bundle.js",
     "build": "node scripts/generate-config.mjs",
+    "deploy": "node deploy.js",
+    "deploy:firebase": "npm run build && npm run bundle:supabase && firebase deploy --only hosting",
+    "deploy:ps": "powershell -ExecutionPolicy Bypass -File deploy.ps1",
     "test": "node test/check-config.js",
     "test:secrets": "node test/scan-secrets.js",
     "test:staged-secrets": "node test/scan-staged-secrets.js",
     "prepare": "husky install",
     "generate-customers-sql": "node scripts/generate-customers-sql.js",
-    "generate-customers-batches": "node scripts/generate-customers-sql-batches.js"
+    "generate-customers-batches": "node scripts/generate-customers-sql-batches.js",
+    "import-viacargo": "node scripts/import-viacargo-xlsx.mjs",
+    "import-snaider": "node scripts/import-snaider-xlsx.mjs"
   },
   "devDependencies": {
-    "husky": "^8.0.0"
+    "husky": "^8.0.0",
+    "sharp": "^0.34.5",
+    "xlsx": "^0.18.5"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.89.0"

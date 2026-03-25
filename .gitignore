@@ -64,6 +64,8 @@ node_modules/
 
 # dotenv environment variables file
 .env
+.env.local
+.env.local.example
 
 # dataconnect generated files
 .dataconnect
@@ -73,3 +75,13 @@ clave/
  
 # Ignorar configuración local con secretos
 scripts/config.local.js
+# Configuración de producción (se genera durante el deploy)
+config.prod.js
+
+# Certificados y llaves privadas de QZ Tray
+qz-private-key.pem
+qz-private.pk8.der
+qz-private.pk8.der.b64
+qz-certificate.crt
+qz-certificate.p12
+qz-cert.conf

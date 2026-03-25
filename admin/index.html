@@ -137,6 +137,14 @@
       opacity: 0.6;
       cursor: not-allowed;
     }
+    #google-login-btn:hover:not(:disabled) {
+      background: #3367d6 !important;
+    }
+    #google-login-btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      background: #9cbaf9 !important;
+    }
     #signup-btn, #reset-btn {
       background: #f0f0f0;
       color: #333;
@@ -231,6 +239,24 @@
       
       <div id="login-form">
         <h2>Ingresar</h2>
+        
+        <!-- Botón de Google OAuth -->
+        <button id="google-login-btn" style="width:100%;padding:12px 20px;background:#4285f4;color:white;border:none;border-radius:6px;font-size:16px;font-weight:500;cursor:pointer;margin-bottom:20px;display:flex;align-items:center;justify-content:center;gap:8px;transition:background 0.2s ease;">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 533.5 544.3" aria-hidden="true">
+            <path fill="#fff" d="M533.5 278.4c0-17.4-1.5-34.1-4.3-50.3H272.1v95.1h147.1c-6.3 34-25 62.8-53.3 82l86.1 66.9c50.3-46.4 81.5-114.8 81.5-193.7z"/>
+            <path fill="#fff" d="M272.1 544.3c72.8 0 134-24 178.7-65.3l-86.1-66.9c-24 16.1-54.8 25.7-92.6 25.7-71.2 0-131.7-48.1-153.3-112.8l-89 68.7c44.4 88 135.4 150.6 242.3 150.6z"/>
+            <path fill="#fff" d="M118.8 324.9c-10.7-31.9-10.7-66.3 0-98.2l-89-68.7c-39.2 78.6-39.2 171.7 0 250.3l89-68.7z"/>
+            <path fill="#fff" d="M272.1 107.7c39.6 0 75.2 13.6 103.3 40.3l77.4-77.4C406.1 24.4 344.9 0 272.1 0 165.2 0 74.2 62.6 29.8 150.6l89 68.7c21.6-64.7 82.1-111.6 153.3-111.6z"/>
+          </svg>
+          Continuar con Google
+        </button>
+        
+        <div style="display:flex;align-items:center;gap:12px;margin:20px 0;">
+          <div style="flex:1;height:1px;background:#ddd;"></div>
+          <span style="color:#666;font-size:14px;">O</span>
+          <div style="flex:1;height:1px;background:#ddd;"></div>
+        </div>
+        
         <label>Email<br/><input id="email" type="email" autocomplete="username" /></label>
         <label>Contraseña<br/><input id="password" type="password" autocomplete="current-password" /></label>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
@@ -327,10 +353,35 @@
             <h3 class="dashboard-card-title">Clientes</h3>
             <p class="dashboard-card-desc">Gestionar clientes y sus datos</p>
           </a>
+          <a href="./missing-images.html" class="dashboard-card" data-module="missing-images">
+            <div class="dashboard-card-icon">📷</div>
+            <h3 class="dashboard-card-title">Imágenes Faltantes</h3>
+            <p class="dashboard-card-desc">Detectar y cargar imágenes para variantes sin fotos</p>
+          </a>
+          <a href="./complete-tags.html" class="dashboard-card" data-module="complete-tags">
+            <div class="dashboard-card-icon">🏷️</div>
+            <h3 class="dashboard-card-title">Completar Tags</h3>
+            <p class="dashboard-card-desc">Completar tags jerárquicos y detalles de productos</p>
+          </a>
+          <a href="./incomplete-products.html" class="dashboard-card" data-module="incomplete-products">
+            <div class="dashboard-card-icon">⚠️</div>
+            <h3 class="dashboard-card-title">Productos Incompletos</h3>
+            <p class="dashboard-card-desc">Completar stock y tags de productos pendientes</p>
+          </a>
+          <a href="./product-status.html" class="dashboard-card" data-module="product-status">
+            <div class="dashboard-card-icon">📋</div>
+            <h3 class="dashboard-card-title">Estado de Productos</h3>
+            <p class="dashboard-card-desc">Gestionar visibilidad de productos en el catálogo</p>
+          </a>
           <a href="./meta-feed.html" class="dashboard-card" data-module="meta-feed">
             <div class="dashboard-card-icon">🔗</div>
             <h3 class="dashboard-card-title">Meta (Catálogo)</h3>
             <p class="dashboard-card-desc">Feed CSV para Facebook/Instagram Catalog</p>
+          </a>
+          <a href="./quick-actions.html" class="dashboard-card" data-module="quick-actions">
+            <div class="dashboard-card-icon">⚡</div>
+            <h3 class="dashboard-card-title">Acciones Rápidas</h3>
+            <p class="dashboard-card-desc">Gestionar acciones rápidas del catálogo móvil</p>
           </a>
         </div>
         <div style="text-align:center;margin-top:32px;">

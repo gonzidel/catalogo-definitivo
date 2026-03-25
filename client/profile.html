@@ -1,85 +1,245 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="app-version" content="v7">
   <title>Mi Perfil | Cliente</title>
-  <link rel="stylesheet" href="../styles.css" />
+  <script>document.documentElement.classList.add("client-area");</script>
+  <link rel="stylesheet" href="../styles.css?v=v7" />
+  <link rel="stylesheet" href="./dashboard.css?v=v7" />
   <meta name="robots" content="noindex" />
   <style>
-    .box { 
-      max-width: 800px; 
-      margin: 32px auto; 
-      padding: 24px;
-      background: white;
-      border-radius: 12px;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    :root {
+      --profile-brand: #CD844D;
+      --profile-bg: #E5E1DC;
+      --profile-card: #ffffff;
+      --profile-text: #2d2d2d;
+      --profile-muted: #666;
+      --profile-border: rgba(0, 0, 0, 0.08);
+      --profile-shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
     }
-    .box h1 {
-      margin: 0 0 24px 0;
-      font-size: 28px;
-      color: #333;
-      border-bottom: 3px solid #CD844D;
-      padding-bottom: 12px;
+
+    html.client-area body.profile-has-bottom-nav {
+      margin: 0;
+      background: var(--profile-bg);
+      color: var(--profile-text);
+      padding-bottom: var(--bottom-nav-h, 56px) !important;
     }
-    .row { 
-      display: flex; 
-      gap: 12px; 
-      align-items: center; 
-      flex-wrap: wrap; 
-      margin-bottom: 24px; 
-    }
-    .profile-grid { 
-      display: grid; 
-      grid-template-columns: 1fr 1fr; 
-      gap: 20px; 
-    }
-    .profile-grid label { 
-      display: flex; 
-      flex-direction: column; 
-      gap: 8px;
-      font-weight: 600;
-      color: #555;
-    }
-    .profile-grid input, .profile-grid select {
-      width: 100%;
-      padding: 10px 12px;
-      border: 1px solid #ddd;
-      border-radius: 6px;
-      font-size: 14px;
-      transition: border-color 0.2s, box-shadow 0.2s;
+
+    .profile-wrap {
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 14px 12px 20px;
       box-sizing: border-box;
     }
-    .profile-grid input:focus, .profile-grid select:focus {
+
+    .profile-topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin: 10px 0 8px;
+      padding: 12px 14px;
+      background: var(--profile-card);
+      border: 1px solid var(--profile-border);
+      border-radius: 16px;
+      box-shadow: var(--profile-shadow);
+    }
+
+    .profile-back {
+      text-decoration: none;
+      font-weight: 600;
+      color: #4d4d4d;
+      padding: 8px 10px;
+      border-radius: 10px;
+      background: #f4f4f4;
+      border: 1px solid rgba(0, 0, 0, 0.06);
+    }
+
+    .profile-email {
+      margin-left: auto;
+      font-size: 13px;
+      color: var(--profile-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 50%;
+    }
+
+    .profile-logout {
+      background: #e54848;
+      color: #fff;
+      border: none;
+      border-radius: 12px;
+      padding: 10px 14px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .profile-card {
+      background: var(--profile-card);
+      border: 1px solid var(--profile-border);
+      border-radius: 18px;
+      box-shadow: var(--profile-shadow);
+      padding: 16px;
+    }
+
+    .profile-card h1 {
+      margin: 0;
+      font-size: 26px;
+      line-height: 1.1;
+      color: #2f2f2f;
+    }
+    .profile-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 10px;
+    }
+    .profile-header-copy {
+      min-width: 0;
+      flex: 1;
+    }
+    .profile-edit-btn {
+      background: #f4f4f4;
+      color: #333;
+      border: 1px solid rgba(0, 0, 0, 0.1);
+      border-radius: 10px;
+      padding: 7px 10px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+
+    .profile-subtitle {
+      margin: 6px 0 0;
+      color: var(--profile-muted);
+      font-size: 14px;
+    }
+
+    .profile-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      margin-top: 18px;
+    }
+
+    .profile-grid label {
+      display: block;
+      font-weight: 700;
+      color: #4c4c4c;
+      font-size: 14px;
+      line-height: 1.15;
+    }
+
+    .profile-grid input,
+    .profile-grid select {
+      width: 100%;
+      min-height: 44px;
+      padding: 11px 12px;
+      border: 1px solid #d6d6d6;
+      border-radius: 12px;
+      font-size: 15px;
+      background: #fff;
+      transition: border-color 0.2s, box-shadow 0.2s;
+      box-sizing: border-box;
+      margin-top: 6px;
+    }
+
+    .profile-grid input:focus,
+    .profile-grid select:focus {
       outline: none;
-      border-color: #CD844D;
+      border-color: var(--profile-brand);
       box-shadow: 0 0 0 3px rgba(205, 132, 77, 0.1);
     }
+
     .profile-grid input:disabled {
       background: #f5f5f5;
       cursor: not-allowed;
     }
+
     .full-width {
       grid-column: 1 / -1;
     }
+    .field-full {
+      grid-column: 1 / -1;
+    }
+
     .phone-container {
       display: flex;
       align-items: center;
       gap: 8px;
+      margin-top: 4px;
     }
+
     .phone-prefix {
-      padding: 10px 12px;
+      min-height: 34px;
+      min-width: 56px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 8px;
       background: #f5f5f5;
       border: 1px solid #ddd;
-      border-radius: 6px;
-      font-size: 14px;
+      border-radius: 8px;
+      font-size: 12px;
       color: #666;
       font-weight: 600;
       white-space: nowrap;
     }
+
     .phone-input {
       flex: 1;
+      margin-top: 0 !important;
     }
+
+    .profile-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .profile-actions button {
+      flex: 1;
+      min-height: 36px;
+      padding: 8px 10px;
+      font-size: 13px;
+      border-radius: 10px;
+    }
+
+    #save-btn {
+      background: var(--profile-brand);
+      color: white;
+    }
+    #save-btn:hover {
+      background: #b8733a;
+    }
+    #cancel-btn {
+      background: #f2f2f2;
+      color: #3a3a3a;
+      border: 1px solid rgba(0, 0, 0, 0.1);
+    }
+
+    body.profile-readonly .profile-grid input,
+    body.profile-readonly .profile-grid select {
+      background: #f7f7f7;
+      color: #555;
+      border-color: #e3e3e3;
+      pointer-events: none;
+    }
+
+    /* Transporte: se puede elegir aunque el resto del perfil esté en solo lectura */
+    body.profile-readonly .profile-grid select#profile-shipping-transporte-select {
+      pointer-events: auto;
+      cursor: pointer;
+      background: #fff;
+      color: #2d2d2d;
+      border-color: rgba(0, 0, 0, 0.12);
+    }
+
     .custom-dropdown {
       position: absolute;
       top: 100%;
@@ -87,157 +247,386 @@
       right: 0;
       background: white;
       border: 1px solid #ddd;
-      border-radius: 6px;
+      border-radius: 10px;
       max-height: 200px;
       overflow-y: auto;
       z-index: 1000;
-      box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
       margin-top: 4px;
     }
+
     .custom-dropdown-item {
       padding: 10px 12px;
       cursor: pointer;
       border-bottom: 1px solid #f0f0f0;
       transition: background 0.2s;
     }
+
     .custom-dropdown-item:hover {
       background: #f8f9fa;
     }
+
     .custom-dropdown-item:last-child {
       border-bottom: none;
     }
+
     .relative {
       position: relative;
     }
-    button { 
-      padding: 12px 24px; 
+
+    button {
+      padding: 12px 24px;
       border: none;
-      border-radius: 8px;
+      border-radius: 12px;
       cursor: pointer;
-      font-size: 16px;
-      font-weight: 600;
+      font-size: 15px;
+      font-weight: 700;
       transition: all 0.2s;
     }
-    #save-btn {
-      background: #28a745;
-      color: white;
+
+    small.help {
+      color: #c00;
+      display: none;
     }
-    #save-btn:hover {
-      background: #218838;
-      transform: translateY(-1px);
-      box-shadow: 0 4px 12px rgba(40, 167, 69, 0.3);
-    }
-    #logout {
-      background: #dc3545;
-      color: white;
-      padding: 8px 16px;
-      font-size: 14px;
-    }
-    #logout:hover {
-      background: #c82333;
-    }
-    small.help { color:#c00; display:none; }
+
     .error-message {
       display: none;
       padding: 12px;
       background: #ffebee;
       color: #c62828;
-      border-radius: 6px;
+      border-radius: 12px;
       border: 1px solid #ef5350;
       margin-top: 16px;
       grid-column: 1 / -1;
     }
+
     .error-message.show {
       display: block;
     }
+
     .success-message {
       display: none;
       padding: 12px;
       background: #e8f5e9;
       color: #2e7d32;
-      border-radius: 6px;
+      border-radius: 12px;
       border: 1px solid #4caf50;
       margin-top: 16px;
       grid-column: 1 / -1;
     }
+
     .success-message.show {
       display: block;
     }
+
     @media (max-width: 768px) {
+      .profile-wrap {
+        padding: 6px 6px 10px;
+      }
+
+      .profile-card {
+        padding: 8px;
+        border-radius: 12px;
+      }
+
+      .profile-card h1 {
+        font-size: 17px;
+      }
+      .profile-header {
+        gap: 6px;
+      }
+      .profile-edit-btn {
+        font-size: 11px;
+        padding: 6px 8px;
+      }
+
+      .profile-subtitle {
+        font-size: 12px;
+      }
+
       .profile-grid {
-        grid-template-columns: 1fr;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
+        margin-top: 8px;
       }
+
+      .profile-grid label {
+        font-size: 12px;
+      }
+
+      .field-full {
+        grid-column: 1 / -1;
+      }
+
+      .profile-grid input,
+      .profile-grid select {
+        min-height: 34px;
+        font-size: 13px;
+        padding: 6px 9px;
+        border-radius: 10px;
+        margin-top: 4px;
+      }
+
+      .profile-email {
+        display: none;
+      }
+
+      .profile-topbar {
+        padding: 6px;
+        border-radius: 12px;
+        gap: 6px;
+        margin: 4px 0 6px;
+      }
+
+      .profile-back {
+        font-size: 12px;
+        padding: 6px 8px;
+      }
+
+      .profile-logout {
+        font-size: 12px;
+        padding: 6px 10px;
+        border-radius: 10px;
+      }
+
       .phone-container {
-        flex-direction: column;
-        align-items: stretch;
+        flex-direction: row;
+        align-items: center;
+        gap: 6px;
       }
+
       .phone-prefix {
+        min-height: 28px;
+        min-width: 50px;
+        font-size: 11px;
         text-align: center;
+        border-radius: 8px;
+      }
+
+      html.client-area body .bottom-nav.profile-bottom-nav {
+        display: flex !important;
+      }
+    }
+
+    .shipping-readonly {
+      width: 100%;
+      min-height: 44px;
+      padding: 11px 12px;
+      border: 1px solid #e3e3e3;
+      border-radius: 12px;
+      font-size: 15px;
+      background: #f7f7f7;
+      color: #555;
+      box-sizing: border-box;
+      margin-top: 6px;
+    }
+    .profile-shipping-inline {
+      grid-column: 1 / -1;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    .profile-shipping-desc {
+      margin: 0 0 12px;
+      color: var(--profile-muted);
+      font-size: 14px;
+      line-height: 1.4;
+      width: 100%;
+      max-width: 100%;
+      box-sizing: border-box;
+    }
+    .shipping-readonly-wrap label { display: block; font-weight: 700; color: #4c4c4c; font-size: 14px; line-height: 1.15; }
+    .shipping-readonly-wrap { margin-top: 14px; }
+    .shipping-card .profile-grid { margin-top: 8px; }
+    .shipping-card .profile-subtitle { margin-bottom: 0; }
+    .shipping-card .profile-header { margin-bottom: 4px; }
+    .shipping-card .profile-header-copy { min-width: 0; flex: 1; }
+    .shipping-card h1 { margin: 0; font-size: 26px; line-height: 1.1; color: #2f2f2f; }
+    .shipping-card .profile-subtitle { margin: 6px 0 0; color: var(--profile-muted); font-size: 14px; }
+    .shipping-select {
+      width: 100%;
+      min-height: 44px;
+      padding: 11px 12px;
+      border: 1px solid #d6d6d6;
+      border-radius: 12px;
+      font-size: 15px;
+      background: #fff;
+      margin-top: 6px;
+      box-sizing: border-box;
+    }
+    .shipping-select:focus {
+      outline: none;
+      border-color: var(--profile-brand);
+      box-shadow: 0 0 0 3px rgba(205, 132, 77, 0.1);
+    }
+    @media (max-width: 768px) {
+      .shipping-card h1 { font-size: 17px; }
+      .shipping-readonly { min-height: 34px; font-size: 13px; padding: 6px 9px; }
+      .shipping-select { min-height: 34px; font-size: 13px; padding: 6px 9px; }
+    }
+
+    @media (max-width: 480px) {
+      #save-btn {
+        min-height: 36px;
+        padding: 8px 10px;
+        font-size: 13px;
+      }
+
+      .error-message,
+      .success-message {
+        padding: 8px 10px;
+        font-size: 12px;
+      }
+      .profile-actions button {
+        min-height: 34px;
+        font-size: 12px;
+      }
+    }
+
+    @media (max-width: 420px) {
+      .profile-wrap {
+        padding: 4px 4px 8px;
+      }
+
+      .profile-card h1 {
+        font-size: 16px;
       }
     }
   </style>
+  <!-- Microsoft Clarity -->
+  <script type="text/javascript">
+    (function(c,l,a,r,i,t,y){
+        c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
+        t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
+        y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
+    })(window, document, "clarity", "script", "vuuq665971");
+  </script>
 </head>
-<body>
-  <div class="box">
-    <h1>Mi Perfil</h1>
-    <div class="row">
-      <a href="./dashboard.html">&larr; Volver al Dashboard</a>
-      <span id="email" style="margin-left:auto"></span>
-      <button id="logout">Cerrar sesión</button>
+<body class="profile-has-bottom-nav">
+  <main class="profile-wrap">
+    <div class="profile-topbar">
+      <a href="./dashboard.html" class="profile-back">&larr; Volver</a>
+      <span id="email" class="profile-email"></span>
+      <button id="logout" type="button" class="profile-logout">Cerrar sesion</button>
     </div>
 
-    <form id="form">
-      <div class="profile-grid">
-        <div>
-          <label>Nombre <span style="color: red;">*</span>
-            <input id="first_name" required autocomplete="given-name" />
-          </label>
+    <div id="view-profile" class="profile-view">
+    <section class="profile-card">
+      <div class="profile-header">
+        <div class="profile-header-copy">
+          <h1>Mi Perfil</h1>
+          <p class="profile-subtitle">Actualiza tus datos para agilizar tus pedidos y envios.</p>
         </div>
-        <div>
-          <label>Apellido <span style="color: red;">*</span>
-            <input id="last_name" required autocomplete="family-name" />
-          </label>
-        </div>
-        <div>
-          <label>Dirección <span style="color: red;">*</span>
-            <input id="address" required autocomplete="street-address" />
-          </label>
-        </div>
-        <div class="relative">
-          <label for="province">Provincia <span style="color: red;">*</span></label>
-          <input type="text" id="province" required placeholder="Escriba para buscar provincia..." autocomplete="new-password" />
-          <div id="province-dropdown" class="custom-dropdown"></div>
-        </div>
-        <div class="relative">
-          <label for="city">Localidad <span style="color: red;">*</span></label>
-          <input type="text" id="city" required placeholder="Seleccione provincia primero..." autocomplete="new-password" disabled />
-          <div id="city-dropdown" class="custom-dropdown"></div>
-        </div>
-        <div>
-          <label>Teléfono <span style="color: red;">*</span>
-            <div class="phone-container">
-              <span class="phone-prefix">+54 9</span>
-              <input id="phone" class="phone-input" required autocomplete="tel" placeholder="362 472-0762" />
-            </div>
-          </label>
-        </div>
-        <div>
-          <label>DNI <span style="color: red;">*</span>
-            <input id="dni" required autocomplete="off" inputmode="numeric" pattern="[0-9]{7,8}" title="El DNI debe tener 7 u 8 dígitos numéricos" />
-          </label>
-        </div>
-        <div class="error-message" id="error-message"></div>
-        <div class="success-message" id="success-message"></div>
-        <div class="full-width">
-          <button id="save-btn" type="submit">Guardar</button>
-        </div>
+        <button id="edit-btn" type="button" class="profile-edit-btn">Editar</button>
       </div>
-    </form>
-  </div>
 
-  <script type="module" src="../scripts/config.js"></script>
-  <script type="module" src="../scripts/supabase-client.js"></script>
-  <script type="module" src="./client-utils.js"></script>
-  <script type="module" src="./profile.js"></script>
+      <form id="form">
+        <div class="profile-grid">
+          <div>
+            <label>Nombre <span style="color: red;">*</span>
+              <input id="first_name" required autocomplete="given-name" />
+            </label>
+          </div>
+          <div>
+            <label>Apellido <span style="color: red;">*</span>
+              <input id="last_name" required autocomplete="family-name" />
+            </label>
+          </div>
+          <div class="field-full">
+            <label>Direccion <span style="color: red;">*</span>
+              <input id="address" required autocomplete="street-address" />
+            </label>
+          </div>
+          <div class="relative">
+            <label for="province">Provincia <span style="color: red;">*</span></label>
+            <input type="text" id="province" required placeholder="Escribi para buscar provincia..." autocomplete="new-password" />
+            <div id="province-dropdown" class="custom-dropdown"></div>
+          </div>
+          <div class="relative">
+            <label for="city">Localidad <span style="color: red;">*</span></label>
+            <input type="text" id="city" required placeholder="Primero elegí provincia…" autocomplete="new-password" disabled />
+            <div id="city-dropdown" class="custom-dropdown"></div>
+          </div>
+          <div>
+            <label>Telefono <span style="color: red;">*</span>
+              <div class="phone-container">
+                <span class="phone-prefix">+54 9</span>
+                <input id="phone" class="phone-input" required autocomplete="tel" placeholder="362 472-0762" />
+              </div>
+            </label>
+          </div>
+          <div>
+            <label>DNI <span style="color: red;">*</span>
+              <input id="dni" required autocomplete="off" inputmode="numeric" pattern="[0-9]{7,8}" title="El DNI debe tener 7 u 8 digitos numericos" />
+            </label>
+          </div>
+          <div class="error-message" id="error-message"></div>
+          <div class="success-message" id="success-message"></div>
+          <div class="full-width profile-actions">
+            <button id="cancel-btn" type="button" hidden>Cancelar</button>
+            <button id="save-btn" type="submit" hidden>Guardar cambios</button>
+          </div>
+
+          <div class="profile-shipping-inline" style="margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--profile-border);">
+            <h2 class="profile-shipping-inline-title" style="margin: 0 0 4px; font-size: 18px; color: #2f2f2f;">Método de envío</h2>
+            <p class="profile-shipping-desc">Según tu provincia y localidad se asigna el transporte. Si hay más de uno disponible, podés elegirlo.</p>
+            <div class="shipping-readonly-wrap field-full" style="margin-top: 12px;">
+              <label>Transporte asignado</label>
+              <div id="profile-shipping-transporte-single" class="shipping-readonly" aria-readonly="true">—</div>
+              <select id="profile-shipping-transporte-select" class="shipping-select" style="display: none;" aria-label="Elegir transporte"></select>
+            </div>
+          </div>
+        </div>
+      </form>
+    </section>
+    </div>
+  </main>
+
+  <nav class="bottom-nav profile-bottom-nav" id="bottom-nav" aria-label="Navegacion principal">
+    <a href="../index2.html#/" class="bottom-nav-item" data-nav="inicio" id="nav-inicio">
+      <div class="icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+          <polyline points="9 22 9 12 15 12 15 22"/>
+        </svg>
+      </div>
+      <span class="label">Inicio</span>
+    </a>
+    <a href="../index2.html#/" class="bottom-nav-item" data-nav="buscar" id="nav-buscar">
+      <div class="icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="8"/>
+          <path d="m21 21-4.3-4.3"/>
+        </svg>
+      </div>
+      <span class="label">Buscar</span>
+    </a>
+    <a href="dashboard.html" class="bottom-nav-item" data-nav="pedidos" id="nav-pedidos">
+      <div class="icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect width="8" height="4" x="8" y="2" rx="1" ry="1"/>
+          <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
+          <path d="M12 11h4"/>
+          <path d="M12 16h4"/>
+          <path d="M8 11h.01"/>
+          <path d="M8 16h.01"/>
+        </svg>
+      </div>
+      <span class="label">Pedidos</span>
+    </a>
+    <a href="profile.html" class="bottom-nav-item active" data-nav="perfil" id="nav-perfil">
+      <div class="icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/>
+          <circle cx="12" cy="8" r="4"/>
+        </svg>
+      </div>
+      <span class="label">Perfil</span>
+    </a>
+  </nav>
+
+  <script type="module" src="../scripts/config.js?v=v7"></script>
+  <script type="module" src="../scripts/supabase-client.js?v=v7"></script>
+  <script type="module" src="./client-utils.js?v=v7"></script>
+  <script type="module" src="./profile.js?v=v9"></script>
 </body>
 </html>

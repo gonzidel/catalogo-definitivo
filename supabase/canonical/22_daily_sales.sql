@@ -159,17 +159,18 @@ begin
     v_customer_name := 'Cliente sin nombre';
   end if;
   
-  -- Extraer hora de created_at
-  v_sale_time := (NEW.created_at::time);
+  -- Extraer hora de created_at convertida a hora Argentina
+  v_sale_time := ((NEW.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Argentina/Buenos_Aires')::time);
   
   -- Usar item_count como cantidad de productos
   v_total_items := NEW.item_count;
   
   -- Verificar que no exista ya un registro para esta venta
   -- Usamos una combinación única de sale_date, sale_type, sale_time y monto para identificar ventas únicas
+  -- Convertir created_at a hora Argentina antes de extraer la fecha
   if not exists (
     select 1 from public.daily_sales
-    where sale_date = NEW.created_at::date
+    where sale_date = (NEW.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Argentina/Buenos_Aires')::date
       and sale_type = 'local'
       and sale_time = v_sale_time
       and sale_amount = NEW.total_amount
@@ -186,7 +187,7 @@ begin
       sale_amount,
       created_by
     ) values (
-      NEW.created_at::date,
+      (NEW.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Argentina/Buenos_Aires')::date,
       'local',
       v_sale_time,
       v_customer_name,
@@ -239,8 +240,8 @@ begin
       v_customer_name := 'Cliente sin nombre';
     end if;
     
-    -- Extraer hora de sent_at (o created_at si sent_at no tiene hora)
-    v_sale_time := (NEW.sent_at::time);
+    -- Extraer hora de sent_at convertida a hora Argentina
+    v_sale_time := ((NEW.sent_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Argentina/Buenos_Aires')::time);
     
     -- Contar items del pedido
     select count(*), coalesce(sum(quantity), 0)
@@ -256,9 +257,10 @@ begin
     end if;
     
     -- Verificar que no exista ya un registro para este envío
+    -- Convertir sent_at a hora Argentina antes de extraer la fecha
     if not exists (
       select 1 from public.daily_sales
-      where sale_date = NEW.sent_at::date
+      where sale_date = (NEW.sent_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Argentina/Buenos_Aires')::date
         and sale_type = 'envios'
         and sale_time = v_sale_time
         and sale_amount = coalesce(v_total_amount, NEW.total_amount, 0)
@@ -275,7 +277,7 @@ begin
         sale_amount,
         created_by
       ) values (
-        NEW.sent_at::date,
+        (NEW.sent_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Argentina/Buenos_Aires')::date,
         'envios',
         v_sale_time,
         v_customer_name,

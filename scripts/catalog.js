@@ -8,6 +8,16 @@ function parseFecha(str) {
   return new Date(y, m - 1, d);
 }
 
+// Función auxiliar para convertir hex a RGB
+function hexToRgb(hex) {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return result ? {
+    r: parseInt(result[1], 16),
+    g: parseInt(result[2], 16),
+    b: parseInt(result[3], 16)
+  } : null;
+}
+
 async function existeNovedades() {
   const flat = (
     await Promise.all(
@@ -98,6 +108,8 @@ async function cargarCategoria(cat) {
         i["Imagen 3"],
         i["Imagen 4"],
       ].filter(Boolean),
+      hex_color: i.ColorHex || '',
+      ColorDisplayNumber: i.ColorDisplayNumber || null
     });
     return acc;
   }, {});
@@ -117,10 +129,24 @@ async function cargarCategoria(cat) {
       )
       .join("");
 
-    const colores = m.DetalleColor.map(
-      (v) =>
-        `<button class="color-btn" data-src="${v.images[0]}">${v.color}</button>`
-    ).join("");
+    const colores = m.DetalleColor.map((v) => {
+      const hexColor = v.hex_color || "#CD844D"; // Color por defecto si no hay hex_color
+      const displayNumber = v.ColorDisplayNumber || v.display_number;
+      // Calcular si el color es claro u oscuro para ajustar el color del texto
+      const rgb = hexToRgb(hexColor);
+      const brightness = rgb ? (rgb.r * 299 + rgb.g * 587 + rgb.b * 114) / 1000 : 128;
+      const textColor = brightness > 128 ? "#000000" : "#FFFFFF";
+      
+      // Agregar el número si existe
+      const numberHtml = displayNumber 
+        ? `<span class="color-number" style="color: ${textColor}; font-weight: bold; font-size: 0.85em; pointer-events: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);">${displayNumber}</span>` 
+        : "";
+      
+      return `<button class="color-btn" 
+                      data-src="${v.images[0]}" 
+                      data-number="${displayNumber || ''}"
+                      style="background-color: ${hexColor}; color: ${textColor}; border: 1px solid ${hexColor}; position: relative; display: flex; align-items: center; justify-content: center;">${numberHtml}</button>`;
+    }).join("");
 
     const fire =
       cat === "Ofertas" ? `<span class="article-fire">🔥</span>` : "";

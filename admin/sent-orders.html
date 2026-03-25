@@ -1,14 +1,15 @@
 <!DOCTYPE html>
 <html lang="es">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Pedidos Enviados - Catálogo FYL</title>
     <link rel="stylesheet" href="../styles.css">
     <script>
-      // Configurar antes de que se carguen los módulos
-      window.redirectTarget = "./sent-orders.html";
-      window.skipPanelRedirect = true;
+        // Configurar antes de que se carguen los módulos
+        window.redirectTarget = "./sent-orders.html";
+        window.skipPanelRedirect = true;
     </script>
     <style>
         .sent-orders-container {
@@ -16,6 +17,7 @@
             margin: 0 auto;
             padding: 16px;
         }
+
         .sent-orders-header {
             display: flex;
             justify-content: space-between;
@@ -26,17 +28,20 @@
             background: #f8f9fa;
             border-radius: 12px;
         }
+
         .sent-orders-header h1 {
             font-size: 22px;
             margin: 0;
         }
+
         .search-container {
             margin-bottom: 24px;
             padding: 16px;
             background: white;
             border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
         }
+
         .search-input {
             width: 100%;
             padding: 12px 16px;
@@ -45,67 +50,80 @@
             font-size: 16px;
             transition: border-color 0.3s;
         }
+
         .search-input:focus {
             outline: none;
             border-color: #CD844D;
         }
+
         .customers-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
             gap: 16px;
         }
+
         .customer-card {
             background: white;
             border: 1px solid #e9ecef;
             border-radius: 12px;
             padding: 20px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
             cursor: pointer;
             transition: transform 0.2s, box-shadow 0.2s;
         }
+
         .customer-card:hover {
             transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(0,0,0,0.15);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
         }
+
         .customer-card-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
             margin-bottom: 12px;
         }
+
         .customer-number {
             color: #CD844D;
             font-weight: 600;
             font-size: 18px;
         }
+
         .customer-name {
             font-size: 18px;
             font-weight: 600;
             color: #333;
             margin-bottom: 8px;
         }
+
         .customer-location {
             color: #666;
             font-size: 14px;
             margin-bottom: 8px;
         }
+
         .customer-orders-count {
             color: #28a745;
             font-weight: 600;
             font-size: 14px;
         }
+
         .empty-state {
             text-align: center;
             padding: 60px 20px;
             color: #666;
         }
+
         .empty-state h2 {
             font-size: 24px;
             margin-bottom: 8px;
         }
+
         .empty-state p {
             font-size: 16px;
         }
+
         .modal {
             display: none;
             position: fixed;
@@ -113,16 +131,18 @@
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(0,0,0,0.5);
+            background: rgba(0, 0, 0, 0.5);
             z-index: 1000;
             overflow-y: auto;
         }
+
         .modal.active {
             display: flex;
             align-items: center;
             justify-content: center;
             padding: 20px;
         }
+
         .modal-content {
             background: white;
             border-radius: 12px;
@@ -131,8 +151,9 @@
             width: 100%;
             max-height: 80vh;
             overflow-y: auto;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
         }
+
         .modal-header {
             display: flex;
             justify-content: space-between;
@@ -141,10 +162,12 @@
             padding-bottom: 16px;
             border-bottom: 2px solid #eee;
         }
+
         .modal-header h2 {
             margin: 0;
             font-size: 22px;
         }
+
         .modal-close {
             background: none;
             border: none;
@@ -160,25 +183,30 @@
             border-radius: 50%;
             transition: background 0.2s;
         }
+
         .modal-close:hover {
             background: #f0f0f0;
         }
+
         .modal-customer-info {
             margin-bottom: 20px;
             padding: 16px;
             background: #f8f9fa;
             border-radius: 8px;
         }
+
         .modal-customer-info p {
             margin: 4px 0;
             font-size: 14px;
             color: #666;
         }
+
         .orders-list {
             display: flex;
             flex-direction: column;
             gap: 12px;
         }
+
         .order-date-item {
             padding: 16px;
             background: #f8f9fa;
@@ -187,14 +215,17 @@
             transition: all 0.2s;
             position: relative;
         }
+
         .order-date-item:hover {
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
         }
+
         .order-date-item.expanded {
             background: #fff;
             border: 2px solid #CD844D;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
         }
+
         .order-date-item-header {
             display: flex;
             justify-content: space-between;
@@ -202,14 +233,17 @@
             margin-bottom: 8px;
             cursor: pointer;
         }
+
         .order-date-item-header:hover {
             opacity: 0.8;
         }
+
         .order-date {
             font-weight: 600;
             font-size: 16px;
             color: #333;
         }
+
         .order-expand-icon {
             margin-left: 8px;
             font-size: 12px;
@@ -217,28 +251,34 @@
             transition: transform 0.2s;
             display: inline-block;
         }
+
         .order-date-item.expanded .order-expand-icon {
             transform: rotate(180deg);
         }
+
         .order-number {
             color: #CD844D;
             font-weight: 600;
             font-size: 14px;
         }
+
         .order-total {
             color: #666;
             font-size: 14px;
             margin-top: 8px;
         }
+
         .order-items-detail {
             display: none;
             margin-top: 16px;
             padding-top: 16px;
             border-top: 2px solid #eee;
         }
+
         .order-items-detail.visible {
             display: block;
         }
+
         .order-item-detail {
             display: flex;
             gap: 12px;
@@ -247,9 +287,11 @@
             border-radius: 8px;
             margin-bottom: 8px;
         }
+
         .order-item-detail.missing {
             opacity: 0.6;
         }
+
         .order-item-detail-image {
             width: 64px;
             height: 64px;
@@ -257,30 +299,36 @@
             border-radius: 8px;
             flex-shrink: 0;
         }
+
         .order-item-detail-info {
             flex: 1;
         }
+
         .order-item-detail-name {
             font-weight: 600;
             font-size: 14px;
             margin-bottom: 4px;
             color: #333;
         }
+
         .order-item-detail-meta {
             font-size: 12px;
             color: #666;
             margin-bottom: 4px;
         }
+
         .order-item-detail-price {
             font-weight: 600;
             font-size: 14px;
             color: #CD844D;
         }
+
         .order-item-detail-quantity {
             font-size: 12px;
             color: #666;
             margin-top: 4px;
         }
+
         .order-items-summary {
             margin-top: 12px;
             padding-top: 12px;
@@ -288,6 +336,7 @@
             font-weight: 600;
             color: #333;
         }
+
         .btn {
             padding: 8px 16px;
             border: none;
@@ -296,18 +345,22 @@
             font-size: 14px;
             transition: background 0.3s;
         }
+
         .btn-secondary {
             background: #6c757d;
             color: white;
         }
+
         .btn-secondary:hover {
             background: #5a6268;
         }
+
         .loading {
             text-align: center;
             padding: 40px;
             color: #666;
         }
+
         /* Estilos para botón Modificar */
         .modify-order-btn {
             background: #17a2b8;
@@ -320,9 +373,11 @@
             margin-top: 8px;
             transition: background 0.2s;
         }
+
         .modify-order-btn:hover {
             background: #138496;
         }
+
         .delete-item-btn {
             background: #dc3545;
             color: white;
@@ -333,9 +388,11 @@
             font-size: 12px;
             transition: background 0.2s;
         }
+
         .delete-item-btn:hover {
             background: #c82333;
         }
+
         .btn-warning {
             background: #ffc107;
             color: #000;
@@ -346,9 +403,11 @@
             font-size: 13px;
             transition: background 0.2s;
         }
+
         .btn-warning:hover {
             background: #e0a800;
         }
+
         /* Estilos para pedidos en devolución */
         .order-date-item.devolucion {
             border-left-color: #dc3545;
@@ -356,33 +415,42 @@
             background: #ffebee !important;
             border: 2px solid #dc3545 !important;
         }
+
         .order-date-item.devolucion .order-number {
             color: #dc3545 !important;
         }
+
         .order-date-item.devolucion .order-date {
             color: #dc3545 !important;
         }
+
         .order-date-item.devolucion .order-total {
             color: #dc3545 !important;
             font-weight: 600;
         }
+
         .order-date-item.devolucion .order-date-item-header {
             color: #dc3545 !important;
         }
+
         .order-date-item.devolucion .order-expand-icon {
             color: #dc3545 !important;
         }
+
         .order-date-item.devolucion.expanded {
             background: #ffebee !important;
             border: 2px solid #dc3545 !important;
             box-shadow: 0 4px 12px rgba(220, 53, 69, 0.2);
         }
+
         .order-date-item.devolucion .order-items-detail {
             border-top-color: #dc3545;
         }
+
         .order-date-item.devolucion .order-items-summary {
             color: #dc3545;
         }
+
         .devolucion-btn {
             background: #dc3545;
             color: white;
@@ -393,27 +461,33 @@
             font-size: 13px;
             transition: background 0.2s;
         }
+
         .devolucion-btn:hover {
             background: #c82333;
         }
+
         .devolucion-btn:disabled {
             background: #999;
             cursor: not-allowed;
         }
+
         .order-card-layout {
             display: flex;
             justify-content: space-between;
             align-items: flex-start;
             gap: 16px;
         }
+
         .order-card-left {
             flex: 1;
         }
+
         .order-card-right {
             display: flex;
             flex-direction: column;
             align-items: flex-end;
         }
+
         /* Modal para crear/editar pedido */
         .order-modal {
             display: none;
@@ -427,11 +501,13 @@
             overflow-y: auto;
             padding: 20px;
         }
+
         .order-modal.active {
             display: flex;
             align-items: center;
             justify-content: center;
         }
+
         .order-modal-content {
             background: white;
             border-radius: 12px;
@@ -441,16 +517,19 @@
             position: relative;
             animation: modalFadeIn 0.3s ease;
         }
+
         @keyframes modalFadeIn {
             from {
                 opacity: 0;
                 transform: translateY(-20px);
             }
+
             to {
                 opacity: 1;
                 transform: translateY(0);
             }
         }
+
         .order-modal-header {
             display: flex;
             justify-content: space-between;
@@ -458,11 +537,13 @@
             padding: 20px 24px;
             border-bottom: 1px solid #e9ecef;
         }
+
         .order-modal-header h2 {
             margin: 0;
             font-size: 22px;
             color: #333;
         }
+
         .order-modal-close {
             background: none;
             border: none;
@@ -478,16 +559,20 @@
             border-radius: 50%;
             transition: all 0.2s;
         }
+
         .order-modal-close:hover {
             background: #f0f0f0;
             color: #333;
         }
+
         .order-modal-body {
             padding: 24px;
         }
+
         .order-form-section {
             margin-bottom: 24px;
         }
+
         .order-form-section h3 {
             margin: 0 0 16px 0;
             font-size: 18px;
@@ -495,12 +580,14 @@
             border-bottom: 2px solid #CD844D;
             padding-bottom: 8px;
         }
+
         .order-form-section label {
             display: block;
             margin-bottom: 8px;
             font-weight: 600;
             color: #555;
         }
+
         .order-modal-footer {
             display: flex;
             justify-content: flex-end;
@@ -509,18 +596,25 @@
             border-top: 1px solid #e9ecef;
             background: #f8f9fa;
         }
-        .customer-result-item, .product-result-item {
+
+        .customer-result-item,
+        .product-result-item {
             padding: 12px;
             cursor: pointer;
             border-bottom: 1px solid #eee;
             transition: background 0.2s;
         }
-        .customer-result-item:hover, .product-result-item:hover {
+
+        .customer-result-item:hover,
+        .product-result-item:hover {
             background: #f8f9fa;
         }
-        .customer-result-item:last-child, .product-result-item:last-child {
+
+        .customer-result-item:last-child,
+        .product-result-item:last-child {
             border-bottom: none;
         }
+
         .order-item-in-modal {
             display: flex;
             justify-content: space-between;
@@ -531,16 +625,20 @@
             border-radius: 6px;
             margin-bottom: 8px;
         }
+
         .order-item-in-modal-info {
             flex: 1;
         }
+
         .order-item-in-modal-actions {
             display: flex;
             gap: 8px;
             align-items: center;
         }
     </style>
+    <script src="../config.local.js"></script>
 </head>
+
 <body>
     <div class="sent-orders-container">
         <div class="sent-orders-header">
@@ -552,13 +650,8 @@
         </div>
 
         <div class="search-container">
-            <input 
-                type="text" 
-                id="search-input" 
-                class="search-input" 
-                placeholder="Buscar por nombre de cliente..."
-                autocomplete="off"
-            />
+            <input type="text" id="search-input" class="search-input" placeholder="Buscar por nombre de cliente..."
+                autocomplete="off" />
         </div>
 
         <div id="customers-content">
@@ -598,17 +691,23 @@
                     <div style="display: flex; gap: 12px; margin-bottom: 16px;">
                         <div style="flex: 1;">
                             <label for="customer-search">Buscar Cliente:</label>
-                            <input type="text" id="customer-search" placeholder="Buscar por nombre, DNI, email..." style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
-                            <div id="customer-results" style="max-height: 200px; overflow-y: auto; border: 1px solid #ddd; border-radius: 6px; margin-top: 8px; display: none; background: white; position: absolute; z-index: 1000; width: 100%; max-width: 400px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);"></div>
+                            <input type="text" id="customer-search" placeholder="Buscar por nombre, DNI, email..."
+                                style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
+                            <div id="customer-results"
+                                style="max-height: 200px; overflow-y: auto; border: 1px solid #ddd; border-radius: 6px; margin-top: 8px; display: none; background: white; position: absolute; z-index: 1000; width: 100%; max-width: 400px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
+                            </div>
                         </div>
                         <div>
                             <label>&nbsp;</label>
-                            <button id="create-customer-btn" class="btn" style="background: #17a2b8; color: white; padding: 8px 16px;">➕ Crear Cliente</button>
+                            <button id="create-customer-btn" class="btn"
+                                style="background: #17a2b8; color: white; padding: 8px 16px;">➕ Crear Cliente</button>
                         </div>
                     </div>
-                    <div id="selected-customer" style="display: none; padding: 12px; background: #f8f9fa; border-radius: 6px; margin-top: 8px;">
+                    <div id="selected-customer"
+                        style="display: none; padding: 12px; background: #f8f9fa; border-radius: 6px; margin-top: 8px;">
                         <strong>Cliente seleccionado:</strong> <span id="selected-customer-name"></span>
-                        <button id="remove-customer-btn" style="margin-left: 12px; padding: 4px 8px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">Cambiar</button>
+                        <button id="remove-customer-btn"
+                            style="margin-left: 12px; padding: 4px 8px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">Cambiar</button>
                     </div>
                 </div>
 
@@ -618,19 +717,24 @@
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
                         <div>
                             <label for="shipping-amount">🚚 Envío ($):</label>
-                            <input type="number" id="shipping-amount" placeholder="Ej: 4000" min="0" step="0.01" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
+                            <input type="number" id="shipping-amount" placeholder="Ej: 4000" min="0" step="0.01"
+                                style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
                         </div>
                         <div>
                             <label for="discount-amount">💸 Descuento ($):</label>
-                            <input type="number" id="discount-amount" placeholder="Ej: 5000" min="0" step="0.01" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
+                            <input type="number" id="discount-amount" placeholder="Ej: 5000" min="0" step="0.01"
+                                style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
                         </div>
                         <div>
                             <label for="extras-amount">➕ Extras ($):</label>
-                            <input type="number" id="extras-amount" placeholder="Ej: 6000" min="0" step="0.01" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
+                            <input type="number" id="extras-amount" placeholder="Ej: 6000" min="0" step="0.01"
+                                style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
                         </div>
                         <div>
                             <label for="extras-percentage">➕ Extras (%):</label>
-                            <input type="number" id="extras-percentage" placeholder="Ej: 5" min="0" max="100" step="0.01" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
+                            <input type="number" id="extras-percentage" placeholder="Ej: 5" min="0" max="100"
+                                step="0.01"
+                                style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
                         </div>
                     </div>
                 </div>
@@ -640,18 +744,23 @@
                     <h3>🛍️ Agregar Productos</h3>
                     <div style="margin-bottom: 16px;">
                         <label for="product-search">Buscar Producto:</label>
-                        <input type="text" id="product-search" placeholder="Buscar producto por nombre..." style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
-                        <div id="product-results" style="max-height: 300px; overflow-y: auto; border: 1px solid #ddd; border-radius: 6px; margin-top: 8px; display: none; background: white; position: absolute; z-index: 1000; width: 100%; max-width: 600px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);"></div>
+                        <input type="text" id="product-search" placeholder="Buscar producto por nombre..."
+                            style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
+                        <div id="product-results"
+                            style="max-height: 300px; overflow-y: auto; border: 1px solid #ddd; border-radius: 6px; margin-top: 8px; display: none; background: white; position: absolute; z-index: 1000; width: 100%; max-width: 600px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
+                        </div>
                     </div>
                 </div>
 
                 <!-- Productos Agregados al Pedido -->
                 <div class="order-form-section">
                     <h3>📦 Productos del Pedido</h3>
-                    <div id="order-items-list" style="min-height: 100px; padding: 12px; background: #f8f9fa; border-radius: 6px; margin-bottom: 16px;">
+                    <div id="order-items-list"
+                        style="min-height: 100px; padding: 12px; background: #f8f9fa; border-radius: 6px; margin-bottom: 16px;">
                         <p style="color: #666; text-align: center; padding: 20px;">No hay productos agregados aún</p>
                     </div>
-                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px; background: #e9ecef; border-radius: 6px;">
+                    <div
+                        style="display: flex; justify-content: space-between; align-items: center; padding: 12px; background: #e9ecef; border-radius: 6px;">
                         <strong style="font-size: 18px;">Total:</strong>
                         <strong style="font-size: 20px; color: #CD844D;" id="order-total">$0</strong>
                     </div>
@@ -659,7 +768,8 @@
             </div>
             <div class="order-modal-footer">
                 <button id="cancel-order-btn" class="btn btn-secondary">Cancelar</button>
-                <button id="save-order-btn" class="btn" style="background: #28a745; color: white;" disabled>Guardar Pedido</button>
+                <button id="save-order-btn" class="btn" style="background: #28a745; color: white;" disabled>Guardar
+                    Pedido</button>
             </div>
         </div>
     </div>
@@ -676,67 +786,121 @@
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
                         <div>
                             <label for="customer-first-name">Nombre <span style="color: red;">*</span>:</label>
-                            <input type="text" id="customer-first-name" required placeholder="Ej: Juan" autocomplete="off" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
+                            <input type="text" id="customer-first-name" required placeholder="Ej: Juan"
+                                autocomplete="off"
+                                style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
                         </div>
                         <div>
                             <label for="customer-last-name">Apellido <span style="color: red;">*</span>:</label>
-                            <input type="text" id="customer-last-name" required placeholder="Ej: Pérez" autocomplete="off" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
+                            <input type="text" id="customer-last-name" required placeholder="Ej: Pérez"
+                                autocomplete="off"
+                                style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
                         </div>
                     </div>
                     <div>
                         <label for="customer-dni">DNI (opcional):</label>
-                        <input type="text" id="customer-dni" placeholder="Ej: 12345678" autocomplete="off" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
+                        <input type="text" id="customer-dni" placeholder="Ej: 12345678" autocomplete="off"
+                            style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
                     </div>
                     <div>
                         <label for="customer-phone">Teléfono <span style="color: red;">*</span>:</label>
-                        <input type="text" id="customer-phone" required placeholder="Ej: 1123456789" autocomplete="off" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
+                        <input type="text" id="customer-phone" required placeholder="Ej: 1123456789" autocomplete="off"
+                            style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
                     </div>
                     <div>
                         <label for="customer-email">Email (opcional):</label>
-                        <input type="email" id="customer-email" placeholder="Ej: juan@example.com" autocomplete="off" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
+                        <input type="email" id="customer-email" placeholder="Ej: juan@example.com" autocomplete="off"
+                            style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
                     </div>
                     <div>
                         <label for="customer-address">Dirección <span style="color: red;">*</span>:</label>
-                        <input type="text" id="customer-address" required placeholder="Ej: Av. Corrientes 1234" autocomplete="off" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
+                        <input type="text" id="customer-address" required placeholder="Ej: Av. Corrientes 1234"
+                            autocomplete="off"
+                            style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
                     </div>
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
                         <div style="position: relative;">
                             <label for="customer-province">Provincia <span style="color: red;">*</span>:</label>
-                            <input type="text" id="customer-province" required placeholder="Escriba para buscar provincia..." autocomplete="new-password" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
-                            <div id="province-dropdown" class="custom-dropdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: white; border: 1px solid #ddd; border-radius: 6px; max-height: 200px; overflow-y: auto; z-index: 1000; box-shadow: 0 4px 8px rgba(0,0,0,0.1); margin-top: 4px;"></div>
+                            <input type="text" id="customer-province" required
+                                placeholder="Escriba para buscar provincia..." autocomplete="new-password"
+                                style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
+                            <div id="province-dropdown" class="custom-dropdown"
+                                style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: white; border: 1px solid #ddd; border-radius: 6px; max-height: 200px; overflow-y: auto; z-index: 1000; box-shadow: 0 4px 8px rgba(0,0,0,0.1); margin-top: 4px;">
+                            </div>
                         </div>
                         <div style="position: relative;">
                             <label for="customer-city">Ciudad <span style="color: red;">*</span>:</label>
-                            <input type="text" id="customer-city" required placeholder="Seleccione provincia primero..." autocomplete="new-password" disabled style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
-                            <div id="city-dropdown" class="custom-dropdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: white; border: 1px solid #ddd; border-radius: 6px; max-height: 200px; overflow-y: auto; z-index: 1000; box-shadow: 0 4px 8px rgba(0,0,0,0.1); margin-top: 4px;"></div>
+                            <input type="text" id="customer-city" required placeholder="Seleccione provincia primero..."
+                                autocomplete="new-password" disabled
+                                style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
+                            <div id="city-dropdown" class="custom-dropdown"
+                                style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: white; border: 1px solid #ddd; border-radius: 6px; max-height: 200px; overflow-y: auto; z-index: 1000; box-shadow: 0 4px 8px rgba(0,0,0,0.1); margin-top: 4px;">
+                            </div>
                         </div>
                     </div>
-                    <div id="customer-form-error" style="display: none; padding: 12px; background: #ffebee; color: #c62828; border-radius: 6px; border: 1px solid #ef5350;"></div>
+                    <div id="customer-form-error"
+                        style="display: none; padding: 12px; background: #ffebee; color: #c62828; border-radius: 6px; border: 1px solid #ef5350;">
+                    </div>
                 </form>
             </div>
             <div class="order-modal-footer">
                 <button id="cancel-customer-btn" class="btn btn-secondary">Cancelar</button>
-                <button id="save-customer-btn" class="btn" style="background: #28a745; color: white;">Guardar Cliente</button>
+                <button id="save-customer-btn" class="btn" style="background: #28a745; color: white;">Guardar
+                    Cliente</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal para seleccionar método de pago (al reimprimir rótulo) -->
+    <div id="payment-method-modal" class="order-modal" style="display: none; z-index: 25000;">
+        <div class="order-modal-content" style="max-width: 500px;">
+            <div class="order-modal-header">
+                <h2>💳 Método de Pago</h2>
+                <button id="close-payment-modal" class="order-modal-close">&times;</button>
+            </div>
+            <div class="order-modal-body">
+                <p style="margin: 0 0 16px; color: #666; font-size: 14px;">Seleccioná o modificá el método de pago para el rótulo. Se actualizará en el pedido.</p>
+                <div style="margin-bottom: 16px;">
+                    <label for="payment-method-select" style="display: block; margin-bottom: 8px; font-weight: 600;">Método de pago:</label>
+                    <select id="payment-method-select" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 16px;">
+                        <option value="">-- Seleccione un método --</option>
+                    </select>
+                </div>
+                <div style="margin-bottom: 16px; padding: 12px; background: #f8f9fa; border-radius: 6px;">
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                        <input type="checkbox" id="create-new-payment-method" style="width: 20px; height: 20px;">
+                        <span>Crear nuevo método de pago</span>
+                    </label>
+                </div>
+                <div id="new-payment-method-container" style="display: none; margin-top: 16px;">
+                    <label for="new-payment-method-input" style="display: block; margin-bottom: 8px; font-weight: 600;">Nombre del nuevo método:</label>
+                    <input type="text" id="new-payment-method-input" placeholder="Ej: Transferencia, Efectivo..." style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 16px;">
+                </div>
+                <div id="payment-method-error" style="display: none; padding: 12px; background: #ffebee; color: #c62828; border-radius: 6px; border: 1px solid #ef5350; margin-top: 12px;"></div>
+            </div>
+            <div class="order-modal-footer">
+                <button id="cancel-payment-btn" class="btn btn-secondary">Cancelar</button>
+                <button id="confirm-payment-btn" class="btn" style="background: #28a745; color: white;">Confirmar</button>
             </div>
         </div>
     </div>
 
     <!-- QZ Tray script -->
     <script>
-      // Cargar QZ Tray si no está disponible
-      if (typeof qz === 'undefined') {
-        const script = document.createElement('script');
-        script.src = 'https://demo.qz.io/js/qz-tray.js';
-        script.onload = () => {
-          console.log('QZ Tray cargado');
-        };
-        document.head.appendChild(script);
-      }
+        // Cargar QZ Tray si no está disponible
+        if (typeof qz === 'undefined') {
+            const script = document.createElement('script');
+            script.src = 'https://cdn.jsdelivr.net/npm/qz-tray@2.2.5/qz-tray.js';
+            script.onload = () => {
+                console.log('QZ Tray cargado');
+            };
+            document.head.appendChild(script);
+        }
     </script>
     <script type="module" src="../scripts/supabase-client.js"></script>
     <script type="module" src="admin-auth.js"></script>
     <script type="module" src="sent-orders.js"></script>
     <script type="module" src="order-creator.js"></script>
 </body>
-</html>
 
+</html>

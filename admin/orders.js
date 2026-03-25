@@ -81,6 +81,33 @@ async function getSupabase() {
 
 // Módulo orders.js cargado
 
+// Importar función centralizada de normalización de tamaños
+import { normalizeSize } from "../scripts/utils/size-normalizer.js";
+
+const STATUS = {
+  ACTIVE: "active",
+  PICKED: "picked",
+  CLOSED: "closed",
+  SENT: "sent",
+  PENDING: "pending",
+  WAITING: "waiting",
+  CANCELLED: "cancelled",
+  DEVOLUCION: "devolución",
+  DEVOLUCION_ALT: "devolucion",
+};
+
+const WORKFLOW_STATUSES = ["active", "closed", "cancelled"];
+const FINAL_STATUSES = ["sent", "devolución", "devolucion"];
+
+const TAB_FILTER_MODE = {
+  active: "client", // Activos se define por order_items (reserved/missing, no todos picked), no por orders.status; la BD no usa status='active'
+  closed: "sql",
+  cancelled: "items", // Pedidos con al menos un order_item cancelado (no orders.status)
+  all: "sql",
+  picked: "client",
+  waiting: "client",
+};
+
 const ORDER_STATUS_LABELS = {
   active: "Activo",
   picked: "Apartado",
@@ -110,23 +137,28 @@ const ITEM_STATUS_INFO = {
 
 // Función auxiliar para verificar si un pedido tiene todos los items apartados
 // waiting se trata como picked para verificación de completitud
+// Regla: sin order_items o array vacío => NO "todos apartados" (return false)
 function hasAllItemsPicked(order) {
-  if (!order.order_items || order.order_items.length === 0) {
+  if (!order || !Array.isArray(order.order_items) || order.order_items.length === 0) {
     return false;
   }
-  const totalItems = order.order_items.length;
-  const pickedItems = order.order_items.filter(item => 
-    item.status === 'picked' || item.status === 'waiting'
-  ).length;
+  const items = order.order_items;
+  const totalItems = items.length;
+  const norm = (s) => String(s ?? "").trim().toLowerCase();
+  const pickedItems = items.filter(item => {
+    const st = norm(item.status);
+    return st === "picked" || st === "waiting";
+  }).length;
   return pickedItems === totalItems && totalItems > 0;
 }
 
 // Función auxiliar para verificar si un pedido tiene al menos un item reservado
 function hasReservedItems(order) {
-  if (!order.order_items || order.order_items.length === 0) {
+  if (!order || !Array.isArray(order.order_items) || order.order_items.length === 0) {
     return false;
   }
-  return order.order_items.some(item => item.status === 'reserved');
+  const norm = (s) => String(s ?? "").trim().toLowerCase();
+  return order.order_items.some(item => norm(item.status) === "reserved");
 }
 
 // Función auxiliar para verificar si un pedido tiene items que necesitan atención
@@ -152,23 +184,19 @@ function hasItemsNeedingAttention(order) {
 
 // Función auxiliar para verificar si un pedido tiene items en espera
 function hasWaitingItems(order) {
-  if (!order.order_items || order.order_items.length === 0) {
+  if (!order || !Array.isArray(order.order_items) || order.order_items.length === 0) {
     return false;
   }
-  // Verificar si tiene al menos un item en espera (sin contar cancelados)
-  return order.order_items.some(item => item.status === 'waiting');
+  const norm = (s) => String(s ?? "").trim().toLowerCase();
+  return order.order_items.some(item => norm(item.status) === "waiting");
 }
 
-// Función auxiliar para verificar si un pedido tiene SOLO items en espera (sin reserved)
-// DEPRECATED: Ya no se usa, pero se mantiene por compatibilidad
+// Función auxiliar: pedido tiene SOLO ítems en espera (todos "waiting", sin reserved ni picked)
+// Usado para que Activos y Espera sean excluyentes: "solo espera" va solo en pestaña Espera.
 function hasOnlyWaitingItems(order) {
-  if (!order.order_items || order.order_items.length === 0) {
-    return false;
-  }
-  const hasWaiting = order.order_items.some(item => item.status === 'waiting');
-  const hasReserved = order.order_items.some(item => item.status === 'reserved');
-  // Tiene solo waiting si tiene waiting pero NO tiene reserved
-  return hasWaiting && !hasReserved;
+  if (!order.order_items || order.order_items.length === 0) return false;
+  const norm = (s) => String(s ?? "").trim().toLowerCase();
+  return order.order_items.every(item => norm(item.status) === "waiting");
 }
 
 let currentFilter = "active";
@@ -180,6 +208,13 @@ let realtimeSubscription = null;
 let currentSort = 'recent';
 let currentSearch = '';
 let searchDebounce = null;
+// Variables de paginación e infinite scroll
+let currentPage = 0;
+let pageSize = 10;
+let hasMoreOrders = true;
+let isLoadingMore = false;
+let allOrdersLoaded = false; // Para saber si ya se cargaron todos los pedidos
+let badgeCountsLoaded = false; // Para saber si ya se cargaron los conteos totales de badges
 // Map para rastrear qué pedidos están en modo "ver completo" vs "solo reservados" en pestaña Activos
 // orderId -> true (ver completo) | false/undefined (solo reservados)
 let orderViewMode = new Map();
@@ -187,14 +222,310 @@ let orderWaitingViewMode = new Map(); // Para rastrear si se muestra solo items 
 // Cache de almacenes
 let warehousesCache = { general: null, ventaPublico: null };
 
-function getCustomerName(order) {
-  let customerName = '';
-  if (Array.isArray(order.customers)) {
-    customerName = order.customers[0]?.full_name || order.customers[0]?.name || '';
-  } else if (order.customers && typeof order.customers === 'object') {
-    customerName = order.customers.full_name || order.customers.name || '';
+// Realtime delta: si true, solo insert/patch/remove por orderId; si false, comportamiento legacy (loadOrders en cada evento)
+const REALTIME_DELTA_MODE = true;
+const PICKING_NO_FULL_REFRESH = true; // En Modo Picking (Activos/Espera) evitar loadOrders(true) para no parpadear
+const PICKING_MODE_ENABLED = true;
+const PICKING_MODE_STORAGE_KEY = "ordersPickingMode";
+const DEBUG_ORDERS = false;
+const DEBUG_ACTIVE_FILTER = false; // true = logs por qué cada order se excluye en pestaña Activos
+const ordersMap = new Map();
+const pendingOrderIds = new Set();
+let pendingTimer = null;
+let lastHiddenAt = 0;
+let realtimeStatus = "UNKNOWN";
+let lastVisibilityRefresh = 0;
+let ordersLoadSeq = 0;
+let ordersLastAppliedSeq = 0;
+
+// Estado del modal de aceptar parcial (solo pedidos del cliente con varias unidades del mismo producto)
+let partialAcceptState = null;
+
+function getPickingMode() {
+  if (new URLSearchParams(location.search).has("noPicking")) return false;
+  return PICKING_MODE_ENABLED && localStorage.getItem(PICKING_MODE_STORAGE_KEY) === "true";
+}
+
+function setPickingMode(on) {
+  if (!PICKING_MODE_ENABLED) return;
+  localStorage.setItem(PICKING_MODE_STORAGE_KEY, on ? "true" : "false");
+  updatePickingModeVisibility();
+}
+
+function updatePickingModeVisibility() {
+  const isPicking = getPickingMode();
+  const isPickingTab = currentFilter === "active" || currentFilter === "waiting";
+
+  document.body.classList.toggle("picking-mode", isPicking);
+  document.body.classList.toggle("picking-mode-on-active-or-waiting", isPicking && isPickingTab);
+
+  const btn = document.getElementById("picking-mode-toggle");
+  if (btn) {
+    btn.classList.toggle("active", isPicking);
+    btn.textContent = isPicking ? "✅ Picking ON" : "📋 Modo Picking";
   }
-  return (customerName || '').toString().toLowerCase();
+}
+
+function injectPickingModeCSS() {
+  if (!PICKING_MODE_ENABLED || document.getElementById("picking-mode-css")) return;
+  const style = document.createElement("style");
+  style.id = "picking-mode-css";
+  style.textContent = `/* ===== Picking Mode: desktop efficiency ===== */
+body.picking-mode.picking-mode-on-active-or-waiting .orders-container {
+  max-width: 1500px;
+  margin: 0 auto;
+  padding-left: 12px;
+  padding-right: 12px;
+}
+body.picking-mode.picking-mode-on-active-or-waiting #orders-content .orders-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+body.picking-mode.picking-mode-on-active-or-waiting #orders-content .order-card {
+  height: fit-content;
+  min-width: 0;
+}
+@media (max-width: 1099px) {
+  body.picking-mode.picking-mode-on-active-or-waiting #orders-content .orders-list { grid-template-columns: 1fr; }
+}
+body.picking-mode.picking-mode-on-active-or-waiting #orders-content .order-item {
+  display: grid;
+  grid-template-columns: 48px 1fr 150px;
+  align-items: center;
+  column-gap: 12px;
+  padding: 6px 10px;
+  margin: 4px 0;
+  border-radius: 10px;
+}
+body.picking-mode.picking-mode-on-active-or-waiting #orders-content .order-item.order-item-processing {
+  opacity: 0.7;
+  pointer-events: none;
+}
+body.picking-mode.picking-mode-on-active-or-waiting #orders-content .item-thumb {
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+body.picking-mode.picking-mode-on-active-or-waiting #orders-content .item-main {
+  min-width: 0;
+}
+body.picking-mode.picking-mode-on-active-or-waiting #orders-content .item-name {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+body.picking-mode.picking-mode-on-active-or-waiting #orders-content .item-details {
+  font-size: 12px;
+  line-height: 1.3;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+body.picking-mode.picking-mode-on-active-or-waiting #orders-content .item-status,
+body.picking-mode.picking-mode-on-active-or-waiting #orders-content .item-price,
+body.picking-mode.picking-mode-on-active-or-waiting #orders-content .item-main > div[style*="background"],
+body.picking-mode.picking-mode-on-active-or-waiting #orders-content .item-main > div[style*="display: flex"] {
+  display: none !important;
+}
+body.picking-mode.picking-mode-on-active-or-waiting #orders-content .item-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  align-items: center;
+}
+body.picking-mode.picking-mode-on-active-or-waiting #orders-content .item-action-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  font-size: 18px;
+}
+body.picking-mode.picking-mode-on-active-or-waiting #orders-content .item-action-btn.picking-more {
+  width: 32px;
+  height: 32px;
+  opacity: 0.85;
+}
+@media (max-width: 768px) {
+  body.picking-mode.picking-mode-on-active-or-waiting #orders-content .order-item {
+    grid-template-columns: 44px 1fr;
+    grid-template-rows: auto auto;
+    align-items: start;
+  }
+  body.picking-mode.picking-mode-on-active-or-waiting #orders-content .order-item .item-actions { grid-column: 1 / -1; justify-content: flex-end; }
+  body.picking-mode.picking-mode-on-active-or-waiting #orders-content .order-item .item-thumb,
+  body.picking-mode.picking-mode-on-active-or-waiting #orders-content .order-item .picking-thumb-placeholder { width: 44px; height: 44px; }
+}
+/* Picking: EXTRA especial badge */
+body.picking-mode.picking-mode-on-active-or-waiting #orders-content .item-thumb.extra-badge {
+  width: 48px; height: 48px; border-radius: 8px; background: #e8e8e8; color: #555; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 700; line-height: 1.2; text-align: center; border: 1px solid #ccc;
+}
+body.picking-mode.picking-mode-on-active-or-waiting #orders-content .item-thumb.extra-badge span { font-size: 8px; font-weight: 600; color: #777; }
+/* Picking: botón lupa (zoom) */
+body.picking-mode.picking-mode-on-active-or-waiting #orders-content .item-thumb-btn {
+  width: 48px; height: 48px; border-radius: 8px; background: #eee; border: 1px solid #ccc; cursor: pointer; font-size: 20px; padding: 0;
+  display: flex; align-items: center; justify-content: center; transition: background .15s, border-color .15s;
+}
+body.picking-mode.picking-mode-on-active-or-waiting #orders-content .item-thumb-btn:hover { background: #e0e0e0; border-color: #999; }
+body.picking-mode.picking-mode-on-active-or-waiting #orders-content .item-thumb-btn:focus-visible { outline: 2px solid #0a84ff; outline-offset: 2px; }
+/* Picking: placeholder sin imagen (sin lupa) */
+body.picking-mode.picking-mode-on-active-or-waiting #orders-content .picking-thumb-placeholder {
+  width: 48px; height: 48px; border-radius: 8px; background: #eee; display: flex; align-items: center; justify-content: center; font-size: 20px;
+}
+body.picking-mode.picking-mode-on-active-or-waiting #orders-content .order-item .picking-thumb-placeholder { width: 44px; height: 44px; font-size: 18px; }
+.picking-show-image-btn {
+  width: 100%; height: 100%; border: none; background: transparent; cursor: pointer; font-size: 20px; padding: 0; border-radius: 8px;
+}
+.picking-image-overlay {
+  display: none; position: fixed; inset: 0; z-index: 10000; background: rgba(0,0,0,.75); align-items: center; justify-content: center; padding: 20px;
+}
+.picking-image-overlay.active { display: flex; }
+.picking-image-container { position: relative; max-width: 90vw; max-height: 90vh; }
+.picking-image-close {
+  position: absolute; top: -36px; right: 0; width: 32px; height: 32px; border: none; background: #fff; border-radius: 50%; cursor: pointer; font-size: 24px; line-height: 1; color: #333;
+}
+.picking-image-img { max-width: 100%; max-height: 85vh; display: block; border-radius: 8px; background: #111; }
+}`;
+  document.head.appendChild(style);
+}
+
+function applyPickingItemActionsMenu() {
+  if (!getPickingMode() || (currentFilter !== "active" && currentFilter !== "waiting")) return;
+  const scope = document.querySelector("#orders-content");
+  if (!scope) return;
+  scope.querySelectorAll(".order-item").forEach((orderItem) => {
+    const actions = orderItem.querySelector(".item-actions");
+    if (!actions) return;
+    if (actions.querySelector(".picking-more")) return;
+
+    const secondary = ["reserved", "delete-item"];
+    actions.querySelectorAll("[data-item-action]").forEach((btn) => {
+      if (secondary.includes(btn.dataset.itemAction)) btn.style.display = "none";
+    });
+
+    const moreBtn = document.createElement("button");
+    moreBtn.type = "button";
+    moreBtn.className = "item-action-btn neutral picking-more";
+    moreBtn.textContent = "⋯";
+    moreBtn.title = "Más acciones";
+
+    const popover = document.createElement("div");
+    popover.className = "picking-more-popover";
+    popover.style.cssText = "display:none;position:absolute;right:0;top:100%;margin-top:4px;z-index:100;background:white;border:1px solid #ddd;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.15);padding:4px 0;min-width:140px;";
+
+    const optRestore = document.createElement("button");
+    optRestore.type = "button";
+    optRestore.className = "picking-more-opt";
+    optRestore.textContent = "Restaurar ↺";
+    optRestore.style.cssText = "display:block;width:100%;padding:8px 12px;border:none;background:none;text-align:left;cursor:pointer;font-size:13px;";
+    const optDelete = document.createElement("button");
+    optDelete.type = "button";
+    optDelete.className = "picking-more-opt";
+    optDelete.textContent = "Eliminar 🗑️";
+    optDelete.style.cssText = "display:block;width:100%;padding:8px 12px;border:none;background:none;text-align:left;cursor:pointer;font-size:13px;";
+
+    function closePopover() {
+      popover.style.display = "none";
+      document.removeEventListener("click", closeOnOutside);
+    }
+    function closeOnOutside(e) {
+      if (!actions.contains(e.target)) closePopover();
+    }
+
+    optRestore.addEventListener("click", () => {
+      const reservedBtn = actions.querySelector('[data-item-action="reserved"]');
+      if (reservedBtn) reservedBtn.click();
+      closePopover();
+    });
+    optDelete.addEventListener("click", () => {
+      const delBtn = actions.querySelector('[data-item-action="delete-item"]');
+      if (delBtn) delBtn.click();
+      closePopover();
+    });
+
+    moreBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (popover.style.display === "block") {
+        closePopover();
+      } else {
+        popover.style.display = "block";
+        setTimeout(() => document.addEventListener("click", closeOnOutside), 0);
+      }
+    });
+
+    popover.appendChild(optRestore);
+    popover.appendChild(optDelete);
+    actions.style.position = "relative";
+    actions.appendChild(moreBtn);
+    actions.appendChild(popover);
+  });
+}
+
+let softRefreshTimer = null;
+let softRefreshOrderId = null;
+const SOFT_REFRESH_DELAY_MS = 1500;
+
+function scheduleSoftRefresh(orderId) {
+  if (orderId) softRefreshOrderId = orderId;
+  if (softRefreshTimer) return;
+  softRefreshTimer = setTimeout(async () => {
+    softRefreshTimer = null;
+    const id = softRefreshOrderId;
+    softRefreshOrderId = null;
+    if (id && typeof refreshOneOrder === "function") {
+      await refreshOneOrder(id);
+    } else if (typeof loadOrders === "function") {
+      await loadOrders(false);
+    }
+    if (typeof updateActiveOrdersBadge === "function") updateActiveOrdersBadge();
+    if (typeof updatePickedOrdersBadge === "function") updatePickedOrdersBadge();
+    if (typeof updateClosedOrdersBadge === "function") updateClosedOrdersBadge();
+    if (typeof updateCancelledOrdersBadge === "function") updateCancelledOrdersBadge();
+    if (typeof updateWaitingOrdersBadge === "function") updateWaitingOrdersBadge();
+  }, SOFT_REFRESH_DELAY_MS);
+}
+
+function applyPickingOptimisticItemRemoval(btn, action) {
+  if (!btn || !getPickingMode() || (currentFilter !== "active" && currentFilter !== "waiting")) return;
+  const itemEl = btn.closest(".order-item");
+  const card = btn.closest(".order-card[data-order-id]");
+  if (!itemEl || !card) return;
+  const orderId = card.getAttribute("data-order-id");
+  const itemsContainer = card.querySelector(".order-items");
+  const headerRow = itemsContainer && itemsContainer.previousElementSibling;
+  if (headerRow) {
+    const textDiv = Array.from(headerRow.children).find((el) => el.textContent && el.textContent.includes("Productos separados"));
+    if (textDiv) {
+      const m = textDiv.textContent.match(/Productos separados:\s*(\d+)\/(\d+)/);
+      if (m) {
+        let picked = parseInt(m[1], 10);
+        let total = parseInt(m[2], 10);
+        if (action === "picked") {
+          picked = Math.min(picked + 1, total);
+        } else {
+          total = Math.max(0, total - 1);
+        }
+        textDiv.textContent = `Productos separados: ${picked}/${total}`;
+      }
+    }
+  }
+  itemEl.remove();
+  const remaining = card.querySelectorAll(".order-item");
+  if (remaining.length === 0) card.remove();
+  scheduleSoftRefresh(orderId);
+}
+
+function getCustomerName(order) {
+  const c = Array.isArray(order?.customers) ? order.customers[0] : order?.customers;
+  const customerName = (c?.full_name || c?.name || '').toString().toLowerCase();
+  return customerName || '';
 }
 
 function formatCustomerDisplayName(customer) {
@@ -208,25 +539,31 @@ function formatCustomerDisplayName(customer) {
 }
 
 function getCustomerPhone(order) {
-  if (Array.isArray(order.customers)) return (order.customers[0]?.phone || '').toString().toLowerCase();
-  if (order.customers && typeof order.customers === 'object') return (order.customers.phone || '').toString().toLowerCase();
-  return '';
+  const c = Array.isArray(order?.customers) ? order.customers[0] : order?.customers;
+  return (c?.phone || '').toString().toLowerCase();
 }
 
 function getCustomerDni(order) {
-  if (Array.isArray(order.customers)) return (order.customers[0]?.dni || '').toString().toLowerCase();
-  if (order.customers && typeof order.customers === 'object') return (order.customers.dni || '').toString().toLowerCase();
-  return '';
+  const c = Array.isArray(order?.customers) ? order.customers[0] : order?.customers;
+  return (c?.dni || '').toString().toLowerCase();
+}
+
+function getCustomerEmail(order) {
+  const c = Array.isArray(order?.customers) ? order.customers[0] : order?.customers;
+  return (c?.email || '').toString().toLowerCase();
 }
 
 function matchesSearch(order) {
   const q = (currentSearch || '').trim().toLowerCase();
   if (!q) return true;
-  const name = getCustomerName(order);
-  // construir "apellido, nombre"
+  const name = getCustomerName(order) || '';
+  const phone = getCustomerPhone(order) || '';
+  const dni = getCustomerDni(order) || '';
+  const email = getCustomerEmail(order) || '';
   const displayName = (() => {
-    const full = name;
-    const parts = full.trim().split(/\s+/);
+    const full = name.trim();
+    if (!full) return '';
+    const parts = full.split(/\s+/);
     if (parts.length > 1) {
       const last = parts[parts.length - 1];
       const first = parts.slice(0, -1).join(' ');
@@ -237,8 +574,9 @@ function matchesSearch(order) {
   return (
     name.includes(q) ||
     displayName.includes(q) ||
-    getCustomerPhone(order).includes(q) ||
-    getCustomerDni(order).includes(q)
+    phone.includes(q) ||
+    dni.includes(q) ||
+    email.includes(q)
   );
 }
 
@@ -273,9 +611,22 @@ function setupSearchControls() {
   input.value = currentSearch;
   input.addEventListener('input', () => {
     if (searchDebounce) clearTimeout(searchDebounce);
-    searchDebounce = setTimeout(() => {
-      currentSearch = input.value || '';
-      displayOrders();
+    searchDebounce = setTimeout(async () => {
+      const newSearch = input.value || '';
+      currentSearch = newSearch;
+      
+      // Si hay búsqueda, buscar directamente en la base de datos
+      if (newSearch.trim().length > 0) {
+        showLoading();
+        await searchOrdersInDatabase(newSearch.trim());
+      } else {
+        // Si no hay búsqueda, recargar pedidos normalmente con paginación
+        currentPage = 0;
+        orders = [];
+        hasMoreOrders = true;
+        allOrdersLoaded = false;
+        await loadOrders(true);
+      }
     }, 250);
   });
 }
@@ -318,13 +669,58 @@ async function initOrders() {
     // Usuario es admin, continuar con la carga
     setupFilters();
     setupButtons();
+    updatePickingModeVisibility();
+    setupInfiniteScroll();
+    
+    // Mostrar loading inicial
+    showLoading();
+    
+    // Cargar pedidos
     await loadOrders();
+    
     setupRealtimeSubscription();
+
+    if (typeof document !== "undefined") {
+      const VISIBILITY_REFRESH_THROTTLE_MS = 30 * 1000;
+      const HIDDEN_REFRESH_MS = 30 * 1000;
+      const HIDDEN_FORCE_MS = 180 * 1000;
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "hidden") {
+          lastHiddenAt = Date.now();
+          return;
+        }
+        if (document.visibilityState !== "visible") return;
+        if (typeof loadBadgeCountsInBackground === "function") loadBadgeCountsInBackground();
+        if (PICKING_NO_FULL_REFRESH && getPickingMode() && (currentFilter === "active" || currentFilter === "waiting")) return;
+        const now = Date.now();
+        const hiddenMs = lastHiddenAt ? now - lastHiddenAt : 0;
+        if (REALTIME_DELTA_MODE) {
+          if (now - lastVisibilityRefresh < VISIBILITY_REFRESH_THROTTLE_MS) return;
+          const shouldFullRefresh =
+            (realtimeStatus !== "SUBSCRIBED" && hiddenMs > HIDDEN_REFRESH_MS) ||
+            (hiddenMs > HIDDEN_FORCE_MS && !pendingTimer && pendingOrderIds.size === 0);
+          if (shouldFullRefresh && typeof loadOrders === "function") {
+            lastVisibilityRefresh = now;
+            loadOrders(true);
+          }
+        } else {
+          if (now - lastVisibilityRefresh < VISIBILITY_REFRESH_THROTTLE_MS) return;
+          lastVisibilityRefresh = now;
+          if (typeof loadOrders === "function") loadOrders(true);
+        }
+      });
+    }
+
+    // Actualizar badges con datos de los pedidos cargados (rápido, pero puede ser inexacto)
     updateActiveOrdersBadge();
     updatePickedOrdersBadge();
     updateClosedOrdersBadge();
     updateCancelledOrdersBadge();
     updateWaitingOrdersBadge();
+    
+    // Cargar conteos exactos en background (no bloquea UI)
+    // Esto actualizará los badges con números reales después de que el usuario vea los pedidos
+    loadBadgeCountsInBackground();
   } catch (error) {
     console.error("❌ Error inicializando panel de pedidos:", error);
     window.location.href = "index.html";
@@ -373,7 +769,7 @@ async function verifyAdminAuth() {
   }
 }
 
-async function loadOrders() {
+async function loadOrders(resetPagination = true) {
   if (!supabase) {
     supabase = await getSupabase();
   }
@@ -382,9 +778,38 @@ async function loadOrders() {
     return;
   }
 
-  // Hacer consulta sin join (PostgREST no encuentra la relación)
-  // Obteneremos customers y emails por separado
-  const response = await supabase
+  const seq = ++ordersLoadSeq;
+  const filterAtStart = currentFilter;
+  const sortAtStart = currentSort;
+  if (DEBUG_ORDERS) console.log("[orders] loadOrders start", { seq, filterAtStart, sortAtStart });
+
+  // Si hay búsqueda activa, buscar directamente en la base de datos sin límite
+  if (currentSearch && currentSearch.trim().length > 0) {
+    await searchOrdersInDatabase(currentSearch.trim());
+    return;
+  }
+
+  // Resetear paginación si se solicita (cambio de filtro, refresh, etc.)
+  if (resetPagination) {
+    currentPage = 0;
+    orders = [];
+    hasMoreOrders = true;
+    allOrdersLoaded = false;
+  }
+
+  // Si ya se cargaron todos los pedidos, no hacer más consultas
+  if (allOrdersLoaded) {
+    if (seq !== ordersLoadSeq || filterAtStart !== currentFilter) {
+      if (DEBUG_ORDERS) console.log("[orders] loadOrders dropped (allOrdersLoaded)", { seq, reason: "stale or filter changed" });
+      return;
+    }
+    ordersLastAppliedSeq = seq;
+    await displayOrders(!resetPagination);
+    return;
+  }
+
+  // Construir query base: orders + order_items + customers (LEFT join; customers no tiene columna 'name', solo full_name)
+  let query = supabase
     .from("orders")
     .select(
       `
@@ -397,6 +822,7 @@ async function loadOrders() {
         sent_at,
         customer_id,
         notes,
+        source,
         order_items (
           id,
           product_name,
@@ -407,72 +833,111 @@ async function loadOrders() {
           status,
           imagen,
           variant_id
+        ),
+        customers:customer_id!left (
+          id,
+          customer_number,
+          full_name,
+          phone,
+          city,
+          province,
+          dni,
+          email
         )
-      `
-    )
-    .order("created_at", { ascending: false });
-  
-  let data = response.data;
-  let error = response.error;
-  
-  // Si hay datos, obtener información de customers y emails por separado
-  if (data && !error && data.length > 0) {
-    const customerIds = [...new Set(data.map(order => order.customer_id).filter(Boolean))];
-    
-    console.log("🔍 Pedidos encontrados:", data.length);
-    console.log("🔍 Customer IDs únicos:", customerIds.length, customerIds);
-    
-    if (customerIds.length > 0) {
-      // Obtener información de customers (ahora incluye email y customer_number)
-      const { data: customersData, error: customersError } = await supabase
-        .from("customers")
-        .select("id, customer_number, full_name, phone, city, province, dni, email")
-        .in("id", customerIds);
-      
-      if (customersError) {
-        console.error("❌ Error obteniendo datos de customers:", customersError);
-      } else {
-        console.log("✅ Customers obtenidos:", customersData?.length || 0, customersData);
-      }
-      
-      // Los emails ahora vienen directamente en customersData
-      // Combinar datos de customers con orders
-      const customersMap = new Map();
-      if (customersData) {
-        customersData.forEach(c => {
-          customersMap.set(c.id, c);
-          console.log(`✅ Customer mapeado: ${c.id} -> ${c.full_name || 'Sin nombre'}, email: ${c.email || 'Sin email'}`);
-        });
-      }
-      
-      // Verificar qué customer_ids no tienen datos
-      const missingCustomers = customerIds.filter(id => !customersMap.has(id));
-      if (missingCustomers.length > 0) {
-        console.warn("⚠️ Customer IDs sin datos en customers:", missingCustomers);
-      }
-      
-      // Mapear orders con customers (el email ya viene en customer)
-      data = data.map(order => {
-        const customer = customersMap.get(order.customer_id) || {};
-        
-        if (!customer.id && order.customer_id) {
-          console.warn(`⚠️ Pedido ${order.id} tiene customer_id ${order.customer_id} pero no se encontró en customers`);
-        }
-        
-        if (!customer.email && order.customer_id) {
-          console.warn(`⚠️ Pedido ${order.id} tiene customer_id ${order.customer_id} pero no tiene email en customers`);
-        }
-        
-        return {
-          ...order,
-          customers: customer
-        };
-      });
-      
-      console.log("✅ Datos combinados. Primer pedido customers:", JSON.stringify(data[0]?.customers, null, 2));
+      `,
+      { count: 'exact' }
+    );
+
+  const filterMode = TAB_FILTER_MODE[currentFilter];
+  let data = null;
+  let error = null;
+  let totalCount = 0;
+
+  if (filterMode === "items" && currentFilter === "cancelled") {
+    // Cancelaciones: pedidos con al menos un ítem cancelado (order_items.status = 'cancelled'), no orders.status
+    const { data: cancelledRows, error: errIds } = await supabase
+      .from("orders")
+      .select("id, created_at, order_items!inner(status)")
+      .eq("order_items.status", "cancelled")
+      .order("created_at", { ascending: false });
+    if (errIds) {
+      error = errIds;
+      data = [];
     } else {
-      console.warn("⚠️ No hay customer_ids válidos en los pedidos");
+      const seen = new Set();
+      const idsOrdered = (cancelledRows || []).map((r) => r.id).filter((id) => {
+        if (seen.has(id)) return false;
+        seen.add(id);
+        return true;
+      });
+      totalCount = idsOrdered.length;
+      const pageIds = idsOrdered.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
+      if (pageIds.length === 0) {
+        data = [];
+      } else {
+        const { data: pageOrders, error: errPage } = await supabase
+          .from("orders")
+          .select(`
+            id, order_number, status, total_amount, created_at, updated_at, sent_at, customer_id, notes, source,
+            order_items ( id, product_name, color, size, quantity, price_snapshot, status, imagen, variant_id ),
+            customers:customer_id!left ( id, customer_number, full_name, phone, city, province, dni, email )
+          `)
+          .in("id", pageIds)
+          .order("created_at", { ascending: false });
+        if (errPage) {
+          error = errPage;
+          data = [];
+        } else {
+          const orderById = new Map((pageOrders || []).map((o) => [o.id, o]));
+          data = pageIds.map((id) => orderById.get(id)).filter(Boolean);
+        }
+      }
     }
+  } else {
+    if (filterMode === "sql") {
+      if (currentFilter === "all") {
+        query = query.not("status", "in", '("sent","devolución","devolucion")');
+      } else {
+        query = query.eq("status", currentFilter);
+      }
+    } else if (filterMode === "client") {
+      query = query.not("status", "in", '("sent","devolución","devolucion")');
+    }
+
+    query = query.order("created_at", { ascending: false }).range(currentPage * pageSize, (currentPage + 1) * pageSize - 1);
+    const response = await query;
+    data = response.data;
+    error = response.error;
+    totalCount = response.count || 0;
+  }
+
+  // Log temporal: respuesta de Supabase (antes del guard)
+  console.log("[orders AUDIT] Supabase response", {
+    currentFilter,
+    filterMode,
+    dataLength: data ? data.length : 0,
+    totalCount,
+    firstStatuses: (data && data.length) ? data.slice(0, 3).map((o) => o.status) : [],
+  });
+
+  // Verificar si hay más pedidos para cargar
+  if (data && !error) {
+    const loadedCount = (currentPage + 1) * pageSize;
+    hasMoreOrders = loadedCount < totalCount;
+    if (!hasMoreOrders) {
+      allOrdersLoaded = true;
+    }
+  }
+
+  // Normalizar customers: Supabase devuelve objeto o null con LEFT join; mantener compatibilidad con array/objeto/vacío
+  if (data && !error && data.length > 0) {
+    data = data.map((order) => {
+      let customer = order.customers ?? null;
+      if (customer && Array.isArray(customer)) {
+        customer = customer[0] ?? null;
+      }
+      return { ...order, customers: customer };
+    });
   }
 
   if (error) {
@@ -480,127 +945,255 @@ async function loadOrders() {
     return;
   }
 
-  orders = data || [];
-  await displayOrders();
+  if (seq !== ordersLoadSeq || filterAtStart !== currentFilter) {
+    console.log("[orders AUDIT] guard DROPPED response", { seq, ordersLoadSeq, filterAtStart, currentFilter });
+    if (DEBUG_ORDERS) console.log("[orders] loadOrders dropped", { seq, filterAtStart, currentFilter, reason: "stale or filter changed" });
+    return;
+  }
+  ordersLastAppliedSeq = seq;
+  if (DEBUG_ORDERS) console.log("[orders] loadOrders apply", { seq, currentFilter });
+
+  // Log temporal: justo antes de asignar orders
+  const ordersBefore = (data || []).length;
+  console.log("[orders AUDIT] before assign orders", { currentFilter, dataLength: ordersBefore, resetPagination });
+
+  // Agregar nuevos pedidos a la lista (no reemplazar si estamos paginando)
+  if (resetPagination) {
+    orders = data || [];
+  } else {
+    orders = [...orders, ...(data || [])];
+  }
+  
+  // Incrementar página para la próxima carga
+  if (data && data.length > 0) {
+    currentPage++;
+  }
+  
+  // #region agent log - Comentado para evitar errores de conexión
+  // Código de debugging removido para evitar errores de conexión
+  // const sampleOrder = orders[0] || null;
+  // const logData = {
+  //   ordersCount: orders.length,
+  //   sampleOrder: sampleOrder ? {
+  //     id: sampleOrder.id,
+  //     status: sampleOrder.status,
+  //     itemsCount: sampleOrder.order_items?.length || 0,
+  //     items: sampleOrder.order_items?.map(i => ({
+  //       id: i.id,
+  //       variant_id: i.variant_id,
+  //       size: i.size,
+  //       quantity: i.quantity,
+  //       status: i.status
+  //     })) || []
+  //   } : null
+  // };
+  // fetch('http://127.0.0.1:7242/ingest/7a4b3bf8-ea8a-4f70-84cf-a37f8cbd48dc',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'orders.js:483',message:'loadOrders: Pedidos cargados',data:logData,timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
+  // #endregion
+
+  syncOrdersMapFromArray();
+  if (DEBUG_ORDERS) {
+    const statuses = [...new Set((orders || []).map((o) => o.status).filter(Boolean))];
+    console.log("[debug] loadOrders rows", orders.length, "filter", currentFilter, "statuses", statuses);
+  }
+  // Log temporal: justo antes de displayOrders
+  console.log("[orders AUDIT] before displayOrders", { currentFilter, ordersLength: (orders || []).length, orderStatuses: (orders || []).map((o) => o.status) });
+  // Si es reset, reemplazar todo; si no, agregar al final
+  await displayOrders(!resetPagination);
   updateActiveOrdersBadge();
   updatePickedOrdersBadge();
   updateClosedOrdersBadge();
 }
 
-// Función para actualizar el badge de pedidos activos
-function updateActiveOrdersBadge() {
-  // Contar pedidos que NO tienen todos los items apartados y no están cerrados ni enviados
-  // Esto incluye pedidos con items "reserved", "missing", o mezclados
-  const activeCount = orders.filter(order => 
-    order.status !== "closed" && 
-    order.status !== "sent" && 
-    order.status !== "devolución" && // Excluir devoluciones
-    !hasAllItemsPicked(order)
-  ).length;
-  const badge = document.getElementById("active-orders-badge");
-  
-  if (badge) {
-    if (activeCount > 0) {
-      badge.textContent = activeCount;
-      badge.classList.remove("hidden");
-    } else {
-      badge.classList.add("hidden");
-    }
+// Función para buscar pedidos directamente en la base de datos (sin límite)
+async function searchOrdersInDatabase(searchTerm) {
+  if (!supabase) {
+    supabase = await getSupabase();
   }
+  if (!supabase) {
+    console.error("❌ Supabase no disponible en searchOrdersInDatabase");
+    return;
+  }
+
+  try {
+    // Buscar clientes que coincidan con el término de búsqueda
+    const { data: customersData, error: customersError } = await supabase
+      .from("customers")
+      .select("id")
+      .or(`full_name.ilike.%${searchTerm}%,dni.ilike.%${searchTerm}%,phone.ilike.%${searchTerm}%,email.ilike.%${searchTerm}%`);
+
+    if (customersError) {
+      console.error("❌ Error buscando clientes:", customersError);
+    }
+
+    const customerIds = customersData?.map(c => c.id) || [];
+
+    // Buscar pedidos que tengan productos que coincidan con el término de búsqueda
+    const { data: ordersWithProducts, error: ordersError } = await supabase
+      .from("order_items")
+      .select("order_id")
+      .or(`product_name.ilike.%${searchTerm}%,color.ilike.%${searchTerm}%`)
+      .limit(1000); // Límite razonable para evitar consultas muy grandes
+
+    const orderIdsFromProducts = ordersWithProducts ? [...new Set(ordersWithProducts.map(item => item.order_id))] : [];
+
+    // Combinar todos los IDs de pedidos encontrados
+    const allOrderIds = new Set();
+    
+    // Agregar IDs de pedidos encontrados por productos
+    orderIdsFromProducts.forEach(id => allOrderIds.add(id));
+    
+    // Buscar pedidos por cliente y agregar sus IDs
+    if (customerIds.length > 0) {
+      const { data: ordersByCustomer, error: ordersByCustomerError } = await supabase
+        .from("orders")
+        .select("id")
+        .in("customer_id", customerIds)
+        .limit(1000);
+      
+      if (!ordersByCustomerError && ordersByCustomer) {
+        ordersByCustomer.forEach(order => allOrderIds.add(order.id));
+      }
+    }
+    
+    // Buscar pedidos por order_number y agregar sus IDs
+    const { data: ordersByNumber, error: ordersByNumberError } = await supabase
+      .from("orders")
+      .select("id")
+      .ilike("order_number", `%${searchTerm}%`)
+      .limit(1000);
+    
+    if (!ordersByNumberError && ordersByNumber) {
+      ordersByNumber.forEach(order => allOrderIds.add(order.id));
+    }
+    
+    // Si no se encontraron pedidos, retornar vacío
+    if (allOrderIds.size === 0) {
+      orders = [];
+      await displayOrders();
+      updateActiveOrdersBadge();
+      updatePickedOrdersBadge();
+      updateClosedOrdersBadge();
+      return;
+    }
+    
+    // Buscar todos los pedidos encontrados con sus datos completos
+    const orderIdsArray = Array.from(allOrderIds);
+    const query = supabase
+      .from("orders")
+      .select(
+        `
+          id,
+          order_number,
+          status,
+          total_amount,
+          created_at,
+          updated_at,
+          sent_at,
+          customer_id,
+          notes,
+          source,
+          order_items (
+            id,
+            product_name,
+            color,
+            size,
+            quantity,
+            price_snapshot,
+            status,
+            imagen,
+            variant_id
+          )
+        `
+      )
+      .in("id", orderIdsArray)
+      .order("created_at", { ascending: false });
+
+    const response = await query;
+    let data = response.data;
+    let error = response.error;
+
+    // Si hay datos, obtener información completa de customers
+    if (data && !error && data.length > 0) {
+      const allCustomerIds = [...new Set(data.map(order => order.customer_id).filter(Boolean))];
+      
+      if (allCustomerIds.length > 0) {
+        const { data: customersFullData, error: customersFullError } = await supabase
+          .from("customers")
+          .select("id, customer_number, full_name, phone, city, province, dni, email")
+          .in("id", allCustomerIds);
+        
+        if (!customersFullError && customersFullData) {
+          const customersMap = new Map();
+          customersFullData.forEach(c => {
+            customersMap.set(c.id, c);
+          });
+          
+          data = data.map(order => {
+            const customer = customersMap.get(order.customer_id) || {};
+            return {
+              ...order,
+              customers: customer
+            };
+          });
+        }
+      }
+    }
+
+    if (error) {
+      console.error("❌ Error buscando pedidos:", error);
+      orders = [];
+    } else {
+      orders = data || [];
+      // Resetear paginación cuando hay búsqueda
+      currentPage = 0;
+      hasMoreOrders = false;
+      allOrdersLoaded = true;
+    }
+
+    await displayOrders();
+    updateActiveOrdersBadge();
+    updatePickedOrdersBadge();
+    updateClosedOrdersBadge();
+  } catch (error) {
+    console.error("❌ Error en searchOrdersInDatabase:", error);
+    orders = [];
+    await displayOrders();
+  }
+}
+
+// NOTA: Las funciones loadMoreOrders() y handleScroll() fueron eliminadas.
+// La funcionalidad de infinite scroll ahora está en setupInfiniteScroll() (línea ~2450)
+// que tiene mejor manejo de debounce y estado.
+
+// Función para actualizar el badge de pedidos activos
+// Los conteos solo los actualiza loadBadgeCountsInBackground() con datos reales de BD.
+// Esta función es no-op para evitar pisar con conteos del array `orders` (parcial/filtrado).
+function updateActiveOrdersBadge() {
+  return;
 }
 
 // Función para actualizar el badge de pedidos apartados
+// Los conteos solo los actualiza loadBadgeCountsInBackground() con datos reales de BD.
 function updatePickedOrdersBadge() {
-  // Contar pedidos que tienen todos los items "picked" (NO waiting) y no están cerrados ni enviados
-  // EXCLUIR pedidos con items en espera (estos van SOLO a "Espera")
-  const pickedCount = orders.filter(order => {
-    if (order.status === "closed" || order.status === "sent" || order.status === "devolución") {
-      return false;
-    }
-    // EXCLUIR si tiene items en espera (prioridad: va a Espera)
-    if (hasWaitingItems(order)) {
-      return false;
-    }
-    // Debe tener todos los items apartados (picked, pero NO waiting)
-    if (!hasAllItemsPicked(order)) {
-      return false;
-    }
-    // Excluir si tiene items reservados (estos van a "Activos")
-    if (hasReservedItems(order)) {
-      return false;
-    }
-    return true;
-  }).length;
-  const badge = document.getElementById("picked-orders-badge");
-  
-  if (badge) {
-    if (pickedCount > 0) {
-      badge.textContent = pickedCount;
-      badge.classList.remove("hidden");
-    } else {
-      badge.classList.add("hidden");
-    }
-  }
+  return;
 }
 
 // Función para actualizar el badge de pedidos cerrados
+// Los conteos solo los actualiza loadBadgeCountsInBackground() con datos reales de BD.
 function updateClosedOrdersBadge() {
-  // Contar pedidos que están cerrados
-  const closedCount = orders.filter(order => 
-    order.status === "closed"
-  ).length;
-  const badge = document.getElementById("closed-orders-badge");
-  
-  if (badge) {
-    if (closedCount > 0) {
-      badge.textContent = closedCount;
-      badge.classList.remove("hidden");
-    } else {
-      badge.classList.add("hidden");
-    }
-  }
+  return;
 }
 
 // Función para actualizar el badge de cancelaciones
+// Los conteos solo los actualiza loadBadgeCountsInBackground() con datos reales de BD.
 function updateCancelledOrdersBadge() {
-  // Contar pedidos que tienen al menos un item cancelado
-  const cancelledCount = orders.filter(order => {
-    const hasCancelledItems = (order.order_items || []).some(item => item.status === 'cancelled');
-    return hasCancelledItems;
-  }).length;
-  const badge = document.getElementById("cancelled-orders-badge");
-  
-  if (badge) {
-    if (cancelledCount > 0) {
-      badge.textContent = cancelledCount;
-      badge.classList.remove("hidden");
-    } else {
-      badge.classList.add("hidden");
-    }
-  }
+  return;
 }
 
 // Función para actualizar el badge de pedidos en espera
+// Los conteos solo los actualiza loadBadgeCountsInBackground() con datos reales de BD.
 function updateWaitingOrdersBadge() {
-  // Contar pedidos que tienen AL MENOS UN item en espera
-  // (sin importar si también tienen reserved, picked, etc.)
-  const waitingCount = orders.filter(order => {
-    if (order.status === "closed" || order.status === "sent" || order.status === "devolución") {
-      return false;
-    }
-    // Contar si tiene al menos un item en espera
-    return hasWaitingItems(order);
-  }).length;
-  const badge = document.getElementById("waiting-orders-badge");
-  
-  if (badge) {
-    if (waitingCount > 0) {
-      badge.textContent = waitingCount;
-      badge.classList.remove("hidden");
-    } else {
-      badge.classList.add("hidden");
-    }
-  }
+  return;
 }
 
 // Exponer funciones de actualización de badges globalmente (después de que estén definidas)
@@ -610,103 +1203,475 @@ window.updateClosedOrdersBadge = updateClosedOrdersBadge;
 window.updateCancelledOrdersBadge = updateCancelledOrdersBadge;
 window.updateWaitingOrdersBadge = updateWaitingOrdersBadge;
 
+// Función auxiliar para actualizar un badge con conteo
+function updateBadgeWithCount(badgeId, count) {
+  const badge = document.getElementById(badgeId);
+  if (badge) {
+    if (count > 0) {
+      badge.textContent = count;
+      badge.classList.remove("hidden");
+    } else {
+      badge.classList.add("hidden");
+    }
+  }
+}
+
+// Función para cargar conteos exactos de badges en background
+// Esta función se ejecuta en paralelo sin bloquear la carga inicial de pedidos
+async function loadBadgeCountsInBackground() {
+  if (!supabase) return;
+  
+  try {
+    console.log("🔄 Cargando conteos exactos de badges en background...");
+    
+    // Consulta optimizada: solo traer IDs y status de items (no datos completos)
+    // Esto es mucho más rápido que traer todos los datos del pedido
+    const { data: ordersForCounting } = await supabase
+      .from("orders")
+      .select("id, status, order_items(status)")
+      .not("status", "in", "(closed,sent,devolución)");
+    
+    if (ordersForCounting) {
+      // Contar activos: solo pedidos con al menos un ítem reservado o missing (misma lógica que pestaña Activos)
+      const realActiveCount = ordersForCounting.filter(order => {
+        if (!order.order_items || order.order_items.length === 0) return false;
+        if (hasAllItemsPicked(order) && !hasWaitingItems(order)) return false;
+        return hasReservedItems(order) || hasItemsNeedingAttention(order);
+      }).length;
+      
+      // Contar apartados
+      const realPickedCount = ordersForCounting.filter(order => {
+        if (!order.order_items || order.order_items.length === 0) return false;
+        const hasWaiting = order.order_items.some(i => i.status === 'waiting');
+        if (hasWaiting) return false;
+        const hasReserved = order.order_items.some(i => i.status === 'reserved');
+        if (hasReserved) return false;
+        const allPicked = order.order_items.every(i => i.status === 'picked' || i.status === 'waiting');
+        return allPicked;
+      }).length;
+      
+      // Contar en espera: pedidos con al menos un ítem en waiting
+      const realWaitingCount = ordersForCounting.filter(order => {
+        if (!order.order_items || order.order_items.length === 0) return false;
+        return hasWaitingItems(order);
+      }).length;
+      
+      // Actualizar badges con conteos reales
+      updateBadgeWithCount('active-orders-badge', realActiveCount);
+      updateBadgeWithCount('picked-orders-badge', realPickedCount);
+      updateBadgeWithCount('waiting-orders-badge', realWaitingCount);
+      
+      console.log(`✅ Badges actualizados: Activos=${realActiveCount}, Apartados=${realPickedCount}, Espera=${realWaitingCount}`);
+    }
+    
+    // Contar cerrados (consulta simple y rápida)
+    const { count: closedCount } = await supabase
+      .from("orders")
+      .select("*", { count: 'exact', head: true })
+      .eq("status", "closed");
+    
+    updateBadgeWithCount('closed-orders-badge', closedCount || 0);
+    
+    // Contar cancelados (pedidos con items cancelados)
+    const { data: allOrders } = await supabase
+      .from("orders")
+      .select("id, order_items!inner(status)")
+      .eq("order_items.status", "cancelled");
+    
+    const cancelledCount = allOrders ? new Set(allOrders.map(o => o.id)).size : 0;
+    updateBadgeWithCount('cancelled-orders-badge', cancelledCount);
+    
+    // Marcar que los conteos totales ya se cargaron
+    badgeCountsLoaded = true;
+    
+    console.log(`✅ Conteos exactos cargados: Cerrados=${closedCount}, Cancelados=${cancelledCount}`);
+    
+  } catch (error) {
+    console.error("❌ Error cargando conteos de badges en background:", error);
+    // Si falla, los badges siguen mostrando el conteo de los pedidos cargados
+    // No es crítico, solo significa que los números pueden no ser exactos
+  }
+}
+
+// ===== REALTIME DELTA ENGINE (NO refetch global) =====
+
+function syncOrdersMapFromArray() {
+  ordersMap.clear();
+  for (const o of orders || []) {
+    if (o?.id) ordersMap.set(o.id, o);
+  }
+}
+
+function upsertOrder(order) {
+  if (!order?.id) return;
+  ordersMap.set(order.id, order);
+  const idx = (orders || []).findIndex((o) => o.id === order.id);
+  if (idx >= 0) {
+    orders[idx] = order;
+  } else {
+    orders.push(order);
+  }
+}
+
+function removeOrder(orderId) {
+  ordersMap.delete(orderId);
+  const idx = (orders || []).findIndex((o) => o.id === orderId);
+  if (idx >= 0) orders.splice(idx, 1);
+}
+
+function removeOrderCard(orderId) {
+  const card = document.querySelector(`.order-card[data-order-id="${orderId}"]`);
+  if (card) card.remove();
+}
+
+async function patchOrderCard(orderId, order) {
+  const list = document.querySelector("#orders-content .orders-list");
+  if (!list) return;
+  const card = list.querySelector(`.order-card[data-order-id="${orderId}"]`);
+  if (!card) return;
+  const html = await renderOrderCard(order);
+  if (!html) return;
+  card.outerHTML = html;
+  attachOrderEventHandlers();
+}
+
+async function insertOrderCardInList(order) {
+  if (document.querySelector(`.order-card[data-order-id="${order.id}"]`)) return;
+  const list = document.querySelector("#orders-content .orders-list");
+  if (!list) return;
+  const html = await renderOrderCard(order);
+  if (!html) return;
+  list.insertAdjacentHTML("afterbegin", html);
+  attachOrderEventHandlers();
+}
+
+function orderBelongsToCurrentTab(order) {
+  const filtered = typeof filterOrders === "function" ? filterOrders([order]) : [order];
+  if (!filtered || filtered.length === 0) return false;
+  if (typeof matchesSearch === "function") {
+    return matchesSearch(order);
+  }
+  return true;
+}
+
+function updateAllBadges() {
+  if (typeof updateActiveOrdersBadge === "function") updateActiveOrdersBadge();
+  if (typeof updatePickedOrdersBadge === "function") updatePickedOrdersBadge();
+  if (typeof updateClosedOrdersBadge === "function") updateClosedOrdersBadge();
+  if (typeof updateCancelledOrdersBadge === "function") updateCancelledOrdersBadge();
+  if (typeof updateWaitingOrdersBadge === "function") updateWaitingOrdersBadge();
+}
+
+function scheduleRealtimeDelta(payload) {
+  const table = payload.table;
+  const orderId =
+    table === "orders"
+      ? (payload.new?.id ?? payload.old?.id)
+      : (payload.new?.order_id ?? payload.old?.order_id);
+  if (!orderId) return;
+
+  if (table === "orders" && payload.eventType === "DELETE") {
+    removeOrder(orderId);
+    removeOrderCard(orderId);
+    updateAllBadges();
+    return;
+  }
+
+  pendingOrderIds.add(orderId);
+  if (pendingTimer) return;
+  pendingTimer = setTimeout(async () => {
+    const ids = Array.from(pendingOrderIds);
+    pendingOrderIds.clear();
+    pendingTimer = null;
+    const t0 = performance.now();
+    for (const id of ids) {
+      await refreshOneOrder(id);
+    }
+    updateAllBadges();
+    const t1 = performance.now();
+    if (DEBUG_ORDERS) console.log("[perf] realtime batch", ids.length, "orders in", (t1 - t0).toFixed(0), "ms");
+  }, 250);
+}
+
+async function refreshOneOrder(orderId) {
+  const t0 = performance.now();
+  const full = await fetchOrderById(orderId);
+  const t1 = performance.now();
+  if (!full) return;
+
+  const belongs = orderBelongsToCurrentTab(full);
+  upsertOrder(full);
+  const card = document.querySelector(`.order-card[data-order-id="${orderId}"]`);
+
+  if (belongs) {
+    if (card) {
+      await patchOrderCard(orderId, full);
+    } else {
+      await insertOrderCardInList(full);
+    }
+  } else {
+    removeOrder(orderId);
+    removeOrderCard(orderId);
+  }
+
+  const t2 = performance.now();
+  if (DEBUG_ORDERS) console.log("[perf] refreshOneOrder", orderId, "fetch", (t1 - t0).toFixed(0) + "ms", "dom", (t2 - t1).toFixed(0) + "ms");
+}
+
+async function fetchOrderById(orderId) {
+  if (!supabase) return null;
+  const { data: order, error: err1 } = await supabase
+    .from("orders")
+    .select(`
+      id, order_number, status, total_amount, created_at, updated_at, sent_at, customer_id, notes, source,
+      order_items (
+        id, product_name, color, size, quantity, price_snapshot, status, imagen, variant_id
+      )
+    `)
+    .eq("id", orderId)
+    .single();
+
+  if (err1 || !order) {
+    console.warn("fetchOrderById: error orders", err1);
+    return null;
+  }
+
+  if (order.customer_id) {
+    const { data: cust, error: err2 } = await supabase
+      .from("customers")
+      .select("id, customer_number, full_name, name, email, phone, dni, city, province")
+      .eq("id", order.customer_id)
+      .single();
+    if (!err2 && cust) {
+      order.customers = cust;
+    } else {
+      order.customers = null;
+    }
+  }
+  return order;
+}
+
 // Función para configurar suscripción en tiempo real
 function setupRealtimeSubscription() {
   if (!supabase) return;
-  
-  // Cancelar suscripción anterior si existe
+
   if (realtimeSubscription) {
     supabase.removeChannel(realtimeSubscription);
   }
-  
-  // Suscribirse a cambios en la tabla orders
-  realtimeSubscription = supabase
-    .channel("orders-changes")
-    .on(
-      "postgres_changes",
-      {
-        event: "*", // INSERT, UPDATE, DELETE
-        schema: "public",
-        table: "orders",
-      },
-      async (payload) => {
-        console.log("🔄 Cambio en pedidos detectado:", payload.eventType);
-        // Recargar pedidos cuando haya cambios
-        await loadOrders();
-        updateActiveOrdersBadge();
-        updatePickedOrdersBadge();
-        updateClosedOrdersBadge();
-        updateCancelledOrdersBadge();
-      }
-    )
-    .on(
-      "postgres_changes",
-      {
-        event: "*", // INSERT, UPDATE, DELETE
-        schema: "public",
-        table: "order_items",
-      },
-      async (payload) => {
-        console.log("🔄 Cambio en items de pedidos detectado:", payload.eventType);
-        // Recargar pedidos cuando haya cambios en items
-        await loadOrders();
-        updateActiveOrdersBadge();
-        updatePickedOrdersBadge();
-        updateClosedOrdersBadge();
-        updateCancelledOrdersBadge();
-      }
-    )
-    .subscribe((status) => {
-      if (status === "SUBSCRIBED") {
-        console.log("✅ Suscripción en tiempo real activa");
-      } else if (status === "CHANNEL_ERROR") {
-        console.error("❌ Error en suscripción en tiempo real");
-      }
-    });
+
+  if (REALTIME_DELTA_MODE) {
+    realtimeSubscription = supabase
+      .channel("orders-changes")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "orders" },
+        (payload) => {
+          console.log("🔄 Cambio en pedidos detectado:", payload.eventType, payload);
+          scheduleRealtimeDelta(payload);
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "order_items" },
+        (payload) => {
+          console.log("🔄 INSERT en items:", payload);
+          scheduleRealtimeDelta(payload);
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "order_items" },
+        (payload) => {
+          console.log("🔄 UPDATE en items:", payload);
+          scheduleRealtimeDelta(payload);
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "DELETE", schema: "public", table: "order_items" },
+        (payload) => {
+          console.log("🔄 DELETE en items:", payload);
+          scheduleRealtimeDelta(payload);
+        }
+      )
+      .subscribe((status) => {
+        realtimeStatus = status;
+        if (status === "SUBSCRIBED") {
+          console.log("✅ Suscripción en tiempo real activa");
+        } else if (status === "CHANNEL_ERROR") {
+          console.error("❌ Error en suscripción en tiempo real");
+        }
+      });
+  } else {
+    realtimeSubscription = supabase
+      .channel("orders-changes")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "orders" },
+        async (payload) => {
+          console.log("🔄 Cambio en pedidos detectado:", payload.eventType);
+          const orderId = payload.new?.id ?? payload.old?.id;
+          if (PICKING_NO_FULL_REFRESH && getPickingMode() && (currentFilter === "active" || currentFilter === "waiting") && orderId && typeof refreshOneOrder === "function") {
+            await refreshOneOrder(orderId);
+          } else if (typeof loadOrders === "function") {
+            await loadOrders();
+          }
+          updateActiveOrdersBadge();
+          updatePickedOrdersBadge();
+          updateClosedOrdersBadge();
+          updateCancelledOrdersBadge();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "order_items" },
+        async (payload) => {
+          console.log("🔄 Cambio en items de pedidos detectado:", payload.eventType);
+          const orderId = payload.new?.order_id ?? payload.old?.order_id;
+          if (PICKING_NO_FULL_REFRESH && getPickingMode() && (currentFilter === "active" || currentFilter === "waiting") && orderId && typeof refreshOneOrder === "function") {
+            await refreshOneOrder(orderId);
+          } else if (typeof loadOrders === "function") {
+            await loadOrders();
+          }
+          updateActiveOrdersBadge();
+          updatePickedOrdersBadge();
+          updateClosedOrdersBadge();
+          updateCancelledOrdersBadge();
+        }
+      )
+      .subscribe((status) => {
+        realtimeStatus = status;
+        if (status === "SUBSCRIBED") {
+          console.log("✅ Suscripción en tiempo real activa");
+        } else if (status === "CHANNEL_ERROR") {
+          console.error("❌ Error en suscripción en tiempo real");
+        }
+      });
+  }
 }
 
-async function displayOrders() {
+async function displayOrders(append = false) {
   const container = document.getElementById("orders-content");
   if (!container) return;
 
+  // Log temporal: entrada a displayOrders
+  console.log("[orders AUDIT] displayOrders entry", { currentFilter, ordersLength: (orders || []).length, append });
+
+  // CRÍTICO: Validar que el filtro actual coincide con los datos
+  // Si orders está vacío o no hay datos, mostrar mensaje apropiado
+  if (!orders || orders.length === 0) {
+    if (!append) {
+      container.innerHTML = `
+        <div class="empty-orders">
+          <h2>No hay pedidos</h2>
+          <p>No se encontraron pedidos con el filtro seleccionado.</p>
+        </div>
+      `;
+      // Ocultar loading si existe
+      hideLoading();
+    }
+    return;
+  }
+
   // Filtrar por pestaña actual
   const filteredByTab = filterOrders(orders);
+  console.log("[orders AUDIT] after filterOrders", { currentFilter, ordersLength: orders.length, filteredByTabLength: filteredByTab.length });
 
-  // Requisito: búsqueda solo en Apartados y Cerrados (no combinar estados)
+  // Aplicar búsqueda si existe
   let filtered = filteredByTab;
-  if (currentFilter === 'picked' || currentFilter === 'closed') {
+  if (currentSearch && currentSearch.trim().length > 0) {
+    filtered = filteredByTab;
+  } else if (currentFilter === 'picked' || currentFilter === 'closed') {
     filtered = filteredByTab.filter(matchesSearch);
   }
 
   const sorted = sortOrders(filtered);
+  if (DEBUG_ORDERS) console.log("[debug] displayOrders filteredByTab", filteredByTab.length, "filtered", filtered.length, "sorted", sorted.length);
 
+  // Si después de filtrar no hay resultados
   if (!sorted.length) {
-    container.innerHTML = `
-      <div class="empty-orders">
-        <h2>No hay pedidos</h2>
-        <p>No se encontraron pedidos con el filtro seleccionado.</p>
-      </div>
-    `;
-    updateActiveOrdersBadge();
-    updatePickedOrdersBadge();
-    updateClosedOrdersBadge();
-    updateCancelledOrdersBadge();
-    updateWaitingOrdersBadge();
+    if (!append) {
+      container.innerHTML = `
+        <div class="empty-orders">
+          <h2>No hay pedidos</h2>
+          <p>No se encontraron pedidos con el filtro seleccionado.</p>
+        </div>
+      `;
+      // Ocultar loading si existe
+      hideLoading();
+    }
     return;
   }
 
-  // Limpiar el estado de visualización cuando cambiamos de filtro
-  // Solo mantener el estado si seguimos en la misma pestaña
-  if (currentFilter !== 'active') {
+  // Limpiar el estado de visualización solo si no es append
+  if (!append && currentFilter !== 'active') {
     orderViewMode.clear();
   }
   
-  // Renderizar pedidos de forma asíncrona
-  const cardsPromises = sorted.map(async (order) => await renderOrderCard(order));
-  const cardsHtml = (await Promise.all(cardsPromises)).join("");
-
-  container.innerHTML = `<div class="orders-list">${cardsHtml}</div>`;
-  attachOrderEventHandlers();
+  // Si es append, agregar al final; si no, reemplazar todo
+  if (append) {
+    // Obtener solo los nuevos pedidos (los que no están ya renderizados)
+    const existingOrdersList = container.querySelector('.orders-list');
+    if (existingOrdersList) {
+      // Obtener IDs de pedidos ya renderizados
+      const existingOrderIds = new Set(
+        Array.from(existingOrdersList.querySelectorAll('[data-order-id]'))
+          .map(el => el.getAttribute('data-order-id'))
+      );
+      
+      // Filtrar solo los nuevos pedidos
+      const newOrders = sorted.filter(order => !existingOrderIds.has(order.id));
+      
+      if (newOrders.length > 0) {
+        // Renderizar solo los nuevos pedidos
+        const cardsPromises = newOrders.map(async (order) => await renderOrderCard(order));
+        const cardsHtml = (await Promise.all(cardsPromises)).join("");
+        
+        // Agregar al final de la lista existente
+        existingOrdersList.insertAdjacentHTML('beforeend', cardsHtml);
+        
+        // Re-attach event handlers solo para los nuevos elementos
+        attachOrderEventHandlers();
+      }
+    }
+  } else {
+    // IMPORTANTE: Limpiar contenedor antes de renderizar
+    container.innerHTML = '';
+    
+    // Crear contenedor de lista inmediatamente
+    const ordersList = document.createElement('div');
+    ordersList.className = 'orders-list';
+    container.appendChild(ordersList);
+    
+    // Renderizar pedidos de forma progresiva (no bloquear esperando todos)
+    // Esto permite que el usuario vea los pedidos tan pronto como estén listos
+    // Renderizar en batches para mejor performance
+    const batchSize = 5;
+    for (let i = 0; i < sorted.length; i += batchSize) {
+      const batch = sorted.slice(i, i + batchSize);
+      const batchPromises = batch.map(async (order) => {
+        try {
+          const cardHtml = await renderOrderCard(order);
+          return cardHtml || '';
+        } catch (error) {
+          console.error(`❌ Error renderizando pedido ${order.id}:`, error);
+          return '';
+        }
+      });
+      
+      const batchHtml = (await Promise.all(batchPromises)).join('');
+      if (DEBUG_ORDERS) console.log("[debug] displayOrders batch", i / batchSize + 1, "batchSize", batch.length, "batchHtml.length", batchHtml.length);
+      if (batchHtml) {
+        ordersList.insertAdjacentHTML('beforeend', batchHtml);
+        // Attach handlers después de cada batch para que los botones funcionen inmediatamente
+        attachOrderEventHandlers();
+      }
+    }
+    
+    // Ocultar loading después de renderizar todos los pedidos
+    hideLoading();
+  }
+  
   updateActiveOrdersBadge();
   updatePickedOrdersBadge();
   updateClosedOrdersBadge();
@@ -714,6 +1679,7 @@ async function displayOrders() {
   updateWaitingOrdersBadge();
   setupSortControls();
   setupSearchControls();
+  applyPickingItemActionsMenu();
 }
 
 // Función para obtener variant_id basado en product_name, color y size
@@ -721,12 +1687,12 @@ async function findVariantId(productName, color, size) {
   if (!supabase || !productName || !color || !size) return null;
   
   try {
-    // Buscar producto por nombre
+    // Buscar producto por nombre (incluir todos los estados)
     const { data: productData, error: productError } = await supabase
       .from('products')
       .select('id')
       .eq('name', productName)
-      .eq('status', 'active')
+      .in('status', ['active', 'pending_stock', 'draft'])
       .limit(1)
       .maybeSingle();
     
@@ -845,12 +1811,12 @@ async function getOffersAndPromotionsForOrder(order) {
     
     if (!item.product_name || !item.color) continue;
     
-    // Buscar producto por nombre
+    // Buscar producto por nombre (incluir todos los estados para aplicar ofertas)
     const { data: productData } = await supabase
       .from('products')
       .select('id')
       .eq('name', item.product_name)
-      .eq('status', 'active')
+      .in('status', ['active', 'pending_stock', 'draft'])
       .limit(1)
       .maybeSingle();
     
@@ -996,23 +1962,55 @@ async function getItemWarehouse(item) {
   }
   
   try {
-    // Consultar stock en ambos depósitos
-    const { data: stockData, error } = await supabase
-      .from("variant_warehouse_stock")
-      .select("warehouse_id, stock_qty")
-      .eq("variant_id", item.variant_id)
-      .in("warehouse_id", [warehousesCache.general, warehousesCache.ventaPublico]);
+    // IMPORTANTE: Si el item tiene un tamaño, consultar variant_size_warehouse_stock
+    // en lugar de variant_warehouse_stock para obtener el stock correcto
+    const itemSize = item.size || null;
+    const normalizedSize = itemSize ? normalizeSize(itemSize) : null;
     
-    if (error || !stockData) {
-      return null;
+    let generalQty = 0;
+    let ventaQty = 0;
+    
+    if (normalizedSize) {
+      // Consultar stock por talle específico desde variant_size_warehouse_stock
+      // IMPORTANTE: Cargar todos los registros y normalizar después para evitar problemas de comparación
+      const { data: sizeStockData, error: sizeStockError } = await supabase
+        .from("variant_size_warehouse_stock")
+        .select("size, warehouse_id, stock_qty")
+        .eq("variant_id", item.variant_id)
+        .in("warehouse_id", [warehousesCache.general, warehousesCache.ventaPublico]);
+      
+      if (!sizeStockError && sizeStockData && sizeStockData.length > 0) {
+        // Filtrar por tamaño normalizado después de obtener los datos
+        sizeStockData.forEach(sws => {
+          const swsNormalizedSize = normalizeSize(sws.size || "");
+          if (swsNormalizedSize !== normalizedSize) return; // Saltar si no coincide después de normalizar
+          
+          if (sws.warehouse_id === warehousesCache.general) {
+            generalQty = sws.stock_qty || 0;
+          } else if (sws.warehouse_id === warehousesCache.ventaPublico) {
+            ventaQty = sws.stock_qty || 0;
+          }
+        });
+      }
     }
     
-    // Buscar stock en general primero (prioridad)
-    const generalStock = stockData.find(s => s.warehouse_id === warehousesCache.general);
-    const ventaStock = stockData.find(s => s.warehouse_id === warehousesCache.ventaPublico);
+    // Si no se encontró stock por talle o no hay tamaño, consultar variant_warehouse_stock como fallback
+    if (generalQty === 0 && ventaQty === 0) {
+      const { data: stockData, error } = await supabase
+        .from("variant_warehouse_stock")
+        .select("warehouse_id, stock_qty")
+        .eq("variant_id", item.variant_id)
+        .in("warehouse_id", [warehousesCache.general, warehousesCache.ventaPublico]);
+      
+      if (!error && stockData) {
+        const generalStock = stockData.find(s => s.warehouse_id === warehousesCache.general);
+        const ventaStock = stockData.find(s => s.warehouse_id === warehousesCache.ventaPublico);
+        
+        generalQty = generalStock?.stock_qty || 0;
+        ventaQty = ventaStock?.stock_qty || 0;
+      }
+    }
     
-    const generalQty = generalStock?.stock_qty || 0;
-    const ventaQty = ventaStock?.stock_qty || 0;
     const itemQty = item.quantity || 1;
     
     // Lógica: primero se descuenta del general, luego del local
@@ -1076,25 +2074,36 @@ async function renderOrderCard(order) {
     statusClass = "status-sent";
   }
   
-  // Manejar customer que puede ser objeto o array
-  let customer = {};
-  if (Array.isArray(order.customers)) {
-    customer = order.customers[0] || {};
-  } else if (order.customers && typeof order.customers === 'object') {
-    customer = order.customers;
+  // Normalizar customer (objeto o array; nunca null para evitar fallos en render)
+  const customer = Array.isArray(order?.customers) ? (order.customers[0] ?? {}) : (order?.customers && typeof order.customers === 'object' ? order.customers : {});
+
+  const customerEmail = (customer?.email || '').trim() || '—';
+  const customerPhone = (customer?.phone || '').trim() || '—';
+  const customerDni = (customer?.dni || '').trim() || '';
+  const customerNumber = (customer?.customer_number || '').trim() || '';
+  const customerCity = (customer?.city || '').trim() || '';
+  const customerProvince = (customer?.province || '').trim() || '';
+  
+  // Obtener ofertas y promociones (con timeout para no bloquear el renderizado)
+  // Si tarda más de 2 segundos, usar datos vacíos para mostrar el pedido rápidamente
+  let offersData = { offers: [], promotions: [], totalDiscount: 0, itemOffers: new Map(), itemPromos: new Map() };
+  try {
+    const offersPromise = getOffersAndPromotionsForOrder(order);
+    const timeoutPromise = new Promise(resolve => setTimeout(() => resolve(null), 2000));
+    const result = await Promise.race([offersPromise, timeoutPromise]);
+    if (result) {
+      offersData = result;
+    }
+  } catch (error) {
+    console.warn(`⚠️ Error obteniendo ofertas para pedido ${order.id}:`, error);
+    // Continuar sin ofertas para mostrar el pedido rápidamente
   }
-  
-  // Obtener email del usuario (ya viene en customer.email desde la función RPC)
-  const customerEmail = customer.email || "Sin email";
-  
-  // Obtener ofertas y promociones
-  const offersData = await getOffersAndPromotionsForOrder(order);
   
   const total =
     typeof order.total_amount === "number"
       ? order.total_amount
       : (order.order_items || []).reduce(
-          (sum, item) => sum + (item.quantity || 0) * ((item.price_snapshot || 0)),
+          (sum, item) => sum + (item.quantity || 0) * normalizeOrderPrice(item.price_snapshot || 0),
           0
         );
 
@@ -1124,7 +2133,8 @@ async function renderOrderCard(order) {
         month: '2-digit',
         day: '2-digit',
         hour: '2-digit',
-        minute: '2-digit'
+        minute: '2-digit',
+        timeZone: 'America/Argentina/Buenos_Aires',
       });
       sentLabel = `<div style="font-size:12px; color:#28a745; margin-top:2px; font-weight:600;">
                     Enviado: ${sentText}
@@ -1139,7 +2149,8 @@ async function renderOrderCard(order) {
         month: '2-digit',
         day: '2-digit',
         hour: '2-digit',
-        minute: '2-digit'
+        minute: '2-digit',
+        timeZone: 'America/Argentina/Buenos_Aires',
       });
       sentLabel = `<div style="font-size:12px; color:#28a745; margin-top:2px; font-weight:600;">
                     Enviado: ${updatedText}
@@ -1170,8 +2181,10 @@ async function renderOrderCard(order) {
       // Modo completo: mostrar todos excepto cancelados
       activeItems = allItems.filter(item => item.status !== 'cancelled');
     } else {
-      // Modo por defecto: solo mostrar items reservados
-      activeItems = allItems.filter(item => item.status === 'reserved');
+      // En Activos solo se muestran productos en estado Reservado (y Falta); no "espera"
+      activeItems = allItems.filter(item =>
+        item.status === 'reserved' || item.status === 'missing'
+      );
     }
   } else {
     // En otros filtros, mostrar todos excepto cancelados
@@ -1182,7 +2195,7 @@ async function renderOrderCard(order) {
   const cancelledWarning = (currentFilter !== 'waiting' && cancelledItems.length > 0) ? `
     <div class="cancelled-warning">
       <span>⚠️</span>
-      <span>${cancelledItems.length} producto(s) cancelado(s) por el cliente ${customer.full_name || 'Cliente sin nombre'}${customer.customer_number ? ` (Nº ${customer.customer_number})` : ''}</span>
+      <span>${cancelledItems.length} producto(s) cancelado(s) por el cliente ${formatCustomerDisplayName(customer)}${customerNumber ? ` (Nº ${customerNumber})` : ''}</span>
     </div>
   ` : '';
   
@@ -1196,9 +2209,9 @@ async function renderOrderCard(order) {
       const extrasAmount = parseFloat(extraValues.extras_amount) || 0;
       const extrasPercentage = parseFloat(extraValues.extras_percentage) || 0;
       
-      // Calcular subtotal de productos para el porcentaje de extras
+      // Calcular subtotal de productos para el porcentaje de extras (normalizar miles abreviados)
       const productsSubtotal = allItems.reduce((sum, item) => {
-        return sum + ((item.price_snapshot || 0) * (item.quantity || 0));
+        return sum + (normalizeOrderPrice(item.price_snapshot || 0) * (item.quantity || 0));
       }, 0);
       
       if (shippingAmount > 0) {
@@ -1285,10 +2298,20 @@ async function renderOrderCard(order) {
   const showExtraValues = currentFilter !== 'waiting' && 
                          (currentFilter !== 'active' || orderViewMode.get(order.id) === true);
   
-  const itemsHtml = cancelledWarning + 
-    (currentFilter !== 'waiting' ? cancelledItems.map((item) => renderOrderItem(item, customer, offersData, warehouseInfoMap)).join("") : "") + 
-    activeItems.map((item) => renderOrderItem(item, customer, offersData, warehouseInfoMap)).join("") + 
-    (showExtraValues ? extraValuesHtml : "");
+  let itemsHtml;
+  if (currentFilter === 'cancelled') {
+    // En Cancelaciones: solo productos cancelados visibles por defecto; el resto en bloque colapsable
+    const restHtml = activeItems.map((item) => renderOrderItem(item, customer, offersData, warehouseInfoMap)).join("") +
+      (showExtraValues ? extraValuesHtml : "");
+    itemsHtml = cancelledWarning +
+      cancelledItems.map((item) => renderOrderItem(item, customer, offersData, warehouseInfoMap)).join("") +
+      (restHtml ? `<div class="order-items-rest" style="display:none;">${restHtml}</div>` : "");
+  } else {
+    itemsHtml = cancelledWarning +
+      (currentFilter !== 'waiting' ? cancelledItems.map((item) => renderOrderItem(item, customer, offersData, warehouseInfoMap)).join("") : "") +
+      activeItems.map((item) => renderOrderItem(item, customer, offersData, warehouseInfoMap)).join("") +
+      (showExtraValues ? extraValuesHtml : "");
+  }
   
   // Agregar resumen de ofertas y promociones si hay descuentos
   let offersSummaryHtml = '';
@@ -1335,14 +2358,23 @@ async function renderOrderCard(order) {
   
   const finalItemsHtml = itemsHtml + offersSummaryHtml;
 
-  const readyCount = (order.order_items || []).filter(
-    (item) => item.status === "picked"
-  ).length;
+  // Contar productos apartados (sumando cantidades)
+  const readyCount = (order.order_items || [])
+    .filter((item) => item.status === "picked")
+    .reduce((sum, item) => sum + (item.quantity || 0), 0);
 
-  const totalItems = order.order_items?.length || 0;
+  // Contar total de productos (sumando cantidades)
+  const totalItems = (order.order_items || [])
+    .reduce((sum, item) => sum + (item.quantity || 0), 0);
+
+  // Contar items reservados
+  const reservedItems = (order.order_items || []).filter(item => item.status === 'reserved');
+  const hasReservedItems = reservedItems.length > 0;
 
   // Mostrar botones según el estado del pedido
   let actionButtons = "";
+  let sendToLocalButton = "";
+  
   if (order.status === "closed") {
     // Para pedidos cerrados, mostrar botón "TERMINADO" y "Editar"
     actionButtons = `
@@ -1350,17 +2382,37 @@ async function renderOrderCard(order) {
       <button class="btn" style="background: #28a745; color: white;" data-mark-sent="${order.id}">TERMINADO</button>
     `;
   } else if (order.status !== "sent") {
-    // Para pedidos activos, mostrar botón "Editar" y "Cerrar pedido"
+    // Botón "Editar Pedido" siempre visible
     actionButtons = `
       <button class="btn" style="background: #17a2b8; color: white;" data-edit-order="${order.id}">✏️ Editar Pedido</button>
-      <button class="btn btn-success" data-close-order="${order.id}">Cerrar pedido</button>
     `;
     
-    // Si el pedido está en estado "apartado" (picked), agregar botón "Enviar al Local"
-    if (displayStatus === "picked" && hasAllItemsPicked(order) && !hasWaitingItems(order)) {
+    // Si el pedido está en estado "activo": botón reservados (lógica original) y/o enviar todos como apartados (pedidos del usuario)
+    if (displayStatus === "active") {
+      if (hasReservedItems) {
+        actionButtons += `
+          <button class="btn" style="background: #28a745; color: white;" data-pick-all-reserved="${order.id}">✓ Apartar Todos los Reservados</button>
+        `;
+      }
+      if (hasWaitingItems(order)) {
+        actionButtons += `
+          <button class="btn" style="background: #28a745; color: white;" data-pick-all-waiting="${order.id}">✓ Enviar todos los productos como apartados</button>
+        `;
+      }
+    }
+    
+    // Si el pedido está en estado "apartado" (picked), mostrar "Cerrar pedido" y "Enviar al Local"
+    if (displayStatus === "picked") {
       actionButtons += `
-        <button class="btn" style="background: #CD844D; color: white;" data-send-to-local="${order.id}">🏪 Enviar al Local</button>
+        <button class="btn btn-success" data-close-order="${order.id}">Cerrar pedido</button>
       `;
+      
+      // Separar botón "Enviar al Local" para colocarlo a la derecha
+      if (hasAllItemsPicked(order) && !hasWaitingItems(order)) {
+        sendToLocalButton = `
+          <button class="btn" style="background: #CD844D; color: white;" data-send-to-local="${order.id}">🏪 Enviar al Local</button>
+        `;
+      }
     }
   }
 
@@ -1398,6 +2450,10 @@ async function renderOrderCard(order) {
     shouldStartCollapsed = true;
     itemsDisplay = 'none';
     toggleLabel = 'Ver productos';
+  } else if (currentFilter === 'cancelled') {
+    // En Cancelaciones: solo se ven los productos cancelados; el resto se muestra al pulsar "Ver productos"
+    itemsDisplay = 'block';
+    toggleLabel = 'Ver productos';
   } else {
     // En otros filtros, mostrar expandido
     itemsDisplay = 'block';
@@ -1412,19 +2468,36 @@ async function renderOrderCard(order) {
   return `
     <div class="order-card" data-order-id="${order.id}">
       <div class="order-header">
-        <div class="order-id">Pedido #${orderDisplayNumber}${createdLabel}${sentLabel}</div>
+        <div class="order-id" style="display: flex; align-items: center; gap: 8px;">
+          Pedido #${orderDisplayNumber}${createdLabel}${sentLabel}
+          ${(displayStatus === 'active' || displayStatus === 'picked' || displayStatus === 'waiting') ? `
+            <button class="btn-cancel-order" 
+                    data-cancel-order="${order.id}" 
+                    title="Cancelar pedido"
+                    style="background: #dc3545; color: white; padding: 4px 8px; font-size: 12px; border-radius: 6px; border: none; cursor: pointer; white-space: nowrap;">
+              🗑️ Cancelar
+            </button>
+          ` : ''}
+        </div>
         <div class="order-status ${statusClass}">${statusLabel}</div>
       </div>
       <div class="customer-info">
-        <div class="customer-name">
-          ${customer.customer_number ? `<span style="color: #CD844D; font-weight: 600; margin-right: 8px;">#${customer.customer_number}</span>` : ""}
-          ${formatCustomerDisplayName(customer)}
+        <div class="customer-name" style="display: flex; justify-content: space-between; align-items: center;">
+          <div>
+            ${customerNumber ? `<span style="color: #CD844D; font-weight: 600; margin-right: 8px;">#${customerNumber}</span>` : ""}
+            ${formatCustomerDisplayName(customer)}
+          </div>
+          ${displayStatus === "picked" ? `
+            <button class="btn" style="background: #17a2b8; color: white; padding: 6px 12px; font-size: 13px;" data-view-summary="${order.id}">
+              📄 Ver Detalle
+            </button>
+          ` : ''}
         </div>
         <div class="customer-details">
-          ${customer.dni ? `<span>🆔 DNI: ${customer.dni}</span>` : ""}
-          <span>📞 ${customer.phone || "Sin teléfono"}</span>
+          ${customerDni ? `<span>🆔 DNI: ${customerDni}</span>` : ""}
+          <span>📞 ${customerPhone}</span>
           <span>📧 ${customerEmail}</span>
-          ${(customer.city || customer.province) ? `<span>📍 ${[customer.city, customer.province].filter(Boolean).join(" - ")}</span>` : ""}
+          ${(customerCity || customerProvince) ? `<span>📍 ${[customerCity, customerProvince].filter(Boolean).join(" - ")}</span>` : ""}
         </div>
       </div>
       <div style="display:flex; justify-content:space-between; align-items:center; margin:8px 0 4px 0;">
@@ -1438,11 +2511,175 @@ async function renderOrderCard(order) {
         <span>Total</span>
         <span>${formatCurrency(total)}</span>
       </div>
-      <div class="order-actions">
-        ${actionButtons}
+      <div class="order-actions" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          ${actionButtons}
+        </div>
+        ${sendToLocalButton ? `<div>${sendToLocalButton}</div>` : ''}
       </div>
     </div>
   `;
+}
+
+function generateOrderSummary(order) {
+  // Obtener información del cliente
+  let customer = {};
+  if (Array.isArray(order.customers)) {
+    customer = order.customers[0] || {};
+  } else if (order.customers && typeof order.customers === 'object') {
+    customer = order.customers;
+  }
+  
+  // Obtener todos los items (excluir cancelados)
+  const allItems = (order.order_items || []).filter(item => item.status !== 'cancelled');
+  
+  // Parsear valores extra desde notes
+  let shippingAmount = 0;
+  let discountAmount = 0;
+  let extrasAmount = 0;
+  let extrasPercentage = 0;
+  
+  if (order.notes) {
+    try {
+      const extraValues = JSON.parse(order.notes);
+      shippingAmount = parseFloat(extraValues.shipping) || 0;
+      discountAmount = parseFloat(extraValues.discount) || 0;
+      extrasAmount = parseFloat(extraValues.extras_amount) || 0;
+      extrasPercentage = parseFloat(extraValues.extras_percentage) || 0;
+    } catch (e) {
+      console.warn('Error parseando valores extra:', e);
+    }
+  }
+  
+  // Calcular subtotal de productos (normalizar miles abreviados)
+  const productsSubtotal = allItems.reduce((sum, item) => {
+    return sum + (normalizeOrderPrice(item.price_snapshot || 0) * (item.quantity || 0));
+  }, 0);
+  
+  // Calcular cantidad total de productos
+  const totalQuantity = allItems.reduce((sum, item) => {
+    return sum + (item.quantity || 0);
+  }, 0);
+  
+  // Calcular extras porcentuales
+  const extrasFromPercentage = productsSubtotal * extrasPercentage / 100;
+  
+  // Calcular total
+  const total = productsSubtotal + shippingAmount - discountAmount + extrasAmount + extrasFromPercentage;
+  
+  // Generar HTML de items
+  const itemsHtml = allItems.map(item => {
+    const unitPrice = normalizeOrderPrice(item.price_snapshot || 0);
+    const itemTotal = unitPrice * (item.quantity || 0);
+    // Usar el nombre del producto en lugar del código QR
+    const productName = item.product_name || 'Producto sin nombre';
+    const color = (item.color || '-').toLowerCase();
+    const size = item.size || '-';
+    const quantity = item.quantity || 0;
+    
+    const imageHtml = item.imagen 
+      ? `<img src="${item.imagen}" alt="${productName}" class="order-summary-item-image" onerror="this.style.display='none'">`
+      : '<div class="order-summary-item-image" style="background: #f0f0f0; display: flex; align-items: center; justify-content: center; color: #999; font-size: 10px;">Sin img</div>';
+    
+    return `
+      <div class="order-summary-item">
+        ${imageHtml}
+        <div class="order-summary-item-details-horizontal">
+          <span class="order-summary-item-name">${productName}</span>
+          <span class="order-summary-item-color">${color}</span>
+          <span class="order-summary-item-size">${size}</span>
+          <span class="order-summary-item-quantity">${quantity}</span>
+          <span class="order-summary-item-unit-price">${formatCurrency(unitPrice)}</span>
+          <span class="order-summary-item-total">${formatCurrency(itemTotal)}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+  
+  // Generar HTML de extras
+  let extrasHtml = '';
+  if (shippingAmount > 0 || discountAmount > 0 || extrasAmount > 0 || extrasPercentage > 0) {
+    extrasHtml += '<div class="order-summary-section">';
+    if (shippingAmount > 0) {
+      extrasHtml += `
+        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+          <span>🚚 Envío:</span>
+          <strong>${formatCurrency(shippingAmount)}</strong>
+        </div>
+      `;
+    }
+    if (discountAmount > 0) {
+      extrasHtml += `
+        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+          <span>💸 Descuento:</span>
+          <strong style="color: #dc3545;">-${formatCurrency(discountAmount)}</strong>
+        </div>
+      `;
+    }
+    if (extrasAmount > 0) {
+      extrasHtml += `
+        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+          <span>➕ Extras:</span>
+          <strong>${formatCurrency(extrasAmount)}</strong>
+        </div>
+      `;
+    }
+    if (extrasPercentage > 0) {
+      extrasHtml += `
+        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+          <span>➕ Extras (${extrasPercentage}%):</span>
+          <strong>${formatCurrency(extrasFromPercentage)}</strong>
+        </div>
+      `;
+    }
+    extrasHtml += '</div>';
+  }
+  
+  return `
+    <div style="margin-bottom: 16px;">
+      <div style="font-size: 14px; color: #666; margin-bottom: 4px;">Pedido #${order.order_number || order.id.substring(0, 8)}</div>
+      <div style="font-size: 16px; font-weight: 600; margin-bottom: 8px;">${formatCustomerDisplayName(customer)}</div>
+      ${customer.phone ? `<div style="font-size: 14px; color: #666;">📞 ${customer.phone}</div>` : ''}
+    </div>
+    <div class="order-summary-section">
+      <h3 style="margin: 0 0 12px 0; font-size: 18px; color: #333;">Productos</h3>
+      ${itemsHtml}
+    </div>
+    ${extrasHtml}
+    <div class="order-summary-total">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <span style="font-size: 14px; color: #666;">Total de productos: <strong>${totalQuantity}</strong></span>
+        <span>Total: ${formatCurrency(total)}</span>
+      </div>
+    </div>
+  `;
+}
+
+function showOrderSummaryModal(order) {
+  const modal = document.getElementById('order-summary-modal');
+  const content = document.getElementById('order-summary-content');
+  
+  if (!modal || !content) {
+    console.error('Modal de resumen no encontrado');
+    return;
+  }
+  
+  content.innerHTML = generateOrderSummary(order);
+  modal.classList.add('active');
+}
+
+function isExtraSpecialItem(item) {
+  if (!item) return false;
+  const empty = (v) => {
+    if (v == null) return true;
+    const s = String(v).trim();
+    return s === "" || s === "-" || s === "—" || s.toLowerCase() === "undefined";
+  };
+  const noVariant = item.variant_id == null || item.variant_id === "";
+  const noImage = empty(item.imagen) && empty(item.image_url);
+  const noColor = empty(item.color);
+  const noSize = empty(item.size);
+  return !!(noVariant && noImage && noColor && noSize);
 }
 
 function renderOrderItem(item, customer = {}, offersData = { itemOffers: new Map(), itemPromos: new Map() }, warehouseInfoMap = new Map()) {
@@ -1450,20 +2687,19 @@ function renderOrderItem(item, customer = {}, offersData = { itemOffers: new Map
   
   // Obtener información del depósito si el item está reservado
   const warehouse = item.status === 'reserved' ? warehouseInfoMap.get(item.id) : null;
+  const warehouseLabel = warehouse === "Local" ? "en local" : warehouse;
   
   // Verificar si tiene promoción (prioridad sobre oferta)
   const promoText = offersData.itemPromos?.get(item.id);
   const offerInfo = offersData.itemOffers?.get(item.id);
   
-  // Calcular precio y subtotal
-  let displayPrice = item.price_snapshot || 0;
+  // Calcular precio y subtotal (normalizar miles abreviados: 18 → 18000)
+  let displayPrice = normalizeOrderPrice(item.price_snapshot || 0);
   let originalPrice = null;
   
   if (promoText) {
-    // Si tiene promoción, mostrar precio original
     originalPrice = displayPrice;
   } else if (offerInfo) {
-    // Si tiene oferta, usar precio de oferta
     originalPrice = offerInfo.originalPrice;
     displayPrice = offerInfo.offerPrice;
   }
@@ -1473,9 +2709,22 @@ function renderOrderItem(item, customer = {}, offersData = { itemOffers: new Map
   const isMissing = item.status === 'missing';
   const isWaiting = item.status === 'waiting';
 
-  const imageHtml = item.imagen
-    ? `<img src="${item.imagen}" alt="${item.product_name}" class="item-thumb" onerror="this.remove()" />`
-    : "";
+  const pickingModeThumb = getPickingMode() && (currentFilter === "active" || currentFilter === "waiting");
+  let imageHtml;
+  if (pickingModeThumb) {
+    if (isExtraSpecialItem(item)) {
+      imageHtml = '<div class="item-thumb extra-badge">EXTRA<br><span>especial</span></div>';
+    } else if (item.imagen && String(item.imagen).trim()) {
+      const imgEsc = (item.imagen || "").replace(/"/g, "&quot;");
+      imageHtml = `<button type="button" class="item-thumb item-thumb-btn" data-action="zoom" data-img="${imgEsc}" aria-label="Ver imagen en grande">🔍</button>`;
+    } else {
+      imageHtml = '<div class="item-thumb picking-thumb-placeholder"><span aria-hidden="true">🖼️</span></div>';
+    }
+  } else {
+    imageHtml = item.imagen
+      ? `<img src="${item.imagen}" alt="${item.product_name}" class="item-thumb" onerror="this.remove()" />`
+      : "";
+  }
 
   // Mostrar leyenda de oferta o promoción
   let offerPromoBadge = '';
@@ -1510,15 +2759,21 @@ function renderOrderItem(item, customer = {}, offersData = { itemOffers: new Map
         item.id
       }" data-item-action="reserved">↺</button>
     </div>
-  ` : isWaiting ? `
+  ` : (isWaiting || item.status === 'reserved' || item.status === 'picked') ? `
     <div class="item-actions">
-      <button class="item-action-btn success" title="Confirmar producto - Cambiar a Apartado" data-item-id="${
+      <button class="item-action-btn success" title="Producto apartado" data-item-id="${
         item.id
-      }" data-item-action="picked" style="background: #28a745; font-weight: 600;">✓ Confirmar</button>
+      }" data-item-action="picked">✓</button>
+      <button class="item-action-btn" title="Producto en espera" data-item-id="${
+        item.id
+      }" data-item-action="waiting" style="background: #ff9800; color: white;">⏳</button>
+      <button class="item-action-btn danger" title="Producto faltante" data-item-id="${
+        item.id
+      }" data-item-action="missing">✕</button>
       <button class="item-action-btn neutral" title="Restaurar estado" data-item-id="${
         item.id
       }" data-item-action="reserved">↺</button>
-      <button class="item-action-btn danger" title="Eliminar del pedido y reintegrar al stock" data-item-id="${
+      <button class="item-action-btn danger" title="Eliminar del pedido" data-item-id="${
         item.id
       }" data-item-action="delete-item">🗑️</button>
     </div>
@@ -1542,87 +2797,139 @@ function renderOrderItem(item, customer = {}, offersData = { itemOffers: new Map
     </div>
   `;
 
-  return `
-    <div class="order-item ${isCancelled ? 'cancelled-item' : ''}">
-      ${imageHtml}
-      <div class="item-main">
-        <div class="item-name">${item.product_name}</div>
-        <div class="item-details">
-          Color: ${item.color || "-"} • Talle: ${item.size || "-"} • Cantidad: ${
-    item.quantity || 0
-  }
+  // Detectar si es móvil
+  const isMobile = window.innerWidth <= 768;
+  
+  if (isMobile) {
+    // Layout móvil: imagen a la izquierda, información a la derecha
+    return `
+      <div class="order-item ${isCancelled ? 'cancelled-item' : ''}">
+        <div style="display: flex; gap: 10px; align-items: flex-start;">
+          ${imageHtml}
+          <div class="item-main" style="flex: 1; min-width: 0;">
+            <div class="item-name" style="font-size: 15px; font-weight: 600; margin-bottom: 6px; line-height: 1.3;">${item.product_name}</div>
+            <div style="display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px;">
+              <div style="font-size: 19px; font-weight: 700; color: #333;">
+                <span style="color: #666; font-size: 13px; font-weight: 500;">Color:</span> <strong style="font-size: 19px; font-weight: 700;">${item.color || "-"}</strong>
+              </div>
+              <div style="font-size: 19px; font-weight: 700; color: #333;">
+                <span style="color: #666; font-size: 13px; font-weight: 500;">Talle:</span> <strong style="font-size: 19px; font-weight: 700;">${item.size || "-"}</strong>
+              </div>
+              <div style="font-size: 16px; font-weight: 700; color: #333; margin-top: 2px;">
+                Cantidad: <strong style="font-size: 16px; font-weight: 700;">${item.quantity || 0}</strong>
+              </div>
+            </div>
+            ${offerPromoBadge}
+            <div style="display: flex; align-items: center; gap: 6px; margin-top: 6px; flex-wrap: wrap;">
+              <span class="item-status ${info.className}">${info.text}</span>
+              ${warehouseLabel ? `<span style="background: #e3f2fd; color: #1565c0; padding: 3px 6px; border-radius: 10px; font-size: 10px; font-weight: 600;">📍 ${warehouseLabel}</span>` : ''}
+            </div>
+            <div class="item-price" style="margin-top: 6px; font-size: 16px; font-weight: 700;">
+              ${originalPrice ? `<span style="text-decoration: line-through; color: #888; font-size: 0.85em; margin-right: 6px;">${formatCurrency(originalPrice * (item.quantity || 0))}</span>` : ''}
+              ${formatCurrency(subtotal)}
+            </div>
+            ${cancelledInfo}
+          </div>
         </div>
-        ${offerPromoBadge}
-        <div style="display: flex; align-items: center; gap: 8px; margin-top: 4px; flex-wrap: wrap;">
-          <span class="item-status ${info.className}">${info.text}</span>
-          ${warehouse ? `<span style="background: #e3f2fd; color: #1565c0; padding: 4px 8px; border-radius: 12px; font-size: 11px; font-weight: 600;">📍 ${warehouse}</span>` : ''}
-        </div>
-        <div class="item-price">
-          ${originalPrice ? `<span style="text-decoration: line-through; color: #888; font-size: 0.9em; margin-right: 8px;">${formatCurrency(originalPrice * (item.quantity || 0))}</span>` : ''}
-          ${formatCurrency(subtotal)}
-        </div>
-        ${cancelledInfo}
+        ${actionButtons}
       </div>
-      ${actionButtons}
-    </div>
-  `;
+    `;
+  } else {
+    // Layout desktop: mantener estructura original
+    return `
+      <div class="order-item ${isCancelled ? 'cancelled-item' : ''}">
+        ${imageHtml}
+        <div class="item-main">
+          <div class="item-name">${item.product_name}</div>
+          <div class="item-details">
+            Color: <strong style="font-size: 15px; font-weight: 700;">${item.color || "-"}</strong> • Talle: <strong style="font-size: 15px; font-weight: 700;">${item.size || "-"}</strong> • Cantidad: <strong style="font-size: 15px; font-weight: 700;">${item.quantity || 0}</strong>
+          </div>
+          ${offerPromoBadge}
+          <div style="display: flex; align-items: center; gap: 8px; margin-top: 4px; flex-wrap: wrap;">
+            <span class="item-status ${info.className}">${info.text}</span>
+            ${warehouseLabel ? `<span style="background: #e3f2fd; color: #1565c0; padding: 4px 8px; border-radius: 12px; font-size: 11px; font-weight: 600;">📍 ${warehouseLabel}</span>` : ''}
+          </div>
+          <div class="item-price">
+            ${originalPrice ? `<span style="text-decoration: line-through; color: #888; font-size: 0.9em; margin-right: 8px;">${formatCurrency(originalPrice * (item.quantity || 0))}</span>` : ''}
+            ${formatCurrency(subtotal)}
+          </div>
+          ${cancelledInfo}
+        </div>
+        ${actionButtons}
+      </div>
+    `;
+  }
 }
 
 function filterOrders(list) {
-  if (currentFilter === "all") return list;
-  
-  // PRIORIDAD: Si un pedido tiene AL MENOS UN item en "waiting", debe aparecer SOLO en "Espera"
-  // Los pedidos solo pueden estar en una pestaña a la vez
-  
+  if (currentFilter === "all") {
+    const excluded = new Set(FINAL_STATUSES.map((s) => s.toLowerCase()));
+    return list.filter((o) => !excluded.has((o.status || "").toLowerCase()));
+  }
+
+  // Activos = solo pedidos con al menos un ítem en Reservado (o Falta). En Activos el único estado de producto que se muestra es Reservado.
+  // Espera = pedidos con ítems en waiting (estado interno; con checkout en 'reserved' ya no deberían crearse nuevos).
+
   if (currentFilter === "waiting") {
-    // Mostrar pedidos que tienen AL MENOS UN item en espera
-    // (sin importar si también tienen reserved, picked, etc.)
     return list.filter((order) => {
-      if (order.status === "closed" || order.status === "sent" || order.status === "devolución") return false;
-      // Mostrar si tiene al menos un item en espera
+      if (order.status === STATUS.CLOSED || order.status === STATUS.SENT || order.status === STATUS.DEVOLUCION) return false;
       return hasWaitingItems(order);
     });
   }
-  
-  if (currentFilter === "active") {
-    // Mostrar pedidos que no están cerrados ni enviados y que NO tienen todos los items apartados
-    // EXCLUIR pedidos con items en espera (estos van SOLO a "Espera")
-    // EXCLUIR pedidos con items cancelados (estos van a "Cancelaciones")
-    // EXCLUIR pedidos en devolución (estos solo aparecen en "Pedidos Enviados")
+
+  if (currentFilter === STATUS.ACTIVE) {
+    // Solo pedidos que tienen al menos un ítem en reservado o missing (no solo waiting)
+    const normStatus = (s) => String(s ?? "").trim().toLowerCase();
+    let debugLogCount = 0;
+    const MAX_DEBUG_LOGS = 10;
     return list.filter((order) => {
-      if (order.status === "closed" || order.status === "sent" || order.status === "devolución") return false;
-      // EXCLUIR si tiene items en espera (prioridad: va a Espera)
-      if (hasWaitingItems(order)) return false;
-      if (hasAllItemsPicked(order)) return false;
-      // Excluir si tiene items cancelados
-      const hasCancelledItems = (order.order_items || []).some(item => item.status === 'cancelled');
-      if (hasCancelledItems) return false;
-      // Incluir pedidos con items reservados, missing u otros estados (pero sin waiting)
+      let excludedBy = null;
+      const statusNorm = normStatus(order.status);
+      if (statusNorm === STATUS.CLOSED || statusNorm === STATUS.SENT || statusNorm === STATUS.DEVOLUCION || statusNorm === STATUS.DEVOLUCION_ALT) excludedBy = "order.status=" + (order.status ?? "null");
+      else if (!hasReservedItems(order) && !hasItemsNeedingAttention(order)) excludedBy = "sin ítems reservados ni missing";
+      else if (hasAllItemsPicked(order) && !hasWaitingItems(order)) excludedBy = "hasAllItemsPicked=true (sin espera)";
+      if (DEBUG_ACTIVE_FILTER && debugLogCount < MAX_DEBUG_LOGS) {
+        const items = order.order_items;
+        const hasItems = items != null;
+        const itemsType = typeof items;
+        const itemsLen = hasItems && Array.isArray(items) ? items.length : (hasItems ? "not-array" : 0);
+        const itemStatuses = (Array.isArray(items) ? items : []).map((i) => i?.status);
+        console.log("[DEBUG_ACTIVE_FILTER] order", {
+          orderId: order.id,
+          orderStatus: order.status,
+          order_itemsExists: hasItems,
+          order_itemsType: itemsType,
+          order_itemsLength: itemsLen,
+          itemStatuses,
+          hasWaitingItems: hasWaitingItems(order),
+          hasOnlyWaitingItems: hasOnlyWaitingItems(order),
+          hasAllItemsPicked: hasAllItemsPicked(order),
+          excludedBy: excludedBy || "INCLUDED",
+        });
+        debugLogCount++;
+      }
+      if (excludedBy) return false;
       return true;
     });
   }
   
-  if (currentFilter === "picked") {
-    // Mostrar pedidos que tienen todos los items "picked" (NO waiting)
-    // EXCLUIR pedidos con items en espera (estos van SOLO a "Espera")
+  if (currentFilter === STATUS.PICKED) {
+    // Apartados: todos los items "picked" (sin items en espera)
     return list.filter((order) => {
-      if (order.status === "closed" || order.status === "sent" || order.status === "devolución") return false;
-      // EXCLUIR si tiene items en espera (prioridad: va a Espera)
+      if (order.status === STATUS.CLOSED || order.status === STATUS.SENT || order.status === STATUS.DEVOLUCION) return false;
       if (hasWaitingItems(order)) return false;
-      // Debe tener todos los items apartados (picked, pero NO waiting)
       if (!hasAllItemsPicked(order)) return false;
-      // Excluir si tiene items reservados (estos van a "Activos")
       if (hasReservedItems(order)) return false;
       return true;
     });
   }
   
-  if (currentFilter === "closed") {
+  if (currentFilter === STATUS.CLOSED) {
     // Mostrar pedidos cerrados (excluir los que ya están enviados/terminados)
-    return list.filter((order) => order.status === "closed");
+    return list.filter((order) => order.status === STATUS.CLOSED);
   }
-  
-  if (currentFilter === "cancelled") {
+
+  if (currentFilter === STATUS.CANCELLED) {
     // Mostrar pedidos que tienen al menos un item cancelado
     return list.filter((order) => {
       const hasCancelledItems = (order.order_items || []).some(item => item.status === 'cancelled');
@@ -1634,9 +2941,32 @@ function filterOrders(list) {
   return list.filter((order) => order.status === currentFilter);
 }
 
+function disableAllTabs() {
+  const filterButtons = document.querySelectorAll(".filter-btn");
+  filterButtons.forEach((btn) => {
+    btn.disabled = true;
+    btn.style.opacity = "0.5";
+    btn.style.cursor = "not-allowed";
+  });
+}
+
+function enableAllTabs() {
+  const filterButtons = document.querySelectorAll(".filter-btn");
+  filterButtons.forEach((btn) => {
+    btn.disabled = false;
+    btn.style.opacity = "1";
+    btn.style.cursor = "pointer";
+  });
+}
+
 function showLoading() {
   const container = document.getElementById("orders-content");
   if (!container) return;
+  
+  // Limpiar completamente el contenedor primero
+  container.innerHTML = '';
+  
+  // Luego mostrar el loading
   container.innerHTML = `
     <div class="loading">
       <div class="loading-spinner"></div>
@@ -1654,21 +2984,190 @@ function hideLoading() {
   }
 }
 
+function showOrderActionLoading(orderId) {
+  const orderCard = document.querySelector(`[data-order-id="${orderId}"]`);
+  if (!orderCard) return;
+  
+  // Crear overlay de carga
+  const overlay = document.createElement('div');
+  overlay.className = 'order-loading-overlay';
+  overlay.innerHTML = `
+    <div class="order-loading-spinner"></div>
+    <p>Actualizando...</p>
+  `;
+  overlay.style.cssText = `
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(255, 255, 255, 0.9);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  `;
+  
+  orderCard.style.position = 'relative';
+  orderCard.appendChild(overlay);
+}
+
+function hideOrderActionLoading(orderId) {
+  const orderCard = document.querySelector(`[data-order-id="${orderId}"]`);
+  if (!orderCard) return;
+  
+  const overlay = orderCard.querySelector('.order-loading-overlay');
+  if (overlay) {
+    overlay.remove();
+  }
+}
+
+function setupInfiniteScroll() {
+  let scrollTimeout = null;
+  
+  window.addEventListener('scroll', () => {
+    // Debounce para evitar demasiadas llamadas
+    if (scrollTimeout) {
+      clearTimeout(scrollTimeout);
+    }
+    
+    scrollTimeout = setTimeout(async () => {
+      // No cargar más si:
+      // - Ya se están cargando pedidos
+      // - Ya se cargaron todos los pedidos
+      // - Hay una búsqueda activa (no usar paginación en búsqueda)
+      // - Se está cambiando de pestaña (las pestañas están deshabilitadas)
+      if (isLoadingMore || allOrdersLoaded || (currentSearch && currentSearch.trim().length > 0)) {
+        return;
+      }
+      
+      // Verificar si el usuario está cerca del final de la página (200px antes del final)
+      const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+      const windowHeight = window.innerHeight;
+      const documentHeight = document.documentElement.scrollHeight;
+      
+      // Si está a menos de 200px del final, cargar más pedidos
+      if (scrollTop + windowHeight >= documentHeight - 200) {
+        if (hasMoreOrders && !isLoadingMore) {
+          isLoadingMore = true;
+          
+          // Mostrar indicador de carga al final de la lista
+          showLoadingMoreIndicator();
+          
+          try {
+            // Cargar siguiente página (sin reset)
+            await loadOrders(false);
+          } catch (error) {
+            console.error("❌ Error cargando más pedidos:", error);
+          } finally {
+            isLoadingMore = false;
+            hideLoadingMoreIndicator();
+          }
+        }
+      }
+    }, 100); // Debounce de 100ms
+  });
+}
+
+function showLoadingMoreIndicator() {
+  const container = document.getElementById("orders-content");
+  if (!container) return;
+  
+  // Buscar si ya existe un indicador
+  let indicator = container.querySelector('.loading-more-indicator');
+  
+  if (!indicator) {
+    indicator = document.createElement('div');
+    indicator.className = 'loading-more-indicator';
+    indicator.innerHTML = `
+      <div class="loading-spinner-small"></div>
+      <p>Cargando más pedidos...</p>
+    `;
+    indicator.style.cssText = `
+      text-align: center;
+      padding: 20px;
+      color: #666;
+    `;
+    
+    const ordersList = container.querySelector('.orders-list');
+    if (ordersList) {
+      ordersList.appendChild(indicator);
+    } else {
+      container.appendChild(indicator);
+    }
+  }
+}
+
+function hideLoadingMoreIndicator() {
+  const container = document.getElementById("orders-content");
+  if (!container) return;
+  
+  const indicator = container.querySelector('.loading-more-indicator');
+  if (indicator) {
+    indicator.remove();
+  }
+}
+
 function setupFilters() {
   const filterButtons = document.querySelectorAll(".filter-btn");
   filterButtons.forEach((btn) => {
     btn.addEventListener("click", async () => {
+      // Prevenir clics múltiples
+      if (btn.disabled) return;
+      
+      // Deshabilitar todas las pestañas inmediatamente
+      disableAllTabs();
+      
+      // Actualizar estado visual
       filterButtons.forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
+      
+      // Actualizar filtro
       currentFilter = btn.dataset.status;
-      // Limpiar el estado de visualización al cambiar de pestaña
+      updatePickingModeVisibility();
+      if (DEBUG_ORDERS) {
+        const label = btn.textContent?.trim().replace(/\s*\d+\s*$/, "") || currentFilter;
+        console.log("[debug] clicked tab", label, "currentFilter", currentFilter);
+      }
       orderViewMode.clear();
+      
+      // Resetear búsqueda y paginación
+      currentSearch = '';
+      const searchInput = document.getElementById('search-input');
+      if (searchInput) {
+        searchInput.value = '';
+      }
+      currentPage = 0;
+      orders = [];
+      hasMoreOrders = true;
+      allOrdersLoaded = false;
+      isLoadingMore = false; // Resetear flag de carga
+      badgeCountsLoaded = false; // Resetear flag de conteos totales para que se vuelvan a cargar
+      
+      // Limpiar contenedor INMEDIATAMENTE
+      const container = document.getElementById("orders-content");
+      if (container) {
+        container.innerHTML = '';  // Limpiar primero
+      }
+      
+      // Ocultar indicador de "cargando más" si existe
+      hideLoadingMoreIndicator();
+      
       // Mostrar indicador de carga
       showLoading();
-      // Esperar un pequeño delay para que se muestre el spinner antes de renderizar
-      await new Promise(resolve => setTimeout(resolve, 50));
-      // Cargar y mostrar pedidos
-      await displayOrders();
+      
+      // Cargar conteos totales de badges INMEDIATAMENTE (en paralelo, no bloquea)
+      loadBadgeCountsInBackground();
+      
+      // Esperar delay para propagación de BD
+      await new Promise(resolve => setTimeout(resolve, 150));
+      
+      // Cargar pedidos desde el inicio
+      await loadOrders(true);
+      
+      // Rehabilitar pestañas
+      enableAllTabs();
     });
   });
 }
@@ -1679,7 +3178,17 @@ function setupButtons() {
     refreshBtn.addEventListener("click", async () => {
       refreshBtn.disabled = true;
       refreshBtn.textContent = "Actualizando...";
-      await loadOrders();
+      // Resetear paginación y búsqueda
+      currentPage = 0;
+      orders = [];
+      hasMoreOrders = true;
+      allOrdersLoaded = false;
+      currentSearch = '';
+      const searchInput = document.getElementById('search-input');
+      if (searchInput) {
+        searchInput.value = '';
+      }
+      await loadOrders(true);
       updateActiveOrdersBadge();
       updatePickedOrdersBadge();
       updateClosedOrdersBadge();
@@ -1690,6 +3199,27 @@ function setupButtons() {
       refreshBtn.textContent = "Actualizar";
       refreshBtn.disabled = false;
     });
+  }
+
+  // Event listener para botones de cancelar pedido (delegación de eventos)
+  document.addEventListener('click', async (e) => {
+    if (e.target.closest('[data-cancel-order]')) {
+      const button = e.target.closest('[data-cancel-order]');
+      const orderId = button.getAttribute('data-cancel-order');
+      if (orderId) {
+        await cancelOrder(orderId);
+      }
+    }
+  });
+
+  // Modo Picking: inyectar CSS y botón (solo si está habilitado y no existe ya)
+  if (PICKING_MODE_ENABLED) {
+    injectPickingModeCSS();
+    const headerBtnWrap = document.querySelector(".orders-header div");
+    if (headerBtnWrap && !document.getElementById("picking-mode-toggle")) {
+      headerBtnWrap.insertAdjacentHTML("beforeend", '<button type="button" id="picking-mode-toggle" class="btn" style="margin-left:8px;">📋 Modo Picking</button>');
+      document.getElementById("picking-mode-toggle").addEventListener("click", () => setPickingMode(!getPickingMode()));
+    }
   }
 
   // Event listeners para el modal de método de pago
@@ -1789,21 +3319,91 @@ function setupHistoryControls() {
   });
 }
 
+function setupPickingImageModal() {
+  if (document.getElementById("image-zoom-modal")) return;
+  const overlay = document.createElement("div");
+  overlay.id = "image-zoom-modal";
+  overlay.className = "picking-image-overlay";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+  overlay.setAttribute("aria-label", "Imagen del producto");
+  overlay.innerHTML = '<div class="picking-image-container"><button type="button" class="picking-image-close" aria-label="Cerrar">×</button><img alt="Producto" class="picking-image-img" /></div>';
+  document.body.appendChild(overlay);
+  const img = overlay.querySelector(".picking-image-img");
+  const close = () => {
+    overlay.classList.remove("active");
+    img.removeAttribute("src");
+  };
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  overlay.querySelector(".picking-image-close").addEventListener("click", close);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && overlay.classList.contains("active")) close(); });
+  window.showPickingImageModal = function (src) {
+    if (!src) return;
+    img.src = src;
+    overlay.classList.add("active");
+  };
+  document.body.addEventListener("click", (e) => {
+    const zoomBtn = e.target.closest("[data-action=\"zoom\"]");
+    const legacyBtn = e.target.closest(".picking-show-image-btn");
+    const btn = zoomBtn || legacyBtn;
+    if (!btn) return;
+    e.preventDefault();
+    const src = btn.getAttribute("data-img") || btn.getAttribute("data-img-src");
+    if (src && typeof window.showPickingImageModal === "function") window.showPickingImageModal(src);
+  });
+}
+
 function attachOrderEventHandlers() {
+  if (!window._pickingImageModalSetup) {
+    setupPickingImageModal();
+    window._pickingImageModalSetup = true;
+  }
+  if (!window._partialAcceptModalSetup) {
+    setupPartialAcceptModal();
+    window._partialAcceptModalSetup = true;
+  }
   document.querySelectorAll("[data-item-action]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const itemId = btn.dataset.itemId;
       const status = btn.dataset.itemAction;
-      
-      // Si es acción de limpiar cancelado o eliminar faltante, usar función diferente
-      if (status === "cleanup-cancelled") {
-        await cleanupCancelledItem(itemId);
-      } else if (status === "remove-missing") {
-        await removeMissingItem(itemId);
-      } else if (status === "delete-item") {
-        await deleteOrderItemImmediate(itemId);
-      } else {
-        await updateOrderItemStatus(itemId, status);
+      const itemEl = btn.closest(".order-item");
+      const isPicking = PICKING_NO_FULL_REFRESH && getPickingMode() && (currentFilter === "active" || currentFilter === "waiting");
+      if (isPicking && itemEl) {
+        itemEl.classList.add("order-item-processing");
+        itemEl.querySelectorAll(".item-action-btn").forEach((b) => { b.disabled = true; });
+      }
+      try {
+        if (status === "cleanup-cancelled") {
+          await cleanupCancelledItem(itemId);
+        } else if (status === "remove-missing") {
+          await removeMissingItem(itemId);
+        } else if (status === "delete-item") {
+          await deleteOrderItemImmediate(itemId);
+        } else if (status === "picked") {
+          // Flujo aceptar parcial: solo para pedidos creados por el cliente con varias unidades del mismo producto
+          const order = orders.find((o) => o.order_items?.some((i) => i.id === itemId));
+          const item = order?.order_items?.find((i) => i.id === itemId);
+          if (order?.source === "customer" && item?.quantity > 1 && item?.status === "reserved") {
+            openPartialAcceptModal(order, item);
+            if (isPicking && itemEl) {
+              itemEl.classList.remove("order-item-processing");
+              itemEl.querySelectorAll(".item-action-btn").forEach((b) => { b.disabled = false; });
+            }
+            return;
+          }
+          await updateOrderItemStatus(itemId, status);
+        } else {
+          await updateOrderItemStatus(itemId, status);
+        }
+        if (getPickingMode() && (currentFilter === "active" || currentFilter === "waiting")) {
+          applyPickingOptimisticItemRemoval(btn, status);
+        }
+      } catch (e) {
+        if (e && e.message) console.error("Item action error:", e.message);
+        if (isPicking && itemEl) {
+          itemEl.classList.remove("order-item-processing");
+          itemEl.querySelectorAll(".item-action-btn").forEach((b) => { b.disabled = false; });
+        }
       }
     });
   });
@@ -1858,10 +3458,17 @@ function attachOrderEventHandlers() {
           });
         }
       } else {
-        // En otras pestañas, solo colapsar/expandir
-        const isHidden = itemsEl.style.display === 'none';
-        itemsEl.style.display = isHidden ? 'block' : 'none';
-        btn.textContent = isHidden ? 'Ocultar productos' : 'Ver productos';
+        // En Cancelaciones hay .order-items-rest (solo ese bloque se muestra/oculta); en otras pestañas se oculta todo
+        const restEl = itemsEl.querySelector('.order-items-rest');
+        if (restEl) {
+          const isHidden = restEl.style.display === 'none';
+          restEl.style.display = isHidden ? 'block' : 'none';
+          btn.textContent = isHidden ? 'Ocultar productos' : 'Ver productos';
+        } else {
+          const isHidden = itemsEl.style.display === 'none';
+          itemsEl.style.display = isHidden ? 'block' : 'none';
+          btn.textContent = isHidden ? 'Ocultar productos' : 'Ver productos';
+        }
       }
     });
   });
@@ -1870,6 +3477,20 @@ function attachOrderEventHandlers() {
     btn.addEventListener("click", async () => {
       const orderId = btn.dataset.closeOrder;
       await closeOrder(orderId);
+    });
+  });
+
+  document.querySelectorAll("[data-pick-all-reserved]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const orderId = btn.dataset.pickAllReserved;
+      await pickAllReservedItems(orderId);
+    });
+  });
+
+  document.querySelectorAll("[data-pick-all-waiting]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const orderId = btn.dataset.pickAllWaiting;
+      await pickAllWaitingItems(orderId);
     });
   });
 
@@ -1907,6 +3528,41 @@ function attachOrderEventHandlers() {
     });
   });
 
+  // Event listener para botón "Ver Detalle"
+  document.querySelectorAll("[data-view-summary]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const orderId = btn.dataset.viewSummary;
+      const order = orders.find(o => o.id === orderId);
+      if (order) {
+        showOrderSummaryModal(order);
+      }
+    });
+  });
+
+  // Event listener para cerrar modal de resumen
+  const closeSummaryBtn = document.getElementById('close-summary-modal');
+  if (closeSummaryBtn) {
+    closeSummaryBtn.addEventListener("click", () => {
+      const modal = document.getElementById('order-summary-modal');
+      if (modal) {
+        modal.classList.remove('active');
+      }
+    });
+  }
+
+  // Cerrar modal al hacer clic fuera del contenido
+  const summaryModal = document.getElementById('order-summary-modal');
+  if (summaryModal) {
+    summaryModal.addEventListener("click", (e) => {
+      if (e.target === summaryModal) {
+        summaryModal.classList.remove('active');
+      }
+    });
+  }
+
+  if (typeof applyPickingItemActionsMenu === "function") {
+    applyPickingItemActionsMenu();
+  }
   setupHistoryControls();
 }
 
@@ -1956,7 +3612,7 @@ async function removeMissingItem(itemId) {
   }
   
   const orderId = itemData.order_id;
-  const itemPrice = Number(itemData.price_snapshot || 0);
+  const itemPrice = normalizeOrderPrice(itemData.price_snapshot || 0);
   const itemQuantity = Number(itemData.quantity || 0);
   const itemTotal = itemPrice * itemQuantity;
   
@@ -2000,17 +3656,14 @@ async function removeMissingItem(itemId) {
   
   console.log("✅ Item faltante eliminado correctamente");
   
-  // Recargar pedidos para actualizar la vista
-  await loadOrders();
   updateActiveOrdersBadge();
   updatePickedOrdersBadge();
   updateClosedOrdersBadge();
   updateCancelledOrdersBadge();
-  
-  if (historyVisible) {
-    await loadClosedOrders();
-  }
-  
+  if (getPickingMode() && (currentFilter === "active" || currentFilter === "waiting")) return;
+
+  await loadOrders();
+  if (historyVisible) await loadClosedOrders();
   alert("✅ Producto faltante eliminado correctamente del pedido. El total ha sido actualizado.");
 }
 
@@ -2064,10 +3717,10 @@ async function cleanupCancelledItem(itemId) {
     return;
   }
   
-  // Obtener información completa del item para actualizar el total del pedido
+  // Obtener información completa del item (variant_id y size para devolver stock)
   const { data: fullItemData, error: fullItemError } = await supabase
     .from("order_items")
-    .select("id, order_id, quantity, price_snapshot")
+    .select("id, order_id, quantity, price_snapshot, variant_id, size")
     .eq("id", itemId)
     .maybeSingle();
   
@@ -2081,6 +3734,49 @@ async function cleanupCancelledItem(itemId) {
   const itemPrice = Number(fullItemData.price_snapshot || 0);
   const itemQuantity = Number(fullItemData.quantity || 0);
   const itemTotal = itemPrice * itemQuantity;
+  
+  // Devolver cantidad al stock general (el producto estaba apartado, se había descontado)
+  const variantId = fullItemData.variant_id;
+  const itemSize = fullItemData.size || null;
+  if (variantId && itemSize) {
+    try {
+      await loadWarehouses();
+      if (warehousesCache.general) {
+        const normalizedItemSize = normalizeSize(itemSize);
+        if (normalizedItemSize) {
+          const { data: sizeStockData, error: sizeStockError } = await supabase
+            .from("variant_size_warehouse_stock")
+            .select("size, stock_qty")
+            .eq("variant_id", variantId)
+            .eq("warehouse_id", warehousesCache.general);
+          let matchingStock = null;
+          if (!sizeStockError && sizeStockData && sizeStockData.length > 0) {
+            matchingStock = sizeStockData.find((sws) => {
+              const swsNormalizedSize = normalizeSize(sws.size || "");
+              return swsNormalizedSize === normalizedItemSize;
+            });
+          }
+          const currentQty = matchingStock ? (matchingStock.stock_qty || 0) : 0;
+          const newQty = currentQty + itemQuantity;
+          const { error: updateSizeError } = await supabase
+            .from("variant_size_warehouse_stock")
+            .upsert({
+              variant_id: variantId,
+              size: normalizedItemSize,
+              warehouse_id: warehousesCache.general,
+              stock_qty: newQty
+            }, { onConflict: "variant_id,size,warehouse_id" });
+          if (updateSizeError) {
+            console.warn("⚠️ Error devolviendo stock al general en cleanup cancelado:", updateSizeError);
+          } else {
+            console.log("✅ Stock devuelto al general:", variantId, normalizedItemSize, "+", itemQuantity);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("⚠️ Error al devolver stock en cleanup cancelado:", e);
+    }
+  }
   
   // Eliminar el item de la base de datos
   const { error: deleteError } = await supabase
@@ -2122,18 +3818,15 @@ async function cleanupCancelledItem(itemId) {
   
   console.log("✅ Item cancelado eliminado correctamente");
   
-  // Recargar pedidos para actualizar la vista
-  await loadOrders();
   updateActiveOrdersBadge();
   updatePickedOrdersBadge();
   updateClosedOrdersBadge();
   updateCancelledOrdersBadge();
-  
-  if (historyVisible) {
-    await loadClosedOrders();
-  }
-  
-  alert("✅ Producto cancelado eliminado correctamente. El pedido ha sido actualizado.");
+  if (getPickingMode() && (currentFilter === "active" || currentFilter === "waiting")) return;
+
+  await loadOrders();
+  if (historyVisible) await loadClosedOrders();
+  alert("✅ Producto cancelado eliminado correctamente. La cantidad se devolvió al stock general y el pedido fue actualizado.");
 }
 
 async function updateOrderItemStatus(itemId, status) {
@@ -2173,23 +3866,512 @@ async function updateOrderItemStatus(itemId, status) {
 
   console.log("✅ Item actualizado correctamente. Respuesta:", data);
   
-  // Recargar pedidos para actualizar la vista
-  await loadOrders();
   updateActiveOrdersBadge();
   updatePickedOrdersBadge();
   updateClosedOrdersBadge();
   updateCancelledOrdersBadge();
   updateWaitingOrdersBadge();
-  
-  // Si todos los items están apartados, mostrar mensaje
-  if (data && data.all_items_picked) {
-    console.log("✅ Todos los items del pedido están apartados");
-  } else {
-    console.log("ℹ️ El pedido aún tiene items que necesitan atención");
+  if (getPickingMode() && (currentFilter === "active" || currentFilter === "waiting")) return;
+
+  await loadOrders();
+  if (data && data.all_items_picked) console.log("✅ Todos los items del pedido están apartados");
+  else console.log("ℹ️ El pedido aún tiene items que necesitan atención");
+  if (historyVisible) await loadClosedOrders();
+}
+
+// --- Flujo aceptar parcial (pedidos creados por cliente desde dashboard, varias unidades del mismo producto) ---
+function getPartialAcceptModalEl() {
+  return document.getElementById("partial-accept-modal");
+}
+
+function openPartialAcceptModal(order, item) {
+  if (!order || !item || item.quantity < 2) return;
+  partialAcceptState = {
+    order,
+    item,
+    step: 1,
+    availableCount: null,
+    waitingSet: new Set(),
+  };
+  const modal = getPartialAcceptModalEl();
+  if (modal) {
+    modal.classList.add("active");
+    renderPartialAcceptStep();
+  }
+}
+
+function closePartialAcceptModal() {
+  partialAcceptState = null;
+  const modal = getPartialAcceptModalEl();
+  if (modal) modal.classList.remove("active");
+}
+
+function renderPartialAcceptStep() {
+  const s = partialAcceptState;
+  if (!s) return;
+  const body = document.getElementById("partial-accept-body");
+  const footer = document.getElementById("partial-accept-footer");
+  const titleEl = document.getElementById("partial-accept-title");
+  if (!body || !footer) return;
+
+  const qty = s.item.quantity;
+  const name = [s.item.product_name, s.item.color, s.item.size].filter(Boolean).join(" · ") || "Producto";
+
+  if (s.step === 1) {
+    titleEl.textContent = "Disponibilidad";
+    body.innerHTML = `
+      <p style="margin: 0 0 16px; color: #444;">¿Están disponibles las <strong>${qty}</strong> unidades de este producto?</p>
+    `;
+    footer.innerHTML = `
+      <button type="button" class="btn" id="partial-accept-yes-all" style="background: #28a745; color: white;">Sí, todas</button>
+      <button type="button" class="btn btn-secondary" id="partial-accept-no-less">No, hay menos</button>
+    `;
+    footer.querySelector("#partial-accept-yes-all").addEventListener("click", () => {
+      updateOrderItemStatus(s.item.id, "picked");
+      closePartialAcceptModal();
+      loadOrders();
+      if (historyVisible) loadClosedOrders();
+    });
+    footer.querySelector("#partial-accept-no-less").addEventListener("click", () => {
+      partialAcceptState.step = 2;
+      renderPartialAcceptStep();
+    });
+    return;
+  }
+
+  if (s.step === 2) {
+    titleEl.textContent = "¿Cuántas hay disponibles?";
+    const buttons = [];
+    for (let i = 0; i <= qty; i++) {
+      buttons.push(`<button type="button" class="btn partial-accept-qty-btn" data-qty="${i}" style="min-width: 44px;">${i}</button>`);
+    }
+    body.innerHTML = `
+      <p style="margin: 0 0 12px; color: #444;">Unidades disponibles (0 = ninguna):</p>
+      <div style="display: flex; flex-wrap: wrap; gap: 8px;">${buttons.join("")}</div>
+    `;
+    footer.innerHTML = "";
+    body.querySelectorAll(".partial-accept-qty-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const k = parseInt(btn.dataset.qty, 10);
+        partialAcceptState.availableCount = k;
+        partialAcceptState.step = 3;
+        partialAcceptState.waitingSet = new Set();
+        renderPartialAcceptStep();
+      });
+    });
+    return;
+  }
+
+  if (s.step === 3) {
+    const k = partialAcceptState.availableCount;
+    const nMissing = qty - k;
+    titleEl.textContent = "Apartado y espera";
+    const chips = [];
+    for (let i = 1; i <= k; i++) {
+      chips.push(`<button type="button" class="partial-accept-chip" data-index="${i}" style="padding: 8px 12px; border-radius: 8px; border: 1px solid #ddd; background: #f8f9fa; cursor: pointer; font-weight: 600;">${i}</button>`);
+    }
+    body.innerHTML = `
+      <p style="margin: 0 0 8px; color: #444;">De las <strong>${k}</strong> disponibles, marcar en espera las que correspondan (click en el número):</p>
+      <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px;">${chips.join("")}</div>
+      <p id="partial-accept-summary" style="margin: 0; font-size: 13px; color: #666;"></p>
+    `;
+    footer.innerHTML = `
+      <button type="button" class="btn btn-secondary" id="partial-accept-cancel-step3">Cancelar</button>
+      <button type="button" class="btn" id="partial-accept-apply" style="background: #28a745; color: white;">Aplicar</button>
+    `;
+
+    const updateSummary = () => {
+      const nWaiting = partialAcceptState.waitingSet.size;
+      const nPicked = k - nWaiting;
+      const el = document.getElementById("partial-accept-summary");
+      if (el) {
+        el.textContent = `Apartados: ${nPicked} · En espera: ${nWaiting} · Sin stock: ${nMissing}`;
+      }
+    };
+
+    body.querySelectorAll(".partial-accept-chip").forEach((chipBtn) => {
+      chipBtn.addEventListener("click", () => {
+        const idx = parseInt(chipBtn.dataset.index, 10);
+        if (partialAcceptState.waitingSet.has(idx)) {
+          partialAcceptState.waitingSet.delete(idx);
+          chipBtn.style.background = "#f8f9fa";
+          chipBtn.style.borderColor = "#ddd";
+        } else {
+          partialAcceptState.waitingSet.add(idx);
+          chipBtn.style.background = "rgba(255, 152, 0, 0.2)";
+          chipBtn.style.borderColor = "#ff9800";
+        }
+        updateSummary();
+      });
+    });
+
+    footer.querySelector("#partial-accept-cancel-step3").addEventListener("click", closePartialAcceptModal);
+    footer.querySelector("#partial-accept-apply").addEventListener("click", async () => {
+      const nWaiting = partialAcceptState.waitingSet.size;
+      const nPicked = k - nWaiting;
+      await callRpcSplitOrderItemStatus(s.item.id, nPicked, nWaiting, nMissing);
+      closePartialAcceptModal();
+      loadOrders();
+      if (historyVisible) loadClosedOrders();
+    });
+    updateSummary();
+  }
+}
+
+async function callRpcSplitOrderItemStatus(itemId, nPicked, nWaiting, nMissing) {
+  if (!supabase) supabase = await getSupabase();
+  if (!supabase || !currentAdminUser) {
+    alert("No se pudo completar la operación.");
+    return;
+  }
+  const { data, error } = await supabase.rpc("rpc_split_order_item_status", {
+    p_item_id: itemId,
+    p_n_picked: nPicked,
+    p_n_waiting: nWaiting,
+    p_n_missing: nMissing,
+    p_checked_by: currentAdminUser.id,
+  });
+  if (error) {
+    console.error("❌ Error rpc_split_order_item_status:", error);
+    alert(error.message || "No se pudo actualizar el pedido.");
+    return;
+  }
+  updateActiveOrdersBadge();
+  updatePickedOrdersBadge();
+  updateWaitingOrdersBadge();
+  if (data && data.all_items_picked) console.log("✅ Todos los items del pedido están apartados");
+}
+
+function setupPartialAcceptModal() {
+  const modal = getPartialAcceptModalEl();
+  if (!modal) return;
+  document.getElementById("partial-accept-close")?.addEventListener("click", closePartialAcceptModal);
+  modal.addEventListener("click", (e) => {
+    if (e.target === modal) closePartialAcceptModal();
+  });
+}
+
+// Función para apartar todos los productos reservados de un pedido
+async function pickAllReservedItems(orderId) {
+  if (!canEditOrders) {
+    alert("No tienes permiso para editar pedidos.");
+    return;
   }
   
-  if (historyVisible) {
-    await loadClosedOrders();
+  if (!orderId) return;
+  
+  if (!supabase) {
+    supabase = await getSupabase();
+  }
+  if (!supabase) {
+    console.error("❌ Supabase no disponible en pickAllReservedItems");
+    alert("No se pudo apartar los productos. Por favor, recarga la página.");
+    return;
+  }
+  
+  if (!currentAdminUser) {
+    console.error("❌ Usuario admin no disponible");
+    return;
+  }
+  
+  // Obtener referencia al botón para control de estado
+  const button = document.querySelector(`[data-pick-all-reserved="${orderId}"]`);
+  const originalButtonText = button?.textContent;
+  const originalButtonBg = button?.style.background;
+  
+  try {
+    // Obtener todos los items reservados del pedido
+    const { data: orderItems, error: itemsError } = await supabase
+      .from("order_items")
+      .select("id, status")
+      .eq("order_id", orderId)
+      .eq("status", "reserved");
+    
+    if (itemsError) {
+      console.error("❌ Error obteniendo items reservados:", itemsError);
+      alert("No se pudieron obtener los productos reservados.");
+      return;
+    }
+    
+    if (!orderItems || orderItems.length === 0) {
+      alert("No hay productos reservados para apartar.");
+      return;
+    }
+    
+    const confirmPick = confirm(
+      `¿Está seguro que desea apartar todos los productos reservados? Se apartarán ${orderItems.length} producto(s).`
+    );
+    
+    if (!confirmPick) return;
+    
+    // Mostrar overlay de carga sobre la tarjeta del pedido
+    showOrderActionLoading(orderId);
+    
+    // Deshabilitar botón y mostrar indicador de carga
+    if (button) {
+      button.disabled = true;
+      button.style.cursor = "not-allowed";
+      button.style.background = "#6c757d";
+      button.innerHTML = "⏳ Apartando...";
+    }
+    
+    console.log(`🔄 Apartando ${orderItems.length} productos reservados del pedido ${orderId}`);
+    
+    // OPTIMIZACIÓN: Actualización masiva en una sola operación
+    const itemIds = orderItems.map(item => item.id);
+    const { error: updateError } = await supabase
+      .from("order_items")
+      .update({
+        status: "picked",
+        checked_by: currentAdminUser.id,
+        checked_at: new Date().toISOString()
+      })
+      .in("id", itemIds);
+    
+    if (updateError) {
+      console.error("❌ Error apartando productos:", updateError);
+      alert(`Error: No se pudieron apartar los productos. ${updateError.message}`);
+      return;
+    }
+    
+    console.log(`✅ ${orderItems.length} productos apartados correctamente`);
+    
+    // Delay para asegurar propagación de cambios en BD (evita mezcla entre pestañas)
+    // Esto previene que consultas posteriores obtengan datos en cache obsoletos
+    await new Promise(resolve => setTimeout(resolve, 150));
+    
+    // Invalidar cache local para forzar datos frescos
+    orders = [];
+    allOrdersLoaded = false;
+    
+    // Recargar pedidos con datos frescos (true = reset paginación y forzar recarga)
+    await loadOrders(true);
+    updateActiveOrdersBadge();
+    updatePickedOrdersBadge();
+    updateClosedOrdersBadge();
+    updateCancelledOrdersBadge();
+    updateWaitingOrdersBadge();
+    
+    // Cargar conteos exactos en background después de operación masiva
+    loadBadgeCountsInBackground();
+    
+    if (historyVisible) {
+      await loadClosedOrders();
+    }
+    
+    showToastNotification(
+      `✅ ${orderItems.length} producto(s) apartado(s) correctamente.`,
+      "success"
+    );
+    
+  } catch (error) {
+    console.error("❌ Error en pickAllReservedItems:", error);
+    alert(`Error inesperado: ${error.message}`);
+  } finally {
+    // Ocultar overlay de carga
+    hideOrderActionLoading(orderId);
+    
+    // Restaurar botón siempre, incluso si hay error
+    if (button) {
+      button.disabled = false;
+      button.style.cursor = "pointer";
+      button.style.background = originalButtonBg || "#28a745";
+      button.textContent = originalButtonText || "✓ Apartar Todos los Reservados";
+    }
+  }
+}
+
+// Función para marcar todos los productos en espera como apartados
+async function pickAllWaitingItems(orderId) {
+  if (!canEditOrders) {
+    alert("No tienes permiso para editar pedidos.");
+    return;
+  }
+  if (!orderId) return;
+
+  if (!supabase) supabase = await getSupabase();
+  if (!supabase) {
+    console.error("❌ Supabase no disponible en pickAllWaitingItems");
+    alert("No se pudo apartar los productos. Por favor, recarga la página.");
+    return;
+  }
+  if (!currentAdminUser) {
+    console.error("❌ Usuario admin no disponible");
+    return;
+  }
+
+  const button = document.querySelector(`[data-pick-all-waiting="${orderId}"]`);
+  const originalButtonText = button?.textContent;
+  const originalButtonBg = button?.style.background;
+
+  try {
+    const { data: orderItems, error: itemsError } = await supabase
+      .from("order_items")
+      .select("id, status")
+      .eq("order_id", orderId)
+      .eq("status", "waiting");
+
+    if (itemsError) {
+      console.error("❌ Error obteniendo items en espera:", itemsError);
+      alert("No se pudieron obtener los productos en espera.");
+      return;
+    }
+    if (!orderItems || orderItems.length === 0) {
+      alert("No hay productos en espera para apartar.");
+      return;
+    }
+
+    const confirmPick = confirm(
+      `¿Marcar todos los productos como apartados? Se apartarán ${orderItems.length} producto(s).`
+    );
+    if (!confirmPick) return;
+
+    showOrderActionLoading(orderId);
+    if (button) {
+      button.disabled = true;
+      button.style.cursor = "not-allowed";
+      button.style.background = "#6c757d";
+      button.innerHTML = "⏳ Apartando...";
+    }
+
+    const itemIds = orderItems.map(item => item.id);
+    const { error: updateError } = await supabase
+      .from("order_items")
+      .update({
+        status: "picked",
+        checked_by: currentAdminUser.id,
+        checked_at: new Date().toISOString()
+      })
+      .in("id", itemIds);
+
+    if (updateError) {
+      console.error("❌ Error apartando productos en espera:", updateError);
+      alert(`Error: No se pudieron apartar los productos. ${updateError.message}`);
+      return;
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 150));
+    orders = [];
+    allOrdersLoaded = false;
+    await loadOrders(true);
+    updateActiveOrdersBadge();
+    updatePickedOrdersBadge();
+    updateWaitingOrdersBadge();
+    loadBadgeCountsInBackground();
+    if (historyVisible) await loadClosedOrders();
+
+    showToastNotification(
+      `✅ ${orderItems.length} producto(s) apartado(s) correctamente.`,
+      "success"
+    );
+  } catch (error) {
+    console.error("❌ Error en pickAllWaitingItems:", error);
+    alert(`Error inesperado: ${error.message}`);
+  } finally {
+    hideOrderActionLoading(orderId);
+    if (button) {
+      button.disabled = false;
+      button.style.cursor = "pointer";
+      button.style.background = originalButtonBg || "#28a745";
+      button.textContent = originalButtonText || "✓ Enviar todos los productos como apartados";
+    }
+  }
+}
+
+// Función unificada: apartar todos los productos (reservados y en espera) del pedido
+async function pickAllItems(orderId) {
+  if (!canEditOrders) {
+    alert("No tienes permiso para editar pedidos.");
+    return;
+  }
+  if (!orderId) return;
+
+  if (!supabase) supabase = await getSupabase();
+  if (!supabase) {
+    console.error("❌ Supabase no disponible en pickAllItems");
+    alert("No se pudo apartar los productos. Por favor, recarga la página.");
+    return;
+  }
+  if (!currentAdminUser) {
+    console.error("❌ Usuario admin no disponible");
+    return;
+  }
+
+  const button = document.querySelector(`[data-pick-all="${orderId}"]`);
+  const originalButtonText = button?.textContent;
+  const originalButtonBg = button?.style.background;
+
+  try {
+    const { data: orderItems, error: itemsError } = await supabase
+      .from("order_items")
+      .select("id, status")
+      .eq("order_id", orderId)
+      .in("status", ["waiting", "reserved"]);
+
+    if (itemsError) {
+      console.error("❌ Error obteniendo items:", itemsError);
+      alert("No se pudieron obtener los productos.");
+      return;
+    }
+    if (!orderItems || orderItems.length === 0) {
+      alert("No hay productos para apartar (reservados o en espera).");
+      return;
+    }
+
+    const confirmPick = confirm(
+      `¿Apartar todos los productos? Se apartarán ${orderItems.length} producto(s).`
+    );
+    if (!confirmPick) return;
+
+    showOrderActionLoading(orderId);
+    if (button) {
+      button.disabled = true;
+      button.style.cursor = "not-allowed";
+      button.style.background = "#6c757d";
+      button.innerHTML = "⏳ Apartando...";
+    }
+
+    const itemIds = orderItems.map(item => item.id);
+    const { error: updateError } = await supabase
+      .from("order_items")
+      .update({
+        status: "picked",
+        checked_by: currentAdminUser.id,
+        checked_at: new Date().toISOString()
+      })
+      .in("id", itemIds);
+
+    if (updateError) {
+      console.error("❌ Error apartando productos:", updateError);
+      alert(`Error: No se pudieron apartar los productos. ${updateError.message}`);
+      return;
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 150));
+    orders = [];
+    allOrdersLoaded = false;
+    await loadOrders(true);
+    updateActiveOrdersBadge();
+    updatePickedOrdersBadge();
+    updateWaitingOrdersBadge();
+    loadBadgeCountsInBackground();
+    if (historyVisible) await loadClosedOrders();
+
+    showToastNotification(
+      `✅ ${orderItems.length} producto(s) apartado(s) correctamente.`,
+      "success"
+    );
+  } catch (error) {
+    console.error("❌ Error en pickAllItems:", error);
+    alert(`Error inesperado: ${error.message}`);
+  } finally {
+    hideOrderActionLoading(orderId);
+    if (button) {
+      button.disabled = false;
+      button.style.cursor = "pointer";
+      button.style.background = originalButtonBg || "#28a745";
+      button.textContent = originalButtonText || "✓ Apartar todos los productos";
+    }
   }
 }
 
@@ -2360,7 +4542,7 @@ async function closeOrderWithPayment(orderId, paymentMethod) {
   }
   
   if (!orderId) return;
-
+  
   if (!supabase) {
     supabase = await getSupabase();
   }
@@ -2370,10 +4552,18 @@ async function closeOrderWithPayment(orderId, paymentMethod) {
     return;
   }
 
+  // #region agent log - Comentado para evitar errores de conexión
+  // fetch('http://127.0.0.1:7242/ingest/7a4b3bf8-ea8a-4f70-84cf-a37f8cbd48dc',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'orders.js:2510',message:'closeOrderWithPayment ENTRY',data:{orderId,paymentMethod},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+  // #endregion
+
   const { error } = await supabase.rpc("rpc_close_order", {
     p_order_id: orderId,
     p_payment_method: paymentMethod,
   });
+
+  // #region agent log - Comentado para evitar errores de conexión
+  // fetch('http://127.0.0.1:7242/ingest/7a4b3bf8-ea8a-4f70-84cf-a37f8cbd48dc',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'orders.js:2531',message:'rpc_close_order RESULT',data:{orderId,error:error?.message,errorCode:error?.code,errorDetails:error?.details},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+  // #endregion
 
   if (error) {
     console.error("❌ Error cerrando pedido:", error);
@@ -2426,9 +4616,17 @@ async function markOrderAsSent(orderId) {
 
   console.log("🔄 Marcando pedido como terminado:", orderId);
 
+  // #region agent log - Comentado para evitar errores de conexión
+  // fetch('http://127.0.0.1:7242/ingest/7a4b3bf8-ea8a-4f70-84cf-a37f8cbd48dc',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'orders.js:2583',message:'Llamando rpc_mark_order_as_sent',data:{orderId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+  // #endregion
+
   const { error } = await supabase.rpc("rpc_mark_order_as_sent", {
     p_order_id: orderId,
   });
+
+  // #region agent log - Comentado para evitar errores de conexión
+  // fetch('http://127.0.0.1:7242/ingest/7a4b3bf8-ea8a-4f70-84cf-a37f8cbd48dc',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'orders.js:2587',message:'rpc_mark_order_as_sent RESULT',data:{orderId,error:error?.message},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+  // #endregion
 
   if (error) {
     console.error("❌ Error marcando pedido como terminado:", error);
@@ -2659,6 +4857,13 @@ function formatCurrency(value) {
   return `$${amount.toLocaleString("es-AR")}`;
 }
 
+// Precios en "miles abreviados" (ej. 18 = $18.000): normalizar para cálculo y visual
+function normalizeOrderPrice(p) {
+  const n = Number(p) || 0;
+  if (n > 0 && n < 1000) return n * 1000;
+  return n;
+}
+
 // Suprimir errores de extensiones del navegador que aparecen periódicamente
 // Estos errores no afectan la funcionalidad de la aplicación
 (function() {
@@ -2754,7 +4959,7 @@ async function deleteOrderItemImmediate(itemId) {
   // Obtener datos del item
   const { data: item, error: itemErr } = await supabase
     .from("order_items")
-    .select("id, order_id, status, quantity, price_snapshot, variant_id")
+    .select("id, order_id, status, quantity, price_snapshot, variant_id, size")
     .eq("id", itemId)
     .maybeSingle();
   if (itemErr || !item) {
@@ -2771,25 +4976,173 @@ async function deleteOrderItemImmediate(itemId) {
   if (item.variant_id) {
     try {
       const itemStatus = (item.status || '').toLowerCase();
+      const itemSize = item.size || null;
+      
+      // Cargar almacenes si no están en cache
+      await loadWarehouses();
+      
       if (itemStatus === 'picked') {
-        await supabase
-          .from("product_variants")
-          .update({ stock_qty: supabase.rpc ? undefined : undefined })
-          .eq("id", item.variant_id);
-        // Lectura del stock y actualización segura
-        const { data: varRow } = await supabase
-          .from("product_variants")
-          .select("stock_qty, reserved_qty")
-          .eq("id", item.variant_id)
-          .maybeSingle();
-        if (varRow) {
-          await supabase
-            .from("product_variants")
-            .update({ stock_qty: (Number(varRow.stock_qty || 0) + qty) })
-            .eq("id", item.variant_id);
+        // Si el item tiene un talle específico, devolver stock a variant_size_warehouse_stock
+        if (itemSize && warehousesCache.general && warehousesCache.ventaPublico) {
+          const warehouseIds = [warehousesCache.general, warehousesCache.ventaPublico].filter(Boolean);
+          
+          // IMPORTANTE: Normalizar el tamaño antes de consultar
+          const normalizedItemSize = normalizeSize(itemSize);
+          if (!normalizedItemSize) return; // Saltar si el tamaño está vacío después de normalizar
+          
+          for (const warehouseId of warehouseIds) {
+            // Obtener stock actual del talle en el almacén
+            // IMPORTANTE: Cargar todos los registros y normalizar después para evitar problemas de comparación
+            const { data: sizeStockData, error: sizeStockError } = await supabase
+              .from("variant_size_warehouse_stock")
+              .select("size, stock_qty")
+              .eq("variant_id", item.variant_id)
+              .eq("warehouse_id", warehouseId);
+            
+            // Filtrar por tamaño normalizado después de obtener los datos
+            let matchingStock = null;
+            if (!sizeStockError && sizeStockData && sizeStockData.length > 0) {
+              matchingStock = sizeStockData.find(sws => {
+                const swsNormalizedSize = normalizeSize(sws.size || "");
+                return swsNormalizedSize === normalizedItemSize;
+              });
+            }
+            
+            if (matchingStock) {
+              const currentQty = matchingStock.stock_qty || 0;
+              const newQty = currentQty + qty;
+              
+              // Actualizar stock por talle usando el tamaño normalizado
+              const { error: updateSizeError } = await supabase
+                .from("variant_size_warehouse_stock")
+                .upsert({
+                  variant_id: item.variant_id,
+                  size: normalizedItemSize, // Usar tamaño normalizado
+                  warehouse_id: warehouseId,
+                  stock_qty: newQty
+                }, {
+                  onConflict: 'variant_id,size,warehouse_id'
+                });
+              
+              if (updateSizeError) {
+                console.warn(`⚠️ Error devolviendo stock por talle para variant ${item.variant_id}, size ${normalizedItemSize}, warehouse ${warehouseId}:`, updateSizeError);
+              }
+            } else if (!sizeStockError) {
+              // Si no existe el registro, crearlo usando el tamaño normalizado
+              const { error: insertSizeError } = await supabase
+                .from("variant_size_warehouse_stock")
+                .insert({
+                  variant_id: item.variant_id,
+                  size: normalizedItemSize, // Usar tamaño normalizado
+                  warehouse_id: warehouseId,
+                  stock_qty: qty
+                });
+              
+              if (insertSizeError) {
+                console.warn(`⚠️ Error creando stock por talle para variant ${item.variant_id}, size ${normalizedItemSize}, warehouse ${warehouseId}:`, insertSizeError);
+              }
+            }
+          }
         }
+        // NOTA: Ya no actualizamos product_variants.stock_qty (código legacy eliminado)
       } else if (itemStatus === 'reserved' || itemStatus === 'waiting') {
-        // Para 'reserved' y 'waiting', liberar la reserva
+        // Para 'reserved' y 'waiting', devolver el stock a variant_size_warehouse_stock
+        // porque cuando se crea un pedido con status 'reserved', el stock se descuenta de variant_size_warehouse_stock
+        if (itemSize && warehousesCache.general) {
+          // IMPORTANTE: Normalizar el tamaño antes de consultar
+          const normalizedItemSize = normalizeSize(itemSize);
+          if (normalizedItemSize) {
+            console.log(`🔄 Devolviendo stock para item 'reserved': variant ${item.variant_id}, size ${normalizedItemSize}, cantidad ${qty}`);
+            
+            // Obtener stock actual del talle en el almacén general
+            const { data: sizeStockData, error: sizeStockError } = await supabase
+              .from("variant_size_warehouse_stock")
+              .select("size, stock_qty")
+              .eq("variant_id", item.variant_id)
+              .eq("warehouse_id", warehousesCache.general);
+            
+            // Filtrar por tamaño normalizado después de obtener los datos
+            let matchingStock = null;
+            if (!sizeStockError && sizeStockData && sizeStockData.length > 0) {
+              matchingStock = sizeStockData.find(sws => {
+                const swsNormalizedSize = normalizeSize(sws.size || "");
+                return swsNormalizedSize === normalizedItemSize;
+              });
+            }
+            
+            let currentQty = 0;
+            if (matchingStock) {
+              currentQty = matchingStock.stock_qty || 0;
+            } else {
+              // Si no existe en variant_size_warehouse_stock, verificar variant_sizes como fallback
+              const { data: variantSizeData } = await supabase
+                .from("variant_sizes")
+                .select("stock_qty")
+                .eq("variant_id", item.variant_id)
+                .eq("size", normalizedItemSize)
+                .maybeSingle();
+              
+              if (variantSizeData) {
+                currentQty = variantSizeData.stock_qty || 0;
+                console.log(`🔵 Usando fallback desde variant_sizes: ${currentQty} unidades`);
+              }
+            }
+            
+            const newQty = currentQty + qty;
+            console.log(`📦 Stock actual: ${currentQty}, Cantidad a devolver: ${qty}, Nuevo stock: ${newQty}`);
+            
+            // Actualizar o insertar el stock en variant_size_warehouse_stock
+            const { error: updateSizeError } = await supabase
+              .from("variant_size_warehouse_stock")
+              .upsert({
+                variant_id: item.variant_id,
+                size: normalizedItemSize,
+                warehouse_id: warehousesCache.general,
+                stock_qty: newQty
+              }, {
+                onConflict: 'variant_id,size,warehouse_id'
+              });
+            
+            if (updateSizeError) {
+              console.warn(`⚠️ Error devolviendo stock por talle para variant ${item.variant_id}, size ${normalizedItemSize}:`, updateSizeError);
+            } else {
+              console.log(`✅ Stock devuelto correctamente: ${qty} unidades agregadas al almacén 'general' para variant ${item.variant_id}, talle ${normalizedItemSize}`);
+              
+              // Si se usó fallback (no había stock en variant_size_warehouse_stock), también actualizar variant_sizes
+              if (!matchingStock) {
+                const { data: variantSizeData } = await supabase
+                  .from("variant_sizes")
+                  .select("stock_qty")
+                  .eq("variant_id", item.variant_id)
+                  .eq("size", normalizedItemSize)
+                  .maybeSingle();
+                
+                if (variantSizeData) {
+                  const variantSizeCurrentQty = variantSizeData.stock_qty || 0;
+                  const variantSizeNewQty = variantSizeCurrentQty + qty;
+                  
+                  const { error: variantSizeUpdateError } = await supabase
+                    .from("variant_sizes")
+                    .upsert({
+                      variant_id: item.variant_id,
+                      size: normalizedItemSize,
+                      stock_qty: variantSizeNewQty
+                    }, {
+                      onConflict: 'variant_id,size'
+                    });
+                  
+                  if (variantSizeUpdateError) {
+                    console.warn(`⚠️ Error actualizando variant_sizes:`, variantSizeUpdateError);
+                  } else {
+                    console.log(`✅ variant_sizes actualizado: ${variantSizeCurrentQty} → ${variantSizeNewQty}`);
+                  }
+                }
+              }
+            }
+          }
+        }
+        
+        // También liberar la reserva en product_variants (por compatibilidad)
         const { data: varRow } = await supabase
           .from("product_variants")
           .select("reserved_qty")
@@ -2830,12 +5183,245 @@ async function deleteOrderItemImmediate(itemId) {
     }
   }
 
-  await loadOrders();
   updateActiveOrdersBadge();
   updatePickedOrdersBadge();
   updateClosedOrdersBadge();
   updateCancelledOrdersBadge();
-  if (historyVisible) await loadClosedOrders();
+  if (getPickingMode() && (currentFilter === "active" || currentFilter === "waiting")) return;
 
+  await loadOrders();
+  if (historyVisible) await loadClosedOrders();
   alert("✅ Producto eliminado del pedido.");
+}
+
+// Función para cancelar un pedido completo
+async function cancelOrder(orderId) {
+  if (!canDeleteOrders) {
+    alert("No tienes permiso para cancelar pedidos.");
+    return;
+  }
+  
+  if (!orderId) return;
+  
+  const confirmed = confirm("¿Cancelar este pedido? Si tiene productos reservados, el stock volverá al almacén general.");
+  if (!confirmed) return;
+
+  if (!supabase) supabase = await getSupabase();
+  if (!supabase) {
+    alert("No se pudo conectar con la base de datos.");
+    return;
+  }
+
+  // Obtener el pedido completo con sus items
+  const { data: order, error: orderErr } = await supabase
+    .from("orders")
+    .select(`
+      id,
+      order_number,
+      status,
+      order_items (
+        id,
+        variant_id,
+        size,
+        quantity,
+        status
+      )
+    `)
+    .eq("id", orderId)
+    .maybeSingle();
+  
+  if (orderErr || !order) {
+    alert("No se encontró el pedido.");
+    return;
+  }
+
+  // Verificar que el pedido pueda cancelarse (solo active, picked o waiting)
+  if (order.status === 'closed' || order.status === 'sent') {
+    alert("No se puede cancelar un pedido cerrado o enviado.");
+    return;
+  }
+
+  // Cargar almacenes si no están en cache
+  await loadWarehouses();
+  
+  if (!warehousesCache.general) {
+    console.error("❌ No se pudo cargar el almacén 'general'");
+    alert("Error: No se pudo encontrar el almacén 'general'. El pedido no se canceló.");
+    return;
+  }
+
+  // Si el pedido tiene items, devolver el stock de los items que no llegaron a enviarse
+  if (order.order_items && order.order_items.length > 0) {
+    const itemsToReturnStock = order.order_items.filter(item => 
+      item.status === 'reserved' || item.status === 'waiting' || item.status === 'picked'
+    );
+    
+    console.log(`🔄 Cancelando pedido ${order.order_number || orderId}: ${itemsToReturnStock.length} items a devolver stock`);
+    
+    for (const item of itemsToReturnStock) {
+      const qty = Number(item.quantity || 0) || 0;
+      const itemSize = item.size || null;
+      
+      if (!item.variant_id || !itemSize || qty === 0) {
+        console.warn(`⚠️ Item ${item.id} sin variant_id, size o cantidad válida, saltando...`);
+        continue;
+      }
+      
+      // Normalizar el tamaño
+      const normalizedItemSize = normalizeSize(itemSize);
+      if (!normalizedItemSize) {
+        console.warn(`⚠️ Item ${item.id} sin tamaño normalizado válido, saltando...`);
+        continue;
+      }
+      
+      console.log(`🔄 Devolviendo stock para item '${item.status}': variant ${item.variant_id}, size ${normalizedItemSize}, cantidad ${qty}`);
+      
+      // Obtener stock actual del talle en el almacén general
+      const { data: sizeStockData, error: sizeStockError } = await supabase
+        .from("variant_size_warehouse_stock")
+        .select("size, stock_qty")
+        .eq("variant_id", item.variant_id)
+        .eq("warehouse_id", warehousesCache.general);
+      
+      // Filtrar por tamaño normalizado después de obtener los datos
+      let matchingStock = null;
+      if (!sizeStockError && sizeStockData && sizeStockData.length > 0) {
+        matchingStock = sizeStockData.find(sws => {
+          const swsNormalizedSize = normalizeSize(sws.size || "");
+          return swsNormalizedSize === normalizedItemSize;
+        });
+      }
+      
+      let currentQty = 0;
+      if (matchingStock) {
+        currentQty = matchingStock.stock_qty || 0;
+      } else {
+        // Si no existe en variant_size_warehouse_stock, verificar variant_sizes como fallback
+        const { data: variantSizeData } = await supabase
+          .from("variant_sizes")
+          .select("stock_qty")
+          .eq("variant_id", item.variant_id)
+          .eq("size", normalizedItemSize)
+          .maybeSingle();
+        
+        if (variantSizeData) {
+          currentQty = variantSizeData.stock_qty || 0;
+          console.log(`🔵 Usando fallback desde variant_sizes: ${currentQty} unidades`);
+        }
+      }
+      
+      const newQty = currentQty + qty;
+      console.log(`📦 Stock actual: ${currentQty}, Cantidad a devolver: ${qty}, Nuevo stock: ${newQty}`);
+      
+      // Actualizar o insertar el stock en variant_size_warehouse_stock
+      const { error: updateSizeError } = await supabase
+        .from("variant_size_warehouse_stock")
+        .upsert({
+          variant_id: item.variant_id,
+          size: normalizedItemSize,
+          warehouse_id: warehousesCache.general,
+          stock_qty: newQty
+        }, {
+          onConflict: 'variant_id,size,warehouse_id'
+        });
+      
+      if (updateSizeError) {
+        console.warn(`⚠️ Error devolviendo stock por talle para variant ${item.variant_id}, size ${normalizedItemSize}:`, updateSizeError);
+      } else {
+        console.log(`✅ Stock devuelto correctamente: ${qty} unidades agregadas al almacén 'general' para variant ${item.variant_id}, talle ${normalizedItemSize}`);
+        
+        // Si se usó fallback (no había stock en variant_size_warehouse_stock), también actualizar variant_sizes
+        if (!matchingStock) {
+          const { data: variantSizeData } = await supabase
+            .from("variant_sizes")
+            .select("stock_qty")
+            .eq("variant_id", item.variant_id)
+            .eq("size", normalizedItemSize)
+            .maybeSingle();
+          
+          if (variantSizeData) {
+            const variantSizeCurrentQty = variantSizeData.stock_qty || 0;
+            const variantSizeNewQty = variantSizeCurrentQty + qty;
+            
+            const { error: variantSizeUpdateError } = await supabase
+              .from("variant_sizes")
+              .upsert({
+                variant_id: item.variant_id,
+                size: normalizedItemSize,
+                stock_qty: variantSizeNewQty
+              }, {
+                onConflict: 'variant_id,size'
+              });
+            
+            if (variantSizeUpdateError) {
+              console.warn(`⚠️ Error actualizando variant_sizes:`, variantSizeUpdateError);
+            } else {
+              console.log(`✅ variant_sizes actualizado: ${variantSizeCurrentQty} → ${variantSizeNewQty}`);
+            }
+          }
+        }
+      }
+      
+      // También liberar la reserva en product_variants (por compatibilidad)
+      const { data: varRow } = await supabase
+        .from("product_variants")
+        .select("reserved_qty")
+        .eq("id", item.variant_id)
+        .maybeSingle();
+      
+      if (varRow && varRow.reserved_qty > 0) {
+        const newReservedQty = Math.max(0, (varRow.reserved_qty || 0) - qty);
+        await supabase
+          .from("product_variants")
+          .update({ reserved_qty: newReservedQty })
+          .eq("id", item.variant_id);
+      }
+    }
+  }
+
+  // Eliminar el pedido (los items se eliminarán automáticamente por on delete cascade si existe)
+  // Primero eliminar los items manualmente para asegurar que se eliminen correctamente
+  if (order.order_items && order.order_items.length > 0) {
+    const itemIds = order.order_items.map(item => item.id);
+    const { error: deleteItemsError } = await supabase
+      .from("order_items")
+      .delete()
+      .in("id", itemIds);
+    
+    if (deleteItemsError) {
+      console.error("❌ Error eliminando items del pedido:", deleteItemsError);
+      alert("Error al eliminar los items del pedido. El pedido no se canceló completamente.");
+      return;
+    }
+  }
+  
+  // Eliminar el pedido
+  const { error: deleteOrderError } = await supabase
+    .from("orders")
+    .delete()
+    .eq("id", orderId);
+  
+  if (deleteOrderError) {
+    console.error("❌ Error eliminando el pedido:", deleteOrderError);
+    alert("Error al eliminar el pedido.");
+    return;
+  }
+  
+  console.log(`✅ Pedido ${order.order_number || orderId} cancelado correctamente`);
+  
+  // Actualizar UI
+  const orderCard = document.querySelector(`.order-card[data-order-id="${orderId}"]`);
+  if (orderCard) {
+    orderCard.remove();
+  }
+  
+  // Actualizar badges
+  updateActiveOrdersBadge();
+  updatePickedOrdersBadge();
+  updateWaitingOrdersBadge();
+  updateClosedOrdersBadge();
+  updateCancelledOrdersBadge();
+  
+  // Mostrar notificación
+  showToastNotification("✅ Pedido cancelado correctamente. El stock ha sido devuelto al almacén general.", "success");
 }

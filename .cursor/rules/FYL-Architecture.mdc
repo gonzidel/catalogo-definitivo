@@ -1,0 +1,39 @@
+---
+alwaysApply: true
+---
+
+This project follows a strict architecture.
+
+Stack:
+- HTML
+- CSS
+- Vanilla JavaScript
+- Supabase backend
+
+Frameworks are NOT allowed.
+
+Project structure:
+
+index2.html
+styles.css
+scripts/
+
+Main scripts:
+scripts/main-supabase.js
+scripts/cart-persistent.js
+scripts/auth-status.js
+
+Client dashboard:
+
+client/dashboard.html
+client/dashboard.js
+client/dashboard-instant.js
+client/dashboard.css
+
+Rules:
+
+- dashboard.js handles authentication only
+- dashboard-instant.js renders the UI
+- catalog logic must remain separate from dashboard logic
+- do not introduce new frameworks
+- do not refactor architecture without explicit request

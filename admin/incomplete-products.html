@@ -2,8 +2,11 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <meta name="robots" content="noindex" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
   <title>Productos Incompletos | Admin</title>
   <link rel="stylesheet" href="../styles.css" />
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -13,7 +16,7 @@
       font-family: 'Poppins', system-ui, -apple-system, sans-serif;
       background: linear-gradient(135deg, #f5f7fa 0%, #e8ecf1 100%);
       min-height: 100vh;
-      padding: 20px;
+      padding: 12px;
       color: #333;
     }
     .container {
@@ -22,23 +25,38 @@
     }
     .page-header {
       background: white;
-      border-radius: 16px;
-      padding: 32px;
-      margin-bottom: 32px;
-      box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 16px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
     }
     .page-header h1 {
-      margin: 0 0 16px 0;
-      font-size: 32px;
+      margin: 0 0 12px 0;
+      font-size: 24px;
       font-weight: 700;
       color: #2c3e50;
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 10px;
     }
     .page-header h1::before {
       content: "⚠️";
-      font-size: 36px;
+      font-size: 28px;
+    }
+    @media (min-width: 768px) {
+      body {
+        padding: 20px;
+      }
+      .page-header {
+        padding: 32px;
+        margin-bottom: 32px;
+      }
+      .page-header h1 {
+        font-size: 32px;
+      }
+      .page-header h1::before {
+        font-size: 36px;
+      }
     }
     .nav-bar {
       display: flex;
@@ -68,107 +86,199 @@
     }
     .section-card {
       background: white;
-      border-radius: 16px;
-      padding: 32px;
-      margin-bottom: 32px;
-      box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 16px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
     }
     .section-card h2 {
-      margin: 0 0 24px 0;
-      font-size: 24px;
+      margin: 0 0 16px 0;
+      font-size: 20px;
       font-weight: 600;
       color: #2c3e50;
-      padding-bottom: 16px;
+      padding-bottom: 12px;
       border-bottom: 2px solid #f0f0f0;
     }
-    .product-card {
-      border: 2px solid #e9ecef;
-      border-radius: 12px;
-      padding: 20px;
-      margin-bottom: 16px;
-      transition: all 0.3s ease;
-      background: #fafafa;
-    }
-    .product-card:hover {
-      border-color: #CD844D;
-      box-shadow: 0 4px 12px rgba(205, 132, 77, 0.15);
-      transform: translateY(-2px);
-    }
-    .product-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      margin-bottom: 16px;
-    }
-    .product-info h3 {
-      margin: 0 0 8px 0;
-      font-size: 20px;
-      color: #2c3e50;
-    }
-    .product-info p {
-      margin: 4px 0;
-      color: #6c757d;
-      font-size: 14px;
-    }
-    .variants-list {
-      margin: 16px 0;
-      padding: 12px;
-      background: white;
-      border-radius: 8px;
+    /* Acordeón de productos */
+    .product-accordion {
+      margin-bottom: 12px;
       border: 1px solid #e9ecef;
+      border-radius: 12px;
+      background: white;
+      overflow: hidden;
     }
-    .variant-item {
+    .accordion-header {
+      width: 100%;
+      padding: 16px;
+      background: #fafafa;
+      border: none;
+      cursor: pointer;
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 8px 0;
-      border-bottom: 1px solid #f0f0f0;
+      text-align: left;
+      transition: all 0.2s ease;
+      font-family: 'Poppins', sans-serif;
     }
-    .variant-item:last-child {
-      border-bottom: none;
+    .accordion-header:hover {
+      background: #f0f0f0;
     }
-    .variant-info {
+    .accordion-header.expanded {
+      background: #e8f4f8;
+      border-bottom: 1px solid #e9ecef;
+    }
+    .accordion-header-content {
       flex: 1;
-    }
-    .variant-info strong {
-      color: #495057;
-    }
-    .variant-stock {
-      display: flex;
-      align-items: center;
-      gap: 16px;
-      flex-wrap: wrap;
-    }
-    .stock-column {
       display: flex;
       flex-direction: column;
-      align-items: flex-start;
+      gap: 8px;
+    }
+    .accordion-title-section {
+      display: flex;
+      flex-direction: column;
       gap: 4px;
     }
-    .stock-label {
-      font-size: 12px;
+    .accordion-title {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 600;
+      color: #2c3e50;
+      line-height: 1.3;
+    }
+    .accordion-supplier {
+      font-size: 13px;
       color: #6c757d;
       font-weight: 500;
     }
-    .stock-total-value {
-      font-weight: 600;
-      font-size: 16px;
+    .accordion-colors-badge {
+      margin-top: 4px;
+    }
+    .colors-text {
+      font-size: 13px;
+      color: #495057;
+      background: #e9ecef;
+      padding: 4px 10px;
+      border-radius: 12px;
+      display: inline-block;
+    }
+    .accordion-icon {
+      font-size: 14px;
+      color: #6c757d;
+      transition: transform 0.2s ease;
+      flex-shrink: 0;
+      margin-left: 12px;
+    }
+    .accordion-content {
+      padding: 16px;
+      background: white;
+    }
+    .variants-list {
+      margin-bottom: 16px;
+    }
+    .color-separator {
+      height: 2px;
+      background: linear-gradient(to right, transparent, #CD844D, transparent);
+      margin: 12px 0 8px 0;
+      border-radius: 2px;
+    }
+    .variant-size-item {
+      margin-bottom: 10px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid #f0f0f0;
+    }
+    .variant-size-item.new-color-group {
+      margin-top: 4px;
+    }
+    .variant-size-item:last-child {
+      border-bottom: none;
+      margin-bottom: 0;
+      padding-bottom: 0;
+    }
+    .variant-stock-row {
+      display: flex;
+      align-items: flex-end;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .variant-info-left {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 90px;
+      flex-shrink: 0;
+    }
+    .variant-color {
+      font-size: 13px;
       color: #2c3e50;
-      padding: 4px 8px;
-      background: #f8f9fa;
-      border-radius: 4px;
-      min-width: 50px;
-      text-align: center;
+      font-weight: 600;
+      line-height: 1.2;
     }
-    .variant-stock input {
-      width: 80px;
-      padding: 6px 10px;
-      border: 1px solid #ddd;
+    .variant-size {
+      font-size: 11px;
+      color: #6c757d;
+      line-height: 1.2;
+    }
+    .stock-input-group {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      flex: 1;
+      min-width: 70px;
+    }
+    .stock-label {
+      font-size: 10px;
+      color: #6c757d;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      line-height: 1.2;
+    }
+    .stock-input {
+      width: 100%;
+      padding: 8px 6px;
+      border: 1px solid #e9ecef;
       border-radius: 6px;
+      font-size: 14px;
       text-align: center;
+      font-weight: 600;
+      transition: all 0.2s ease;
+      background: white;
+      -webkit-appearance: none;
+      -moz-appearance: textfield;
     }
-    button {
-      padding: 12px 24px;
+    .stock-input:focus {
+      outline: none;
+      border-color: #CD844D;
+      box-shadow: 0 0 0 2px rgba(205, 132, 77, 0.1);
+    }
+    .stock-input::-webkit-outer-spin-button,
+    .stock-input::-webkit-inner-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+    .accordion-actions {
+      margin-top: 20px;
+      padding-top: 20px;
+      border-top: 1px solid #e9ecef;
+      display: flex;
+      justify-content: center;
+    }
+    @media (min-width: 768px) {
+      .variant-stock-row {
+        gap: 12px;
+      }
+      .variant-info-left {
+        min-width: 100px;
+      }
+      .stock-input-group {
+        min-width: 80px;
+      }
+      .section-card {
+        padding: 24px;
+      }
+    }
+    .btn-complete {
+      padding: 14px 28px;
       border: none;
       border-radius: 10px;
       font-weight: 600;
@@ -179,15 +289,21 @@
       display: inline-flex;
       align-items: center;
       gap: 8px;
-    }
-    .btn-complete {
       background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
       color: white;
+      width: 100%;
+      justify-content: center;
+      min-height: 48px;
     }
     .btn-complete:hover {
       background: linear-gradient(135deg, #3d9be8 0%, #00d9e6 100%);
       transform: translateY(-2px);
       box-shadow: 0 4px 12px rgba(79, 172, 254, 0.3);
+    }
+    @media (min-width: 768px) {
+      .btn-complete {
+        width: auto;
+      }
     }
     .btn-save {
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -343,7 +459,7 @@
   <div class="container">
     <div class="page-header">
       <h1>Productos Incompletos</h1>
-      <p style="color: #6c757d; margin: 0;">Completá los tags y stock de los productos importados para activarlos en el catálogo.</p>
+      <p style="color: #6c757d; margin: 0;">Productos nuevos creados que aún no tienen stock contabilizado. Completá el stock y los tags para activarlos en el catálogo.</p>
       <div class="nav-bar">
         <a href="./index.html">← Volver al panel</a>
         <span style="flex:1 1 auto"></span>
@@ -367,21 +483,9 @@
     </section>
   </div>
 
-  <!-- Modal para completar producto -->
-  <div id="complete-modal" class="modal">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h3 id="modal-product-name">Completar Producto</h3>
-        <button class="close-btn" id="close-modal">×</button>
-      </div>
-      <div id="modal-body">
-        <!-- Se llena dinámicamente -->
-      </div>
-    </div>
-  </div>
 
-  <script type="module" src="../scripts/config.js"></script>
-  <script type="module" src="../scripts/supabase-client.js"></script>
-  <script type="module" src="./incomplete-products.js"></script>
+  <script type="module" src="../scripts/config.js?v=2"></script>
+  <script type="module" src="../scripts/supabase-client.js?v=2"></script>
+  <script type="module" src="./incomplete-products.js?v=2"></script>
 </body>
 </html>

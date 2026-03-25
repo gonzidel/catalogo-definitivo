@@ -56,6 +56,12 @@ window.addEventListener("DOMContentLoaded", () => {
         // Obtener filtro activo
         const filtroActivo = input.checked ? input.value : null;
 
+        // Ocultar/mostrar banner dinámico: solo en index puro, sin filtros
+        const bannerWrapper = document.getElementById("custom-banner-wrapper");
+        if (bannerWrapper) {
+          bannerWrapper.style.display = filtroActivo ? "none" : "";
+        }
+
         productos.forEach((prod) => {
           const valores = [
             prod.dataset.filtro1,

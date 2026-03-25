@@ -1,0 +1,25 @@
+---
+alwaysApply: true
+---
+
+The FYL catalog is mobile-first.
+
+Users are mostly resellers using smartphones.
+
+Target resolution:
+360px - 430px.
+
+Design priorities:
+
+1 speed
+2 clarity
+3 minimal steps
+4 avoid accidental taps
+
+Guidelines:
+
+- avoid complex layouts
+- prefer vertical scrolling
+- avoid large modals
+- maintain visible CTAs
+- prioritize thumb-friendly interactions

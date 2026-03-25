@@ -164,9 +164,9 @@ begin
     raise exception 'El pedido no existe o no está cerrado';
   end if;
 
-  -- Revertir el estado del pedido a "picked"
+  -- Revertir el estado del pedido a "active" (válido en orders_status_check; los ítems siguen en picked)
   update public.orders
-     set status = 'picked',
+     set status = 'active',
          updated_at = now()
    where id = p_order_id;
 

@@ -4,8 +4,29 @@ create table if not exists public.colors (
   id uuid primary key default gen_random_uuid(),
   name text unique not null,
   code text unique,
+  hex_color text,
   created_at timestamptz default now()
 );
+
+-- Agregar columna hex_color si no existe
+alter table public.colors add column if not exists hex_color text;
+
+-- Agregar columna display_number si no existe (número del 1 al 9 para mostrar en círculos de color)
+alter table public.colors add column if not exists display_number integer;
+
+-- Agregar constraint para validar que display_number esté entre 1 y 9 si se proporciona
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint 
+    where conname = 'colors_display_number_check' 
+    and conrelid = 'public.colors'::regclass
+  ) then
+    alter table public.colors 
+    add constraint colors_display_number_check 
+    check (display_number is null or (display_number >= 1 and display_number <= 9));
+  end if;
+end $$;
 
 alter table public.colors enable row level security;
 
@@ -41,8 +62,12 @@ do $$ begin
 end $$;
 
 -- Semillas comunes (opcional)
-insert into public.colors(name, code) values
-('Negro','NEG'),('Suela','SUE'),('Beige','BEI'),('Plata','PLA'),('Blanco','BLA')
-on conflict (name) do nothing;
+insert into public.colors(name, code, hex_color) values
+('Negro','NEG','#000000'),
+('Suela','SUE','#8B4513'),
+('Beige','BEI','#F5F5DC'),
+('Plata','PLA','#C0C0C0'),
+('Blanco','BLA','#FFFFFF')
+on conflict (name) do update set hex_color = excluded.hex_color where colors.hex_color is null;
 
 select pg_notify('pgrst','reload schema');

@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="robots" content="noindex" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+  <title>Estado de Productos | Admin</title>
+  <link rel="stylesheet" href="../styles.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'Poppins', system-ui, -apple-system, sans-serif;
+      background: linear-gradient(135deg, #f5f7fa 0%, #e8ecf1 100%);
+      min-height: 100vh;
+      padding: 12px;
+      color: #333;
+    }
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+    .page-header {
+      background: white;
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 16px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+    .page-header h1 {
+      margin: 0 0 12px 0;
+      font-size: 24px;
+      font-weight: 700;
+      color: #2c3e50;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .page-header h1::before {
+      content: "📋";
+      font-size: 28px;
+    }
+    .page-header p {
+      color: #6c757d;
+      margin: 0 0 8px 0;
+      line-height: 1.5;
+    }
+    .stats-row {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid #e9ecef;
+    }
+    .stat-item {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .stat-label {
+      font-size: 12px;
+      color: #6c757d;
+      font-weight: 500;
+    }
+    .stat-value {
+      font-size: 24px;
+      font-weight: 700;
+      color: #2c3e50;
+    }
+    @media (min-width: 768px) {
+      body {
+        padding: 20px;
+      }
+      .page-header {
+        padding: 32px;
+        margin-bottom: 32px;
+      }
+      .page-header h1 {
+        font-size: 32px;
+      }
+      .page-header h1::before {
+        font-size: 36px;
+      }
+    }
+    .nav-bar {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+      padding: 16px 0;
+      border-top: 1px solid #e9ecef;
+      margin-top: 16px;
+    }
+    .nav-bar a {
+      padding: 10px 18px;
+      border: 2px solid #e9ecef;
+      border-radius: 10px;
+      text-decoration: none;
+      color: #495057;
+      font-weight: 500;
+      font-size: 14px;
+      transition: all 0.3s ease;
+      background: white;
+    }
+    .nav-bar a:hover {
+      border-color: #CD844D;
+      color: #CD844D;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(205, 132, 77, 0.15);
+    }
+    .section-card {
+      background: white;
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 16px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+    .section-card h2 {
+      margin: 0 0 16px 0;
+      font-size: 20px;
+      font-weight: 600;
+      color: #2c3e50;
+      padding-bottom: 12px;
+      border-bottom: 2px solid #f0f0f0;
+    }
+    .search-filters {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+      align-items: center;
+    }
+    .search-input {
+      flex: 1;
+      min-width: 200px;
+      padding: 10px 14px;
+      border: 1px solid #e9ecef;
+      border-radius: 8px;
+      font-size: 14px;
+      font-family: 'Poppins', sans-serif;
+      transition: all 0.2s ease;
+    }
+    .search-input:focus {
+      outline: none;
+      border-color: #CD844D;
+      box-shadow: 0 0 0 3px rgba(205, 132, 77, 0.1);
+    }
+    .filter-tabs {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .filter-tab {
+      padding: 8px 16px;
+      border: 2px solid #e9ecef;
+      border-radius: 8px;
+      background: white;
+      color: #495057;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      font-family: 'Poppins', sans-serif;
+    }
+    .filter-tab:hover {
+      border-color: #CD844D;
+      color: #CD844D;
+    }
+    .filter-tab.active {
+      background: #CD844D;
+      color: white;
+      border-color: #CD844D;
+    }
+    .table-wrapper {
+      overflow-x: auto;
+      width: 100%;
+    }
+    .products-table {
+      width: 100%;
+      min-width: 800px;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    .products-table thead th {
+      background: #f8f9fa;
+      padding: 12px;
+      text-align: left;
+      font-weight: 600;
+      color: #2c3e50;
+      border-bottom: 2px solid #e9ecef;
+      white-space: nowrap;
+    }
+    .products-table tbody td {
+      padding: 12px;
+      border-bottom: 1px solid #f0f0f0;
+      vertical-align: middle;
+    }
+    .products-table tbody tr:hover {
+      background: #f8f9fa;
+    }
+    .products-table tbody tr:last-child td {
+      border-bottom: none;
+    }
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 12px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .status-badge.active {
+      background: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+    .status-badge.draft {
+      background: #e9ecef;
+      color: #495057;
+      border: 1px solid #dee2e6;
+    }
+    .status-badge.pending_stock {
+      background: #fff3cd;
+      color: #856404;
+      border: 1px solid #ffeaa7;
+    }
+    .action-select {
+      padding: 6px 10px;
+      border: 1px solid #e9ecef;
+      border-radius: 6px;
+      font-size: 13px;
+      font-family: 'Poppins', sans-serif;
+      background: white;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      min-width: 120px;
+    }
+    .action-select:focus {
+      outline: none;
+      border-color: #CD844D;
+      box-shadow: 0 0 0 2px rgba(205, 132, 77, 0.1);
+    }
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: #6c757d;
+    }
+    .empty-state::before {
+      content: "📦";
+      font-size: 64px;
+      display: block;
+      margin-bottom: 16px;
+    }
+    .message {
+      padding: 12px 16px;
+      border-radius: 10px;
+      font-weight: 500;
+      font-size: 14px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .message.ok {
+      background: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+    .message.err {
+      background: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+    }
+    .loading {
+      text-align: center;
+      padding: 40px 20px;
+      color: #6c757d;
+    }
+    .loading::before {
+      content: "⏳";
+      font-size: 48px;
+      display: block;
+      margin-bottom: 16px;
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    @media (min-width: 768px) {
+      .section-card {
+        padding: 24px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="page-header">
+      <h1>Estado de Productos</h1>
+      <p>Gestionar la visibilidad de productos en el catálogo público (index2.html). Los productos con estado "active" se muestran públicamente, mientras que "draft" solo están disponibles en áreas administrativas.</p>
+      <div class="stats-row" id="stats-row">
+        <div class="stat-item">
+          <span class="stat-label">Total</span>
+          <span class="stat-value" id="stat-total">-</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Active</span>
+          <span class="stat-value" style="color: #28a745;" id="stat-active">-</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Draft</span>
+          <span class="stat-value" style="color: #6c757d;" id="stat-draft">-</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Pending Stock</span>
+          <span class="stat-value" style="color: #ffc107;" id="stat-pending">-</span>
+        </div>
+      </div>
+      <div class="nav-bar">
+        <a href="./index.html">← Volver al panel</a>
+        <span style="flex:1 1 auto"></span>
+        <a href="./products.html">Productos</a>
+        <a href="./stock.html">Stock</a>
+        <a href="./orders.html">Pedidos</a>
+        <a href="./import-export.html">Importar/Exportar</a>
+      </div>
+    </div>
+
+    <div id="message-container"></div>
+
+    <section class="section-card">
+      <div class="search-filters">
+        <input 
+          type="text" 
+          id="search-input" 
+          class="search-input" 
+          placeholder="Buscar por nombre o handle..."
+          autocomplete="off"
+        />
+        <div class="filter-tabs">
+          <button class="filter-tab active" data-filter="all">Todos</button>
+          <button class="filter-tab" data-filter="active">Active</button>
+          <button class="filter-tab" data-filter="draft">Draft</button>
+          <button class="filter-tab" data-filter="pending_stock">Pending Stock</button>
+        </div>
+      </div>
+      
+      <div class="table-wrapper">
+        <table class="products-table">
+          <thead>
+            <tr>
+              <th>Nombre</th>
+              <th>Handle</th>
+              <th>Categoría</th>
+              <th>Estado Actual</th>
+              <th>Cambiar Estado</th>
+              <th>Actualizado</th>
+            </tr>
+          </thead>
+          <tbody id="products-tbody">
+            <tr>
+              <td colspan="6" class="loading">Cargando productos...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <script type="module" src="../scripts/config.js?v=2"></script>
+  <script type="module" src="../scripts/supabase-client.js?v=2"></script>
+  <script type="module" src="./product-status.js?v=2"></script>
+</body>
+</html>

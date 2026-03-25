@@ -2,6 +2,18 @@
 
 import { supabase } from "./supabase-client.js";
 import { checkPasskeySupport, authenticateWithPasskey } from "./passkeys.js";
+import {
+  getPostLoginRedirectUrl,
+  savePreAuthReturnTarget,
+  restorePostAuthNavigation,
+  remindSupabaseRedirectUrlsIfLocal,
+} from "./auth-redirect-url.js";
+import {
+  maybeShowProfileOnboardingModal,
+  clearProfileOnboardingSessionFlag,
+} from "./profile-onboarding-modal.js";
+
+remindSupabaseRedirectUrlsIfLocal();
 
 const loginModal = document.getElementById("login-modal");
 const loginModalMsg = document.getElementById("login-modal-msg");
@@ -64,30 +76,10 @@ function showLoginModalStep1() {
     window.location.href = "client/login.html";
     return;
   }
-  
-  // Resetear modal
-  resetLoginModal();
-  currentLoginEmail = "";
-  
-  // Mostrar paso 1, ocultar paso 3
-  if (loginStep1) loginStep1.style.display = "block";
-  if (loginStep3) loginStep3.style.display = "none";
-  
-  // Resetear input de email
-  if (loginEmailInput) {
-    loginEmailInput.value = "";
-  }
-  
-  // Resetear botón continuar
-  if (loginContinueBtn) {
-    loginContinueBtn.disabled = false;
-    loginContinueBtn.textContent = "Enviarme un enlace de inicio de sesión";
-  }
-  if (loginEmailInput) {
-    loginEmailInput.value = "";
-    loginEmailInput.focus();
-  }
-  
+
+  resetLoginModalToStep1Hidden();
+  if (loginEmailInput) loginEmailInput.focus();
+
   loginModal.classList.add("active");
   document.body.classList.add("modal-open");
 }
@@ -107,12 +99,25 @@ function showLoginModalStep3(email) {
 // Función eliminada - ya no se usa el paso 2
 // showLoginModalStep2() fue eliminada porque unificamos todo en el paso 1
 
+/** Solo resetea pasos/UI del modal sin abrirlo (evita reabrir al cerrar). */
+function resetLoginModalToStep1Hidden() {
+  resetLoginModal();
+  currentLoginEmail = "";
+  if (loginStep1) loginStep1.style.display = "block";
+  if (loginStep3) loginStep3.style.display = "none";
+  if (loginEmailInput) loginEmailInput.value = "";
+  if (loginContinueBtn) {
+    loginContinueBtn.disabled = false;
+    loginContinueBtn.textContent = "Enviarme un enlace de inicio de sesión";
+  }
+}
+
 function hideLoginModal() {
   if (!loginModal) return;
   loginModal.classList.remove("active");
   document.body.classList.remove("modal-open");
-  // Volver al paso 1 cuando se cierra el modal
-  showLoginModalStep1();
+  // Dejar el modal listo para la próxima apertura, sin volver a mostrarlo
+  resetLoginModalToStep1Hidden();
 }
 
 function promptLogin(reason) {
@@ -173,10 +178,11 @@ loginContinueBtn?.addEventListener("click", async () => {
   }
 
   try {
+    savePreAuthReturnTarget();
     const { error } = await supabase.auth.signInWithOtp({
       email: currentLoginEmail,
       options: {
-        emailRedirectTo: `${window.location.origin}/client/dashboard.html`,
+        emailRedirectTo: getPostLoginRedirectUrl(),
       },
     });
 
@@ -226,10 +232,11 @@ loginGoogleBtnStep1?.addEventListener("click", async () => {
   }
 
   try {
+    savePreAuthReturnTarget();
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: `${window.location.origin}/client/dashboard.html`,
+        redirectTo: getPostLoginRedirectUrl(),
         queryParams: {
           prompt: "select_account",
           access_type: "offline",
@@ -294,10 +301,11 @@ loginResendEmailBtn?.addEventListener("click", async () => {
   }
 
   try {
+    savePreAuthReturnTarget();
     const { error } = await supabase.auth.signInWithOtp({
       email: currentLoginEmail,
       options: {
-        emailRedirectTo: `${window.location.origin}/client/dashboard.html`,
+        emailRedirectTo: getPostLoginRedirectUrl(),
       },
     });
 
@@ -348,6 +356,10 @@ let lastLoggedTime = 0;
 
 // Función para actualizar el enlace del área de clientes
 async function updateClientAreaLink() {
+  if (!supabase?.auth?.getSession) {
+    showDefaultLink();
+    return;
+  }
   try {
     // Solo loguear la primera vez o si pasó más de 5 segundos desde el último log
     const now = Date.now();
@@ -366,10 +378,10 @@ async function updateClientAreaLink() {
       return;
     }
 
-    // Verificar sesión con timeout
+    // Verificar sesión con timeout (10s para redes lentas)
     const sessionPromise = supabase.auth.getSession();
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error("Timeout")), 3000)
+      setTimeout(() => reject(new Error("Timeout")), 10000)
     );
 
     const {
@@ -425,7 +437,13 @@ async function updateClientAreaLink() {
     // Mostrar avatar y nombre
     showAuthenticatedUser(session.user, customer);
   } catch (error) {
-    console.error("❌ Error verificando autenticación:", error);
+    if (error?.message === "Timeout") {
+      if (shouldLog) {
+        console.warn("⚠️ Verificación de sesión tardó demasiado, mostrando Área de Clientes");
+      }
+    } else {
+      console.error("❌ Error verificando autenticación:", error);
+    }
     showDefaultLink();
   }
 }
@@ -435,12 +453,25 @@ function showDefaultLink() {
   const clienteLink = document.querySelector(".cliente-link");
   if (clienteLink) {
     clienteLink.innerHTML = `
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
-        <circle cx="12" cy="7" r="4"/>
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/>
+        <circle cx="12" cy="8" r="4"/>
       </svg>
-      Área de Clientes
     `;
+    clienteLink.classList.add("cliente-link--guest");
+    clienteLink.style.padding = "0";
+    clienteLink.style.minWidth = "32px";
+    clienteLink.style.width = "32px";
+    clienteLink.style.height = "32px";
+    clienteLink.style.borderRadius = "50%";
+    clienteLink.style.display = "inline-flex";
+    clienteLink.style.alignItems = "center";
+    clienteLink.style.justifyContent = "center";
+    clienteLink.style.color = "#CD844D";
+    clienteLink.style.borderColor = "#E6D2C2";
+    clienteLink.style.background = "#fff";
+    clienteLink.style.boxShadow = "0 2px 6px rgba(0, 0, 0, 0.08)";
+    clienteLink.setAttribute("aria-label", "Iniciar sesión");
     clienteLink.title = "Iniciar sesión";
   }
 }
@@ -449,6 +480,7 @@ function showDefaultLink() {
 function showAuthenticatedUser(user, customer) {
   const clienteLink = document.querySelector(".cliente-link");
   if (!clienteLink) return;
+  clienteLink.classList.remove("cliente-link--guest");
 
   const displayName =
     customer?.full_name ||
@@ -472,6 +504,27 @@ function showAuthenticatedUser(user, customer) {
       displayName
     )}&background=CD844D&color=fff&size=32`;
 
+  // En mobile solo mostrar el avatar, sin nombre ni ícono
+  // Usar media query para determinar si es mobile
+  const isMobile = window.matchMedia('(max-width: 414px)').matches;
+  
+  if (isMobile) {
+    // Solo avatar en mobile - sin nombre, sin ícono dropdown
+    clienteLink.innerHTML = `
+      <img src="${avatarUrl}" 
+           alt="Avatar de ${displayName}" 
+           class="cliente-avatar"
+           onerror="this.src='https://ui-avatars.com/api/?name=${encodeURIComponent(
+             displayName
+           )}&background=CD844D&color=fff&size=28'">
+    `;
+    clienteLink.style.padding = '2px';
+    clienteLink.style.minWidth = '28px';
+    clienteLink.style.width = '28px';
+    clienteLink.style.height = '28px';
+    clienteLink.style.borderRadius = '50%';
+  } else {
+    // Desktop: avatar + nombre + ícono
   clienteLink.innerHTML = `
     <img src="${avatarUrl}" 
          alt="Avatar de ${displayName}" 
@@ -484,6 +537,12 @@ function showAuthenticatedUser(user, customer) {
       <polyline points="6,9 12,15 18,9"/>
     </svg>
   `;
+    clienteLink.style.padding = '';
+    clienteLink.style.minWidth = '';
+    clienteLink.style.width = '';
+    clienteLink.style.height = '';
+    clienteLink.style.borderRadius = '';
+  }
   clienteLink.title = "Mi área personal - " + displayName;
 
   // Agregar indicador visual de sesión activa
@@ -500,6 +559,11 @@ async function handleClientAreaClick(event) {
   event.stopImmediatePropagation();
 
   console.log("🖱️ Click en área de clientes detectado");
+
+  if (!supabase?.auth?.getSession) {
+    showLoginModalStep1();
+    return;
+  }
 
   // Verificar si el usuario ya está autenticado
   try {
@@ -525,6 +589,11 @@ async function handleClientAreaClick(event) {
 // Override de la función original que estaba causando problemas
 window.redirectToClientArea = async function () {
   console.log("🔄 Función redirectToClientArea llamada");
+
+  if (!supabase?.auth?.getSession) {
+    showLoginModalStep1();
+    return false;
+  }
 
   // Verificar si el usuario ya está autenticado
   try {
@@ -611,7 +680,13 @@ function createUserDropdown(user, customer) {
 // Función para logout
 window.logoutUser = async function () {
   try {
+    if (!supabase?.auth?.signOut) {
+      console.warn("🚪 logout: supabase no disponible, recargando…");
+      window.location.reload();
+      return;
+    }
     console.log("🚪 Cerrando sesión...");
+    clearProfileOnboardingSessionFlag();
     await supabase.auth.signOut();
     window.location.reload();
   } catch (error) {
@@ -630,6 +705,11 @@ function toggleUserDropdown() {
   if (existingDropdown) {
     console.log("❌ Cerrando dropdown existente");
     existingDropdown.remove();
+    return;
+  }
+
+  if (!supabase?.auth?.getSession) {
+    console.warn("⚠️ Dropdown: supabase no disponible");
     return;
   }
 
@@ -688,6 +768,7 @@ let initTimeout = null;
 
 // Función para inicializar (con protección contra múltiples ejecuciones)
 async function initializeAuth() {
+  if (window.__CATALOG_ONLY__) return;
   // Evitar múltiples ejecuciones simultáneas
   if (isInitializing) {
     return;
@@ -747,7 +828,23 @@ if (document.readyState === "loading") {
 let lastAuthState = null;
 let lastAuthEvent = null;
 
-supabase.auth.onAuthStateChange((event, session) => {
+if (
+  !supabase ||
+  typeof supabase.auth?.onAuthStateChange !== "function"
+) {
+  console.warn(
+    "[FYL auth] supabase no disponible: se omite onAuthStateChange (catálogo puede cargar sin sesión)"
+  );
+  globalThis.markBootStage?.("auth.skipped_no_supabase", {
+    hasClient: !!supabase,
+    hasOnAuthStateChange: typeof supabase?.auth?.onAuthStateChange === "function",
+  });
+} else {
+  supabase.auth.onAuthStateChange((event, session) => {
+  if (event === "SIGNED_OUT") {
+    clearProfileOnboardingSessionFlag();
+  }
+
   const currentState = session ? "SIGNED_IN" : "SIGNED_OUT";
   
   // Solo loguear si el estado realmente cambió o si es un evento diferente importante
@@ -761,9 +858,32 @@ supabase.auth.onAuthStateChange((event, session) => {
     lastAuthState = currentState;
     lastAuthEvent = event;
   }
+
+  if (session && (event === "SIGNED_IN" || event === "INITIAL_SESSION")) {
+    requestAnimationFrame(() => restorePostAuthNavigation());
+    if (!window.__CATALOG_ONLY__) {
+      maybeShowProfileOnboardingModal({
+        onComplete: () => updateClientAreaLink(),
+      }).catch(() => {});
+    }
+  }
   
   // Actualizar el link sin reinicializar todo (sin logs repetidos)
   updateClientAreaLink();
+  });
+}
+
+// Escuchar cambios de tamaño de ventana para actualizar el cliente-link en mobile/desktop
+let resizeTimeout;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimeout);
+  resizeTimeout = setTimeout(() => {
+    // Solo actualizar si el usuario está autenticado
+    const clienteLink = document.querySelector(".cliente-link");
+    if (clienteLink && clienteLink.querySelector("img")) {
+      updateClientAreaLink();
+    }
+  }, 250);
 });
 
 // Función de fallback inmediata
@@ -792,6 +912,11 @@ function clearAllListeners() {
 // Función de debug para verificar sesión
 window.debugSession = async function () {
   console.log("🔧 Debug de sesión iniciado...");
+
+  if (!supabase?.auth?.getSession) {
+    console.error("❌ supabase no disponible");
+    return { success: false, error: "no_supabase_client" };
+  }
 
   try {
     const {

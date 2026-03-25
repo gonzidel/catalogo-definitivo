@@ -29,7 +29,7 @@ async function hasCompleteProfile() {
     }
 
     // Verificar campos iniciales requeridos: full_name, phone, dni, province, city
-    const initialRequiredFields = ["full_name", "phone", "dni", "province", "city"];
+    const initialRequiredFields = ["full_name", "phone", "dni", "province", "city", "address"];
     const hasInitialFields = initialRequiredFields.every(
       (field) => customer[field] && String(customer[field]).trim() !== ""
     );
@@ -66,7 +66,7 @@ async function hasInitialProfileComplete() {
 
     const { data: customer, error } = await supabase
       .from("customers")
-      .select("full_name, phone, dni, province, city")
+      .select("full_name, phone, dni, province, city, address")
       .eq("id", user.id)
       .single();
 
@@ -75,7 +75,7 @@ async function hasInitialProfileComplete() {
       return false;
     }
 
-    const requiredFields = ["full_name", "phone", "dni", "province", "city"];
+    const requiredFields = ["full_name", "phone", "dni", "province", "city", "address"];
     const hasAllFields = requiredFields.every(
       (field) => customer[field] && String(customer[field]).trim() !== ""
     );

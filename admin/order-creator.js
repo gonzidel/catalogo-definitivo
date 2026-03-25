@@ -4,56 +4,33 @@
 console.log("📦 order-creator.js: Iniciando carga del módulo...");
 
 import { supabase as supabaseClient } from "../scripts/supabase-client.js";
+import { normalizeSize } from "../scripts/utils/size-normalizer.js";
+import { PROVINCE_CITIES_DATA } from './argentina-cities-data.js';
 
 console.log("📦 order-creator.js: Importación de supabase-client completada");
+
+// Validar formato UUID v4 (formato estándar PostgreSQL/Supabase)
+function isValidUUID(uuid) {
+  if (typeof uuid !== 'string' || !uuid) return false;
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  return uuidRegex.test(uuid);
+}
 
 let supabase = supabaseClient;
 let currentCustomer = null;
 let orderItems = [];
 let editingOrderId = null;
-// Rastrear cantidades seleccionadas por variante en la búsqueda actual
-let selectedQuantities = new Map(); // variant_id -> quantity
+// Rastrear cantidades seleccionadas por variante y talle en la búsqueda actual
+let selectedQuantities = new Map(); // "variant_id|size" -> quantity
 // Valores extra del pedido
 let shippingAmount = 0;
 let discountAmount = 0;
 let extrasAmount = 0;
 let extrasPercentage = 0;
 
-// Provincias y ciudades argentinas para autocomplete
-const ARGENTINA_PROVINCES = [
-  "Buenos Aires", "Catamarca", "Chaco", "Chubut", "Córdoba", "Corrientes",
-  "Entre Ríos", "Formosa", "Jujuy", "La Pampa", "La Rioja", "Mendoza",
-  "Misiones", "Neuquén", "Río Negro", "Salta", "San Juan", "San Luis",
-  "Santa Cruz", "Santa Fe", "Santiago del Estero", "Tierra del Fuego",
-  "Tucumán", "CABA"
-];
-
-const PROVINCE_CITIES = {
-  "Buenos Aires": ["La Plata", "Mar del Plata", "Bahía Blanca", "Tandil", "Quilmes", "Lanús", "Banfield", "Lomas de Zamora", "Avellaneda", "Merlo", "San Miguel", "Moreno", "Morón", "Florencio Varela", "Berazategui", "San Isidro", "Tigre", "Pilar", "Malvinas Argentinas", "Esteban Echeverría"],
-  "Catamarca": ["San Fernando del Valle de Catamarca", "Valle Viejo", "Fray Mamerto Esquiú", "San Isidro"],
-  "Chaco": ["Resistencia", "Barranqueras", "Villa Ángela", "Presidencia Roque Sáenz Peña", "Charata", "General San Martín", "Juan José Castelli", "Machagai", "Quitilipi", "Villa Berthet"],
-  "Chubut": ["Rawson", "Comodoro Rivadavia", "Trelew", "Puerto Madryn", "Esquel", "Sarmiento", "Gaiman"],
-  "Córdoba": ["Córdoba", "Villa Carlos Paz", "Río Cuarto", "Villa María", "San Francisco", "Villa Allende", "Jesús María", "Unquillo", "La Calera", "Marcos Juárez"],
-  "Corrientes": ["Corrientes", "Goya", "Mercedes", "Curuzú Cuatiá", "Bella Vista", "Paso de los Libres", "Monte Caseros", "Esquina"],
-  "Entre Ríos": ["Paraná", "Concordia", "Gualeguaychú", "Concepción del Uruguay", "Villaguay", "Colón", "Nogoyá", "Federación"],
-  "Formosa": ["Formosa", "Clorinda", "Pirané", "El Colorado", "Comandante Fontana", "Laguna Naick Neck"],
-  "Jujuy": ["San Salvador de Jujuy", "Palpalá", "Perico", "San Pedro de Jujuy", "La Quiaca", "Humahuaca"],
-  "La Pampa": ["Santa Rosa", "General Pico", "Toay", "Realicó", "Eduardo Castex", "General Acha"],
-  "La Rioja": ["La Rioja", "Chilecito", "Arauco", "Aminga", "Chamical"],
-  "Mendoza": ["Mendoza", "San Rafael", "Godoy Cruz", "Luján de Cuyo", "Maipú", "Guaymallén", "Las Heras", "Rivadavia", "Tunuyán", "San Martín"],
-  "Misiones": ["Posadas", "Oberá", "Eldorado", "Puerto Iguazú", "Leandro N. Alem", "Apóstoles", "Montecarlo"],
-  "Neuquén": ["Neuquén", "Cutral Có", "Plottier", "Zapala", "San Martín de los Andes", "Villa La Angostura"],
-  "Río Negro": ["Viedma", "Bariloche", "General Roca", "Cipolletti", "Allen", "Cinco Saltos", "Villa Regina"],
-  "Salta": ["Salta", "San Salvador de Jujuy", "Orán", "Tartagal", "Cafayate", "Metán", "Rosario de la Frontera"],
-  "San Juan": ["San Juan", "Rawson", "Rivadavia", "Santa Lucía", "Pocito", "Chimbas", "Caucete"],
-  "San Luis": ["San Luis", "Villa Mercedes", "Merlo", "La Toma", "Justo Daract"],
-  "Santa Cruz": ["Río Gallegos", "Caleta Olivia", "El Calafate", "Puerto Deseado", "Pico Truncado"],
-  "Santa Fe": ["Santa Fe", "Rosario", "Venado Tuerto", "Rafaela", "Reconquista", "Santo Tomé", "Villa Gobernador Gálvez", "San Lorenzo"],
-  "Santiago del Estero": ["Santiago del Estero", "La Banda", "Fernández", "Frías", "Termas de Río Hondo"],
-  "Tierra del Fuego": ["Ushuaia", "Río Grande", "Tolhuin"],
-  "Tucumán": ["San Miguel de Tucumán", "Yerba Buena", "Tafí Viejo", "Concepción", "Banda del Río Salí", "Alderetes"],
-  "CABA": ["Ciudad Autónoma de Buenos Aires"]
-};
+// Provincias y ciudades argentinas para autocomplete (importadas desde archivo compartido)
+const PROVINCE_CITIES = PROVINCE_CITIES_DATA;
+const ARGENTINA_PROVINCES = Object.keys(PROVINCE_CITIES).sort();
 
 // Definir función global inmediatamente para que esté disponible desde el inicio
 // Esta función será actualizada cuando openCreateOrderModal esté definida
@@ -239,6 +216,14 @@ async function initOrderCreator() {
     });
   }
   
+  // Agregar extra especial
+  const addSpecialExtraBtn = document.getElementById("add-special-extra-btn");
+  if (addSpecialExtraBtn) {
+    addSpecialExtraBtn.addEventListener("click", () => {
+      addSpecialExtra();
+    });
+  }
+  
   // Guardar pedido
   if (saveBtn) {
     console.log("✅ Event listener de save-order-btn registrado");
@@ -262,6 +247,13 @@ async function initOrderCreator() {
       
       if (!editingOrderId && orderItems.length === 0) {
         alert("Por favor, agrega al menos un producto al pedido antes de guardar.");
+        return;
+      }
+      
+      const mensaje = editingOrderId
+        ? "¿Está seguro que desea guardar los cambios del pedido?"
+        : "¿Está seguro que desea guardar el pedido?";
+      if (!confirm(mensaje)) {
         return;
       }
       
@@ -340,6 +332,7 @@ function ensureEventListeners() {
   const closeBtn = document.getElementById("close-order-modal");
   const cancelBtn = document.getElementById("cancel-order-btn");
   const productSearch = document.getElementById("product-search");
+  const qrSearch = document.getElementById("qr-search");
   
   // Re-registrar listeners de cerrar si no están funcionando
   if (closeBtn && !closeBtn.hasAttribute('data-listener-attached')) {
@@ -374,6 +367,32 @@ function ensureEventListeners() {
       searchTimeout = setTimeout(() => {
         searchProducts(query);
       }, 300);
+    });
+  }
+  
+  // Registrar listener de búsqueda por QR
+  // Usar solo debounce para leer el código completo: si el lector envía "145" + Enter + "565",
+  // no procesar en Enter para no enviar "145"; esperar 250 ms tras el último carácter y procesar "145565".
+  if (qrSearch && !qrSearch.hasAttribute('data-listener-attached')) {
+    qrSearch.setAttribute('data-listener-attached', 'true');
+    let qrDebounceTimer;
+    const QR_DEBOUNCE_MS = 250;
+
+    qrSearch.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") e.preventDefault(); // Evitar newline y que se procese un fragmento
+    });
+
+    qrSearch.addEventListener("input", () => {
+      clearTimeout(qrDebounceTimer);
+      const value = qrSearch.value.trim();
+      if (!/^\d*$/.test(value) || value.length < 3) return;
+      qrDebounceTimer = setTimeout(() => {
+        const current = qrSearch.value.trim();
+        if (/^\d+$/.test(current) && current.length >= 3) {
+          addToQrQueue(current);
+          qrSearch.value = "";
+        }
+      }, QR_DEBOUNCE_MS);
     });
   }
 }
@@ -470,8 +489,14 @@ function closeModal() {
   // Limpiar campos
   const customerSearch = document.getElementById("customer-search");
   const productSearch = document.getElementById("product-search");
+  const qrSearch = document.getElementById("qr-search");
+  const specialExtraName = document.getElementById("special-extra-name");
+  const specialExtraAmount = document.getElementById("special-extra-amount");
   if (customerSearch) customerSearch.value = "";
   if (productSearch) productSearch.value = "";
+  if (qrSearch) qrSearch.value = "";
+  if (specialExtraName) specialExtraName.value = "";
+  if (specialExtraAmount) specialExtraAmount.value = "";
   
   hideCustomerResults();
   hideProductResults();
@@ -480,6 +505,10 @@ function closeModal() {
   orderItems = [];
   editingOrderId = null;
   selectedQuantities.clear();
+  
+  // Limpiar cola de QR
+  qrProcessingQueue = [];
+  isProcessingQr = false;
   
   // Resetear valores extra
   shippingAmount = 0;
@@ -924,7 +953,47 @@ function handleCityInput(value) {
   });
 }
 
+// Funciones de formato de teléfono (idénticas a customers.js)
+function validatePhone(phone) {
+  if (!phone) return false;
+  let cleaned = phone.replace(/^\+54\s?/i, "");
+  cleaned = cleaned.replace(/[\s\-\(\)]/g, "");
+  if (cleaned.startsWith("9")) {
+    cleaned = cleaned.substring(1);
+  }
+  return /^\d{8,10}$/.test(cleaned);
+}
+
+function formatPhone(phone) {
+  if (!phone) return "";
+  let cleaned = phone.replace(/^\+54\s?/i, "");
+  cleaned = cleaned.replace(/[\s\-\(\)]/g, "");
+  if (!cleaned.startsWith("9") && cleaned.length >= 8) {
+    cleaned = "9" + cleaned;
+  }
+  if (cleaned.length >= 10) {
+    const match = cleaned.match(/^9?(\d{2,4})(\d{6,8})$/);
+    if (match) {
+      const areaCode = match[1];
+      const number = match[2];
+      const formattedNumber = number.length > 4
+        ? `${number.slice(0, -4)}-${number.slice(-4)}`
+        : number;
+      return `+54 9 ${areaCode} ${formattedNumber}`;
+    }
+  }
+  return `+54 ${cleaned}`;
+}
+
 async function handleCreateCustomer() {
+  const errorDiv = document.getElementById("customer-form-error");
+  const saveBtn = document.getElementById("save-customer-btn");
+  
+  if (errorDiv) {
+    errorDiv.style.display = "none";
+    errorDiv.textContent = "";
+  }
+  
   const firstName = document.getElementById("customer-first-name")?.value?.trim();
   const lastName = document.getElementById("customer-last-name")?.value?.trim();
   const dni = document.getElementById("customer-dni")?.value?.trim();
@@ -933,7 +1002,6 @@ async function handleCreateCustomer() {
   const address = document.getElementById("customer-address")?.value?.trim();
   const province = document.getElementById("customer-province")?.value?.trim();
   const city = document.getElementById("customer-city")?.value?.trim();
-  const errorDiv = document.getElementById("customer-form-error");
   
   // Validaciones
   if (!firstName || !lastName) {
@@ -947,6 +1015,15 @@ async function handleCreateCustomer() {
   if (!phone) {
     if (errorDiv) {
       errorDiv.textContent = "Teléfono es obligatorio";
+      errorDiv.style.display = "block";
+    }
+    return;
+  }
+  
+  // Validar formato de teléfono
+  if (!validatePhone(phone)) {
+    if (errorDiv) {
+      errorDiv.textContent = "El formato del teléfono no es válido. Debe tener entre 8 y 10 dígitos.";
       errorDiv.style.display = "block";
     }
     return;
@@ -968,6 +1045,15 @@ async function handleCreateCustomer() {
     return;
   }
   
+  // Validar que la provincia sea válida
+  if (!ARGENTINA_PROVINCES.includes(province)) {
+    if (errorDiv) {
+      errorDiv.textContent = "La provincia seleccionada no es válida";
+      errorDiv.style.display = "block";
+    }
+    return;
+  }
+  
   if (!city) {
     if (errorDiv) {
       errorDiv.textContent = "Ciudad es obligatoria";
@@ -976,28 +1062,57 @@ async function handleCreateCustomer() {
     return;
   }
   
-  if (errorDiv) {
-    errorDiv.style.display = "none";
+  // Validar que la ciudad sea válida para la provincia seleccionada
+  const cities = PROVINCE_CITIES[province] || [];
+  if (!cities.includes(city)) {
+    if (errorDiv) {
+      errorDiv.textContent = "La ciudad seleccionada no es válida para la provincia elegida";
+      errorDiv.style.display = "block";
+    }
+    return;
   }
   
-  const fullName = `${firstName} ${lastName}`.trim();
+  // Deshabilitar botón mientras se guarda
+  if (saveBtn) {
+    saveBtn.disabled = true;
+  }
   
-  await createCustomer({
-    full_name: fullName,
-    dni: dni || null,
-    phone: phone,
-    email: email || null,
-    address: address,
-    city: city,
-    province: province
-  });
-  
-  // Cerrar modal después de crear
-  closeCreateCustomerModal();
+  try {
+    const fullName = `${firstName} ${lastName}`.trim();
+    const formattedPhone = formatPhone(phone);
+    
+    await createCustomer({
+      full_name: fullName,
+      dni: dni || null,
+      phone: formattedPhone,
+      email: email || null,
+      address: address,
+      city: city,
+      province: province
+    });
+    
+    // Cerrar modal después de crear
+    closeCreateCustomerModal();
+  } catch (error) {
+    console.error("Error en handleCreateCustomer:", error);
+    if (errorDiv) {
+      errorDiv.textContent = `Error: ${error.message}`;
+      errorDiv.style.display = "block";
+    }
+  } finally {
+    // Rehabilitar botón
+    if (saveBtn) {
+      saveBtn.disabled = false;
+    }
+  }
 }
 
 // Cargar IDs de almacenes
 let warehouses = { general: null, ventaPublico: null };
+
+// Sistema de cola para procesar múltiples QR seguidos
+let qrProcessingQueue = [];
+let isProcessingQr = false;
 
 async function loadWarehouses() {
   if (!supabase) {
@@ -1059,7 +1174,7 @@ async function searchProducts(query) {
         )
       `)
       .ilike("name", `%${query}%`)
-      .eq("status", "active")
+      .in("status", ["active", "pending_stock", "draft"]) // Incluir productos activos, con stock pendiente y en borrador
       .limit(20);
     
     if (productsError) {
@@ -1095,7 +1210,7 @@ async function searchProducts(query) {
       }
     }
     
-    // Filtrar variantes activas (incluyendo las sin stock), luego obtener imágenes
+    // Filtrar variantes activas (incluyendo las sin stock), luego obtener imágenes y talles
     const productsWithStock = await Promise.all(
       (products || []).flatMap(async (product) => {
         const variantsWithStock = (product.product_variants || [])
@@ -1105,9 +1220,10 @@ async function searchProducts(query) {
             return true;
           });
         
-        // Obtener imágenes para cada variante
+        // Obtener imágenes y talles para cada variante
         const variantsWithImages = await Promise.all(
-          variantsWithStock.map(async (v) => {
+          variantsWithStock.flatMap(async (v) => {
+            // Obtener imagen de la variante
             const { data: imageData } = await supabase
               .from("variant_images")
               .select("url")
@@ -1115,26 +1231,113 @@ async function searchProducts(query) {
               .eq("position", 1)
               .maybeSingle();
             
-            const variantStock = stockMap.get(v.id) || new Map();
-            const stockGeneral = variantStock.get(warehouses.general) || 0;
-            const stockVenta = variantStock.get(warehouses.ventaPublico) || 0;
-            const totalStock = stockGeneral + stockVenta;
+            // Obtener talles desde variant_sizes (TABLA PRINCIPAL)
+            // IMPORTANTE: También obtener stock_qty para fallback si no hay stock en warehouses
+            // Normalizar los tamaños al cargarlos para asegurar consistencia
+            const { data: sizesData, error: sizesError } = await supabase
+              .from("variant_sizes")
+              .select("size, stock_qty")
+              .eq("variant_id", v.id);
             
-            return {
-              articulo: product.name,
-              color: v.color,
-              talle: v.size,
-              precio: v.price,
-              stock_general: stockGeneral,
-              stock_venta: stockVenta,
-              stock_total: totalStock,
-              imagen: imageData?.url || null,
-              variant_id: v.id
-            };
+            if (sizesError) {
+              console.warn(`⚠️ Error obteniendo talles para variante ${v.id}:`, sizesError);
+            }
+            
+            // Si no hay talles en variant_sizes, usar el size de product_variants como fallback (legacy)
+            // IMPORTANTE: Normalizar los tamaños al cargarlos
+            const sizes = (sizesData && sizesData.length > 0) 
+              ? sizesData.map(s => ({ size: normalizeSize(s.size), stock_qty: s.stock_qty || 0 })).filter(s => s.size)
+              : (v.size ? [{ size: normalizeSize(v.size), stock_qty: 0 }].filter(s => s.size) : []);
+            
+            // Si no hay talles, crear un item sin talle
+            if (sizes.length === 0) {
+              const variantStock = stockMap.get(v.id) || new Map();
+              const stockGeneral = variantStock.get(warehouses.general) || 0;
+              const stockVenta = variantStock.get(warehouses.ventaPublico) || 0;
+              const totalStock = stockGeneral + stockVenta;
+              
+              return [{
+                articulo: product.name,
+                color: v.color,
+                talle: null,
+                precio: v.price,
+                stock_general: stockGeneral,
+                stock_venta: stockVenta,
+                stock_total: totalStock,
+                imagen: imageData?.url || null,
+                variant_id: v.id
+              }];
+            }
+            
+            // Obtener stock por talle desde variant_size_warehouse_stock (DISTRIBUCIÓN POR WAREHOUSE)
+            // IMPORTANTE: Normalizar los tamaños al crear el mapa y al buscar
+            const sizeStockMap = new Map(); // key: `${normalizedSize}_${warehouse_id}` -> stock_qty
+            if (sizes.length > 0 && (warehouses.general || warehouses.ventaPublico)) {
+              const warehouseIds = [warehouses.general, warehouses.ventaPublico].filter(Boolean);
+              // Normalizar los tamaños antes de consultar
+              const normalizedSizes = sizes.map(s => s.size).filter(Boolean);
+              
+              // Cargar todos los registros y normalizar después para evitar problemas de comparación
+              const { data: sizeStockData } = await supabase
+                .from("variant_size_warehouse_stock")
+                .select("size, warehouse_id, stock_qty")
+                .eq("variant_id", v.id)
+                .in("warehouse_id", warehouseIds);
+              
+              if (sizeStockData) {
+                sizeStockData.forEach(stock => {
+                  // Normalizar el tamaño antes de guardarlo en el mapa
+                  const normalizedStockSize = normalizeSize(stock.size);
+                  if (!normalizedStockSize) return; // Saltar tamaños vacíos
+                  
+                  // Filtrar solo los tamaños que están en la lista de sizes normalizados
+                  if (!normalizedSizes.includes(normalizedStockSize)) return;
+                  
+                  if (!sizeStockMap.has(normalizedStockSize)) {
+                    sizeStockMap.set(normalizedStockSize, new Map());
+                  }
+                  sizeStockMap.get(normalizedStockSize).set(stock.warehouse_id, stock.stock_qty || 0);
+                });
+              }
+            }
+            
+            // Crear un item por cada talle
+            // IMPORTANTE: Aplicar fallback a variant_sizes.stock_qty si no hay stock en warehouses
+            // Esto sigue el mismo patrón que admin/stock.js (líneas 554-560)
+            return sizes.map(sizeData => {
+              const normalizedSize = sizeData.size;
+              if (!normalizedSize) return null; // Saltar tamaños vacíos
+              
+              const sizeStock = sizeStockMap.get(normalizedSize) || new Map();
+              let stockGeneral = sizeStock.get(warehouses.general) || 0;
+              let stockVenta = sizeStock.get(warehouses.ventaPublico) || 0;
+              
+              // FALLBACK CRÍTICO: Si no hay stock en warehouses pero hay en variant_sizes, usar variant_sizes.stock_qty
+              // Este es el mismo patrón que usa admin/stock.js (líneas 554-560)
+              if (stockGeneral === 0 && stockVenta === 0 && sizeData.stock_qty > 0) {
+                // Si hay stock en variant_sizes pero no en variant_size_warehouse_stock,
+                // poner todo en general como fallback (esto es lo que hace admin/stock.js)
+                stockGeneral = sizeData.stock_qty || 0;
+              }
+              
+              const totalStock = stockGeneral + stockVenta;
+              
+              return {
+                articulo: product.name,
+                color: v.color,
+                talle: normalizedSize, // Usar tamaño normalizado
+                precio: v.price,
+                stock_general: stockGeneral,
+                stock_venta: stockVenta,
+                stock_total: totalStock,
+                imagen: imageData?.url || null,
+                variant_id: v.id
+              };
+            }).filter(Boolean); // Filtrar nulls de tamaños vacíos
           })
         );
         
-        return variantsWithImages;
+        return variantsWithImages.flat();
       })
     );
     
@@ -1142,6 +1345,258 @@ async function searchProducts(query) {
   } catch (error) {
     console.error("❌ Error en búsqueda de productos:", error);
   }
+}
+
+// Sistema de cola para procesar múltiples QR seguidos
+function addToQrQueue(qrCode) {
+  // Limpiar el input inmediatamente para permitir siguiente escaneo
+  const qrSearchInput = document.getElementById("qr-search");
+  if (qrSearchInput) {
+    qrSearchInput.value = "";
+  }
+  
+  // Agregar a la cola
+  qrProcessingQueue.push(qrCode);
+  
+  // Iniciar procesamiento si no está en proceso
+  if (!isProcessingQr) {
+    processQrQueue();
+  }
+}
+
+// Procesar cola de QR
+async function processQrQueue() {
+  if (qrProcessingQueue.length === 0) {
+    isProcessingQr = false;
+    return;
+  }
+  
+  isProcessingQr = true;
+  const qrCode = qrProcessingQueue.shift();
+  
+  try {
+    await processQrCodeForOrder(qrCode);
+  } catch (error) {
+    console.error("Error procesando QR:", error);
+    alert(`Error al procesar código QR ${qrCode}: ${error.message}`);
+  }
+  
+  // Procesar siguiente en la cola (sin await para no bloquear)
+  setTimeout(() => {
+    processQrQueue();
+  }, 0);
+}
+
+// Función optimizada para procesar QR code y agregar al pedido
+async function processQrCodeForOrder(qrCode) {
+  if (!supabase) {
+    supabase = await getSupabase();
+  }
+  if (!supabase) {
+    console.error("❌ Supabase no disponible");
+    alert("Error: No se pudo conectar con la base de datos.");
+    return;
+  }
+
+  // Normalizar: siempre string y sin espacios (algunos lectores envían caracteres extra)
+  const qrNormalized = String(qrCode).trim().replace(/\s+/g, "");
+  if (!qrNormalized || !/^\d+$/.test(qrNormalized)) {
+    alert(`Código QR no válido: "${qrCode}". Debe ser solo números.`);
+    return;
+  }
+  
+  // Cargar almacenes si no están cargados
+  if (!warehouses.general || !warehouses.ventaPublico) {
+    await loadWarehouses();
+  }
+  
+  const baseQuery = () =>
+    supabase
+      .from("variant_sizes")
+      .select(`
+        variant_id,
+        size,
+        sku,
+        qr_code,
+        stock_qty,
+        product_variants!inner (
+          id,
+          sku,
+          color,
+          price,
+          active,
+          products!inner (
+            id,
+            name,
+            category,
+            status
+          )
+        )
+      `)
+      .eq("qr_code", qrNormalized);
+  
+  try {
+    // 1) Buscar solo productos activos y con estado visible
+    let { data: sizeData, error: sizeError } = await baseQuery()
+      .eq("product_variants.active", true)
+      .in("product_variants.products.status", ["active", "pending_stock", "draft"])
+      .maybeSingle();
+    
+    if (sizeError) {
+      console.error("❌ Error buscando por QR:", sizeError);
+      alert(`Error al buscar producto con código QR "${qrNormalized}": ${sizeError.message}`);
+      return;
+    }
+    
+    // 2) Si no hay resultado, buscar sin filtro de activo/estado (por si el producto está inactivo o en otro estado)
+    if (!sizeData || !sizeData.product_variants) {
+      const fallback = await baseQuery().maybeSingle();
+      if (fallback.error) {
+        console.error("❌ Error en búsqueda fallback por QR:", fallback.error);
+        alert(`No se encontró el producto con el código QR "${qrNormalized}". Verificá que el código exista en variant_sizes.`);
+        return;
+      }
+      if (fallback.data && fallback.data.product_variants) {
+        const product = fallback.data.product_variants.products;
+        const variant = fallback.data.product_variants;
+        const ok = confirm(
+          `El producto "${product.name}" (${variant.color}) existe pero está inactivo o no disponible.\n\n¿Agregarlo al pedido igual?`
+        );
+        if (!ok) return;
+        sizeData = fallback.data;
+      }
+    }
+    
+    if (!sizeData || !sizeData.product_variants) {
+      alert(`No se encontró el producto con el código QR "${qrNormalized}". Revisá que el QR corresponda a un talle de producto cargado y que tenga código asignado.`);
+      return;
+    }
+    
+    const variant = {
+      ...sizeData.product_variants,
+      size: sizeData.size,
+    };
+    
+    const product = sizeData.product_variants.products;
+    
+    // Obtener stock del talle específico
+    const normalizedSize = normalizeSize(variant.size);
+    let sizeStock = { general: { stock: 0 }, ventaPublico: { stock: 0 }, total: 0 };
+    let variantSizeStockQty = sizeData.stock_qty || 0;
+    
+    // Obtener stock desde variant_size_warehouse_stock
+    if (normalizedSize && warehouses.general && warehouses.ventaPublico) {
+      const { data: sizeWarehouseStocks } = await supabase
+        .from("variant_size_warehouse_stock")
+        .select("size, warehouse_id, stock_qty")
+        .eq("variant_id", variant.id)
+        .in("warehouse_id", [warehouses.general, warehouses.ventaPublico]);
+      
+      if (sizeWarehouseStocks) {
+        sizeWarehouseStocks.forEach(sws => {
+          const swsNormalizedSize = normalizeSize(sws.size);
+          if (swsNormalizedSize !== normalizedSize) return;
+          
+          if (sws.warehouse_id === warehouses.general) {
+            sizeStock.general.stock += sws.stock_qty || 0;
+          } else if (sws.warehouse_id === warehouses.ventaPublico) {
+            sizeStock.ventaPublico.stock += sws.stock_qty || 0;
+          }
+        });
+        sizeStock.total = sizeStock.general.stock + sizeStock.ventaPublico.stock;
+      }
+    }
+    
+    // FALLBACK: Si no hay stock en warehouses pero hay en variant_sizes, usar variant_sizes.stock_qty
+    if (sizeStock.general.stock === 0 && sizeStock.ventaPublico.stock === 0 && variantSizeStockQty > 0) {
+      sizeStock.general.stock = variantSizeStockQty;
+      sizeStock.total = variantSizeStockQty;
+    }
+    
+    // Por QR el producto se asume físico (se escaneó), no pedir confirmación si no hay stock; agregar directo.
+    // La carga manual sigue usando el modal de confirmación en la grilla de talles.
+
+    // Obtener imagen de la variante
+    const { data: imageData } = await supabase
+      .from("variant_images")
+      .select("url")
+      .eq("variant_id", variant.id)
+      .eq("position", 1)
+      .maybeSingle();
+    
+    // Determinar de qué almacén tomar el stock (priorizar venta público si hay, sino general)
+    let qtyFromGeneral = 0;
+    let qtyFromVenta = 0;
+    const quantity = 1;
+    
+    if (sizeStock.ventaPublico.stock > 0) {
+      qtyFromVenta = Math.min(quantity, sizeStock.ventaPublico.stock);
+      const remaining = quantity - qtyFromVenta;
+      if (remaining > 0 && sizeStock.general.stock > 0) {
+        qtyFromGeneral = Math.min(remaining, sizeStock.general.stock);
+      }
+    } else if (sizeStock.general.stock > 0) {
+      qtyFromGeneral = Math.min(quantity, sizeStock.general.stock);
+    }
+    
+    // Agregar producto al pedido
+    const productToAdd = {
+      product_name: product.name,
+      color: variant.color,
+      size: normalizedSize,
+      quantity: quantity,
+      price_snapshot: variant.price,
+      imagen: imageData?.url || null,
+      variant_id: variant.id,
+      qty_from_general: qtyFromGeneral,
+      qty_from_venta: qtyFromVenta
+    };
+    
+    await addProductToOrder(productToAdd);
+    
+    // Mostrar mensaje de éxito
+    console.log(`✅ Producto agregado al pedido: ${product.name} - ${variant.color} - ${normalizedSize || 'N/A'}`);
+    
+  } catch (error) {
+    console.error("❌ Error procesando QR code:", error);
+    alert(`Error al procesar código QR ${qrCode}: ${error.message}`);
+  }
+}
+
+// Función para ordenar talles de menor a mayor
+function sortSizes(sizes) {
+  // Orden estándar para tallas de ropa
+  const sizeOrder = {
+    'XS': 1, 'S': 2, 'M': 3, 'L': 4, 'XL': 5, 
+    'XXL': 6, '2XL': 6, '3XL': 7, '4XL': 8, '5XL': 9,
+    'UNICO': 10, 'ÚNICO': 10, 'U': 10
+  };
+  
+  return sizes.sort((a, b) => {
+    const talleA = String(a.talle || '').trim().toUpperCase();
+    const talleB = String(b.talle || '').trim().toUpperCase();
+    
+    // Si ambos son números, ordenar numéricamente de menor a mayor
+    const numA = parseFloat(talleA);
+    const numB = parseFloat(talleB);
+    if (!isNaN(numA) && !isNaN(numB)) {
+      return numA - numB;
+    }
+    
+    // Si ambos están en el orden de tallas de ropa, usar ese orden
+    if (sizeOrder[talleA] !== undefined && sizeOrder[talleB] !== undefined) {
+      return sizeOrder[talleA] - sizeOrder[talleB];
+    }
+    
+    // Si solo A está en el orden de ropa, A va después
+    if (sizeOrder[talleA] !== undefined) return 1;
+    
+    // Si solo B está en el orden de ropa, B va después
+    if (sizeOrder[talleB] !== undefined) return -1;
+    
+    // Si ninguno es número ni está en el orden, ordenar alfabéticamente
+    return talleA.localeCompare(talleB);
+  });
 }
 
 // Mostrar resultados de productos
@@ -1177,6 +1632,11 @@ function displayProductResults(products) {
     });
   });
   
+  // Ordenar los talles de cada producto
+  Object.values(groupedProducts).forEach(product => {
+    product.talles = sortSizes(product.talles);
+  });
+  
   const productsHtml = Object.values(groupedProducts).map(product => `
     <div class="product-result-item">
       <div style="display: flex; gap: 12px; align-items: start;">
@@ -1190,7 +1650,9 @@ function displayProductResults(products) {
             <div style="display: flex; flex-wrap: wrap; gap: 4px; align-items: center;">
               ${product.talles.map(t => {
                 const variantId = t.variant_id;
-                const currentQty = selectedQuantities.get(variantId) || 0;
+                const size = t.talle || '';
+                const quantityKey = `${variantId}|${size}`;
+                const currentQty = selectedQuantities.get(quantityKey) || 0;
                 const stockGeneral = t.stock_general || 0;
                 const stockVenta = t.stock_venta || 0;
                 const stockTotal = t.stock_total || 0;
@@ -1199,10 +1661,10 @@ function displayProductResults(products) {
                 // Determinar estilos según stock y selección
                 let bgColor, borderColor, textColor, opacity;
                 if (hasNoStock) {
-                  // Sin stock: fondo gris claro con opacidad reducida y borde rojo/naranja
+                  // Sin stock: fondo gris claro con opacidad reducida y borde rojo
                   bgColor = '#f5f5f5';
-                  borderColor = '#ff9800';
-                  textColor = '#999';
+                  borderColor = '#dc3545';  // Rojo en lugar de naranja
+                  textColor = '#dc3545';    // Texto en rojo
                   opacity = '0.7';
                 } else {
                   // Con stock: determinar si se está usando stock de venta
@@ -1220,6 +1682,7 @@ function displayProductResults(products) {
                 return `
                   <div style="position: relative; width: 45px; height: 45px; background: ${bgColor}; border: 2px solid ${borderColor}; border-radius: 6px; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; transition: all 0.2s; opacity: ${opacity};"
                        data-variant-id="${variantId}"
+                       data-quantity-key="${quantityKey}"
                        data-articulo="${product.articulo}"
                        data-color="${product.color}"
                        data-talle="${t.talle}"
@@ -1229,13 +1692,13 @@ function displayProductResults(products) {
                        data-stock-total="${stockTotal}"
                        data-has-no-stock="${hasNoStock}"
                        title="${tooltipText}">
-                    <div style="font-size: 14px; font-weight: 600; color: ${textColor}; ${hasNoStock ? 'text-decoration: line-through;' : ''}">${t.talle}</div>
-                    ${hasNoStock ? '<div data-no-stock-badge="true" style="font-size: 8px; font-weight: 600; color: #ff9800; margin-top: 1px;">Sin stock</div>' : ''}
+                    <div style="font-size: 14px; font-weight: 600; color: ${textColor}; ${hasNoStock ? 'text-decoration: line-through; text-decoration-color: #dc3545;' : ''}">${t.talle}</div>
+                    ${hasNoStock ? '<div data-no-stock-badge="true" style="font-size: 8px; font-weight: 600; color: #dc3545; margin-top: 1px;">Sin stock</div>' : ''}
                     ${currentQty > 0 ? `<div style="font-size: 10px; font-weight: 600; color: #CD844D; margin-top: 1px;">${currentQty}</div>` : ''}
                     ${currentQty > 0 ? `
                       <div style="position: absolute; top: 2px; right: 2px; width: 16px; height: 16px; background: #dc3545; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: bold; cursor: pointer; z-index: 10;"
                            data-action="decrease"
-                           onclick="event.stopPropagation(); window.decreaseQuantity('${variantId}')">-</div>
+                           onclick="event.stopPropagation(); window.decreaseQuantity('${quantityKey}')">-</div>
                     ` : ''}
                   </div>
                 `;
@@ -1265,10 +1728,13 @@ function displayProductResults(products) {
   // Agregar event listeners a los cuadrados de talles
   resultsDiv.querySelectorAll("[data-variant-id]").forEach(square => {
     square.addEventListener("click", (e) => {
-      // Ignorar clicks en el botón de disminuir
-      if (e.target.dataset.action === "decrease") return;
+      // Ignorar clicks en el botón de disminuir o en sus elementos hijos
+      if (e.target.dataset.action === "decrease" || e.target.closest('[data-action="decrease"]')) {
+        return;
+      }
       
       const variantId = square.dataset.variantId;
+      const quantityKey = square.dataset.quantityKey || `${variantId}|${square.dataset.talle}`;
       const articulo = square.dataset.articulo;
       const color = square.dataset.color;
       const talle = square.dataset.talle;
@@ -1277,22 +1743,19 @@ function displayProductResults(products) {
       const stockVenta = parseInt(square.dataset.stockVenta) || 0;
       const stockTotal = parseInt(square.dataset.stockTotal) || 0;
       const hasNoStock = square.dataset.hasNoStock === 'true';
-      const currentQty = selectedQuantities.get(variantId) || 0;
+      const currentQty = selectedQuantities.get(quantityKey) || 0;
       
-      // Si no hay stock, mostrar advertencia y permitir agregar de todas formas
+      // Si no hay stock, mostrar modal de confirmación
       if (hasNoStock) {
-        const confirmAdd = confirm(`⚠️ Este producto (${articulo} - ${color} - Talle ${talle}) no tiene stock disponible.\n\n¿Deseas agregarlo de todas formas?`);
-        if (confirmAdd) {
-          selectedQuantities.set(variantId, currentQty + 1);
-          updateProductSquare(variantId);
-        }
+        showStockMaxConfirmModal(articulo, color, talle, 0, stockGeneral, stockVenta, quantityKey, currentQty, true);
       } else {
         // Incrementar cantidad si hay stock disponible
         if (currentQty < stockTotal) {
-          selectedQuantities.set(variantId, currentQty + 1);
-          updateProductSquare(variantId);
+          selectedQuantities.set(quantityKey, currentQty + 1);
+          updateProductSquare(quantityKey);
         } else {
-          alert(`No hay más stock disponible para talle ${talle}. Stock total: ${stockTotal}`);
+          // Stock máximo alcanzado: mostrar modal de confirmación
+          showStockMaxConfirmModal(articulo, color, talle, stockTotal, stockGeneral, stockVenta, quantityKey, currentQty);
         }
       }
     });
@@ -1300,11 +1763,11 @@ function displayProductResults(products) {
 }
 
 // Función para actualizar un cuadrado de talle específico
-function updateProductSquare(variantId) {
-  const square = document.querySelector(`[data-variant-id="${variantId}"]`);
+function updateProductSquare(quantityKey) {
+  const square = document.querySelector(`[data-quantity-key="${quantityKey}"]`);
   if (!square) return;
   
-  const currentQty = selectedQuantities.get(variantId) || 0;
+  const currentQty = selectedQuantities.get(quantityKey) || 0;
   const stockGeneral = parseInt(square.dataset.stockGeneral) || 0;
   const stockVenta = parseInt(square.dataset.stockVenta) || 0;
   const stockTotal = parseInt(square.dataset.stockTotal) || 0;
@@ -1391,9 +1854,15 @@ function updateProductSquare(variantId) {
       decreaseBtn.textContent = '-';
       decreaseBtn.onclick = (e) => {
         e.stopPropagation();
-        window.decreaseQuantity(variantId);
+        window.decreaseQuantity(quantityKey);
       };
       square.appendChild(decreaseBtn);
+    } else {
+      // Actualizar el onclick del botón existente para asegurar que use el quantityKey correcto
+      decreaseBtn.onclick = (e) => {
+        e.stopPropagation();
+        window.decreaseQuantity(quantityKey);
+      };
     }
   } else {
     if (qtyDisplay) qtyDisplay.remove();
@@ -1403,13 +1872,78 @@ function updateProductSquare(variantId) {
 }
 
 // Función global para disminuir cantidad
-window.decreaseQuantity = function(variantId) {
-  const currentQty = selectedQuantities.get(variantId) || 0;
+window.decreaseQuantity = function(quantityKey) {
+  const currentQty = selectedQuantities.get(quantityKey) || 0;
   if (currentQty > 0) {
-    selectedQuantities.set(variantId, currentQty - 1);
-    updateProductSquare(variantId);
+    const newQty = currentQty - 1;
+    if (newQty === 0) {
+      selectedQuantities.delete(quantityKey);
+    } else {
+      selectedQuantities.set(quantityKey, newQty);
+    }
+    updateProductSquare(quantityKey);
   }
 };
+
+// Función para mostrar modal de confirmación cuando el stock está agotado o máximo alcanzado
+async function showStockMaxConfirmModal(articulo, color, talle, stockTotal, stockGeneral, stockVenta, quantityKey, currentQty, isNoStock = false) {
+  const modal = document.getElementById("no-stock-confirm-modal");
+  const confirmYes = document.getElementById("no-stock-confirm-yes");
+  const confirmNo = document.getElementById("no-stock-confirm-no");
+  const modalMessage = document.getElementById("no-stock-confirm-message");
+
+  if (!modal || !confirmYes || !confirmNo || !modalMessage) {
+    // Fallback a confirm si el modal no existe
+    const message = isNoStock 
+      ? `⚠️ Este producto (${articulo} - ${color} - Talle ${talle}) no tiene stock disponible.\n\n¿Deseas agregarlo de todas formas?`
+      : `Stock máximo alcanzado para talle ${talle}. Disponible: ${stockTotal} (Venta Público: ${stockVenta}, General: ${stockGeneral}). ¿Desea agregarlo de todas formas? (Útil en caso de mal conteo de stock)`;
+    const confirmAdd = confirm(message);
+    if (confirmAdd) {
+      selectedQuantities.set(quantityKey, currentQty + 1);
+      updateProductSquare(quantityKey);
+    }
+    return;
+  }
+
+  // Actualizar mensaje del modal
+  if (isNoStock) {
+    modalMessage.textContent = `Este producto (${articulo} - ${color} - Talle ${talle}) no tiene stock disponible. ¿Está seguro de que desea agregarlo de todas formas?`;
+  } else {
+    modalMessage.textContent = `Stock máximo alcanzado para talle ${talle}. Disponible: ${stockTotal} (Venta Público: ${stockVenta}, General: ${stockGeneral}). ¿Desea agregarlo de todas formas? (Útil en caso de mal conteo de stock)`;
+  }
+
+  modal.classList.add("active");
+
+  // Esperar respuesta del usuario
+  const userConfirmed = await new Promise((resolve) => {
+    const handleYes = () => {
+      modal.classList.remove("active");
+      // Restaurar mensaje original del modal
+      modalMessage.textContent = "Este producto no tiene stock disponible. ¿Está seguro de que desea agregarlo de todas formas?";
+      confirmYes.removeEventListener("click", handleYes);
+      confirmNo.removeEventListener("click", handleNo);
+      resolve(true);
+    };
+
+    const handleNo = () => {
+      modal.classList.remove("active");
+      // Restaurar mensaje original del modal
+      modalMessage.textContent = "Este producto no tiene stock disponible. ¿Está seguro de que desea agregarlo de todas formas?";
+      confirmYes.removeEventListener("click", handleYes);
+      confirmNo.removeEventListener("click", handleNo);
+      resolve(false);
+    };
+
+    confirmYes.addEventListener("click", handleYes);
+    confirmNo.addEventListener("click", handleNo);
+  });
+
+  if (userConfirmed) {
+    // Agregar talle como si tuviera stock (para casos de mal conteo)
+    selectedQuantities.set(quantityKey, currentQty + 1);
+    updateProductSquare(quantityKey);
+  }
+}
 
 // Agregar productos seleccionados al pedido
 async function addSelectedProductsToOrder() {
@@ -1429,10 +1963,10 @@ async function addSelectedProductsToOrder() {
   // Obtener información de cada variante seleccionada
   const productsToAdd = [];
   
-  for (const [variantId, quantity] of selectedQuantities.entries()) {
+  for (const [quantityKey, quantity] of selectedQuantities.entries()) {
     if (quantity <= 0) continue;
     
-    const square = resultsDiv.querySelector(`[data-variant-id="${variantId}"]`);
+    const square = resultsDiv.querySelector(`[data-quantity-key="${quantityKey}"]`);
     if (!square) continue;
     
     const articulo = square.dataset.articulo;
@@ -1441,10 +1975,85 @@ async function addSelectedProductsToOrder() {
     const precio = parseFloat(square.dataset.precio);
     const stockGeneral = parseInt(square.dataset.stockGeneral) || 0;
     const stockVenta = parseInt(square.dataset.stockVenta) || 0;
+    const variantId = square.dataset.variantId;
+    
+    // VALIDACIÓN: Verificar stock disponible antes de agregar
+    const stockTotal = stockGeneral + stockVenta;
+    
+    // Verificar si ya existe este producto en el pedido para calcular cantidad total
+    const existingItem = orderItems.find(item => 
+      item.product_name === articulo &&
+      item.color === color &&
+      item.size === talle
+    );
+    const totalQuantity = (existingItem?.quantity || 0) + quantity;
+    
+    // Inicializar variables para cantidad de cada stock
+    let qtyFromGeneral = 0;
+    let qtyFromVenta = 0;
+    
+    if (totalQuantity > stockTotal) {
+      const available = Math.max(0, stockTotal - (existingItem?.quantity || 0));
+      if (available <= 0) {
+        const confirmAdd = confirm(
+          `⚠️ No hay stock disponible para ${articulo} - ${color} - Talle ${talle}.\n\n` +
+          `Stock disponible: ${stockTotal} (General: ${stockGeneral}, Venta: ${stockVenta})\n\n` +
+          `¿Desea agregarlo de todas formas? (Útil en caso de mal conteo de stock)`
+        );
+        
+        if (!confirmAdd) {
+          continue; // Saltar este producto
+        }
+        
+        // Permitir agregar con cantidad solicitada pero sin stock
+        qtyFromGeneral = 0;
+        qtyFromVenta = 0;
+        // Continuar con el flujo normal (no ajustar quantity, usar la cantidad solicitada)
+      } else {
+        const confirmAdd = confirm(
+          `⚠️ Stock insuficiente para ${articulo} - ${color} - Talle ${talle}.\n\n` +
+          `Stock disponible: ${stockTotal} (General: ${stockGeneral}, Venta: ${stockVenta})\n` +
+          `Ya en pedido: ${existingItem?.quantity || 0}\n` +
+          `Cantidad a agregar: ${quantity}\n` +
+          `Total sería: ${totalQuantity}\n\n` +
+          `¿Desea agregar solo ${available} unidades disponibles?`
+        );
+        
+        if (!confirmAdd) {
+          continue;
+        }
+        
+        // Ajustar cantidad al stock disponible
+        quantity = available;
+        
+        // Calcular cuánto viene de cada stock (priorizar venta-publico, luego general)
+        if (stockVenta > 0) {
+          qtyFromVenta = Math.min(quantity, stockVenta);
+          const remaining = quantity - qtyFromVenta;
+          if (remaining > 0 && stockGeneral > 0) {
+            qtyFromGeneral = Math.min(remaining, stockGeneral);
+          }
+        } else if (stockGeneral > 0) {
+          qtyFromGeneral = Math.min(quantity, stockGeneral);
+        }
+      }
+    } else {
+      // Calcular cuánto viene de cada stock (priorizar venta-publico, luego general)
+      // Solo si no se excedió el stock
+      if (stockVenta > 0) {
+        qtyFromVenta = Math.min(quantity, stockVenta);
+        const remaining = quantity - qtyFromVenta;
+        if (remaining > 0 && stockGeneral > 0) {
+          qtyFromGeneral = Math.min(remaining, stockGeneral);
+        }
+      } else if (stockGeneral > 0) {
+        qtyFromGeneral = Math.min(quantity, stockGeneral);
+      }
+    }
     
     // Obtener la imagen del producto
     let imagen = null;
-    if (supabase) {
+    if (supabase && variantId) {
       try {
         const { data: imageData } = await supabase
           .from("variant_images")
@@ -1460,10 +2069,6 @@ async function addSelectedProductsToOrder() {
         console.warn("⚠️ No se pudo obtener la imagen:", error);
       }
     }
-    
-    // Calcular cuánto viene de cada stock
-    const qtyFromGeneral = Math.min(quantity, stockGeneral);
-    const qtyFromVenta = Math.max(0, quantity - stockGeneral);
     
     productsToAdd.push({
       product_name: articulo,
@@ -1486,8 +2091,8 @@ async function addSelectedProductsToOrder() {
   // Limpiar selecciones y actualizar visualización
   selectedQuantities.clear();
   if (resultsDiv) {
-    resultsDiv.querySelectorAll("[data-variant-id]").forEach(square => {
-      updateProductSquare(square.dataset.variantId);
+    resultsDiv.querySelectorAll("[data-quantity-key]").forEach(square => {
+      updateProductSquare(square.dataset.quantityKey);
     });
   }
   
@@ -1503,8 +2108,168 @@ async function addSelectedProductsToOrder() {
   // El aviso de confirmación fue removido según solicitud del usuario
 }
 
+// Agregar extra especial al pedido
+function addSpecialExtra() {
+  const nameInput = document.getElementById("special-extra-name");
+  const amountInput = document.getElementById("special-extra-amount");
+  
+  const name = nameInput?.value?.trim();
+  const amount = parseFloat(amountInput?.value);
+  
+  // Validaciones
+  if (!name) {
+    alert("Por favor ingrese un nombre para el extra especial");
+    return;
+  }
+  if (isNaN(amount) || amount <= 0) {
+    alert("Por favor ingrese un monto válido mayor a 0");
+    return;
+  }
+  
+  // Crear item de extra especial
+  const specialExtra = {
+    id: `special-${Date.now()}-${Math.random()}`,
+    product_name: name,
+    color: null,
+    size: null,
+    quantity: 1,
+    price_snapshot: amount,
+    imagen: null,
+    variant_id: null,
+    qty_from_general: 0,
+    qty_from_venta: 0,
+    status: 'reserved',
+    is_special_extra: true
+  };
+  
+  // Agregar a orderItems
+  orderItems.push(specialExtra);
+  
+  // Limpiar campos
+  if (nameInput) nameInput.value = "";
+  if (amountInput) amountInput.value = "";
+  
+  // Actualizar lista
+  updateOrderItemsList();
+  
+  console.log(`✅ Extra especial agregado: ${name} - $${amount}`);
+}
+
 // Agregar producto al pedido
 async function addProductToOrder(product) {
+  // VALIDACIÓN: Verificar stock disponible si se proporciona información de stock
+  if (product.variant_id && product.size && !product.is_special_extra) {
+    // Obtener stock actual desde la base de datos para validación
+    if (!warehouses.general || !warehouses.ventaPublico) {
+      await loadWarehouses();
+    }
+    
+    try {
+      const normalizedSize = normalizeSize(product.size);
+      if (normalizedSize) {
+        // Obtener stock actual por talle
+        const { data: sizeStocks } = await supabase
+          .from("variant_size_warehouse_stock")
+          .select("warehouse_id, stock_qty")
+          .eq("variant_id", product.variant_id)
+          .eq("size", normalizedSize)
+          .in("warehouse_id", [warehouses.general, warehouses.ventaPublico]);
+        
+        let stockGeneral = 0;
+        let stockVenta = 0;
+        
+        if (sizeStocks) {
+          sizeStocks.forEach(s => {
+            if (String(s.warehouse_id) === String(warehouses.general)) {
+              stockGeneral = s.stock_qty || 0;
+            } else if (String(s.warehouse_id) === String(warehouses.ventaPublico)) {
+              stockVenta = s.stock_qty || 0;
+            }
+          });
+        }
+        
+        // FALLBACK: Si no hay stock en warehouses, consultar variant_sizes
+        if (stockGeneral === 0 && stockVenta === 0) {
+          const { data: variantSize } = await supabase
+            .from("variant_sizes")
+            .select("stock_qty")
+            .eq("variant_id", product.variant_id)
+            .eq("size", normalizedSize)
+            .maybeSingle();
+          
+          if (variantSize && variantSize.stock_qty > 0) {
+            stockGeneral = variantSize.stock_qty;
+          }
+        }
+        
+        const stockTotal = stockGeneral + stockVenta;
+        
+        // Verificar si ya existe este producto en el pedido
+        const existingItem = orderItems.find(item => 
+          item.product_name === product.product_name &&
+          item.color === product.color &&
+          item.size === product.size
+        );
+        const totalQuantity = (existingItem?.quantity || 0) + product.quantity;
+        
+        // Validar que no se exceda el stock disponible
+        if (totalQuantity > stockTotal) {
+          const available = Math.max(0, stockTotal - (existingItem?.quantity || 0));
+          if (available <= 0) {
+            // Si el stock es 0, permitir agregar si el usuario confirma
+            const confirmAdd = confirm(
+              `⚠️ No hay stock disponible para ${product.product_name} - ${product.color} - Talle ${product.size}.\n\n` +
+              `Stock disponible: ${stockTotal} (General: ${stockGeneral}, Venta: ${stockVenta})\n\n` +
+              `¿Desea agregarlo de todas formas? (Útil en caso de mal conteo de stock)`
+            );
+            
+            if (!confirmAdd) {
+              return;
+            }
+            
+            // Permitir agregar con cantidad solicitada pero sin stock (qty_from_general = 0, qty_from_venta = 0)
+            product.qty_from_general = 0;
+            product.qty_from_venta = 0;
+            // Continuar con el flujo normal para agregar el producto
+          } else {
+            const confirmAdd = confirm(
+              `⚠️ Stock insuficiente para ${product.product_name} - ${product.color} - Talle ${product.size}.\n\n` +
+              `Stock disponible: ${stockTotal} (General: ${stockGeneral}, Venta: ${stockVenta})\n` +
+              `Ya en pedido: ${existingItem?.quantity || 0}\n` +
+              `Cantidad a agregar: ${product.quantity}\n` +
+              `Total sería: ${totalQuantity}\n\n` +
+              `¿Desea agregar solo ${available} unidades disponibles?`
+            );
+            
+            if (!confirmAdd) {
+              return;
+            }
+            
+            // Ajustar cantidad al stock disponible
+            product.quantity = available;
+            
+            // Recalcular qty_from_general y qty_from_venta
+            if (stockVenta > 0) {
+              product.qty_from_venta = Math.min(product.quantity, stockVenta);
+              const remaining = product.quantity - product.qty_from_venta;
+              if (remaining > 0 && stockGeneral > 0) {
+                product.qty_from_general = Math.min(remaining, stockGeneral);
+              } else {
+                product.qty_from_general = 0;
+              }
+            } else if (stockGeneral > 0) {
+              product.qty_from_general = Math.min(product.quantity, stockGeneral);
+              product.qty_from_venta = 0;
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.warn("⚠️ Error validando stock al agregar producto:", error);
+      // Continuar agregando el producto aunque falle la validación
+    }
+  }
+  
   // Verificar si ya existe en el pedido
   const existingIndex = orderItems.findIndex(item => 
     item.product_name === product.product_name &&
@@ -1531,99 +2296,21 @@ async function addProductToOrder(product) {
     });
   }
   
-  // Si hay variant_id y cantidades de stock, actualizar el stock en la base de datos
-  if (product.variant_id && (product.qty_from_general > 0 || product.qty_from_venta > 0)) {
-    await updateStockForOrder(product.variant_id, product.qty_from_general || 0, product.qty_from_venta || 0);
-  }
+  // NOTA: El stock NO se descuenta aquí al agregar productos.
+  // El stock se descuenta solo cuando se guarda el pedido mediante updateStockBatch().
+  // Esto evita descontar stock si el usuario cancela o no guarda el pedido.
   
   updateOrderItemsList();
 }
 
-// Actualizar stock en la base de datos
-async function updateStockForOrder(variantId, qtyFromGeneral, qtyFromVenta) {
-  if (!supabase) {
-    supabase = await getSupabase();
-  }
-  if (!supabase) {
-    console.error("❌ Supabase no disponible para actualizar stock");
-    return;
-  }
-  
-  // Cargar almacenes si no están cargados
-  if (!warehouses.general || !warehouses.ventaPublico) {
-    await loadWarehouses();
-  }
-  
-  try {
-    // Actualizar stock general
-    if (qtyFromGeneral > 0 && warehouses.general) {
-      // Obtener stock actual
-      const { data: currentStock, error: stockError } = await supabase
-        .from("variant_warehouse_stock")
-        .select("stock_qty")
-        .eq("variant_id", variantId)
-        .eq("warehouse_id", warehouses.general)
-        .maybeSingle();
-      
-      if (stockError && stockError.code !== 'PGRST116') {
-        console.error("❌ Error obteniendo stock general:", stockError);
-      } else {
-        const currentQty = currentStock?.stock_qty || 0;
-        const newQty = Math.max(0, currentQty - qtyFromGeneral);
-        
-        // Actualizar o insertar
-        const { error: updateError } = await supabase
-          .from("variant_warehouse_stock")
-          .upsert({
-            variant_id: variantId,
-            warehouse_id: warehouses.general,
-            stock_qty: newQty
-          }, {
-            onConflict: 'variant_id,warehouse_id'
-          });
-        
-        if (updateError) {
-          console.error("❌ Error actualizando stock general:", updateError);
-        }
-      }
-    }
-    
-    // Actualizar stock de venta
-    if (qtyFromVenta > 0 && warehouses.ventaPublico) {
-      // Obtener stock actual
-      const { data: currentStock, error: stockError } = await supabase
-        .from("variant_warehouse_stock")
-        .select("stock_qty")
-        .eq("variant_id", variantId)
-        .eq("warehouse_id", warehouses.ventaPublico)
-        .maybeSingle();
-      
-      if (stockError && stockError.code !== 'PGRST116') {
-        console.error("❌ Error obteniendo stock venta:", stockError);
-      } else {
-        const currentQty = currentStock?.stock_qty || 0;
-        const newQty = Math.max(0, currentQty - qtyFromVenta);
-        
-        // Actualizar o insertar
-        const { error: updateError } = await supabase
-          .from("variant_warehouse_stock")
-          .upsert({
-            variant_id: variantId,
-            warehouse_id: warehouses.ventaPublico,
-            stock_qty: newQty
-          }, {
-            onConflict: 'variant_id,warehouse_id'
-          });
-        
-        if (updateError) {
-          console.error("❌ Error actualizando stock venta:", updateError);
-        }
-      }
-    }
-  } catch (error) {
-    console.error("❌ Error actualizando stock:", error);
-  }
-}
+// NOTA: La función updateStockForOrder fue eliminada porque:
+// 1. No se usa (el stock se descuenta mediante updateStockBatch cuando se guarda el pedido)
+// 2. Usaba variant_warehouse_stock (obsoleto) en lugar de variant_size_warehouse_stock (actual)
+// 3. No manejaba stock por talle individual, solo por variante completa
+// El descuento de stock ahora se maneja exclusivamente mediante updateStockBatch() que:
+// - Se ejecuta solo cuando se guarda el pedido (createNewOrder/addItemsToExistingOrder)
+// - Maneja stock por talle individual usando variant_size_warehouse_stock
+// - Usa qty_from_general y qty_from_venta de cada item para descontar correctamente
 
 // Función global para agregar productos seleccionados
 window.addSelectedProductsToOrder = addSelectedProductsToOrder;
@@ -1641,7 +2328,17 @@ function updateProductQuantity(itemId, newQuantity) {
     if (newQuantity <= 0) {
       removeProductFromOrder(itemId);
     } else {
+      // Actualizar cantidad total
       item.quantity = parseInt(newQuantity);
+
+      // Si el item tenía cantidades específicas por almacén (qty_from_general / qty_from_venta),
+      // dejarlas en cero para que updateStockBatch recalcule desde cero según el stock actual.
+      // Esto evita que se descuente solo la cantidad original cuando el admin cambia la cantidad manualmente.
+      if (item.qty_from_general || item.qty_from_venta) {
+        item.qty_from_general = 0;
+        item.qty_from_venta = 0;
+      }
+
       updateOrderItemsList();
     }
   }
@@ -1670,6 +2367,16 @@ function setProductAsPicked(itemId) {
 window.toggleProductWaitingStatus = toggleProductWaitingStatus;
 window.setProductAsPicked = setProductAsPicked;
 
+// Actualizar contador de productos
+function updateProductsCounter() {
+  const counterElement = document.getElementById("products-count");
+  if (!counterElement) return;
+  
+  // Sumar la cantidad total de productos (sumando las cantidades de cada item)
+  const totalProducts = orderItems.reduce((sum, item) => sum + (item.quantity || 0), 0);
+  counterElement.textContent = totalProducts;
+}
+
 // Actualizar lista de productos del pedido
 function updateOrderItemsList() {
   const itemsList = document.getElementById("order-items-list");
@@ -1681,20 +2388,37 @@ function updateOrderItemsList() {
     const itemStatus = item.status || 'reserved';
     const isWaiting = itemStatus === 'waiting';
     const isPicked = itemStatus === 'picked';
-    const statusBadge = isWaiting 
-      ? '<span style="background: #fff4e6; color: #e65100; padding: 4px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; border: 1px solid #ff9800;">⏳ Espera</span>'
-      : isPicked
-      ? '<span style="background: #e6f4ea; color: #1b5e20; padding: 4px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; border: 1px solid #28a745;">✓ Apartado</span>'
-      : '';
+    const isSpecialExtra = item.is_special_extra === true;
+    
+    // Construir badge de estado
+    let statusBadge = '';
+    if (isSpecialExtra) {
+      statusBadge = '<span style="background: #9c27b0; color: white; padding: 4px 8px; border-radius: 12px; font-size: 11px; font-weight: 600;">⭐ EXTRA</span>';
+    } else if (isWaiting) {
+      statusBadge = '<span style="background: #fff4e6; color: #e65100; padding: 4px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; border: 1px solid #ff9800;">⏳ Espera</span>';
+    } else if (isPicked) {
+      statusBadge = '<span style="background: #e6f4ea; color: #1b5e20; padding: 4px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; border: 1px solid #28a745;">✓ Apartado</span>';
+    }
+    
+    // Determinar estilo del contenedor
+    let containerStyle = '';
+    if (isSpecialExtra) {
+      containerStyle = 'border-left: 4px solid #9c27b0; background: #f3e5f5;';
+    } else if (isWaiting) {
+      containerStyle = 'border-left: 4px solid #ff9800; background: #fff9f0;';
+    } else if (isPicked) {
+      containerStyle = 'border-left: 4px solid #28a745; background: #f0f9f4;';
+    }
+    
     return `
-      <div class="order-item-in-modal" style="${isWaiting ? 'border-left: 4px solid #ff9800; background: #fff9f0;' : isPicked ? 'border-left: 4px solid #28a745; background: #f0f9f4;' : ''}">
+      <div class="order-item-in-modal" style="${containerStyle}">
         <div class="order-item-in-modal-info">
           <div style="display: flex; align-items: center; gap: 8px;">
             <strong>${item.product_name || 'Producto'}</strong>
             ${statusBadge}
           </div>
           <div style="font-size: 13px; color: #666; margin-top: 4px;">
-            Color: ${item.color || '-'} • Talle: ${item.size || '-'}
+            ${isSpecialExtra ? 'Extra personalizado' : `Color: ${item.color || '-'} • Talle: ${item.size || '-'}`}
           </div>
           <div style="font-size: 14px; color: #CD844D; margin-top: 8px; font-weight: 600;">
             $${(item.price_snapshot || 0).toLocaleString('es-AR')} x ${item.quantity || 0} = $${subtotal.toLocaleString('es-AR')}
@@ -1819,6 +2543,7 @@ function updateOrderItemsList() {
   
   updateOrderTotal();
   updateSaveButton(); // Actualizar estado del botón de guardar
+  updateProductsCounter(); // Actualizar contador de productos
 }
 
 // Función para remover valores extra
@@ -1954,6 +2679,13 @@ async function saveOrder() {
     if (!currentCustomer) {
       console.warn("⚠️ saveOrder: No hay cliente seleccionado");
       alert("Por favor, selecciona un cliente.");
+      return;
+    }
+    
+    // Validar que currentCustomer tenga un id válido
+    if (!currentCustomer.id || !isValidUUID(currentCustomer.id)) {
+      console.error("❌ saveOrder: currentCustomer no tiene id válido:", currentCustomer);
+      alert("Error: El cliente seleccionado no tiene un ID válido. Por favor, selecciona un cliente nuevamente.");
       return;
     }
     
@@ -2134,6 +2866,448 @@ async function saveOrder() {
   }
 }
 
+// Función auxiliar para obtener variant_ids en batch (OPTIMIZACIÓN)
+async function getVariantIdsForItems(items) {
+  if (!items || items.length === 0) return [];
+  
+  // Recolectar nombres únicos de productos
+  const uniqueProductNames = [...new Set(items.map(i => i.product_name))];
+  
+  // Consulta 1: Obtener todos los productos
+  const { data: allProducts, error: productsError } = await supabase
+    .from("products")
+    .select("id, name")
+    .in("name", uniqueProductNames);
+  
+  if (productsError || !allProducts || allProducts.length === 0) {
+    console.warn("⚠️ No se encontraron productos:", productsError);
+    return items.map(item => ({ ...item, variant_id: null }));
+  }
+  
+  // Crear mapa de productos
+  const productsMap = new Map(allProducts.map(p => [p.name, p]));
+  const productIds = allProducts.map(p => p.id);
+  
+  // Consulta 2: Obtener todas las variantes
+  const { data: allVariants, error: variantsError } = await supabase
+    .from("product_variants")
+    .select("id, product_id, color")
+    .in("product_id", productIds);
+  
+  if (variantsError || !allVariants) {
+    console.warn("⚠️ Error obteniendo variantes:", variantsError);
+    return items.map(item => ({ ...item, variant_id: null }));
+  }
+  
+  // Crear mapa de variantes: "product_id|color" -> variant
+  const variantsMap = new Map(
+    allVariants.map(v => [`${v.product_id}|${v.color}`, v])
+  );
+  
+  // Consulta 3: Obtener todos los sizes (solo si hay items con size)
+  const itemsWithSizes = items.filter(i => i.size);
+  let sizesMap = new Map();
+  
+  if (itemsWithSizes.length > 0) {
+    const variantIds = allVariants.map(v => v.id);
+    const { data: allSizes } = await supabase
+      .from("variant_sizes")
+      .select("variant_id, size")
+      .in("variant_id", variantIds);
+    
+    if (allSizes) {
+      allSizes.forEach(s => {
+        const normalizedSize = normalizeSize(s.size);
+        if (!sizesMap.has(s.variant_id)) {
+          sizesMap.set(s.variant_id, new Set());
+        }
+        sizesMap.get(s.variant_id).add(normalizedSize);
+      });
+    }
+  }
+  
+  // Mapear items con variant_ids
+  return items.map(item => {
+    const product = productsMap.get(item.product_name);
+    if (!product) {
+      console.warn(`⚠️ Producto "${item.product_name}" no encontrado`);
+      return { ...item, variant_id: null };
+    }
+    
+    const variant = variantsMap.get(`${product.id}|${item.color}`);
+    if (!variant) {
+      console.warn(`⚠️ Variante no encontrada: ${item.product_name} - ${item.color}`);
+      return { ...item, variant_id: null };
+    }
+    
+    // Validar size si existe
+    if (item.size) {
+      const normalizedSize = normalizeSize(item.size);
+      const validSizes = sizesMap.get(variant.id);
+      if (validSizes && !validSizes.has(normalizedSize)) {
+        console.warn(`⚠️ Talle "${normalizedSize}" no encontrado para ${item.product_name}`);
+      }
+    }
+    
+    return { ...item, variant_id: variant.id };
+  });
+}
+
+// Función auxiliar para actualizar stock en batch (OPTIMIZACIÓN)
+async function updateStockBatch(itemsWithVariants) {
+  if (!itemsWithVariants || itemsWithVariants.length === 0) {
+    console.warn("⚠️ updateStockBatch: No hay items para actualizar stock");
+    return;
+  }
+  
+  console.log("🔵 updateStockBatch: Iniciando actualización de stock para", itemsWithVariants.length, "items");
+  console.log("🔵 updateStockBatch: Primer item ejemplo:", JSON.stringify(itemsWithVariants[0], null, 2));
+  
+  // Cargar warehouses
+  if (!warehouses.general || !warehouses.ventaPublico) {
+    await loadWarehouses();
+  }
+  
+  const warehouseIds = [warehouses.general, warehouses.ventaPublico].filter(Boolean);
+  if (warehouseIds.length === 0) {
+    console.error("❌ updateStockBatch: No se encontraron warehouses");
+    return;
+  }
+  
+  // Filtrar items con variant_id y size
+  const itemsToUpdate = itemsWithVariants.filter(i => i.variant_id && i.size);
+  if (itemsToUpdate.length === 0) {
+    console.warn("⚠️ updateStockBatch: No hay items con variant_id y size para actualizar");
+    return;
+  }
+  
+  console.log("🔵 updateStockBatch: Items a actualizar:", itemsToUpdate.length);
+  
+  const variantIds = [...new Set(itemsToUpdate.map(i => i.variant_id))];
+  console.log("🔵 updateStockBatch: Variant IDs únicos:", variantIds.length, variantIds);
+  
+  // Validar que variantIds tenga valores
+  if (!variantIds || variantIds.length === 0) {
+    console.error("❌ updateStockBatch: No hay variant IDs para consultar");
+    return;
+  }
+  
+  // Consulta 1: Obtener stocks actuales de variant_size_warehouse_stock
+  console.log("🔵 updateStockBatch: Consultando stocks actuales...");
+  console.log("🔵 updateStockBatch: Warehouse IDs:", warehouseIds);
+  const { data: currentStocks, error: stocksError } = await supabase
+    .from("variant_size_warehouse_stock")
+    .select("variant_id, size, warehouse_id, stock_qty")
+    .in("variant_id", variantIds)
+    .in("warehouse_id", warehouseIds);
+  
+  if (stocksError) {
+    console.error("❌ updateStockBatch: Error obteniendo stocks actuales:", stocksError);
+    return;
+  }
+  
+  console.log("🔵 updateStockBatch: Stocks actuales obtenidos:", currentStocks?.length || 0);
+  if (currentStocks && currentStocks.length > 0) {
+    console.log("🔵 updateStockBatch: Primer stock ejemplo:", JSON.stringify(currentStocks[0], null, 2));
+  } else {
+    console.log("🔵 updateStockBatch: currentStocks es null o vacío");
+  }
+  
+  // Consulta 2: Obtener stocks de fallback desde variant_sizes (para aplicar fallback si no hay stock en warehouses)
+  console.log("🔵 updateStockBatch: ANTES de consultar fallback - Variant IDs:", variantIds);
+  console.log("🔵 updateStockBatch: Consultando stocks de fallback desde variant_sizes...");
+  
+  let variantSizes = null;
+  let variantSizesError = null;
+  
+  try {
+    console.log("🔵 updateStockBatch: Ejecutando consulta a variant_sizes...");
+    const result = await supabase
+      .from("variant_sizes")
+      .select("variant_id, size, stock_qty")
+      .in("variant_id", variantIds);
+    
+    variantSizes = result.data;
+    variantSizesError = result.error;
+    console.log("🔵 updateStockBatch: Consulta a variant_sizes completada");
+  } catch (error) {
+    console.error("❌ updateStockBatch: Excepción al consultar variant_sizes:", error);
+    variantSizesError = error;
+  }
+  
+  if (variantSizesError) {
+    console.error("❌ updateStockBatch: Error obteniendo variant_sizes (fallback):", variantSizesError);
+    console.error("❌ updateStockBatch: Detalles del error:", JSON.stringify(variantSizesError, null, 2));
+  } else {
+    console.log("🔵 updateStockBatch: Variant sizes obtenidos:", variantSizes?.length || 0);
+    if (variantSizes && variantSizes.length > 0) {
+      console.log("🔵 updateStockBatch: Primer variant_size ejemplo:", JSON.stringify(variantSizes[0], null, 2));
+    } else {
+      console.warn("⚠️ updateStockBatch: variantSizes está vacío o null");
+    }
+  }
+  
+  // Crear mapa de stock de fallback (variant_sizes)
+  const fallbackStockMap = new Map(
+    (variantSizes || []).map(vs => [
+      `${vs.variant_id}|${normalizeSize(vs.size)}`,
+      vs.stock_qty || 0
+    ])
+  );
+  
+  console.log("🔵 updateStockBatch: Fallback stock map creado con", fallbackStockMap.size, "entradas");
+  if (fallbackStockMap.size > 0) {
+    const firstFallbackKey = Array.from(fallbackStockMap.keys())[0];
+    const firstFallbackValue = fallbackStockMap.get(firstFallbackKey);
+    console.log("🔵 updateStockBatch: Primer fallback ejemplo:", firstFallbackKey, "->", firstFallbackValue);
+  }
+  
+  // Crear mapa de stock actual desde variant_size_warehouse_stock
+  const stockMap = new Map(
+    (currentStocks || []).map(s => [
+      `${s.variant_id}|${normalizeSize(s.size)}|${s.warehouse_id}`,
+      s.stock_qty || 0
+    ])
+  );
+  
+  // Aplicar fallback: si un variant+size no tiene stock en ningún warehouse, usar variant_sizes.stock_qty
+  // Esto asegura que si el stock está solo en variant_sizes, se use como stock inicial
+  if (fallbackStockMap.size > 0) {
+    itemsToUpdate.forEach(item => {
+      const normalizedSize = normalizeSize(item.size);
+      if (!normalizedSize) return;
+      
+      const fallbackKey = `${item.variant_id}|${normalizedSize}`;
+      const fallbackStock = fallbackStockMap.get(fallbackKey) || 0;
+      
+      if (fallbackStock > 0) {
+        // Verificar si hay stock en algún warehouse para este variant+size
+        let hasStockInWarehouse = false;
+        for (const wid of warehouseIds) {
+          const key = `${item.variant_id}|${normalizedSize}|${wid}`;
+          if (stockMap.has(key) && stockMap.get(key) > 0) {
+            hasStockInWarehouse = true;
+            break;
+          }
+        }
+        
+        // Si no hay stock en ningún warehouse pero hay en variant_sizes, inicializar en general
+        if (!hasStockInWarehouse && warehouses.general) {
+          const generalKey = `${item.variant_id}|${normalizedSize}|${warehouses.general}`;
+          if (!stockMap.has(generalKey)) {
+            console.log(`🔵 updateStockBatch: Aplicando fallback para ${item.variant_id} talle ${normalizedSize}: ${fallbackStock} unidades desde variant_sizes`);
+            stockMap.set(generalKey, fallbackStock);
+          }
+        }
+      }
+    });
+  }
+  
+  console.log("🔵 updateStockBatch: Stock map creado con", stockMap.size, "entradas (incluye fallback)");
+  
+  // Preparar actualizaciones
+  const stockChanges = [];
+  const variantSizesUpdates = []; // Para actualizar variant_sizes cuando se usa fallback
+  
+  itemsToUpdate.forEach((item, index) => {
+    const normalizedSize = normalizeSize(item.size);
+    if (!normalizedSize) {
+      console.warn(`⚠️ updateStockBatch: Item ${index} sin tamaño normalizado:`, item.size);
+      return;
+    }
+    
+    // Obtener cantidades de cada almacén (si están definidas)
+    const qtyFromGeneral = item.qty_from_general || 0;
+    const qtyFromVenta = item.qty_from_venta || 0;
+    const quantity = item.quantity || 0;
+    
+    console.log(`🔵 updateStockBatch: Item ${index} - Variant: ${item.variant_id}, Size: ${normalizedSize}, Qty: ${quantity}, From General: ${qtyFromGeneral}, From Venta: ${qtyFromVenta}`);
+    
+    // Validar consistencia: si tiene qty_from_general o qty_from_venta, deben sumar quantity
+    const hasSpecificQuantities = qtyFromGeneral > 0 || qtyFromVenta > 0;
+    if (hasSpecificQuantities && (qtyFromGeneral + qtyFromVenta) !== quantity) {
+      console.warn(`⚠️ Inconsistencia en cantidades para item ${item.variant_id} talle ${normalizedSize}: qty_from_general=${qtyFromGeneral}, qty_from_venta=${qtyFromVenta}, quantity=${quantity}`);
+    }
+    
+    // Si tiene cantidades específicas por almacén, usarlas
+    if (hasSpecificQuantities) {
+      // Descontar del almacén general si corresponde
+      if (qtyFromGeneral > 0 && warehouses.general) {
+        const key = `${item.variant_id}|${normalizedSize}|${warehouses.general}`;
+        let currentQty = stockMap.get(key) || 0;
+        
+        console.log(`🔵 updateStockBatch: Stock inicial para ${item.variant_id} talle ${normalizedSize} en general: ${currentQty}`);
+        console.log(`🔵 updateStockBatch: Fallback map tiene ${fallbackStockMap.size} entradas`);
+        
+        // FALLBACK: Si no hay stock en warehouse pero hay en variant_sizes, usarlo
+        if (currentQty === 0) {
+          const fallbackKey = `${item.variant_id}|${normalizedSize}`;
+          console.log(`🔵 updateStockBatch: Buscando fallback con key: "${fallbackKey}"`);
+          console.log(`🔵 updateStockBatch: Fallback map tiene ${fallbackStockMap.size} entradas`);
+          const fallbackStock = fallbackStockMap.get(fallbackKey) || 0;
+          console.log(`🔵 updateStockBatch: Fallback stock encontrado: ${fallbackStock}`);
+          
+          if (fallbackStock > 0) {
+            console.log(`🔵 updateStockBatch: ✅ Usando fallback para ${item.variant_id} talle ${normalizedSize}: ${fallbackStock} unidades desde variant_sizes`);
+            currentQty = fallbackStock;
+            // Actualizar el mapa para que refleje el stock real
+            stockMap.set(key, currentQty);
+            // Marcar que este item usa fallback para actualizar variant_sizes también
+            item._usesFallback = true;
+            item._fallbackStock = fallbackStock;
+          } else {
+            console.warn(`⚠️ updateStockBatch: No hay fallback disponible para ${item.variant_id} talle ${normalizedSize}`);
+            // Debug: mostrar todas las keys del fallback map para diagnosticar
+            if (fallbackStockMap.size > 0) {
+              console.log(`🔵 updateStockBatch: Keys disponibles en fallback map:`, Array.from(fallbackStockMap.keys()).slice(0, 5));
+            }
+          }
+        }
+        
+        const newQty = Math.max(0, currentQty - qtyFromGeneral);
+        console.log(`🔵 updateStockBatch: Descontando ${qtyFromGeneral} de general. Stock actual: ${currentQty}, Nuevo stock: ${newQty}`);
+        
+        if (newQty === 0 && currentQty > 0) {
+          console.log(`✅ updateStockBatch: Stock se descontará correctamente de ${currentQty} a ${newQty}`);
+        } else if (newQty === 0 && currentQty === 0) {
+          console.warn(`⚠️ updateStockBatch: ADVERTENCIA - Intentando descontar ${qtyFromGeneral} pero el stock actual es 0`);
+        }
+        
+        stockChanges.push({
+          variant_id: item.variant_id,
+          size: normalizedSize,
+          warehouse_id: warehouses.general,
+          stock_qty: newQty
+        });
+        
+        // Si se usó fallback, también actualizar variant_sizes.stock_qty
+        if (item._usesFallback && item._fallbackStock !== undefined) {
+          const newVariantSizeStock = Math.max(0, item._fallbackStock - qtyFromGeneral);
+          variantSizesUpdates.push({
+            variant_id: item.variant_id,
+            size: normalizedSize,
+            stock_qty: newVariantSizeStock
+          });
+          console.log(`🔵 updateStockBatch: También actualizando variant_sizes para ${item.variant_id} talle ${normalizedSize}: ${item._fallbackStock} → ${newVariantSizeStock}`);
+        }
+      }
+      
+      // Descontar del almacén venta-publico si corresponde
+      if (qtyFromVenta > 0 && warehouses.ventaPublico) {
+        const key = `${item.variant_id}|${normalizedSize}|${warehouses.ventaPublico}`;
+        const currentQty = stockMap.get(key) || 0;
+        const newQty = Math.max(0, currentQty - qtyFromVenta);
+        
+        stockChanges.push({
+          variant_id: item.variant_id,
+          size: normalizedSize,
+          warehouse_id: warehouses.ventaPublico,
+          stock_qty: newQty
+        });
+      }
+    } else {
+      // FALLBACK: Si no tiene cantidades específicas, usar lógica de prioridad
+      // Priorizar venta-publico si hay stock, sino general
+      let remainingQty = quantity;
+      
+      // Intentar primero desde venta-publico
+      if (warehouses.ventaPublico && remainingQty > 0) {
+        const key = `${item.variant_id}|${normalizedSize}|${warehouses.ventaPublico}`;
+        const currentQty = stockMap.get(key) || 0;
+        const qtyToDeduct = Math.min(remainingQty, currentQty);
+        
+        if (qtyToDeduct > 0) {
+          const newQty = Math.max(0, currentQty - qtyToDeduct);
+          stockChanges.push({
+            variant_id: item.variant_id,
+            size: normalizedSize,
+            warehouse_id: warehouses.ventaPublico,
+            stock_qty: newQty
+          });
+          remainingQty -= qtyToDeduct;
+        }
+      }
+      
+      // Si aún queda cantidad, descontar de general
+      if (warehouses.general && remainingQty > 0) {
+        const key = `${item.variant_id}|${normalizedSize}|${warehouses.general}`;
+        const currentQty = stockMap.get(key) || 0;
+        const qtyToDeduct = Math.min(remainingQty, currentQty);
+        
+        if (qtyToDeduct > 0) {
+          const newQty = Math.max(0, currentQty - qtyToDeduct);
+          stockChanges.push({
+            variant_id: item.variant_id,
+            size: normalizedSize,
+            warehouse_id: warehouses.general,
+            stock_qty: newQty
+          });
+          remainingQty -= qtyToDeduct;
+        }
+      }
+      
+      // Si aún queda cantidad sin descontar, registrar advertencia
+      if (remainingQty > 0) {
+        console.warn(`⚠️ No hay suficiente stock para descontar ${remainingQty} unidades de ${item.variant_id} talle ${normalizedSize}`);
+      }
+    }
+  });
+  
+  // Consulta 2: Actualizar todos los stocks de una vez
+  console.log("🔵 updateStockBatch: Total cambios preparados:", stockChanges.length);
+  if (stockChanges.length > 0) {
+    console.log(`🔵 updateStockBatch: Actualizando ${stockChanges.length} registros de stock`);
+    console.log("🔵 updateStockBatch: Primer cambio ejemplo:", JSON.stringify(stockChanges[0], null, 2));
+    
+    try {
+      const { data, error } = await supabase
+        .from("variant_size_warehouse_stock")
+        .upsert(stockChanges, {
+          onConflict: 'variant_id,size,warehouse_id'
+        });
+      
+      if (error) {
+        console.error("❌ updateStockBatch: Error actualizando stock batch:", error);
+        console.error("❌ updateStockBatch: Detalles del error:", JSON.stringify(error, null, 2));
+        throw error;
+      } else {
+        console.log("✅ updateStockBatch: Stock actualizado correctamente para", stockChanges.length, "registros en variant_size_warehouse_stock");
+        if (data) {
+          console.log("✅ updateStockBatch: Datos retornados:", data.length || 0, "registros");
+        }
+      }
+      
+      // Actualizar variant_sizes si se usó fallback
+      if (variantSizesUpdates.length > 0) {
+        console.log(`🔵 updateStockBatch: Actualizando ${variantSizesUpdates.length} registros en variant_sizes (fallback usado)`);
+        const { data: variantSizesData, error: variantSizesUpdateError } = await supabase
+          .from("variant_sizes")
+          .upsert(variantSizesUpdates, {
+            onConflict: 'variant_id,size'
+          });
+        
+        if (variantSizesUpdateError) {
+          console.error("❌ updateStockBatch: Error actualizando variant_sizes:", variantSizesUpdateError);
+          console.error("❌ updateStockBatch: Detalles del error:", JSON.stringify(variantSizesUpdateError, null, 2));
+        } else {
+          console.log("✅ updateStockBatch: variant_sizes actualizado correctamente para", variantSizesUpdates.length, "registros");
+          if (variantSizesData) {
+            console.log("✅ updateStockBatch: Datos retornados de variant_sizes:", variantSizesData.length || 0, "registros");
+          }
+        }
+      } else {
+        console.log("🔵 updateStockBatch: No se usó fallback, no es necesario actualizar variant_sizes");
+      }
+    } catch (error) {
+      console.error("❌ updateStockBatch: Excepción al actualizar stock:", error);
+      throw error;
+    }
+  } else {
+    console.warn("⚠️ updateStockBatch: No hay cambios de stock para aplicar");
+    console.warn("⚠️ updateStockBatch: Esto puede indicar que los items no tienen qty_from_general/qty_from_venta o que hay un problema con el procesamiento");
+  }
+}
+
 // Crear nuevo pedido
 async function createNewOrder(customerId, items, total, extraValues = {}) {
   console.log("🔵 createNewOrder: Iniciando creación de pedido...");
@@ -2141,41 +3315,52 @@ async function createNewOrder(customerId, items, total, extraValues = {}) {
   console.log("🔵 createNewOrder: items:", items);
   console.log("🔵 createNewOrder: total:", total);
   
-  // Primero, obtener el variant_id para cada item
-  const itemsWithVariants = await Promise.all(items.map(async (item) => {
-    // Buscar el producto por nombre
-    const { data: product, error: productError } = await supabase
-      .from("products")
+  // Validar que customerId sea válido
+  if (!customerId || !isValidUUID(customerId)) {
+    const errorMsg = "Error: No se proporcionó un ID de cliente válido para crear el pedido.";
+    console.error("❌ createNewOrder:", errorMsg);
+    throw new Error(errorMsg);
+  }
+  
+  // Verificar que el cliente existe en la base de datos antes de crear el pedido
+  try {
+    const { data: customer, error: customerError } = await supabase
+      .from("customers")
       .select("id")
-      .eq("name", item.product_name)
+      .eq("id", customerId)
       .maybeSingle();
     
-    if (productError || !product) {
-      console.warn(`⚠️ Producto "${item.product_name}" no encontrado:`, productError);
-      return {
-        ...item,
-        variant_id: null
-      };
+    if (customerError) {
+      console.error("❌ createNewOrder: Error verificando cliente:", customerError);
+      throw new Error(`Error al verificar el cliente: ${customerError.message}`);
     }
     
-    // Buscar la variante por product_id, color y size
-    const { data: variant, error: variantError } = await supabase
-      .from("product_variants")
-      .select("id")
-      .eq("product_id", product.id)
-      .eq("size", item.size)
-      .eq("color", item.color)
-      .maybeSingle();
-    
-    if (variantError || !variant) {
-      console.warn(`⚠️ Variante no encontrada para "${item.product_name}" - ${item.color} - ${item.size}:`, variantError);
+    if (!customer || !customer.id) {
+      const errorMsg = `Error: No se encontró el cliente con ID "${customerId}" en la base de datos. Por favor, selecciona un cliente válido.`;
+      console.error("❌ createNewOrder:", errorMsg);
+      throw new Error(errorMsg);
     }
     
-    return {
-      ...item,
-      variant_id: variant?.id || null
-    };
-  }));
+    console.log("✅ createNewOrder: Cliente verificado en customers:", customer.id);
+    
+    // Verificar que el cliente tiene un formato UUID válido (ya validado arriba, pero confirmar)
+    if (!isValidUUID(customer.id)) {
+      const errorMsg = `Error: El ID del cliente "${customer.id}" tiene formato UUID inválido. Por favor, selecciona un cliente válido.`;
+      console.error("❌ createNewOrder:", errorMsg);
+      throw new Error(errorMsg);
+    }
+  } catch (error) {
+    // Si es un error que ya tiene mensaje, re-lanzarlo
+    if (error.message && error.message.startsWith("Error:")) {
+      throw error;
+    }
+    // Si es otro error, envolverlo
+    console.error("❌ createNewOrder: Error inesperado verificando cliente:", error);
+    throw new Error(`Error al verificar el cliente: ${error.message || "Error desconocido"}`);
+  }
+  
+  // OPTIMIZACIÓN: Obtener variant_ids en batch (una sola consulta en lugar de N consultas)
+  const itemsWithVariants = await getVariantIdsForItems(items);
   
   console.log("🔵 createNewOrder: itemsWithVariants:", itemsWithVariants);
   
@@ -2185,6 +3370,7 @@ async function createNewOrder(customerId, items, total, extraValues = {}) {
     : null;
   
   console.log("🔵 createNewOrder: Creando pedido en base de datos...");
+  console.log("🔵 createNewOrder: customer_id a insertar:", customerId, "tipo:", typeof customerId, "formato válido:", isValidUUID(customerId));
   // Crear el pedido
   const { data: order, error: orderError } = await supabase
     .from("orders")
@@ -2199,6 +3385,14 @@ async function createNewOrder(customerId, items, total, extraValues = {}) {
   
   if (orderError) {
     console.error("❌ createNewOrder: Error creando pedido:", orderError);
+    console.error("❌ createNewOrder: customer_id que causó el error:", customerId);
+    console.error("❌ createNewOrder: Detalles del error:", JSON.stringify(orderError, null, 2));
+    
+    // Mensaje de error más descriptivo si es foreign key constraint
+    if (orderError.message && orderError.message.includes("foreign key constraint")) {
+      throw new Error(`Error: El cliente con ID "${customerId}" no puede ser usado porque su ID no existe en auth.users. Esto suele pasar con clientes importados. Por favor, verifica que el cliente tenga un usuario asociado válido.`);
+    }
+    
     throw new Error(`Error creando pedido: ${orderError.message}`);
   }
   
@@ -2219,7 +3413,7 @@ async function createNewOrder(customerId, items, total, extraValues = {}) {
     quantity: item.quantity,
     price_snapshot: item.price_snapshot,
     imagen: item.imagen,
-    status: "reserved"
+    status: item.status || "reserved" // Usar el estado del item si existe, sino usar "reserved" por defecto
   }));
   
   console.log("🔵 createNewOrder: Creando items del pedido...");
@@ -2236,39 +3430,9 @@ async function createNewOrder(customerId, items, total, extraValues = {}) {
   
   console.log("✅ createNewOrder: Items del pedido creados correctamente");
   
-  // Actualizar stock reservado
-  console.log("🔵 createNewOrder: Actualizando stock reservado...");
-  for (const item of itemsWithVariants) {
-    if (item.variant_id) {
-      // Obtener el stock reservado actual
-      const { data: variantData, error: variantError } = await supabase
-        .from("product_variants")
-        .select("reserved_qty")
-        .eq("id", item.variant_id)
-        .single();
-      
-      if (variantError) {
-        console.error(`❌ Error obteniendo variant ${item.variant_id}:`, variantError);
-        // Continuar con el siguiente item
-        continue;
-      }
-      
-      if (variantData) {
-        // Actualizar stock reservado
-        const { error: updateError } = await supabase
-          .from("product_variants")
-          .update({ 
-            reserved_qty: (variantData.reserved_qty || 0) + item.quantity 
-          })
-          .eq("id", item.variant_id);
-        
-        if (updateError) {
-          console.error(`❌ Error actualizando stock para variant ${item.variant_id}:`, updateError);
-          // No lanzar error, solo loguear - el pedido ya está creado
-        }
-      }
-    }
-  }
+  // OPTIMIZACIÓN: Actualizar stock en batch (una sola consulta en lugar de N*M consultas)
+  console.log("🔵 createNewOrder: Actualizando stock...");
+  await updateStockBatch(itemsWithVariants);
   
   console.log("✅ createNewOrder: Proceso completado exitosamente");
   
@@ -2278,31 +3442,8 @@ async function createNewOrder(customerId, items, total, extraValues = {}) {
 
 // Agregar items a pedido existente
 async function addItemsToExistingOrder(orderId, items, newTotal = null, extraValues = {}) {
-  // Similar a createNewOrder pero actualizando el pedido existente
-  const itemsWithVariants = await Promise.all(items.map(async (item) => {
-    const { data: product } = await supabase
-      .from("products")
-      .select("id")
-      .eq("name", item.product_name)
-      .maybeSingle();
-    
-    if (!product) {
-      throw new Error(`Producto "${item.product_name}" no encontrado`);
-    }
-    
-    const { data: variant } = await supabase
-      .from("product_variants")
-      .select("id")
-      .eq("product_id", product.id)
-      .eq("size", item.size)
-      .eq("color", item.color)
-      .maybeSingle();
-    
-    return {
-      ...item,
-      variant_id: variant?.id
-    };
-  }));
+  // OPTIMIZACIÓN: Obtener variant_ids en batch (una sola consulta en lugar de N consultas)
+  const itemsWithVariants = await getVariantIdsForItems(items);
   
   // Obtener el pedido con sus items para verificar el estado
   const { data: order } = await supabase
@@ -2398,10 +3539,7 @@ async function addItemsToExistingOrder(orderId, items, newTotal = null, extraVal
       // Si está cerrado, enviado o en devolución, no cambiar el estado
       delete updateData.status;
       
-      // Si el pedido está enviado, actualizar sent_at a la fecha actual
-      if (currentOrder.status === "sent") {
-        updateData.sent_at = new Date().toISOString();
-      }
+      // Si el pedido está enviado, dejar que el backend mantenga/actualice sent_at
       
       // Si el pedido está en devolución, mantener el estado de devolución
       // No hacer nada adicional, solo preservar el estado
@@ -2413,37 +3551,8 @@ async function addItemsToExistingOrder(orderId, items, newTotal = null, extraVal
     .update(updateData)
     .eq("id", orderId);
   
-  // Actualizar stock según el estado del item
-  for (const item of itemsWithVariants) {
-    if (item.variant_id) {
-      // Obtener el stock actual
-      const { data: variantData } = await supabase
-        .from("product_variants")
-        .select("stock_qty, reserved_qty")
-        .eq("id", item.variant_id)
-        .single();
-      
-      if (variantData) {
-        if (newItemStatus === "picked") {
-          // Si está "picked", descontar del stock físico (stock_qty)
-          await supabase
-            .from("product_variants")
-            .update({ 
-              stock_qty: Math.max(0, (variantData.stock_qty || 0) - item.quantity)
-            })
-            .eq("id", item.variant_id);
-        } else {
-          // Si está "reserved", solo reservar (aumentar reserved_qty)
-          await supabase
-            .from("product_variants")
-            .update({ 
-              reserved_qty: (variantData.reserved_qty || 0) + item.quantity 
-            })
-            .eq("id", item.variant_id);
-        }
-      }
-    }
-  }
+  // OPTIMIZACIÓN: Actualizar stock en batch (una sola consulta en lugar de N*M consultas)
+  await updateStockBatch(itemsWithVariants);
 }
 
 // Cargar pedido para editar

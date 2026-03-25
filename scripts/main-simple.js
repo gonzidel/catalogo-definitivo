@@ -231,12 +231,29 @@ function renderizarGaleria(producto) {
 }
 
 function renderizarColores(producto) {
-  return producto.DetalleColor.map(
-    (v) =>
-      `<button class='color-btn' data-src="${v.images[0] || ""}">${
-        v.color
-      }</button>`
-  ).join("");
+  return producto.DetalleColor.map((v) => {
+    const hexColor = v.hex_color || "#CD844D"; // Color por defecto si no hay hex_color
+    // Calcular si el color es claro u oscuro para ajustar el color del texto
+    const rgb = hexToRgb(hexColor);
+    const brightness = rgb ? (rgb.r * 299 + rgb.g * 587 + rgb.b * 114) / 1000 : 128;
+    const textColor = brightness > 128 ? "#000000" : "#FFFFFF";
+    
+    return `<button class='color-btn' 
+                    data-src="${v.images[0] || ""}" 
+                    style="background-color: ${hexColor}; color: ${textColor}; border: 1px solid ${hexColor};">${
+      v.color
+    }</button>`;
+  }).join("");
+}
+
+// Función auxiliar para convertir hex a RGB
+function hexToRgb(hex) {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return result ? {
+    r: parseInt(result[1], 16),
+    g: parseInt(result[2], 16),
+    b: parseInt(result[3], 16)
+  } : null;
 }
 
 function renderizarVariantes(producto) {

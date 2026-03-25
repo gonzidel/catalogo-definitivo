@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <meta name="robots" content="noindex" />
   <title>Productos FYL | Admin</title>
   <link rel="stylesheet" href="../styles.css" />
@@ -306,6 +306,70 @@
       flex-direction: column;
       gap: 10px;
     }
+    /* Grupos de colores desplegables en desktop */
+    .color-group {
+      margin-bottom: 12px;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      overflow: hidden;
+      background: #fff;
+    }
+    .color-group-header {
+      display: grid;
+      grid-template-columns: 2fr 1fr 1fr 1fr 1fr 1fr auto;
+      gap: 12px;
+      padding: 14px 16px;
+      background: #f8f8f8;
+      cursor: pointer;
+      user-select: none;
+      align-items: center;
+      border-bottom: 2px solid #e0e0e0;
+      transition: background-color 0.2s;
+    }
+    .color-group-header:hover {
+      background: #f0f0f0;
+    }
+    @media (max-width: 1200px) {
+      .color-group-header {
+        grid-template-columns: 1.8fr 0.9fr 0.9fr 0.9fr 0.9fr 0.9fr auto;
+        gap: 8px;
+        padding: 12px;
+      }
+    }
+    @media (max-width: 1024px) and (min-width: 769px) {
+      .color-group-header {
+        grid-template-columns: 1.5fr 0.8fr 0.8fr 0.8fr 0.8fr 0.8fr auto;
+        gap: 6px;
+        padding: 10px 8px;
+      }
+    }
+    .color-group-name {
+      font-weight: 700;
+      font-size: 16px;
+      color: #333;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .color-group-expand-icon {
+      font-size: 12px;
+      color: #666;
+      transition: transform 0.2s;
+    }
+    .color-group-header.expanded .color-group-expand-icon {
+      transform: rotate(180deg);
+    }
+    .color-group-summary {
+      font-size: 13px;
+      color: #666;
+      text-align: center;
+    }
+    .color-group-details {
+      display: none;
+    }
+    .color-group-details.expanded {
+      display: block;
+    }
     .variant-item {
       display: grid;
       grid-template-columns: 2fr 1fr 1fr 1fr 1fr 1fr auto;
@@ -436,7 +500,7 @@
       flex-direction: column;
       align-items: center;
       gap: 2px;
-      min-width: 50px;
+      min-width: 70px;
     }
     .mobile-stock-total {
       font-weight: 700;
@@ -452,13 +516,15 @@
       color: #333;
     }
     .mobile-stock-input {
-      width: 60px;
-      padding: 4px;
+      width: 70px;
+      padding: 6px 4px;
       border: 1px solid #ddd;
       border-radius: 4px;
-      font-size: 13px;
+      font-size: 16px; /* Evita zoom en iOS */
       text-align: center;
       font-weight: 600;
+      -webkit-appearance: none;
+      -moz-appearance: textfield;
     }
     .mobile-stock-input:focus {
       outline: none;

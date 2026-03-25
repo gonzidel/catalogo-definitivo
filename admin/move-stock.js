@@ -1,6 +1,7 @@
 // admin/move-stock.js
 import { requireAuth } from "./admin-auth.js";
 import { supabase } from "../scripts/supabase-client.js";
+import { normalizeSize } from "../scripts/utils/size-normalizer.js";
 
 await requireAuth();
 
@@ -36,46 +37,101 @@ async function searchProducts(term) {
     
     // Primero intentar buscar productos por nombre
     if (searchTerm) {
-      const { data: productsByName, error: productsError } = await supabase
+      // Si el término parece ser un código corto (solo números o alfanumérico corto),
+      // buscar coincidencias exactas o que empiecen con el término seguido de un separador
+      const isShortCode = /^[a-z0-9]{1,5}$/i.test(searchTerm);
+      
+      let productsQuery = supabase
         .from("products")
         .select("id, name, category, status")
-        .eq("status", "active")
-        .ilike("name", `%${searchTerm}%`)
-        .limit(100);
+        .in("status", ["active", "pending_stock", "draft"]);
       
-      if (productsError) throw productsError;
-      
-      if (productsByName && productsByName.length > 0) {
-        products = productsByName;
-        productIds = products.map(p => p.id);
+      if (isShortCode) {
+        // Para códigos cortos, buscar coincidencias exactas primero
+        const { data: exactMatch, error: exactError } = await supabase
+          .from("products")
+          .select("id, name, category, status")
+          .in("status", ["active", "pending_stock", "draft"])
+          .ilike("name", searchTerm)
+          .limit(100);
+        
+        if (exactError) throw exactError;
+        
+        if (exactMatch && exactMatch.length > 0) {
+          products = exactMatch;
+          productIds = products.map(p => p.id);
+        } else {
+          // Si no hay coincidencia exacta, buscar que el código esté al inicio o al final
+          // pero separado por un guion, espacio, o al inicio/fin del nombre
+          // Esto evita que "55" coincida con "MU55" o "Z55"
+          const { data: prefixMatch, error: prefixError } = await supabase
+            .from("products")
+            .select("id, name, category, status")
+            .in("status", ["active", "pending_stock", "draft"])
+            .or(`name.ilike.${searchTerm},name.ilike.${searchTerm}-%,name.ilike.${searchTerm} %,name.ilike.%-${searchTerm},name.ilike.% ${searchTerm}`)
+            .limit(100);
+          
+          if (prefixError) throw prefixError;
+          
+          if (prefixMatch && prefixMatch.length > 0) {
+            // Filtrar resultados para asegurar que el término esté separado correctamente
+            const filtered = prefixMatch.filter(p => {
+              const name = p.name.toLowerCase();
+              // Coincidencia exacta
+              if (name === searchTerm) return true;
+              // Empieza con el término seguido de separador
+              if (name.startsWith(searchTerm + "-") || name.startsWith(searchTerm + " ")) return true;
+              // Termina con el término precedido de separador
+              if (name.endsWith("-" + searchTerm) || name.endsWith(" " + searchTerm)) return true;
+              return false;
+            });
+            
+            if (filtered.length > 0) {
+              products = filtered;
+              productIds = products.map(p => p.id);
+            }
+          }
+        }
+      } else {
+        // Para términos más largos, usar búsqueda parcial normal
+        const { data: productsByName, error: productsError } = await productsQuery
+          .ilike("name", `%${searchTerm}%`)
+          .limit(100);
+        
+        if (productsError) throw productsError;
+        
+        if (productsByName && productsByName.length > 0) {
+          products = productsByName;
+          productIds = products.map(p => p.id);
+        }
       }
     }
     
-    // Buscar variantes que coincidan con el término (SKU, color, size)
+    // Buscar variantes que coincidan con el término (SKU, color)
+    // Nota: size ya no está en product_variants, se busca en variant_sizes después
     let variantsQuery = supabase
       .from("product_variants")
       .select(`
         id,
         sku,
         color,
-        size,
         active,
         product_id,
         products!inner(id, name, category, status)
       `)
       .eq("active", true)
-      .eq("products.status", "active");
+      .in("products.status", ["active", "pending_stock", "draft"]);
     
     if (searchTerm) {
       // Si ya tenemos productos por nombre, buscar variantes de esos productos
       if (productIds.length > 0) {
         variantsQuery = variantsQuery
           .in("product_id", productIds)
-          .or(`sku.ilike.%${searchTerm}%,color.ilike.%${searchTerm}%,size.ilike.%${searchTerm}%`);
+          .or(`sku.ilike.%${searchTerm}%,color.ilike.%${searchTerm}%`);
       } else {
-        // Si no hay productos por nombre, buscar variantes directamente por SKU, color o size
+        // Si no hay productos por nombre, buscar variantes directamente por SKU o color
         variantsQuery = variantsQuery.or(
-          `sku.ilike.%${searchTerm}%,color.ilike.%${searchTerm}%,size.ilike.%${searchTerm}%`
+          `sku.ilike.%${searchTerm}%,color.ilike.%${searchTerm}%`
         );
       }
     } else {
@@ -98,6 +154,60 @@ async function searchProducts(term) {
       return;
     }
     
+    // Obtener talles desde variant_sizes para las variantes encontradas
+    const variantIds = variants.map(v => v.id);
+    const { data: variantSizes, error: sizesError } = await supabase
+      .from("variant_sizes")
+      .select("variant_id, size")
+      .in("variant_id", variantIds)
+      .order("variant_id, size");
+    
+    if (sizesError) {
+      console.warn("Error obteniendo talles desde variant_sizes:", sizesError);
+    }
+    
+    // Agrupar talles por variant_id
+    const sizesByVariant = new Map();
+    if (variantSizes) {
+      variantSizes.forEach(vs => {
+        if (!sizesByVariant.has(vs.variant_id)) {
+          sizesByVariant.set(vs.variant_id, []);
+        }
+        sizesByVariant.get(vs.variant_id).push(vs.size);
+      });
+    }
+    
+    // Si el término de búsqueda parece ser un talle, filtrar variantes que tengan ese talle
+    let filteredVariants = variants;
+    if (searchTerm && variantSizes) {
+      const searchTermLower = searchTerm.toLowerCase().trim();
+      // Verificar si alguna variante tiene un talle que coincida
+      const matchingVariantIds = new Set();
+      variantSizes.forEach(vs => {
+        if (String(vs.size || "").toLowerCase().includes(searchTermLower)) {
+          matchingVariantIds.add(vs.variant_id);
+        }
+      });
+      
+      if (matchingVariantIds.size > 0) {
+        filteredVariants = variants.filter(v => matchingVariantIds.has(v.id));
+      }
+    }
+    
+    if (filteredVariants.length === 0) {
+      resultsContainer.innerHTML = `
+        <div class="no-results">
+          <p>No se encontraron variantes que coincidan con "${term}"</p>
+        </div>
+      `;
+      return;
+    }
+    
+    // Agregar talles a cada variante
+    filteredVariants.forEach(v => {
+      v.sizes = sizesByVariant.get(v.id) || [];
+    });
+    
     // Si no encontramos productos por nombre pero sí variantes, obtener los productos de las variantes
     if (products.length === 0) {
       const uniqueProductIds = [...new Set(variants.map(v => v.product_id))];
@@ -105,7 +215,7 @@ async function searchProducts(term) {
         .from("products")
         .select("id, name, category, status")
         .in("id", uniqueProductIds)
-        .eq("status", "active");
+        .in("status", ["active", "pending_stock", "draft"]);
       
       if (productsError2) throw productsError2;
       products = productsFromVariants || [];
@@ -125,7 +235,7 @@ async function searchProducts(term) {
     });
     
     // Agregar productos desde variantes si no están en el mapa
-    variants.forEach(v => {
+    filteredVariants.forEach(v => {
       if (v.products && !productsMap.has(v.products.id)) {
         productsMap.set(v.products.id, {
           id: v.products.id,
@@ -137,7 +247,7 @@ async function searchProducts(term) {
     });
     
     // Agregar variantes a sus productos
-    variants.forEach(v => {
+    filteredVariants.forEach(v => {
       const productId = v.product_id || (v.products && v.products.id);
       const product = productsMap.get(productId);
       
@@ -146,7 +256,7 @@ async function searchProducts(term) {
           id: v.id,
           sku: v.sku,
           color: v.color,
-          size: v.size,
+          sizes: v.sizes || [],
           active: v.active,
           products: {
             id: product.id,
@@ -193,38 +303,114 @@ async function searchProducts(term) {
   }
 }
 
-// Obtener stock por almacén para una variante
+// Obtener stock por almacén para una variante (por talle individual)
 async function getVariantStock(variantId) {
   try {
-    const { data, error } = await supabase
-      .rpc("get_variant_stock_by_warehouse", { p_variant_id: variantId });
+    // 1. Obtener talles desde variant_sizes para esta variante (con stock_qty como fallback)
+    const { data: sizesData, error: sizesError } = await supabase
+      .from("variant_sizes")
+      .select("size, stock_qty")
+      .eq("variant_id", variantId)
+      .order("size");
 
-    if (error) throw error;
+    if (sizesError) throw sizesError;
 
-    const stockMap = {};
-    const total = { stock: 0 };
-
-    if (data) {
-      for (const row of data) {
-        stockMap[row.warehouse_code] = {
-          name: row.warehouse_name,
-          stock: row.stock_qty
-        };
-        total.stock += row.stock_qty;
+    // Crear mapa de talles con su stock_qty de fallback
+    const sizesMap = new Map();
+    (sizesData || []).forEach(s => {
+      const normalizedSize = normalizeSize(s.size);
+      if (normalizedSize) {
+        sizesMap.set(normalizedSize, {
+          size: normalizedSize,
+          stockQty: s.stock_qty || 0
+        });
       }
+    });
+
+    // 2. Obtener stock por talle desde variant_size_warehouse_stock (usar left join para traer todos)
+    // Primero obtener IDs de warehouses
+    const { data: warehouses, error: warehousesError } = await supabase
+      .from("warehouses")
+      .select("id, code")
+      .in("code", ["general", "venta-publico"]);
+
+    if (warehousesError) throw warehousesError;
+
+    const warehouseMap = new Map();
+    warehouses?.forEach(w => {
+      warehouseMap.set(w.code, w.id);
+    });
+
+    const generalWarehouseId = warehouseMap.get("general");
+    const ventaPublicoWarehouseId = warehouseMap.get("venta-publico");
+
+    if (!generalWarehouseId || !ventaPublicoWarehouseId) {
+      console.error("Almacenes no encontrados");
+      return { sizes: [] };
     }
 
+    // Obtener stock desde variant_size_warehouse_stock
+    const { data: stockData, error: stockError } = await supabase
+      .from("variant_size_warehouse_stock")
+      .select("size, warehouse_id, stock_qty")
+      .eq("variant_id", variantId)
+      .in("warehouse_id", [generalWarehouseId, ventaPublicoWarehouseId]);
+
+    if (stockError) throw stockError;
+
+    // 3. Organizar stock por talle y warehouse
+    const stockBySize = new Map();
+    
+    // Inicializar todos los talles desde variant_sizes
+    sizesMap.forEach((sizeInfo, normalizedSize) => {
+      stockBySize.set(normalizedSize, {
+        size: normalizedSize,
+        general: 0,
+        ventaPublico: 0
+      });
+    });
+
+    // Poblar con datos reales de variant_size_warehouse_stock
+    if (stockData) {
+      stockData.forEach(row => {
+        const normalizedSize = normalizeSize(row.size);
+        if (!normalizedSize) return;
+
+        if (!stockBySize.has(normalizedSize)) {
+          stockBySize.set(normalizedSize, {
+            size: normalizedSize,
+            general: 0,
+            ventaPublico: 0
+          });
+        }
+
+        const sizeStock = stockBySize.get(normalizedSize);
+        const stockQty = row.stock_qty || 0;
+
+        if (String(row.warehouse_id) === String(generalWarehouseId)) {
+          sizeStock.general = stockQty;
+        } else if (String(row.warehouse_id) === String(ventaPublicoWarehouseId)) {
+          sizeStock.ventaPublico = stockQty;
+        }
+      });
+    }
+
+    // 4. Aplicar fallback: si no hay stock en warehouses pero hay stock_qty en variant_sizes, usar ese para general
+    sizesMap.forEach((sizeInfo, normalizedSize) => {
+      const sizeStock = stockBySize.get(normalizedSize);
+      if (sizeStock && sizeStock.general === 0 && sizeStock.ventaPublico === 0 && sizeInfo.stockQty > 0) {
+        sizeStock.general = sizeInfo.stockQty;
+      }
+    });
+
+    // 5. Retornar estructura con talles
     return {
-      general: stockMap["general"] || { name: "Almacén General", stock: 0 },
-      ventaPublico: stockMap["venta-publico"] || { name: "Venta al Público", stock: 0 },
-      total: total.stock
+      sizes: Array.from(stockBySize.values())
     };
   } catch (error) {
     console.error("Error obteniendo stock:", error);
     return {
-      general: { name: "Almacén General", stock: 0 },
-      ventaPublico: { name: "Venta al Público", stock: 0 },
-      total: 0
+      sizes: []
     };
   }
 }
@@ -255,16 +441,27 @@ function renderResults(products) {
     `;
 
     for (const variant of product.variants) {
-      const stockData = variant.stockData || {
-        general: { stock: 0 },
-        ventaPublico: { stock: 0 },
-        total: 0
-      };
+      const stockData = variant.stockData || { sizes: [] };
+      const sizes = stockData.sizes || [];
 
-      // Determinar qué stock mostrar según el modo
-      const sourceStock = currentMode === "to_public" 
-        ? stockData.general.stock 
-        : stockData.ventaPublico.stock;
+      const sizesDisplay = variant.sizes && variant.sizes.length > 0 
+        ? variant.sizes.join(", ") 
+        : "Sin talles";
+
+      // Información de la variante (cabecera)
+      html += `
+        <div class="variant-item" data-variant-id="${variant.id}">
+          <div class="variant-info">
+            <div class="variant-details">
+              <span class="variant-detail"><strong>SKU:</strong> ${escapeHtml(variant.sku || "")}</span>
+              <span class="variant-detail"><strong>Color:</strong> ${escapeHtml(variant.color || "")}</span>
+              <span class="variant-detail"><strong>Talles:</strong> ${escapeHtml(sizesDisplay)}</span>
+            </div>
+          </div>
+          <div class="sizes-list" style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #e5e5e5;">
+      `;
+
+      // Mostrar cada talle con sus controles individuales
       const sourceLabel = currentMode === "to_public" 
         ? "Stock General" 
         : "Stock Venta Público";
@@ -275,57 +472,81 @@ function renderResults(products) {
         ? "Mover a Venta Público" 
         : "Devolver a General";
 
+      if (sizes.length === 0) {
+        html += `
+          <div style="padding: 8px; color: #999; font-size: 14px;">
+            No hay talles con stock para mover
+          </div>
+        `;
+      } else {
+        sizes.forEach(sizeStock => {
+          const normalizedSize = normalizeSize(sizeStock.size);
+          const sourceStock = currentMode === "to_public" 
+            ? sizeStock.general 
+            : sizeStock.ventaPublico;
+
+          html += `
+            <div class="size-item" style="display: flex; align-items: center; gap: 12px; padding: 8px; background: #f9f9f9; border-radius: 6px; margin-bottom: 8px; flex-wrap: wrap;">
+              <div style="min-width: 80px; font-weight: 600; color: #333;">
+                Talle ${normalizedSize}
+              </div>
+              <div style="min-width: 120px; text-align: center;">
+                <div style="font-size: 12px; color: #666; margin-bottom: 2px;">${sourceLabel}</div>
+                <div class="stock-value" style="font-size: 16px; font-weight: 600; color: #155724;">${sourceStock}</div>
+              </div>
+              <div class="move-controls" style="display: flex; align-items: center; gap: 4px; flex-wrap: wrap;">
+                <div class="quantity-controls" style="display: flex; align-items: center; gap: 0; border: 1px solid #ddd; border-radius: 6px; overflow: hidden;">
+                  <button 
+                    class="quantity-btn decrease" 
+                    data-variant-id="${variant.id}"
+                    data-size="${normalizedSize}"
+                    data-action="decrease"
+                    ${sourceStock === 0 ? "disabled" : ""}
+                    type="button"
+                    style="width: 32px; height: 32px; padding: 0; border: none; background: #f0f0f0; color: #333; font-size: 16px; font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center;"
+                  >
+                    −
+                  </button>
+                  <input 
+                    type="number" 
+                    class="quantity-input" 
+                    min="0" 
+                    max="${sourceStock}"
+                    value="0"
+                    placeholder="0"
+                    data-variant-id="${variant.id}"
+                    data-size="${normalizedSize}"
+                    ${sourceStock === 0 ? "disabled" : ""}
+                    style="width: 50px; padding: 6px 4px; border: none; border-left: 1px solid #ddd; border-right: 1px solid #ddd; text-align: center; font-size: 14px;"
+                  />
+                  <button 
+                    class="quantity-btn increase" 
+                    data-variant-id="${variant.id}"
+                    data-size="${normalizedSize}"
+                    data-action="increase"
+                    ${sourceStock === 0 ? "disabled" : ""}
+                    type="button"
+                    style="width: 32px; height: 32px; padding: 0; border: none; background: #f0f0f0; color: #333; font-size: 16px; font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center;"
+                  >
+                    +
+                  </button>
+                </div>
+                <button 
+                  class="move-btn" 
+                  data-variant-id="${variant.id}"
+                  data-size="${normalizedSize}"
+                  ${sourceStock === 0 ? "disabled" : ""}
+                  style="padding: 6px 12px; background: #CD844D; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 500; font-size: 13px;"
+                >
+                  ${buttonText}
+                </button>
+              </div>
+            </div>
+          `;
+        });
+      }
+
       html += `
-        <div class="variant-item" data-variant-id="${variant.id}">
-          <div class="variant-info">
-            <div class="variant-details">
-              <span class="variant-detail"><strong>SKU:</strong> ${escapeHtml(variant.sku || "")}</span>
-              <span class="variant-detail"><strong>Color:</strong> ${escapeHtml(variant.color || "")}</span>
-              <span class="variant-detail"><strong>Talle:</strong> ${escapeHtml(variant.size || "")}</span>
-            </div>
-          </div>
-          <div class="stock-info">
-            <div class="stock-label">${sourceLabel}</div>
-            <div class="stock-value">${sourceStock}</div>
-          </div>
-          <div class="move-controls">
-            <div class="quantity-controls">
-              <button 
-                class="quantity-btn decrease" 
-                data-variant-id="${variant.id}"
-                data-action="decrease"
-                ${sourceStock === 0 ? "disabled" : ""}
-                type="button"
-              >
-                −
-              </button>
-              <input 
-                type="number" 
-                class="quantity-input" 
-                min="0" 
-                max="${sourceStock}"
-                value="0"
-                placeholder="0"
-                data-variant-id="${variant.id}"
-                ${sourceStock === 0 ? "disabled" : ""}
-              />
-              <button 
-                class="quantity-btn increase" 
-                data-variant-id="${variant.id}"
-                data-action="increase"
-                ${sourceStock === 0 ? "disabled" : ""}
-                type="button"
-              >
-                +
-              </button>
-            </div>
-            <button 
-              class="move-btn" 
-              data-variant-id="${variant.id}"
-              ${sourceStock === 0 ? "disabled" : ""}
-            >
-              ${buttonText}
-            </button>
           </div>
         </div>
       `;
@@ -366,9 +587,12 @@ function renderResults(products) {
 function handleQuantityChange(event) {
   const btn = event.target;
   const variantId = btn.getAttribute("data-variant-id");
+  const size = btn.getAttribute("data-size");
   const action = btn.getAttribute("data-action");
+  
+  // Buscar input específico por variant_id y size
   const quantityInput = document.querySelector(
-    `.quantity-input[data-variant-id="${variantId}"]`
+    `.quantity-input[data-variant-id="${variantId}"][data-size="${size}"]`
   );
   
   if (!quantityInput || quantityInput.disabled) return;
@@ -395,8 +619,16 @@ function handleQuantityChange(event) {
 async function handleMoveStock(event) {
   const btn = event.target;
   const variantId = btn.getAttribute("data-variant-id");
+  const size = btn.getAttribute("data-size");
+  
+  if (!variantId || !size) {
+    showMessage("Error: No se encontró información del talle", "error");
+    return;
+  }
+
+  // Buscar input específico por variant_id y size
   const quantityInput = document.querySelector(
-    `.quantity-input[data-variant-id="${variantId}"]`
+    `.quantity-input[data-variant-id="${variantId}"][data-size="${size}"]`
   );
   
   if (!quantityInput) {
@@ -426,8 +658,11 @@ async function handleMoveStock(event) {
     const toWarehouse = currentMode === "to_public" ? "venta-publico" : "general";
     const actionText = currentMode === "to_public" ? "movieron a Venta al Público" : "devolvieron a General";
     
-    const { data, error } = await supabase.rpc("rpc_move_stock", {
+    const normalizedSize = normalizeSize(size);
+    
+    const { data, error } = await supabase.rpc("rpc_move_size_stock", {
       p_variant_id: variantId,
+      p_size: normalizedSize,
       p_from_warehouse_code: fromWarehouse,
       p_to_warehouse_code: toWarehouse,
       p_quantity: quantity,
@@ -439,32 +674,36 @@ async function handleMoveStock(event) {
     if (error) throw error;
 
     showMessage(
-      `✅ Se ${actionText} ${quantity} unidades exitosamente`,
+      `✅ Se ${actionText} ${quantity} unidades del talle ${normalizedSize} exitosamente`,
       "success"
     );
 
-    // Actualizar stock en la UI
-    const variantItem = btn.closest(".variant-item");
-    const stockValueEl = variantItem.querySelector(".stock-value");
+    // Actualizar stock en la UI para este talle específico
+    const sizeItem = btn.closest(".size-item");
+    const stockValueEl = sizeItem.querySelector(".stock-value");
     const newStock = data.from_stock_after;
     
-    stockValueEl.textContent = newStock;
+    if (stockValueEl) {
+      stockValueEl.textContent = newStock;
+    }
     quantityInput.max = newStock;
     quantityInput.value = "0";
     
+    // Actualizar estado de botones y inputs
     if (newStock === 0) {
       quantityInput.disabled = true;
       btn.disabled = true;
-    }
-
-    // Actualizar datos en memoria
-    const variant = Array.from(document.querySelectorAll(".variant-item"))
-      .find(el => el.getAttribute("data-variant-id") === variantId);
-    
-    if (variant) {
-      // Recargar stock actualizado
-      const updatedStock = await getVariantStock(variantId);
-      // Actualizar en el objeto de datos si existe
+      const decreaseBtn = sizeItem.querySelector(`.quantity-btn.decrease[data-variant-id="${variantId}"][data-size="${normalizedSize}"]`);
+      const increaseBtn = sizeItem.querySelector(`.quantity-btn.increase[data-variant-id="${variantId}"][data-size="${normalizedSize}"]`);
+      if (decreaseBtn) decreaseBtn.disabled = true;
+      if (increaseBtn) increaseBtn.disabled = true;
+    } else {
+      quantityInput.disabled = false;
+      btn.disabled = false;
+      const decreaseBtn = sizeItem.querySelector(`.quantity-btn.decrease[data-variant-id="${variantId}"][data-size="${normalizedSize}"]`);
+      const increaseBtn = sizeItem.querySelector(`.quantity-btn.increase[data-variant-id="${variantId}"][data-size="${normalizedSize}"]`);
+      if (decreaseBtn) decreaseBtn.disabled = false;
+      if (increaseBtn) increaseBtn.disabled = false;
     }
 
   } catch (error) {
@@ -472,7 +711,10 @@ async function handleMoveStock(event) {
     showMessage("Error al mover stock: " + (error.message || "Error desconocido"), "error");
   } finally {
     btn.disabled = false;
-    btn.textContent = "Mover a Venta Público";
+    const buttonText = currentMode === "to_public" 
+      ? "Mover a Venta Público" 
+      : "Devolver a General";
+    btn.textContent = buttonText;
   }
 }
 
@@ -510,7 +752,7 @@ async function loadSuggestions(term) {
     const { data: products, error } = await supabase
       .from("products")
       .select("id, name, category")
-      .eq("status", "active")
+      .in("status", ["active", "pending_stock", "draft"])
       .ilike("name", `%${searchTerm}%`)
       .limit(10);
 
@@ -586,7 +828,7 @@ document.addEventListener("click", (e) => {
   }
 });
 
-// Manejar movimiento de todas las variantes
+// Manejar movimiento de todas las variantes (por talle individual)
 async function handleMoveAll() {
   console.log("🔄 handleMoveAll llamado");
   const moveAllBtn = document.getElementById("move-all-btn");
@@ -597,13 +839,20 @@ async function handleMoveAll() {
     return;
   }
   
-  // Obtener todas las variantes visibles con cantidad > 0
-  const variantItems = document.querySelectorAll(".variant-item");
+  // Obtener todas las combinaciones variant_id + size con cantidad > 0
+  const sizeItems = document.querySelectorAll(".size-item");
   const movesToProcess = [];
   
-  for (const item of variantItems) {
-    const variantId = item.getAttribute("data-variant-id");
-    const quantityInput = item.querySelector(`.quantity-input[data-variant-id="${variantId}"]`);
+  for (const item of sizeItems) {
+    const variantItem = item.closest(".variant-item");
+    if (!variantItem) continue;
+    
+    const variantId = variantItem.getAttribute("data-variant-id");
+    const size = item.querySelector(".quantity-input")?.getAttribute("data-size");
+    
+    if (!variantId || !size) continue;
+    
+    const quantityInput = item.querySelector(`.quantity-input[data-variant-id="${variantId}"][data-size="${size}"]`);
     
     if (!quantityInput || quantityInput.disabled) continue;
     
@@ -612,15 +861,15 @@ async function handleMoveAll() {
     
     const maxStock = parseInt(quantityInput.max, 10);
     if (quantity > maxStock) {
-      showMessage(`No puedes mover más de ${maxStock} unidades para una variante`, "error");
+      showMessage(`No puedes mover más de ${maxStock} unidades para el talle ${size}`, "error");
       return;
     }
     
-    movesToProcess.push({ variantId, quantity, quantityInput, item });
+    movesToProcess.push({ variantId, size, quantity, quantityInput, item });
   }
   
   if (movesToProcess.length === 0) {
-    showMessage("No hay variantes con cantidades válidas para mover", "error");
+    showMessage("No hay talles con cantidades válidas para mover", "error");
     return;
   }
   
@@ -642,9 +891,11 @@ async function handleMoveAll() {
       const toWarehouse = currentMode === "to_public" ? "venta-publico" : "general";
       
       const results = await Promise.allSettled(
-        batch.map(async ({ variantId, quantity }) => {
-          const { data, error } = await supabase.rpc("rpc_move_stock", {
+        batch.map(async ({ variantId, size, quantity }) => {
+          const normalizedSize = normalizeSize(size);
+          const { data, error } = await supabase.rpc("rpc_move_size_stock", {
             p_variant_id: variantId,
+            p_size: normalizedSize,
             p_from_warehouse_code: fromWarehouse,
             p_to_warehouse_code: toWarehouse,
             p_quantity: quantity,
@@ -654,30 +905,47 @@ async function handleMoveAll() {
           });
           
           if (error) throw error;
-          return { variantId, quantity, data };
+          return { variantId, size: normalizedSize, quantity, data };
         })
       );
       
       // Actualizar UI para cada movimiento exitoso
       results.forEach((result, index) => {
-        const { variantId, quantity, quantityInput, item } = batch[index];
+        const { variantId, size, quantity, quantityInput, item } = batch[index];
         
         if (result.status === "fulfilled") {
           successCount++;
+          const normalizedSize = normalizeSize(size);
           const stockValueEl = item.querySelector(".stock-value");
           const newStock = result.value.data.from_stock_after;
           
-          stockValueEl.textContent = newStock;
+          if (stockValueEl) {
+            stockValueEl.textContent = newStock;
+          }
           quantityInput.max = newStock;
           quantityInput.value = "0";
           
+          // Actualizar estado de botones y inputs
           if (newStock === 0) {
             quantityInput.disabled = true;
-            item.querySelector(".move-btn").disabled = true;
+            const moveBtn = item.querySelector(`.move-btn[data-variant-id="${variantId}"][data-size="${normalizedSize}"]`);
+            const decreaseBtn = item.querySelector(`.quantity-btn.decrease[data-variant-id="${variantId}"][data-size="${normalizedSize}"]`);
+            const increaseBtn = item.querySelector(`.quantity-btn.increase[data-variant-id="${variantId}"][data-size="${normalizedSize}"]`);
+            if (moveBtn) moveBtn.disabled = true;
+            if (decreaseBtn) decreaseBtn.disabled = true;
+            if (increaseBtn) increaseBtn.disabled = true;
+          } else {
+            quantityInput.disabled = false;
+            const moveBtn = item.querySelector(`.move-btn[data-variant-id="${variantId}"][data-size="${normalizedSize}"]`);
+            const decreaseBtn = item.querySelector(`.quantity-btn.decrease[data-variant-id="${variantId}"][data-size="${normalizedSize}"]`);
+            const increaseBtn = item.querySelector(`.quantity-btn.increase[data-variant-id="${variantId}"][data-size="${normalizedSize}"]`);
+            if (moveBtn) moveBtn.disabled = false;
+            if (decreaseBtn) decreaseBtn.disabled = false;
+            if (increaseBtn) increaseBtn.disabled = false;
           }
         } else {
           errorCount++;
-          console.error(`Error moviendo variante ${variantId}:`, result.reason);
+          console.error(`Error moviendo variante ${variantId}, talle ${size}:`, result.reason);
         }
       });
       
@@ -686,11 +954,11 @@ async function handleMoveAll() {
     
     if (successCount > 0) {
       showMessage(
-        `✅ Se movieron ${successCount} variante(s) exitosamente${errorCount > 0 ? ` (${errorCount} error(es))` : ""}`,
+        `✅ Se movieron ${successCount} talle(s) exitosamente${errorCount > 0 ? ` (${errorCount} error(es))` : ""}`,
         successCount === movesToProcess.length ? "success" : "error"
       );
     } else {
-      showMessage("Error: No se pudo mover ninguna variante", "error");
+      showMessage("Error: No se pudo mover ningún talle", "error");
     }
     
   } catch (error) {

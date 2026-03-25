@@ -4,79 +4,108 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Completar Perfil | Cliente</title>
-  <link rel="stylesheet" href="../styles.css" />
+  <script>document.documentElement.classList.add("client-area");</script>
+  <link rel="stylesheet" href="../styles.css?v=v12" />
   <meta name="robots" content="noindex" />
   <style>
-    .box { 
-      max-width: 800px; 
-      margin: 32px auto; 
-      padding: 24px;
-      background: white;
-      border-radius: 12px;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-    }
-    .box h1 {
-      margin: 0 0 24px 0;
-      font-size: 28px;
-      color: #333;
-      border-bottom: 3px solid #CD844D;
-      padding-bottom: 12px;
-    }
-    .box p {
-      color: #666;
-      margin-bottom: 24px;
-      line-height: 1.6;
-    }
-    .profile-grid { 
-      display: grid; 
-      grid-template-columns: 1fr 1fr; 
-      gap: 20px; 
-    }
-    .profile-grid label { 
-      display: flex; 
-      flex-direction: column; 
-      gap: 8px;
-      font-weight: 600;
-      color: #555;
-    }
-    .profile-grid input, .profile-grid select {
-      width: 100%;
-      padding: 10px 12px;
-      border: 1px solid #ddd;
-      border-radius: 6px;
-      font-size: 14px;
-      transition: border-color 0.2s, box-shadow 0.2s;
+    body {
+      margin: 0;
+      padding: 12px;
+      background: #f0f0f0;
+      min-height: 100dvh;
       box-sizing: border-box;
     }
-    .profile-grid input:focus, .profile-grid select:focus {
+    .box {
+      max-width: 480px;
+      margin: 0 auto;
+      padding: 16px 14px 18px;
+      background: white;
+      border-radius: 14px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+      box-sizing: border-box;
+    }
+    .box h1 {
+      margin: 0 0 6px 0;
+      font-size: 1.25rem;
+      color: #2d2d2d;
+      border-bottom: 2px solid #CD844D;
+      padding-bottom: 8px;
+      line-height: 1.25;
+    }
+    .box .lead {
+      color: #5f5f5f;
+      margin: 0 0 14px;
+      font-size: 0.8125rem;
+      line-height: 1.4;
+    }
+    .req { color: #c0392b; font-weight: 700; }
+    /* Un solo bloque por label: evita que flex parta "Nombre" y "*" en dos filas */
+    .profile-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px 12px;
+    }
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 0;
+    }
+    .field__lbl {
+      font-weight: 600;
+      font-size: 0.75rem;
+      color: #444;
+      line-height: 1.2;
+    }
+    .profile-grid input {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      font-size: 16px;
+      transition: border-color 0.2s, box-shadow 0.2s;
+      box-sizing: border-box;
+      min-height: 40px;
+    }
+    .profile-grid input:focus {
       outline: none;
       border-color: #CD844D;
-      box-shadow: 0 0 0 3px rgba(205, 132, 77, 0.1);
+      box-shadow: 0 0 0 2px rgba(205, 132, 77, 0.2);
     }
     .profile-grid input:disabled {
-      background: #f5f5f5;
+      background: #f3f3f3;
       cursor: not-allowed;
+      color: #666;
     }
     .full-width {
       grid-column: 1 / -1;
     }
     .phone-container {
       display: flex;
-      align-items: center;
-      gap: 8px;
+      align-items: stretch;
+      gap: 6px;
     }
     .phone-prefix {
-      padding: 10px 12px;
+      display: flex;
+      align-items: center;
+      padding: 0 8px;
       background: #f5f5f5;
       border: 1px solid #ddd;
-      border-radius: 6px;
-      font-size: 14px;
-      color: #666;
+      border-radius: 8px;
+      font-size: 0.75rem;
+      color: #555;
       font-weight: 600;
       white-space: nowrap;
     }
     .phone-input {
       flex: 1;
+      min-width: 0;
+    }
+    .field-hint {
+      color: #888;
+      font-size: 0.6875rem;
+      line-height: 1.25;
+      margin: 0;
     }
     .custom-dropdown {
       position: absolute;
@@ -85,21 +114,22 @@
       right: 0;
       background: white;
       border: 1px solid #ddd;
-      border-radius: 6px;
-      max-height: 200px;
+      border-radius: 8px;
+      max-height: 160px;
       overflow-y: auto;
       z-index: 1000;
-      box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-      margin-top: 4px;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.1);
+      margin-top: 2px;
     }
     .custom-dropdown-item {
-      padding: 10px 12px;
+      padding: 8px 10px;
       cursor: pointer;
       border-bottom: 1px solid #f0f0f0;
       transition: background 0.2s;
+      font-size: 0.8125rem;
     }
     .custom-dropdown-item:hover {
-      background: #f8f9fa;
+      background: #faf6f2;
     }
     .custom-dropdown-item:last-child {
       border-bottom: none;
@@ -107,106 +137,104 @@
     .relative {
       position: relative;
     }
-    button { 
-      padding: 12px 24px; 
-      border: none;
-      border-radius: 8px;
-      cursor: pointer;
-      font-size: 16px;
-      font-weight: 600;
-      transition: all 0.2s;
-    }
     #submit-btn {
+      padding: 12px 16px;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 0.9375rem;
+      font-weight: 700;
       background: #CD844D;
       color: white;
       width: 100%;
+      min-height: 46px;
+      margin-top: 4px;
+      -webkit-tap-highlight-color: transparent;
     }
-    #submit-btn:hover {
+    #submit-btn:hover:not(:disabled) {
       background: #b86f3d;
-      transform: translateY(-1px);
-      box-shadow: 0 4px 12px rgba(205, 132, 77, 0.3);
     }
     #submit-btn:disabled {
       background: #ccc;
       cursor: not-allowed;
-      transform: none;
     }
     .error-message {
       display: none;
-      padding: 12px;
+      padding: 8px 10px;
       background: #ffebee;
       color: #c62828;
-      border-radius: 6px;
+      border-radius: 8px;
       border: 1px solid #ef5350;
-      margin-top: 16px;
+      font-size: 0.8125rem;
+      line-height: 1.3;
       grid-column: 1 / -1;
     }
     .error-message.show {
       display: block;
     }
-    @media (max-width: 768px) {
+    @media (max-width: 420px) {
       .profile-grid {
         grid-template-columns: 1fr;
       }
-      .phone-container {
-        flex-direction: column;
-        align-items: stretch;
-      }
-      .phone-prefix {
-        text-align: center;
-      }
     }
   </style>
+  <!-- Microsoft Clarity -->
+  <script type="text/javascript">
+    (function(c,l,a,r,i,t,y){
+        c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
+        t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
+        y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
+    })(window, document, "clarity", "script", "vuuq665971");
+  </script>
 </head>
 <body>
   <div class="box">
-    <h1>Completar tu Perfil</h1>
-    <p>Para acceder a tu área personal, necesitamos que completes algunos datos básicos.</p>
+    <h1>Completar tu perfil</h1>
+    <p class="lead">Completá los datos para tu cuenta mayorista.</p>
 
     <form id="form">
       <div class="profile-grid">
-        <div class="full-width">
-          <label>Email
-            <input id="email" type="email" readonly disabled />
-          </label>
+        <div class="field full-width">
+          <label class="field__lbl" for="email">Email</label>
+          <input id="email" type="email" readonly disabled />
         </div>
-        <div>
-          <label>Nombre <span style="color: red;">*</span>
-            <input id="first_name" required autocomplete="given-name" />
-          </label>
+        <div class="field">
+          <label class="field__lbl" for="first_name">Nombre <span class="req">*</span></label>
+          <input id="first_name" required autocomplete="given-name" maxlength="100" />
         </div>
-        <div>
-          <label>Apellido <span style="color: red;">*</span>
-            <input id="last_name" required autocomplete="family-name" />
-          </label>
+        <div class="field">
+          <label class="field__lbl" for="last_name">Apellido <span class="req">*</span></label>
+          <input id="last_name" required autocomplete="family-name" maxlength="100" />
         </div>
-        <div class="full-width">
-          <label>DNI <span style="color: red;">*</span>
-            <input id="dni" required autocomplete="off" inputmode="numeric" pattern="[0-9]{7,8}" title="El DNI debe tener entre 7 y 8 dígitos numéricos" />
-          </label>
+        <div class="field">
+          <label class="field__lbl" for="dni">DNI <span class="req">*</span></label>
+          <input id="dni" required autocomplete="off" inputmode="numeric" pattern="[0-9]{7,8}" maxlength="8" title="7 u 8 dígitos" />
         </div>
-        <div class="full-width">
-          <label>Teléfono <span style="color: red;">*</span>
-            <div class="phone-container">
-              <span class="phone-prefix">+54 9</span>
-              <input id="phone" class="phone-input" required autocomplete="tel" placeholder="362 472-0762" />
-            </div>
-            <small style="color: #666; font-size: 12px; margin-top: 4px; display: block;">Ingresá código de área + número. Ejemplo: 362 472-0762</small>
-          </label>
+        <div class="field">
+          <label class="field__lbl" for="phone">Teléfono <span class="req">*</span></label>
+          <div class="phone-container">
+            <span class="phone-prefix" aria-hidden="true">+54 9</span>
+            <input id="phone" class="phone-input" required autocomplete="tel" placeholder="362 472-0762" />
+          </div>
+          <p class="field-hint">Área + número, sin el 9 inicial.</p>
         </div>
-        <div class="relative full-width">
-          <label for="province">Provincia <span style="color: red;">*</span></label>
-          <input type="text" id="province" required placeholder="Escriba para buscar provincia..." autocomplete="new-password" />
+        <div class="field full-width">
+          <label class="field__lbl" for="address">Dirección (calle y número) <span class="req">*</span></label>
+          <input id="address" required autocomplete="street-address" maxlength="500" placeholder="Ej: San Martín 123" />
+        </div>
+        <div class="field relative full-width">
+          <label class="field__lbl" for="province">Provincia <span class="req">*</span></label>
+          <input type="text" id="province" required placeholder="Buscá provincia…" autocomplete="off" />
           <div id="province-dropdown" class="custom-dropdown"></div>
         </div>
-        <div class="relative full-width">
-          <label for="city">Ciudad <span style="color: red;">*</span></label>
-          <input type="text" id="city" required placeholder="Seleccione provincia primero..." autocomplete="new-password" disabled />
+        <div class="field relative full-width">
+          <label class="field__lbl" for="city">Localidad <span class="req">*</span></label>
+          <input type="text" id="city" required placeholder="Primero provincia…" autocomplete="off" disabled />
           <div id="city-dropdown" class="custom-dropdown"></div>
         </div>
         <div class="error-message" id="error-message"></div>
         <div class="full-width">
-          <button id="submit-btn" type="submit">Completar Registro</button>
+          <button id="submit-btn" type="submit">Completar registro</button>
         </div>
       </div>
     </form>
@@ -241,7 +269,7 @@
   <script type="module" src="../scripts/supabase-client.js"></script>
   <script type="module" src="./client-utils.js"></script>
   <script type="module" src="../scripts/passkeys.js"></script>
-  <script type="module" src="./complete-profile.js"></script>
+  <script type="module" src="./complete-profile.js?v=v3"></script>
 </body>
 </html>
 

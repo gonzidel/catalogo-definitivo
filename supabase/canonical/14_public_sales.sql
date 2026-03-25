@@ -307,6 +307,7 @@ declare
   v_credit_record record;
   v_qty_venta_publico int;
   v_qty_general int;
+  v_return_rows int;
 begin
   -- Obtener usuario actual
   v_user_id := auth.uid();
@@ -446,16 +447,21 @@ begin
       end if;
         end if; -- Cerrar bloque "if not v_from_local_order"
       else
-        -- Es devolución, sumar stock a venta-publico
-        insert into public.variant_warehouse_stock (variant_id, warehouse_id, stock_qty)
-        select 
-          v_variant_id,
-          (select id from public.warehouses where code = 'venta-publico'),
-          v_qty
-        on conflict (variant_id, warehouse_id)
-        do update set
-          stock_qty = variant_warehouse_stock.stock_qty + v_qty,
-          updated_at = now();
+        -- Es devolución: sumar stock SOLO a venta-publico (nunca tocar general)
+        update public.variant_warehouse_stock
+        set stock_qty = stock_qty + v_qty,
+            updated_at = now()
+        where variant_id = v_variant_id
+          and warehouse_id = (select id from public.warehouses where code = 'venta-publico');
+        get diagnostics v_return_rows = row_count;
+        if v_return_rows = 0 then
+          insert into public.variant_warehouse_stock (variant_id, warehouse_id, stock_qty)
+          values (
+            v_variant_id,
+            (select id from public.warehouses where code = 'venta-publico'),
+            v_qty
+          );
+        end if;
       end if; -- Cerrar bloque "if not v_is_return"
 
     -- Calcular total: sumar ventas, restar devoluciones
@@ -650,8 +656,8 @@ begin
       select json_agg(
         json_build_object(
           'id', psi.id,
-          'sku', pv.sku,
-          'product_name', p.name,
+          'sku', COALESCE(pv.sku, 'EXTRA-ESPECIAL'),
+          'product_name', COALESCE(psi.product_name, p.name, 'Extra especial'),
           'color', pv.color,
           'size', pv.size,
           'qty', psi.qty,
@@ -660,8 +666,8 @@ begin
         )
       )
       from public.public_sale_items psi
-      join public.product_variants pv on pv.id = psi.variant_id
-      join public.products p on p.id = pv.product_id
+      left join public.product_variants pv on pv.id = psi.variant_id
+      left join public.products p on p.id = pv.product_id
       where psi.sale_id = p_sale_id
     )
   ) into v_result

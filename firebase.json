@@ -1,10 +1,196 @@
 {
   "hosting": {
+    "predeploy": [
+      "npm run build",
+      "npm run bundle:supabase"
+    ],
     "public": ".",
     "ignore": [
       "firebase.json",
       "**/.*",
-      "**/node_modules/**"
+      "**/node_modules/**",
+      "clave/**",
+      "*.md",
+      "test/**",
+      "scripts/generate-config.mjs",
+      "deploy.js",
+      "deploy.ps1",
+      "*.bat",
+      "*.ps1",
+      "*.pem",
+      "*.sql",
+      "*.kt",
+      "*.p12",
+      "supabase/**",
+      "cloudinary-optimize/**",
+      "certs/**",
+      "!certs/qz-site.crt",
+      "config.local.js",
+      "generate_*.js",
+      "scripts/generate-*.js",
+      "scripts/extract-*.js",
+      "scripts/verify-*.js",
+      "scripts/verify-*.ps1",
+      "scripts/fetch-*.js",
+      "verify-*.ps1",
+      "qz-private-*.pem"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ],
+    "headers": [
+      {
+        "source": "/sw.js",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          },
+          {
+            "key": "Service-Worker-Allowed",
+            "value": "/"
+          }
+        ]
+      },
+      {
+        "source": "/manifest.json",
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/manifest+json"
+          },
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=3600"
+          }
+        ]
+      },
+      {
+        "source": "admin/**/*.@(js|css|html)",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, no-store, must-revalidate"
+          },
+          {
+            "key": "Pragma",
+            "value": "no-cache"
+          },
+          {
+            "key": "Expires",
+            "value": "0"
+          }
+        ]
+      },
+      {
+        "source": "**/*.@(jpg|jpeg|gif|png|svg|webp|ico)",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=31536000, immutable"
+          }
+        ]
+      },
+      {
+        "source": "**/*.@(js|css)",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=31536000, immutable"
+          }
+        ]
+      },
+      {
+        "source": "/config.prod.js",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, no-store, must-revalidate"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/javascript; charset=utf-8"
+          }
+        ]
+      },
+      {
+        "source": "scripts/config.js",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, no-store, must-revalidate"
+          }
+        ]
+      },
+      {
+        "source": "scripts/boot-telemetry.js",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, no-store, must-revalidate"
+          }
+        ]
+      },
+      {
+        "source": "scripts/vendor/supabase-js.bundle.js",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, no-store, must-revalidate"
+          }
+        ]
+      },
+      {
+        "source": "scripts/config.local.js",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, no-store, must-revalidate"
+          }
+        ]
+      },
+      {
+        "source": "/qz-site.crt",
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/x-x509-ca-cert"
+          },
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=3600"
+          }
+        ]
+      },
+      {
+        "source": "/certs/qz-site.crt",
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/x-x509-ca-cert"
+          },
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=3600"
+          }
+        ]
+      },
+      {
+        "source": "**/*.crt",
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/x-x509-ca-cert"
+          },
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=3600"
+          }
+        ]
+      }
     ]
   }
 }

@@ -15,7 +15,12 @@ with base as (
     p.name                                             as "Articulo",
     coalesce(p.description,'')                         as "Descripcion",
     pv.color                                           as "Color",
-    string_agg(distinct pv.size, ',' order by pv.size) as "Numeracion",
+    -- Obtener talles desde variant_sizes en lugar de product_variants.size
+    -- IMPORTANTE: Solo incluir talles que tienen stock > 0 (consistente con el filtro de variantes)
+    coalesce(
+      string_agg(distinct vs.size, ',' order by vs.size) filter (where vs.size is not null and vs.size != '' and vs.stock_qty > 0),
+      'Único'
+    ) as "Numeracion",
     to_char(coalesce(p.created_at::date, now()::date), 'DD/MM/YYYY') as "FechaIngreso",
     true                                               as "Mostrar",
     'FALSE'                                            as "Oferta", -- Mantener por compatibilidad
@@ -26,13 +31,31 @@ with base as (
     max(case when vi.position = 4 then vi.url end)     as "Imagen 3",
     pt.tag1_id,
     pt.tag2_id,
-    pt.tag3_ids
+    pt.tag3_ids,
+    c.hex_color                                        as "ColorHex",
+    c.display_number                                   as "ColorDisplayNumber",
+    coalesce(s.code, '')                               as "SupplierCode"
   from public.products p
   join public.product_variants pv on pv.product_id = p.id and pv.active is true
+  left join public.suppliers s on s.id = p.supplier_id
+  -- Filtrar variantes que tienen stock > 0 en al menos un talle
+  inner join (
+    select distinct variant_id
+    from variant_sizes
+    where stock_qty > 0
+  ) vs_with_stock on vs_with_stock.variant_id = pv.id
+  -- Filtrar variantes que tienen al menos una imagen
+  inner join (
+    select distinct variant_id
+    from variant_images
+  ) vi_with_images on vi_with_images.variant_id = pv.id
+  -- IMPORTANTE: Solo unir talles que tienen stock > 0 (consistente con el filtro de vs_with_stock)
+  inner join public.variant_sizes vs on vs.variant_id = pv.id and vs.stock_qty > 0
   left join public.variant_images vi on vi.variant_id = pv.id
   left join public.product_tags pt on pt.product_id = p.id
+  left join public.colors c on lower(trim(c.name)) = lower(trim(pv.color))
   where p.status = 'active'
-  group by p.id, p.category, p.name, p.description, pv.color, p.created_at, pt.tag1_id, pt.tag2_id, pt.tag3_ids
+  group by p.id, p.category, p.name, p.description, pv.color, p.created_at, pt.tag1_id, pt.tag2_id, pt.tag3_ids, c.hex_color, c.display_number, s.code
 ),
 offers_data as (
   select
@@ -71,6 +94,7 @@ promos_data as (
     od.product_id, od.tag1_id, od.tag2_id, od.tag3_ids,
     od."OfertaActiva", od."PrecioOferta",
     od."OfferCampaignId", od."OfferImageUrl", od."OfferTitle",
+    od."ColorHex", od."ColorDisplayNumber", od."SupplierCode",
     -- Promoción activa (texto: '2x1' o '2x$XXX' o null)
     max(
       case
@@ -95,7 +119,7 @@ promos_data as (
            od."Imagen Principal", od."Imagen 1", od."Imagen 2", od."Imagen 3",
            od.product_id, od.tag1_id, od.tag2_id, od.tag3_ids,
            od."OfertaActiva", od."PrecioOferta",
-           od."OfferCampaignId", od."OfferImageUrl", od."OfferTitle"
+           od."OfferCampaignId", od."OfferImageUrl", od."OfferTitle", od."ColorHex", od."ColorDisplayNumber", od."SupplierCode"
 ),
 tags_data as (
   select
@@ -113,7 +137,7 @@ tags_data as (
            pd."Imagen Principal", pd."Imagen 1", pd."Imagen 2", pd."Imagen 3",
            pd.tag1_id, pd.tag2_id, pd.tag3_ids, t1.name, t2.name,
            pd."OfertaActiva", pd."PrecioOferta", pd."PromoActiva", pd.product_id,
-           pd."OfferCampaignId", pd."OfferImageUrl", pd."OfferTitle"
+           pd."OfferCampaignId", pd."OfferImageUrl", pd."OfferTitle", pd."ColorHex", pd."ColorDisplayNumber", pd."SupplierCode"
 )
 select
   "Categoria","Articulo","Descripcion","Color","Numeracion","FechaIngreso",
@@ -132,7 +156,10 @@ select
   coalesce("PromoActiva", '') as "PromoActiva",
   "OfferCampaignId",
   coalesce("OfferImageUrl", '') as "OfferImageUrl",
-  coalesce("OfferTitle", '') as "OfferTitle"
+  coalesce("OfferTitle", '') as "OfferTitle",
+  coalesce("ColorHex", '') as "ColorHex",
+  "ColorDisplayNumber",
+  coalesce("SupplierCode", '') as "SupplierCode"
 from tags_data;
 
 grant select on public.catalog_public_view to anon;

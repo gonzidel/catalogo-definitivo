@@ -1,0 +1,31 @@
+---
+description: 
+alwaysApply: true
+---
+
+Supabase is the backend for FYL.
+
+Main tables:
+
+- customers
+- carts
+- cart_items
+- orders
+- order_items
+
+Checkout uses RPC:
+
+- rpc_checkout_cart()
+
+Cart system:
+
+- localStorage + Supabase sync.
+
+Functions used in frontend:
+
+- addToCart()
+- removeCartItem()
+- getCartTotal()
+- syncCartWithSupabase()
+
+Google Sheets is deprecated in the FYL system and must never be proposed as a data source unless explicitly requested.

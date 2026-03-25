@@ -177,6 +177,65 @@
       display: flex;
       gap: 8px;
       flex-wrap: wrap;
+      align-items: center;
+    }
+    .customer-menu-wrap {
+      position: relative;
+    }
+    .btn-icon-menu {
+      min-width: 44px;
+      min-height: 44px;
+      padding: 0 10px;
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      font-size: 18px;
+      line-height: 1;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      color: #333;
+      cursor: pointer;
+      transition: border-color 0.2s ease, color 0.2s ease;
+    }
+    .btn-icon-menu:hover {
+      border-color: #CD844D;
+      color: #CD844D;
+    }
+    .customer-menu-dropdown {
+      display: none;
+      position: absolute;
+      right: 0;
+      top: calc(100% + 4px);
+      min-width: 200px;
+      background: #fff;
+      border: 1px solid #e9ecef;
+      border-radius: 8px;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+      z-index: 60;
+      overflow: hidden;
+    }
+    .customer-menu-dropdown.is-open {
+      display: block;
+    }
+    .customer-menu-item {
+      display: block;
+      width: 100%;
+      padding: 12px 16px;
+      border: none;
+      background: none;
+      text-align: left;
+      font-size: 15px;
+      cursor: pointer;
+      color: #333;
+    }
+    .customer-menu-item:hover {
+      background: #f8f9fa;
+    }
+    .customer-menu-delete {
+      color: #c62828;
+    }
+    .customer-menu-delete:hover {
+      background: #ffebee;
     }
     .message {
       padding: 12px 16px;
@@ -387,6 +446,7 @@
           type="text" 
           id="customer-search" 
           placeholder="Buscar por nombre, DNI, teléfono, email o número de cliente..."
+          autocomplete="off"
         />
         <button type="button" class="btn-primary" id="new-customer-btn">
           + Nuevo Cliente
@@ -405,7 +465,7 @@
         <h2 id="modal-title">Crear Nuevo Cliente</h2>
         <button type="button" class="modal-close" id="modal-close">&times;</button>
       </div>
-      <form id="customer-form">
+      <form id="customer-form" autocomplete="off">
         <div class="form-row">
           <div class="form-group">
             <label for="customer-first-name">
@@ -415,6 +475,7 @@
               type="text" 
               id="customer-first-name" 
               placeholder="Ej: Juan"
+              autocomplete="off"
               required
             />
           </div>
@@ -426,6 +487,7 @@
               type="text" 
               id="customer-last-name" 
               placeholder="Ej: Pérez"
+              autocomplete="off"
               required
             />
           </div>
@@ -439,6 +501,7 @@
               placeholder="Ej: 12345678"
               pattern="[0-9]{7,8}"
               title="El DNI debe tener entre 7 y 8 dígitos"
+              autocomplete="off"
             />
           </div>
           <div class="form-group">
@@ -452,6 +515,7 @@
                 id="customer-phone" 
                 class="phone-input"
                 placeholder="9 362 472-0762"
+                autocomplete="off"
                 required
               />
             </div>
@@ -463,6 +527,7 @@
             type="email" 
             id="customer-email" 
             placeholder="Ej: juan@example.com"
+            autocomplete="off"
           />
         </div>
         <div class="form-group">
@@ -473,6 +538,7 @@
             type="text" 
             id="customer-address" 
             placeholder="Ej: Av. Corrientes 1234"
+            autocomplete="off"
             required
           />
         </div>
@@ -485,6 +551,7 @@
               type="text" 
               id="customer-province" 
               placeholder="Escriba para buscar provincia..."
+              autocomplete="off"
               required
             />
             <div id="province-dropdown" class="custom-dropdown" style="display: none;"></div>
@@ -497,6 +564,7 @@
               type="text" 
               id="customer-city" 
               placeholder="Seleccione provincia primero..."
+              autocomplete="off"
               required
               disabled
             />

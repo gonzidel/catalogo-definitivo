@@ -19,7 +19,13 @@ let deferredPrompt;
 // Claves y pausas
 const DISMISS_KEY = "pwa-install-dismissed";
 const ACCEPT_KEY = "pwa-install-accepted";
+const VISIT_KEY = "pwa-catalog-visit-count";
 const PAUSE_MS = 48 * 60 * 60 * 1000; // 48 horas en ms
+
+// Cada carga del catálogo cuenta como una visita (1ª = sin modal; 2ª en adelante = elegible)
+const catalogVisitCount =
+  parseInt(localStorage.getItem(VISIT_KEY) || "0", 10) + 1;
+localStorage.setItem(VISIT_KEY, String(catalogVisitCount));
 
 window.addEventListener("beforeinstallprompt", (e) => {
   if (__IS_LOCAL) return; // no mostrar prompt en local
@@ -28,6 +34,11 @@ window.addEventListener("beforeinstallprompt", (e) => {
 
   // Si ya aceptó antes, no mostramos nunca más
   if (localStorage.getItem(ACCEPT_KEY)) {
+    return;
+  }
+
+  // Primera visita: no mostrar el modal (sigue suprimido el prompt nativo)
+  if (catalogVisitCount < 2) {
     return;
   }
 

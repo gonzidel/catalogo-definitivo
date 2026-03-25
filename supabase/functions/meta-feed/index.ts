@@ -174,6 +174,10 @@ serve(async (req) => {
       );
     }
 
+    // Log seguro del host de Supabase
+    const supabaseHost = SUPABASE_URL ? new URL(SUPABASE_URL).hostname : 'not-set';
+    console.log(`[meta-feed] Supabase host: ${supabaseHost}`);
+
     // Llamar RPC get_meta_feed()
     const { data, error } = await supabaseAdmin.rpc("get_meta_feed");
 
@@ -198,10 +202,14 @@ serve(async (req) => {
       );
     }
 
-    // Agregar link y normalizar image_link (generado en Edge Function)
+    // Log de cantidad de filas devueltas por RPC
+    console.log(`[meta-feed] RPC returned ${data.length} rows`);
+
+    // Usar link de RPC si existe, fallback a BASE_URL solo si falta
+    // Normalizar solo image_link
     const dataWithLinks = data.map((row) => ({
       ...row,
-      link: `${BASE_URL}/index.html?sku=${encodeURIComponent(row.id)}`,
+      link: row.link || `${BASE_URL}/index.html?sku=${encodeURIComponent(row.id)}`,
       image_link: normalizeCloudinaryURL(row.image_link || ""),
     }));
 
@@ -230,13 +238,24 @@ serve(async (req) => {
     // Default: CSV
     const csv = generateCSV(finalData);
 
+    // Headers para Meta Commerce Manager
+    // Nota: Meta requiere CSV puro con Content-Type correcto y sin Content-Disposition: attachment
+    const csvHeaders: Record<string, string> = {
+      "Content-Type": "text/csv; charset=utf-8",
+      "Cache-Control": "no-store, no-cache, must-revalidate",
+      "Pragma": "no-cache",
+      "Expires": "0",
+    };
+
+    // Solo agregar CORS si hay origin (Meta no envía origin, así que no se agregan)
+    // Esto asegura que Meta vea el CSV directamente sin interferencia de CORS
+    if (origin) {
+      Object.assign(csvHeaders, corsHeaders);
+    }
+
     return new Response(csv, {
       status: 200,
-      headers: {
-        ...corsHeaders,
-        "Content-Type": "text/csv; charset=utf-8",
-        "Content-Disposition": 'attachment; filename="meta-feed.csv"',
-      },
+      headers: csvHeaders,
     });
   } catch (error) {
     console.error("Error en meta-feed:", error);

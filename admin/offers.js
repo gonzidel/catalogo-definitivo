@@ -196,17 +196,41 @@ async function loadProduct(searchTerm) {
     const products = productsData[0];
     currentProduct = products;
     
-    // Cargar variantes
+    // Cargar variantes (sin size, ya que está en variant_sizes)
     const { data: variants, error: variantsError } = await supabase
       .from('product_variants')
-      .select('id, color, size, price, active')
+      .select('id, color, price, active')
       .eq('product_id', products.id)
       .eq('active', true)
-      .order('color, size');
+      .order('color');
     
     if (variantsError) throw variantsError;
     
-    currentProductVariants = variants || [];
+    // Obtener talles desde variant_sizes
+    const variantIds = (variants || []).map(v => v.id);
+    let sizesByVariant = new Map();
+    if (variantIds.length > 0) {
+      const { data: variantSizes, error: sizesError } = await supabase
+        .from('variant_sizes')
+        .select('variant_id, size')
+        .in('variant_id', variantIds)
+        .order('variant_id, size');
+      
+      if (!sizesError && variantSizes) {
+        variantSizes.forEach(vs => {
+          if (!sizesByVariant.has(vs.variant_id)) {
+            sizesByVariant.set(vs.variant_id, []);
+          }
+          sizesByVariant.get(vs.variant_id).push(vs.size);
+        });
+      }
+    }
+    
+    // Combinar variantes con sus talles
+    currentProductVariants = (variants || []).map(v => ({
+      ...v,
+      sizes: sizesByVariant.get(v.id) || []
+    }));
     
     // Mostrar información del producto
     const productNameEl = document.getElementById('product-name');
@@ -335,7 +359,7 @@ async function uploadOfferImage(file) {
       if (!bucketExists) {
         const { error: createError } = await supabase.storage.createBucket(bucketName, {
           public: true,
-          fileSizeLimit: 5242880, // 5MB
+          fileSizeLimit: 10485760, // 10MB
           allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp']
         });
         
@@ -390,7 +414,7 @@ async function uploadPromoImage(file) {
       if (!bucketExists) {
         const { error: createError } = await supabase.storage.createBucket(bucketName, {
           public: true,
-          fileSizeLimit: 5242880, // 5MB
+          fileSizeLimit: 10485760, // 10MB
           allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp']
         });
         
@@ -937,10 +961,10 @@ async function searchPromoItems(term) {
       throw productsError;
     }
     
-    // Buscar variantes por SKU
+    // Buscar variantes por SKU (sin size, ya que está en variant_sizes)
     const { data: variantsBySku, error: variantsSkuError } = await supabase
       .from('product_variants')
-      .select('id, sku, color, size, products!inner(id, name, cost)')
+      .select('id, sku, color, products!inner(id, name, cost)')
       .ilike('sku', `%${term}%`)
       .eq('active', true)
       .limit(5);
@@ -959,7 +983,7 @@ async function searchPromoItems(term) {
       const productIds = matchingProducts.map(p => p.id);
       const { data: variantsData, error: variantsNameError } = await supabase
         .from('product_variants')
-        .select('id, sku, color, size, products!inner(id, name, cost)')
+        .select('id, sku, color, products!inner(id, name, cost)')
         .in('product_id', productIds)
         .eq('active', true)
         .limit(5);
@@ -1368,15 +1392,41 @@ window.editOffer = async function(offerId) {
     // Cargar el producto y sus variantes
     currentProduct = offer.products;
     
+    // Cargar variantes (sin size, ya que está en variant_sizes)
     const { data: variants, error: variantsError } = await supabase
       .from('product_variants')
-      .select('id, color, size, price, active')
+      .select('id, color, price, active')
       .eq('product_id', currentProduct.id)
       .eq('active', true)
-      .order('color, size');
-    
+      .order('color');
+
     if (variantsError) throw variantsError;
-    currentProductVariants = variants || [];
+    
+    // Obtener talles desde variant_sizes
+    const variantIds = (variants || []).map(v => v.id);
+    let sizesByVariant = new Map();
+    if (variantIds.length > 0) {
+      const { data: variantSizes, error: sizesError } = await supabase
+        .from('variant_sizes')
+        .select('variant_id, size')
+        .in('variant_id', variantIds)
+        .order('variant_id, size');
+      
+      if (!sizesError && variantSizes) {
+        variantSizes.forEach(vs => {
+          if (!sizesByVariant.has(vs.variant_id)) {
+            sizesByVariant.set(vs.variant_id, []);
+          }
+          sizesByVariant.get(vs.variant_id).push(vs.size);
+        });
+      }
+    }
+    
+    // Combinar variantes con sus talles
+    currentProductVariants = (variants || []).map(v => ({
+      ...v,
+      sizes: sizesByVariant.get(v.id) || []
+    }));
     
     // Mostrar información del producto
     const productNameEl = document.getElementById('product-name');
@@ -1637,15 +1687,41 @@ async function loadProductForCampaign(productId, campaignId) {
     
     if (productError) throw productError;
     
-    // Cargar variantes
+    // Cargar variantes (sin size, ya que está en variant_sizes)
     const { data: variants, error: variantsError } = await supabase
       .from('product_variants')
-      .select('id, color, size, price, active')
+      .select('id, color, price, active')
       .eq('product_id', productId)
       .eq('active', true)
-      .order('color, size');
-    
+      .order('color');
+
     if (variantsError) throw variantsError;
+    
+    // Obtener talles desde variant_sizes
+    const variantIds = (variants || []).map(v => v.id);
+    let sizesByVariant = new Map();
+    if (variantIds.length > 0) {
+      const { data: variantSizes, error: sizesError } = await supabase
+        .from('variant_sizes')
+        .select('variant_id, size')
+        .in('variant_id', variantIds)
+        .order('variant_id, size');
+      
+      if (!sizesError && variantSizes) {
+        variantSizes.forEach(vs => {
+          if (!sizesByVariant.has(vs.variant_id)) {
+            sizesByVariant.set(vs.variant_id, []);
+          }
+          sizesByVariant.get(vs.variant_id).push(vs.size);
+        });
+      }
+    }
+    
+    // Combinar variantes con sus talles
+    const variantsWithSizes = (variants || []).map(v => ({
+      ...v,
+      sizes: sizesByVariant.get(v.id) || []
+    }));
     
     currentProduct = product;
     currentProductVariants = variants || [];

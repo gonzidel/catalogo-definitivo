@@ -431,14 +431,21 @@ declare
   v_variant_id uuid;
   v_quantity int;
   v_warehouse_id uuid;
-  v_current_stock int;
-  v_available_stock int;
-  v_exists_record boolean;
   v_warehouse_venta_publico_id uuid;
   v_warehouse_general_id uuid;
   v_stock_venta_publico int;
   v_stock_general int;
   v_total_stock int;
+  v_size text;
+  v_normalized_size text;
+  v_size_stock_vp int;
+  v_size_stock_gen int;
+  v_size_total_stock int;
+  v_deduct_vp int;
+  v_deduct_gen int;
+  v_remaining int;
+  v_add_without_stock boolean;
+  v_fallback_stock_qty int;
 begin
   -- Validar que el cliente existe
   if not exists (select 1 from public.public_sales_customers where id = p_customer_id) then
@@ -474,28 +481,69 @@ begin
       
       v_variant_id := (v_item->>'variant_id')::uuid;
       v_quantity := (v_item->>'quantity')::int;
+      v_size := v_item->>'size';
+      -- Detectar confirmación de "agregar sin stock" (frontend envía source 0,0)
+      v_add_without_stock := (
+        v_item->'source' is not null
+        and coalesce((v_item->'source'->>'venta_publico')::int, 0) = 0
+        and coalesce((v_item->'source'->>'general')::int, 0) = 0
+      );
+      if v_size is not null and trim(v_size) <> '' then
+        -- Validar stock por talle usando variant_size_warehouse_stock
+        v_normalized_size := trim(v_size);
+        if v_normalized_size ~ '^\d+(\.\d+)?$' then
+          v_normalized_size := split_part(v_normalized_size, '.', 1);
+        end if;
 
-      -- Obtener stock en ambos warehouses (venta-publico y general)
-      select coalesce(stock_qty, 0) into v_stock_venta_publico
-      from public.variant_warehouse_stock
-      where variant_id = v_variant_id
-        and warehouse_id = v_warehouse_venta_publico_id
-      for update;
+        select 
+          coalesce(sum(case when warehouse_id = v_warehouse_venta_publico_id then stock_qty else 0 end), 0),
+          coalesce(sum(case when warehouse_id = v_warehouse_general_id then stock_qty else 0 end), 0)
+        into v_size_stock_vp, v_size_stock_gen
+        from public.variant_size_warehouse_stock
+        where variant_id = v_variant_id
+          and size = v_normalized_size
+          and warehouse_id in (v_warehouse_venta_publico_id, v_warehouse_general_id);
 
-      select coalesce(stock_qty, 0) into v_stock_general
-      from public.variant_warehouse_stock
-      where variant_id = v_variant_id
-        and warehouse_id = v_warehouse_general_id
-      for update;
+        -- FALLBACK: si no hay stock en warehouses, usar variant_sizes.stock_qty como stock "general"
+        if coalesce(v_size_stock_vp, 0) = 0 and coalesce(v_size_stock_gen, 0) = 0 then
+          select coalesce(stock_qty, 0) into v_fallback_stock_qty
+          from public.variant_sizes
+          where variant_id = v_variant_id
+            and size = v_normalized_size
+          limit 1;
+          if coalesce(v_fallback_stock_qty, 0) > 0 then
+            v_size_stock_gen := v_fallback_stock_qty;
+          end if;
+        end if;
 
-      -- Calcular stock total disponible
-      v_total_stock := coalesce(v_stock_venta_publico, 0) + coalesce(v_stock_general, 0);
+        v_size_total_stock := coalesce(v_size_stock_vp, 0) + coalesce(v_size_stock_gen, 0);
 
-      -- Validar stock disponible (verificar en ambos warehouses)
-      if v_total_stock < v_quantity then
-        raise exception 'Stock insuficiente para % (Cantidad: %, Disponible: % - venta-publico: %, general: %)', 
-          v_item->>'product_name', v_quantity, v_total_stock, 
-          coalesce(v_stock_venta_publico, 0), coalesce(v_stock_general, 0);
+        if v_size_total_stock < v_quantity and not v_add_without_stock then
+          raise exception 'Stock insuficiente para % talle % (Cantidad: %, Disponible: % - venta-publico: %, general: %)', 
+            v_item->>'product_name', v_normalized_size, v_quantity, v_size_total_stock,
+            coalesce(v_size_stock_vp, 0), coalesce(v_size_stock_gen, 0);
+        end if;
+      else
+        -- Validar stock a nivel de variante (legacy) usando variant_warehouse_stock
+        select coalesce(stock_qty, 0) into v_stock_venta_publico
+        from public.variant_warehouse_stock
+        where variant_id = v_variant_id
+          and warehouse_id = v_warehouse_venta_publico_id
+        for update;
+
+        select coalesce(stock_qty, 0) into v_stock_general
+        from public.variant_warehouse_stock
+        where variant_id = v_variant_id
+          and warehouse_id = v_warehouse_general_id
+        for update;
+
+        v_total_stock := coalesce(v_stock_venta_publico, 0) + coalesce(v_stock_general, 0);
+
+        if v_total_stock < v_quantity and not v_add_without_stock then
+          raise exception 'Stock insuficiente para % (Cantidad: %, Disponible: % - venta-publico: %, general: %)', 
+            v_item->>'product_name', v_quantity, v_total_stock, 
+            coalesce(v_stock_venta_publico, 0), coalesce(v_stock_general, 0);
+        end if;
       end if;
 
     end if;
@@ -563,47 +611,119 @@ begin
       
       v_variant_id := (v_item->>'variant_id')::uuid;
       v_quantity := (v_item->>'quantity')::int;
+      v_size := v_item->>'size';
 
-      -- Obtener stock en ambos warehouses para determinar de dónde descontar
-      declare
-        v_stock_vp int;
-        v_stock_gen int;
-        v_target_warehouse_id uuid;
-      begin
-        select coalesce(stock_qty, 0) into v_stock_vp
-        from public.variant_warehouse_stock
-        where variant_id = v_variant_id
-          and warehouse_id = v_warehouse_venta_publico_id
-        for update;
-
-        select coalesce(stock_qty, 0) into v_stock_gen
-        from public.variant_warehouse_stock
-        where variant_id = v_variant_id
-          and warehouse_id = v_warehouse_general_id
-        for update;
-
-        -- Determinar de dónde descontar (priorizar venta-publico)
-        declare
-          v_final_stock int;
-        begin
-          if v_stock_vp >= v_quantity then
-            v_target_warehouse_id := v_warehouse_venta_publico_id;
-            v_final_stock := v_stock_vp - v_quantity;
-          else
-            v_target_warehouse_id := v_warehouse_general_id;
-            v_final_stock := v_stock_gen - v_quantity;
+      -- Si el usuario confirmó agregar sin stock, NO descontar stock (evita violar constraints de no-negativo)
+      if not v_add_without_stock then
+        if v_size is not null and trim(v_size) <> '' then
+          -- Descontar stock por talle desde variant_size_warehouse_stock (priorizar venta-publico)
+          v_normalized_size := trim(v_size);
+          if v_normalized_size ~ '^\d+(\.\d+)?$' then
+            v_normalized_size := split_part(v_normalized_size, '.', 1);
           end if;
 
-          -- Descontar stock del warehouse determinado
-          -- Usar INSERT ... ON CONFLICT para manejar casos donde no existe el registro
-          insert into public.variant_warehouse_stock (variant_id, warehouse_id, stock_qty, updated_at)
-          values (v_variant_id, v_target_warehouse_id, v_final_stock, now())
-          on conflict (variant_id, warehouse_id) 
+          select 
+            coalesce(sum(case when warehouse_id = v_warehouse_venta_publico_id then stock_qty else 0 end), 0),
+            coalesce(sum(case when warehouse_id = v_warehouse_general_id then stock_qty else 0 end), 0)
+          into v_size_stock_vp, v_size_stock_gen
+          from public.variant_size_warehouse_stock
+          where variant_id = v_variant_id
+            and size = v_normalized_size
+            and warehouse_id in (v_warehouse_venta_publico_id, v_warehouse_general_id);
+
+          -- FALLBACK: si no hay stock en warehouses, usar variant_sizes.stock_qty como stock "general"
+          v_fallback_stock_qty := 0;
+          if coalesce(v_size_stock_vp, 0) = 0 and coalesce(v_size_stock_gen, 0) = 0 then
+            select coalesce(stock_qty, 0) into v_fallback_stock_qty
+            from public.variant_sizes
+            where variant_id = v_variant_id
+              and size = v_normalized_size
+            limit 1;
+            if coalesce(v_fallback_stock_qty, 0) > 0 then
+              v_size_stock_gen := v_fallback_stock_qty;
+            end if;
+          end if;
+
+          -- Determinar de dónde descontar (priorizar venta-publico)
+          v_deduct_vp := least(v_quantity, coalesce(v_size_stock_vp, 0));
+          v_deduct_gen := v_quantity - v_deduct_vp;
+
+          -- Asegurar que existan registros antes de actualizar
+          insert into public.variant_size_warehouse_stock (variant_id, size, warehouse_id, stock_qty, updated_at)
+          values (v_variant_id, v_normalized_size, v_warehouse_venta_publico_id, 0, now())
+          on conflict (variant_id, size, warehouse_id) do nothing;
+          insert into public.variant_size_warehouse_stock (variant_id, size, warehouse_id, stock_qty, updated_at)
+          values (v_variant_id, v_normalized_size, v_warehouse_general_id, coalesce(v_fallback_stock_qty, 0), now())
+          on conflict (variant_id, size, warehouse_id)
           do update set
-            stock_qty = variant_warehouse_stock.stock_qty - v_quantity,
+            stock_qty = greatest(public.variant_size_warehouse_stock.stock_qty, excluded.stock_qty),
             updated_at = now();
-        end;
-      end;
+
+          if v_deduct_vp > 0 then
+            update public.variant_size_warehouse_stock
+            set stock_qty = stock_qty - v_deduct_vp,
+                updated_at = now()
+            where variant_id = v_variant_id
+              and size = v_normalized_size
+              and warehouse_id = v_warehouse_venta_publico_id;
+          end if;
+          if v_deduct_gen > 0 then
+            update public.variant_size_warehouse_stock
+            set stock_qty = stock_qty - v_deduct_gen,
+                updated_at = now()
+            where variant_id = v_variant_id
+              and size = v_normalized_size
+              and warehouse_id = v_warehouse_general_id;
+
+            -- Si se usó fallback desde variant_sizes, también descontar de variant_sizes.stock_qty
+            if coalesce(v_fallback_stock_qty, 0) > 0 then
+              update public.variant_sizes
+              set stock_qty = greatest(stock_qty - v_deduct_gen, 0),
+                  updated_at = now()
+              where variant_id = v_variant_id
+                and size = v_normalized_size;
+            end if;
+          end if;
+        else
+          -- Descontar stock a nivel de variante (legacy) usando variant_warehouse_stock
+          declare
+            v_stock_vp int;
+            v_stock_gen int;
+          begin
+            select coalesce(stock_qty, 0) into v_stock_vp
+            from public.variant_warehouse_stock
+            where variant_id = v_variant_id
+              and warehouse_id = v_warehouse_venta_publico_id
+            for update;
+
+            select coalesce(stock_qty, 0) into v_stock_gen
+            from public.variant_warehouse_stock
+            where variant_id = v_variant_id
+              and warehouse_id = v_warehouse_general_id
+            for update;
+
+            v_deduct_vp := least(v_quantity, coalesce(v_stock_vp, 0));
+            v_deduct_gen := v_quantity - v_deduct_vp;
+
+            if v_deduct_vp > 0 then
+              insert into public.variant_warehouse_stock (variant_id, warehouse_id, stock_qty, updated_at)
+              values (v_variant_id, v_warehouse_venta_publico_id, coalesce(v_stock_vp, 0) - v_deduct_vp, now())
+              on conflict (variant_id, warehouse_id)
+              do update set
+                stock_qty = public.variant_warehouse_stock.stock_qty - v_deduct_vp,
+                updated_at = now();
+            end if;
+            if v_deduct_gen > 0 then
+              insert into public.variant_warehouse_stock (variant_id, warehouse_id, stock_qty, updated_at)
+              values (v_variant_id, v_warehouse_general_id, coalesce(v_stock_gen, 0) - v_deduct_gen, now())
+              on conflict (variant_id, warehouse_id)
+              do update set
+                stock_qty = public.variant_warehouse_stock.stock_qty - v_deduct_gen,
+                updated_at = now();
+            end if;
+          end;
+        end if;
+      end if;
     end if;
 
     -- Crear item del pedido

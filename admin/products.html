@@ -47,6 +47,27 @@
     /* Imágenes más compactas */
     .v-images-list input{font-size:11px;padding:4px}
     .v-images-list img{width:40px;height:40px}
+    /* Modal para URLs */
+    .modal-overlay{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
+    .modal-overlay.active{display:flex}
+    .modal{background:#fff;border-radius:12px;padding:24px;max-width:600px;width:90%;max-height:80vh;overflow-y:auto;box-shadow:0 20px 25px -5px rgba(0,0,0,0.1),0 10px 10px -5px rgba(0,0,0,0.04)}
+    .modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;padding-bottom:16px;border-bottom:2px solid #e5e7eb}
+    .modal-header h3{margin:0;font-size:18px;font-weight:600;color:#111827}
+    .modal-close{background:none;border:none;font-size:24px;color:#6b7280;cursor:pointer;padding:0;width:32px;height:32px;display:flex;align-items:center;justify-content:center;border-radius:6px;transition:all 0.2s}
+    .modal-close:hover{background:#f3f4f6;color:#111827}
+    .modal-body{margin-bottom:20px}
+    .modal-body label{display:block;margin-bottom:8px;font-weight:500;color:#374151;font-size:14px}
+    .modal-body textarea{width:100%;min-height:200px;padding:12px;border:2px solid #e5e7eb;border-radius:8px;font-size:13px;font-family:monospace;resize:vertical;box-sizing:border-box;transition:border-color 0.2s}
+    .modal-body textarea:focus{outline:none;border-color:#3a6df0;box-shadow:0 0 0 3px rgba(58,109,240,0.1)}
+    .url-input-wrapper{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+    .url-input-wrapper input{flex:1;padding:10px 12px;border:2px solid #e5e7eb;border-radius:8px;font-size:13px;font-family:monospace;transition:border-color 0.2s}
+    .url-input-wrapper input:focus{outline:none;border-color:#3a6df0;box-shadow:0 0 0 3px rgba(58,109,240,0.1)}
+    .url-input-wrapper .remove-btn{background:#fee2e2;color:#991b1b;border:none;padding:8px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:500;transition:all 0.2s;white-space:nowrap}
+    .url-input-wrapper .remove-btn:hover{background:#fecaca}
+    .url-input-wrapper .remove-btn:disabled{display:none}
+    .modal-body .hint{color:#6b7280;font-size:12px;margin-top:8px;line-height:1.5}
+    .modal-footer{display:flex;gap:12px;justify-content:flex-end;padding-top:16px;border-top:2px solid #e5e7eb}
+    .modal-footer .btn{min-width:100px}
   </style>
 </head>
 <body>
@@ -63,7 +84,7 @@
 
     <section class="card" style="margin-bottom:8px;">
       <div class="actions" style="gap:8px;flex-wrap:wrap">
-        <input id="p-search" placeholder="Buscar por nombre o handle..." style="flex:1;" list="products-datalist"/>
+        <input id="p-search" placeholder="Buscar por nombre o handle..." style="flex:1;" list="products-datalist" autocomplete="off"/>
         <button id="p-search-btn" type="button" class="btn">Buscar</button>
         <select id="p-results" style="min-width:260px;"></select>
         <button id="p-load" type="button" class="btn">Cargar</button>
@@ -83,19 +104,22 @@
             </select>
           </label>
           <label>Handle (único)
-            <input id="handle" placeholder="zapatilla-343" />
+            <input id="handle" placeholder="zapatilla-343" autocomplete="off" />
           </label>
           <label>Estado
             <select id="status">
               <option value="active">active</option>
               <option value="draft">draft</option>
+              <option value="pending_stock">completar stock</option>
+              <option value="missing_tags">completar tags</option>
+              <option value="archived">archivado</option>
             </select>
           </label>
           <label>Nombre
-            <input id="name" placeholder="Zapatilla 343" />
+            <input id="name" placeholder="Zapatilla 343" autocomplete="off" />
           </label>
           <label>Descripción
-            <input id="description" />
+            <input id="description" autocomplete="off" />
           </label>
           <label>Proveedor
             <div style="display:flex;gap:6px;align-items:flex-start;">
@@ -109,11 +133,11 @@
               <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:6px;align-items:end;">
                 <div>
                   <label style="font-size:11px;color:#666;display:block;margin-bottom:2px;">Nombre</label>
-                  <input type="text" id="new-supplier-name" placeholder="Nombre del proveedor" style="width:100%;padding:4px;border:1px solid #ddd;border-radius:4px;font-size:11px">
+                  <input type="text" id="new-supplier-name" placeholder="Nombre del proveedor" style="width:100%;padding:4px;border:1px solid #ddd;border-radius:4px;font-size:11px" autocomplete="off">
                 </div>
                 <div>
                   <label style="font-size:11px;color:#666;display:block;margin-bottom:2px;">Código (opcional)</label>
-                  <input type="text" id="new-supplier-code" placeholder="Código" style="width:100%;padding:4px;border:1px solid #ddd;border-radius:4px;font-size:11px">
+                  <input type="text" id="new-supplier-code" placeholder="Código" style="width:100%;padding:4px;border:1px solid #ddd;border-radius:4px;font-size:11px" autocomplete="off">
                 </div>
                 <div style="display:flex;gap:4px;">
                   <button type="button" id="create-supplier-btn" class="btn primary" style="white-space:nowrap;padding:4px 8px;font-size:11px">Crear</button>
@@ -125,7 +149,7 @@
               <div style="display:grid;grid-template-columns:1fr auto;gap:6px;align-items:end;">
                 <div>
                   <label style="font-size:11px;color:#666;display:block;margin-bottom:2px;">Código del proveedor</label>
-                  <input type="text" id="edit-supplier-code" placeholder="Código" style="width:100%;padding:4px;border:1px solid #ddd;border-radius:4px;font-size:11px">
+                  <input type="text" id="edit-supplier-code" placeholder="Código" style="width:100%;padding:4px;border:1px solid #ddd;border-radius:4px;font-size:11px" autocomplete="off">
                 </div>
                 <div style="display:flex;gap:4px;">
                   <button type="button" id="save-supplier-code-btn" class="btn primary" style="white-space:nowrap;padding:4px 8px;font-size:11px">Guardar</button>
@@ -134,13 +158,13 @@
               </div>
             </div>
           </label>
-          <label>Porcentaje de ganancia (%)
+          <label id="price-percentage-label" data-cost-sensitive="global-pricing">Porcentaje de ganancia (%)
             <input id="price-percentage" type="number" step="0.1" min="0" max="100" value="30" placeholder="30" />
-            <small class="hint">Porcentaje que se aplica al costo para calcular el precio recomendado</small>
+            <small id="price-percentage-hint" class="hint" data-cost-sensitive="global-pricing">Porcentaje que se aplica al costo para calcular el precio recomendado</small>
           </label>
-          <label>Monto logístico ($)
-            <input id="logistic-amount" type="text" inputmode="numeric" value="500" placeholder="500" />
-            <small class="hint">Monto fijo que se suma al costo y porcentaje</small>
+          <label id="logistic-amount-label" data-cost-sensitive="global-pricing">Monto logístico ($)
+            <input id="logistic-amount" type="text" inputmode="numeric" value="500" placeholder="500" autocomplete="off" />
+            <small id="logistic-amount-hint" class="hint" data-cost-sensitive="global-pricing">Monto fijo que se suma al costo y porcentaje</small>
           </label>
           <label style="grid-column: 1 / -1;">Tags Jerárquicos
             <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-top:6px;">
@@ -202,7 +226,7 @@
             style="max-height:200px;overflow-y:auto;border:1px solid #ddd;border-radius:4px;padding:8px;background:#fafafa;"
           >
             <div style="color:#666;font-size:11px;text-align:center;padding:8px;">
-              Selecciona Tags1 y Tags2 para ver detalles disponibles
+              Cargando detalles disponibles...
             </div>
           </div>
           <small class="hint" style="display:block;margin-top:4px;">
@@ -241,7 +265,7 @@
         <div class="actions" style="margin-bottom:6px;justify-content:space-between;flex-wrap:wrap">
           <div class="actions" style="gap:6px">
             <button type="button" id="add-variant" class="btn primary">+ Agregar variante</button>
-            <small class="hint">Podés editar talles y stock en bloque o en modo simple.</small>
+            <small class="hint">Podés editar talles y stock individualmente para cada variante.</small>
           </div>
           <small class="hint">Imágenes: pegá URLs. Tenés 3 por defecto y podés agregar más.</small>
         </div>
@@ -250,11 +274,12 @@
             <thead>
               <tr>
                 <th style="min-width:100px">Color</th>
+                <th style="min-width:80px">Estado</th>
+                <th style="min-width:100px">Acciones</th>
                 <th style="min-width:180px">Talles y Stock</th>
                 <th style="min-width:120px">SKU base</th>
-                <th style="min-width:90px">Costo</th>
+                <th data-cost-sensitive="cost-col-header" style="min-width:90px">Costo</th>
                 <th style="min-width:120px">Precio recomendado</th>
-                <th style="min-width:100px">Stock (modo simple)</th>
                 <th style="min-width:60px">Activa</th>
                 <th style="min-width:200px">Imágenes (URLs)</th>
                 <th style="min-width:30px"></th>
@@ -266,12 +291,44 @@
       </fieldset>
 
       <div class="actions" style="margin-top:8px">
+        <button type="button" id="pre-save-btn" class="btn" style="background:#f59e0b;color:#fff;border-color:#d97706">
+          💾 Pre-guardar
+        </button>
         <button type="submit" class="btn primary">Guardar producto</button>
         <span class="spacer"></span>
         <button type="button" id="p-delete" class="btn danger">Eliminar producto</button>
         <span id="save-status"></span>
       </div>
     </form>
+  </div>
+
+  <!-- Modal para cargar URLs -->
+  <div id="url-modal" class="modal-overlay">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>🔗 Cargar Imágenes desde URLs</h3>
+        <button class="modal-close" id="url-modal-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <label>
+          Ingresá las URLs de Cloudinary (mínimo 1, máximo 10):
+        </label>
+        <div id="url-inputs-container" style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">
+          <!-- Los inputs se generarán dinámicamente -->
+        </div>
+        <button type="button" id="add-url-btn" class="btn secondary small" style="width:auto;margin-bottom:12px">
+          ➕ Agregar URL
+        </button>
+        <div class="hint">
+          <strong>Ejemplo:</strong><br/>
+          https://res.cloudinary.com/dnuedzuzm/image/upload/v1234567890/productos/calzado/ZAP343-NEG-1.jpg
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn secondary" id="url-modal-cancel">Cancelar</button>
+        <button class="btn" id="url-modal-submit">Cargar URLs</button>
+      </div>
+    </div>
   </div>
 
   <script src="./suppress-extension-errors.js"></script>

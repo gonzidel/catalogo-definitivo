@@ -38,6 +38,48 @@ function abbreviateColorLabel(raw) {
   return s.slice(0, 5) + "..";
 }
 
+// PDP real del catálogo usa hash route: index.html#/pdp/<SKU>
+const __variantSkuCache = new Map(); // variant_id -> sku (string)
+
+function buildCatalogPdpHrefFromSku(sku) {
+  if (!sku) return "";
+  return `../index.html#/pdp/${encodeURIComponent(String(sku).trim())}`;
+}
+
+function buildCatalogFallbackHrefFromProductName(productName) {
+  const name = String(productName || "").trim();
+  return `../index.html?articulo=${encodeURIComponent(name)}`;
+}
+
+function buildCatalogHrefFromVariantOrName(variantId, productName) {
+  const vid = variantId != null ? String(variantId).trim() : "";
+  const sku = vid ? __variantSkuCache.get(vid) : null;
+  if (sku) return buildCatalogPdpHrefFromSku(sku);
+  return buildCatalogFallbackHrefFromProductName(productName);
+}
+
+async function ensureVariantSkusLoaded(variantIds = []) {
+  if (!supabase) return;
+  const ids = Array.from(new Set((variantIds || []).map((v) => String(v || "").trim()).filter(Boolean)));
+  const missing = ids.filter((id) => !__variantSkuCache.has(id));
+  if (missing.length === 0) return;
+
+  const { data, error } = await supabase
+    .from("product_variants")
+    .select("id, sku")
+    .in("id", missing);
+
+  if (error) {
+    console.warn("No se pudieron cargar SKU de variantes:", error.message || error);
+    return;
+  }
+  (data || []).forEach((row) => {
+    const id = row?.id != null ? String(row.id).trim() : "";
+    const sku = row?.sku != null ? String(row.sku).trim() : "";
+    if (id) __variantSkuCache.set(id, sku || "");
+  });
+}
+
 function normalizeGuestCartStorageItems(items = []) {
   const map = new Map();
 
@@ -982,6 +1024,239 @@ function showDashboardConfirmModal(opts) {
     modal.setAttribute("aria-hidden", "false");
     modal.classList.add("is-open");
     cancelBtn.focus();
+  });
+}
+
+/**
+ * Modal de selección (1..N). Devuelve número o null si cancela.
+ * @param {{ title: string, max: number, confirmLabel?: string, cancelLabel?: string, label?: string }} opts
+ * @returns {Promise<number|null>}
+ */
+function showDashboardQuantitySelectModal(opts) {
+  const {
+    title,
+    max,
+    confirmLabel = "Aceptar",
+    cancelLabel = "Cancelar",
+    label = "¿Cuántas unidades?",
+  } = opts || {};
+
+  const maxInt = Math.max(1, Number(max || 1) | 0);
+  const optionsHtml = Array.from({ length: maxInt }, (_, i) => {
+    const n = i + 1;
+    return `<option value="${n}">${n}</option>`;
+  }).join("");
+
+  const bodyHtml = `
+    <div class="dash-qty-select">
+      <div class="dash-qty-select__label">${label}</div>
+      <select id="dash-qty-select" class="dash-qty-select__select" aria-label="${label.replace(/"/g, "&quot;")}">
+        ${optionsHtml}
+      </select>
+    </div>
+  `;
+
+  return new Promise((resolve) => {
+    let modal = document.getElementById("dash-app-confirm-modal");
+    if (!modal) {
+      modal = document.createElement("div");
+      modal.id = "dash-app-confirm-modal";
+      modal.className = "dash-remove-cart-item-modal";
+      modal.setAttribute("role", "dialog");
+      modal.setAttribute("aria-modal", "true");
+      modal.setAttribute("aria-labelledby", "dash-app-confirm-title");
+      modal.setAttribute("aria-hidden", "true");
+      modal.innerHTML = `
+        <div class="dash-remove-cart-item-modal__panel">
+          <h3 id="dash-app-confirm-title" class="dash-remove-cart-item-modal__title"></h3>
+          <div id="dash-app-confirm-message" class="dash-remove-cart-item-modal__hint dash-app-confirm-message"></div>
+          <div class="dash-remove-cart-item-modal__actions">
+            <button type="button" class="btn btn-ghost" id="dash-app-confirm-cancel"></button>
+            <button type="button" class="btn btn-primary" id="dash-app-confirm-ok"></button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+    }
+    if (!modal) return resolve(null);
+
+    const titleEl = modal.querySelector("#dash-app-confirm-title");
+    const msgEl = modal.querySelector("#dash-app-confirm-message");
+    const okBtn = modal.querySelector("#dash-app-confirm-ok");
+    const cancelBtn = modal.querySelector("#dash-app-confirm-cancel");
+
+    titleEl.textContent = title || "";
+    msgEl.classList.add("dash-app-confirm-message--html");
+    msgEl.style.display = "";
+    msgEl.innerHTML = bodyHtml;
+    okBtn.textContent = confirmLabel;
+    cancelBtn.textContent = cancelLabel;
+
+    const selectEl = modal.querySelector("#dash-qty-select");
+
+    const cleanup = () => {
+      modal.classList.remove("is-open");
+      modal.setAttribute("aria-hidden", "true");
+      modal.onclick = null;
+      okBtn.onclick = null;
+      cancelBtn.onclick = null;
+      document.removeEventListener("keydown", onKeyDown);
+    };
+
+    const done = (value) => {
+      cleanup();
+      resolve(value);
+    };
+
+    function onKeyDown(e) {
+      if (e.key === "Escape") done(null);
+    }
+
+    modal.onclick = (e) => {
+      if (e.target === modal) done(null);
+    };
+    okBtn.onclick = (e) => {
+      e.stopPropagation();
+      const v = Number(selectEl?.value || 0) | 0;
+      done(v > 0 ? v : 1);
+    };
+    cancelBtn.onclick = (e) => {
+      e.stopPropagation();
+      done(null);
+    };
+
+    document.addEventListener("keydown", onKeyDown);
+    modal.setAttribute("aria-hidden", "false");
+    modal.classList.add("is-open");
+    // En mobile es más cómodo caer en el select
+    (selectEl || cancelBtn).focus();
+  });
+}
+
+/**
+ * Modal para elegir una opción (ej. talle). Devuelve el `value` elegido o null si cancela.
+ * @param {{ title: string, options: Array<{ value: string, label: string, sublabel?: string }>, confirmLabel?: string, cancelLabel?: string }} opts
+ * @returns {Promise<string|null>}
+ */
+function showDashboardOptionButtonsModal(opts) {
+  const {
+    title,
+    options = [],
+    confirmLabel = "Aceptar",
+    cancelLabel = "Cancelar",
+  } = opts || {};
+
+  const safeOptions = (options || [])
+    .map((o) => ({
+      value: String(o?.value ?? "").trim(),
+      label: String(o?.label ?? "").trim(),
+      sublabel: String(o?.sublabel ?? "").trim(),
+    }))
+    .filter((o) => o.value && o.label);
+
+  const bodyHtml = `
+    <div class="dash-opt-select">
+      <div class="dash-opt-select__grid">
+        ${safeOptions
+          .map(
+            (o) => `
+              <button type="button" class="dash-opt-select__btn" data-opt-value="${o.value.replace(/"/g, "&quot;")}">
+                <span class="dash-opt-select__btn-label">${o.label}</span>
+                ${o.sublabel ? `<span class="dash-opt-select__btn-sub">${o.sublabel}</span>` : ""}
+              </button>
+            `
+          )
+          .join("")}
+      </div>
+    </div>
+  `;
+
+  return new Promise((resolve) => {
+    let modal = document.getElementById("dash-app-confirm-modal");
+    if (!modal) {
+      modal = document.createElement("div");
+      modal.id = "dash-app-confirm-modal";
+      modal.className = "dash-remove-cart-item-modal";
+      modal.setAttribute("role", "dialog");
+      modal.setAttribute("aria-modal", "true");
+      modal.setAttribute("aria-labelledby", "dash-app-confirm-title");
+      modal.setAttribute("aria-hidden", "true");
+      modal.innerHTML = `
+        <div class="dash-remove-cart-item-modal__panel">
+          <h3 id="dash-app-confirm-title" class="dash-remove-cart-item-modal__title"></h3>
+          <div id="dash-app-confirm-message" class="dash-remove-cart-item-modal__hint dash-app-confirm-message"></div>
+          <div class="dash-remove-cart-item-modal__actions">
+            <button type="button" class="btn btn-ghost" id="dash-app-confirm-cancel"></button>
+            <button type="button" class="btn btn-primary" id="dash-app-confirm-ok"></button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+    }
+    if (!modal) return resolve(null);
+
+    const titleEl = modal.querySelector("#dash-app-confirm-title");
+    const msgEl = modal.querySelector("#dash-app-confirm-message");
+    const okBtn = modal.querySelector("#dash-app-confirm-ok");
+    const cancelBtn = modal.querySelector("#dash-app-confirm-cancel");
+
+    titleEl.textContent = title || "";
+    msgEl.classList.add("dash-app-confirm-message--html");
+    msgEl.style.display = "";
+    msgEl.innerHTML = bodyHtml;
+    okBtn.textContent = confirmLabel;
+    cancelBtn.textContent = cancelLabel;
+
+    let pickedValue = safeOptions[0]?.value || null;
+    const btns = Array.from(modal.querySelectorAll(".dash-opt-select__btn"));
+    btns.forEach((b) => {
+      b.onclick = (e) => {
+        e.stopPropagation();
+        btns.forEach((x) => x.classList.remove("is-selected"));
+        b.classList.add("is-selected");
+        pickedValue = String(b.dataset.optValue || "").trim() || pickedValue;
+      };
+    });
+    // Seleccionar la primera por defecto
+    if (btns[0]) {
+      btns[0].classList.add("is-selected");
+      pickedValue = String(btns[0].dataset.optValue || "").trim() || pickedValue;
+    }
+
+    const cleanup = () => {
+      modal.classList.remove("is-open");
+      modal.setAttribute("aria-hidden", "true");
+      modal.onclick = null;
+      okBtn.onclick = null;
+      cancelBtn.onclick = null;
+      document.removeEventListener("keydown", onKeyDown);
+    };
+
+    const done = (value) => {
+      cleanup();
+      resolve(value);
+    };
+
+    function onKeyDown(e) {
+      if (e.key === "Escape") done(null);
+    }
+
+    modal.onclick = (e) => {
+      if (e.target === modal) done(null);
+    };
+    okBtn.onclick = (e) => {
+      e.stopPropagation();
+      done(pickedValue);
+    };
+    cancelBtn.onclick = (e) => {
+      e.stopPropagation();
+      done(null);
+    };
+
+    document.addEventListener("keydown", onKeyDown);
+    modal.setAttribute("aria-hidden", "false");
+    modal.classList.add("is-open");
+    (btns[0] || cancelBtn).focus();
   });
 }
 
@@ -2249,7 +2524,7 @@ async function loadCart(userId) {
             Todavía no agregaste productos
             <br><span class="subtext">Explorá el catálogo y armá tu pedido</span>
           </p>
-          <a href="../index2.html" class="btn" style="margin:12px auto 0; display:block; width:fit-content;">Explorar catálogo</a>
+          <a href="../index.html" class="btn" style="margin:12px auto 0; display:block; width:fit-content;">Explorar catálogo</a>
         `;
       const cartFooter = document.getElementById("cart-footer");
       if (cartFooter) cartFooter.style.display = "none";
@@ -2299,13 +2574,16 @@ async function loadCart(userId) {
     }
     cartItems = cartItemsFresh || [];
 
+    // Precargar SKUs para que "Ver producto" en carrito vaya al PDP real
+    await ensureVariantSkusLoaded(cartItems.map((it) => it?.variant_id).filter(Boolean));
+
     if (!cartItems || cartItems.length === 0) {
         cartInfo.innerHTML = `
           <p class="empty-cart">
             Todavía no agregaste productos
             <br><span class="subtext">Explorá el catálogo y armá tu pedido</span>
           </p>
-          <a href="../index2.html" class="btn" style="margin:12px auto 0; display:block; width:fit-content;">Explorar catálogo</a>
+          <a href="../index.html" class="btn" style="margin:12px auto 0; display:block; width:fit-content;">Explorar catálogo</a>
         `;
       const cartFooter = document.getElementById("cart-footer");
       if (cartFooter) cartFooter.style.display = "none";
@@ -2485,7 +2763,7 @@ async function loadCart(userId) {
                       <button type="button" class="item-row__kebab" aria-label="Opciones" aria-haspopup="true" aria-expanded="false">⋯</button>
                       <div class="item-row__popover" role="menu" aria-hidden="true">
                         <button type="button" class="item-row__menuitem item-row__menuitem--danger" data-action="remove-bag-item" data-id="${item.id}">Quitar de la bolsa</button>
-                        <a href="../index2.html?articulo=${encodeURIComponent(productName)}" class="item-row__menuitem" data-action="view-product">Ver producto</a>
+                        <a href="${buildCatalogHrefFromVariantOrName(item.variant_id || item.variantInfo?.id, productName)}" class="item-row__menuitem" data-action="view-product">Ver producto</a>
                       </div>
                     </div>
                   </div>
@@ -2676,6 +2954,15 @@ async function loadOrders(userId) {
       return;
     }
 
+    // Precargar SKUs para que "Ver producto" vaya al PDP real (index#/pdp/<sku>)
+    const allVariantIds = [];
+    for (const o of orders) {
+      for (const it of (o?.order_items || [])) {
+        if (it?.variant_id) allVariantIds.push(it.variant_id);
+      }
+    }
+    await ensureVariantSkusLoaded(allVariantIds);
+
     // Precios: si vienen en "miles abreviados" (ej. 18 = $18.000, 16.5 = $16.500), convertir a pesos para cálculo y visual
     function normalizeOrderPrice(p) {
       const n = Number(p) || 0;
@@ -2772,7 +3059,7 @@ async function loadOrders(userId) {
             const sizeLabel = String(distinctSizes[0] || "").trim();
             const titleHtml = `<span class="item-row__title-name">${productName}</span><span class="item-row__title-sep" aria-hidden="true">·</span><span class="item-row__title-color">${color}</span>`;
             const sizeHtml = !multiSize && sizeLabel
-              ? `<div class="item-row__variant-size">${sizeLabel}</div>`
+              ? `<div class="item-row__variant-size">${sizeLabel}${totalQty > 1 ? ` · x ${totalQty} unidades` : ""}</div>`
               : "";
 
             const orderItemIds = group.map((g) => g.id).filter(Boolean).join(",");
@@ -2858,7 +3145,7 @@ async function loadOrders(userId) {
                     <button type="button" class="item-row__kebab" aria-label="Opciones" aria-haspopup="true" aria-expanded="false">⋯</button>
                     <div class="item-row__popover" role="menu" aria-hidden="true">
                       <button type="button" class="item-row__menuitem item-row__menuitem--danger" data-action="remove-order-item" data-order-item-ids="${orderItemIds.replace(/"/g, "&quot;")}">Quitar del pedido</button>
-                      <a href="../index2.html?articulo=${encodeURIComponent(productName)}" class="item-row__menuitem" data-action="view-product">Ver producto</a>
+                      <a href="${buildCatalogHrefFromVariantOrName(base.variant_id, productName)}" class="item-row__menuitem" data-action="view-product">Ver producto</a>
                     </div>
                   </div>
                 </div>
@@ -2878,7 +3165,7 @@ async function loadOrders(userId) {
             const unitPrice = normalizeOrderPrice(m.price_snapshot || 0);
             const lineTotal = qty * unitPrice;
             const titleHtml = `<span class="item-row__title-name">${productName}</span><span class="item-row__title-sep" aria-hidden="true">·</span><span class="item-row__title-color">${color}</span>`;
-            const sizeHtml = sizeLabel ? `<div class="item-row__variant-size">${sizeLabel}</div>` : "";
+            const sizeHtml = sizeLabel ? `<div class="item-row__variant-size">${sizeLabel}${qty > 1 ? ` · x ${qty} unidades` : ""}</div>` : "";
             const missingMeta = { className: "item-row__status--st-missing", text: "Sin stock", info: "Esta unidad no tiene stock disponible." };
             const statusHtml = `<span class="item-row__status ${missingMeta.className}" data-status-info="${missingMeta.info.replace(/"/g, "&quot;")}" tabindex="0" role="button"><span class="item-row__status-full">${missingMeta.text}</span><span class="item-row__status-short">${missingMeta.text}</span></span><div class="item-row__status-tooltip" aria-hidden="true"></div>`;
             return `
@@ -2903,8 +3190,8 @@ async function loadOrders(userId) {
                     <button type="button" class="item-row__kebab" aria-label="Opciones" aria-haspopup="true" aria-expanded="false">⋯</button>
                     <div class="item-row__popover" role="menu" aria-hidden="true">
                       <button type="button" class="item-row__menuitem item-row__menuitem--danger" data-action="remove-order-item" data-order-item-ids="${(m.id || "").replace(/"/g, "&quot;")}">Quitar del pedido</button>
-                      <a href="../index2.html?similares=1&articulo=${encodeURIComponent(productName)}&talle=${encodeURIComponent(size)}" class="item-row__menuitem" data-action="view-similares">Ver similares</a>
-                      <a href="../index2.html?articulo=${encodeURIComponent(productName)}" class="item-row__menuitem" data-action="view-product">Ver producto</a>
+                      <a href="../index.html?similares=1&articulo=${encodeURIComponent(productName)}&talle=${encodeURIComponent(size)}" class="item-row__menuitem" data-action="view-similares">Ver similares</a>
+                      <a href="${buildCatalogHrefFromVariantOrName(m.variant_id, productName)}" class="item-row__menuitem" data-action="view-product">Ver producto</a>
                     </div>
                   </div>
                 </div>
@@ -3237,19 +3524,94 @@ async function loadOrders(userId) {
           popover.setAttribute("aria-hidden", "true");
           wrap?.querySelector(".item-row__kebab")?.setAttribute("aria-expanded", "false");
         }
-        const confirmed = await showDashboardConfirmModal({
+        // Obtener cantidades reales para permitir quitar unidades (no solo líneas)
+        const { data: rows, error: rowsErr } = await supabase
+          .from("order_items")
+          .select("id, quantity, size")
+          .in("id", ids);
+        if (rowsErr || !rows || rows.length === 0) {
+          console.error("No se pudieron cargar cantidades de order_items:", rowsErr);
+          alert("No se pudo obtener la cantidad de este producto.");
+          return;
+        }
+
+        // Elegir talle primero (si hay más de uno)
+        const sizeCounts = new Map(); // size -> total units
+        rows.forEach((r) => {
+          const size = String(r?.size ?? "Unico").trim() || "Unico";
+          const q = Math.max(0, Number(r?.quantity || 0) || 0);
+          if (!sizeCounts.has(size)) sizeCounts.set(size, 0);
+          sizeCounts.set(size, (sizeCounts.get(size) || 0) + q);
+        });
+        const sizes = Array.from(sizeCounts.entries())
+          .map(([size, q]) => ({ size, q }))
+          .filter((x) => x.q > 0);
+
+        let chosenSize = sizes[0]?.size || "Unico";
+        if (sizes.length > 1) {
+          const pickedSize = await showDashboardOptionButtonsModal({
+            title: "¿Qué talle desea quitar?",
+            options: sizes.map((s) => ({
+              value: s.size,
+              label: s.size,
+              sublabel: `${s.q} Uni`,
+            })),
+            confirmLabel: "Aceptar",
+            cancelLabel: "Cancelar",
+          });
+          if (!pickedSize) return;
+          chosenSize = String(pickedSize).trim() || chosenSize;
+        }
+
+        const rowsForSize = rows.filter((r) => String(r?.size ?? "Unico").trim() === chosenSize);
+        const totalUnitsForSize = rowsForSize.reduce((sum, r) => sum + (Math.max(0, Number(r?.quantity || 0) || 0)), 0);
+        const maxUnits = Math.max(1, totalUnitsForSize || 1);
+
+        let unitsToRemove = 1;
+        // El modal de cantidad SOLO aparece si ese talle tiene más de 1 unidad
+        if (maxUnits > 1) {
+          const pickedUnits = await showDashboardQuantitySelectModal({
+            title: "¿Cuántas unidades querés quitar?",
+            max: maxUnits,
+            confirmLabel: "Aceptar",
+            cancelLabel: "Cancelar",
+          });
+          if (!pickedUnits) return;
+          unitsToRemove = Math.max(1, Math.min(maxUnits, Number(pickedUnits) | 0));
+        }
+
+        const secondConfirm = await showDashboardConfirmModal({
           title:
-            ids.length === 1
-              ? "¿Quitar este producto del pedido?"
-              : `¿Quitar estos ${ids.length} productos del pedido?`,
+            unitsToRemove === 1
+              ? "¿Quiere quitar 1 producto de su pedido?"
+              : `¿Quiere quitar ${unitsToRemove} productos de su pedido?`,
           message: "",
           confirmLabel: "Quitar",
           cancelLabel: "Cancelar",
         });
-        if (!confirmed) return;
-        for (const itemId of ids) {
-          await cancelOrderItem(itemId);
+        if (!secondConfirm) return;
+
+        // Quitar unidades distribuyéndolas entre líneas (si una línea tiene quantity > 1, se cancela parcialmente).
+        let remaining = unitsToRemove;
+        for (const r of rowsForSize) {
+          if (remaining <= 0) break;
+          const rowQty = Math.max(0, Number(r.quantity || 0) || 0);
+          if (!r.id || rowQty <= 0) continue;
+          const cancelQty = Math.min(remaining, rowQty);
+
+          const { error: rpcErr } = await supabase.rpc("rpc_cancel_order_item_units", {
+            p_item_id: r.id,
+            p_units: cancelQty,
+          });
+          if (rpcErr) {
+            console.error("Error quitando unidades del pedido:", rpcErr);
+            alert(rpcErr.message || "No se pudo quitar el producto del pedido.");
+            return;
+          }
+
+          remaining -= cancelQty;
         }
+
         if (currentUserId) await loadOrders(currentUserId);
       };
     });
@@ -3651,7 +4013,7 @@ function showNoSession() {
             Todavía no agregaste productos
             <br><span class="subtext">Explorá el catálogo y armá tu pedido</span>
           </p>
-          <a href="../index2.html" class="btn" style="margin:12px auto 0; display:block; width:fit-content;">Explorar catálogo</a>
+          <a href="../index.html" class="btn" style="margin:12px auto 0; display:block; width:fit-content;">Explorar catálogo</a>
         `;
       } else {
         const totalUnits = normalizedGuestItems.reduce((sum, item) => sum + (Number(item.cantidad) || 0), 0);
@@ -3679,7 +4041,7 @@ function showNoSession() {
                           <button type="button" class="item-row__kebab" aria-label="Opciones" aria-haspopup="true" aria-expanded="false">⋯</button>
                           <div class="item-row__popover" role="menu" aria-hidden="true">
                             <button type="button" class="item-row__menuitem item-row__menuitem--danger" data-action="remove-bag-item" data-id="${idx}">Quitar de la bolsa</button>
-                            <a href="../index2.html?articulo=${encodeURIComponent(item.articulo)}" class="item-row__menuitem" data-action="view-product">Ver producto</a>
+                            <a href="${buildCatalogHrefFromVariantOrName(item.variant_id || item.variantInfo?.id, item.articulo)}" class="item-row__menuitem" data-action="view-product">Ver producto</a>
                           </div>
                         </div>
                       </div>

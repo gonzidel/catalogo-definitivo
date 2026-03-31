@@ -63,7 +63,7 @@ function setupNavHandlers() {
       }
 
       // Si estamos en "Cómo comprar", volver al inicio por hash (cerrar vista informativa)
-      if ((location.hash || "").startsWith("#/como-comprar")) {
+      if ((location.hash || "").startsWith("#/como-comprar") || (location.hash || "").startsWith("#/quienes-somos")) {
         location.hash = "#/";
         updateActiveNav();
         navInicio.classList.add("active");
@@ -146,7 +146,7 @@ function setupNavHandlers() {
       }
 
       // Si estamos en "Cómo comprar", volver al inicio por hash (cerrar vista informativa)
-      if ((location.hash || "").startsWith("#/como-comprar")) {
+      if ((location.hash || "").startsWith("#/como-comprar") || (location.hash || "").startsWith("#/quienes-somos")) {
         location.hash = "#/";
         updateActiveNav();
         navCategorias.classList.add("active");

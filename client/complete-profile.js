@@ -1,5 +1,4 @@
 import { supabase } from "../scripts/supabase-client.js";
-import { checkPasskeySupport, hasRegisteredPasskeys, registerPasskey } from "../scripts/passkeys.js";
 import { ARGENTINA_PROVINCES, PROVINCE_CITIES } from "../scripts/argentina-locations-data.js";
 
 const form = document.getElementById("form");
@@ -448,66 +447,8 @@ form.addEventListener("submit", async (e) => {
     // Mostrar mensaje de éxito
     console.log("✅ Perfil completado correctamente");
     
-    // Verificar si el cliente es de Resistencia-Chaco
-    const isResistenciaChaco = 
-      city.toLowerCase().trim() === "resistencia" &&
-      province.toLowerCase().trim() === "chaco";
-    
-    if (isResistenciaChaco) {
-      console.log("📍 Cliente de Resistencia-Chaco detectado, redirigiendo a customer.html");
-      
-      // Si ya tenemos customer_number de la vinculación, usarlo directamente
-      if (!customerNumber) {
-        // Si no se vinculó, obtener customer_number (puede que necesite generarse por el trigger)
-        // Esperar un momento para que el trigger genere el customer_number
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
-        // Intentar obtener el customer_number
-        const { data: updatedCustomer, error: fetchError } = await supabase
-          .from("customers")
-          .select("customer_number")
-          .eq("id", user.id)
-          .single();
-        
-        if (!fetchError && updatedCustomer?.customer_number) {
-          customerNumber = updatedCustomer.customer_number;
-        } else {
-          // Si aún no tiene, esperar un poco más y reintentar
-          console.log("⏳ Esperando generación de customer_number...");
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          
-          const { data: retryCustomer } = await supabase
-            .from("customers")
-            .select("customer_number")
-            .eq("id", user.id)
-            .single();
-          
-          if (retryCustomer?.customer_number) {
-            customerNumber = retryCustomer.customer_number;
-          }
-        }
-      }
-      
-      if (customerNumber) {
-        console.log("✅ Redirigiendo a customer.html con código:", customerNumber);
-        window.location.href = `../customer.html?code=${encodeURIComponent(customerNumber)}`;
-        return;
-      } else {
-        console.error("❌ No se pudo obtener customer_number, redirigiendo a dashboard como fallback");
-        window.location.href = "./dashboard.html";
-        return;
-      }
-    }
-    
-    // Si no es de Resistencia-Chaco, continuar con el flujo normal
-    // Verificar si debe mostrar modal de passkey
-    await checkAndShowPasskeyModal();
-    
-    // Si no se muestra el modal, redirigir directamente
-    const passkeyModal = document.getElementById("passkey-modal");
-    if (!passkeyModal || passkeyModal.style.display === "none") {
-      window.location.href = "./dashboard.html";
-    }
+    // Mantener al usuario en dashboard luego de completar el perfil
+    window.location.href = "./dashboard.html";
   } catch (e) {
     console.error("❌ Error:", e);
     // Mostrar mensaje de error
@@ -523,128 +464,6 @@ form.addEventListener("submit", async (e) => {
     }
   }
 });
-
-// Función para verificar y mostrar modal de passkey
-async function checkAndShowPasskeyModal() {
-  try {
-    // Verificar soporte WebAuthn
-    if (!checkPasskeySupport()) {
-      return; // No mostrar modal si no hay soporte
-    }
-
-    // Verificar si ya eligió "omitir" recientemente
-    const dismissedAt = localStorage.getItem("passkeys_prompt_dismissed_at");
-    if (dismissedAt) {
-      const dismissedDate = new Date(dismissedAt);
-      const daysSinceDismissed = (Date.now() - dismissedDate.getTime()) / (1000 * 60 * 60 * 24);
-      
-      // No mostrar si pasaron menos de 7 días
-      if (daysSinceDismissed < 7) {
-        console.log("Modal de passkey omitido recientemente");
-        return;
-      }
-    }
-
-    // Obtener sesión
-    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-    if (sessionError || !session) {
-      return; // No hay sesión
-    }
-
-    // Verificar si ya tiene passkey registrada
-    const hasPasskey = await hasRegisteredPasskeys(session.user.id);
-    if (hasPasskey) {
-      return; // Ya tiene passkey, no mostrar modal
-    }
-
-    // Mostrar modal
-    const passkeyModal = document.getElementById("passkey-modal");
-    if (passkeyModal) {
-      passkeyModal.style.display = "flex";
-    }
-  } catch (error) {
-    console.error("Error verificando passkey:", error);
-  }
-}
-
-// Función para cerrar modal de passkey
-function closePasskeyModal() {
-  const passkeyModal = document.getElementById("passkey-modal");
-  if (passkeyModal) {
-    passkeyModal.style.display = "none";
-  }
-}
-
-// Función para activar passkey
-async function activatePasskey() {
-  const activateBtn = document.getElementById("activate-passkey-btn");
-  const skipBtn = document.getElementById("skip-passkey-btn");
-  const msgDiv = document.getElementById("passkey-modal-msg");
-
-  if (!activateBtn || !msgDiv) return;
-
-  activateBtn.disabled = true;
-  activateBtn.textContent = "Registrando...";
-  if (skipBtn) skipBtn.disabled = true;
-  msgDiv.style.display = "none";
-  msgDiv.className = "";
-
-  try {
-    await registerPasskey();
-    
-    // Éxito
-    msgDiv.textContent = "✅ Acceso biométrico activado correctamente";
-    msgDiv.style.display = "block";
-    msgDiv.style.background = "#d4edda";
-    msgDiv.style.color = "#155724";
-    msgDiv.style.border = "1px solid #c3e6cb";
-    
-    // Redirigir al dashboard después de 1.5 segundos
-    setTimeout(() => {
-      window.location.href = "./dashboard.html";
-    }, 1500);
-  } catch (error) {
-    console.error("Error activando passkey:", error);
-    msgDiv.textContent = `❌ Error: ${error.message || "No se pudo activar el acceso biométrico"}`;
-    msgDiv.style.display = "block";
-    msgDiv.style.background = "#f8d7da";
-    msgDiv.style.color = "#721c24";
-    msgDiv.style.border = "1px solid #f5c6cb";
-    
-    activateBtn.disabled = false;
-    activateBtn.textContent = "🔐 Activar Acceso Biométrico";
-    if (skipBtn) skipBtn.disabled = false;
-  }
-}
-
-// Función para omitir passkey
-function skipPasskey() {
-  // Guardar timestamp de cuando se omitió
-  localStorage.setItem("passkeys_prompt_dismissed_at", new Date().toISOString());
-  
-  // Cerrar modal y redirigir
-  closePasskeyModal();
-  window.location.href = "./dashboard.html";
-}
-
-// Inicializar event listeners para el modal de passkey
-function initPasskeyModal() {
-  const activateBtn = document.getElementById("activate-passkey-btn");
-  const skipBtn = document.getElementById("skip-passkey-btn");
-  const closeBtn = document.getElementById("passkey-modal-close");
-  const modal = document.getElementById("passkey-modal");
-
-  activateBtn?.addEventListener("click", activatePasskey);
-  skipBtn?.addEventListener("click", skipPasskey);
-  closeBtn?.addEventListener("click", skipPasskey);
-
-  // Cerrar al hacer clic fuera del modal
-  modal?.addEventListener("click", (e) => {
-    if (e.target === modal) {
-      skipPasskey();
-    }
-  });
-}
 
 // Agregar formateo automático mientras se escribe
 function setupPhoneInputFormatting() {
@@ -682,7 +501,6 @@ function setupPhoneInputFormatting() {
   const user = await checkAuthAndRedirect();
   if (user) {
     initializeAutocomplete();
-    initPasskeyModal();
     setupPhoneInputFormatting();
   } else {
     setupPhoneInputFormatting();

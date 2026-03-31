@@ -26,11 +26,13 @@ btn?.addEventListener("click", async () => {
   try {
     console.log("🔐 Iniciando login con Google...");
     savePreAuthReturnTarget();
+    const oauthRedirectUrl = getPostLoginRedirectUrl();
+    console.log("[FYL DEBUG AUTH] login.js signInWithOAuth redirectTo =", oauthRedirectUrl);
 
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: getPostLoginRedirectUrl(),
+        redirectTo: oauthRedirectUrl,
         queryParams: {
           prompt: "select_account",
           access_type: "offline",
@@ -140,7 +142,9 @@ window.addEventListener("load", async () => {
       await maybeShowProfileOnboardingModal({
         onComplete: () => {
           clearOAuthReturnPath();
-          window.location.href = getPostLoginRedirectUrl();
+          const finalRedirectUrl = getPostLoginRedirectUrl();
+          console.log("[FYL DEBUG AUTH] login.js window.location.href =", finalRedirectUrl);
+          window.location.href = finalRedirectUrl;
         },
       });
       return;
@@ -149,6 +153,7 @@ window.addEventListener("load", async () => {
     const nextUrl = getPostLoginRedirectUrl();
     clearOAuthReturnPath();
     console.log("✅ Perfil inicial completo, redirigiendo a:", nextUrl);
+    console.log("[FYL DEBUG AUTH] login.js window.location.href =", nextUrl);
     window.location.href = nextUrl;
   } catch (error) {
     console.error("❌ Error verificando sesión:", error);

@@ -1111,7 +1111,37 @@ async function fetchCustomerShippingRow() {
  * @returns {Promise<{ ok: boolean, transportName?: string }>}
  */
 function showTransportFinalizeModal({ province, city, opciones }) {
+  function normalizeForMatch(s) {
+    return String(s || "")
+      .trim()
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/\u0301/g, "")
+      .replace(/\u0300/g, "")
+      .replace(/[\u0300-\u036f]/g, "");
+  }
+
+  const chacoSpecialLocalities = new Set(
+    [
+      "resistencia",
+      "puerto vilela",
+      "puerto vilelas",
+      "barranqueras",
+      "fontana",
+      "puerto tirol",
+      "margarita belen",
+      "margarita belén",
+      "colonia benites",
+      "colonia benítez",
+    ].map(normalizeForMatch)
+  );
+
+  const isChacoSpecial = normalizeForMatch(province) === "chaco" && chacoSpecialLocalities.has(normalizeForMatch(city));
+  // Regla: para esas localidades, el transporte efectivo es solo "Retiro de Local".
+  if (isChacoSpecial) opciones = ["Retiro de Local"];
+
   const soloSedeUnico = opciones.length === 1 && opciones[0] === "SEDE";
+  const soloRetiroLocalUnico = opciones.length === 1 && opciones[0] === "Retiro de Local";
 
   return new Promise((resolve) => {
     let modal = document.getElementById("dash-transport-finalize-modal");
@@ -1128,7 +1158,15 @@ function showTransportFinalizeModal({ province, city, opciones }) {
     const waLink = `<a href="${WHATSAPP_ENVIOS_HREF}" target="_blank" rel="noopener noreferrer" class="dash-transport-wa-link">WhatsApp</a>`;
 
     let bodyInner;
-    if (soloSedeUnico) {
+    if (soloRetiroLocalUnico) {
+      bodyInner = `
+        <h3 id="dash-transport-finalize-title" class="dash-remove-cart-item-modal__title">Transporte asignado: Retiro del local</h3>
+        <p class="dash-transport-lead">Acordar en el local.</p>
+        <div class="dash-transport-block">
+          <p class="dash-transport-block__text">¿Tenés dudas? Escribinos por ${waLink}.</p>
+        </div>
+      `;
+    } else if (soloSedeUnico) {
       bodyInner = `
         <h3 id="dash-transport-finalize-title" class="dash-remove-cart-item-modal__title">Transporte asignado: SEDE</h3>
         <p class="dash-transport-lead">El pago es contra reembolso (abonás el total del pedido + envío al recibirlo).</p>
@@ -1160,11 +1198,11 @@ function showTransportFinalizeModal({ province, city, opciones }) {
         <h3 id="dash-transport-finalize-title" class="dash-remove-cart-item-modal__title">Seleccioná tu transporte</h3>
         <p class="dash-transport-sub">Te mostramos las opciones disponibles según tu localidad.</p>
         <div class="dash-transport-select-wrap">${selectHtml}</div>
-        <div class="dash-transport-block">
+        <div class="dash-transport-block" id="dash-transport-pago-block">
           <div class="dash-transport-block__title">Forma de pago</div>
-          <p class="dash-transport-block__text">El pedido se paga por transferencia. El envío se abona al recibir el paquete.</p>
+          <p class="dash-transport-block__text">Acordar en el local.</p>
         </div>
-        <div class="dash-transport-block dash-transport-block--muted">
+        <div class="dash-transport-block dash-transport-block--muted" id="dash-transport-correo-block" style="display:none;">
           <div class="dash-transport-block__title">Correo Argentino</div>
           <p class="dash-transport-block__text">Si elegís Correo Argentino, te informaremos el costo total (pedido + envío) para abonarlo antes del despacho.</p>
         </div>
@@ -1191,9 +1229,19 @@ function showTransportFinalizeModal({ province, city, opciones }) {
     const cancelBtn = modal.querySelector("#dash-transport-cancel");
     const continueBtn = modal.querySelector("#dash-transport-continue");
     const selectEl = modal.querySelector("#dash-transport-select");
+    const pagoBlock = modal.querySelector("#dash-transport-pago-block");
+    const correoBlock = modal.querySelector("#dash-transport-correo-block");
+
+    function syncPaymentBlocks() {
+      if (!selectEl) return;
+      const selected = selectEl.value;
+      const showCorreo = selected === "Correo Argentino";
+      if (correoBlock) correoBlock.style.display = showCorreo ? "" : "none";
+      if (pagoBlock) pagoBlock.style.display = showCorreo ? "none" : "";
+    }
 
     function syncContinueDisabled() {
-      if (soloSedeUnico || !selectEl) {
+      if ((soloSedeUnico || soloRetiroLocalUnico) || !selectEl) {
         continueBtn.disabled = false;
         return;
       }
@@ -1201,9 +1249,13 @@ function showTransportFinalizeModal({ province, city, opciones }) {
     }
 
     if (selectEl) {
-      selectEl.addEventListener("change", syncContinueDisabled);
+      selectEl.addEventListener("change", () => {
+        syncContinueDisabled();
+        syncPaymentBlocks();
+      });
     }
     syncContinueDisabled();
+    syncPaymentBlocks();
 
     const cleanup = () => {
       modal.classList.remove("is-open");
@@ -1234,6 +1286,10 @@ function showTransportFinalizeModal({ province, city, opciones }) {
       e.stopPropagation();
       if (soloSedeUnico) {
         done({ ok: true, transportName: "SEDE" });
+        return;
+      }
+      if (soloRetiroLocalUnico) {
+        done({ ok: true, transportName: "Retiro de Local" });
         return;
       }
       const v = selectEl ? selectEl.value : "";
@@ -2871,16 +2927,19 @@ async function loadOrders(userId) {
         const totalUnits = visibleItems.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
         const MIN_UNITS_TO_FINALIZE = 4;
         const allPickedForOrder = visibleItems.length > 0 && visibleItems.every((item) => (item.status || "").toLowerCase() === "picked");
-        const canFinalize = totalUnits >= MIN_UNITS_TO_FINALIZE && allPickedForOrder;
+        const hasReservedInOrder = visibleItems.some((item) => (item.status || "").toLowerCase() === "reserved");
+        const hasMissingItems = missingItems.length > 0;
+        // Regla UX: 4+ productos habilita, y los items "reservados" no bloquean.
+        const canFinalize = totalUnits >= MIN_UNITS_TO_FINALIZE && !hasMissingItems && (allPickedForOrder || hasReservedInOrder);
         const finalizeBtnClass = canFinalize ? "btn-finalize-order--enabled" : "btn-finalize-order--disabled";
         const missingForFinalize = Math.max(0, MIN_UNITS_TO_FINALIZE - totalUnits);
         let finalizeTitle = "";
-        if (missingItems.length > 0) {
+        if (hasMissingItems) {
           finalizeTitle = "Para finalizar el pedido elimine o cambie el producto sin stock.";
-        } else if (!allPickedForOrder) {
-          finalizeTitle = "Para finalizar el pedido debe esperar a que el vendedor confirme el stock de la reserva.";
-        } else if (!canFinalize && missingForFinalize > 0) {
+        } else if (totalUnits < MIN_UNITS_TO_FINALIZE && missingForFinalize > 0) {
           finalizeTitle = missingForFinalize === 1 ? "Te falta 1 par para cerrar el pedido" : `Te faltan ${missingForFinalize} pares para cerrar el pedido`;
+        } else if (!allPickedForOrder && !hasReservedInOrder) {
+          finalizeTitle = "Para finalizar el pedido debe esperar a que el vendedor confirme el stock de la reserva.";
         }
 
         return `
@@ -2899,7 +2958,7 @@ async function loadOrders(userId) {
                 <div class="dash-order__number">Pedido #${orderDisplayNumber}</div>
                 <div class="dash-order__total-line">Total: ${formatOrderPrice(total)}</div>
               </div>
-              ${isActive ? `<div class="dash-order__cta"><div class="dash-order-finalize-wrap"><button type="button" class="btn btn-finalize-order close-order-btn ${finalizeBtnClass}" data-order-id="${order.id}" data-order-items-count="${totalUnits}" data-all-picked="${allPickedForOrder ? "true" : "false"}" data-finalize-title="${(finalizeTitle || "").replace(/"/g, "&quot;")}" ${allPickedForOrder && totalUnits < MIN_UNITS_TO_FINALIZE ? "disabled" : ""} ${finalizeTitle ? `title="${finalizeTitle.replace(/"/g, "&quot;")}"` : ""}>Finalizar pedido</button><div class="dash-order-finalize-tooltip" id="finalize-tooltip-${order.id}" role="tooltip" aria-hidden="true"></div></div></div>` : ""}
+              ${isActive ? `<div class="dash-order__cta"><div class="dash-order-finalize-wrap"><button type="button" class="btn btn-finalize-order close-order-btn ${finalizeBtnClass}" data-order-id="${order.id}" data-order-items-count="${totalUnits}" data-all-picked="${allPickedForOrder ? "true" : "false"}" data-has-reserved="${hasReservedInOrder ? "true" : "false"}" data-has-missing-items="${hasMissingItems ? "true" : "false"}" data-finalize-title="${(finalizeTitle || "").replace(/"/g, "&quot;")}" ${canFinalize ? "" : (totalUnits < MIN_UNITS_TO_FINALIZE ? "disabled" : "")} ${finalizeTitle ? `title="${finalizeTitle.replace(/"/g, "&quot;")}"` : ""}>Finalizar pedido</button><div class="dash-order-finalize-tooltip" id="finalize-tooltip-${order.id}" role="tooltip" aria-hidden="true"></div></div></div>` : ""}
               ${isClosed ? `<div class="dash-order__cta"><button type="button" class="dash-order-modify-link" data-order-id="${order.id}">Modificar pedido</button></div>` : ""}
             </div>
             <div class="dash-divider"></div>
@@ -2929,10 +2988,32 @@ async function loadOrders(userId) {
         const orderId = btn.dataset.orderId;
         const itemsCount = parseInt(btn.dataset.orderItemsCount || "0", 10);
         const allPicked = btn.dataset.allPicked === "true";
+        const hasReserved = btn.dataset.hasReserved === "true";
+        const hasMissingItems = btn.dataset.hasMissingItems === "true";
         const finalizeTitle = (btn.dataset.finalizeTitle || "").replace(/&quot;/g, '"');
         if (!orderId) return;
 
-        if (!allPicked) {
+        if (hasMissingItems) {
+          const text =
+            finalizeTitle || "Para finalizar el pedido elimine o cambie el producto sin stock.";
+          const wrap = btn.closest(".dash-order-finalize-wrap");
+          const tooltip = wrap ? wrap.querySelector(".dash-order-finalize-tooltip") : null;
+          if (tooltip) {
+            tooltip.textContent = text;
+            tooltip.classList.add("is-visible");
+            tooltip.setAttribute("aria-hidden", "false");
+            setTimeout(() => {
+              tooltip.classList.remove("is-visible");
+              tooltip.setAttribute("aria-hidden", "true");
+            }, 5000);
+          } else {
+            alert(text);
+          }
+          return;
+        }
+
+        // Permitir finalizar si el pedido tiene "reservados" (regla nueva).
+        if (!allPicked && !hasReserved) {
           const text = finalizeTitle || "Para finalizar el pedido debe esperar a que el vendedor confirme el stock de la reserva.";
           const wrap = btn.closest(".dash-order-finalize-wrap");
           const tooltip = wrap ? wrap.querySelector(".dash-order-finalize-tooltip") : null;
@@ -2970,6 +3051,18 @@ async function loadOrders(userId) {
             alert(text);
           }
           return;
+        }
+
+        if (hasReserved) {
+          const confirmText =
+            "Tu pedido incluye productos en reserva, pendientes de confirmación. Si alguno no tuviera stock, te avisaremos. ?quiere finalizar el pedido?";
+          const confirmed = await showDashboardConfirmModal({
+            title: "Finalizar pedido",
+            message: confirmText,
+            confirmLabel: "Aceptar",
+            cancelLabel: "Cancelar",
+          });
+          if (!confirmed) return;
         }
 
         await closeOrder(orderId);

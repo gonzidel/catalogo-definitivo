@@ -177,9 +177,9 @@ async function handleStatusChange(productId, newStatus, productName, selectEleme
   let confirmMessage = `¿Cambiar el estado del producto "${productName}" de "${currentStatus}" a "${newStatus}"?`;
   
   if (currentStatus === 'active' && newStatus === 'draft') {
-    confirmMessage += '\n\n⚠️ El producto dejará de mostrarse en el catálogo público (index2.html).';
+    confirmMessage += '\n\n⚠️ El producto dejará de mostrarse en el catálogo público (index.html).';
   } else if (currentStatus === 'draft' && newStatus === 'active') {
-    confirmMessage += '\n\n✅ El producto aparecerá en el catálogo público (index2.html).';
+    confirmMessage += '\n\n✅ El producto aparecerá en el catálogo público (index.html).';
   }
 
   if (!confirm(confirmMessage)) {

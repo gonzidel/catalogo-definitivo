@@ -43,7 +43,7 @@ Fecha: Marzo 2026
 
 ### 4.1 Catálogo público (frontend cliente)
 
-- **Ubicación**: `index.html` (entrada principal), `index2.html` (alternativa de catálogo referenciada desde dashboard y navegación); `scripts/` (main, catalog, filtros, search-manager, como-comprar, etc.). La sección “Cómo comprar” y colecciones (ej. FYL Originals) se manejan por hash (`#/como-comprar`, `#/coleccion/...`) con `como-comprar.js`.
+- **Ubicación**: `index.html` (entrada principal); `scripts/` (main, catalog, filtros, search-manager, como-comprar, etc.). La sección “Cómo comprar” y colecciones (ej. FYL Originals) se manejan por hash (`#/como-comprar`, `#/coleccion/...`) con `como-comprar.js`.
 - **Fuente de datos**: Vista `catalog_public_view` (productos activos, variantes con stock > 0 e imágenes, precios, ofertas, tags). Fallback opcional a vista/tabla `catalog_items` si la principal no devuelve datos.
 - **Funcionalidades**:
   - Listado de productos con filtros (categoría, color, talle, tags, búsqueda). Filtro de talles con normalización (`size-filter.js`, `utils/size-normalizer.js`) y modal bottom sheet por categoría.

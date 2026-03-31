@@ -1,15 +1,6 @@
 // client/dashboard.js - Dashboard del cliente
 import { supabase } from "../scripts/supabase-client.js";
-import { hasRegisteredPasskeys, registerPasskey, checkPasskeySupport } from "../scripts/passkeys.js";
 import { hasInitialProfileComplete } from "./auth-helper.js";
-import { maybeShowProfileOnboardingModal } from "../scripts/profile-onboarding-modal.js";
-
-/** @returns {Promise<boolean>} true solo si el usuario guardó desde el modal (viene recarga) */
-async function showProfileOnboardingIfNeeded() {
-  return await maybeShowProfileOnboardingModal({
-    onComplete: () => window.location.reload(),
-  });
-}
 
 // Función para verificar autenticación y perfil
 async function checkAuthAndProfile() {
@@ -42,13 +33,12 @@ async function checkAuthAndProfile() {
     const hasInitialProfile = await hasInitialProfileComplete();
     
     if (!hasInitialProfile) {
-      console.log("📝 Usuario sin perfil completo: modal de datos");
-      const saved = await showProfileOnboardingIfNeeded();
+      console.log("📝 Usuario sin perfil completo");
       return {
         hasSession: true,
         hasProfile: false,
         user: session.user,
-        redirecting: saved === true,
+        redirecting: false,
       };
     }
 
@@ -60,7 +50,7 @@ async function checkAuthAndProfile() {
       const customerResult = await Promise.race([
         supabase
           .from("customers")
-          .select("full_name, phone, address, dni, province, city, customer_number")
+          .select("full_name, phone, address, dni, province, city, customer_number, qr_code")
           .eq("id", session.user.id)
           .single(),
         new Promise((_, reject) =>
@@ -81,26 +71,24 @@ async function checkAuthAndProfile() {
     console.log("- customer:", customer);
     console.log("- customerError:", customerError);
 
-    // Si no hay perfil, redirigir a complete-profile
+    // Si no hay perfil completo, no bloquear dashboard.
     if (customerError && customerError.code !== "PGRST116") {
-      console.log("📝 Error obteniendo perfil, modal de datos");
-      const saved = await showProfileOnboardingIfNeeded();
+      console.log("📝 Error obteniendo perfil");
       return {
         hasSession: true,
         hasProfile: false,
         user: session.user,
-        redirecting: saved === true,
+        redirecting: false,
       };
     }
 
     if (!customer) {
-      console.log("📝 Sin perfil, modal de datos");
-      const saved = await showProfileOnboardingIfNeeded();
+      console.log("📝 Sin perfil");
       return {
         hasSession: true,
         hasProfile: false,
         user: session.user,
-        redirecting: saved === true,
+        redirecting: false,
       };
     }
 
@@ -123,72 +111,14 @@ async function checkAuthAndProfile() {
     console.log("- hasAllInitialFields:", hasAllInitialFields);
 
     if (!hasAllInitialFields) {
-      console.log("📝 Perfil inicial incompleto, modal de datos");
-      const saved = await showProfileOnboardingIfNeeded();
+      console.log("📝 Perfil inicial incompleto");
       return {
         hasSession: true,
         hasProfile: false,
         user: session.user,
         customer: customer,
-        redirecting: saved === true,
+        redirecting: false,
       };
-    }
-
-    // Verificar si el cliente es de Resistencia-Chaco
-    const isResistenciaChaco = 
-      customer.city && 
-      customer.province && 
-      customer.city.toLowerCase().trim() === "resistencia" &&
-      customer.province.toLowerCase().trim() === "chaco";
-
-    if (isResistenciaChaco) {
-      console.log("📍 Cliente de Resistencia-Chaco detectado, redirigiendo a customer.html");
-      
-      // Obtener customer_number (puede que necesite generarse)
-      let customerNumber = customer.customer_number;
-      
-      if (!customerNumber) {
-        // Si no tiene customer_number, intentar obtenerlo o generarlo
-        console.log("⚠️ Cliente no tiene customer_number, intentando obtenerlo...");
-        const { data: updatedCustomer, error: updateError } = await supabase
-          .from("customers")
-          .select("customer_number")
-          .eq("id", session.user.id)
-          .single();
-        
-        if (!updateError && updatedCustomer?.customer_number) {
-          customerNumber = updatedCustomer.customer_number;
-        } else {
-          // Si aún no tiene, esperar un momento y reintentar (el trigger debería generarlo)
-          console.log("⏳ Esperando generación de customer_number...");
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          
-          const { data: retryCustomer } = await supabase
-            .from("customers")
-            .select("customer_number")
-            .eq("id", session.user.id)
-            .single();
-          
-          if (retryCustomer?.customer_number) {
-            customerNumber = retryCustomer.customer_number;
-          }
-        }
-      }
-      
-      if (customerNumber) {
-        console.log("✅ Redirigiendo a customer.html con código:", customerNumber);
-        window.location.replace(`../customer.html?code=${encodeURIComponent(customerNumber)}`);
-        return {
-          hasSession: true,
-          hasProfile: true,
-          user: session.user,
-          customer: customer,
-          redirecting: true,
-        };
-      } else {
-        console.error("❌ No se pudo obtener customer_number para cliente de Resistencia-Chaco");
-        // Continuar al dashboard normal como fallback
-      }
     }
 
     console.log("✅ Usuario tiene perfil inicial completo");
@@ -292,140 +222,9 @@ async function initDashboard() {
 // controladores del DOM: dashboard-instant.js es el único que pinta #cart-info y #orders-section.
 // Mensajes de no-sesión/error los muestra dashboard-instant (withAuth fallback).
 
-// Función para verificar y mostrar modal de passkey
-async function checkAndShowPasskeyModal() {
-  try {
-    // Verificar soporte WebAuthn
-    if (!checkPasskeySupport()) {
-      return; // No mostrar modal si no hay soporte
-    }
-
-    // Verificar si ya eligió "omitir" recientemente
-    const dismissedAt = localStorage.getItem("passkeys_prompt_dismissed_at");
-    if (dismissedAt) {
-      const dismissedDate = new Date(dismissedAt);
-      const daysSinceDismissed = (Date.now() - dismissedDate.getTime()) / (1000 * 60 * 60 * 24);
-      
-      // No mostrar si pasaron menos de 7 días
-      if (daysSinceDismissed < 7) {
-        console.log("Modal de passkey omitido recientemente");
-        return;
-      }
-    }
-
-    // Obtener sesión
-    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-    if (sessionError || !session) {
-      return; // No hay sesión
-    }
-
-    // Verificar si ya tiene passkey registrada
-    const hasPasskey = await hasRegisteredPasskeys(session.user.id);
-    if (hasPasskey) {
-      return; // Ya tiene passkey, no mostrar modal
-    }
-
-    // Mostrar modal
-    const passkeyModal = document.getElementById("passkey-modal");
-    if (passkeyModal) {
-      passkeyModal.style.display = "flex";
-    }
-  } catch (error) {
-    console.error("Error verificando passkey:", error);
-  }
-}
-
-// Función para cerrar modal de passkey
-function closePasskeyModal() {
-  const passkeyModal = document.getElementById("passkey-modal");
-  if (passkeyModal) {
-    passkeyModal.style.display = "none";
-  }
-}
-
-// Función para activar passkey
-async function activatePasskey() {
-  const activateBtn = document.getElementById("activate-passkey-btn");
-  const skipBtn = document.getElementById("skip-passkey-btn");
-  const msgDiv = document.getElementById("passkey-modal-msg");
-
-  if (!activateBtn || !msgDiv) return;
-
-  activateBtn.disabled = true;
-  activateBtn.textContent = "Registrando...";
-  skipBtn.disabled = true;
-  msgDiv.style.display = "none";
-  msgDiv.className = "";
-
-  try {
-    await registerPasskey();
-    
-    // Éxito
-    msgDiv.textContent = "✅ Acceso biométrico activado correctamente";
-    msgDiv.className = "msg success";
-    msgDiv.style.display = "block";
-    
-    // Cerrar modal después de 2 segundos
-    setTimeout(() => {
-      closePasskeyModal();
-    }, 2000);
-  } catch (error) {
-    console.error("Error registrando passkey:", error);
-    msgDiv.textContent = error.message || "Error al activar acceso biométrico";
-    msgDiv.className = "msg error";
-    msgDiv.style.display = "block";
-    
-    activateBtn.disabled = false;
-    activateBtn.textContent = "🔐 Activar Acceso Biométrico";
-    skipBtn.disabled = false;
-  }
-}
-
-// Función para omitir passkey
-function skipPasskey() {
-  // Guardar timestamp en localStorage
-  localStorage.setItem("passkeys_prompt_dismissed_at", new Date().toISOString());
-  closePasskeyModal();
-}
-
-// Configurar event listeners para modal de passkey
-function setupPasskeyModal() {
-  const passkeyModal = document.getElementById("passkey-modal");
-  const passkeyModalClose = document.getElementById("passkey-modal-close");
-  const activateBtn = document.getElementById("activate-passkey-btn");
-  const skipBtn = document.getElementById("skip-passkey-btn");
-
-  if (passkeyModalClose) {
-    passkeyModalClose.addEventListener("click", closePasskeyModal);
-  }
-
-  if (activateBtn) {
-    activateBtn.addEventListener("click", activatePasskey);
-  }
-
-  if (skipBtn) {
-    skipBtn.addEventListener("click", skipPasskey);
-  }
-
-  // Cerrar al hacer click fuera del modal
-  if (passkeyModal) {
-    passkeyModal.addEventListener("click", (e) => {
-      if (e.target === passkeyModal) {
-        closePasskeyModal();
-      }
-    });
-  }
-}
-
 // Inicializar cuando se carga la página
 document.addEventListener("DOMContentLoaded", () => {
   initDashboard();
-  setupPasskeyModal();
-  
-  // Verificar y mostrar modal de passkey después de un delay
-  setTimeout(() => {
-    checkAndShowPasskeyModal();
-  }, 1000);
 });
 
 console.log("🔧 Script del dashboard cargado");

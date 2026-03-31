@@ -119,42 +119,19 @@ const productNamesDatalist = document.getElementById("product-names");
 
 let allData = [];
 const pendingChanges = new Map(); // id -> { stock_general, stock_venta_publico, price, active }
+const MIN_SEARCH_CHARS = 2;
+let currentProductIds = [];
+let dataLoaded = false;
+let loadInProgress = false;
+let renderTimeout = null;
+let searchTimeout = null;
+let activeSearchRequest = 0;
 
 // Cargar nombres de productos para autocompletado
 async function loadProductNames() {
   if (!productNamesDatalist) return;
-  
-  try {
-    // Obtener todos los nombres de productos únicos (excluyendo archivados)
-    const { data: products, error } = await supabase
-      .from("products")
-      .select("name")
-      .neq("status", "archived")
-      .not("name", "is", null)
-      .order("name", { ascending: true });
-    
-    if (error) {
-      console.error("Error cargando nombres de productos:", error);
-      return;
-    }
-    
-    // Limpiar datalist existente
-    productNamesDatalist.innerHTML = "";
-    
-    // Obtener nombres únicos
-    const uniqueNames = [...new Set((products || []).map(p => p.name).filter(Boolean))];
-    
-    // Agregar opciones al datalist
-    uniqueNames.forEach(name => {
-      const option = document.createElement("option");
-      option.value = name;
-      productNamesDatalist.appendChild(option);
-    });
-    
-    console.log(`✅ ${uniqueNames.length} nombres de productos cargados para autocompletado`);
-  } catch (err) {
-    console.error("Error en loadProductNames:", err);
-  }
+  // Evitar precarga masiva de nombres: el stock ahora se consulta bajo demanda.
+  productNamesDatalist.innerHTML = "";
 }
 
 // Cargar contador de productos incompletos (pending_stock con stock 0)
@@ -336,7 +313,38 @@ function updateLowAlertBadge() {
 
 // Función normalizeSize importada desde scripts/utils/size-normalizer.js (centralizada)
 
-async function load() {
+async function searchProductsByName(term) {
+  const normalizedTerm = String(term || "").trim();
+  if (normalizedTerm.length < MIN_SEARCH_CHARS) return [];
+
+  const { data, error } = await supabase
+    .from("products")
+    .select("id, name")
+    .neq("status", "archived")
+    .ilike("name", `%${normalizedTerm}%`)
+    .order("name", { ascending: true })
+    .limit(60);
+
+  if (error) {
+    console.error("Error buscando productos por nombre:", error);
+    msg.textContent = `Error en búsqueda: ${error.message}`;
+    return [];
+  }
+
+  return (data || []).map((p) => p.id).filter(Boolean);
+}
+
+async function load(productIds = []) {
+  const ids = Array.isArray(productIds) ? productIds.filter(Boolean) : [];
+  if (ids.length === 0) {
+    allData = [];
+    pendingChanges.clear();
+    setPendingCount();
+    render();
+    msg.textContent = `Escribe al menos ${MIN_SEARCH_CHARS} letras para buscar productos.`;
+    return true;
+  }
+
   msg.textContent = "Cargando...";
   tbody.innerHTML = "";
   allData = []; // Limpiar al inicio para que, si hay return anticipado, no queden datos viejos
@@ -344,10 +352,11 @@ async function load() {
   pendingChanges.clear();
   setPendingCount();
   
-  // Obtener variantes (sin size, ya que los talles están en variant_sizes)
+  // Obtener variantes solo de los productos buscados
   const { data: variants, error: variantsError } = await supabase
     .from("product_variants")
-    .select("id, sku, color, price, active, products(id, name, category, status, created_at, handle)")
+    .select("id, product_id, sku, color, price, active, products(id, name, category, status, created_at, handle)")
+    .in("product_id", ids)
     .order("sku", { ascending: true });
   
   if (variantsError) {
@@ -369,6 +378,14 @@ async function load() {
   });
   
   console.log(`✅ Variantes válidas (excluyendo archivados): ${validVariants.length}`);
+  if (validVariants.length === 0) {
+    allData = [];
+    render();
+    msg.textContent = "No se encontraron variantes para los productos buscados.";
+    updateLowAlertBadge();
+    await loadIncompleteCount();
+    return true;
+  }
   
   // Obtener IDs de almacenes
   const { data: warehouses, error: warehousesError } = await supabase
@@ -1350,8 +1367,8 @@ async function addStockLoad(rowId, variantId, size, loadQty) {
   // Recargar datos desde la base de datos antes de renderizar
   msg.textContent = `Carga exitosa: +${loadQty} unidades. Recargando...`;
   
-  // Recargar todos los datos desde la base de datos
-  const ok = await load();
+  // Recargar solo los resultados actuales de búsqueda
+  const ok = await load(currentProductIds);
   if (ok) dataLoaded = true;
   updateLowAlertBadge();
 }
@@ -2315,100 +2332,72 @@ function discardAll() {
   render();
 }
 
-// Variable para rastrear si ya se cargaron los datos
-let dataLoaded = false;
-let loadInProgress = false; // Prevenir múltiples cargas simultáneas
-let renderTimeout = null; // Para debounce de render
+async function runSearchByTerm(term) {
+  const trimmedTerm = String(term || "").trim();
+  const requestId = ++activeSearchRequest;
 
-// Función para cargar datos solo cuando hay filtros activos
-async function loadIfNeeded() {
-  // Prevenir múltiples cargas simultáneas
-  if (loadInProgress) {
-    return;
-  }
-  
-  // Verificar si hay filtros activos
-  const term = (q.value || "").toLowerCase().trim();
-  const cat = fCategory.value || "";
-  const color = fColor.value || "";
-  const size = fSize.value || "";
-  const active = fActive.value;
-  const onlyLow = fLow.checked;
-  const hasAnyFilter = term || cat || color || size || active || onlyLow;
-  
-  // Solo cargar si hay filtros y aún no se han cargado los datos
-  if (hasAnyFilter && !dataLoaded) {
-    loadInProgress = true;
-    try {
-      const ok = await load();
-      if (ok) dataLoaded = true; // Solo marcar como cargado si load() terminó bien (sin return anticipado)
-    } finally {
-      loadInProgress = false;
-    }
-  }
-  
-  // Si no hay filtros, no cargar nada
-  if (!hasAnyFilter) {
+  if (trimmedTerm.length < MIN_SEARCH_CHARS) {
+    currentProductIds = [];
+    dataLoaded = false;
     allData = [];
-    // Cancelar render pendiente
-    if (renderTimeout) {
-      clearTimeout(renderTimeout);
-      renderTimeout = null;
-    }
+    pendingChanges.clear();
+    setPendingCount();
     render();
-    msg.textContent = `Usa el buscador o filtros para ver productos.`;
+    msg.textContent = `Escribe al menos ${MIN_SEARCH_CHARS} letras para buscar productos.`;
     return;
   }
-  
-  // Si ya se cargaron los datos, solo renderizar (con debounce)
-  if (dataLoaded) {
-    // Cancelar render anterior pendiente
-    if (renderTimeout) {
-      clearTimeout(renderTimeout);
-    }
-    // Debounce: esperar 300ms antes de renderizar
-    renderTimeout = setTimeout(() => {
-      render();
-      renderTimeout = null;
-    }, 300);
+
+  if (loadInProgress) return;
+  loadInProgress = true;
+
+  try {
+    const productIds = await searchProductsByName(trimmedTerm);
+    if (requestId !== activeSearchRequest) return;
+
+    currentProductIds = productIds;
+    const ok = await load(productIds);
+    if (requestId !== activeSearchRequest) return;
+    dataLoaded = Boolean(ok);
+  } finally {
+    loadInProgress = false;
   }
 }
 
 reloadBtn.addEventListener("click", async () => {
-  dataLoaded = false; // Resetear para forzar recarga
-  const ok = await load();
-  if (ok) dataLoaded = true;
-  render();
-  // Actualizar nombres de productos para autocompletado
-  await loadProductNames();
-});
-
-// Debounce para búsqueda (input) - prevenir múltiples llamadas mientras el usuario escribe
-let searchTimeout = null;
-q.addEventListener("input", () => {
-  // Si ya hay una carga en progreso, no hacer nada
-  if (loadInProgress) {
+  const term = (q.value || "").trim();
+  if (term.length >= MIN_SEARCH_CHARS) {
+    await runSearchByTerm(term);
     return;
   }
-  
-  // Cancelar búsqueda anterior pendiente
-  if (searchTimeout) {
-    clearTimeout(searchTimeout);
-  }
-  
-  // Debounce: esperar 800ms antes de buscar (aumentado para evitar múltiples cargas)
-  searchTimeout = setTimeout(() => {
-    if (!loadInProgress) {
-      loadIfNeeded();
-    }
-    searchTimeout = null;
-  }, 800);
+
+  currentProductIds = [];
+  dataLoaded = false;
+  allData = [];
+  pendingChanges.clear();
+  setPendingCount();
+  render();
+  msg.textContent = `Escribe al menos ${MIN_SEARCH_CHARS} letras para buscar productos.`;
 });
-// Event listeners para filtros - con protección contra cargas duplicadas
+
+q.addEventListener("input", () => {
+  if (searchTimeout) clearTimeout(searchTimeout);
+  searchTimeout = setTimeout(() => {
+    runSearchByTerm(q.value);
+    searchTimeout = null;
+  }, 450);
+});
+
+// Event listeners para filtros (solo filtran el set ya cargado por búsqueda)
 const handleFilterChange = () => {
-  if (!loadInProgress) {
-    loadIfNeeded();
+  if (!dataLoaded) {
+    render();
+    return;
   }
+  if (renderTimeout) clearTimeout(renderTimeout);
+  renderTimeout = setTimeout(() => {
+    render();
+    renderTimeout = null;
+  }, 120);
 };
 
 fCategory.addEventListener("change", handleFilterChange);
@@ -2556,7 +2545,7 @@ archiveSelectedBtn?.addEventListener("click", async () => {
   await supabase.from("product_variants").update({ active: false }).in("product_id", ids);
   oldSummary.textContent = "Archivado completo. Actualizando lista…";
   dataLoaded = false; // Resetear para forzar recarga
-  const ok = await load(); // recargar tabla principal
+  const ok = await load(currentProductIds); // recargar resultados actuales
   if (ok) dataLoaded = true;
   await openOldProductsModal(); // reabrir con lista actualizada
 });
@@ -2565,6 +2554,7 @@ archiveSelectedBtn?.addEventListener("click", async () => {
 
 // Cargar nombres de productos para autocompletado al iniciar
 loadProductNames();
+msg.textContent = `Escribe al menos ${MIN_SEARCH_CHARS} letras para buscar productos.`;
 
 // ========== FUNCIONES DE HISTORIAL DE STOCK ==========
 

@@ -8,12 +8,14 @@ const STORAGE_KEY = "fyl_dashboard_onboarding_seen";
 const HIGHLIGHT_CLASS = "dash-onboarding-highlight";
 const BODY_OPEN_CLASS = "onboarding-open";
 const CARD_STEP3_CLASS = "dash-onboarding-card--step3";
+const AUTO_OPEN_DELAY_MS = 2000;
 
 let currentStepIndex = 0;
 let currentHighlightEl = null;
 let currentProductParentEl = null;
 let autoRunDoneThisLoad = false;
 let positionRetryTimer = null;
+let autoStartTimer = null;
 
 let prevProductParentPosition = "";
 let prevProductParentZIndex = "";
@@ -420,7 +422,9 @@ function startOnboarding(force = false) {
 function runDashboardOnboardingIfNeeded() {
   if (autoRunDoneThisLoad) return;
   autoRunDoneThisLoad = true;
-  startOnboarding(false);
+  autoStartTimer = setTimeout(() => {
+    startOnboarding(false);
+  }, AUTO_OPEN_DELAY_MS);
 }
 
 function init() {

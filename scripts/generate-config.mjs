@@ -4,6 +4,28 @@ import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const __repoRoot = path.resolve(__dirname, "..");
+
+/** Misma convención que deploy.ps1: líneas KEY=valor, # comentarios. No pisa variables ya definidas en el entorno. */
+function loadEnvLocalFile() {
+  const envPath = path.join(__repoRoot, ".env.local");
+  if (!fs.existsSync(envPath)) return;
+  const raw = fs.readFileSync(envPath, "utf8");
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eq = trimmed.indexOf("=");
+    if (eq <= 0) continue;
+    const key = trimmed.slice(0, eq).trim();
+    let val = trimmed.slice(eq + 1).trim();
+    val = val.replace(/^["']|["']$/g, "");
+    if (key && val !== "" && process.env[key] === undefined) {
+      process.env[key] = val;
+    }
+  }
+}
+
+loadEnvLocalFile();
 
 // Limpiar las variables de entorno: remover comillas y espacios
 let url = process.env.SUPABASE_URL;
@@ -34,9 +56,9 @@ if (!url || !anon) {
   }
   console.error("");
   console.error("Configúralas antes de ejecutar el build:");
-  console.error("  - En Windows PowerShell: $env:SUPABASE_URL=\"tu_url\"");
-  console.error("  - En Windows CMD: set SUPABASE_URL=tu_url");
-  console.error("  - En Linux/Mac: export SUPABASE_URL=\"tu_url\"");
+  console.error(`  - Creá .env.local en la raíz del repo (${__repoRoot}) con SUPABASE_URL y SUPABASE_ANON_KEY`);
+  console.error("  - O en PowerShell: $env:SUPABASE_URL=\"tu_url\"; $env:SUPABASE_ANON_KEY=\"tu_clave\"");
+  console.error("  - O en CMD: set SUPABASE_URL=tu_url");
   process.exit(1);
 }
 

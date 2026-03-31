@@ -651,11 +651,76 @@ logoutBtn?.addEventListener("click", async () => {
 const profileShippingSingle = document.getElementById("profile-shipping-transporte-single");
 const profileShippingSelect = document.getElementById("profile-shipping-transporte-select");
 
+const profileFormaPagoBlock = document.getElementById(
+  "profile-shipping-forma-pago-block"
+);
+const profileCorreoBlock = document.getElementById("profile-shipping-correo-block");
+const profileFormaPagoText = document.getElementById("profile-shipping-forma-pago-text");
+
+function normalizeForMatch(s) {
+  return String(s || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\u0301/g, "")
+    .replace(/\u0300/g, "")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+const chacoSpecialLocalities = new Set(
+  [
+    "resistencia",
+    "puerto vilela",
+    "puerto vilelas",
+    "barranqueras",
+    "fontana",
+    "puerto tirol",
+    "margarita belen",
+    "margarita belén",
+    "colonia benites",
+    "colonia benítez",
+  ].map(normalizeForMatch)
+);
+
+function isChacoSpecial(province, city) {
+  return (
+    normalizeForMatch(province) === "chaco" &&
+    chacoSpecialLocalities.has(normalizeForMatch(city))
+  );
+}
+
+function getFormaPagoTextForTransport(transporte) {
+  // Por ahora mantenemos el texto base; cuando tengas el texto exacto para
+  // Credifin/Snaider/Via Cargo lo ajustamos en esta función.
+  if (transporte === "Correo Argentino") return "";
+  return "Acordar en el local.";
+}
+
+function syncPaymentBlocks(transporteElegido) {
+  if (!profileFormaPagoBlock || !profileCorreoBlock) return;
+
+  const t = String(transporteElegido || "").trim();
+  const showCorreo = t === "Correo Argentino";
+
+  profileCorreoBlock.style.display = showCorreo ? "" : "none";
+  profileFormaPagoBlock.style.display = showCorreo ? "none" : "";
+
+  if (!showCorreo && profileFormaPagoText) {
+    profileFormaPagoText.textContent = getFormaPagoTextForTransport(t);
+  }
+}
+
 function updateProfileShippingBlock() {
   const province = (document.getElementById("province")?.value || "").trim();
   const city = (document.getElementById("city")?.value || "").trim();
-  const opciones = getTransportesDisponibles(province, city);
-  const efectivo = getTransporte(province, city);
+  let opciones = getTransportesDisponibles(province, city);
+  let efectivo = getTransporte(province, city);
+
+  // Regla de Chaco: para esas localidades el transporte efectivo es solo Retiro de Local.
+  if (isChacoSpecial(province, city)) {
+    opciones = ["Retiro de Local"];
+    efectivo = "Retiro de Local";
+  }
 
   if (profileShippingSingle && profileShippingSelect) {
     // Solo SEDE único: texto fijo. Cualquier otro caso (varias opciones o un solo no-SEDE): lista desplegable.
@@ -671,8 +736,10 @@ function updateProfileShippingBlock() {
     } else {
       profileShippingSingle.style.display = "block";
       profileShippingSelect.style.display = "none";
-      profileShippingSingle.textContent = soloSedeUnico ? "SEDE" : opciones.length ? opciones[0] : "—";
+      profileShippingSingle.textContent = opciones.length ? opciones[0] : "—";
     }
+
+    syncPaymentBlocks(efectivo);
   }
 }
 
@@ -681,6 +748,7 @@ profileShippingSelect?.addEventListener("change", () => {
   const city = (document.getElementById("city")?.value || "").trim();
   const transporte = profileShippingSelect.value;
   if (province && city && transporte) guardarTransporteElegido(province, city, transporte);
+  syncPaymentBlocks(transporte);
 });
 
 // Agregar formateo automático mientras se escribe

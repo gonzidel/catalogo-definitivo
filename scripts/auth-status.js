@@ -58,6 +58,7 @@ function resetLoginModal() {
 
 function showLoginModal(message) {
   if (!loginModal) {
+    console.log("[FYL DEBUG AUTH] auth-status.js window.location.href = client/login.html");
     window.location.href = "client/login.html";
     return;
   }
@@ -73,6 +74,7 @@ function showLoginModal(message) {
 // Mostrar paso 1 del modal (solicitar email)
 function showLoginModalStep1() {
   if (!loginModal) {
+    console.log("[FYL DEBUG AUTH] auth-status.js window.location.href = client/login.html");
     window.location.href = "client/login.html";
     return;
   }
@@ -124,6 +126,7 @@ function promptLogin(reason) {
   if (loginModal) {
     showLoginModal(reason);
   } else {
+    console.log("[FYL DEBUG AUTH] auth-status.js window.location.href = client/login.html");
     window.location.href = "client/login.html";
   }
 }
@@ -233,10 +236,12 @@ loginGoogleBtnStep1?.addEventListener("click", async () => {
 
   try {
     savePreAuthReturnTarget();
+    const oauthRedirectUrl = getPostLoginRedirectUrl();
+    console.log("[FYL DEBUG AUTH] auth-status.js signInWithOAuth redirectTo =", oauthRedirectUrl);
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: getPostLoginRedirectUrl(),
+        redirectTo: oauthRedirectUrl,
         queryParams: {
           prompt: "select_account",
           access_type: "offline",
@@ -572,6 +577,7 @@ async function handleClientAreaClick(event) {
     if (!sessionError && session) {
       console.log("✅ Usuario ya autenticado, redirigiendo a dashboard");
       // Usuario ya está autenticado, redirigir directamente
+      console.log("[FYL DEBUG AUTH] auth-status.js window.location.href = client/dashboard.html");
       window.location.href = "client/dashboard.html";
       return;
     }
@@ -602,6 +608,7 @@ window.redirectToClientArea = async function () {
     if (!sessionError && session) {
       console.log("✅ Usuario ya autenticado, redirigiendo a dashboard");
       // Usuario ya está autenticado, redirigir directamente
+      console.log("[FYL DEBUG AUTH] auth-status.js window.location.href = client/dashboard.html");
       window.location.href = "client/dashboard.html";
       return false;
     }

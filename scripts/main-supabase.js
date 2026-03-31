@@ -8,7 +8,7 @@ import {
   USE_OPEN_SHEET_FALLBACK as CONFIG_USE_OPEN_SHEET_FALLBACK,
   configReady,
 } from "./config.js";
-import { supabase as supabaseClient } from "./supabase-client.js?v=m250324";
+import { supabase as supabaseClient } from "./supabase-client.js?v=m260328";
 import { normalizeSize } from "./utils/size-normalizer.js";
 
 await configReady;
@@ -1914,10 +1914,12 @@ function obtenerGaleriaYImagenPrincipal(producto, colorSeleccionado) {
   return { gal, mainImgUrl };
 }
 
-async function enrichProductsWithStock(productos = []) {
+async function enrichProductsWithStock(productos = [], { mergeSkuIndex = false } = {}) {
   try {
-    // Limpiar skuIndex antes de reconstruirlo
-    skuIndex.clear();
+    // Por defecto se limpia el índice (render de página). Deep link / PDP: merge sin borrar lo ya indexado.
+    if (!mergeSkuIndex) {
+      skuIndex.clear();
+    }
     
     const nombres = [
       ...new Set(
@@ -2365,7 +2367,57 @@ async function buscarPorSKUEnSupabase(sku) {
     
     const variant = variantData;
     const productId = variant.product_id;
-    
+    const articulo = (variant.products?.name || '').trim();
+
+    // 3b. Mismo shape que el catálogo: filas de la vista por artículo → agrupar + enrich (precio, colores, talles)
+    if (articulo && supabase) {
+      try {
+        let catRows = null;
+        const rCat = await supabase
+          .from('catalog_public_view')
+          .select('*')
+          .eq('Articulo', articulo);
+        if (!rCat.error && rCat.data?.length) {
+          catRows = rCat.data;
+        } else if (!rCat.error) {
+          const rCatI = await supabase
+            .from('catalog_public_view')
+            .select('*')
+            .ilike('Articulo', articulo);
+          if (!rCatI.error && rCatI.data?.length) catRows = rCatI.data;
+        }
+        if (catRows && catRows.length > 0) {
+          const grouped = agruparProductos(catRows);
+          const productoFull = grouped[0];
+          if (productoFull) {
+            await enrichProductsWithStock([productoFull], { mergeSkuIndex: true });
+            const hit = buscarPorSKU(sku.trim());
+            if (hit) {
+              return {
+                producto: hit.producto,
+                color: hit.color,
+                talle: hit.talle,
+                variant_id: hit.variant_id,
+                available: hit.available,
+                image: hit.image,
+              };
+            }
+            return {
+              producto: productoFull,
+              color: variant.color || '',
+              talle: talle || '',
+              variant_id: variantId,
+              sku: sku.trim(),
+              available: null,
+              image: productoFull.VariantePrincipal || '',
+            };
+          }
+        }
+      } catch (e) {
+        console.warn('⚠️ catalog_public_view por artículo (PDP deep link):', e);
+      }
+    }
+
     // 4. Obtener warehouses "general" y "venta-publico"
     const { data: warehouses } = await supabase
       .from("warehouses")
@@ -2754,6 +2806,8 @@ function abrirModalPorSKU(sku, { pushState = true } = {}) {
   // Scroll al área de la imagen (parte superior del PDP)
   const modalBody = document.getElementById('product-modal-body');
   if (modalBody) modalBody.scrollTop = 0;
+
+  if (typeof window.updateFloatingCartCta === 'function') window.updateFloatingCartCta();
   
   return true;
 }
@@ -2787,8 +2841,19 @@ function abrirModalConResultado(resultado, { pushState = true } = {}) {
   // Scroll al área de la imagen (parte superior del PDP)
   const modalBody = document.getElementById('product-modal-body');
   if (modalBody) modalBody.scrollTop = 0;
+
+  if (typeof window.updateFloatingCartCta === 'function') window.updateFloatingCartCta();
   
   return true;
+}
+
+/** Abre PDP por SKU: índice de página actual, o carga completa vía Supabase (deep link / Ver más). */
+async function abrirPdpPorSkuIfPossible(sku, { pushState = true } = {}) {
+  if (!sku) return false;
+  if (abrirModalPorSKU(sku, { pushState })) return true;
+  const resultado = await buscarPorSKUEnSupabase(sku);
+  if (resultado && abrirModalConResultado(resultado, { pushState })) return true;
+  return false;
 }
 
 function cerrarModal(skipHistory = false) {
@@ -2799,6 +2864,8 @@ function cerrarModal(skipHistory = false) {
   }
   document.body.classList.remove('modal-open');
   productoActualEnModal = null;
+
+  if (typeof window.updateFloatingCartCta === 'function') window.updateFloatingCartCta();
 
   if (skipHistory) return;
   if (history.state?.pdp) {
@@ -2852,43 +2919,34 @@ function showToast(message, type = 'error') {
 async function inicializarModalDesdeURL() {
   const sku = parsePdpFromUrl();
   if (!sku) return;
-  
-  // Si está en skuIndex, abrir normal
-  if (skuIndex.has(sku)) {
-    abrirModalPorSKU(sku, { pushState: false });
-    return;
-  }
-  
-  // Si no, usar fallback
-  const resultado = await buscarPorSKUEnSupabase(sku);
-  if (resultado) {
-    abrirModalConResultado(resultado, { pushState: false });
+
+  const opened = await abrirPdpPorSkuIfPossible(sku, { pushState: false });
+  if (opened) return;
+
+  // Mostrar mensaje en modal en lugar de alert
+  const modal = document.getElementById('product-modal');
+  const modalBody = document.getElementById('product-modal-body');
+  if (modal && modalBody) {
+    modalBody.innerHTML = `
+      <div style="padding: 40px; text-align: center;">
+        <h3 style="color: #dc3545; margin-bottom: 16px;">⚠️ Producto no disponible</h3>
+        <p style="color: #666; margin-bottom: 20px;">El producto solicitado no está disponible en este momento.</p>
+        <button onclick="window.cerrarModal()" style="
+          background: #CD844D;
+          color: white;
+          border: none;
+          padding: 10px 20px;
+          border-radius: 5px;
+          cursor: pointer;
+          font-size: 14px;
+        ">Cerrar</button>
+      </div>
+    `;
+    modal.classList.add('active');
+    document.body.classList.add('modal-open');
   } else {
-    // Mostrar mensaje en modal en lugar de alert
-    const modal = document.getElementById('product-modal');
-    const modalBody = document.getElementById('product-modal-body');
-    if (modal && modalBody) {
-      modalBody.innerHTML = `
-        <div style="padding: 40px; text-align: center;">
-          <h3 style="color: #dc3545; margin-bottom: 16px;">⚠️ Producto no disponible</h3>
-          <p style="color: #666; margin-bottom: 20px;">El producto solicitado no está disponible en este momento.</p>
-          <button onclick="window.cerrarModal()" style="
-            background: #CD844D;
-            color: white;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 5px;
-            cursor: pointer;
-            font-size: 14px;
-          ">Cerrar</button>
-        </div>
-      `;
-      modal.classList.add('active');
-      document.body.classList.add('modal-open');
-    } else {
-      // Fallback a toast si no hay modal disponible
-      showToast('Producto no disponible', 'error');
-    }
+    // Fallback a toast si no hay modal disponible
+    showToast('Producto no disponible', 'error');
   }
 }
 
@@ -3028,11 +3086,13 @@ function renderizarModalProducto(producto, colorSeleccionado, talleSeleccionado)
             <div class="product-modal-colors">${colores}</div>
           </div>
         </div>
-        ${featuresHtml}
         <div class="product-modal-section product-modal-sizes-section">
-          <div class="product-modal-section-label">TALLES</div>
-          <div class="product-modal-variants pdp-size-section">${variantesPDP}</div>
+          <div class="pdp-size-flow">
+            <div class="product-modal-section-label">TALLES</div>
+            <div class="product-modal-variants pdp-size-section">${variantesPDP}</div>
+          </div>
         </div>
+        ${featuresHtml}
       </div>
       <div class="pdp-reco">
         <div class="pdp-reco-head">
@@ -3058,7 +3118,7 @@ function renderizarModalProducto(producto, colorSeleccionado, talleSeleccionado)
           </div>
           <button class="product-modal-cta-btn reserve-btn pdp-add-btn is-empty" 
                   data-articulo="${producto.Articulo}" 
-                  data-color="${detalleColor?.color || ''}">Agregar al borrador</button>
+                  data-color="${detalleColor?.color || ''}">Agregar al carrito</button>
         </div>`;
     }
   }
@@ -3163,8 +3223,48 @@ function renderizarColoresModal(producto, colorSeleccionado) {
   }).join('');
 }
 
+/** Texto de talle en UI: igual que en datos (p. ej. 39/40, no 39–40). */
 function formatTalleDisplay(talle) {
-  return (talle || '').replace(/\//g, '–');
+  return String(talle || "").trim();
+}
+
+function normalizeCartStockKeyPart(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function getCartQtyByProductColorSize() {
+  const qtyMap = new Map();
+  try {
+    const rawCart = localStorage.getItem("fyl_cart");
+    const parsed = rawCart ? JSON.parse(rawCart) : [];
+    if (!Array.isArray(parsed)) return qtyMap;
+
+    parsed.forEach((item) => {
+      const articulo = normalizeCartStockKeyPart(item.articulo ?? item.product_name ?? "");
+      const color = normalizeCartStockKeyPart(item.color ?? "Único");
+      const rawTalle = item.talle ?? item.size ?? "";
+      const talle = normalizeCartStockKeyPart(normalizeSize(rawTalle) || rawTalle);
+      const cantidad = Number(item.cantidad ?? item.quantity ?? item.qty ?? 0) || 0;
+      if (!articulo || !color || !talle || cantidad <= 0) return;
+      const key = `${articulo}__${color}__${talle}`;
+      qtyMap.set(key, (qtyMap.get(key) || 0) + cantidad);
+    });
+  } catch (error) {
+    console.warn("⚠️ No se pudo leer fyl_cart para stock visual:", error?.message || error);
+  }
+  return qtyMap;
+}
+
+function getVisualAvailableFromCart(vd, productArticulo, colorActual, qtyMap = null) {
+  if (!vd || vd.available === null || vd.available === undefined) return vd?.available ?? null;
+  const articulo = normalizeCartStockKeyPart(productArticulo);
+  const color = normalizeCartStockKeyPart(colorActual);
+  const talle = normalizeCartStockKeyPart(normalizeSize(vd.talle) || vd.talle);
+  if (!articulo || !color || !talle) return vd.available;
+  const key = `${articulo}__${color}__${talle}`;
+  const sourceMap = qtyMap || getCartQtyByProductColorSize();
+  const qtyInCart = sourceMap.get(key) || 0;
+  return Math.max(0, Number(vd.available) - qtyInCart);
 }
 
 /**
@@ -3200,31 +3300,42 @@ function renderizarVariantesModalPDP(producto, colorSeleccionado, colorActual) {
   if (!detalleColor) return '';
 
   const variantDetails = detalleColor.variantDetails || [];
+  const cartQtyMap = getCartQtyByProductColorSize();
   const chips = variantDetails.map((vd) => {
     const key = `${colorActual}_${vd.talle}`;
-    const sinStock = vd.available !== null && vd.available <= 0;
-    const max = vd.available !== null ? vd.available : 999;
-    const stockText = sinStock ? 'Sin stock' : (vd.available !== null ? `${vd.available} disp.` : '—');
+    const availableVisual = getVisualAvailableFromCart(vd, producto?.Articulo, colorActual, cartQtyMap);
+    const sinStock = availableVisual !== null && availableVisual <= 0;
+    const max = availableVisual !== null ? availableVisual : 999;
+    const stockUnknown = availableVisual === null;
     const sizeDisplay = formatTalleDisplay(vd.talle);
+    const titleHint = sinStock
+      ? "Sin stock"
+      : stockUnknown
+        ? "Disponibilidad por confirmar"
+        : `Disponibles: ${availableVisual}`;
 
     if (sinStock) {
       return `
-        <button type="button" class="size-chip size-chip--disabled" disabled data-key="${key}" data-size="${sizeDisplay}" data-max="0" data-qty="0" aria-disabled="true">
-          <div class="size-chip__top">
-            <div class="size-chip__size">${sizeDisplay}</div>
-            <div class="size-chip__stock">${stockText}</div>
-          </div>
+        <button type="button" class="size-chip size-chip--disabled" disabled data-key="${key}" data-size="${sizeDisplay}" data-max="0" data-qty="0" data-stock-unknown="0" title="${titleHint.replace(/"/g, "&quot;")}" aria-disabled="true">
+          <span class="size-chip__size">${sizeDisplay}</span>
         </button>`;
     }
     return `
-      <button type="button" class="size-chip" data-key="${key}" data-size="${sizeDisplay}" data-max="${max}" data-qty="0" aria-disabled="false">
-        <div class="size-chip__top">
-          <div class="size-chip__size">${sizeDisplay}</div>
-          <div class="size-chip__stock">${stockText}</div>
-        </div>
+      <button type="button" class="size-chip" data-key="${key}" data-size="${sizeDisplay}" data-max="${max}" data-qty="0" data-stock-unknown="${stockUnknown ? "1" : "0"}" title="${titleHint.replace(/"/g, "&quot;")}" aria-disabled="false">
+        <span class="size-chip__size">${sizeDisplay}</span>
       </button>`;
-  }).join('');
-  return `<div class="size-grid">${chips}</div><div class="size-stepper-panel is-hidden" id="pdp-size-stepper"></div>`;
+  });
+
+  /* Una sola grilla: 2 columnas ≤360px, 3 columnas >360px (CSS en styles.css) */
+  const layoutHtml = `
+    <div class="pdp-size-layout">
+      <div class="pdp-size-layout-grid" role="group" aria-label="Talles disponibles">
+        ${chips.join('')}
+      </div>
+    </div>
+  `;
+
+  return `${layoutHtml}<div class="size-stepper-panel is-hidden" id="pdp-size-stepper"></div>`;
 }
 
 function renderizarVariantesModal(producto, colorSeleccionado, talleSeleccionado) {
@@ -3559,6 +3670,15 @@ function renderizarTags(producto) {
     : "";
 }
 
+/** Quita estado "Agregado" (verde) cuando el usuario cambia selección en el PDP */
+function clearPdpAddAddedState(modal) {
+  const addBtn = modal?.querySelector?.('.pdp-add-btn');
+  if (!addBtn || !addBtn.classList.contains('pdp-add-btn--added')) return;
+  addBtn.classList.remove('pdp-add-btn--added');
+  addBtn.style.background = '';
+  addBtn.textContent = 'Agregar al carrito';
+}
+
 function updateModalPDPTotal(modal) {
   if (!modal) return;
   let total = 0;
@@ -3745,6 +3865,7 @@ function initModalEvents() {
         if (colorLabelEl) colorLabelEl.textContent = color;
         const addBtn = modal.querySelector('.pdp-add-btn');
         if (addBtn) addBtn.dataset.color = color;
+        clearPdpAddAddedState(modal);
         updateModalPDPTotal(modal);
       }
       
@@ -3766,7 +3887,7 @@ function initModalEvents() {
       if (!btn || btn.disabled) return;
 
       e.preventDefault();
-      const sizeGrid = modal.querySelector('.size-grid');
+      const sizeGrid = modal.querySelector('.size-grid') || modal.querySelector('.pdp-size-layout');
       const activeChip = sizeGrid?.querySelector('.size-chip.is-active');
       if (!activeChip) return;
 
@@ -3788,42 +3909,54 @@ function initModalEvents() {
       if (decBtn) decBtn.disabled = qty <= 0;
       if (incBtn) incBtn.disabled = qty >= max;
 
+      clearPdpAddAddedState(modal);
       updateModalPDPTotal(modal);
       return;
     }
 
-    /* Size chips: tap marca activo y muestra panel */
-    const sizeGrid = e.target.closest('.size-grid');
+    /* Size chips: tap marca activo y muestra panel (.size-grid legacy o .pdp-size-layout actual) */
+    const sizeGrid = e.target.closest('.size-grid') || e.target.closest('.pdp-size-layout');
     if (sizeGrid) {
       const chip = e.target.closest('.size-chip');
       if (!chip || chip.classList.contains('size-chip--disabled')) return;
 
       e.preventDefault();
       const sizeDisplay = chip.dataset.size || '';
-      const stockText = chip.querySelector('.size-chip__stock')?.textContent || '';
       const max = parseInt(chip.dataset.max || '0', 10) || 999;
+      const stockUnknown = chip.dataset.stockUnknown === '1';
       let qty = parseInt(chip.dataset.qty || '0', 10) || 0;
 
       /* Si ya está activo, no hacer nada */
       if (chip.classList.contains('is-active')) return;
 
+      clearPdpAddAddedState(modal);
       sizeGrid.querySelectorAll('.size-chip').forEach(c => c.classList.remove('is-active'));
       chip.classList.add('is-active');
 
       const panel = modal.querySelector('#pdp-size-stepper') || modal.querySelector('.size-stepper-panel');
       if (panel) {
         const safeSize = (sizeDisplay || '').replace(/</g, '&lt;');
-        const labelText = (!stockText || stockText.trim() === '—') 
-          ? `${safeSize} (stock a confirmar)` 
-          : `${safeSize} (${stockText.replace(/</g, '&lt;')})`;
+        const stockSuffix = stockUnknown
+          ? '(stock a confirmar)'
+          : `(${max} disp.)`;
         panel.classList.remove('is-hidden');
         panel.innerHTML = `
-          <div class="size-stepper-label">${labelText}</div>
+          <div class="size-stepper-label"><span class="size-stepper-label-talle">${safeSize}</span><span class="size-stepper-label-stock">${stockSuffix}</span></div>
           <div class="size-stepper-controls">
             <button type="button" class="size-stepper-btn" data-action="dec" aria-label="Menos" ${qty <= 0 ? 'disabled' : ''}>−</button>
             <div class="size-stepper-qty">${qty}</div>
             <button type="button" class="size-stepper-btn" data-action="inc" aria-label="Más" ${qty >= max ? 'disabled' : ''}>+</button>
           </div>`;
+
+        // Asegurar que el selector de cantidades quede expuesto al usuario
+        // (scroll suave dentro del contenedor scrollable del modal).
+        setTimeout(() => {
+          const modalBody = document.getElementById('product-modal-body');
+          if (!modalBody) return;
+
+          // block: 'center' + scroll-margin-bottom en CSS: el stepper no queda bajo el footer fijo del PDP.
+          panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 50);
       }
       return;
     }
@@ -3909,11 +4042,18 @@ function initModalEvents() {
 
         if (rowsAdded > 0) {
           btn.textContent = 'Agregado';
-          btn.style.background = '#4CAF50';
-          setTimeout(() => {
-            updateModalPDPTotal(modal);
-            btn.style.background = '';
-          }, 1200);
+          btn.classList.add('pdp-add-btn--added');
+          btn.style.background = '';
+          const variantsContainer = modal.querySelector('.product-modal-variants');
+          if (variantsContainer && productoActualEnModal) {
+            variantsContainer.innerHTML = renderizarVariantesModalPDP(productoActualEnModal, color, color);
+          }
+          const stepperPanel = modal.querySelector('#pdp-size-stepper') || modal.querySelector('.size-stepper-panel');
+          if (stepperPanel) {
+            stepperPanel.classList.add('is-hidden');
+            stepperPanel.innerHTML = '';
+          }
+          updateModalPDPTotal(modal);
         }
 
           const countDespues = window.getCartCount?.() ?? 0;
@@ -4120,7 +4260,7 @@ async function onNavChange() {
   }
 
   if (sku && !isPdpOpen) {
-    abrirModalPorSKU(sku, { pushState: false });
+    await abrirPdpPorSkuIfPossible(sku, { pushState: false });
   }
 }
 
@@ -5044,7 +5184,8 @@ async function mostrarAlternativasParaTalleSinStock(producto) {
 
     // Mostrar modal con alternativas
     window.mostrarModalAlternativas({
-      mensaje: `Productos alternativos disponibles en talle ${producto.talle}:`,
+      mensajeArticulo: producto.articulo,
+      mensajeTalle: producto.talle,
       productos,
       onProductoSeleccionado: async (productoSeleccionado) => {
         // Agregar el producto seleccionado al carrito
@@ -5152,6 +5293,7 @@ window.getImgFull = getImgFull;
 window.mostrarAlternativasParaTalleSinStock = mostrarAlternativasParaTalleSinStock;
 window.cerrarModal = cerrarModal;
 window.abrirModalPorSKU = abrirModalPorSKU;
+window.abrirPdpPorSkuIfPossible = abrirPdpPorSkuIfPossible;
 window.abrirModalConResultado = abrirModalConResultado;
 window.enrichProductsWithStock = enrichProductsWithStock;
 window.formatPrice = formatPrice;

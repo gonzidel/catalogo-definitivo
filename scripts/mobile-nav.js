@@ -24,8 +24,7 @@ function getCurrentPage() {
   if (path.includes("dashboard")) return "pedidos";
   if (path.includes("profile")) return "perfil";
   if (path.includes("admin")) return "admin";
-  // En index2, "inicio" es "Catálogo"
-  if (path.includes("index2")) return "inicio";
+  if (path.includes("index.html") || path.endsWith("/")) return "inicio";
   return "inicio";
 }
 
@@ -57,9 +56,9 @@ function setupNavHandlers() {
     navInicio.addEventListener("click", (e) => {
       e.preventDefault();
       
-      // Si estamos en banner.html, redirigir a index2.html
+      // Si estamos en banner.html, redirigir a index.html
       if (window.location.pathname.includes('banner.html')) {
-        window.location.href = 'index2.html';
+        window.location.href = 'index.html';
         return;
       }
 
@@ -140,9 +139,9 @@ function setupNavHandlers() {
     navCategorias.addEventListener("click", (e) => {
       e.preventDefault();
       
-      // Si estamos en banner.html, redirigir a index2.html
+      // Si estamos en banner.html, redirigir a index.html
       if (window.location.pathname.includes('banner.html')) {
-        window.location.href = 'index2.html';
+        window.location.href = 'index.html';
         return;
       }
 

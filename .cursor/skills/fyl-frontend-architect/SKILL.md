@@ -20,7 +20,7 @@ This project does **not** use React, Vue, Next, Tailwind, or any frontend framew
 
 ### Public catalog
 
-- `index2.html`
+- `index.html`
 - `styles.css`
 - `scripts/main-supabase.js`
 - `scripts/cart-persistent.js`

@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="app-version" content="v7">
+    <meta name="app-version" content="m260328">
     <title>Dashboard - Catálogo FYL</title>
     <script>document.documentElement.classList.add("client-area");</script>
     <script>window.__DASHBOARD__ = true;</script>
-    <link rel="stylesheet" href="../styles.css?v=v12">
-    <link rel="stylesheet" href="./dashboard.css?v=v10">
+    <link rel="stylesheet" href="../styles.css?v=m260328">
+    <link rel="stylesheet" href="./dashboard.css?v=m260328">
     <style>
         /* Misma familia visual que index2: fondo claro, cards blancas, sombras suaves, #CD844D */
         .dashboard-container {
@@ -528,7 +528,7 @@
                     <nav class="dash-account-sheet__nav" aria-label="Cuenta y enlaces">
                         <a href="profile.html" class="btn btn-ghost">👤 Mis datos</a>
                         <a href="https://wa.me/5493624720762" target="_blank" rel="noopener" class="btn btn-ghost">WhatsApp</a>
-                        <a href="../index2.html" class="btn btn-ghost">← Volver al catálogo</a>
+                        <a href="../index.html" class="btn btn-ghost">← Volver al catálogo</a>
                         <button type="button" id="logout-btn" class="btn btn-danger">Cerrar sesión</button>
                     </nav>
                 </div>
@@ -623,37 +623,12 @@
         </div>
     </div>
 
-    <!-- Modal para activar acceso biométrico -->
-    <div id="passkey-modal" class="previous-orders-modal" style="display: none;">
-        <div class="modal-content-wrapper" style="max-width: 500px;">
-            <div class="modal-header-orders">
-                <h2>🔐 Activar Acceso Biométrico</h2>
-                <button class="modal-close-btn" id="passkey-modal-close">&times;</button>
-            </div>
-            <div style="padding: 20px;">
-                <p style="color: #666; margin-bottom: 24px; line-height: 1.6;">
-                    Activá el acceso biométrico para entrar más rápido con tu huella o rostro. 
-                    Ya no necesitarás ingresar tu contraseña cada vez.
-                </p>
-                <div style="display: flex; flex-direction: column; gap: 12px;">
-                    <button id="activate-passkey-btn" class="btn" style="width: 100%;">
-                        🔐 Activar Acceso Biométrico
-                    </button>
-                    <button id="skip-passkey-btn" class="btn btn-secondary" style="width: 100%;">
-                        Omitir por ahora
-                    </button>
-                </div>
-                <div id="passkey-modal-msg" style="margin-top: 16px; display: none; padding: 12px; border-radius: 5px; font-size: 14px;"></div>
-            </div>
-        </div>
-    </div>
-
     <nav class="bottom-nav dashboard-bottom-nav" id="bottom-nav" aria-label="Navegación principal">
-        <a href="../index2.html#/" class="bottom-nav-item" data-nav="inicio" id="nav-inicio">
+        <a href="../index.html#/" class="bottom-nav-item" data-nav="inicio" id="nav-inicio">
             <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></div>
             <span class="label">Inicio</span>
         </a>
-        <a href="../index2.html#/" class="bottom-nav-item" data-nav="buscar" id="nav-buscar">
+        <a href="../index.html#/" class="bottom-nav-item" data-nav="buscar" id="nav-buscar">
             <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg></div>
             <span class="label">Buscar</span>
         </a>
@@ -667,14 +642,14 @@
         </a>
     </nav>
 
-    <script type="module" src="../scripts/supabase-client.js?v=v7"></script>
-    <script type="module" src="../scripts/auth-wait.js?v=v7"></script>
-    <script type="module" src="auth-helper.js?v=v7"></script>
-    <script type="module" src="../scripts/passkeys.js?v=v7"></script>
-    <script type="module" src="../scripts/cart-persistent.js?v=v7"></script>
-    <script type="module" src="../scripts/product-alternatives.js?v=v7"></script>
-    <script type="module" src="dashboard-instant.js?v=v17"></script>
-    <script type="module" src="dashboard-onboarding.js?v=v7"></script>
-    <script type="module" src="dashboard.js?v=v11"></script>
+    <script type="module" src="../scripts/supabase-client.js?v=m260328"></script>
+    <script type="module" src="../scripts/auth-wait.js?v=m260328"></script>
+    <script type="module" src="auth-helper.js?v=m260328"></script>
+    <script type="module" src="../scripts/passkeys.js?v=m260328"></script>
+    <script type="module" src="../scripts/cart-persistent.js?v=m260328"></script>
+    <script type="module" src="../scripts/product-alternatives.js?v=m260328"></script>
+    <script type="module" src="dashboard-instant.js?v=m260328"></script>
+    <script type="module" src="dashboard-onboarding.js?v=m260328"></script>
+    <script type="module" src="dashboard.js?v=m260328"></script>
 </body>
 </html>

@@ -8,6 +8,77 @@ let isDedupingSupabase = false;
 let isSyncing = false;
 let authListenerAttached = false;
 let loadCartFromSupabaseInFlight = null;
+const CART_XTAB_LOCK_PREFIX = "fyl_cart_xtab_lock";
+const CART_XTAB_TAB_ID = `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withCrossTabLock(lockName, fn, opts = {}) {
+  const ttlMs = Number(opts.ttlMs || 9000);
+  const waitMs = Number(opts.waitMs || 140);
+  const maxWaitMs = Number(opts.maxWaitMs || 4500);
+  const lockKey = `${CART_XTAB_LOCK_PREFIX}:${lockName}`;
+  const ownerToken = `${CART_XTAB_TAB_ID}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
+  const startedAt = Date.now();
+
+  // Si localStorage no está disponible, ejecutar sin lock cross-tab.
+  if (typeof window === "undefined" || !window.localStorage) {
+    return fn();
+  }
+
+  while (Date.now() - startedAt < maxWaitMs) {
+    const now = Date.now();
+    let current = null;
+    try {
+      const raw = localStorage.getItem(lockKey);
+      current = raw ? JSON.parse(raw) : null;
+    } catch (_e) {
+      current = null;
+    }
+
+    const isLocked = current && typeof current.expiresAt === "number" && current.expiresAt > now;
+    if (!isLocked || current?.owner === ownerToken) {
+      try {
+        localStorage.setItem(
+          lockKey,
+          JSON.stringify({ owner: ownerToken, expiresAt: now + ttlMs })
+        );
+      } catch (_e) {
+        // Si falla escritura de lock, no bloquear el flujo.
+        return fn();
+      }
+
+      // Verificar que seguimos siendo dueños del lock.
+      let verified = null;
+      try {
+        const check = localStorage.getItem(lockKey);
+        verified = check ? JSON.parse(check) : null;
+      } catch (_e) {
+        verified = null;
+      }
+      if (verified?.owner === ownerToken) {
+        try {
+          return await fn();
+        } finally {
+          try {
+            const latest = localStorage.getItem(lockKey);
+            const latestParsed = latest ? JSON.parse(latest) : null;
+            if (latestParsed?.owner === ownerToken) {
+              localStorage.removeItem(lockKey);
+            }
+          } catch (_e) {}
+        }
+      }
+    }
+
+    await sleep(waitMs);
+  }
+
+  // Si no se obtuvo lock en el tiempo máximo, ejecutar igual para no congelar UX.
+  return fn();
+}
 
 async function ensureCustomerRecord(user) {
   try {
@@ -444,6 +515,39 @@ function createFloatingCartButton() {
   document.body.appendChild(btn);
 }
 
+/**
+ * El PDP (#product-modal) tiene z-index mayor que la barra; si no, el sticky queda tapado.
+ * Con carrito e PDP abiertos, movemos #sticky-cart dentro de .product-modal-content (antes del footer).
+ */
+function repositionStickyCartInModal() {
+  if (window.__DASHBOARD__ === true) return;
+  const sticky = document.getElementById("sticky-cart");
+  if (!sticky) return;
+  const modal = document.getElementById("product-modal");
+  const content = modal?.querySelector?.(".product-modal-content");
+  const footer = document.getElementById("product-modal-footer");
+  if (!modal || !content || !footer) {
+    if (sticky.parentElement !== document.body) document.body.appendChild(sticky);
+    sticky.classList.remove("sticky-cart--in-modal");
+    return;
+  }
+
+  const count = typeof window.getCartCount === "function" ? window.getCartCount() : 0;
+  const pdpOpen = modal.classList.contains("active");
+
+  if (pdpOpen && count > 0) {
+    sticky.classList.add("sticky-cart--in-modal");
+    if (sticky.parentElement !== content || sticky.nextElementSibling !== footer) {
+      content.insertBefore(sticky, footer);
+    }
+  } else {
+    sticky.classList.remove("sticky-cart--in-modal");
+    if (sticky.parentElement !== document.body) {
+      document.body.appendChild(sticky);
+    }
+  }
+}
+
 function updateFloatingCartCta() {
   if (window.__DASHBOARD__ === true) return;
   const btn = document.getElementById("sticky-cart");
@@ -464,6 +568,7 @@ function updateFloatingCartCta() {
   if (totalEl) totalEl.textContent = formatted;
   btn.classList.toggle("is-visible", count > 0);
   document.body.classList.toggle("has-cart-bar", count > 0);
+  repositionStickyCartInModal();
   const root = document.documentElement;
   if (count > 0 && btn) {
     const h = btn.getBoundingClientRect().height;
@@ -502,39 +607,107 @@ function updateCartCount() {
 }
 
 async function syncCartWithSupabase(options = {}) {
-  const { mergeWithRemote = false } = options;
-  if (isSyncing) {
-    return;
-  }
+  return withCrossTabLock("sync", async () => {
+    const { mergeWithRemote = false } = options;
+    if (isSyncing) {
+      return;
+    }
 
-  isSyncing = true;
-  try {
-    // Solo loguear ocasionalmente para evitar spam
-    // console.log("🔄 Sincronizando carrito con Supabase...");
-    if (!supabase) return;
+    isSyncing = true;
+    try {
+      // Solo loguear ocasionalmente para evitar spam
+      // console.log("🔄 Sincronizando carrito con Supabase...");
+      if (!supabase) return;
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return;
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return;
 
-    const ready = await ensureCustomerRecord(user);
-    if (!ready) return;
+      const ready = await ensureCustomerRecord(user);
+      if (!ready) return;
 
-    const cartId = await getOrCreateOpenCart(user);
-    if (!cartId) return;
+      const cartId = await getOrCreateOpenCart(user);
+      if (!cartId) return;
 
-    cartItems = normalizeCartItems(cartItems);
+      cartItems = normalizeCartItems(cartItems);
 
-    if (mergeWithRemote) {
-      const { data: remoteItems, error: remoteItemsError } = await supabase
+      if (mergeWithRemote) {
+        const { data: remoteItems, error: remoteItemsError } = await supabase
+          .from("cart_items")
+          .select("*")
+          .eq("cart_id", cartId);
+
+        if (!remoteItemsError && Array.isArray(remoteItems) && remoteItems.length > 0) {
+          const normalizedRemote = normalizeCartItems(
+            remoteItems.map((row) => ({
+              id: row.id,
+              articulo: row.product_name,
+              color: row.color,
+              talle: row.size,
+              cantidad: row.quantity,
+              precio: row.price_snapshot,
+              imagen: row.imagen,
+              descripcion: null,
+              variant_id: row.variant_id,
+            }))
+          );
+          // Merge login-safe: avoid adding local+remote qty for the same key.
+          cartItems = normalizeCartItems(
+            mergeCartItemsWithoutDoubleCount(normalizedRemote, cartItems)
+          );
+        }
+      }
+
+      if (!cartItems.length) {
+        await supabase.from("cart_items").delete().eq("cart_id", cartId);
+        saveCartToStorage();
+        updateCartCount();
+        window.dispatchEvent(new CustomEvent("cart:synced"));
+        return;
+      }
+
+      await supabase.from("cart_items").delete().eq("cart_id", cartId);
+
+      const rows = await Promise.all(
+        cartItems.map(async (item) => {
+          let imagen = item.imagen;
+          if (!imagen) {
+            imagen = await fetchPrimaryImage(item.articulo, item.color);
+          }
+          return {
+            cart_id: cartId,
+            product_name: item.articulo,
+            color: item.color,
+            size: normalizeSize(item.talle ?? item.size ?? "") || (item.talle ?? item.size),
+            quantity: item.cantidad,
+            qty: item.cantidad,
+            price_snapshot: item.precio,
+            status: "reserved",
+            imagen: imagen || null,
+            variant_id: item.variant_id || null,
+          };
+        })
+      );
+
+      const { error: insertError } = await supabase
+        .from("cart_items")
+        .insert(rows)
+        .select("*");
+
+      if (insertError) {
+        console.error("❌ Error insertando items del carrito:", insertError);
+        return;
+      }
+
+      const reloaded = await supabase
         .from("cart_items")
         .select("*")
         .eq("cart_id", cartId);
 
-      if (!remoteItemsError && Array.isArray(remoteItems) && remoteItems.length > 0) {
-        const normalizedRemote = normalizeCartItems(
-          remoteItems.map((row) => ({
+      if (!reloaded.error && reloaded.data) {
+        const normalizedInserted = normalizeCartItems(
+          reloaded.data.map((row) => ({
             id: row.id,
             articulo: row.product_name,
             color: row.color,
@@ -546,85 +719,19 @@ async function syncCartWithSupabase(options = {}) {
             variant_id: row.variant_id,
           }))
         );
-        // Merge login-safe: avoid adding local+remote qty for the same key.
-        cartItems = normalizeCartItems(
-          mergeCartItemsWithoutDoubleCount(normalizedRemote, cartItems)
-        );
+
+        cartItems = normalizedInserted;
+        saveCartToStorage();
+        updateCartCount();
       }
-    }
 
-    if (!cartItems.length) {
-      await supabase.from("cart_items").delete().eq("cart_id", cartId);
-      saveCartToStorage();
-      updateCartCount();
       window.dispatchEvent(new CustomEvent("cart:synced"));
-      return;
+    } catch (error) {
+      console.error("❌ Error sincronizando carrito:", error);
+    } finally {
+      isSyncing = false;
     }
-
-    await supabase.from("cart_items").delete().eq("cart_id", cartId);
-
-    const rows = await Promise.all(
-      cartItems.map(async (item) => {
-        let imagen = item.imagen;
-        if (!imagen) {
-          imagen = await fetchPrimaryImage(item.articulo, item.color);
-        }
-        return {
-          cart_id: cartId,
-          product_name: item.articulo,
-          color: item.color,
-          size: normalizeSize(item.talle ?? item.size ?? "") || (item.talle ?? item.size),
-          quantity: item.cantidad,
-          qty: item.cantidad,
-          price_snapshot: item.precio,
-          status: "reserved",
-          imagen: imagen || null,
-          variant_id: item.variant_id || null,
-        };
-      })
-    );
-
-    const { data: insertedRows, error: insertError } = await supabase
-      .from("cart_items")
-      .insert(rows)
-      .select("*");
-
-    if (insertError) {
-      console.error("❌ Error insertando items del carrito:", insertError);
-      return;
-    }
-
-    const reloaded = await supabase
-      .from("cart_items")
-      .select("*")
-      .eq("cart_id", cartId);
-
-    if (!reloaded.error && reloaded.data) {
-      const normalizedInserted = normalizeCartItems(
-        reloaded.data.map((row) => ({
-          id: row.id,
-          articulo: row.product_name,
-          color: row.color,
-          talle: row.size,
-          cantidad: row.quantity,
-          precio: row.price_snapshot,
-          imagen: row.imagen,
-          descripcion: null,
-          variant_id: row.variant_id,
-        }))
-      );
-
-      cartItems = normalizedInserted;
-      saveCartToStorage();
-      updateCartCount();
-    }
-
-    window.dispatchEvent(new CustomEvent("cart:synced"));
-  } catch (error) {
-    console.error("❌ Error sincronizando carrito:", error);
-  } finally {
-    isSyncing = false;
-  }
+  });
 }
 
 async function loadCartFromSupabase() {
@@ -693,6 +800,7 @@ async function loadCartFromSupabase() {
 }
 
 async function ensureCartItemInDatabase(productData, authUser = null, options = {}) {
+  return withCrossTabLock("ensure-item", async () => {
   try {
     if (!productData) return false;
 
@@ -908,6 +1016,7 @@ async function ensureCartItemInDatabase(productData, authUser = null, options = 
     console.error("❌ Error asegurando item en Supabase:", error);
     return false;
   }
+  });
 }
 
 async function addToCart(productData, options = {}) {
@@ -1167,6 +1276,7 @@ function initPersistentCart() {
   setBottomNavHeightVar();
   createFloatingCartButton();
   window.updateFloatingCartCta = updateFloatingCartCta;
+  window.repositionStickyCartInModal = repositionStickyCartInModal;
   updateFloatingCartCta();
   loadCartFromStorage();
   setupAuthListener();

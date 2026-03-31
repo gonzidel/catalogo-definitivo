@@ -427,29 +427,6 @@ export async function maybeShowProfileOnboardingModal(options = {}) {
         if (rpcError) throw new Error(rpcError.message || "Error al guardar");
         if (!rpcResult?.success) throw new Error(rpcResult?.error || "Error al guardar");
 
-        const isResistenciaChaco =
-          city.toLowerCase().trim() === "resistencia" &&
-          province.toLowerCase().trim() === "chaco";
-
-        if (isResistenciaChaco) {
-          let num = customerNumber;
-          if (!num) {
-            await new Promise((r) => setTimeout(r, 500));
-            const { data: c1 } = await supabase
-              .from("customers")
-              .select("customer_number")
-              .eq("id", user.id)
-              .single();
-            num = c1?.customer_number;
-          }
-          if (num) {
-            cleanup();
-            window.location.href = `${window.location.origin}/customer.html?code=${encodeURIComponent(num)}`;
-            resolve(true);
-            return;
-          }
-        }
-
         cleanup();
         options.onComplete?.();
         resolve(true);

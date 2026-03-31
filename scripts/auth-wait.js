@@ -5,7 +5,9 @@
  */
 
 // Función para esperar autenticación completa
-async function waitForAuth(maxWaitTime = 5000) {
+// Reducimos la espera por defecto para que el fallback de no autenticado
+// no demore tanto en páginas cliente.
+async function waitForAuth(maxWaitTime = 1800) {
   return new Promise((resolve) => {
     let attempts = 0;
     const maxAttempts = Math.floor(maxWaitTime / 100);

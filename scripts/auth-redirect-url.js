@@ -7,16 +7,29 @@ const PRE_AUTH_PAGE_KEY = "fyl_pre_auth_page";
 const PRE_AUTH_HASH_KEY = "fyl_pre_auth_hash";
 
 const ALLOWED_RETURN_PATHS = new Set([
-  "/index2.html",
+  "/index.html",
   "/client/dashboard.html",
   "/client/complete-profile.html",
   "/client/profile.html",
 ]);
 
+function isLocalDevHost(hostname) {
+  if (!hostname) return false;
+  if (hostname === "localhost" || hostname === "127.0.0.1") return true;
+  if (hostname.startsWith("192.168.")) return true;
+  if (hostname.startsWith("10.")) return true;
+  const m = hostname.match(/^172\.(\d{1,3})\./);
+  if (m) {
+    const second = Number(m[1]);
+    if (second >= 16 && second <= 31) return true;
+  }
+  return false;
+}
+
 function logLocalhostHint(redirectUrl) {
   try {
     const h = window.location.hostname;
-    if (h !== "localhost" && h !== "127.0.0.1") return;
+    if (!isLocalDevHost(h)) return;
     console.info(
       "%c[FYL Auth]%c redirectTo / emailRedirectTo:\n%s\n\nSi terminás en catalogo-fyl-test.web.app, Supabase rechazó esta URL: agregala en Authentication → URL Configuration → Redirect URLs (o usá wildcard %s/**).",
       "color:#CD844D;font-weight:bold",
@@ -33,7 +46,7 @@ function logLocalhostHint(redirectUrl) {
 export function remindSupabaseRedirectUrlsIfLocal() {
   if (typeof window === "undefined") return;
   const h = window.location.hostname;
-  if (h !== "localhost" && h !== "127.0.0.1") return;
+  if (!isLocalDevHost(h)) return;
   try {
     if (sessionStorage.getItem("fyl_supabase_redirect_reminder")) return;
     sessionStorage.setItem("fyl_supabase_redirect_reminder", "1");
@@ -43,7 +56,7 @@ export function remindSupabaseRedirectUrlsIfLocal() {
   const o = window.location.origin;
   console.warn(
     `[FYL Dev] Si al loguearte vas a producción (web.app), en Supabase → Authentication → URL configuration → Redirect URLs agregá:\n` +
-      `  • ${o}/index2.html\n` +
+      `  • ${o}/index.html\n` +
       `  • ${o}/client/dashboard.html\n` +
       `  • o wildcard: ${o}/**   (cubre ambas y login.html)\n` +
       `Repetí lo mismo si a veces abrís con 127.0.0.1 en lugar de localhost (otro origen).`
@@ -58,8 +71,8 @@ export function savePreAuthReturnTarget() {
   if (typeof window === "undefined") return;
   try {
     const path = (window.location.pathname || "").replace(/\\/g, "/");
-    if (path.endsWith("/index2.html") || path.endsWith("index2.html")) {
-      sessionStorage.setItem(PRE_AUTH_PAGE_KEY, "index2");
+    if (path.endsWith("/index.html") || path.endsWith("index.html") || path === "/") {
+      sessionStorage.setItem(PRE_AUTH_PAGE_KEY, "index");
       sessionStorage.setItem(PRE_AUTH_HASH_KEY, window.location.hash || "#/");
       return;
     }
@@ -77,7 +90,7 @@ export function restorePostAuthNavigation() {
   try {
     const path = (window.location.pathname || "").replace(/\\/g, "/");
     const was = sessionStorage.getItem(PRE_AUTH_PAGE_KEY);
-    if (was === "index2" && (path.endsWith("/index2.html") || path.endsWith("index2.html"))) {
+    if (was === "index" && (path === "/" || path.endsWith("/index.html") || path.endsWith("index.html"))) {
       const savedHash = sessionStorage.getItem(PRE_AUTH_HASH_KEY) || "#/";
       sessionStorage.removeItem(PRE_AUTH_PAGE_KEY);
       sessionStorage.removeItem(PRE_AUTH_HASH_KEY);
@@ -128,6 +141,7 @@ export function clearOAuthReturnPath() {
 export function getPostLoginRedirectUrl() {
   if (typeof window === "undefined") return "";
   const origin = window.location.origin;
+  console.log("[FYL DEBUG AUTH] getPostLoginRedirectUrl origin =", origin);
   const path = (window.location.pathname || "").replace(/\\/g, "/");
 
   if (path.includes("/client/dashboard") || /\/dashboard\.html$/i.test(path)) {
@@ -143,12 +157,12 @@ export function getPostLoginRedirectUrl() {
       logLocalhostHint(url);
       return url;
     }
-    const url = `${origin}/index2.html`;
+    const url = `${origin}/index.html`;
     logLocalhostHint(url);
     return url;
   }
 
-  const url = `${origin}/index2.html`;
+  const url = `${origin}/index.html`;
   logLocalhostHint(url);
   return url;
 }

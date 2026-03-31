@@ -1,11 +1,13 @@
-// Mismo sufijo que ?v= en index2/index.html (buscar m250324) para pruebas rápidas en móvil / PWA.
-// index/index2: network-first (abajo). Scripts críticos de boot: siempre red (sin cache-first).
-const CACHE_NAME = "fyl-catalog-m250324";
+// La versión se inyecta desde scripts/pwa-install.js al registrar: sw.js?v=<version>.
+// Así, para cada deploy solo cambiás el valor en pwa-install.js.
+const SW_VERSION =
+  new URL(self.location.href).searchParams.get("v") || "m260328";
+// index: network-first (abajo). Scripts críticos de boot: siempre red (sin cache-first).
+const CACHE_NAME = `fyl-catalog-${SW_VERSION}`;
 
 const urlsToCache = [
   "/",
   "/index.html",
-  "/index2.html",
   "/client/dashboard.html",
   "/styles.css",
   "/scripts/whatsapp.js",
@@ -77,6 +79,13 @@ self.addEventListener("activate", (event) => {
   );
 });
 
+// Permite activar inmediatamente un SW nuevo desde la app.
+self.addEventListener("message", (event) => {
+  if (event?.data?.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
+});
+
 // Interceptar peticiones
 self.addEventListener("fetch", (event) => {
   const requestUrl = event.request.url;
@@ -115,12 +124,37 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
+  // JS/CSS del mismo origen: red primero (evita catálogo “viejo” en móvil si el SW tenía caché).
+  let sameOrigin = false;
+  try {
+    sameOrigin = new URL(requestUrl).origin === self.location.origin;
+  } catch (_) {
+    sameOrigin = false;
+  }
+  const networkFirstAsset =
+    sameOrigin &&
+    (pathname.endsWith(".css") ||
+      (pathname.startsWith("/scripts/") && pathname.endsWith(".js")));
+  if (networkFirstAsset) {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          if (response && response.status === 200 && response.type === "basic") {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          }
+          return response;
+        })
+        .catch(() => caches.match(event.request))
+    );
+    return;
+  }
+
   const url = new URL(requestUrl);
   const isDoc = event.request.destination === "document";
   const isIndex =
     url.pathname === "/" ||
     url.pathname === "/index.html" ||
-    url.pathname === "/index2.html" ||
     url.pathname === "/client/dashboard.html";
   if (isDoc && isIndex) {
     event.respondWith(

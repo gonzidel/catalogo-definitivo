@@ -74,55 +74,6 @@ function describeError(e) {
 
 /** @returns {{ createClient: Function, source: string }} */
 async function loadCreateClient() {
-  // Caso 1: ya cargado como UMD (script clásico en HTML)
-  if (globalThis.supabase?.createClient) {
-    console.info(`${LOG} OK: createClient desde UMD global (window.supabase).`);
-    globalThis.markBootStage?.("supabase.runtime.loaded", { source: "umd-global" });
-    return { createClient: globalThis.supabase.createClient, source: "umd-global" };
-  }
-
-  // Caso 2: bundle local ESM (fallback para entornos que soporten import() dinámico)
-  let lastErr = null;
-  console.info(`${LOG} UMD global no encontrado, intentando bundle local ESM…`);
-
-  try {
-    const mod = await importWithTimeout(SUPABASE_LOCAL_BUNDLE, SUPABASE_LOCAL_IMPORT_MS);
-    if (mod?.createClient) {
-      console.info(`${LOG} OK: createClient desde bundle local ESM.`);
-      globalThis.markBootStage?.("supabase.runtime.loaded", { source: "local-esm" });
-      return { createClient: mod.createClient, source: "local-esm" };
-    }
-    lastErr = new Error("Módulo local sin export createClient");
-  } catch (e) {
-    lastErr = e;
-    const d = describeError(e);
-    console.warn(`${LOG} Bundle local ESM falló: ${d.name} — ${d.message}`);
-    globalThis.markBootStage?.("supabase.runtime.local_failed", { name: d.name, message: d.message });
-  }
-
-  // Caso 3: CDN (último recurso, puede fallar en Safari)
-  for (let i = 0; i < SUPABASE_CDN_URLS.length; i++) {
-    const url = SUPABASE_CDN_URLS[i];
-    try {
-      console.info(`${LOG} CDN ${i + 1}/${SUPABASE_CDN_URLS.length}:`, url);
-      const mod = await importWithTimeout(url, SUPABASE_CDN_IMPORT_MS);
-      if (mod?.createClient) {
-        console.info(`${LOG} OK: createClient desde CDN ${i + 1}.`);
-        const source = `cdn-${i + 1}`;
-        globalThis.markBootStage?.("supabase.runtime.loaded", { source });
-        return { createClient: mod.createClient, source };
-      }
-    } catch (e) {
-      lastErr = e;
-      const d = describeError(e);
-      console.warn(`${LOG} CDN ${i + 1} falló: ${d.name} — ${d.message}`);
-    }
-  }
-
-  const finalD = describeError(lastErr);
-  throw new Error(`No se pudo cargar @supabase/supabase-js. Último error: ${finalD.name}: ${finalD.message}`);
-}
-/*async function loadCreateClient() {
   let lastErr = null;
 
   console.info(`${LOG} Carga de @supabase/supabase-js: primero bundle local, luego CDN.`);
@@ -191,7 +142,7 @@ async function loadCreateClient() {
   throw new Error(
     `No se pudo cargar @supabase/supabase-js (local ni CDN). Último: ${finalD.name}: ${finalD.message}`
   );
-}*/
+}
 
 /** Safari modo privado / cuota / restricciones: sin esto createClient puede tirar y dejar supabase null. */
 function buildSupabaseAuthOptions() {
@@ -249,40 +200,60 @@ if (USE_SUPABASE) {
       SUPABASE_ANON_KEY ? "✅ (longitud " + SUPABASE_ANON_KEY.length + ")" : "❌"
     );
   } else {
-    if (
-      typeof window !== "undefined" &&
-      window.supabase &&
-      typeof window.supabase.from === "function"
-    ) {
+    const canUseWindow = typeof window !== "undefined";
+    const existingWindowClient =
+      canUseWindow && window.supabase && typeof window.supabase.from === "function"
+        ? window.supabase
+        : null;
+
+    if (existingWindowClient) {
       console.log(`${LOG} Reutilizando instancia existente en window.supabase`);
-      supabase = window.supabase;
+      supabase = existingWindowClient;
       globalThis.markBootStage?.("supabase.client.reused", { from: "window" });
+    } else if (canUseWindow && window.__FYL_SUPABASE_CLIENT_PROMISE__) {
+      // Evita carreras cuando el módulo se carga más de una vez con distinto specifier (ej. ?v=...).
+      supabase = await window.__FYL_SUPABASE_CLIENT_PROMISE__;
+      globalThis.markBootStage?.("supabase.client.reused", { from: "window-promise" });
     } else {
-      try {
-        console.log(`${LOG} Iniciando carga del runtime de Supabase…`);
-        const { createClient, source } = await loadCreateClient();
+      const createClientOnce = (async () => {
+        try {
+          console.log(`${LOG} Iniciando carga del runtime de Supabase…`);
+          const { createClient, source } = await loadCreateClient();
 
-        supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-          auth: buildSupabaseAuthOptions(),
-          global: { fetch: fylFetchWithTimeout },
-        });
+          const created = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+            auth: buildSupabaseAuthOptions(),
+            global: { fetch: fylFetchWithTimeout },
+          });
 
-        if (!supabase) {
-          throw new Error("createClient devolvió null o undefined");
+          if (!created) {
+            throw new Error("createClient devolvió null o undefined");
+          }
+
+          if (canUseWindow) {
+            window.supabaseClient = created;
+            window.supabase = created;
+          }
+
+          console.info(`${LOG} Cliente createClient() creado correctamente.`);
+          globalThis.markBootStage?.("supabase.client.ready", { source });
+          return created;
+        } catch (error) {
+          const d = describeError(error);
+          console.error(`${LOG} ERROR al crear cliente:`, d.name, d.message);
+          if (error?.stack) console.error(`${LOG} Stack:`, error.stack);
+          globalThis.markBootStage?.("supabase.client.failed", {
+            name: d.name,
+            message: d.message,
+          });
+          return null;
         }
+      })();
 
-        console.info(`${LOG} Cliente createClient() creado correctamente.`);
-        globalThis.markBootStage?.("supabase.client.ready", { source });
-      } catch (error) {
-        const d = describeError(error);
-        console.error(`${LOG} ERROR al crear cliente:`, d.name, d.message);
-        if (error?.stack) console.error(`${LOG} Stack:`, error.stack);
-        supabase = null;
-        globalThis.markBootStage?.("supabase.client.failed", {
-          name: d.name,
-          message: d.message,
-        });
+      if (canUseWindow) {
+        window.__FYL_SUPABASE_CLIENT_PROMISE__ = createClientOnce;
       }
+
+      supabase = await createClientOnce;
     }
   }
 } else {

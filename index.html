@@ -1,22 +1,18 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <script>
-    window.__CATALOG_ONLY__ = true;
-    document.documentElement.classList.add('catalog-only');
-  </script>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <!-- Cache bust móvil: mismo token que index2 + sw.js + main-supabase import -->
-  <meta name="app-version" content="m250324">
+  <!-- Cache bust: subí la versión en app-version.json y ejecutá npm run build (o deploy con predeploy). -->
+  <meta name="app-version" content="m260328">
   <title>Catálogo FYL</title>
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
-  <link rel="manifest" href="manifest.json?v=m250324">
-  <link rel="stylesheet" href="styles.css?v=m250324">
+  <link rel="manifest" href="manifest.json?v=m260328">
+  <link rel="stylesheet" href="styles.css?v=m260328">
   <link rel="icon" href="icons/icon-192x192.png" type="image/png">
   <meta name="theme-color" content="#CD844D">
   <style>
-    /* Estilos inline para header y elementos críticos (igual que index2) */
+    /* Estilos inline para header y elementos críticos */
     header { position: relative; }
     
     .cliente-link { 
@@ -201,6 +197,7 @@
       }
     }
 
+    /* Ocultar en desktop */
     @media (min-width: 768px) {
       .promotional-banner {
         display: none;
@@ -260,6 +257,7 @@
   </script>
 </head>
 <body class="catalog-boot-active">
+  <!-- Bloqueo hasta que el catálogo termine de inicializar (main-supabase.js) -->
   <div id="catalog-boot-overlay" class="catalog-boot-overlay" aria-busy="true" aria-live="polite" role="status">
     <div class="catalog-boot-dots" aria-hidden="true"><span></span><span></span><span></span></div>
     <span class="visually-hidden">Cargando catálogo…</span>
@@ -307,6 +305,7 @@
 
       function showHardTimeout() {
         var ov = document.getElementById("catalog-boot-overlay");
+        // Si el overlay ya se ocultó, el catálogo sigue cargando en #catalogo (container suele estar vacío o ausente): no es fallo de red.
         if (!overlayStillVisible(ov)) return;
         if ((Date.now() - startTs) < MAX_LIMIT_MS && shouldExtendTimeout()) {
           limitId = setTimeout(showHardTimeout, RETRY_STEP_MS);
@@ -333,6 +332,128 @@
       );
     })();
   </script>
+
+  <!-- Onboarding historias (solo invitados; ver scripts/catalog-onboarding.js) -->
+  <div
+    id="catalog-onboarding"
+    class="catalog-onboarding hidden"
+    aria-hidden="true"
+    role="dialog"
+    aria-modal="true"
+    aria-label="Bienvenida al catálogo"
+  >
+    <div class="catalog-onboarding__backdrop" id="co-backdrop"></div>
+    <div class="catalog-onboarding__card-shell" role="document">
+      <div class="catalog-onboarding__chrome">
+        <button type="button" class="catalog-onboarding__back" id="co-back" aria-label="Cerrar o volver">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M15 18l-6-6 6-6"/>
+          </svg>
+        </button>
+        <div class="catalog-onboarding__progress" aria-hidden="true">
+          <span class="catalog-onboarding__progress-bar is-active" data-co-bar="0"></span>
+          <span class="catalog-onboarding__progress-bar" data-co-bar="1"></span>
+          <span class="catalog-onboarding__progress-bar" data-co-bar="2"></span>
+        </div>
+        <button type="button" class="catalog-onboarding__skip" id="co-close" aria-label="Saltar onboarding">Saltar</button>
+      </div>
+      <div class="catalog-onboarding__viewport">
+        <div class="catalog-onboarding__track" id="co-track">
+        <section class="catalog-onboarding__slide" aria-roledescription="slide" aria-label="Paso 1 de 3">
+          <div class="catalog-onboarding__card catalog-onboarding__card--decor catalog-onboarding__card--welcome">
+            <div class="catalog-onboarding__content">
+              <h2 class="catalog-onboarding__title">¡Bienvenida!</h2>
+              <p class="catalog-onboarding__subtitle">Comprá por mayor</p>
+              <ul class="catalog-onboarding__list">
+                <li>
+                  <span class="catalog-onboarding__bullet-icon" aria-hidden="true"></span>
+                  <span class="catalog-onboarding__item-text">
+                    <span class="catalog-onboarding__list-lead">Compra&nbsp;mínima:</span><br>
+                    <span>4 productos surtidos</span>
+                  </span>
+                </li>
+                <li>
+                  <span class="catalog-onboarding__bullet-icon" aria-hidden="true"></span>
+                  <span class="catalog-onboarding__item-text">
+                    <span>Podés armar tu pedido</span><br>
+                    <span>a lo largo de 7 días</span>
+                  </span>
+                </li>
+                <li>
+                  <span class="catalog-onboarding__bullet-icon" aria-hidden="true"></span>
+                  <span class="catalog-onboarding__item-text">
+                    <span>Hacemos envíos</span><br>
+                    <span>a todo el país</span>
+                  </span>
+                </li>
+              </ul>
+            </div>
+            <div class="catalog-onboarding__hero-wrap" aria-hidden="true">
+              <img class="catalog-onboarding__hero" src="history/onboarding-1-bag.png" width="560" height="560" alt="" decoding="async" />
+            </div>
+          </div>
+        </section>
+        <section class="catalog-onboarding__slide" aria-roledescription="slide" aria-label="Paso 2 de 3">
+          <div class="catalog-onboarding__card catalog-onboarding__card--steps">
+            <h2 class="catalog-onboarding__title catalog-onboarding__title--single">Así funciona:</h2>
+            <div class="catalog-onboarding__steps">
+              <div class="catalog-onboarding__step-card catalog-onboarding__step-card--1">
+                <div class="catalog-onboarding__step-copy">
+                  <strong class="catalog-onboarding__step-title">1. Armá tu carrito</strong>
+                </div>
+                <img class="catalog-onboarding__step-ill catalog-onboarding__step-ill--1" src="history/ChatGPT%20Image%2021%20mar%202026,%2001_58_45%20p.m..png" width="400" height="400" alt="" decoding="async" />
+              </div>
+              <div class="catalog-onboarding__step-card catalog-onboarding__step-card--2">
+                <div class="catalog-onboarding__step-copy">
+                  <strong class="catalog-onboarding__step-title">2. Enviás tu pedido</strong>
+                </div>
+                <img class="catalog-onboarding__step-ill catalog-onboarding__step-ill--2" src="history/onboarding-step-send.png" width="400" height="400" alt="" decoding="async" />
+              </div>
+              <div class="catalog-onboarding__step-card catalog-onboarding__step-card--3">
+                <div class="catalog-onboarding__step-copy">
+                  <strong class="catalog-onboarding__step-title">3. Confirmamos el stock para vos</strong>
+                </div>
+                <img class="catalog-onboarding__step-ill catalog-onboarding__step-ill--3" src="history/onboarding-step-confirm.png" width="400" height="400" alt="" decoding="async" />
+              </div>
+            </div>
+          </div>
+        </section>
+        <section class="catalog-onboarding__slide" aria-roledescription="slide" aria-label="Paso 3 de 3">
+          <div class="catalog-onboarding__card catalog-onboarding__card--decor catalog-onboarding__card--delivery">
+            <div class="catalog-onboarding__content">
+              <h2 class="catalog-onboarding__title catalog-onboarding__title--single">Coordinamos el envío y listo.</h2>
+              <ul class="catalog-onboarding__list">
+                <li>
+                  <span class="catalog-onboarding__bullet-icon" aria-hidden="true"></span>
+                  <span class="catalog-onboarding__item-text">Pago por transferencia<br>o contra reembolso</span>
+                </li>
+                <li>
+                  <span class="catalog-onboarding__bullet-icon" aria-hidden="true"></span>
+                  <span class="catalog-onboarding__item-text">Despachamos rápido<br>a todo el país</span>
+                </li>
+              </ul>
+            </div>
+            <div class="catalog-onboarding__hero-wrap" aria-hidden="true">
+              <img class="catalog-onboarding__hero" src="history/onboarding-3-delivery.png" width="560" height="560" alt="" decoding="async" />
+            </div>
+          </div>
+        </section>
+        </div>
+      </div>
+      <div class="catalog-onboarding__footer">
+        <label class="catalog-onboarding__never">
+          <input type="checkbox" id="co-never" />
+          No volver a mostrar
+        </label>
+        <button type="button" class="catalog-onboarding__next" id="co-next">Siguiente</button>
+        <div class="catalog-onboarding__dots" role="tablist" aria-label="Pasos">
+          <button type="button" class="catalog-onboarding__dot is-active" data-co-dot="0" aria-label="Ir al paso 1"></button>
+          <button type="button" class="catalog-onboarding__dot" data-co-dot="1" aria-label="Ir al paso 2"></button>
+          <button type="button" class="catalog-onboarding__dot" data-co-dot="2" aria-label="Ir al paso 3"></button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- HEADER MOBILE -->
   <header>
@@ -362,8 +483,8 @@
 
   <div id="catalog-view">
   <div class="container">
-    <!-- Menú Desktop (SOLO visible en desktop, oculto completamente en mobile) -->
-    <div class="menu menu-desktop" style="display: none;">
+    <!-- Menú Desktop (visible en desktop vía CSS @media min-width: 768px) -->
+    <div class="menu menu-desktop" aria-label="Categorías">
       <button onclick="window.cambiarCategoria('Calzado')">Calzado</button>
       <button onclick="window.cambiarCategoria('Ropa')">Ropa</button>
       <button onclick="window.cambiarCategoria('Lenceria')">Lencería</button>
@@ -412,10 +533,12 @@
             <img class="info-banner-top__icon" src="assets/icono-carrito-x4.png" alt="" loading="lazy" decoding="async">
           </div>
           <div class="info-banner-top__content">
-            <h3 class="info-banner-top__title">Compra mínima: <strong>4 productos combinables</strong></h3>
+            <h3 class="info-banner-top__title">
+              <span class="info-banner-top__title-main">COMPRA MÍNIMA</span>
+              <strong>4 productos combinables</strong>
+            </h3>
             <p class="info-banner-top__line">Tenés hasta 7 días para armar tu pedido</p>
-            <p class="info-banner-top__line">Confirmamos stock al enviarlo</p>
-            <span class="info-banner-top__cta">Guía de compra →</span>
+            <span class="info-banner-top__cta">Guía de compra <span class="info-banner-top__cta-arrow" aria-hidden="true">➜</span></span>
           </div>
         </div>
       </a>
@@ -450,6 +573,16 @@
     <!-- Filtros y búsqueda desktop (OCULTO en mobile) -->
     <div class="filter-search-view" id="filter-container">
       <button id="toggleFiltros">Filtros</button>
+      <button type="button" class="desktop-only-talles" id="size-filter-btn-desktop" title="Filtrar por talle" aria-label="Filtrar por talle">
+        <span class="filter-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
+            <line x1="4" y1="6" x2="20" y2="6"></line>
+            <line x1="4" y1="12" x2="20" y2="12"></line>
+            <line x1="4" y1="18" x2="20" y2="18"></line>
+          </svg>
+        </span>
+        <span>Talles</span>
+      </button>
       <div id="filtroMenu" style="display:none"></div>
       <input type="text" id="searchInput" placeholder="Buscar artículo...">
       <input type="text" id="search-input" placeholder="Buscar artículo..." style="display:none;">
@@ -756,27 +889,28 @@
 
   <!-- Scripts esenciales -->
   <script src="/config.prod.js"></script>
-  <script type="module" src="scripts/boot-telemetry.js?v=m250324"></script>
-  <script type="module" src="scripts/config.js?v=m250324"></script>
-  <script type="module" src="scripts/supabase-client.js?v=m250324"></script>
-  <script type="module" src="scripts/main-supabase.js?v=m250324"></script>
-  <script type="module" src="scripts/auth-status.js?v=m250324"></script>
-  <script type="module" src="scripts/product-alternatives.js?v=m250324"></script>
-  <script type="module" src="scripts/cart-persistent.js?v=m250324"></script>
-  <script type="module" src="scripts/ui/toast.js?v=m250324"></script>
-  <script type="module" src="scripts/search-manager.js?v=m250324"></script>
-  <script type="module" src="scripts/whatsapp.js?v=m250324"></script>
-  <script type="module" src="scripts/scroll.js?v=m250324"></script>
-  <script src="scripts/pwa-install.js?v=m250324"></script>
-  <script src="scripts/filtros.js?v=m250324"></script>
-  <script type="module" src="scripts/quick-actions.js?v=m250324"></script>
-  <script type="module" src="scripts/mobile-nav.js?v=m250324"></script>
-  <script type="module" src="scripts/banner.js?v=m250324"></script>
-  <script type="module" src="scripts/size-filter.js?v=m250324"></script>
-  <script type="module" src="scripts/fyl-originals-banner.js?v=m250324"></script>
-  <script type="module" src="scripts/custom-banner.js?v=m250324"></script>
-  <script type="module" src="scripts/como-comprar.js?v=m250324"></script>
-  <script type="module" src="scripts/ui/bottom-sheet.js?v=m250324"></script>
+  <script type="module" src="scripts/boot-telemetry.js?v=m260328"></script>
+  <script type="module" src="scripts/config.js?v=m260328"></script>
+  <script type="module" src="scripts/supabase-client.js?v=m260328"></script>
+  <script type="module" src="scripts/main-supabase.js?v=m260328"></script>
+  <script type="module" src="scripts/auth-status.js?v=m260328"></script>
+  <script type="module" src="scripts/catalog-onboarding.js?v=m260328"></script>
+  <script type="module" src="scripts/product-alternatives.js?v=m260328"></script>
+  <script type="module" src="scripts/cart-persistent.js?v=m260328"></script>
+  <script type="module" src="scripts/ui/toast.js?v=m260328"></script>
+  <script type="module" src="scripts/search-manager.js?v=m260328"></script>
+  <script type="module" src="scripts/whatsapp.js?v=m260328"></script>
+  <script type="module" src="scripts/scroll.js?v=m260328"></script>
+  <script src="scripts/pwa-install.js?v=m260328"></script>
+  <script src="scripts/filtros.js?v=m260328"></script>
+  <script type="module" src="scripts/quick-actions.js?v=m260328"></script>
+  <script type="module" src="scripts/mobile-nav.js?v=m260328"></script>
+  <script type="module" src="scripts/banner.js?v=m260328"></script>
+  <script type="module" src="scripts/size-filter.js?v=m260328"></script>
+  <script type="module" src="scripts/fyl-originals-banner.js?v=m260328"></script>
+  <script type="module" src="scripts/custom-banner.js?v=m260328"></script>
+  <script type="module" src="scripts/como-comprar.js?v=m260328"></script>
+  <script type="module" src="scripts/ui/bottom-sheet.js?v=m260328"></script>
   
   <!-- Modal de producto con SKU -->
   <div id="product-modal" class="product-modal">

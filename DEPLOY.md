@@ -73,10 +73,10 @@ En **Authentication → URL configuration**:
 
 - **Site URL**: puede ser tu dominio principal (ej. `https://catalogo-fyl-test.web.app`).
 - **Redirect URLs**: agregá **todas** las que uses (producción + desarrollo), por ejemplo:
-  - `https://catalogo-fyl-test.web.app/index2.html`
+- `https://catalogo-fyl-test.web.app/index.html`
   - `https://catalogo-fyl-test.web.app/client/dashboard.html`
   - **En local, lo más simple:** `http://localhost:5500/**` y, si usás IP, `http://127.0.0.1:5500/**` (ajustá el puerto)
-  - O URLs exactas: `http://localhost:5500/index2.html`, `http://localhost:5500/client/dashboard.html`, etc.
+- O URLs exactas: `http://localhost:5500/index.html`, `http://localhost:5500/client/dashboard.html`, etc.
 
 En consola (solo en localhost) el script imprime `[FYL Auth]` con la URL exacta que se está usando: copiala y agregala en Redirect URLs si falta.
 

@@ -1,12 +1,70 @@
 // scripts/pwa-install.js
 
 // Evitar registrar SW en entorno local para desarrollo
-const __LOCAL_HOSTS = ["localhost", "127.0.0.1", "::1"]; 
-const __IS_LOCAL = __LOCAL_HOSTS.includes(location.hostname);
+const __LOCAL_HOSTS = ["localhost", "127.0.0.1", "::1"];
+
+function __isLanIpv4(hostname) {
+  // 192.168.x.x
+  if (hostname.startsWith("192.168.")) return true;
+  // 10.x.x.x
+  if (hostname.startsWith("10.")) return true;
+
+  // 172.16.x.x -> 172.31.x.x
+  if (hostname.startsWith("172.")) {
+    const parts = hostname.split(".");
+    if (parts.length !== 4) return false;
+    const second = Number(parts[1]);
+    if (!Number.isFinite(second)) return false;
+    return second >= 16 && second <= 31;
+  }
+
+  return false;
+}
+
+const __IS_DEV_PORT =
+  !!location.port && location.port !== "80" && location.port !== "443";
+
+const __IS_LOCAL =
+  __LOCAL_HOSTS.includes(location.hostname) ||
+  (__isLanIpv4(location.hostname) && (__IS_DEV_PORT || true));
 
 // 1) Registrar service worker (solo fuera de localhost)
+const SW_VERSION = "m260328";
+let __swRefreshing = false;
+
 if ("serviceWorker" in navigator && !__IS_LOCAL) {
-  navigator.serviceWorker.register("sw.js");
+  navigator.serviceWorker
+    .register(`sw.js?v=${SW_VERSION}`)
+    .then((registration) => {
+      // Si hay un SW nuevo esperando, activarlo de inmediato.
+      if (registration.waiting) {
+        registration.waiting.postMessage({ type: "SKIP_WAITING" });
+      }
+
+      // Cuando llega una nueva versión, forzar activación.
+      registration.addEventListener("updatefound", () => {
+        const newWorker = registration.installing;
+        if (!newWorker) return;
+        newWorker.addEventListener("statechange", () => {
+          if (
+            newWorker.state === "installed" &&
+            navigator.serviceWorker.controller
+          ) {
+            newWorker.postMessage({ type: "SKIP_WAITING" });
+          }
+        });
+      });
+    })
+    .catch((err) => {
+      console.warn("[PWA] No se pudo registrar SW:", err);
+    });
+
+  // Cuando el nuevo SW toma control, recargar una sola vez para levantar HTML/JS nuevos.
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (__swRefreshing) return;
+    __swRefreshing = true;
+    window.location.reload();
+  });
 } else if ("serviceWorker" in navigator && __IS_LOCAL) {
   // En local, intentar desregistrar cualquier SW previo para evitar caché
   navigator.serviceWorker.getRegistrations?.().then((regs) => {

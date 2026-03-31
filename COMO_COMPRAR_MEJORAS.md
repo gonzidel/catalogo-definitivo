@@ -109,7 +109,7 @@
 
 ## D. Propuesta técnica mínima de implementación
 
-- **index2.html:** Reemplazar solo el bloque `<main id="howto-page" class="howto is-hidden" ...> ... </main>` (desde la línea de apertura del main hasta el cierre `</main>`) por el nuevo HTML que implementa la sección C. No cambiar id, clase ni estructura de secciones (howto-hero, howto-section, howto-final); no tocar ids que usa el JS: `howto-page`, `howto-title`, `howto-steps`, `howto-notes`, `howto-faq`, `howto-steps-title`, `howto-notes-title`, `howto-faq-title`; mantener `data-action="go-home"`, `href="#howto-steps"`, y la estructura de `.faq-item` (`.faq-q`, `.faq-a`, `.faq-icon`).
+- **index.html:** Reemplazar solo el bloque `<main id="howto-page" class="howto is-hidden" ...> ... </main>` (desde la línea de apertura del main hasta el cierre `</main>`) por el nuevo HTML que implementa la sección C. No cambiar id, clase ni estructura de secciones (howto-hero, howto-section, howto-final); no tocar ids que usa el JS: `howto-page`, `howto-title`, `howto-steps`, `howto-notes`, `howto-faq`, `howto-steps-title`, `howto-notes-title`, `howto-faq-title`; mantener `data-action="go-home"`, `href="#howto-steps"`, y la estructura de `.faq-item` (`.faq-q`, `.faq-a`, `.faq-icon`).
 - **index.html:** Replicar exactamente el mismo reemplazo del bloque `#howto-page` para mantener paridad.
 - **scripts/como-comprar.js:** No tocar. `initInternalAnchors()` sigue aplicando a `a[href^="#howto-"]`; `initFAQ()` a `.faq-q` dentro de `#howto-page`; `initGoHomeHandlers()` a `[data-action="go-home"]`.
 - **styles.css:** Cambio mínimo aplicado: en el media query `(min-width: 700px)`, `.howto .cards` pasó de `grid-template-columns: 1fr 1fr 1fr` a `1fr 1fr` para que las 4 cards queden en 2x2 en tablet/desktop. El resto de estilos se mantiene.
@@ -118,5 +118,5 @@
 
 ## E. Diff aplicado
 
-- **index2.html** e **index.html:** reemplazado el bloque completo `<main id="howto-page">…</main>` por el nuevo contenido (hero, pasos, aclaraciones 4 cards, FAQ 6 ítems, CTA final). IDs, clases y atributos usados por el JS se mantienen.
+- **index.html:** reemplazado el bloque completo `<main id="howto-page">…</main>` por el nuevo contenido (hero, pasos, aclaraciones 4 cards, FAQ 6 ítems, CTA final). IDs, clases y atributos usados por el JS se mantienen.
 - **styles.css:** en la sección "PÁGINA CÓMO COMPRAR", dentro del `@media (min-width: 700px)`, la regla `.howto .cards` ahora usa `grid-template-columns: 1fr 1fr`.

@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 240" role="img" aria-label="Ubicación FYL Moda (preview de mapa)">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fbf6ee"/>
+      <stop offset="1" stop-color="#f4ecdf"/>
+    </linearGradient>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#000" flood-opacity="0.12"/>
+    </filter>
+  </defs>
+
+  <!-- background -->
+  <rect x="0" y="0" width="640" height="240" rx="18" fill="url(#bg)"/>
+
+  <!-- subtle blocks -->
+  <g opacity="0.28">
+    <rect x="42" y="36" width="120" height="54" rx="10" fill="#ffffff"/>
+    <rect x="190" y="30" width="86" height="44" rx="10" fill="#ffffff"/>
+    <rect x="308" y="44" width="110" height="52" rx="10" fill="#ffffff"/>
+    <rect x="468" y="34" width="128" height="56" rx="10" fill="#ffffff"/>
+    <rect x="86" y="130" width="140" height="64" rx="12" fill="#ffffff"/>
+    <rect x="258" y="138" width="112" height="58" rx="12" fill="#ffffff"/>
+    <rect x="414" y="124" width="170" height="70" rx="12" fill="#ffffff"/>
+  </g>
+
+  <!-- roads -->
+  <g fill="none" stroke="#d9cfc2" stroke-width="10" stroke-linecap="round" opacity="0.9">
+    <path d="M40 110 C140 90, 220 90, 320 110 S520 150, 610 120"/>
+    <path d="M90 210 C160 170, 260 160, 350 175 S500 205, 610 180"/>
+  </g>
+  <g fill="none" stroke="#efe6da" stroke-width="4" stroke-linecap="round" opacity="1">
+    <path d="M40 110 C140 90, 220 90, 320 110 S520 150, 610 120"/>
+    <path d="M90 210 C160 170, 260 160, 350 175 S500 205, 610 180"/>
+    <path d="M260 18 C240 70, 240 130, 250 220"/>
+    <path d="M520 20 C500 70, 492 120, 510 220"/>
+  </g>
+
+  <!-- pin -->
+  <g transform="translate(470 92)" filter="url(#soft)">
+    <path d="M0 -6 C0 -26 16 -40 36 -40 C56 -40 72 -26 72 -6 C72 22 36 54 36 54 C36 54 0 22 0 -6Z" fill="#CD844D"/>
+    <circle cx="36" cy="-6" r="12" fill="#ffffff" opacity="0.95"/>
+  </g>
+
+  <!-- label -->
+  <g transform="translate(34 156)">
+    <rect x="0" y="0" width="260" height="58" rx="14" fill="#ffffff" opacity="0.92" stroke="#e7dfd2"/>
+    <text x="16" y="24" font-family="Poppins, system-ui, -apple-system, Segoe UI, sans-serif" font-size="16" font-weight="800" fill="#1f1f1f">Av. Alberdi 1099</text>
+    <text x="16" y="44" font-family="Poppins, system-ui, -apple-system, Segoe UI, sans-serif" font-size="13" font-weight="700" fill="#6b6b6b">Resistencia, Chaco</text>
+  </g>
+</svg>

@@ -633,7 +633,10 @@
   <!-- Página Cómo comprar -->
   <main class="howto is-hidden" id="howto-page" aria-label="Cómo comprar por mayor">
     <section class="howto-hero" aria-labelledby="howto-title">
-      <div class="howto-hero__badge">Mayorista</div>
+      <div class="howto-hero__tabs" role="tablist" aria-label="Secciones">
+        <a class="howto-tab is-active" role="tab" aria-selected="true" href="#/como-comprar">Cómo comprar</a>
+        <a class="howto-tab" role="tab" aria-selected="false" href="#/quienes-somos">Quiénes somos</a>
+      </div>
       <h1 id="howto-title">Cómo comprar por mayor</h1>
       <p class="howto-hero__lead">
         Mínimo 4 productos combinables. Armás tu pedido, lo enviás para reserva y te confirmamos stock. Sin pago online.
@@ -684,12 +687,6 @@
           </div>
         </li>
       </ol>
-      <div class="callout">
-        <div class="callout__icon">Tip</div>
-        <div class="callout__body">
-          Para compartir un producto con alguien, copiá el link de la ficha y enviáselo.
-        </div>
-      </div>
     </section>
     <section class="howto-section" id="howto-notes" aria-labelledby="howto-notes-title">
       <div class="howto-section__head">
@@ -751,6 +748,101 @@
       <h2>¿Lista para armar tu pedido?</h2>
       <p class="muted">Entrá al catálogo, elegí tus productos y enviá el pedido cuando llegues al mínimo.</p>
       <a class="btn btn-primary btn-wide" href="#/" data-action="go-home">Ir al catálogo</a>
+    </section>
+  </main>
+
+  <!-- Página Quiénes somos -->
+  <main class="howto about-fyl is-hidden" id="about-fyl-page" aria-label="Quiénes somos">
+    <section class="howto-hero about-fyl__hero" aria-labelledby="about-fyl-title">
+      <div class="howto-hero__tabs" role="tablist" aria-label="Secciones">
+        <a class="howto-tab" role="tab" aria-selected="false" href="#/como-comprar">Cómo comprar</a>
+        <a class="howto-tab is-active" role="tab" aria-selected="true" href="#/quienes-somos">Quiénes somos</a>
+      </div>
+      <article class="info-card about-fyl__mainCard">
+        <div class="about-fyl__eyebrow">FYL Moda</div>
+        <h1 id="about-fyl-title">Quiénes somos</h1>
+        <p class="about-fyl__subtitle">Mayorista para revendedoras de todo el país.</p>
+      </article>
+    </section>
+
+    <section class="howto-section" aria-label="Presentación">
+      <article class="info-card about-fyl__intro">
+        <p>Somos un mayorista de calzado e indumentaria enfocado en revendedoras de todo el país.</p>
+        <p>Trabajamos con stock real y operación diaria, lo que nos permite ofrecer variedad, rapidez y cumplimiento en cada pedido.</p>
+      </article>
+    </section>
+
+    <section class="howto-section about-fyl__block" aria-label="Por qué elegir FYL">
+      <div class="howto-section__head">
+        <h2>Por qué elegir FYL</h2>
+      </div>
+      <ul class="about-fyl__list about-fyl__list--strong" aria-label="Por qué elegir FYL">
+        <li class="about-fyl__li"><span class="about-fyl__check" aria-hidden="true">✔</span>Gran variedad de modelos, talles y colores</li>
+        <li class="about-fyl__li"><span class="about-fyl__check" aria-hidden="true">✔</span>Pedido flexible: combiná modelos y talles</li>
+        <li class="about-fyl__li"><span class="about-fyl__check" aria-hidden="true">✔</span>Compra mínima accesible</li>
+        <li class="about-fyl__li"><span class="about-fyl__check" aria-hidden="true">✔</span>Confirmación de stock antes del envío</li>
+        <li class="about-fyl__li"><span class="about-fyl__check" aria-hidden="true">✔</span>Atención directa y rápida</li>
+      </ul>
+    </section>
+
+    <section class="howto-section" aria-label="Ubicación">
+      <div class="howto-section__head">
+        <h2>Dónde estamos</h2>
+        <p class="muted">Dirección real y acceso directo a Maps.</p>
+      </div>
+      <article class="info-card about-fyl__location">
+        <div class="about-fyl__locationRow">
+          <div class="about-fyl__pin" aria-hidden="true">&#128205;</div>
+          <div class="about-fyl__locationBody">
+            <div class="about-fyl__address">Av. Alberdi 1099, Resistencia, Chaco</div>
+            <div class="muted">Podés abrir la ubicación directamente en Google Maps.</div>
+          </div>
+        </div>
+        <a class="about-fyl__mapLink" href="https://maps.app.goo.gl/PoxAhU5AG3m2etSz5" target="_blank">
+          <img
+            src="/assets/maps/mapa-fyl.jpg"
+            alt="Ubicación FYL Moda"
+            class="map-preview"
+          />
+        </a>
+        <a class="btn btn-primary about-fyl__mapsBtn" href="https://maps.app.goo.gl/PoxAhU5AG3m2etSz5" target="_blank" rel="noopener">
+          Abrir en Maps
+        </a>
+      </article>
+    </section>
+
+    <section class="howto-section" aria-label="Redes sociales">
+      <div class="howto-section__head">
+        <h2>Nuestras redes</h2>
+        <p class="muted">Podés ver nuestros productos y cómo trabajamos en nuestras redes.</p>
+      </div>
+      <div class="about-fyl__socialActions" aria-label="Acciones de redes">
+        <a class="btn about-fyl__socialBtn about-fyl__socialBtn--ig" href="https://www.instagram.com/fylmodaok/" target="_blank" rel="noopener" aria-label="Abrir Instagram @fylmodaok">
+          <span class="about-fyl__socialIcon">
+            <img src="/assets/icons/instagram.svg" alt="Instagram" />
+          </span>
+          <span class="about-fyl__socialText">
+            <span class="about-fyl__socialLabel">Instagram</span>
+            <span class="about-fyl__socialHandle">@fylmodaok</span>
+          </span>
+          <span class="about-fyl__socialGo" aria-hidden="true">↗</span>
+        </a>
+        <a class="btn about-fyl__socialBtn about-fyl__socialBtn--fb" href="https://www.facebook.com/FyLcalzados1" target="_blank" rel="noopener" aria-label="Abrir Facebook FyL Calzados">
+          <span class="about-fyl__socialIcon">
+            <img src="/assets/icons/facebook.svg" alt="Facebook" />
+          </span>
+          <span class="about-fyl__socialText">
+            <span class="about-fyl__socialLabel">Facebook</span>
+            <span class="about-fyl__socialHandle">FyL Calzados</span>
+          </span>
+          <span class="about-fyl__socialGo" aria-hidden="true">↗</span>
+        </a>
+      </div>
+    </section>
+
+    <section class="howto-final about-fyl__final" aria-label="Acción final">
+      <h2>¿Querés empezar?</h2>
+      <a class="btn btn-ghost btn-wide" href="#/como-comprar">Ver cómo comprar</a>
     </section>
   </main>
 

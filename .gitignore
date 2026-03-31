@@ -85,3 +85,12 @@ qz-private.pk8.der.b64
 qz-certificate.crt
 qz-certificate.p12
 qz-cert.conf
+
+# Configuración local (contiene secretos)
+config.local.js
+
+# Llaves privadas exportadas (no commitear nunca)
+*.pem
+
+# Artefactos locales
+diff-dashboard-instant.txt

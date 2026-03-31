@@ -4534,6 +4534,65 @@ body.modal-open {
   margin-bottom: 10px;
 }
 
+.howto-hero__tabs {
+  display: flex;
+  width: 100%;
+  gap: 0;
+  padding: 2px;
+  border-radius: 14px;
+  background: rgba(0,0,0,0.06);
+  border: 1px solid var(--howto-line);
+  overflow: hidden;
+  margin: -6px 0 12px;
+  box-sizing: border-box;
+}
+
+.howto-tab {
+  display: inline-flex;
+  flex: 1 1 0;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 10px;
+  border-radius: 0;
+  border: 1px solid transparent;
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 700;
+  color: #7a7a7a;
+  background: #e9dfd2;
+  line-height: 1.1;
+  position: relative;
+  transition: all 0.2s ease;
+  min-height: 30px;
+}
+
+.howto-tab:active {
+  transform: scale(0.98);
+}
+
+.howto-tab.is-active {
+  background: #ffffff;
+  color: #000;
+  border-color: rgba(0,0,0,0.08);
+  box-shadow: 0 2px 4px rgba(0,0,0,0.06);
+  transform: scale(1.02);
+  z-index: 1;
+}
+
+.howto-tab:not(.is-active) {
+  background: #e9dfd2;
+  color: #6b6b6b;
+}
+
+.howto-tab + .howto-tab {
+  border-left: 1px solid rgba(0,0,0,0.06);
+}
+
+.howto-tab:focus {
+  outline: 3px solid rgba(205,132,77,0.4);
+  outline-offset: 2px;
+}
+
 .howto h1 {
   font-size: 22px;
   line-height: 1.15;
@@ -4566,6 +4625,8 @@ body.modal-open {
   font-size: 14px;
   color: var(--howto-ink);
   background: rgba(255,255,255,0.7);
+  box-sizing: border-box;
+  max-width: 100%;
 }
 
 .howto .btn:focus { outline: 3px solid rgba(205,132,77,0.4); outline-offset: 2px; }
@@ -4694,6 +4755,229 @@ body.modal-open {
   margin-top: 12px;
   display: grid;
   gap: 10px;
+}
+
+/* ========== QUIÉNES SOMOS (#/quienes-somos) ========== */
+.about-fyl__eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(17,17,17,0.08);
+  font-size: 12px;
+  font-weight: 800;
+  margin-bottom: 10px;
+}
+
+.about-fyl__mainCard {
+  background: rgba(255,255,255,0.72);
+  border: 1px solid var(--howto-line);
+  border-radius: 18px;
+  padding: 14px 14px;
+  box-shadow: 0 10px 22px rgba(0,0,0,0.06);
+}
+
+.about-fyl__mainCard h1 {
+  margin: 0 0 6px;
+}
+
+.about-fyl__subtitle {
+  margin: 0;
+  color: var(--howto-muted);
+  font-size: 13px;
+  line-height: 1.35;
+  font-weight: 700;
+}
+
+.about-fyl__intro p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--howto-muted);
+}
+
+.about-fyl__intro p + p {
+  margin-top: 10px;
+}
+
+.about-fyl__block {
+  padding-top: 10px;
+}
+
+.about-fyl__list {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0 0;
+  display: grid;
+  gap: 10px;
+}
+
+.about-fyl__li {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  gap: 10px;
+  align-items: start;
+  background: rgba(255,255,255,0.72);
+  border: 1px solid var(--howto-line);
+  border-radius: 16px;
+  padding: 11px 12px;
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--howto-ink);
+}
+
+.about-fyl__list--strong .about-fyl__li {
+  font-weight: 800;
+}
+
+.about-fyl__check {
+  width: 18px;
+  height: 18px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: rgba(205,132,77,0.22);
+  color: var(--howto-ink);
+  font-size: 12px;
+  line-height: 1;
+  margin-top: 1px;
+}
+
+.about-fyl__goal .muted {
+  margin: 0;
+}
+
+.about-fyl__locationRow {
+  display: grid;
+  grid-template-columns: 34px 1fr;
+  gap: 10px;
+  align-items: start;
+}
+
+.about-fyl__pin {
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: rgba(205,132,77,0.22);
+  font-size: 14px;
+}
+
+.about-fyl__address {
+  font-weight: 900;
+  font-size: 15px;
+  line-height: 1.25;
+  margin: 0 0 4px;
+}
+
+.about-fyl__mapsBtn {
+  margin-top: 12px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.about-fyl__mapLink {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+}
+
+.map-preview {
+  width: 100%;
+  height: 140px;
+  object-fit: cover;
+  border-radius: 14px;
+  margin-top: 10px;
+  display: block;
+  cursor: pointer;
+}
+
+.about-fyl__location {
+  border: 1px solid rgba(0,0,0,0.10);
+  box-shadow: 0 10px 22px rgba(0,0,0,0.06);
+}
+
+.about-fyl__socialActions {
+  margin-top: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.howto .btn.about-fyl__socialBtn {
+  width: 100%;
+  justify-content: space-between;
+  padding: 12px;
+  background: rgba(255,255,255,0.85);
+}
+
+.about-fyl__socialText {
+  display: grid;
+  gap: 2px;
+  text-align: left;
+  flex: 1 1 auto;
+}
+
+.about-fyl__socialLabel {
+  font-weight: 900;
+  color: var(--howto-ink);
+  font-size: 14px;
+  line-height: 1.1;
+}
+
+.about-fyl__socialHandle {
+  color: var(--howto-muted);
+  font-weight: 700;
+  font-size: 12px;
+  line-height: 1.1;
+}
+
+.about-fyl__socialIcon {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.06);
+  font-weight: 900;
+  font-size: 12px;
+  letter-spacing: 0.2px;
+  flex: 0 0 auto;
+  margin-right: 10px;
+}
+
+.about-fyl__socialIcon img {
+  width: 18px;
+  height: 18px;
+  display: block;
+  object-fit: contain;
+}
+
+.about-fyl__socialGo {
+  width: 28px;
+  height: 28px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: rgba(0,0,0,0.06);
+  font-weight: 900;
+  flex: 0 0 auto;
+  margin-left: 10px;
+}
+
+.about-fyl__socialBtn--ig .about-fyl__socialIcon {
+  background: rgba(225, 48, 108, 0.12);
+}
+
+.about-fyl__socialBtn--fb .about-fyl__socialIcon {
+  background: rgba(24, 119, 242, 0.12);
+}
+
+.about-fyl__final .btn-wide {
+  width: 100%;
 }
 
 .howto .faq-item {

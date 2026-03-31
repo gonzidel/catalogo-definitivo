@@ -13,18 +13,31 @@ async function applyHashRoute() {
   try {
   const catalogView = document.getElementById("catalog-view");
   const howtoPage = document.getElementById("howto-page");
+  const aboutPage = document.getElementById("about-fyl-page");
   const waPopup = document.getElementById("wa-popup");
   const collectionHeader = document.getElementById("collection-header");
   const hash = location.hash || "#/";
   const isComoComprar = hash === "#/como-comprar";
+  const isQuienesSomos = hash === "#/quienes-somos";
   const isCollectionFYL = hash === "#/coleccion/fyl-originals";
   const wasCollectionFYL = prevHash === "#/coleccion/fyl-originals";
 
-  if (!catalogView || !howtoPage) return;
+  if (!catalogView || !howtoPage || !aboutPage) return;
 
   if (isComoComprar) {
     catalogView.classList.add("is-hidden");
     howtoPage.classList.remove("is-hidden");
+    aboutPage.classList.add("is-hidden");
+    waPopup?.classList.add("is-hidden");
+    if (collectionHeader) {
+      collectionHeader.classList.add("is-hidden");
+      collectionHeader.style.display = "none";
+    }
+    window.scrollTo(0, 0);
+  } else if (isQuienesSomos) {
+    catalogView.classList.add("is-hidden");
+    howtoPage.classList.add("is-hidden");
+    aboutPage.classList.remove("is-hidden");
     waPopup?.classList.add("is-hidden");
     if (collectionHeader) {
       collectionHeader.classList.add("is-hidden");
@@ -37,6 +50,7 @@ async function applyHashRoute() {
     }
     catalogView.classList.remove("is-hidden");
     howtoPage.classList.add("is-hidden");
+    aboutPage.classList.add("is-hidden");
     waPopup?.classList.remove("is-hidden");
     if (collectionHeader) {
       collectionHeader.classList.remove("is-hidden");
@@ -60,6 +74,7 @@ async function applyHashRoute() {
   } else {
     catalogView.classList.remove("is-hidden");
     howtoPage.classList.add("is-hidden");
+    aboutPage.classList.add("is-hidden");
     waPopup?.classList.remove("is-hidden");
     if (collectionHeader) {
       collectionHeader.classList.add("is-hidden");

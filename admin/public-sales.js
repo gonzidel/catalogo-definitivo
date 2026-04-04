@@ -2550,8 +2550,37 @@ async function processQrCodeFast(qrCode) {
   const totalStock = stockData.total;
   
   if (totalStock === 0 && !returnMode.checked) {
-    showMessage(`⚠️ No hay stock disponible para el código QR ${qrCode}`, "error");
-    return;
+    // Sin stock: permitir confirmar y agregar igual (útil para mal conteo o venta excepcional).
+    const modal = document.getElementById("no-stock-confirm-modal");
+    const confirmYes = document.getElementById("no-stock-confirm-yes");
+    const confirmNo = document.getElementById("no-stock-confirm-no");
+
+    if (!modal || !confirmYes || !confirmNo) {
+      showMessage(`⚠️ No hay stock disponible para el código QR ${qrCode}`, "error");
+      return;
+    }
+
+    modal.classList.add("active");
+
+    const userConfirmed = await new Promise((resolve) => {
+      const handleYes = () => {
+        modal.classList.remove("active");
+        confirmYes.removeEventListener("click", handleYes);
+        confirmNo.removeEventListener("click", handleNo);
+        resolve(true);
+      };
+      const handleNo = () => {
+        modal.classList.remove("active");
+        confirmYes.removeEventListener("click", handleYes);
+        confirmNo.removeEventListener("click", handleNo);
+        resolve(false);
+      };
+      confirmYes.addEventListener("click", handleYes);
+      confirmNo.addEventListener("click", handleNo);
+    });
+
+    if (!userConfirmed) return;
+    // Continuar: se agregará con source 0,0 (marca "confirmado sin stock")
   }
   
   // Obtener stock del talle específico en paralelo con otras operaciones
@@ -2610,8 +2639,8 @@ async function processQrCodeFast(qrCode) {
     sizeStock.total = variantSizeStockQty;
   }
   
-  // Si hay stock, agregar automáticamente a la venta
-  if (sizeStock.total > 0 || returnMode.checked) {
+  // Si hay stock (o fue confirmado sin stock), agregar automáticamente a la venta
+  if (sizeStock.total > 0 || returnMode.checked || totalStock === 0) {
     const isReturn = returnMode.checked;
     const quantity = 1;
     
@@ -2623,18 +2652,17 @@ async function processQrCodeFast(qrCode) {
     );
     
     // Obtener fuente del stock (priorizar venta-publico, si no hay usar general)
-    let ventaPublicoQty = Math.min(quantity, sizeStock.ventaPublico.stock);
-    let generalQty = 0;
-    
-    if (ventaPublicoQty < quantity) {
-      const neededFromGeneral = quantity - ventaPublicoQty;
-      generalQty = Math.min(neededFromGeneral, sizeStock.general.stock);
+    // Caso confirmado sin stock: source 0,0 para que finalize/validaciones lo traten como excepción aceptada.
+    let source = { ventaPublico: 0, general: 0 };
+    if (totalStock !== 0 || returnMode.checked) {
+      let ventaPublicoQty = Math.min(quantity, sizeStock.ventaPublico.stock);
+      let generalQty = 0;
+      if (ventaPublicoQty < quantity) {
+        const neededFromGeneral = quantity - ventaPublicoQty;
+        generalQty = Math.min(neededFromGeneral, sizeStock.general.stock);
+      }
+      source = { ventaPublico: ventaPublicoQty, general: generalQty };
     }
-    
-    const source = {
-      ventaPublico: ventaPublicoQty,
-      general: generalQty
-    };
     
     // Usar precio directamente de la variante (sin cargar todas las variantes)
     const effectivePrice = variant.price; // Precio base, se puede mejorar después con ofertas
@@ -7988,6 +8016,27 @@ if (historyCustomerSearch) {
 }
 
 // Cargar historial de ventas
+const __voidedSaleIds = new Set();
+
+async function fetchVoidedAtMap(saleIds) {
+  const map = new Map();
+  const ids = (saleIds || []).filter(Boolean);
+  if (ids.length === 0) return map;
+
+  // Evitar pedir demasiado en una sola query (PostgREST limita tamaño de URL/payload)
+  const chunkSize = 500;
+  for (let i = 0; i < ids.length; i += chunkSize) {
+    const chunk = ids.slice(i, i + chunkSize);
+    const { data, error } = await supabase
+      .from("public_sales")
+      .select("id, voided_at")
+      .in("id", chunk);
+    if (error) throw error;
+    (data || []).forEach((row) => map.set(row.id, row.voided_at));
+  }
+  return map;
+}
+
 async function loadSalesHistory(append = false) {
   try {
     // Si hay búsqueda por cliente, ignorar el filtro de fecha y cargar todos los pedidos
@@ -8007,6 +8056,24 @@ async function loadSalesHistory(append = false) {
 
     const sales = data || [];
 
+    // Auditoría/robustez: si el RPC de historial no trae voided_at en este entorno,
+    // consultamos la tabla para marcar anuladas de forma persistente (sobrevive recargas).
+    // Esto también evita que el usuario pueda tocar "×" en una venta ya anulada.
+    try {
+      const idsNeedingVoidedCheck = sales
+        .filter((s) => s && s.id && !s.voided_at)
+        .map((s) => s.id);
+      const voidedMap = await fetchVoidedAtMap(idsNeedingVoidedCheck);
+      sales.forEach((s) => {
+        if (!s || !s.id) return;
+        const v = voidedMap.get(s.id);
+        if (v && !s.voided_at) s.voided_at = v;
+      });
+    } catch (e) {
+      // Si falla esta consulta auxiliar (RLS/permisos), no rompemos el historial.
+      console.warn("No se pudo validar voided_at desde public_sales:", e);
+    }
+
     // Limpiar lista siempre (no hay append)
     historyList.innerHTML = "";
 
@@ -8019,7 +8086,7 @@ async function loadSalesHistory(append = false) {
     // Agregar ventas a la lista (con botón X para anular si no está anulada)
     const salesHtml = sales.map(sale => {
       const isExpanded = expandedSaleId === sale.id;
-      const isVoided = !!sale.voided_at;
+      const isVoided = !!sale.voided_at || __voidedSaleIds.has(sale.id);
       return `
         <div class="history-sale-item" data-sale-id="${sale.id}" style="padding: 12px; border: 1px solid #ddd; border-radius: 8px; margin-bottom: 8px; cursor: pointer; transition: background 0.2s; display: flex; align-items: center; justify-content: space-between; gap: 8px; ${isExpanded ? 'background: #f8f9fa; border-color: #CD844D;' : ''}" onclick="toggleSaleDetails('${sale.id}')">
           <div style="flex: 1; min-width: 0;">
@@ -8051,13 +8118,17 @@ async function loadSalesHistory(append = false) {
 }
 
 // Anular venta y restablecer stock en venta al público
+const __voidSaleInFlight = new Set();
 window.voidSale = async function (saleId) {
+  if (__voidSaleInFlight.has(saleId)) return;
   if (!confirm('¿Anular esta venta? El stock se reestablecerá en venta al público.')) {
     return;
   }
   try {
+    __voidSaleInFlight.add(saleId);
     const { data, error } = await supabase.rpc('rpc_void_public_sale', { p_sale_id: saleId });
     if (error) throw error;
+    __voidedSaleIds.add(saleId);
     showMessage('Venta anulada correctamente. Stock restablecido en venta al público.', 'success');
     if (expandedSaleId === saleId) {
       expandedSaleId = null;
@@ -8066,8 +8137,36 @@ window.voidSale = async function (saleId) {
     }
     await loadSalesHistory();
   } catch (error) {
+    // Si ya estaba anulada en backend, lo tratamos como estado válido y refrescamos UI.
+    const code = error?.code || error?.details?.code;
+    const msg = typeof error?.message === "string" ? error.message : String(error?.message || "");
+    const detailsMsg =
+      typeof error?.details === "string"
+        ? error.details
+        : error?.details != null
+          ? JSON.stringify(error.details)
+          : "";
+    const hintMsg =
+      typeof error?.hint === "string"
+        ? error.hint
+        : error?.hint != null
+          ? JSON.stringify(error.hint)
+          : "";
+    const combined = `${msg}\n${detailsMsg}\n${hintMsg}`.trim();
+    if (code === 'P0001' && /ya\s+est[aá]\s+anulad/i.test(combined)) {
+      __voidedSaleIds.add(saleId);
+      showMessage('La venta ya estaba anulada. Se actualizó el historial.', 'success');
+      await loadSalesHistory();
+      return;
+    }
     console.error('Error anulando venta:', error);
-    showMessage('Error al anular venta: ' + (error.message || 'Error desconocido'), 'error');
+    showMessage(
+      'Error al anular venta: ' +
+        (combined || error?.message || 'Error desconocido'),
+      'error'
+    );
+  } finally {
+    __voidSaleInFlight.delete(saleId);
   }
 };
 

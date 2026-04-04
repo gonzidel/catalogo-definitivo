@@ -760,19 +760,21 @@ function buildDashBolsaQtySelectOptions(qty, maxQtyCap) {
 
   for (const n of qtyOptions) {
     const label =
-      n === 0 ? "0" : useCompactQtyLabel ? `${n} u` : n === 1 ? "1" : `${n} unidades`;
+      n === 0
+        ? "0"
+        : `${n} uni`;
     const sel =
       effectiveSelectedSmall !== null && n === effectiveSelectedSmall ? "selected" : "";
     parts.push(`<option value="${n}" ${sel}>${label}</option>`);
   }
 
   if (cartOver4WithinCap && cartQ > maxOption) {
-    const label = useCompactQtyLabel ? `${cartQ} u` : `${cartQ} unidades`;
+    const label = `${cartQ} uni`;
     parts.push(`<option value="${cartQ}" selected>${label}</option>`);
   }
 
   if (cartOver4Overshoot) {
-    const label = useCompactQtyLabel ? `${cap} u` : `${cap} unidades`;
+    const label = `${cap} uni`;
     parts.push(`<option value="${cap}" selected>${label}</option>`);
   }
 
@@ -1381,6 +1383,20 @@ async function fetchCustomerShippingRow() {
   return data;
 }
 
+async function fetchCustomerProfileRow() {
+  if (!currentUserId) return null;
+  const { data, error } = await supabase
+    .from("customers")
+    .select("full_name, avatar_url, email")
+    .eq("id", currentUserId)
+    .maybeSingle();
+  if (error) {
+    console.warn("No se pudo leer perfil del cliente:", error.message);
+    return null;
+  }
+  return data;
+}
+
 /**
  * Paso de transporte antes del cierre definitivo (solo si aún no hay transport_id en cuenta).
  * @returns {Promise<{ ok: boolean, transportName?: string }>}
@@ -1435,7 +1451,8 @@ function showTransportFinalizeModal({ province, city, opciones }) {
     let bodyInner;
     if (soloRetiroLocalUnico) {
       bodyInner = `
-        <h3 id="dash-transport-finalize-title" class="dash-remove-cart-item-modal__title">Transporte asignado: Retiro del local</h3>
+        <h3 id="dash-transport-finalize-title" class="dash-remove-cart-item-modal__title">Transporte asignado</h3>
+        <div class="dash-transport-assigned">Retiro del local</div>
         <p class="dash-transport-lead">Acordar en el local.</p>
         <div class="dash-transport-block">
           <p class="dash-transport-block__text">¿Tenés dudas? Escribinos por ${waLink}.</p>
@@ -1443,7 +1460,8 @@ function showTransportFinalizeModal({ province, city, opciones }) {
       `;
     } else if (soloSedeUnico) {
       bodyInner = `
-        <h3 id="dash-transport-finalize-title" class="dash-remove-cart-item-modal__title">Transporte asignado: SEDE</h3>
+        <h3 id="dash-transport-finalize-title" class="dash-remove-cart-item-modal__title">Transporte asignado</h3>
+        <div class="dash-transport-assigned">SEDE</div>
         <p class="dash-transport-lead">El pago es contra reembolso (abonás el total del pedido + envío al recibirlo).</p>
         <div class="dash-transport-block">
           <p class="dash-transport-block__text">¿Tenés dudas? Escribinos por ${waLink}.</p>
@@ -1884,9 +1902,25 @@ function openPreviousOrdersModal() {
     return;
   }
   
-  // Abrir modal
+  // Abrir pantalla historial
   modal.classList.add("active");
   historyVisible = true;
+  try {
+    document.body.classList.add("history-open");
+  } catch (_) {
+    /* ignore */
+  }
+
+  // Deep-link: ?view=history
+  try {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("view") !== "history") {
+      url.searchParams.set("view", "history");
+      window.history.replaceState({}, "", url.toString());
+    }
+  } catch (_) {
+    /* ignore */
+  }
   
   // Cargar pedidos
   if (!currentUserId) {
@@ -1908,16 +1942,32 @@ function closePreviousOrdersModal() {
     return;
   }
   
-  // Cerrar modal
+  // Cerrar pantalla historial
   modal.classList.remove("active");
   historyVisible = false;
+  try {
+    document.body.classList.remove("history-open");
+  } catch (_) {
+    /* ignore */
+  }
+
+  // Limpiar deep-link
+  try {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("view") === "history") {
+      url.searchParams.delete("view");
+      window.history.replaceState({}, "", url.toString());
+    }
+  } catch (_) {
+    /* ignore */
+  }
 }
 
 function setupModalControls() {
   if (modalControlsInitialized) return;
   
   const modal = document.getElementById("previous-orders-modal");
-  const closeBtn = document.getElementById("modal-close-btn");
+  const closeBtn = document.getElementById("history-back-btn");
   
   if (!modal || !closeBtn) {
     console.warn("âš ï¸ No se encontraron los elementos del modal");
@@ -1926,16 +1976,9 @@ function setupModalControls() {
   
   modalControlsInitialized = true;
   
-  // Cerrar con botÃ³n X
+  // Volver con flecha
   closeBtn.addEventListener("click", () => {
     closePreviousOrdersModal();
-  });
-  
-  // Cerrar al hacer clic fuera del modal
-  modal.addEventListener("click", (e) => {
-    if (e.target === modal) {
-      closePreviousOrdersModal();
-    }
   });
   
   // Cerrar con tecla ESC
@@ -2211,10 +2254,23 @@ async function closeOrder(orderId) {
       }
     }
 
+    const isPickupOnly =
+      needTransportStep &&
+      opciones.length === 1 &&
+      ["retiro de local", "retiro del local"].includes(
+        String(opciones[0] || "")
+          .toLowerCase()
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .trim()
+      );
+
     const confirmClose = await showDashboardConfirmModal({
       title: "¿Cerrar tu pedido?",
       message:
-        "¿Estás seguro de que querés cerrar tu pedido y que te lo enviemos?",
+        isPickupOnly
+          ? "¿Estás seguro de que querés cerrar tu pedido?"
+          : "¿Estás seguro de que querés cerrar tu pedido y que te lo enviemos?",
       confirmLabel: "Sí, enviar",
       cancelLabel: "Cancelar",
     });
@@ -2727,10 +2783,7 @@ async function loadCart(userId) {
           : ``;
 
         const unitPriceFormatted = price.toLocaleString('es-AR');
-        const unitPriceMeta =
-          qty === 1
-            ? `· $${unitPriceFormatted}`
-            : `· $${unitPriceFormatted} c/u`;
+        const unitPriceMeta = `· $${unitPriceFormatted} c/u`;
         
         return `
           <div class="dash-bolsa-item ${isOutOfStock ? 'cart-item-out-of-stock' : ''}" style="${outOfStockStyles}" data-item-id="${item.id}">
@@ -2925,7 +2978,7 @@ async function loadOrders(userId) {
     }
 
     // Cargar pedidos activos y cerrados (excluir enviados y expirados)
-    // Los pedidos "closed" aparecerÃ¡n con aviso "En preparaciÃ³n"
+    // Los pedidos "closed" aparecerán con aviso "En preparación"
     const { data: orders, error } = await supabase
       .from("orders")
       .select(
@@ -2977,7 +3030,7 @@ async function loadOrders(userId) {
         const items = order.order_items || [];
         const orderStatus = (order.status || "").toLowerCase().trim();
         const isActive = orderStatus === "active";
-        const isClosed = orderStatus === "closed";  // En preparaciÃ³n
+        const isClosed = orderStatus === "closed";  // En preparación
         
         // Calcular total excluyendo items faltantes (con precios normalizados)
         const validItems = items.filter(item => item.status !== 'missing');
@@ -2995,7 +3048,7 @@ async function loadOrders(userId) {
         let statusStyle = "background:#e6f4ea; color:#1b5e20;";
         
         if (isClosed) {
-          statusLabel = "En preparaciÃ³n";
+          statusLabel = "En preparación";
           statusStyle = "background:#fff3cd; color:#856404;";
         } else if (isActive) {
           statusLabel = "Activo";
@@ -3057,10 +3110,28 @@ async function loadOrders(userId) {
             const hasMultipleVariants = sizeStatusList.length > 1;
 
             const sizeLabel = String(distinctSizes[0] || "").trim();
-            const titleHtml = `<span class="item-row__title-name">${productName}</span><span class="item-row__title-sep" aria-hidden="true">·</span><span class="item-row__title-color">${color}</span>`;
-            const sizeHtml = !multiSize && sizeLabel
-              ? `<div class="item-row__variant-size">${sizeLabel}${totalQty > 1 ? ` · x ${totalQty} unidades` : ""}</div>`
-              : "";
+            const normSize = sizeLabel
+              .toLowerCase()
+              .normalize("NFD")
+              .replace(/[\u0300-\u036f]/g, "")
+              .trim();
+            const isUniqueSize =
+              normSize === "unico" ||
+              normSize === "talle unico" ||
+              normSize === "talle unico." ||
+              normSize === "talle: unico" ||
+              normSize === "talle unico (unico)";
+
+            const showInlineSize = !multiSize && sizeLabel && !isUniqueSize;
+
+            const titleHtml = showInlineSize
+              ? `<span class="item-row__title-name">${productName}</span><span class="item-row__title-sep" aria-hidden="true">·</span><span class="item-row__title-color">${color}</span><span class="item-row__title-sep" aria-hidden="true">·</span><span class="item-row__title-size">${sizeLabel}</span>`
+              : `<span class="item-row__title-name">${productName}</span><span class="item-row__title-sep" aria-hidden="true">·</span><span class="item-row__title-color">${color}</span>`;
+
+            const sizeHtml =
+              !multiSize && sizeLabel && !showInlineSize
+                ? `<div class="item-row__variant-size">${sizeLabel}${totalQty > 1 ? ` · x ${totalQty} unidades` : ""}</div>`
+                : "";
 
             const orderItemIds = group.map((g) => g.id).filter(Boolean).join(",");
 
@@ -3133,7 +3204,7 @@ async function loadOrders(userId) {
                     </div>
                     ${sizeHtml}
                     <div class="item-row__line2">
-                      <div class="item-row__order-meta">${totalQty === 1 ? "1 · " + formatOrderPrice(unitPrice) : totalQty + " uni · " + formatOrderPrice(unitPrice) + " c/u"}</div>
+                      <div class="item-row__order-meta">${totalQty} uni · ${formatOrderPrice(unitPrice)} c/u</div>
                     </div>
                   </div>
                 </div>
@@ -3164,8 +3235,27 @@ async function loadOrders(userId) {
             const qty = Number(m.quantity || 0) || 1;
             const unitPrice = normalizeOrderPrice(m.price_snapshot || 0);
             const lineTotal = qty * unitPrice;
-            const titleHtml = `<span class="item-row__title-name">${productName}</span><span class="item-row__title-sep" aria-hidden="true">·</span><span class="item-row__title-color">${color}</span>`;
-            const sizeHtml = sizeLabel ? `<div class="item-row__variant-size">${sizeLabel}${qty > 1 ? ` · x ${qty} unidades` : ""}</div>` : "";
+            const normSize = sizeLabel
+              .toLowerCase()
+              .normalize("NFD")
+              .replace(/[\u0300-\u036f]/g, "")
+              .trim();
+            const isUniqueSize =
+              normSize === "unico" ||
+              normSize === "talle unico" ||
+              normSize === "talle unico." ||
+              normSize === "talle: unico" ||
+              normSize === "talle unico (unico)";
+            const showInlineSize = Boolean(sizeLabel) && !isUniqueSize;
+
+            const titleHtml = showInlineSize
+              ? `<span class="item-row__title-name">${productName}</span><span class="item-row__title-sep" aria-hidden="true">·</span><span class="item-row__title-color">${color}</span><span class="item-row__title-sep" aria-hidden="true">·</span><span class="item-row__title-size">${sizeLabel}</span>`
+              : `<span class="item-row__title-name">${productName}</span><span class="item-row__title-sep" aria-hidden="true">·</span><span class="item-row__title-color">${color}</span>`;
+
+            const sizeHtml =
+              sizeLabel && !showInlineSize
+                ? `<div class="item-row__variant-size">${sizeLabel}${qty > 1 ? ` · x ${qty} unidades` : ""}</div>`
+                : "";
             const missingMeta = { className: "item-row__status--st-missing", text: "Sin stock", info: "Esta unidad no tiene stock disponible." };
             const statusHtml = `<span class="item-row__status ${missingMeta.className}" data-status-info="${missingMeta.info.replace(/"/g, "&quot;")}" tabindex="0" role="button"><span class="item-row__status-full">${missingMeta.text}</span><span class="item-row__status-short">${missingMeta.text}</span></span><div class="item-row__status-tooltip" aria-hidden="true"></div>`;
             return `
@@ -3178,7 +3268,7 @@ async function loadOrders(userId) {
                     </div>
                     ${sizeHtml}
                     <div class="item-row__line2">
-                      <div class="item-row__order-meta">${qty === 1 ? "1 · " + formatOrderPrice(unitPrice) : qty + " uni · " + formatOrderPrice(unitPrice) + " c/u"}</div>
+                      <div class="item-row__order-meta">${qty} uni · ${formatOrderPrice(unitPrice)} c/u</div>
                     </div>
                   </div>
                 </div>
@@ -3231,12 +3321,31 @@ async function loadOrders(userId) {
 
         return `
           <div class="dash-order order-item" data-order-id="${order.id}" data-order-closed="${isClosed ? 'true' : 'false'}">
-            <div class="dash-order__head--compact">
-              <div class="dash-order__title">📦 Mi pedido</div>
-              <div style="display:flex; gap:8px; align-items:center;">
+            <div class="dash-order__head--compact dash-order__head--summary">
+              <div class="dash-order__head-left">
+                <div class="dash-order__title">📦 Mi pedido</div>
                 <span class="dash-order-header-chip dash-order-header-chip--state ${isClosed ? 'dash-order-header-chip--preparing' : ''}">${isClosed ? 'Preparando pedido' : getOrderStatusSummary(visibleItems)}</span>
+              </div>
+              <div class="dash-order__head-right">
                 ${!isClosed ? `<span class="dash-order-header-chip dash-order-header-chip--days" title="Quedan ${daysRemaining} días para cerrar el pedido (14 días desde la creación)">${daysRemaining} días</span>` : ''}
-                ${isActive ? `<div class="dash-order-header-menu-wrap"><button type="button" class="dash-order-header-kebab" aria-label="Opciones del pedido" aria-haspopup="true" aria-expanded="false">…</button><div class="dash-order-header-popover" role="menu" aria-hidden="true"><button type="button" class="dash-order-header-menuitem" data-cancel-entire-order="${order.id}">Cancelar pedido</button></div></div>` : `<span class="dash-order-header-kebab" aria-hidden="true">…</span>`}
+                ${
+                  isActive
+                    ? `<div class="dash-order-header-menu-wrap">
+                         <button type="button" class="dash-order-header-kebab" aria-label="Opciones del pedido" aria-haspopup="true" aria-expanded="false">…</button>
+                         <div class="dash-order-header-popover" role="menu" aria-hidden="true">
+                           <button type="button" class="dash-order-header-menuitem" data-cancel-entire-order="${order.id}">Cancelar pedido</button>
+                         </div>
+                       </div>`
+                    : isClosed
+                      ? `<div class="dash-order-header-menu-wrap">
+                           <button type="button" class="dash-order-header-kebab" aria-label="Opciones del pedido" aria-haspopup="true" aria-expanded="false">…</button>
+                           <div class="dash-order-header-popover" role="menu" aria-hidden="true">
+                             <button type="button" class="dash-order-header-menuitem" data-modify-order="${order.id}">Modificar pedido</button>
+                             <a class="dash-order-header-menuitem" href="${WHATSAPP_ENVIOS_HREF}" target="_blank" rel="noopener noreferrer">Contactar</a>
+                           </div>
+                         </div>`
+                      : `<span class="dash-order-header-kebab" aria-hidden="true">…</span>`
+                }
               </div>
             </div>
             <div class="dash-divider"></div>
@@ -3662,6 +3771,29 @@ async function loadOrders(userId) {
         await cancelEntireOrder(orderId);
       };
     });
+
+    // Pedido cerrado: menú ⋯ -> Modificar pedido (misma acción que el botón)
+    document.querySelectorAll("[data-modify-order]").forEach((btn) => {
+      btn.onclick = async () => {
+        const orderId = btn.dataset.modifyOrder;
+        if (!orderId) return;
+        const popover = btn.closest(".dash-order-header-popover");
+        if (popover) {
+          popover.classList.remove("is-open");
+          popover.setAttribute("aria-hidden", "true");
+          popover
+            .closest(".dash-order-header-menu-wrap")
+            ?.querySelector(".dash-order-header-kebab")
+            ?.setAttribute("aria-expanded", "false");
+        }
+        const card = document.querySelector(`.dash-order[data-order-id="${CSS.escape(orderId)}"]`);
+        const modifyBtn = card?.querySelector(`.dash-order-modify-link[data-order-id="${CSS.escape(orderId)}"]`);
+        if (modifyBtn) {
+          modifyBtn.click();
+          return;
+        }
+      };
+    });
     
     // Configurar botones de cancelar producto
     document.querySelectorAll(".btn-cancel-item").forEach((btn) => {
@@ -3766,12 +3898,12 @@ async function loadClosedOrders(userId) {
         console.log(`  - Pedido ${o.order_number || o.id.substring(0, 8)}: estado="${o.status}", customer_id="${o.customer_id}"`);
       });
       
-      // Verificar pedidos "closed" (aparecen en Mis Pedidos con "En preparaciÃ³n")
+      // Verificar pedidos "closed" (aparecen en Mis Pedidos con "En preparación")
       const closedOrders = allOrders.filter(o => {
         const status = (o.status || "").toLowerCase().trim();
         return status === "closed";
       });
-      console.log(`ðŸ“‹ Pedidos con estado "closed" (Mis Pedidos - En preparaciÃ³n):`, closedOrders.length);
+      console.log(`📋 Pedidos con estado "closed" (Mis Pedidos - En preparación):`, closedOrders.length);
       
       // Verificar si hay pedidos con estados diferentes
       const otherStatuses = allOrders.filter(o => {
@@ -3793,7 +3925,7 @@ async function loadClosedOrders(userId) {
     console.log("ðŸ“‹ Intentando consultas separadas para closed y sent...");
     
     // SOLO pedidos enviados (sent) aparecen en "Pedidos Anteriores"
-    // Los pedidos "closed" aparecen en "Mis Pedidos" con aviso "En preparaciÃ³n"
+    // Los pedidos "closed" aparecen en "Mis Pedidos" con aviso "En preparación"
     const { data: sentOrders, error: sentError } = await supabase
       .from("orders")
       .select(
@@ -3835,10 +3967,10 @@ async function loadClosedOrders(userId) {
     
     if (!finalOrders || finalOrders.length === 0) {
       console.log("â„¹ï¸ No se encontraron pedidos enviados (estado 'sent')");
-      console.log("â„¹ï¸ Nota: Los pedidos 'closed' aparecen en 'Mis Pedidos' con aviso 'En preparaciÃ³n'");
+      console.log("ℹ️ Nota: Los pedidos 'closed' aparecen en 'Mis Pedidos' con aviso 'En preparación'");
       
       historyContainer.innerHTML = `
-        <p style="text-align: center; color: #666; padding: 40px;">No tienes pedidos anteriores. Los pedidos en preparaciÃ³n aparecen en "Mis Pedidos".</p>
+        <p style="text-align: center; color: #666; padding: 40px;">No tienes pedidos anteriores. Los pedidos en preparación aparecen en "Mis Pedidos".</p>
       `;
       return;
     }
@@ -4048,8 +4180,8 @@ function showNoSession() {
                     </div>
                     <div class="dash-bolsa-item__line2">
                       <select class="cart-qty-select dash-bolsa-item__qty-select" data-id="${idx}">
-                        ${[0,1,2,3,4].map((n) => `<option value="${n}" ${n === Number(item.cantidad || 0) ? "selected" : ""}>${n === 0 ? "0" : n === 1 ? "1" : `${n} unidades`}</option>`).join("")}
-                        ${(Number(item.cantidad || 0) > 4) ? `<option value="${Number(item.cantidad)}" selected>${Number(item.cantidad)} unidades</option>` : ""}
+                        ${[0,1,2,3,4].map((n) => `<option value="${n}" ${n === Number(item.cantidad || 0) ? "selected" : ""}>${n === 0 ? "0" : `${n} uni`}</option>`).join("")}
+                        ${(Number(item.cantidad || 0) > 4) ? `<option value="${Number(item.cantidad)}" selected>${Number(item.cantidad)} uni</option>` : ""}
                       </select>
                       <span class="dash-bolsa-item__unit-price">· $${(Number(item.precio) || 0).toLocaleString("es-AR")} c/u</span>
                     </div>
@@ -4158,28 +4290,36 @@ async function loadData() {
         const userEmail = document.getElementById("user-email");
         const userAvatar = document.getElementById("user-avatar");
 
+        const customerProfile = await fetchCustomerProfileRow();
+
         if (userName) {
           const displayName =
+            customerProfile?.full_name ||
             user.user_metadata?.full_name ||
             user.email?.split("@")[0] ||
             "Usuario";
-          userName.textContent = getFirstNameForGreeting(displayName);
+          const greeting = getFirstNameForGreeting(displayName);
+          userName.textContent = greeting;
           const userNameSheet = document.getElementById("user-name-sheet");
           if (userNameSheet) {
-            userNameSheet.textContent = getFirstNameForGreeting(displayName);
+            userNameSheet.textContent = greeting;
           }
         }
         if (userEmail) {
-          userEmail.textContent = user.email;
+          userEmail.textContent = customerProfile?.email || user.email;
         }
         if (userAvatar) {
           const displayName =
+            customerProfile?.full_name ||
             user.user_metadata?.full_name ||
             user.email?.split("@")[0] ||
             "Usuario";
           const avatarUrl =
-            user.user_metadata?.avatar_url || user.user_metadata?.picture;
+            customerProfile?.avatar_url ||
+            user.user_metadata?.avatar_url ||
+            user.user_metadata?.picture;
           setUserAvatarWithFallback(userAvatar, displayName, avatarUrl);
+          userAvatar.dataset.identitySet = "true";
         }
 
         setupCartActions();
@@ -4190,6 +4330,22 @@ async function loadData() {
         // Asegurar que los controles del historial estÃ©n configurados
         // Esto es necesario incluso si no hay pedidos para que el botÃ³n funcione
         setupHistoryControls();
+
+        // Deep-link: abrir historial solo DESPUÉS de auth (cuando currentUserId ya existe)
+        try {
+          const url = new URL(window.location.href);
+          if (url.searchParams.get("view") === "history") {
+            setTimeout(() => {
+              try {
+                openPreviousOrdersModal();
+              } catch (_) {
+                /* ignore */
+              }
+            }, 0);
+          }
+        } catch (_) {
+          /* ignore */
+        }
 
         if (!cartSyncedListenerRegistered) {
           window.addEventListener("cart:synced", () => loadCart(user.id));

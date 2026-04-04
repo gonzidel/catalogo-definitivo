@@ -1636,6 +1636,25 @@ async function finalizeOrder(orderId) {
     return;
   }
 
+  // Notificación al cliente: pedido empaquetado
+  try {
+    const customerId = order?.customer_id || (Array.isArray(order?.customers) ? order.customers[0]?.id : order?.customers?.id);
+    if (customerId) {
+      await supabase.from("customer_notifications").delete().eq("customer_id", customerId).eq("order_id", orderId);
+      await supabase.from("customer_notifications").insert({
+        customer_id: customerId,
+        order_id: orderId,
+        type: "ORDER_PACKAGED_TODAY",
+        message: "Tu pedido ya fue empaquetado y se enviará hoy al transporte.",
+        payload: { action_url: "client/dashboard.html?view=history" },
+        read: false,
+        read_at: null,
+      });
+    }
+  } catch (e) {
+    console.warn("⚠️ No se pudo emitir notificación al cliente:", e);
+  }
+
   console.log("✅ Pedido finalizado correctamente");
   alert("✅ Pedido finalizado. Se ha movido a 'Enviados'.");
   await loadClosedOrders();

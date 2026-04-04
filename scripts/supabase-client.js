@@ -27,7 +27,49 @@ function fylFetchWithTimeout(input, init) {
     else incoming.addEventListener("abort", () => ctrl.abort(), { once: true });
   }
   base.signal = ctrl.signal;
-  return fetch(input, base).finally(() => clearTimeout(timer));
+  return fetch(input, base)
+    .then(async (res) => {
+      // Cuando PostgREST devuelve 4xx/5xx a veces supabase-js solo muestra "Bad Request".
+      // Logueamos el body real (sin consumir el stream del response original).
+      try {
+        if (!res.ok) {
+          const url = typeof input === "string" ? input : input?.url;
+          const isRpc = typeof url === "string" && url.includes("/rest/v1/rpc/");
+          if (isRpc) {
+            const bodyText = await res.clone().text();
+            // Si es el caso esperado "ya está anulada", no lo mostramos como error ruidoso.
+            try {
+              const parsed = bodyText ? JSON.parse(bodyText) : null;
+              const code = parsed?.code;
+              const msg = String(parsed?.message || "");
+              if (
+                code === "P0001" &&
+                /ya\s+est[aá]\s+anulad/i.test(msg)
+              ) {
+                console.info(`${LOG} RPC HTTP ${res.status} (venta ya anulada)`, {
+                  url,
+                  body: parsed,
+                });
+              } else {
+                console.error(`${LOG} RPC HTTP ${res.status} ${res.statusText}`, {
+                  url,
+                  body: parsed ?? bodyText,
+                });
+              }
+            } catch {
+              console.error(`${LOG} RPC HTTP ${res.status} ${res.statusText}`, {
+                url,
+                body: bodyText,
+              });
+            }
+          }
+        }
+      } catch {
+        // no-op: logging best-effort
+      }
+      return res;
+    })
+    .finally(() => clearTimeout(timer));
 }
 
 /** Evita que import() quede colgado indefinidamente (móvil / redes lentas). */

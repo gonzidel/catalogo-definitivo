@@ -334,67 +334,46 @@
             color: #333;
         }
         
-        /* Estilos para el modal de pedidos anteriores */
+        /* Historial (pantalla) — mantener compatibilidad, pero sin centrar ni limitar ancho */
         .previous-orders-modal {
             display: none;
             position: fixed;
-            top: 0;
-            left: 0;
+            inset: 0;
             width: 100%;
             height: 100%;
-            background: rgba(0,0,0,0.5);
-            z-index: 1000;
-            overflow-y: auto;
+            background: #fff;
+            z-index: 1200;
+            overflow: hidden;
         }
         .previous-orders-modal.active {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
-        }
-        .modal-content-wrapper {
-            background: #fff;
-            border-radius: 16px;
-            padding: 24px;
-            max-width: 700px;
-            width: 100%;
-            max-height: 85vh;
-            overflow-y: auto;
-            box-shadow: 0 2px 10px rgba(0,0,0,.06);
-            border: 1px solid rgba(0,0,0,.06);
-        }
-        .modal-header-orders {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 16px;
-            padding-bottom: 12px;
-            border-bottom: 1px solid rgba(205, 132, 77, 0.3);
-        }
-        .modal-header-orders h2 {
-            margin: 0;
-            font-size: 18px;
-            font-weight: 600;
-            color: #333;
-        }
-        .modal-close-btn {
-            background: none;
-            border: none;
-            font-size: 28px;
-            cursor: pointer;
-            color: #666;
+            display: block;
             padding: 0;
-            width: 36px;
-            height: 36px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 50%;
-            transition: background 0.2s;
-            line-height: 1;
         }
-        .modal-close-btn:hover {
-            background: #f0f0f0;
+        .previous-orders-modal .modal-content-wrapper {
+            background: #fff;
+            border-radius: 0;
+            padding: 0;
+            max-width: none;
+            width: 100%;
+            height: 100%;
+            max-height: none;
+            overflow: hidden;
+            box-shadow: none;
+            border: 0;
+        }
+        .previous-orders-modal .modal-header-orders {
+            display: grid;
+            grid-template-columns: 44px 1fr;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 12px;
+            border-bottom: 1px solid rgba(0,0,0,.08);
+        }
+        .previous-orders-modal .modal-header-orders h2 {
+            margin: 0;
+            font-size: 16px;
+            font-weight: 800;
+            color: #333;
         }
         .orders-list {
             display: flex;
@@ -527,7 +506,7 @@
                     <p id="user-email" class="user-email dash-account-sheet__email"></p>
                     <nav class="dash-account-sheet__nav" aria-label="Cuenta y enlaces">
                         <a href="profile.html" class="btn btn-ghost">👤 Mis datos</a>
-                        <a href="https://wa.me/5493624720762" target="_blank" rel="noopener" class="btn btn-ghost">WhatsApp</a>
+                        <a href="https://wa.me/5493624118637" target="_blank" rel="noopener" class="btn btn-ghost">WhatsApp</a>
                         <a href="../index.html" class="btn btn-ghost">← Volver al catálogo</a>
                         <button type="button" id="logout-btn" class="btn btn-danger">Cerrar sesión</button>
                     </nav>
@@ -609,12 +588,16 @@
         </div>
     </div>
 
-    <!-- Modal historial (resumen + pedidos anteriores) -->
+    <!-- Historial (pantalla) -->
     <div id="previous-orders-modal" class="previous-orders-modal" role="dialog" aria-modal="true" aria-labelledby="history-modal-title">
         <div class="modal-content-wrapper history-modal__wrapper">
             <div class="modal-header-orders">
-                <h2 id="history-modal-title" class="modal-header-orders__title">Historial de pedidos</h2>
-                <button type="button" class="modal-close-btn" id="modal-close-btn" aria-label="Cerrar">×</button>
+                <button type="button" class="history-back-btn" id="history-back-btn" aria-label="Volver">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M15 18l-6-6 6-6"></path>
+                    </svg>
+                </button>
+                <h2 id="history-modal-title" class="modal-header-orders__title" style="margin:0;">Historial</h2>
             </div>
             <div class="history-modal__body">
                 <section id="history-modal-summary" class="history-modal__summary" aria-label="Resumen"></section>

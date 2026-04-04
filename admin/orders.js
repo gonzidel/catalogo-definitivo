@@ -142,7 +142,9 @@ function hasAllItemsPicked(order) {
   if (!order || !Array.isArray(order.order_items) || order.order_items.length === 0) {
     return false;
   }
-  const items = order.order_items;
+  const items = isOrders2Page()
+    ? order.order_items.filter((item) => String(item?.status || "").trim().toLowerCase() !== "missing")
+    : order.order_items;
   const totalItems = items.length;
   const norm = (s) => String(s ?? "").trim().toLowerCase();
   const pickedItems = items.filter(item => {
@@ -200,6 +202,56 @@ function hasOnlyWaitingItems(order) {
 }
 
 let currentFilter = "active";
+
+async function getOrderCustomerId(orderId) {
+  if (!orderId) return null;
+  try {
+    const local = Array.isArray(orders) ? orders.find((o) => String(o?.id) === String(orderId)) : null;
+    const cid = local?.customer_id || local?.customers?.id || (Array.isArray(local?.customers) ? local.customers[0]?.id : null);
+    if (cid) return cid;
+  } catch (_) {
+    /* ignore */
+  }
+
+  if (!supabase) supabase = await getSupabase();
+  if (!supabase) return null;
+  const { data, error } = await supabase.from("orders").select("customer_id").eq("id", orderId).maybeSingle();
+  if (error) return null;
+  return data?.customer_id || null;
+}
+
+async function emitCustomerNotification({ customerId, orderId, type, message, payload, dedupeTypes }) {
+  if (!customerId || !type || !message) return { ok: false };
+  if (!supabase) supabase = await getSupabase();
+  if (!supabase) return { ok: false };
+
+  try {
+    if (Array.isArray(dedupeTypes) && dedupeTypes.length) {
+      await supabase
+        .from("customer_notifications")
+        .delete()
+        .eq("customer_id", customerId)
+        .eq("order_id", orderId)
+        .in("type", dedupeTypes);
+    }
+
+    const insertPayload = {
+      customer_id: customerId,
+      order_id: orderId || null,
+      type: String(type),
+      message: String(message),
+      payload: payload && typeof payload === "object" ? payload : {},
+      read: false,
+      read_at: null,
+    };
+
+    const { error } = await supabase.from("customer_notifications").insert(insertPayload);
+    if (error) return { ok: false, error };
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e };
+  }
+}
 let orders = [];
 let currentAdminUser = null;
 let historyControlsInitialized = false;
@@ -219,14 +271,12 @@ let badgeCountsLoaded = false; // Para saber si ya se cargaron los conteos total
 // orderId -> true (ver completo) | false/undefined (solo reservados)
 let orderViewMode = new Map();
 let orderWaitingViewMode = new Map(); // Para rastrear si se muestra solo items en espera o todos en la pestaña "Espera"
+let orderClosedViewMode = new Map(); // Orders2: en Cerrados, renderizar items solo bajo demanda
 // Cache de almacenes
 let warehousesCache = { general: null, ventaPublico: null };
 
 // Realtime delta: si true, solo insert/patch/remove por orderId; si false, comportamiento legacy (loadOrders en cada evento)
 const REALTIME_DELTA_MODE = true;
-const PICKING_NO_FULL_REFRESH = true; // En Modo Picking (Activos/Espera) evitar loadOrders(true) para no parpadear
-const PICKING_MODE_ENABLED = true;
-const PICKING_MODE_STORAGE_KEY = "ordersPickingMode";
 const DEBUG_ORDERS = false;
 const DEBUG_ACTIVE_FILTER = false; // true = logs por qué cada order se excluye en pestaña Activos
 const ordersMap = new Map();
@@ -241,230 +291,764 @@ let ordersLastAppliedSeq = 0;
 // Estado del modal de aceptar parcial (solo pedidos del cliente con varias unidades del mismo producto)
 let partialAcceptState = null;
 
-function getPickingMode() {
-  if (new URLSearchParams(location.search).has("noPicking")) return false;
-  return PICKING_MODE_ENABLED && localStorage.getItem(PICKING_MODE_STORAGE_KEY) === "true";
+function isOrders2Page() {
+  try {
+    const p = (window.location && window.location.pathname) ? window.location.pathname.toLowerCase() : "";
+    return p.endsWith("/orders2.html") || p.endsWith("orders2.html");
+  } catch {
+    return false;
+  }
 }
 
-function setPickingMode(on) {
-  if (!PICKING_MODE_ENABLED) return;
-  localStorage.setItem(PICKING_MODE_STORAGE_KEY, on ? "true" : "false");
-  updatePickingModeVisibility();
+const ADMIN_CLIENT_SUMMARY_KEY = "admin_client_summary";
+
+/** Fusiona claves en orders.notes (JSON). Si notes no es JSON objeto, devuelve null (no pisar). */
+function applyOrderNotesPatch(rawNotes, patch) {
+  let obj = {};
+  if (rawNotes != null && String(rawNotes).trim() !== "") {
+    try {
+      const p = JSON.parse(String(rawNotes));
+      if (typeof p !== "object" || p === null || Array.isArray(p)) return null;
+      obj = { ...p };
+    } catch {
+      return null;
+    }
+  }
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === null || v === undefined) delete obj[k];
+    else obj[k] = v;
+  }
+  return JSON.stringify(obj);
 }
 
-function updatePickingModeVisibility() {
-  const isPicking = getPickingMode();
-  const isPickingTab = currentFilter === "active" || currentFilter === "waiting";
+function getAdminClientSummaryFromOrder(order) {
+  if (!order?.notes) return "";
+  try {
+    const o = JSON.parse(order.notes);
+    if (typeof o !== "object" || !o) return "";
+    const s = o[ADMIN_CLIENT_SUMMARY_KEY];
+    return typeof s === "string" && s.trim() ? s.trim() : "";
+  } catch {
+    return "";
+  }
+}
 
-  document.body.classList.toggle("picking-mode", isPicking);
-  document.body.classList.toggle("picking-mode-on-active-or-waiting", isPicking && isPickingTab);
+/** Contribuciones por ítem (picked/waiting/missing/reserved) según BD o selección pendiente orders2. */
+function collectContributionsForOrderItem(item, pendingEntry) {
+  const norm = (s) => String(s ?? "").trim().toLowerCase();
+  if (norm(item?.status) === "cancelled") return [];
 
-  const btn = document.getElementById("picking-mode-toggle");
+  const name = (item.product_name || "Producto").toString().trim() || "Producto";
+  const color = (item.color || "-").toString().trim() || "-";
+  const size = (item.size || "-").toString().trim() || "-";
+  const qty = Number(item.quantity) || 0;
+  const piece = (kind, q) => ({ kind, qty: q, name, color, size });
+
+  if (pendingEntry?.kind === "split") {
+    const s = pendingEntry.split || {};
+    const nP = Number(s.nPicked) || 0;
+    const nW = Number(s.nWaiting) || 0;
+    const nM = Number(s.nMissing) || 0;
+    const out = [];
+    if (nP > 0) out.push(piece("picked", nP));
+    if (nW > 0) out.push(piece("waiting", nW));
+    if (nM > 0) out.push(piece("missing", nM));
+    const rest = qty - nP - nW - nM;
+    if (rest > 0) out.push(piece("reserved", rest));
+    return out;
+  }
+
+  if (pendingEntry?.kind === "status") {
+    const a = pendingEntry.action;
+    if (a === "delete-item" || a === "remove-missing" || a === "cleanup-cancelled") return [];
+    if (a === "picked") return [piece("picked", qty)];
+    if (a === "waiting") return [piece("waiting", qty)];
+    if (a === "missing") return [piece("missing", qty)];
+    if (a === "reserved") return [piece("reserved", qty)];
+    return [];
+  }
+
+  const st = norm(item.status);
+  if (st === "picked") return [piece("picked", qty)];
+  if (st === "waiting") return [piece("waiting", qty)];
+  if (st === "missing") return [piece("missing", qty)];
+  if (st === "reserved") return [piece("reserved", qty)];
+  return [piece("reserved", qty)];
+}
+
+function buildAdminClientSummaryFromContributions(contributions) {
+  if (!contributions.length) return "";
+
+  const fmtMissingLine = (c) => {
+    const q = c.qty;
+    if (q === 1) {
+      return `- 1 unidad del artículo ${c.name}, color ${c.color}, talle ${c.size}`;
+    }
+    return `- ${q} unidades del artículo ${c.name}, color ${c.color}, talle ${c.size}`;
+  };
+
+  const hasMissing = contributions.some((c) => c.kind === "missing");
+  const apartadosQty = contributions
+    .filter((c) => c.kind === "picked" || c.kind === "waiting")
+    .reduce((sum, c) => sum + c.qty, 0);
+
+  const missingLines = contributions.filter((c) => c.kind === "missing").map(fmtMissingLine);
+  const stockBlock =
+    missingLines.length > 0 ? `❌ Sin stock:\n${missingLines.join("\n")}` : "";
+
+  // Sin apartados efectivos y sin faltantes en el mensaje (p. ej. solo reserva interna): no inventar texto
+  if (!hasMissing && apartadosQty === 0) {
+    return "";
+  }
+
+  // Escenario 1 — todo apartado/en espera para el cliente, sin faltantes
+  if (!hasMissing && apartadosQty > 0) {
+    return `Tu pedido está listo 👍
+
+✔ Todos los productos ya están reservados.
+
+Ya reservamos estos productos para vos. Podés seguir agregando más si querés.`.trim();
+  }
+
+  // Escenario 2 — parte apartado + parte sin stock
+  if (hasMissing && apartadosQty > 0) {
+    return `Parte de tu pedido ya está confirmado 👍
+
+✔ Se reservaron ${apartadosQty} unidades.
+
+${stockBlock}
+
+Si querés, podés reemplazar los faltantes o seguir agregando otros productos.`.trim();
+  }
+
+  // Escenario 3 — todo faltante, nada apartado
+  if (hasMissing && apartadosQty === 0) {
+    return `No pudimos confirmar stock de tu pedido ❌
+
+${stockBlock}
+
+Podés elegir otros modelos o seguir agregando productos a tu pedido.`.trim();
+  }
+
+  return "";
+}
+
+function buildAdminClientSummary(order) {
+  const contribs = [];
+  for (const item of order?.order_items || []) {
+    contribs.push(...collectContributionsForOrderItem(item, null));
+  }
+  return buildAdminClientSummaryFromContributions(contribs);
+}
+
+/** Misma lógica que buildAdminClientSummary pero aplicando `orders2PendingByOrder` por ítem (vista previa antes de Aceptar). */
+function buildAdminClientSummaryWithPending(order) {
+  const pendingMap = orders2PendingByOrder.get(order.id);
+  const contribs = [];
+  for (const item of order?.order_items || []) {
+    const entry = pendingMap?.get(item.id);
+    contribs.push(...collectContributionsForOrderItem(item, entry));
+  }
+  return buildAdminClientSummaryFromContributions(contribs);
+}
+
+async function persistAdminClientSummaryForOrder(orderId) {
+  if (!orderId || !canEditOrders) return;
+  const client = await getSupabase();
+  if (!client) return;
+  const order = ordersMap.get(orderId);
+  if (!order) return;
+
+  const text = buildAdminClientSummary(order);
+  if (!String(text).trim()) return;
+
+  let nextNotes = applyOrderNotesPatch(order.notes, { [ADMIN_CLIENT_SUMMARY_KEY]: text });
+  if (nextNotes === null) {
+    const { data, error: selErr } = await client.from("orders").select("notes").eq("id", orderId).maybeSingle();
+    if (selErr) return;
+    nextNotes = applyOrderNotesPatch(data?.notes, { [ADMIN_CLIENT_SUMMARY_KEY]: text });
+    if (nextNotes === null) {
+      console.warn("notes del pedido no es JSON; no se guarda admin_client_summary.");
+      return;
+    }
+  }
+
+  const { error } = await client.from("orders").update({ notes: nextNotes }).eq("id", orderId);
+  if (error) {
+    console.warn("No se pudo guardar resumen para cliente:", error);
+    return;
+  }
+  order.notes = nextNotes;
+  await patchOrderCard(orderId, order);
+}
+
+async function clearOrderAdminClientSummary(orderId) {
+  if (!orderId || !canEditOrders) return;
+  const client = await getSupabase();
+  if (!client) return;
+
+  const { data, error: selErr } = await client.from("orders").select("notes").eq("id", orderId).maybeSingle();
+  if (selErr) return;
+
+  const nextNotes = applyOrderNotesPatch(data?.notes, { [ADMIN_CLIENT_SUMMARY_KEY]: null });
+  if (nextNotes === null) return;
+  if (String(data?.notes ?? "") === nextNotes) return;
+
+  const { error } = await client.from("orders").update({ notes: nextNotes }).eq("id", orderId);
+  if (error) console.warn("No se pudo limpiar resumen para cliente:", error);
+}
+
+async function copyTextToClipboard(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (_) {
+    /* fallback */
+  }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.left = "-9999px";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+// --- Orders2: selección de estados + Aceptar (por pedido) ---
+const orders2PendingByOrder = new Map(); // orderId -> Map(itemId -> { kind, action?, split? })
+
+function orders2PendingClassFor(kind, payload) {
+  if (kind === "status") {
+    if (payload === "picked") return "pending-picked";
+    if (payload === "waiting") return "pending-waiting";
+    if (payload === "missing") return "pending-missing";
+    if (payload === "reserved") return "pending-reserved";
+    if (payload === "delete-item") return "pending-missing";
+    if (payload === "remove-missing") return "pending-missing";
+    if (payload === "cleanup-cancelled") return "pending-missing";
+  }
+  if (kind === "split") {
+    const { nPicked = 0, nWaiting = 0, nMissing = 0 } = payload || {};
+    if (nWaiting > 0) return "pending-waiting";
+    if (nPicked > 0) return "pending-picked";
+    if (nMissing > 0) return "pending-missing";
+    return "pending-reserved";
+  }
+  return "";
+}
+
+function orders2ClearPendingClasses(itemEl) {
+  if (!itemEl) return;
+  itemEl.classList.remove("pending-picked", "pending-waiting", "pending-missing", "pending-reserved");
+}
+
+function orders2ClearSplitPreview(itemEl) {
+  if (!itemEl) return;
+  itemEl.querySelectorAll(".orders2-split-preview").forEach((n) => n.remove());
+}
+
+function orders2RenderSplitPreview(itemEl, split) {
+  if (!itemEl) return;
+  orders2ClearSplitPreview(itemEl);
+
+  const s = split || {};
+  const parts = [
+    { key: "picked", n: Number(s.nPicked || 0) || 0, cls: "pending-picked", label: "Apartado" },
+    { key: "waiting", n: Number(s.nWaiting || 0) || 0, cls: "pending-waiting", label: "Espera" },
+    { key: "missing", n: Number(s.nMissing || 0) || 0, cls: "pending-missing", label: "Faltante" },
+  ].filter((p) => p.n > 0);
+
+  if (parts.length <= 1) return;
+
+  const wrap = document.createElement("div");
+  wrap.className = "orders2-split-preview";
+  wrap.innerHTML = parts
+    .map(
+      (p) =>
+        `<div class="orders2-split-row ${p.cls}"><strong>${p.label}</strong> <span>x${p.n}</span></div>`
+    )
+    .join("");
+
+  itemEl.appendChild(wrap);
+}
+
+function orders2ApplyPendingToItemEl(itemEl, kind, payload) {
+  if (!itemEl) return;
+  orders2ClearPendingClasses(itemEl);
+  orders2ClearSplitPreview(itemEl);
+  const cls = orders2PendingClassFor(kind, payload);
+  if (cls) itemEl.classList.add(cls);
+  if (kind === "split") orders2RenderSplitPreview(itemEl, payload);
+}
+
+function orders2GetOrderIdFromAnyEl(el) {
+  const card = el?.closest?.(".order-card[data-order-id]");
+  return card?.getAttribute("data-order-id") || "";
+}
+
+function orders2EnsureAcceptRow(orderId) {
+  if (!orderId) return;
+  const card = document.querySelector(`.order-card[data-order-id="${orderId}"]`);
+  if (!card) return;
+  let row = card.querySelector(".order-accept-row");
+  if (!row) {
+    row = document.createElement("div");
+    row.className = "order-accept-row";
+    row.innerHTML = `
+      <button type="button" class="btn orders2-accept-btn" data-accept-order="${orderId}">
+        Aceptar
+      </button>
+    `;
+    const totalEl = card.querySelector(".order-total");
+    if (totalEl && totalEl.parentElement === card) {
+      card.insertBefore(row, totalEl);
+    } else {
+      card.appendChild(row);
+    }
+  }
+  orders2SyncAcceptRow(orderId);
+}
+
+function orders2SyncAcceptRow(orderId) {
+  const card = document.querySelector(`.order-card[data-order-id="${orderId}"]`);
+  if (!card) {
+    orders2SyncClientSummaryButtonVisibility(orderId);
+    return;
+  }
+  const row = card.querySelector(".order-accept-row");
+  if (row) {
+    const pending = orders2PendingByOrder.get(orderId);
+    const count = pending ? pending.size : 0;
+    if (!count) {
+      row.style.display = "none";
+    } else {
+      row.style.display = "block";
+      const btn = row.querySelector("[data-accept-order]");
+      if (btn) btn.textContent = `Aceptar (${count})`;
+    }
+  }
+  orders2SyncClientSummaryButtonVisibility(orderId);
+}
+
+/** Muestra u oculta el botón 💬 según pendientes o resumen guardado (solo orders2, pedido cliente). */
+function orders2SyncClientSummaryButtonVisibility(orderId) {
+  if (!isOrders2Page() || !orderId) return;
+  const order = ordersMap.get(orderId);
+  if (!order) return;
+  const isCustomerOrder = String(order?.source || "").trim().toLowerCase() === "customer";
+  if (!isCustomerOrder) return;
+
+  const card = document.querySelector(`.order-card[data-order-id="${orderId}"]`);
+  if (!card) return;
+  const host = card.querySelector(".customer-info");
+  if (!host) return;
+
+  const pendingCount = orders2PendingByOrder.get(orderId)?.size ?? 0;
+  const saved = getAdminClientSummaryFromOrder(order);
+  const show = pendingCount > 0 || Boolean(saved);
+
+  const details = host.querySelector(".customer-details");
+  let row = host.querySelector(".orders2-client-message-row");
+  if (!show) {
+    row?.remove();
+    return;
+  }
+  const btnHtml = `<div class="orders2-client-message-row">
+                 <button type="button" class="orders2-client-message-btn" data-copy-client-summary="${order.id}" aria-label="Copiar mensaje para el cliente">
+                   <span class="orders2-client-message-btn__icon" aria-hidden="true">💬</span>
+                   <span class="orders2-client-message-btn__text">Copiar mensaje</span>
+                 </button>
+               </div>`;
+  if (row) {
+    row.outerHTML = btnHtml;
+  } else if (details) {
+    details.insertAdjacentHTML("afterend", btnHtml);
+  }
+}
+
+function orders2SetPendingStatus(orderId, itemId, action) {
+  if (!orderId || !itemId) return;
+  if (!orders2PendingByOrder.has(orderId)) orders2PendingByOrder.set(orderId, new Map());
+  orders2PendingByOrder.get(orderId).set(itemId, { kind: "status", action });
+  orders2EnsureAcceptRow(orderId);
+  orders2SyncAcceptRow(orderId);
+  const itemEl = document.querySelector(`.order-card[data-order-id="${orderId}"] [data-item-id="${itemId}"]`)?.closest?.(".order-item");
+  orders2ApplyPendingToItemEl(itemEl, "status", action);
+}
+
+function orders2SetPendingSplit(orderId, itemId, split) {
+  if (!orderId || !itemId) return;
+  if (!orders2PendingByOrder.has(orderId)) orders2PendingByOrder.set(orderId, new Map());
+  orders2PendingByOrder.get(orderId).set(itemId, { kind: "split", split });
+  orders2EnsureAcceptRow(orderId);
+  orders2SyncAcceptRow(orderId);
+  const itemEl = document.querySelector(`.order-card[data-order-id="${orderId}"] [data-item-id="${itemId}"]`)?.closest?.(".order-item");
+  orders2ApplyPendingToItemEl(itemEl, "split", split);
+}
+
+async function orders2AcceptPending(orderId) {
+  const pending = orders2PendingByOrder.get(orderId);
+  if (!pending || pending.size === 0) return;
+  const card = document.querySelector(`.order-card[data-order-id="${orderId}"]`);
+  const btn = card?.querySelector(`[data-accept-order="${orderId}"]`);
   if (btn) {
-    btn.classList.toggle("active", isPicking);
-    btn.textContent = isPicking ? "✅ Picking ON" : "📋 Modo Picking";
+    btn.disabled = true;
+    btn.textContent = "Aplicando...";
   }
-}
 
-function injectPickingModeCSS() {
-  if (!PICKING_MODE_ENABLED || document.getElementById("picking-mode-css")) return;
-  const style = document.createElement("style");
-  style.id = "picking-mode-css";
-  style.textContent = `/* ===== Picking Mode: desktop efficiency ===== */
-body.picking-mode.picking-mode-on-active-or-waiting .orders-container {
-  max-width: 1500px;
-  margin: 0 auto;
-  padding-left: 12px;
-  padding-right: 12px;
-}
-body.picking-mode.picking-mode-on-active-or-waiting #orders-content .orders-list {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-  align-items: start;
-}
-body.picking-mode.picking-mode-on-active-or-waiting #orders-content .order-card {
-  height: fit-content;
-  min-width: 0;
-}
-@media (max-width: 1099px) {
-  body.picking-mode.picking-mode-on-active-or-waiting #orders-content .orders-list { grid-template-columns: 1fr; }
-}
-body.picking-mode.picking-mode-on-active-or-waiting #orders-content .order-item {
-  display: grid;
-  grid-template-columns: 48px 1fr 150px;
-  align-items: center;
-  column-gap: 12px;
-  padding: 6px 10px;
-  margin: 4px 0;
-  border-radius: 10px;
-}
-body.picking-mode.picking-mode-on-active-or-waiting #orders-content .order-item.order-item-processing {
-  opacity: 0.7;
-  pointer-events: none;
-}
-body.picking-mode.picking-mode-on-active-or-waiting #orders-content .item-thumb {
-  width: 48px;
-  height: 48px;
-  border-radius: 8px;
-  object-fit: cover;
-}
-body.picking-mode.picking-mode-on-active-or-waiting #orders-content .item-main {
-  min-width: 0;
-}
-body.picking-mode.picking-mode-on-active-or-waiting #orders-content .item-name {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 1.25;
-}
-body.picking-mode.picking-mode-on-active-or-waiting #orders-content .item-details {
-  font-size: 12px;
-  line-height: 1.3;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-}
-body.picking-mode.picking-mode-on-active-or-waiting #orders-content .item-status,
-body.picking-mode.picking-mode-on-active-or-waiting #orders-content .item-price,
-body.picking-mode.picking-mode-on-active-or-waiting #orders-content .item-main > div[style*="background"],
-body.picking-mode.picking-mode-on-active-or-waiting #orders-content .item-main > div[style*="display: flex"] {
-  display: none !important;
-}
-body.picking-mode.picking-mode-on-active-or-waiting #orders-content .item-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  align-items: center;
-}
-body.picking-mode.picking-mode-on-active-or-waiting #orders-content .item-action-btn {
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-  font-size: 18px;
-}
-body.picking-mode.picking-mode-on-active-or-waiting #orders-content .item-action-btn.picking-more {
-  width: 32px;
-  height: 32px;
-  opacity: 0.85;
-}
-@media (max-width: 768px) {
-  body.picking-mode.picking-mode-on-active-or-waiting #orders-content .order-item {
-    grid-template-columns: 44px 1fr;
-    grid-template-rows: auto auto;
-    align-items: start;
-  }
-  body.picking-mode.picking-mode-on-active-or-waiting #orders-content .order-item .item-actions { grid-column: 1 / -1; justify-content: flex-end; }
-  body.picking-mode.picking-mode-on-active-or-waiting #orders-content .order-item .item-thumb,
-  body.picking-mode.picking-mode-on-active-or-waiting #orders-content .order-item .picking-thumb-placeholder { width: 44px; height: 44px; }
-}
-/* Picking: EXTRA especial badge */
-body.picking-mode.picking-mode-on-active-or-waiting #orders-content .item-thumb.extra-badge {
-  width: 48px; height: 48px; border-radius: 8px; background: #e8e8e8; color: #555; display: flex; flex-direction: column; align-items: center; justify-content: center;
-  font-size: 10px; font-weight: 700; line-height: 1.2; text-align: center; border: 1px solid #ccc;
-}
-body.picking-mode.picking-mode-on-active-or-waiting #orders-content .item-thumb.extra-badge span { font-size: 8px; font-weight: 600; color: #777; }
-/* Picking: botón lupa (zoom) */
-body.picking-mode.picking-mode-on-active-or-waiting #orders-content .item-thumb-btn {
-  width: 48px; height: 48px; border-radius: 8px; background: #eee; border: 1px solid #ccc; cursor: pointer; font-size: 20px; padding: 0;
-  display: flex; align-items: center; justify-content: center; transition: background .15s, border-color .15s;
-}
-body.picking-mode.picking-mode-on-active-or-waiting #orders-content .item-thumb-btn:hover { background: #e0e0e0; border-color: #999; }
-body.picking-mode.picking-mode-on-active-or-waiting #orders-content .item-thumb-btn:focus-visible { outline: 2px solid #0a84ff; outline-offset: 2px; }
-/* Picking: placeholder sin imagen (sin lupa) */
-body.picking-mode.picking-mode-on-active-or-waiting #orders-content .picking-thumb-placeholder {
-  width: 48px; height: 48px; border-radius: 8px; background: #eee; display: flex; align-items: center; justify-content: center; font-size: 20px;
-}
-body.picking-mode.picking-mode-on-active-or-waiting #orders-content .order-item .picking-thumb-placeholder { width: 44px; height: 44px; font-size: 18px; }
-.picking-show-image-btn {
-  width: 100%; height: 100%; border: none; background: transparent; cursor: pointer; font-size: 20px; padding: 0; border-radius: 8px;
-}
-.picking-image-overlay {
-  display: none; position: fixed; inset: 0; z-index: 10000; background: rgba(0,0,0,.75); align-items: center; justify-content: center; padding: 20px;
-}
-.picking-image-overlay.active { display: flex; }
-.picking-image-container { position: relative; max-width: 90vw; max-height: 90vh; }
-.picking-image-close {
-  position: absolute; top: -36px; right: 0; width: 32px; height: 32px; border: none; background: #fff; border-radius: 50%; cursor: pointer; font-size: 24px; line-height: 1; color: #333;
-}
-.picking-image-img { max-width: 100%; max-height: 85vh; display: block; border-radius: 8px; background: #111; }
-}`;
-  document.head.appendChild(style);
-}
+  try {
+    let pendingMissing = 0;
+    let pendingPicked = 0;
+    let pendingWaiting = 0;
 
-function applyPickingItemActionsMenu() {
-  if (!getPickingMode() || (currentFilter !== "active" && currentFilter !== "waiting")) return;
-  const scope = document.querySelector("#orders-content");
-  if (!scope) return;
-  scope.querySelectorAll(".order-item").forEach((orderItem) => {
-    const actions = orderItem.querySelector(".item-actions");
-    if (!actions) return;
-    if (actions.querySelector(".picking-more")) return;
-
-    const secondary = ["reserved", "delete-item"];
-    actions.querySelectorAll("[data-item-action]").forEach((btn) => {
-      if (secondary.includes(btn.dataset.itemAction)) btn.style.display = "none";
-    });
-
-    const moreBtn = document.createElement("button");
-    moreBtn.type = "button";
-    moreBtn.className = "item-action-btn neutral picking-more";
-    moreBtn.textContent = "⋯";
-    moreBtn.title = "Más acciones";
-
-    const popover = document.createElement("div");
-    popover.className = "picking-more-popover";
-    popover.style.cssText = "display:none;position:absolute;right:0;top:100%;margin-top:4px;z-index:100;background:white;border:1px solid #ddd;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.15);padding:4px 0;min-width:140px;";
-
-    const optRestore = document.createElement("button");
-    optRestore.type = "button";
-    optRestore.className = "picking-more-opt";
-    optRestore.textContent = "Restaurar ↺";
-    optRestore.style.cssText = "display:block;width:100%;padding:8px 12px;border:none;background:none;text-align:left;cursor:pointer;font-size:13px;";
-    const optDelete = document.createElement("button");
-    optDelete.type = "button";
-    optDelete.className = "picking-more-opt";
-    optDelete.textContent = "Eliminar 🗑️";
-    optDelete.style.cssText = "display:block;width:100%;padding:8px 12px;border:none;background:none;text-align:left;cursor:pointer;font-size:13px;";
-
-    function closePopover() {
-      popover.style.display = "none";
-      document.removeEventListener("click", closeOnOutside);
-    }
-    function closeOnOutside(e) {
-      if (!actions.contains(e.target)) closePopover();
-    }
-
-    optRestore.addEventListener("click", () => {
-      const reservedBtn = actions.querySelector('[data-item-action="reserved"]');
-      if (reservedBtn) reservedBtn.click();
-      closePopover();
-    });
-    optDelete.addEventListener("click", () => {
-      const delBtn = actions.querySelector('[data-item-action="delete-item"]');
-      if (delBtn) delBtn.click();
-      closePopover();
-    });
-
-    moreBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      if (popover.style.display === "block") {
-        closePopover();
-      } else {
-        popover.style.display = "block";
-        setTimeout(() => document.addEventListener("click", closeOnOutside), 0);
+    for (const [itemId, entry] of pending.entries()) {
+      if (!entry) continue;
+      if (entry.kind === "split") {
+        const s = entry.split || {};
+        pendingPicked += Number(s.nPicked || 0) || 0;
+        pendingWaiting += Number(s.nWaiting || 0) || 0;
+        pendingMissing += Number(s.nMissing || 0) || 0;
+        await callRpcSplitOrderItemStatus(itemId, s.nPicked || 0, s.nWaiting || 0, s.nMissing || 0);
+        continue;
       }
-    });
+      const action = entry.action;
+      if (action === "cleanup-cancelled") await cleanupCancelledItem(itemId);
+      else if (action === "remove-missing") await removeMissingItem(itemId);
+      else if (action === "delete-item") await deleteOrderItemImmediate(itemId);
+      else if (action === "picked") await updateOrderItemStatus(itemId, "picked", { skipReload: true });
+      else if (action === "waiting") await updateOrderItemStatus(itemId, "waiting", { skipReload: true });
+      else if (action === "missing") await updateOrderItemStatus(itemId, "missing", { skipReload: true });
+      else if (action === "reserved") await updateOrderItemStatus(itemId, "reserved", { skipReload: true });
 
-    popover.appendChild(optRestore);
-    popover.appendChild(optDelete);
-    actions.style.position = "relative";
-    actions.appendChild(moreBtn);
-    actions.appendChild(popover);
+      if (action === "picked") pendingPicked += 1;
+      else if (action === "waiting") pendingWaiting += 1;
+      else if (action === "missing") pendingMissing += 1;
+    }
+
+    // Notificación al cliente: solo cuando se acepta en pestaña "Activos" (orders2.html)
+    if (isOrders2Page() && currentFilter === "active") {
+      const customerId = await getOrderCustomerId(orderId);
+      const actionUrl = "client/dashboard.html?view=history";
+      const actionUrlDashboard = "client/dashboard.html";
+
+      if (pendingMissing > 0) {
+        await emitCustomerNotification({
+          customerId,
+          orderId,
+          type: "ORDER_MISSING_ITEMS",
+          message: `${pendingMissing} producto(s) no están disponibles. Por favor revisalos en tu pedido.`,
+          payload: { missingCount: pendingMissing, action_url: actionUrl },
+          dedupeTypes: ["ORDER_MISSING_ITEMS", "ORDER_ALL_RESERVED"],
+        });
+      } else if (pendingPicked > 0 || pendingWaiting > 0) {
+        await emitCustomerNotification({
+          customerId,
+          orderId,
+          type: "ORDER_ALL_RESERVED",
+          message: "Todos los productos están reservados.",
+          payload: { action_url: actionUrlDashboard },
+          dedupeTypes: ["ORDER_MISSING_ITEMS", "ORDER_ALL_RESERVED"],
+        });
+      }
+    }
+
+    orders2PendingByOrder.delete(orderId);
+    orders2SyncAcceptRow(orderId);
+
+    if (orderId && typeof refreshOneOrder === "function") await refreshOneOrder(orderId);
+    else if (typeof loadOrders === "function") await loadOrders();
+
+    if (isOrders2Page() && currentFilter === "active" && orderId) {
+      const ordAfter = ordersMap.get(orderId);
+      const src = String(ordAfter?.source || "").trim().toLowerCase();
+      if (ordAfter && src === "customer") await persistAdminClientSummaryForOrder(orderId);
+    }
+  } catch (e) {
+    console.error("❌ Error aplicando pendientes:", e);
+    alert(e?.message || "No se pudieron aplicar los cambios.");
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      orders2SyncAcceptRow(orderId);
+    }
+  }
+}
+
+function setupOrders2PendingAcceptSystem() {
+  if (!isOrders2Page()) return;
+  if (window.__orders2PendingAcceptSetup) return;
+  window.__orders2PendingAcceptSetup = true;
+
+  document.addEventListener("click", (e) => {
+    const acceptBtn = e.target.closest?.("[data-accept-order]");
+    if (!acceptBtn) return;
+    const orderId = acceptBtn.getAttribute("data-accept-order");
+    if (!orderId) return;
+    e.preventDefault();
+    orders2AcceptPending(orderId);
+  });
+}
+
+function setupOrders2ClientSummaryCopy() {
+  if (!isOrders2Page()) return;
+  if (window.__orders2ClientSummaryCopySetup) return;
+  window.__orders2ClientSummaryCopySetup = true;
+
+  document.addEventListener("click", async (e) => {
+    const btn = e.target.closest?.("[data-copy-client-summary]");
+    if (!btn) return;
+    const orderId = btn.getAttribute("data-copy-client-summary");
+    if (!orderId) return;
+    e.preventDefault();
+    const order = ordersMap.get(orderId);
+    if (!order) {
+      alert("No se encontró el pedido.");
+      return;
+    }
+    const live = buildAdminClientSummaryWithPending(order).trim();
+    const text = live || getAdminClientSummaryFromOrder(order);
+    if (!text) {
+      alert("No hay datos para armar el mensaje. Marcá al menos un producto o aceptá los cambios primero.");
+      return;
+    }
+    const ok = await copyTextToClipboard(text);
+    if (ok) showToastNotification("Mensaje generado y copiado al portapapeles.", "success");
+    else alert("No se pudo copiar. Copiá el texto manualmente desde el pedido.");
+  });
+}
+
+function setupOrders2MissingItemsModalSystem() {
+  if (!isOrders2Page()) return;
+  if (window.__orders2MissingModalSetup) return;
+  window.__orders2MissingModalSetup = true;
+
+  function ensureModal() {
+    if (document.getElementById("orders2-missing-modal")) return;
+    const modal = document.createElement("div");
+    modal.id = "orders2-missing-modal";
+    modal.className = "modal";
+    modal.innerHTML = `
+      <div class="modal-content orders2-missing-modal-content" style="max-width: 560px; text-align: left;">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap: 10px; margin-bottom: 14px;">
+          <h2 id="orders2-missing-modal-title" style="margin:0; font-size: 18px; color:#333;">Productos faltantes</h2>
+          <button type="button" class="order-modal-close" data-close-missing-modal aria-label="Cerrar">&times;</button>
+        </div>
+        <div id="orders2-missing-modal-body"></div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+
+    modal.addEventListener("click", (e) => {
+      if (e.target === modal) modal.classList.remove("active");
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") modal.classList.remove("active");
+    });
+  }
+
+  function openModalForOrder(orderId) {
+    ensureModal();
+    const modal = document.getElementById("orders2-missing-modal");
+    const title = document.getElementById("orders2-missing-modal-title");
+    const body = document.getElementById("orders2-missing-modal-body");
+    if (!modal || !title || !body) return;
+
+    const order = orders.find((o) => String(o?.id) === String(orderId));
+    const items = (order?.order_items || []).filter((i) => String(i?.status || "").trim().toLowerCase() === "missing");
+
+    title.textContent = `Productos faltantes (${items.length || 0})`;
+
+    if (!items.length) {
+      body.innerHTML = `<div style="padding: 10px; color:#666;">No hay productos faltantes en este pedido.</div>`;
+      modal.classList.add("active");
+      return;
+    }
+
+    body.innerHTML = `
+      <div class="orders2-missing-list">
+        ${items
+          .map((it) => {
+            const color = (it.color || "-").toString().trim() || "-";
+            const size = (it.size || "-").toString().trim() || "-";
+            const qty = Number(it.quantity || 0) || 0;
+            const line = `${it.product_name} - ${color} - ${size} - x${qty}`;
+            return `
+              <div class="orders2-missing-row">
+                <div class="orders2-missing-row__main">
+                  <div class="orders2-missing-row__title">${line}</div>
+                </div>
+                <button type="button" class="btn orders2-missing-remove-btn" data-remove-missing-item="${it.id}" data-order-id="${orderId}">
+                  Quitar
+                </button>
+              </div>
+            `;
+          })
+          .join("")}
+      </div>
+    `;
+
+    modal.classList.add("active");
+  }
+
+  document.addEventListener("click", async (e) => {
+    const openBtn = e.target.closest?.("[data-open-missing-modal]");
+    if (openBtn) {
+      e.preventDefault();
+      const orderId = openBtn.getAttribute("data-open-missing-modal");
+      if (orderId) openModalForOrder(orderId);
+      return;
+    }
+    const closeBtn = e.target.closest?.("[data-close-missing-modal]");
+    if (closeBtn) {
+      e.preventDefault();
+      document.getElementById("orders2-missing-modal")?.classList.remove("active");
+    }
+
+    const removeBtn = e.target.closest?.("[data-remove-missing-item]");
+    if (removeBtn) {
+      e.preventDefault();
+      const itemId = removeBtn.getAttribute("data-remove-missing-item");
+      const orderId = removeBtn.getAttribute("data-order-id");
+      if (!itemId) return;
+
+      const confirmed = confirm("¿Quitar este producto faltante del pedido del cliente?");
+      if (!confirmed) return;
+
+      removeBtn.disabled = true;
+      const prevText = removeBtn.textContent;
+      removeBtn.textContent = "Quitando...";
+      try {
+        const res = await orders2RemoveMissingItemImmediate(itemId);
+        if (!res.ok) {
+          alert("No se pudo quitar el producto.");
+          return;
+        }
+
+        // Refrescar UI
+        if (res.orderId && typeof refreshOneOrder === "function") await refreshOneOrder(res.orderId);
+        else if (typeof loadOrders === "function") await loadOrders();
+
+        // Re-render modal contents (si sigue abierto)
+        const modal = document.getElementById("orders2-missing-modal");
+        if (modal && modal.classList.contains("active")) {
+          openModalForOrder(orderId || res.orderId);
+        }
+      } catch (err) {
+        console.error("❌ Error quitando faltante:", err);
+        alert("No se pudo quitar el producto.");
+      } finally {
+        removeBtn.disabled = false;
+        removeBtn.textContent = prevText || "Quitar";
+      }
+    }
+  });
+}
+
+async function orders2RemoveMissingItemImmediate(itemId) {
+  if (!itemId) return { ok: false, orderId: null, reason: "missing itemId" };
+  if (!supabase) supabase = await getSupabase();
+  if (!supabase) return { ok: false, orderId: null, reason: "no supabase" };
+
+  const { data: itemRow, error: itemErr } = await supabase
+    .from("order_items")
+    .select("id, order_id, status, quantity, price_snapshot")
+    .eq("id", itemId)
+    .maybeSingle();
+  if (itemErr || !itemRow) return { ok: false, orderId: null, reason: "item not found" };
+
+  const orderId = itemRow.order_id;
+  const status = String(itemRow.status || "").toLowerCase();
+  if (status !== "missing") return { ok: false, orderId, reason: "not missing" };
+
+  const qty = Number(itemRow.quantity || 0) || 0;
+  const price = normalizeOrderPrice(itemRow.price_snapshot || 0);
+  const itemTotal = qty * price;
+
+  const { error: delErr } = await supabase.from("order_items").delete().eq("id", itemId);
+  if (delErr) return { ok: false, orderId, reason: delErr.message || "delete failed" };
+
+  if (orderId && itemTotal > 0) {
+    const { data: orderData } = await supabase
+      .from("orders")
+      .select("total_amount")
+      .eq("id", orderId)
+      .maybeSingle();
+    if (orderData) {
+      const currentTotal = normalizeOrderPrice(orderData.total_amount || 0);
+      const newTotal = Math.max(0, Number(currentTotal || 0) - itemTotal);
+      await supabase
+        .from("orders")
+        .update({ total_amount: newTotal, updated_at: new Date().toISOString() })
+        .eq("id", orderId);
+    }
+  }
+
+  // Si el pedido queda sin items (excluir cancelled), eliminarlo
+  if (orderId) {
+    const { count, error: countErr } = await supabase
+      .from("order_items")
+      .select("id", { count: "exact", head: true })
+      .eq("order_id", orderId)
+      .neq("status", "cancelled");
+    if (!countErr && (Number(count) || 0) === 0) {
+      await supabase.rpc("rpc_delete_empty_order", { p_order_id: orderId });
+    }
+  }
+
+  return { ok: true, orderId };
+}
+
+function setupOrders2ItemKebabMenu() {
+  if (!isOrders2Page()) return;
+  if (window.__orders2ItemKebabMenuSetup) return;
+  window.__orders2ItemKebabMenuSetup = true;
+
+  function closeAll(exceptRoot) {
+    document.querySelectorAll(".item-more[data-open='1']").forEach((root) => {
+      if (exceptRoot && root === exceptRoot) return;
+      root.removeAttribute("data-open");
+    });
+  }
+
+  document.addEventListener("click", (e) => {
+    const toggle = e.target.closest?.("[data-kebab-toggle]");
+    if (toggle) {
+      const root = toggle.closest(".item-more");
+      if (!root) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const isOpen = root.getAttribute("data-open") === "1";
+      closeAll(root);
+      if (!isOpen) root.setAttribute("data-open", "1");
+      return;
+    }
+
+    const menuAction = e.target.closest?.("[data-kebab-action]");
+    if (menuAction) {
+      const root = menuAction.closest(".item-actions");
+      const action = menuAction.getAttribute("data-kebab-action");
+      if (!root || !action) return;
+      e.preventDefault();
+      const realBtn = root.querySelector(`[data-item-action="${action}"]`);
+      if (realBtn) realBtn.click();
+      closeAll();
+      return;
+    }
+
+    closeAll();
+  }, true);
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeAll();
   });
 }
 
@@ -492,36 +1076,6 @@ function scheduleSoftRefresh(orderId) {
   }, SOFT_REFRESH_DELAY_MS);
 }
 
-function applyPickingOptimisticItemRemoval(btn, action) {
-  if (!btn || !getPickingMode() || (currentFilter !== "active" && currentFilter !== "waiting")) return;
-  const itemEl = btn.closest(".order-item");
-  const card = btn.closest(".order-card[data-order-id]");
-  if (!itemEl || !card) return;
-  const orderId = card.getAttribute("data-order-id");
-  const itemsContainer = card.querySelector(".order-items");
-  const headerRow = itemsContainer && itemsContainer.previousElementSibling;
-  if (headerRow) {
-    const textDiv = Array.from(headerRow.children).find((el) => el.textContent && el.textContent.includes("Productos separados"));
-    if (textDiv) {
-      const m = textDiv.textContent.match(/Productos separados:\s*(\d+)\/(\d+)/);
-      if (m) {
-        let picked = parseInt(m[1], 10);
-        let total = parseInt(m[2], 10);
-        if (action === "picked") {
-          picked = Math.min(picked + 1, total);
-        } else {
-          total = Math.max(0, total - 1);
-        }
-        textDiv.textContent = `Productos separados: ${picked}/${total}`;
-      }
-    }
-  }
-  itemEl.remove();
-  const remaining = card.querySelectorAll(".order-item");
-  if (remaining.length === 0) card.remove();
-  scheduleSoftRefresh(orderId);
-}
-
 function getCustomerName(order) {
   const c = Array.isArray(order?.customers) ? order.customers[0] : order?.customers;
   const customerName = (c?.full_name || c?.name || '').toString().toLowerCase();
@@ -536,6 +1090,24 @@ function formatCustomerDisplayName(customer) {
   const last = parts.pop();
   const first = parts.join(' ');
   return `${last}, ${first}`;
+}
+
+function toWhatsAppPhoneDigits(rawPhone) {
+  const s = String(rawPhone || "").trim();
+  if (!s) return "";
+  let digits = s.replace(/[^\d+]/g, "");
+  if (digits.startsWith("+")) digits = digits.slice(1);
+  digits = digits.replace(/\D/g, "");
+  // WhatsApp usa formato internacional sin "+".
+  // Para AR, si viene con "00" internacional, normalizar a sin prefijo.
+  if (digits.startsWith("00")) digits = digits.slice(2);
+  return digits;
+}
+
+function buildWhatsAppHref(rawPhone) {
+  const digits = toWhatsAppPhoneDigits(rawPhone);
+  if (!digits) return "";
+  return `https://wa.me/${digits}`;
 }
 
 function getCustomerPhone(order) {
@@ -669,7 +1241,6 @@ async function initOrders() {
     // Usuario es admin, continuar con la carga
     setupFilters();
     setupButtons();
-    updatePickingModeVisibility();
     setupInfiniteScroll();
     
     // Mostrar loading inicial
@@ -691,7 +1262,6 @@ async function initOrders() {
         }
         if (document.visibilityState !== "visible") return;
         if (typeof loadBadgeCountsInBackground === "function") loadBadgeCountsInBackground();
-        if (PICKING_NO_FULL_REFRESH && getPickingMode() && (currentFilter === "active" || currentFilter === "waiting")) return;
         const now = Date.now();
         const hiddenMs = lastHiddenAt ? now - lastHiddenAt : 0;
         if (REALTIME_DELTA_MODE) {
@@ -1511,11 +2081,8 @@ function setupRealtimeSubscription() {
         async (payload) => {
           console.log("🔄 Cambio en pedidos detectado:", payload.eventType);
           const orderId = payload.new?.id ?? payload.old?.id;
-          if (PICKING_NO_FULL_REFRESH && getPickingMode() && (currentFilter === "active" || currentFilter === "waiting") && orderId && typeof refreshOneOrder === "function") {
-            await refreshOneOrder(orderId);
-          } else if (typeof loadOrders === "function") {
-            await loadOrders();
-          }
+          if (orderId && typeof refreshOneOrder === "function") await refreshOneOrder(orderId);
+          else if (typeof loadOrders === "function") await loadOrders();
           updateActiveOrdersBadge();
           updatePickedOrdersBadge();
           updateClosedOrdersBadge();
@@ -1528,11 +2095,8 @@ function setupRealtimeSubscription() {
         async (payload) => {
           console.log("🔄 Cambio en items de pedidos detectado:", payload.eventType);
           const orderId = payload.new?.order_id ?? payload.old?.order_id;
-          if (PICKING_NO_FULL_REFRESH && getPickingMode() && (currentFilter === "active" || currentFilter === "waiting") && orderId && typeof refreshOneOrder === "function") {
-            await refreshOneOrder(orderId);
-          } else if (typeof loadOrders === "function") {
-            await loadOrders();
-          }
+          if (orderId && typeof refreshOneOrder === "function") await refreshOneOrder(orderId);
+          else if (typeof loadOrders === "function") await loadOrders();
           updateActiveOrdersBadge();
           updatePickedOrdersBadge();
           updateClosedOrdersBadge();
@@ -1679,7 +2243,6 @@ async function displayOrders(append = false) {
   updateWaitingOrdersBadge();
   setupSortControls();
   setupSearchControls();
-  applyPickingItemActionsMenu();
 }
 
 // Función para obtener variant_id basado en product_name, color y size
@@ -2079,6 +2642,8 @@ async function renderOrderCard(order) {
 
   const customerEmail = (customer?.email || '').trim() || '—';
   const customerPhone = (customer?.phone || '').trim() || '—';
+  const customerPhoneDigits = buildWhatsAppHref(customerPhone) ? toWhatsAppPhoneDigits(customerPhone) : "";
+  const customerPhoneHref = buildWhatsAppHref(customerPhone);
   const customerDni = (customer?.dni || '').trim() || '';
   const customerNumber = (customer?.customer_number || '').trim() || '';
   const customerCity = (customer?.city || '').trim() || '';
@@ -2099,13 +2664,20 @@ async function renderOrderCard(order) {
     // Continuar sin ofertas para mostrar el pedido rápidamente
   }
   
+  const itemsSubtotal = (order.order_items || []).reduce(
+    (sum, item) => sum + (item.quantity || 0) * normalizeOrderPrice(item.price_snapshot || 0),
+    0
+  );
+
+  // total_amount a veces viene en "miles abreviados" (ej. 5.4 => $5.400). Si es numérico pero < 1000
+  // y los ítems suman miles, normalizar para evitar mostrar "$5,4".
+  const rawTotalAmount = typeof order.total_amount === "number" ? order.total_amount : null;
   const total =
-    typeof order.total_amount === "number"
-      ? order.total_amount
-      : (order.order_items || []).reduce(
-          (sum, item) => sum + (item.quantity || 0) * normalizeOrderPrice(item.price_snapshot || 0),
-          0
-        );
+    rawTotalAmount != null
+      ? ((rawTotalAmount > 0 && rawTotalAmount < 1000 && itemsSubtotal >= 1000)
+          ? normalizeOrderPrice(rawTotalAmount)
+          : rawTotalAmount)
+      : itemsSubtotal;
 
   // Fecha de creación y días transcurridos
   const createdAt = order.created_at ? new Date(order.created_at) : null;
@@ -2161,6 +2733,7 @@ async function renderOrderCard(order) {
   // Separar items cancelados de los demás para mostrarlos primero con advertencia
   const allItems = order.order_items || [];
   const cancelledItems = allItems.filter(item => item.status === 'cancelled');
+  const missingItemsAll = allItems.filter((i) => String(i?.status || "").trim().toLowerCase() === "missing");
   
   // Determinar qué items mostrar según el filtro y el modo de visualización
   let activeItems;
@@ -2181,14 +2754,19 @@ async function renderOrderCard(order) {
       // Modo completo: mostrar todos excepto cancelados
       activeItems = allItems.filter(item => item.status !== 'cancelled');
     } else {
-      // En Activos solo se muestran productos en estado Reservado (y Falta); no "espera"
+      // En Activos solo se muestran productos en estado Reservado; no "espera"
       activeItems = allItems.filter(item =>
-        item.status === 'reserved' || item.status === 'missing'
+        item.status === 'reserved'
       );
     }
   } else {
     // En otros filtros, mostrar todos excepto cancelados
     activeItems = allItems.filter(item => item.status !== 'cancelled');
+  }
+
+  // Orders2: los items faltantes se gestionan por aviso + modal, no se muestran como ficha en la card
+  if (isOrders2Page()) {
+    activeItems = (activeItems || []).filter((item) => String(item?.status || "").trim().toLowerCase() !== "missing");
   }
   
   // Mostrar advertencia si hay items cancelados (solo si no estamos en filtro de espera)
@@ -2198,6 +2776,12 @@ async function renderOrderCard(order) {
       <span>${cancelledItems.length} producto(s) cancelado(s) por el cliente ${formatCustomerDisplayName(customer)}${customerNumber ? ` (Nº ${customerNumber})` : ''}</span>
     </div>
   ` : '';
+
+  const missingBannerHtml = (isOrders2Page() && missingItemsAll.length > 0)
+    ? `<button type="button" class="orders2-missing-banner" data-open-missing-modal="${order.id}" aria-label="Ver productos faltantes">
+         ⚠️ Faltantes: ${missingItemsAll.length}
+       </button>`
+    : "";
   
   // Parsear valores extra desde notes
   let extraValuesHtml = '';
@@ -2307,10 +2891,12 @@ async function renderOrderCard(order) {
       cancelledItems.map((item) => renderOrderItem(item, customer, offersData, warehouseInfoMap)).join("") +
       (restHtml ? `<div class="order-items-rest" style="display:none;">${restHtml}</div>` : "");
   } else {
+    const shouldRenderItemsNow =
+      !(isOrders2Page() && currentFilter === "closed" && orderClosedViewMode.get(order.id) !== true);
     itemsHtml = cancelledWarning +
-      (currentFilter !== 'waiting' ? cancelledItems.map((item) => renderOrderItem(item, customer, offersData, warehouseInfoMap)).join("") : "") +
-      activeItems.map((item) => renderOrderItem(item, customer, offersData, warehouseInfoMap)).join("") +
-      (showExtraValues ? extraValuesHtml : "");
+      (shouldRenderItemsNow && currentFilter !== 'waiting' ? cancelledItems.map((item) => renderOrderItem(item, customer, offersData, warehouseInfoMap)).join("") : "") +
+      (shouldRenderItemsNow ? activeItems.map((item) => renderOrderItem(item, customer, offersData, warehouseInfoMap)).join("") : "") +
+      (shouldRenderItemsNow && showExtraValues ? extraValuesHtml : "");
   }
   
   // Agregar resumen de ofertas y promociones si hay descuentos
@@ -2450,6 +3036,17 @@ async function renderOrderCard(order) {
     shouldStartCollapsed = true;
     itemsDisplay = 'none';
     toggleLabel = 'Ver productos';
+  } else if (currentFilter === 'closed') {
+    // Orders2: en Cerrados, no renderizar productos hasta pedirlo
+    if (isOrders2Page()) {
+      const isFullView = orderClosedViewMode.get(order.id) === true;
+      shouldStartCollapsed = !isFullView;
+      itemsDisplay = isFullView ? 'block' : 'none';
+      toggleLabel = isFullView ? 'Ocultar productos' : 'Ver pedido';
+    } else {
+      itemsDisplay = 'block';
+      toggleLabel = 'Ocultar productos';
+    }
   } else if (currentFilter === 'cancelled') {
     // En Cancelaciones: solo se ven los productos cancelados; el resto se muestra al pulsar "Ver productos"
     itemsDisplay = 'block';
@@ -2465,8 +3062,16 @@ async function renderOrderCard(order) {
     return '';
   }
   
+  const isCustomerOrder = String(order?.source || "").trim().toLowerCase() === "customer";
+  const orderCardExtraClass = (isOrders2Page() && isCustomerOrder) ? " order-card--customer" : "";
+  const pendingSummaryCount = orders2PendingByOrder.get(order.id)?.size ?? 0;
+  const showClientSummaryBtn =
+    isOrders2Page() &&
+    isCustomerOrder &&
+    (pendingSummaryCount > 0 || Boolean(getAdminClientSummaryFromOrder(order)));
+
   return `
-    <div class="order-card" data-order-id="${order.id}">
+    <div class="order-card${orderCardExtraClass}" data-order-id="${order.id}">
       <div class="order-header">
         <div class="order-id" style="display: flex; align-items: center; gap: 8px;">
           Pedido #${orderDisplayNumber}${createdLabel}${sentLabel}
@@ -2495,13 +3100,30 @@ async function renderOrderCard(order) {
         </div>
         <div class="customer-details">
           ${customerDni ? `<span>🆔 DNI: ${customerDni}</span>` : ""}
-          <span>📞 ${customerPhone}</span>
+          ${
+            (customerPhoneHref && customerPhoneDigits.length >= 8)
+              ? `<a href="${customerPhoneHref}" target="_blank" rel="noopener noreferrer" style="color: inherit; text-decoration: underline; text-underline-offset: 3px; font-weight: 600;">📞 ${customerPhone}</a>`
+              : `<span>📞 ${customerPhone}</span>`
+          }
           <span>📧 ${customerEmail}</span>
           ${(customerCity || customerProvince) ? `<span>📍 ${[customerCity, customerProvince].filter(Boolean).join(" - ")}</span>` : ""}
         </div>
+        ${
+          showClientSummaryBtn
+            ? `<div class="orders2-client-message-row">
+                 <button type="button" class="orders2-client-message-btn" data-copy-client-summary="${order.id}" aria-label="Copiar mensaje para el cliente">
+                   <span class="orders2-client-message-btn__icon" aria-hidden="true">💬</span>
+                   <span class="orders2-client-message-btn__text">Copiar mensaje</span>
+                 </button>
+               </div>`
+            : ""
+        }
       </div>
-      <div style="display:flex; justify-content:space-between; align-items:center; margin:8px 0 4px 0;">
-        <button class="btn btn-outline" data-toggle-items="${order.id}">${toggleLabel}</button>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin:8px 0 4px 0; gap: 10px; flex-wrap: wrap;">
+        <div style="display:flex; align-items:center; gap:10px; flex-wrap: wrap;">
+          <button class="btn btn-outline" data-toggle-items="${order.id}">${toggleLabel}</button>
+          ${missingBannerHtml}
+        </div>
         <div style="font-size:14px; color:#555; font-weight:600;">Productos separados: ${readyCount}/${totalItems}</div>
       </div>
       <div class="order-items" id="order-items-${order.id}" style="display:${itemsDisplay};" data-order-id="${order.id}">
@@ -2568,7 +3190,7 @@ function generateOrderSummary(order) {
   const total = productsSubtotal + shippingAmount - discountAmount + extrasAmount + extrasFromPercentage;
   
   // Generar HTML de items
-  const itemsHtml = allItems.map(item => {
+  const itemsHtml = allItems.map((item, idx) => {
     const unitPrice = normalizeOrderPrice(item.price_snapshot || 0);
     const itemTotal = unitPrice * (item.quantity || 0);
     // Usar el nombre del producto en lugar del código QR
@@ -2583,7 +3205,10 @@ function generateOrderSummary(order) {
     
     return `
       <div class="order-summary-item">
-        ${imageHtml}
+        <div class="order-summary-item-media">
+          <div class="order-summary-item-index">${idx + 1}</div>
+          ${imageHtml}
+        </div>
         <div class="order-summary-item-details-horizontal">
           <span class="order-summary-item-name">${productName}</span>
           <span class="order-summary-item-color">${color}</span>
@@ -2708,23 +3333,16 @@ function renderOrderItem(item, customer = {}, offersData = { itemOffers: new Map
   const isCancelled = item.status === 'cancelled';
   const isMissing = item.status === 'missing';
   const isWaiting = item.status === 'waiting';
+  const useKebabMenu = isOrders2Page();
 
-  const pickingModeThumb = getPickingMode() && (currentFilter === "active" || currentFilter === "waiting");
-  let imageHtml;
-  if (pickingModeThumb) {
-    if (isExtraSpecialItem(item)) {
-      imageHtml = '<div class="item-thumb extra-badge">EXTRA<br><span>especial</span></div>';
-    } else if (item.imagen && String(item.imagen).trim()) {
-      const imgEsc = (item.imagen || "").replace(/"/g, "&quot;");
-      imageHtml = `<button type="button" class="item-thumb item-thumb-btn" data-action="zoom" data-img="${imgEsc}" aria-label="Ver imagen en grande">🔍</button>`;
-    } else {
-      imageHtml = '<div class="item-thumb picking-thumb-placeholder"><span aria-hidden="true">🖼️</span></div>';
-    }
-  } else {
-    imageHtml = item.imagen
-      ? `<img src="${item.imagen}" alt="${item.product_name}" class="item-thumb" onerror="this.remove()" />`
-      : "";
-  }
+  const displayColor = (item.color || "-").toString().trim() || "-";
+  const displaySize = (item.size || "-").toString().trim() || "-";
+  const displayQty = Number(item.quantity || 0) || 0;
+  const compactLine = `${item.product_name} - ${displayColor} - ${displaySize} - x${displayQty}`;
+
+  const imageHtml = item.imagen
+    ? `<img src="${item.imagen}" alt="${item.product_name}" class="item-thumb" onerror="this.remove()" />`
+    : "";
 
   // Mostrar leyenda de oferta o promoción
   let offerPromoBadge = '';
@@ -2764,36 +3382,60 @@ function renderOrderItem(item, customer = {}, offersData = { itemOffers: new Map
       <button class="item-action-btn success" title="Producto apartado" data-item-id="${
         item.id
       }" data-item-action="picked">✓</button>
-      <button class="item-action-btn" title="Producto en espera" data-item-id="${
-        item.id
-      }" data-item-action="waiting" style="background: #ff9800; color: white;">⏳</button>
       <button class="item-action-btn danger" title="Producto faltante" data-item-id="${
         item.id
       }" data-item-action="missing">✕</button>
-      <button class="item-action-btn neutral" title="Restaurar estado" data-item-id="${
-        item.id
-      }" data-item-action="reserved">↺</button>
-      <button class="item-action-btn danger" title="Eliminar del pedido" data-item-id="${
-        item.id
-      }" data-item-action="delete-item">🗑️</button>
+      ${
+        useKebabMenu
+          ? `
+        <div class="item-more">
+          <button type="button" class="item-action-btn neutral item-kebab-toggle" title="Más acciones" aria-label="Más acciones" data-kebab-toggle="1">⋮</button>
+          <div class="item-kebab-menu" role="menu">
+            <button type="button" class="item-kebab-item" role="menuitem" data-kebab-action="waiting">⏳ Producto en espera</button>
+            <button type="button" class="item-kebab-item" role="menuitem" data-kebab-action="reserved">↺ Restaurar estado</button>
+            <button type="button" class="item-kebab-item danger" role="menuitem" data-kebab-action="delete-item">🗑️ Eliminar</button>
+          </div>
+        </div>
+        <button class="item-action-btn" title="Producto en espera" data-item-id="${item.id}" data-item-action="waiting" style="display:none;background:#ff9800;color:white;">⏳</button>
+        <button class="item-action-btn neutral" title="Restaurar estado" data-item-id="${item.id}" data-item-action="reserved" style="display:none;">↺</button>
+        <button class="item-action-btn danger" title="Eliminar del pedido" data-item-id="${item.id}" data-item-action="delete-item" style="display:none;">🗑️</button>
+          `
+          : `
+        <button class="item-action-btn" title="Producto en espera" data-item-id="${item.id}" data-item-action="waiting" style="background: #ff9800; color: white;">⏳</button>
+        <button class="item-action-btn neutral" title="Restaurar estado" data-item-id="${item.id}" data-item-action="reserved">↺</button>
+        <button class="item-action-btn danger" title="Eliminar del pedido" data-item-id="${item.id}" data-item-action="delete-item">🗑️</button>
+          `
+      }
     </div>
   ` : `
     <div class="item-actions">
       <button class="item-action-btn success" title="Producto apartado" data-item-id="${
         item.id
       }" data-item-action="picked">✓</button>
-      <button class="item-action-btn" title="Producto en espera" data-item-id="${
-        item.id
-      }" data-item-action="waiting" style="background: #ff9800; color: white;">⏳</button>
       <button class="item-action-btn danger" title="Producto faltante" data-item-id="${
         item.id
       }" data-item-action="missing">✕</button>
-      <button class="item-action-btn neutral" title="Restaurar estado" data-item-id="${
-        item.id
-      }" data-item-action="reserved">↺</button>
-      <button class="item-action-btn danger" title="Eliminar del pedido" data-item-id="${
-        item.id
-      }" data-item-action="delete-item">🗑️</button>
+      ${
+        useKebabMenu
+          ? `
+        <div class="item-more">
+          <button type="button" class="item-action-btn neutral item-kebab-toggle" title="Más acciones" aria-label="Más acciones" data-kebab-toggle="1">⋮</button>
+          <div class="item-kebab-menu" role="menu">
+            <button type="button" class="item-kebab-item" role="menuitem" data-kebab-action="waiting">⏳ Producto en espera</button>
+            <button type="button" class="item-kebab-item" role="menuitem" data-kebab-action="reserved">↺ Restaurar estado</button>
+            <button type="button" class="item-kebab-item danger" role="menuitem" data-kebab-action="delete-item">🗑️ Eliminar</button>
+          </div>
+        </div>
+        <button class="item-action-btn" title="Producto en espera" data-item-id="${item.id}" data-item-action="waiting" style="display:none;background:#ff9800;color:white;">⏳</button>
+        <button class="item-action-btn neutral" title="Restaurar estado" data-item-id="${item.id}" data-item-action="reserved" style="display:none;">↺</button>
+        <button class="item-action-btn danger" title="Eliminar del pedido" data-item-id="${item.id}" data-item-action="delete-item" style="display:none;">🗑️</button>
+          `
+          : `
+        <button class="item-action-btn" title="Producto en espera" data-item-id="${item.id}" data-item-action="waiting" style="background: #ff9800; color: white;">⏳</button>
+        <button class="item-action-btn neutral" title="Restaurar estado" data-item-id="${item.id}" data-item-action="reserved">↺</button>
+        <button class="item-action-btn danger" title="Eliminar del pedido" data-item-id="${item.id}" data-item-action="delete-item">🗑️</button>
+          `
+      }
     </div>
   `;
 
@@ -2807,18 +3449,7 @@ function renderOrderItem(item, customer = {}, offersData = { itemOffers: new Map
         <div style="display: flex; gap: 10px; align-items: flex-start;">
           ${imageHtml}
           <div class="item-main" style="flex: 1; min-width: 0;">
-            <div class="item-name" style="font-size: 15px; font-weight: 600; margin-bottom: 6px; line-height: 1.3;">${item.product_name}</div>
-            <div style="display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px;">
-              <div style="font-size: 19px; font-weight: 700; color: #333;">
-                <span style="color: #666; font-size: 13px; font-weight: 500;">Color:</span> <strong style="font-size: 19px; font-weight: 700;">${item.color || "-"}</strong>
-              </div>
-              <div style="font-size: 19px; font-weight: 700; color: #333;">
-                <span style="color: #666; font-size: 13px; font-weight: 500;">Talle:</span> <strong style="font-size: 19px; font-weight: 700;">${item.size || "-"}</strong>
-              </div>
-              <div style="font-size: 16px; font-weight: 700; color: #333; margin-top: 2px;">
-                Cantidad: <strong style="font-size: 16px; font-weight: 700;">${item.quantity || 0}</strong>
-              </div>
-            </div>
+            <div class="item-name" style="font-size: 15px; font-weight: 700; margin-bottom: 6px; line-height: 1.3;">${compactLine}</div>
             ${offerPromoBadge}
             <div style="display: flex; align-items: center; gap: 6px; margin-top: 6px; flex-wrap: wrap;">
               <span class="item-status ${info.className}">${info.text}</span>
@@ -2840,10 +3471,7 @@ function renderOrderItem(item, customer = {}, offersData = { itemOffers: new Map
       <div class="order-item ${isCancelled ? 'cancelled-item' : ''}">
         ${imageHtml}
         <div class="item-main">
-          <div class="item-name">${item.product_name}</div>
-          <div class="item-details">
-            Color: <strong style="font-size: 15px; font-weight: 700;">${item.color || "-"}</strong> • Talle: <strong style="font-size: 15px; font-weight: 700;">${item.size || "-"}</strong> • Cantidad: <strong style="font-size: 15px; font-weight: 700;">${item.quantity || 0}</strong>
-          </div>
+          <div class="item-name">${compactLine}</div>
           ${offerPromoBadge}
           <div style="display: flex; align-items: center; gap: 8px; margin-top: 4px; flex-wrap: wrap;">
             <span class="item-status ${info.className}">${info.text}</span>
@@ -2885,7 +3513,13 @@ function filterOrders(list) {
     return list.filter((order) => {
       let excludedBy = null;
       const statusNorm = normStatus(order.status);
-      if (statusNorm === STATUS.CLOSED || statusNorm === STATUS.SENT || statusNorm === STATUS.DEVOLUCION || statusNorm === STATUS.DEVOLUCION_ALT) excludedBy = "order.status=" + (order.status ?? "null");
+      // orders2: si el pedido quedó CLOSED pero todavía tiene items RESERVED, debe priorizarse en Activos
+      const orders2AllowClosedWithReserved =
+        isOrders2Page() && statusNorm === STATUS.CLOSED && hasReservedItems(order);
+
+      if (!orders2AllowClosedWithReserved && (statusNorm === STATUS.CLOSED || statusNorm === STATUS.SENT || statusNorm === STATUS.DEVOLUCION || statusNorm === STATUS.DEVOLUCION_ALT)) {
+        excludedBy = "order.status=" + (order.status ?? "null");
+      }
       else if (!hasReservedItems(order) && !hasItemsNeedingAttention(order)) excludedBy = "sin ítems reservados ni missing";
       else if (hasAllItemsPicked(order) && !hasWaitingItems(order)) excludedBy = "hasAllItemsPicked=true (sin espera)";
       if (DEBUG_ACTIVE_FILTER && debugLogCount < MAX_DEBUG_LOGS) {
@@ -2926,7 +3560,20 @@ function filterOrders(list) {
   
   if (currentFilter === STATUS.CLOSED) {
     // Mostrar pedidos cerrados (excluir los que ya están enviados/terminados)
-    return list.filter((order) => order.status === STATUS.CLOSED);
+    return list.filter((order) => {
+      if (order.status !== STATUS.CLOSED) return false;
+
+      // orders2: si aún quedan items RESERVED, NO debe verse en Cerrados (prioridad Activos)
+      if (isOrders2Page()) {
+        if (hasReservedItems(order)) return false;
+        // Solo mostrar cuando esté completamente procesado (sin reserved; picked/waiting o resuelto)
+        if (hasItemsNeedingAttention(order)) return false;
+        if (hasWaitingItems(order)) return false;
+        if (!hasAllItemsPicked(order)) return false;
+      }
+
+      return true;
+    });
   }
 
   if (currentFilter === STATUS.CANCELLED) {
@@ -3125,7 +3772,6 @@ function setupFilters() {
       
       // Actualizar filtro
       currentFilter = btn.dataset.status;
-      updatePickingModeVisibility();
       if (DEBUG_ORDERS) {
         const label = btn.textContent?.trim().replace(/\s*\d+\s*$/, "") || currentFilter;
         console.log("[debug] clicked tab", label, "currentFilter", currentFilter);
@@ -3211,16 +3857,6 @@ function setupButtons() {
       }
     }
   });
-
-  // Modo Picking: inyectar CSS y botón (solo si está habilitado y no existe ya)
-  if (PICKING_MODE_ENABLED) {
-    injectPickingModeCSS();
-    const headerBtnWrap = document.querySelector(".orders-header div");
-    if (headerBtnWrap && !document.getElementById("picking-mode-toggle")) {
-      headerBtnWrap.insertAdjacentHTML("beforeend", '<button type="button" id="picking-mode-toggle" class="btn" style="margin-left:8px;">📋 Modo Picking</button>');
-      document.getElementById("picking-mode-toggle").addEventListener("click", () => setPickingMode(!getPickingMode()));
-    }
-  }
 
   // Event listeners para el modal de método de pago
   setupPaymentMethodModal();
@@ -3319,58 +3955,29 @@ function setupHistoryControls() {
   });
 }
 
-function setupPickingImageModal() {
-  if (document.getElementById("image-zoom-modal")) return;
-  const overlay = document.createElement("div");
-  overlay.id = "image-zoom-modal";
-  overlay.className = "picking-image-overlay";
-  overlay.setAttribute("role", "dialog");
-  overlay.setAttribute("aria-modal", "true");
-  overlay.setAttribute("aria-label", "Imagen del producto");
-  overlay.innerHTML = '<div class="picking-image-container"><button type="button" class="picking-image-close" aria-label="Cerrar">×</button><img alt="Producto" class="picking-image-img" /></div>';
-  document.body.appendChild(overlay);
-  const img = overlay.querySelector(".picking-image-img");
-  const close = () => {
-    overlay.classList.remove("active");
-    img.removeAttribute("src");
-  };
-  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
-  overlay.querySelector(".picking-image-close").addEventListener("click", close);
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && overlay.classList.contains("active")) close(); });
-  window.showPickingImageModal = function (src) {
-    if (!src) return;
-    img.src = src;
-    overlay.classList.add("active");
-  };
-  document.body.addEventListener("click", (e) => {
-    const zoomBtn = e.target.closest("[data-action=\"zoom\"]");
-    const legacyBtn = e.target.closest(".picking-show-image-btn");
-    const btn = zoomBtn || legacyBtn;
-    if (!btn) return;
-    e.preventDefault();
-    const src = btn.getAttribute("data-img") || btn.getAttribute("data-img-src");
-    if (src && typeof window.showPickingImageModal === "function") window.showPickingImageModal(src);
-  });
-}
-
 function attachOrderEventHandlers() {
-  if (!window._pickingImageModalSetup) {
-    setupPickingImageModal();
-    window._pickingImageModalSetup = true;
-  }
   if (!window._partialAcceptModalSetup) {
     setupPartialAcceptModal();
     window._partialAcceptModalSetup = true;
   }
   document.querySelectorAll("[data-item-action]").forEach((btn) => {
+    if (btn.dataset.orders2Bound === "1") return;
+    btn.dataset.orders2Bound = "1";
     btn.addEventListener("click", async () => {
       const itemId = btn.dataset.itemId;
       const status = btn.dataset.itemAction;
-      const itemEl = btn.closest(".order-item");
-      const isPicking = PICKING_NO_FULL_REFRESH && getPickingMode() && (currentFilter === "active" || currentFilter === "waiting");
-      if (isPicking && itemEl) {
-        itemEl.classList.add("order-item-processing");
-        itemEl.querySelectorAll(".item-action-btn").forEach((b) => { b.disabled = true; });
+      if (isOrders2Page()) {
+        const orderId = orders2GetOrderIdFromAnyEl(btn);
+        if (status === "picked") {
+          const order = orders.find((o) => o.order_items?.some((i) => i.id === itemId));
+          const item = order?.order_items?.find((i) => i.id === itemId);
+          if (order?.source === "customer" && item?.quantity > 1 && item?.status === "reserved") {
+            openPartialAcceptModal(order, item);
+            return;
+          }
+        }
+        orders2SetPendingStatus(orderId, itemId, status);
+        return;
       }
       try {
         if (status === "cleanup-cancelled") {
@@ -3385,31 +3992,22 @@ function attachOrderEventHandlers() {
           const item = order?.order_items?.find((i) => i.id === itemId);
           if (order?.source === "customer" && item?.quantity > 1 && item?.status === "reserved") {
             openPartialAcceptModal(order, item);
-            if (isPicking && itemEl) {
-              itemEl.classList.remove("order-item-processing");
-              itemEl.querySelectorAll(".item-action-btn").forEach((b) => { b.disabled = false; });
-            }
             return;
           }
           await updateOrderItemStatus(itemId, status);
         } else {
           await updateOrderItemStatus(itemId, status);
         }
-        if (getPickingMode() && (currentFilter === "active" || currentFilter === "waiting")) {
-          applyPickingOptimisticItemRemoval(btn, status);
-        }
       } catch (e) {
         if (e && e.message) console.error("Item action error:", e.message);
-        if (isPicking && itemEl) {
-          itemEl.classList.remove("order-item-processing");
-          itemEl.querySelectorAll(".item-action-btn").forEach((b) => { b.disabled = false; });
-        }
       }
     });
   });
 
   // Toggle de productos por pedido
   document.querySelectorAll('[data-toggle-items]').forEach((btn) => {
+    if (btn.dataset.toggleBound === "1") return;
+    btn.dataset.toggleBound = "1";
     btn.addEventListener('click', () => {
       const orderId = btn.getAttribute('data-toggle-items');
       const itemsEl = document.getElementById(`order-items-${orderId}`);
@@ -3452,6 +4050,23 @@ function attachOrderEventHandlers() {
               if (orderCard) {
                 orderCard.outerHTML = html;
                 // Re-attach event handlers para este pedido
+                attachOrderEventHandlers();
+              }
+            }
+          });
+        }
+      } else if (currentFilter === 'closed' && isOrders2Page()) {
+        const isFullView = orderClosedViewMode.get(orderId) === true;
+        const newMode = !isFullView;
+        orderClosedViewMode.set(orderId, newMode);
+
+        const order = orders.find(o => o.id === orderId);
+        if (order) {
+          renderOrderCard(order).then(async (html) => {
+            if (html) {
+              const orderCard = document.querySelector(`.order-card[data-order-id="${orderId}"]`);
+              if (orderCard) {
+                orderCard.outerHTML = html;
                 attachOrderEventHandlers();
               }
             }
@@ -3560,9 +4175,6 @@ function attachOrderEventHandlers() {
     });
   }
 
-  if (typeof applyPickingItemActionsMenu === "function") {
-    applyPickingItemActionsMenu();
-  }
   setupHistoryControls();
 }
 
@@ -3660,8 +4272,6 @@ async function removeMissingItem(itemId) {
   updatePickedOrdersBadge();
   updateClosedOrdersBadge();
   updateCancelledOrdersBadge();
-  if (getPickingMode() && (currentFilter === "active" || currentFilter === "waiting")) return;
-
   await loadOrders();
   if (historyVisible) await loadClosedOrders();
   alert("✅ Producto faltante eliminado correctamente del pedido. El total ha sido actualizado.");
@@ -3822,14 +4432,22 @@ async function cleanupCancelledItem(itemId) {
   updatePickedOrdersBadge();
   updateClosedOrdersBadge();
   updateCancelledOrdersBadge();
-  if (getPickingMode() && (currentFilter === "active" || currentFilter === "waiting")) return;
-
   await loadOrders();
   if (historyVisible) await loadClosedOrders();
   alert("✅ Producto cancelado eliminado correctamente. La cantidad se devolvió al stock general y el pedido fue actualizado.");
 }
 
-async function updateOrderItemStatus(itemId, status) {
+function findOrderIdByItemId(itemId) {
+  if (!itemId) return null;
+  const id = String(itemId);
+  for (const o of orders || []) {
+    const items = o?.order_items || [];
+    if (items.some((it) => String(it?.id) === id)) return o.id || null;
+  }
+  return null;
+}
+
+async function updateOrderItemStatus(itemId, status, opts = {}) {
   if (!canEditOrders) {
     alert("No tienes permiso para editar pedidos.");
     return;
@@ -3871,7 +4489,15 @@ async function updateOrderItemStatus(itemId, status) {
   updateClosedOrdersBadge();
   updateCancelledOrdersBadge();
   updateWaitingOrdersBadge();
-  if (getPickingMode() && (currentFilter === "active" || currentFilter === "waiting")) return;
+  if (opts?.skipReload) return;
+
+  if (isOrders2Page()) {
+    const orderId = findOrderIdByItemId(itemId);
+    if (orderId && typeof refreshOneOrder === "function") {
+      await refreshOneOrder(orderId);
+      return;
+    }
+  }
 
   await loadOrders();
   if (data && data.all_items_picked) console.log("✅ Todos los items del pedido están apartados");
@@ -3927,10 +4553,16 @@ function renderPartialAcceptStep() {
       <button type="button" class="btn btn-secondary" id="partial-accept-no-less">No, hay menos</button>
     `;
     footer.querySelector("#partial-accept-yes-all").addEventListener("click", () => {
-      updateOrderItemStatus(s.item.id, "picked");
+      if (isOrders2Page()) {
+        orders2SetPendingStatus(s.order.id, s.item.id, "picked");
+      } else {
+        updateOrderItemStatus(s.item.id, "picked");
+      }
       closePartialAcceptModal();
-      loadOrders();
-      if (historyVisible) loadClosedOrders();
+      if (!isOrders2Page()) {
+        loadOrders();
+        if (historyVisible) loadClosedOrders();
+      }
     });
     footer.querySelector("#partial-accept-no-less").addEventListener("click", () => {
       partialAcceptState.step = 2;
@@ -4009,10 +4641,16 @@ function renderPartialAcceptStep() {
     footer.querySelector("#partial-accept-apply").addEventListener("click", async () => {
       const nWaiting = partialAcceptState.waitingSet.size;
       const nPicked = k - nWaiting;
-      await callRpcSplitOrderItemStatus(s.item.id, nPicked, nWaiting, nMissing);
+      if (isOrders2Page()) {
+        orders2SetPendingSplit(s.order.id, s.item.id, { nPicked, nWaiting, nMissing });
+      } else {
+        await callRpcSplitOrderItemStatus(s.item.id, nPicked, nWaiting, nMissing);
+      }
       closePartialAcceptModal();
-      loadOrders();
-      if (historyVisible) loadClosedOrders();
+      if (!isOrders2Page()) {
+        loadOrders();
+        if (historyVisible) loadClosedOrders();
+      }
     });
     updateSummary();
   }
@@ -4460,10 +5098,15 @@ async function showPaymentMethodModal(orderId) {
 
   // Cargar métodos de pago
   const paymentMethods = await loadPaymentMethods();
+  const seen = new Set();
   paymentMethods.forEach((method) => {
+    const name = (method?.name || "").toString().trim();
+    const key = name.toLowerCase();
+    if (!name || seen.has(key)) return;
+    seen.add(key);
     const option = document.createElement("option");
-    option.value = method.name;
-    option.textContent = method.name;
+    option.value = name;
+    option.textContent = name;
     select.appendChild(option);
   });
 
@@ -4571,7 +5214,11 @@ async function closeOrderWithPayment(orderId, paymentMethod) {
     return;
   }
 
-  await loadOrders();
+  if (isOrders2Page() && typeof refreshOneOrder === "function") {
+    await refreshOneOrder(orderId);
+  } else {
+    await loadOrders();
+  }
   updateActiveOrdersBadge();
   updatePickedOrdersBadge();
   updateClosedOrdersBadge();
@@ -4634,9 +5281,33 @@ async function markOrderAsSent(orderId) {
     return;
   }
 
+  await clearOrderAdminClientSummary(orderId);
+
+  // Limpiar notificaciones previas del pedido y emitir "empaquetado" (campana cliente)
+  try {
+    const customerId = await getOrderCustomerId(orderId);
+    if (customerId) {
+      await supabase.from("customer_notifications").delete().eq("customer_id", customerId).eq("order_id", orderId);
+      await emitCustomerNotification({
+        customerId,
+        orderId,
+        type: "ORDER_PACKAGED_TODAY",
+        message: "Tu pedido ya fue empaquetado y se enviará hoy al transporte.",
+        payload: { action_url: "client/dashboard.html?view=history" },
+        dedupeTypes: ["ORDER_PACKAGED_TODAY"],
+      });
+    }
+  } catch (e) {
+    console.warn("⚠️ No se pudo emitir notificación al cliente:", e);
+  }
+
   console.log("✅ Pedido marcado como terminado correctamente");
 
-  await loadOrders();
+  if (isOrders2Page() && typeof refreshOneOrder === "function") {
+    await refreshOneOrder(orderId);
+  } else {
+    await loadOrders();
+  }
   updateActiveOrdersBadge();
   updatePickedOrdersBadge();
   updateClosedOrdersBadge();
@@ -4918,6 +5589,11 @@ async function initWhenReady() {
     });
   }
   
+  setupOrders2ItemKebabMenu();
+  setupOrders2PendingAcceptSystem();
+  setupOrders2ClientSummaryCopy();
+  setupOrders2MissingItemsModalSystem();
+  
   // Esperar a que Supabase esté disponible
   supabase = await getSupabase();
   
@@ -5187,8 +5863,6 @@ async function deleteOrderItemImmediate(itemId) {
   updatePickedOrdersBadge();
   updateClosedOrdersBadge();
   updateCancelledOrdersBadge();
-  if (getPickingMode() && (currentFilter === "active" || currentFilter === "waiting")) return;
-
   await loadOrders();
   if (historyVisible) await loadClosedOrders();
   alert("✅ Producto eliminado del pedido.");

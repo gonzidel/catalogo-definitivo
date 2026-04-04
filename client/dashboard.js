@@ -150,6 +150,9 @@ function displayUserInfo(user, customer) {
     const userAvatar = document.getElementById("user-avatar");
     const userName = document.getElementById("user-name");
 
+    // El header lo controla dashboard-instant.js; evitar que este script lo pise en recargas/entradas directas.
+    if (userAvatar?.dataset?.identitySet === "true") return;
+
     if (userProfile) {
       userProfile.style.display = "flex";
     }

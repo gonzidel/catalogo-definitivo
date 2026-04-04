@@ -481,6 +481,19 @@
     </div>
   </header>
 
+  <!-- Panel de notificaciones (campana) -->
+  <div id="notifications-backdrop" class="notifications-backdrop" aria-hidden="true"></div>
+  <aside id="notifications-panel" class="notifications-panel" aria-hidden="true" aria-label="Notificaciones">
+    <div class="notifications-panel__header">
+      <div class="notifications-panel__title">Notificaciones</div>
+      <button type="button" class="notifications-panel__close" id="notifications-close" aria-label="Cerrar">×</button>
+    </div>
+    <div class="notifications-panel__body">
+      <div class="notifications-panel__empty" id="notifications-empty" style="display:none;">No tenés notificaciones.</div>
+      <div class="notifications-panel__list" id="notifications-list"></div>
+    </div>
+  </aside>
+
   <div id="catalog-view">
   <div class="container">
     <!-- Menú Desktop (visible en desktop vía CSS @media min-width: 768px) -->
@@ -986,6 +999,7 @@
   <script type="module" src="scripts/supabase-client.js?v=m260328"></script>
   <script type="module" src="scripts/main-supabase.js?v=m260328"></script>
   <script type="module" src="scripts/auth-status.js?v=m260328"></script>
+  <script type="module" src="scripts/notifications.js?v=m260328"></script>
   <script type="module" src="scripts/catalog-onboarding.js?v=m260328"></script>
   <script type="module" src="scripts/product-alternatives.js?v=m260328"></script>
   <script type="module" src="scripts/cart-persistent.js?v=m260328"></script>

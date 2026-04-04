@@ -2292,7 +2292,7 @@ async function addProductToOrder(product) {
       id: `temp-${Date.now()}-${Math.random()}`,
       qty_from_general: product.qty_from_general || 0,
       qty_from_venta: product.qty_from_venta || 0,
-      status: product.status || 'reserved' // Estado del item (reserved, waiting, picked)
+      status: product.status || 'picked' // Admin: por defecto "apartado"
     });
   }
   
@@ -3378,7 +3378,8 @@ async function createNewOrder(customerId, items, total, extraValues = {}) {
       customer_id: customerId,
       status: "active",
       total_amount: total,
-      notes: notes
+      notes: notes,
+      source: "admin"
     })
     .select()
     .single();
@@ -3413,7 +3414,7 @@ async function createNewOrder(customerId, items, total, extraValues = {}) {
     quantity: item.quantity,
     price_snapshot: item.price_snapshot,
     imagen: item.imagen,
-    status: item.status || "reserved" // Usar el estado del item si existe, sino usar "reserved" por defecto
+    status: item.status || "picked" // Admin: por defecto "apartado"
   }));
   
   console.log("🔵 createNewOrder: Creando items del pedido...");
@@ -3460,10 +3461,8 @@ async function addItemsToExistingOrder(orderId, items, newTotal = null, extraVal
   const existingItems = order?.order_items || [];
   const allItemsPicked = existingItems.length > 0 && existingItems.every(item => item.status === 'picked');
   
-  // Determinar el estado para los nuevos items
-  // Cuando se agregan productos manualmente, siempre deben estar "reserved"
-  // para que el pedido vuelva a la sección de "Activos" y se pueda seleccionar como apartado
-  const newItemStatus = "reserved";
+  // Admin: al agregar productos manualmente, por defecto quedan "picked" (apartado)
+  const newItemStatus = "picked";
   
   // Calcular el nuevo total
   let finalTotal;
@@ -3517,8 +3516,7 @@ async function addItemsToExistingOrder(orderId, items, newTotal = null, extraVal
   }
   
   // Actualizar total del pedido, notes y estado
-  // Cuando se agregan productos manualmente, el pedido debe volver a "active"
-  // para que se pueda seleccionar como apartado nuevamente
+  // Admin: al agregar productos manualmente, mantener/volver a "active" para que siga el flujo normal
   const updateData = { 
     total_amount: finalTotal,
     status: "active" // Volver a estado activo cuando se agregan nuevos items

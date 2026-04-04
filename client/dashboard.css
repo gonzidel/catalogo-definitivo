@@ -386,6 +386,36 @@ html.client-area body.dashboard-has-bottom-nav .bottom-nav {
   gap: 6px 12px;
   padding-bottom: 10px;
 }
+
+/* Mi pedido: header flexible (estado puede bajar bajo el título) */
+.client-area .dash-order__head--summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.client-area .dash-order__head--summary .dash-order__head-left {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.client-area .dash-order__head--summary .dash-order__head-right {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.client-area .dash-order__head--summary .dash-order-header-chip--state {
+  white-space: normal;
+  line-height: 1.25;
+  max-width: 100%;
+  width: fit-content;
+  align-self: flex-start;
+}
 /* Marco del botón Finalizar pedido: área superior reducida (~10%) */
 .client-area .dash-order__head--compact:has(.dash-order__cta) {
   padding-top: 2px;
@@ -2043,9 +2073,11 @@ html.client-area body.dashboard-has-bottom-nav .bottom-nav {
 
   .client-area .item-row--order .item-row__title {
     display: flex;
-    flex-wrap: wrap;
+    /* Regla UX: el talle (corto) se queda arriba; el color se recorta si es largo */
+    flex-wrap: nowrap;
     gap: 4px;
     line-height: 1.1;
+    min-width: 0;
   }
 
   .client-area .item-row--order .item-row__title-name {
@@ -2055,10 +2087,17 @@ html.client-area body.dashboard-has-bottom-nav .bottom-nav {
   .client-area .item-row--order .item-row__title-color {
     opacity: 0.7;
     font-weight: 500;
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .client-area .item-row--order .item-row__title-size {
     font-weight: 600;
+    flex: 0 0 auto;
+    white-space: nowrap;
   }
 
   .client-area .item-row--order .item-row__size,
@@ -2520,11 +2559,70 @@ html.client-area body.has-sticky {
 }
 
 /* Modal historial (resumen + lista pedidos) */
+.client-area .previous-orders-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: #fff;
+  display: none;
+  padding: env(safe-area-inset-top, 0px) 0 env(safe-area-inset-bottom, 0px);
+}
+
+.client-area .previous-orders-modal.active {
+  display: block;
+}
+
+.client-area .previous-orders-modal .history-modal__wrapper {
+  max-height: none;
+  height: 100%;
+  border-radius: 0;
+  margin: 0;
+  box-shadow: none;
+  border: 0;
+}
+
+.client-area .previous-orders-modal .modal-header-orders {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #fff;
+  border-bottom: 1px solid var(--border);
+  padding: 10px 12px;
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  align-items: center;
+  gap: 10px;
+}
+
+.client-area .history-back-btn {
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--border);
+  background: #fff;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.client-area .history-back-btn svg {
+  color: var(--text);
+}
+
+html.client-area body.history-open {
+  overflow: hidden;
+}
+
 .client-area .history-modal__wrapper {
   display: flex;
   flex-direction: column;
   max-height: 85vh;
   overflow: hidden;
+}
+
+.client-area .previous-orders-modal .history-modal__wrapper {
+  max-height: none;
 }
 .client-area .history-modal__body {
   overflow-y: auto;
@@ -2685,7 +2783,9 @@ html.client-area body.has-sticky {
   top: 100%;
   right: 0;
   margin-top: 6px;
-  min-width: 180px;
+  min-width: 0;
+  width: max-content;
+  max-width: min(320px, calc(100vw - 24px));
   padding: 6px 0;
   background: #fff;
   border: 1px solid rgba(0, 0, 0, 0.1);
@@ -2987,7 +3087,7 @@ html.client-area body.has-sticky {
   gap: 0;
 }
 .client-area .dash-bolsa-item {
-  padding: 10px 0;
+  padding: 6px 0;
   border-bottom: 1px solid rgba(0, 0, 0, 0.06);
   background: transparent;
   border-radius: 0;
@@ -3002,14 +3102,14 @@ html.client-area body.has-sticky {
 
 /* Espaciado: ítems del carrito */
 .client-area #section-bag .dash-bolsa-item:not(:first-child) {
-  margin-top: 12px;
+  margin-top: 7px;
 }
 /* Misma estructura que Mi pedido: grid [thumb] [body] [acciones], centrado vertical */
 .client-area .dash-bolsa-item__row1 {
   display: grid;
   grid-template-columns: 48px 1fr;
-  column-gap: 12px;
-  align-items: start;
+  column-gap: 8px;
+  align-items: center;
 }
 .client-area .dash-bolsa-item__thumb {
   grid-column: 1;
@@ -3021,23 +3121,27 @@ html.client-area body.has-sticky {
   object-fit: cover;
   border: 1px solid var(--border, rgba(0, 0, 0, 0.08));
   background: #f8f9fa;
+  align-self: center;
 }
 .client-area .dash-bolsa-item__main {
   grid-column: 2;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  align-items: stretch;
+  justify-content: flex-start;
+  gap: 0;
+  min-height: 0;
 }
 /* Fila 1: título a la izquierda, precio total + menú a la derecha (normal y con error de stock) */
 .client-area .dash-bolsa-item__head {
   display: flex;
+  /* Evita “hueco” grande bajo el título cuando el ⋯ es más alto */
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   width: 100%;
   min-width: 0;
-  margin-bottom: 2px;
+  margin-bottom: 0;
 }
 .client-area .dash-bolsa-item__head .dash-bolsa-item__line1 {
   flex: 1 1 auto;
@@ -3048,7 +3152,7 @@ html.client-area body.has-sticky {
   flex: 0 0 auto;
 }
 .client-area .dash-bolsa-item__line1 {
-  margin-bottom: 4px;
+  margin-bottom: 0;
   margin-left: 0;
   padding-left: 0;
   display: flex;
@@ -3062,13 +3166,13 @@ html.client-area body.has-sticky {
   font-size: 14px;
   font-weight: 600;
   color: var(--text, #2d2d2d);
-  line-height: 1.3;
+  line-height: 1.15;
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
   align-items: flex-start;
   gap: 4px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 .client-area .dash-bolsa-item__title-main {
   min-width: 0;
@@ -3097,6 +3201,19 @@ html.client-area body.has-sticky {
   gap: 8px;
   min-width: 0;
 }
+
+/* Bolsa: el botón ⋯ alto agranda la fila y separa título ↔ cantidad */
+.client-area #section-bag .dash-bolsa-item .item-row__kebab {
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  min-height: 24px;
+  font-size: 16px;
+}
+
+.client-area #section-bag .dash-bolsa-item .item-row__menu-wrap {
+  align-self: center;
+}
 .client-area .dash-bolsa-item__right.order-item-actions {
   min-width: 0;
 }
@@ -3115,13 +3232,14 @@ html.client-area body.has-sticky {
 .client-area .dash-bolsa-item__line2 {
   display: flex;
   align-items: center;
-  justify-content: flex-start;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-top: 2px;
+  justify-content: flex-start !important;
+  gap: 6px;
+  flex-wrap: nowrap;
+  margin-top: -2px;
   margin-left: 0;
   padding-left: 0;
   width: 100%;
+  max-width: 100%;
   min-width: 0;
   box-sizing: border-box;
 }
@@ -3144,10 +3262,11 @@ html.client-area body.has-sticky {
   margin: 0;
 }
 .client-area .dash-bolsa-item__qty-select {
-  min-width: 44px;
-  max-width: 52px;
+  min-width: 28px;
+  max-width: 32px;
   width: auto;
-  padding: 4px 6px;
+  height: 28px;
+  padding: 2px 6px;
   border-radius: 8px;
   border: 1px solid var(--border);
   font-size: 13px;
@@ -3160,8 +3279,8 @@ html.client-area body.has-sticky {
 
 /* Microcopy: evitar truncado de "1 unidad" en el carrito */
 .client-area #section-bag .dash-bolsa-item__qty-select {
-  min-width: 64px;
-  max-width: 78px;
+  min-width: 40px;
+  max-width: 48px;
   margin-left: 0;
 }
 .client-area .dash-bolsa-item__unit-price {
@@ -3172,6 +3291,10 @@ html.client-area body.has-sticky {
   gap: 6px;
   align-items: center;
   white-space: nowrap;
+  margin-left: 0 !important;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .client-area .dash-bolsa-item__remove {
   flex-shrink: 0;
@@ -3946,6 +4069,24 @@ html.client-area .dash-transport-lead {
   color: var(--text, #2d2d2d);
   font-size: 14px;
   line-height: 1.45;
+}
+
+/* Modal transporte: subtítulo debajo del heading */
+html.client-area .dash-transport-assigned {
+  margin: -6px 0 12px 0;
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(205, 132, 77, 0.28);
+  background: rgba(205, 132, 77, 0.10);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text, #2d2d2d);
+  line-height: 1.15;
 }
 
 html.client-area .dash-transport-select-wrap {

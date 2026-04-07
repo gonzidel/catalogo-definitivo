@@ -708,20 +708,36 @@ begin
     raise exception 'El carrito está vacío.';
   end if;
 
-  -- Buscar pedido activo del cliente
+  -- Buscar pedido abierto del cliente (active o closing_soon)
   select id
     into v_order_id
     from public.orders
    where customer_id = auth.uid()
-     and status = 'active'
-   order by created_at desc
+     and status in ('active', 'closing_soon')
+   order by
+     case when status = 'active' then 0 when status = 'closing_soon' then 1 else 2 end,
+     created_at desc
    limit 1;
 
-  -- Si no existe un pedido activo, crear uno nuevo
   if v_order_id is null then
-    insert into public.orders (customer_id, status)
-      values (auth.uid(), 'active')
-      returning id into v_order_id;
+    begin
+      insert into public.orders (customer_id, status)
+        values (auth.uid(), 'active')
+        returning id into v_order_id;
+    exception
+      when unique_violation then
+        select id into v_order_id
+        from public.orders
+        where customer_id = auth.uid()
+          and status in ('active', 'closing_soon')
+        order by
+          case when status = 'active' then 0 when status = 'closing_soon' then 1 else 2 end,
+          created_at desc
+        limit 1;
+        if v_order_id is null then
+          raise;
+        end if;
+    end;
   end if;
 
   for r in

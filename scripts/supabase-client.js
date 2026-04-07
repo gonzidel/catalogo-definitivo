@@ -8,6 +8,8 @@ import {
   USE_SUPABASE,
   configReady,
   fylConfigDiagnostics,
+  fylDevLog,
+  fylDevInfo,
 } from "./config.js";
 
 let supabase = null;
@@ -46,7 +48,7 @@ function fylFetchWithTimeout(input, init) {
                 code === "P0001" &&
                 /ya\s+est[aá]\s+anulad/i.test(msg)
               ) {
-                console.info(`${LOG} RPC HTTP ${res.status} (venta ya anulada)`, {
+                fylDevInfo(`${LOG} RPC HTTP ${res.status} (venta ya anulada)`, {
                   url,
                   body: parsed,
                 });
@@ -118,16 +120,16 @@ function describeError(e) {
 async function loadCreateClient() {
   let lastErr = null;
 
-  console.info(`${LOG} Carga de @supabase/supabase-js: primero bundle local, luego CDN.`);
+  fylDevInfo(`${LOG} Carga de @supabase/supabase-js: primero bundle local, luego CDN.`);
 
   try {
-    console.info(`${LOG} Intento 1/local (${SUPABASE_LOCAL_IMPORT_MS}ms):`, SUPABASE_LOCAL_BUNDLE);
+    fylDevInfo(`${LOG} Intento 1/local (${SUPABASE_LOCAL_IMPORT_MS}ms):`, SUPABASE_LOCAL_BUNDLE);
     const mod = await importWithTimeout(
       SUPABASE_LOCAL_BUNDLE,
       SUPABASE_LOCAL_IMPORT_MS
     );
     if (mod?.createClient) {
-      console.info(`${LOG} OK: createClient desde bundle local (mismo origen).`);
+      fylDevInfo(`${LOG} OK: createClient desde bundle local (mismo origen).`);
       globalThis.markBootStage?.("supabase.runtime.loaded", { source: "local" });
       return { createClient: mod.createClient, source: "local" };
     }
@@ -149,13 +151,13 @@ async function loadCreateClient() {
   for (let i = 0; i < SUPABASE_CDN_URLS.length; i++) {
     const url = SUPABASE_CDN_URLS[i];
     try {
-      console.info(
+      fylDevInfo(
         `${LOG} Intento CDN ${i + 1}/${SUPABASE_CDN_URLS.length} (${SUPABASE_CDN_IMPORT_MS}ms):`,
         url
       );
       const mod = await importWithTimeout(url, SUPABASE_CDN_IMPORT_MS);
       if (mod?.createClient) {
-        console.info(`${LOG} OK: createClient desde CDN (${i + 1}).`);
+        fylDevInfo(`${LOG} OK: createClient desde CDN (${i + 1}).`);
         const source = `cdn-${i + 1}`;
         globalThis.markBootStage?.("supabase.runtime.loaded", { source });
         return { createClient: mod.createClient, source };
@@ -225,7 +227,7 @@ function buildSupabaseAuthOptions() {
 await configReady;
 
 if (typeof window !== "undefined") {
-  console.info(`${LOG} Tras configReady:`, {
+  fylDevInfo(`${LOG} Tras configReady:`, {
     configProdScriptMarker: fylConfigDiagnostics.configProdScriptMarker,
     SUPABASE_URL: fylConfigDiagnostics.resolvedSupabaseUrl || "(vacío)",
     SUPABASE_ANON_KEY: fylConfigDiagnostics.resolvedAnonKeyMasked,
@@ -249,7 +251,7 @@ if (USE_SUPABASE) {
         : null;
 
     if (existingWindowClient) {
-      console.log(`${LOG} Reutilizando instancia existente en window.supabase`);
+      fylDevLog(`${LOG} Reutilizando instancia existente en window.supabase`);
       supabase = existingWindowClient;
       globalThis.markBootStage?.("supabase.client.reused", { from: "window" });
     } else if (canUseWindow && window.__FYL_SUPABASE_CLIENT_PROMISE__) {
@@ -259,7 +261,7 @@ if (USE_SUPABASE) {
     } else {
       const createClientOnce = (async () => {
         try {
-          console.log(`${LOG} Iniciando carga del runtime de Supabase…`);
+          fylDevLog(`${LOG} Iniciando carga del runtime de Supabase…`);
           const { createClient, source } = await loadCreateClient();
 
           const created = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
@@ -276,7 +278,7 @@ if (USE_SUPABASE) {
             window.supabase = created;
           }
 
-          console.info(`${LOG} Cliente createClient() creado correctamente.`);
+          fylDevInfo(`${LOG} Cliente createClient() creado correctamente.`);
           globalThis.markBootStage?.("supabase.client.ready", { source });
           return created;
         } catch (error) {

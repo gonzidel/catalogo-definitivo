@@ -2,6 +2,20 @@
 
 import { supabase } from "./supabase-client.js";
 
+/** Logs verbosos del banner/catálogo. Activar: `window.FYL_DEBUG_CATALOG = true` antes de cargar, o `?debug=catalog` en la URL. */
+function fylCatalogDebugEnabled() {
+  if (typeof window === "undefined") return false;
+  if (window.FYL_DEBUG_CATALOG === true) return true;
+  try {
+    return /(?:^|[&?])debug=catalog(?:&|$)/.test(window.location.search || "");
+  } catch (_) {
+    return false;
+  }
+}
+function fylCatalogDbg(...args) {
+  if (fylCatalogDebugEnabled()) console.log.apply(console, args);
+}
+
 let customBannerProducts = [];
 let customBannerProductsLoaded = 0; // Contador de productos mostrados
 const PRODUCTS_PER_PAGE = 10; // Cantidad de productos a cargar por página
@@ -80,7 +94,7 @@ export async function getAllUniqueTags() {
       a.localeCompare(b, 'es', { sensitivity: 'base' })
     );
 
-    console.log(`✅ Tags únicos encontrados: ${tags.length}`, tags.slice(0, 10));
+    fylCatalogDbg(`✅ Tags únicos encontrados: ${tags.length}`, tags.slice(0, 10));
     return tags;
   } catch (error) {
     console.error("❌ Error en getAllUniqueTags:", error);
@@ -92,7 +106,7 @@ export async function getAllUniqueTags() {
 // IMPORTANTE: Este banner muestra productos de TODAS las categorías (Calzado, Ropa, Lencería, Accesorios, etc.)
 export async function loadCustomBannerProducts(tagValue) {
   try {
-    console.log(`🔍 loadCustomBannerProducts llamado con tagValue: "${tagValue}"`);
+    fylCatalogDbg(`🔍 loadCustomBannerProducts llamado con tagValue: "${tagValue}"`);
     
     // Cargar TODOS los productos visibles de TODAS las categorías
     // No se filtra por categoría, solo por el tag especificado
@@ -104,16 +118,16 @@ export async function loadCustomBannerProducts(tagValue) {
 
     const { data: allData, error: queryError } = await query.order("FechaIngreso", { ascending: false });
     
-    console.log(`📊 Productos cargados (Mostrar=true): ${allData?.length || 0}`);
+    fylCatalogDbg(`📊 Productos cargados (Mostrar=true): ${allData?.length || 0}`);
     
     // Log para confirmar que se cargan productos de todas las categorías
     if (allData && allData.length > 0) {
       const categoriasUnicas = [...new Set(allData.map(p => p.Categoria).filter(Boolean))];
       const productosOtros = allData.filter(p => (p.Categoria || "").trim().toLowerCase() === "otros");
-      console.log(`📦 Productos cargados para banner: ${allData.length} productos de ${categoriasUnicas.length} categorías:`, categoriasUnicas);
-      console.log(`📦 Productos de categoría "Otros": ${productosOtros.length}`);
+      fylCatalogDbg(`📦 Productos cargados para banner: ${allData.length} productos de ${categoriasUnicas.length} categorías:`, categoriasUnicas);
+      fylCatalogDbg(`📦 Productos de categoría "Otros": ${productosOtros.length}`);
       if (productosOtros.length > 0) {
-        console.log(`   Ejemplos de productos "Otros":`, productosOtros.slice(0, 3).map(p => ({
+        fylCatalogDbg(`   Ejemplos de productos "Otros":`, productosOtros.slice(0, 3).map(p => ({
           Articulo: p.Articulo,
           Filtro1: p.Filtro1,
           Filtro2: p.Filtro2,
@@ -122,38 +136,38 @@ export async function loadCustomBannerProducts(tagValue) {
       }
     }
     
-    // Debug: verificar también productos con Mostrar=false para diagnosticar
-    const { data: allDataDebug } = await supabase
-      .from("catalog_public_view")
-      .select("Articulo, Descripcion, Mostrar, Filtro1, Filtro2, Filtro3")
-      .ilike("Articulo", "%F314%")
-      .limit(10);
-    
-    if (allDataDebug && allDataDebug.length > 0) {
-      console.log(`🔍 Productos F314 encontrados en catalog_public_view:`, allDataDebug);
-    } else {
-      console.warn(`⚠️ F314 NO encontrado en catalog_public_view. Esto puede deberse a:`);
-      console.warn(`   1. El producto tiene status != 'active'`);
-      console.warn(`   2. No tiene variantes activas (pv.active = true)`);
-      console.warn(`   3. No tiene stock > 0 en ningún talle`);
-      console.warn(`   4. No tiene imágenes asociadas`);
-      console.warn(`   5. El nombre del artículo no es exactamente "F314"`);
-      
-      // Intentar buscar en la tabla products directamente (solo para admins)
-      try {
-        const { data: productDirect } = await supabase
-          .from("products")
-          .select("id, name, status, created_at")
-          .ilike("name", "%F314%")
-          .limit(5);
-        
-        if (productDirect && productDirect.length > 0) {
-          console.log(`🔍 Productos F314 encontrados en tabla products:`, productDirect);
-        } else {
-          console.warn(`   Tampoco encontrado en tabla products`);
+    if (fylCatalogDebugEnabled()) {
+      const { data: allDataDebug } = await supabase
+        .from("catalog_public_view")
+        .select("Articulo, Descripcion, Mostrar, Filtro1, Filtro2, Filtro3")
+        .ilike("Articulo", "%F314%")
+        .limit(10);
+
+      if (allDataDebug && allDataDebug.length > 0) {
+        fylCatalogDbg(`🔍 Productos F314 encontrados en catalog_public_view:`, allDataDebug);
+      } else {
+        console.warn(`⚠️ F314 NO encontrado en catalog_public_view. Esto puede deberse a:`);
+        console.warn(`   1. El producto tiene status != 'active'`);
+        console.warn(`   2. No tiene variantes activas (pv.active = true)`);
+        console.warn(`   3. No tiene stock > 0 en ningún talle`);
+        console.warn(`   4. No tiene imágenes asociadas`);
+        console.warn(`   5. El nombre del artículo no es exactamente "F314"`);
+
+        try {
+          const { data: productDirect } = await supabase
+            .from("products")
+            .select("id, name, status, created_at")
+            .ilike("name", "%F314%")
+            .limit(5);
+
+          if (productDirect && productDirect.length > 0) {
+            fylCatalogDbg(`🔍 Productos F314 encontrados en tabla products:`, productDirect);
+          } else {
+            console.warn(`   Tampoco encontrado en tabla products`);
+          }
+        } catch (err) {
+          console.warn(`   No se pudo consultar tabla products directamente:`, err.message);
         }
-      } catch (err) {
-        console.warn(`   No se pudo consultar tabla products directamente:`, err.message);
       }
     }
 
@@ -163,7 +177,7 @@ export async function loadCustomBannerProducts(tagValue) {
     }
 
     if (!allData || allData.length === 0) {
-      console.log(`ℹ️ No hay productos visibles`);
+      fylCatalogDbg(`ℹ️ No hay productos visibles`);
       return [];
     }
 
@@ -172,8 +186,8 @@ export async function loadCustomBannerProducts(tagValue) {
     // Eliminar espacios extra y normalizar
     const tagValueNormalized = (tagValue || "").trim().replace(/\s+/g, ' ').toLowerCase();
     
-    console.log(`🔍 Filtrando productos con tag: "${tagValue}" (normalizado: "${tagValueNormalized}")`);
-    console.log(`📦 Total de productos a filtrar: ${allData.length}`);
+    fylCatalogDbg(`🔍 Filtrando productos con tag: "${tagValue}" (normalizado: "${tagValueNormalized}")`);
+    fylCatalogDbg(`📦 Total de productos a filtrar: ${allData.length}`);
 
     // Función helper para normalizar tags para comparación
     // Elimina espacios extra y normaliza a minúsculas
@@ -182,42 +196,41 @@ export async function loadCustomBannerProducts(tagValue) {
       return tag.toString().trim().replace(/\s+/g, ' ').toLowerCase();
     };
 
-    // Debug: buscar producto específico F314 con búsqueda más amplia
-    const productosF314 = allData.filter(i => {
-      const art = (i.Articulo || "").toString().trim().toUpperCase();
-      const desc = (i.Descripcion || "").toString().trim().toUpperCase();
-      return art.includes("F314") || desc.includes("F314") || art === "F314";
-    });
-    
-    if (productosF314.length > 0) {
-      console.log(`🔍 Productos F314 encontrados (${productosF314.length}):`);
-      productosF314.forEach(prod => {
-        console.log(`  - Articulo: "${prod.Articulo}", Descripcion: "${prod.Descripcion}"`, {
-          Filtro1: prod.Filtro1,
-          Filtro2: prod.Filtro2,
-          Filtro3: prod.Filtro3,
-          Mostrar: prod.Mostrar,
-          Filtro1_normalized: normalizeTag(prod.Filtro1),
-          Filtro2_normalized: normalizeTag(prod.Filtro2),
-          Filtro3_normalized: normalizeTag(prod.Filtro3),
-          tagBuscado: tagValueNormalized,
-          coincide: normalizeTag(prod.Filtro1) === tagValueNormalized || 
-                   normalizeTag(prod.Filtro2) === tagValueNormalized || 
-                   normalizeTag(prod.Filtro3) === tagValueNormalized
-        });
+    if (fylCatalogDebugEnabled()) {
+      const productosF314 = allData.filter(i => {
+        const art = (i.Articulo || "").toString().trim().toUpperCase();
+        const desc = (i.Descripcion || "").toString().trim().toUpperCase();
+        return art.includes("F314") || desc.includes("F314") || art === "F314";
       });
-    } else {
-      console.warn(`⚠️ Producto F314 NO encontrado en los productos visibles`);
-      console.warn(`   Esto puede indicar que:`);
-      console.warn(`   1. El producto no tiene Mostrar=true en la base de datos`);
-      console.warn(`   2. El artículo no se llama exactamente "F314" (puede tener espacios o formato diferente)`);
-      console.warn(`   3. El producto no está en la vista catalog_public_view`);
-      
-      // Intentar buscar en todos los productos sin filtro de Mostrar
-      console.log(`🔍 Intentando buscar F314 en TODOS los productos (sin filtro Mostrar)...`);
+
+      if (productosF314.length > 0) {
+        fylCatalogDbg(`🔍 Productos F314 encontrados (${productosF314.length}):`);
+        productosF314.forEach(prod => {
+          fylCatalogDbg(`  - Articulo: "${prod.Articulo}", Descripcion: "${prod.Descripcion}"`, {
+            Filtro1: prod.Filtro1,
+            Filtro2: prod.Filtro2,
+            Filtro3: prod.Filtro3,
+            Mostrar: prod.Mostrar,
+            Filtro1_normalized: normalizeTag(prod.Filtro1),
+            Filtro2_normalized: normalizeTag(prod.Filtro2),
+            Filtro3_normalized: normalizeTag(prod.Filtro3),
+            tagBuscado: tagValueNormalized,
+            coincide: normalizeTag(prod.Filtro1) === tagValueNormalized ||
+                     normalizeTag(prod.Filtro2) === tagValueNormalized ||
+                     normalizeTag(prod.Filtro3) === tagValueNormalized
+          });
+        });
+      } else {
+        console.warn(`⚠️ Producto F314 NO encontrado en los productos visibles`);
+        console.warn(`   Esto puede indicar que:`);
+        console.warn(`   1. El producto no tiene Mostrar=true en la base de datos`);
+        console.warn(`   2. El artículo no se llama exactamente "F314" (puede tener espacios o formato diferente)`);
+        console.warn(`   3. El producto no está en la vista catalog_public_view`);
+        fylCatalogDbg(`🔍 Intentando buscar F314 en TODOS los productos (sin filtro Mostrar)...`);
+      }
     }
 
-    console.log(`🔍 Filtrando productos por tag normalizado: "${tagValueNormalized}"`);
+    fylCatalogDbg(`🔍 Filtrando productos por tag normalizado: "${tagValueNormalized}"`);
     
     // Usar la misma lógica que el buscador: buscar con includes() en lugar de comparación exacta
     // IMPORTANTE: Filtro3 puede contener múltiples tags separados por comas (ej: "Colegio, Lona")
@@ -249,24 +262,23 @@ export async function loadCustomBannerProducts(tagValue) {
       
       if (match) {
         const categoria = i.Categoria || 'Sin categoría';
-        console.log(`✅ Producto ${i.Articulo} (${categoria}) coincide: Filtro1="${i.Filtro1 || ''}", Filtro2="${i.Filtro2 || ''}", Filtro3="${i.Filtro3 || ''}"`);
+        fylCatalogDbg(`✅ Producto ${i.Articulo} (${categoria}) coincide: Filtro1="${i.Filtro1 || ''}", Filtro2="${i.Filtro2 || ''}", Filtro3="${i.Filtro3 || ''}"`);
       }
       
       return match;
     });
 
-    console.log(`📊 Productos filtrados: ${filteredData.length} de ${allData.length} totales`);
+    fylCatalogDbg(`📊 Productos filtrados: ${filteredData.length} de ${allData.length} totales`);
     
     // Log específico para productos de categoría "Otros"
     const productosOtrosFiltrados = filteredData.filter(p => (p.Categoria || "").trim().toLowerCase() === "otros");
     if (productosOtrosFiltrados.length > 0) {
-      console.log(`📦 Productos de categoría "Otros" encontrados: ${productosOtrosFiltrados.length}`);
-    } else {
+      fylCatalogDbg(`📦 Productos de categoría "Otros" encontrados: ${productosOtrosFiltrados.length}`);
+    } else if (fylCatalogDebugEnabled()) {
       console.warn(`⚠️ No se encontraron productos de categoría "Otros" con el tag "${tagValue}"`);
-      // Mostrar algunos productos de "Otros" para debugging
       const productosOtrosEjemplo = allData.filter(p => (p.Categoria || "").trim().toLowerCase() === "otros").slice(0, 3);
       if (productosOtrosEjemplo.length > 0) {
-        console.log(`   Ejemplos de productos "Otros" disponibles:`, productosOtrosEjemplo.map(p => ({
+        fylCatalogDbg(`   Ejemplos de productos "Otros" disponibles:`, productosOtrosEjemplo.map(p => ({
           Articulo: p.Articulo,
           Filtro1: p.Filtro1,
           Filtro2: p.Filtro2,
@@ -276,7 +288,7 @@ export async function loadCustomBannerProducts(tagValue) {
     }
 
     if (filteredData.length === 0) {
-      console.log(`ℹ️ No hay productos con el tag "${tagValue}"`);
+      fylCatalogDbg(`ℹ️ No hay productos con el tag "${tagValue}"`);
       return [];
     }
 
@@ -342,7 +354,7 @@ export async function loadCustomBannerProducts(tagValue) {
     }, {});
 
     customBannerProducts = Object.values(grupos);
-    console.log(`✅ Productos del banner personalizado cargados: ${customBannerProducts.length}`);
+    fylCatalogDbg(`✅ Productos del banner personalizado cargados: ${customBannerProducts.length}`);
 
     return customBannerProducts;
   } catch (error) {
@@ -709,7 +721,7 @@ export async function loadAndShowCustomBanner() {
       hideCustomBanner();
       return;
     }
-    console.log("🔄 Iniciando carga de banner personalizado...");
+    fylCatalogDbg("🔄 Iniciando carga de banner personalizado...");
     
     // Verificar si hay parámetro ?banner en la URL
     const urlParams = new URLSearchParams(window.location.search);
@@ -721,13 +733,13 @@ export async function loadAndShowCustomBanner() {
     if (bannerParam) {
       // Usar tag de la URL si existe
       tagValue = bannerParam.trim();
-      console.log(`📋 Usando tag de URL: "${tagValue}"`);
+      fylCatalogDbg(`📋 Usando tag de URL: "${tagValue}"`);
     } else {
       // Cargar configuración de la BD
       const config = await loadCustomBannerConfig();
       
       if (!config || !config.enabled) {
-        console.log("ℹ️ Banner personalizado no está habilitado o no hay configuración");
+        fylCatalogDbg("ℹ️ Banner personalizado no está habilitado o no hay configuración");
         hideCustomBanner();
         return;
       }
@@ -735,7 +747,7 @@ export async function loadAndShowCustomBanner() {
       tagValue = config.tag_value;
       bannerName = config.name;
       
-      console.log(`📋 Configuración del banner:`, {
+      fylCatalogDbg(`📋 Configuración del banner:`, {
         name: config.name,
         tag_value: config.tag_value,
         enabled: config.enabled
@@ -745,7 +757,7 @@ export async function loadAndShowCustomBanner() {
     // Cargar productos filtrados
     let products = await loadCustomBannerProducts(tagValue);
     
-    console.log(`📦 Productos cargados para banner: ${products.length}`);
+    fylCatalogDbg(`📦 Productos cargados para banner: ${products.length}`);
 
     // Excluir productos que ya están visibles arriba en el catálogo (evitar duplicados)
     const yaMostrados = getArticulosYaMostradosEnCatalogo();
@@ -753,19 +765,19 @@ export async function loadAndShowCustomBanner() {
       const antes = products.length;
       products = products.filter((p) => !yaMostrados.has((p.Articulo || "").trim()));
       if (antes !== products.length) {
-        console.log(`📌 Excluidos ${antes - products.length} productos ya mostrados en el catálogo`);
+        fylCatalogDbg(`📌 Excluidos ${antes - products.length} productos ya mostrados en el catálogo`);
       }
     }
     
     if (products.length === 0) {
-      console.warn("⚠️ No se encontraron productos para el banner (o todos ya están arriba)");
+      fylCatalogDbg("⚠️ No se encontraron productos para el banner (o todos ya están arriba)");
       hideCustomBanner();
       return;
     }
 
     // Enriquecer productos con información de stock/variantes si es necesario
     if (products.length > 0 && typeof window.enrichProductsWithStock === 'function') {
-      console.log("🔄 Enriqueciendo productos con información de stock...");
+      fylCatalogDbg("🔄 Enriqueciendo productos con información de stock...");
       await window.enrichProductsWithStock(products);
     }
     
@@ -774,7 +786,7 @@ export async function loadAndShowCustomBanner() {
       return;
     }
     renderCustomBanner(products, bannerName, tagValue);
-    console.log("✅ Banner personalizado renderizado exitosamente");
+    fylCatalogDbg("✅ Banner personalizado renderizado exitosamente");
   } catch (error) {
     console.error("❌ Error en loadAndShowCustomBanner:", error);
     hideCustomBanner();

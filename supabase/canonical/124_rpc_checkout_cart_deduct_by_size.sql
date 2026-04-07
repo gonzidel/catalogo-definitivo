@@ -50,18 +50,36 @@ BEGIN
   SELECT id, expires_at, dismantle_at
   INTO v_order_id, v_expires_at, v_dismantle_at
   FROM public.orders
-  WHERE customer_id = auth.uid() AND status = 'active'
-  ORDER BY created_at DESC LIMIT 1;
+  WHERE customer_id = auth.uid() AND status IN ('active', 'closing_soon')
+  ORDER BY
+    CASE WHEN status = 'active' THEN 0 WHEN status = 'closing_soon' THEN 1 ELSE 2 END,
+    created_at DESC
+  LIMIT 1;
 
   IF v_order_id IS NULL THEN
-    INSERT INTO public.orders (customer_id, status, expires_at, dismantle_at)
-    VALUES (
-      auth.uid(),
-      'active',
-      now() + interval '7 days',
-      now() + interval '14 days'
-    )
-    RETURNING id INTO v_order_id;
+    BEGIN
+      INSERT INTO public.orders (customer_id, status, expires_at, dismantle_at)
+      VALUES (
+        auth.uid(),
+        'active',
+        now() + interval '7 days',
+        now() + interval '14 days'
+      )
+      RETURNING id INTO v_order_id;
+    EXCEPTION
+      WHEN unique_violation THEN
+        SELECT id, expires_at, dismantle_at
+        INTO v_order_id, v_expires_at, v_dismantle_at
+        FROM public.orders
+        WHERE customer_id = auth.uid() AND status IN ('active', 'closing_soon')
+        ORDER BY
+          CASE WHEN status = 'active' THEN 0 WHEN status = 'closing_soon' THEN 1 ELSE 2 END,
+          created_at DESC
+        LIMIT 1;
+        IF v_order_id IS NULL THEN
+          RAISE;
+        END IF;
+    END;
   ELSE
     IF v_expires_at IS NULL OR v_dismantle_at IS NULL THEN
       UPDATE public.orders
@@ -195,15 +213,19 @@ BEGIN
     SELECT price INTO v_item_price FROM public.product_variants WHERE id = r.variant_id;
     v_item_price := COALESCE(NULLIF(r.price_snapshot, 0), v_item_price, r.price_snapshot, 0);
 
-    INSERT INTO public.order_items (order_id, variant_id, product_name, color, size, quantity, price_snapshot, imagen, status)
-    VALUES (v_order_id, r.variant_id, r.product_name, r.color, r.size, v_qty, v_item_price, r.imagen, 'reserved')
-    RETURNING id INTO v_order_item_id;
-
+    -- Una línea por almacén: general = reserved; venta-público = waiting (cola en local / campana).
     IF v_qty_from_general > 0 AND v_general_id IS NOT NULL THEN
+      INSERT INTO public.order_items (order_id, variant_id, product_name, color, size, quantity, price_snapshot, imagen, status)
+      VALUES (v_order_id, r.variant_id, r.product_name, r.color, r.size, v_qty_from_general, v_item_price, r.imagen, 'reserved')
+      RETURNING id INTO v_order_item_id;
       INSERT INTO public.order_item_stock_sources (order_item_id, warehouse_id, qty)
       VALUES (v_order_item_id, v_general_id, v_qty_from_general);
     END IF;
+
     IF v_qty_from_venta > 0 AND v_venta_id IS NOT NULL THEN
+      INSERT INTO public.order_items (order_id, variant_id, product_name, color, size, quantity, price_snapshot, imagen, status)
+      VALUES (v_order_id, r.variant_id, r.product_name, r.color, r.size, v_qty_from_venta, v_item_price, r.imagen, 'waiting')
+      RETURNING id INTO v_order_item_id;
       INSERT INTO public.order_item_stock_sources (order_item_id, warehouse_id, qty)
       VALUES (v_order_item_id, v_venta_id, v_qty_from_venta);
     END IF;
@@ -224,6 +246,6 @@ END;
 $$;
 
 COMMENT ON FUNCTION public.rpc_checkout_cart() IS
-  'Checkout: descuenta stock por talle (variant_size_warehouse_stock) o por variante (variant_warehouse_stock). Aplicar 124 si al hacer pedido desde el dashboard el stock no se descontaba.';
+  'Checkout: descuenta stock por talle o variante (general primero, luego venta-público). Crea líneas separadas: general=reserved, venta-público=waiting; order_item_stock_sources una fila por línea.';
 
 SELECT pg_notify('pgrst', 'reload schema');

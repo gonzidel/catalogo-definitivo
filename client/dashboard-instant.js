@@ -1,11 +1,27 @@
+import { fylDevLog } from "../scripts/config.js";
 import { supabase } from "../scripts/supabase-client.js";
 import { normalizeSize } from "../scripts/utils/size-normalizer.js";
 import { hasInitialProfileComplete } from "./auth-helper.js";
 import { maybeShowProfileOnboardingModal } from "../scripts/profile-onboarding-modal.js";
+import { parseARSNumber, resolveOrderItemUnitPrice } from "../scripts/utils/price.js";
 import {
   getTransportesDisponibles,
   guardarTransporteElegido,
 } from "./transportes-data.js";
+import { fylAnalytics } from "../scripts/analytics.js";
+
+let fylDashboardViewOnce = false;
+
+function fylDashboardCartLinesForGa(items) {
+  return (items || []).map((it) => ({
+    articulo: it.product_name,
+    color: it.color,
+    talle: it.size,
+    cantidad: it.quantity ?? it.qty,
+    precio: it.price_snapshot,
+    id: it.variant_id || it.id,
+  }));
+}
 
 const FALLBACK_IMAGE =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120' viewBox='0 0 120 120'%3E%3Crect width='120' height='120' rx='12' fill='%23f2f2f2'/%3E%3Cpath d='M24 88L44 62l12 14 16-22 24 34H24z' fill='none' stroke='%23cd844d' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='46' cy='42' r='10' fill='%23cd844d' opacity='0.35'/%3E%3Ctext x='60' y='108' fill='%23777' font-family='Poppins,Arial,sans-serif' font-size='12' text-anchor='middle'%3ESin imagen%3C/text%3E%3C/svg%3E";
@@ -40,6 +56,15 @@ function abbreviateColorLabel(raw) {
 
 // PDP real del catálogo usa hash route: index.html#/pdp/<SKU>
 const __variantSkuCache = new Map(); // variant_id -> sku (string)
+/** Precio de catálogo por variante (para corregir price_snapshot corrupto en pedidos) */
+const __variantPriceCache = new Map(); // variant_id string -> raw price from DB
+
+function orderItemUnitForDisplay(item) {
+  const vid =
+    item?.variant_id != null ? String(item.variant_id).trim() : "";
+  const pvRaw = vid ? __variantPriceCache.get(vid) : undefined;
+  return resolveOrderItemUnitPrice(item?.price_snapshot, pvRaw);
+}
 
 function buildCatalogPdpHrefFromSku(sku) {
   if (!sku) return "";
@@ -61,12 +86,14 @@ function buildCatalogHrefFromVariantOrName(variantId, productName) {
 async function ensureVariantSkusLoaded(variantIds = []) {
   if (!supabase) return;
   const ids = Array.from(new Set((variantIds || []).map((v) => String(v || "").trim()).filter(Boolean)));
-  const missing = ids.filter((id) => !__variantSkuCache.has(id));
+  const missing = ids.filter(
+    (id) => !__variantSkuCache.has(id) || !__variantPriceCache.has(id)
+  );
   if (missing.length === 0) return;
 
   const { data, error } = await supabase
     .from("product_variants")
-    .select("id, sku")
+    .select("id, sku, price")
     .in("id", missing);
 
   if (error) {
@@ -76,7 +103,14 @@ async function ensureVariantSkusLoaded(variantIds = []) {
   (data || []).forEach((row) => {
     const id = row?.id != null ? String(row.id).trim() : "";
     const sku = row?.sku != null ? String(row.sku).trim() : "";
-    if (id) __variantSkuCache.set(id, sku || "");
+    if (id) {
+      __variantSkuCache.set(id, sku || "");
+      if (row?.price != null && row.price !== "") {
+        __variantPriceCache.set(id, row.price);
+      } else {
+        __variantPriceCache.set(id, null);
+      }
+    }
   });
 }
 
@@ -89,7 +123,7 @@ function normalizeGuestCartStorageItems(items = []) {
     const rawSize = item?.talle || item?.size || "Talle único";
     const talle = normalizeSize(rawSize) || String(rawSize || "Talle único").trim();
     const qty = Number(item?.cantidad ?? item?.quantity ?? item?.qty ?? 0) || 0;
-    const price = Number(item?.precio ?? item?.price_snapshot ?? 0) || 0;
+    const price = parseARSNumber(item?.precio ?? item?.price_snapshot ?? 0);
     if (qty <= 0) return;
 
     const key = `${articulo}__${color}__${talle}`;
@@ -129,7 +163,7 @@ let currentCartId = null;
 let currentCartItems = [];
 let ordersRealtimeSubscription = null;
 
-console.log("ðŸ“¦ dashboard-instant.js cargado (orders2)");
+fylDevLog("dashboard-instant.js cargado");
 
 function hideLoader() {
   const loader = document.getElementById("loader");
@@ -340,7 +374,7 @@ async function getOffersAndPromotionsForItems(items) {
     
     for (const item of itemsInPromo) {
       const qty = Number(item.quantity || item.qty || 0);
-      const price = Number(item.price_snapshot || item.variantInfo?.price || 0);
+      const price = parseARSNumber(item.price_snapshot ?? item.variantInfo?.price ?? 0);
       totalQuantity += qty;
       totalPrice += qty * price;
     }
@@ -719,7 +753,7 @@ async function attachAlternativasHandlers(userId) {
             }
           },
           onCerrar: () => {
-            console.log("Modal de alternativas cerrado");
+            fylDevLog("Modal de alternativas cerrado");
           },
         });
       } catch (error) {
@@ -1387,7 +1421,7 @@ async function fetchCustomerProfileRow() {
   if (!currentUserId) return null;
   const { data, error } = await supabase
     .from("customers")
-    .select("full_name, avatar_url, email")
+    .select("full_name, email")
     .eq("id", currentUserId)
     .maybeSingle();
   if (error) {
@@ -1867,6 +1901,48 @@ async function submitCurrentCart() {
       return;
     }
 
+    try {
+      if (fylAnalytics.isReady()) {
+        const lines = fylDashboardCartLinesForGa(currentCartItems);
+        const gaItems = fylAnalytics.buildCartItemsFromLines(lines);
+        const val = gaItems.reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.quantity) || 0), 0);
+        fylAnalytics.ecommerceEvent("begin_checkout", { currency: "ARS", value: val, items: gaItems });
+      }
+    } catch (_e) {}
+
+    try {
+      const skusArray = Array.isArray(currentCartItems)
+        ? currentCartItems
+            .map((item) =>
+              String(
+                item?.sku ||
+                item?.variant_id ||
+                item?.articulo ||
+                item?.product_name ||
+                ""
+              ).trim()
+            )
+            .filter(Boolean)
+        : [];
+      const totalRaw = Array.isArray(currentCartItems)
+        ? currentCartItems.reduce((sum, item) => {
+            const qty = Number(item?.cantidad ?? item?.quantity ?? item?.qty ?? 0) || 0;
+            const unit = Number(item?.precio ?? item?.price_snapshot ?? item?.price ?? 0) || 0;
+            return sum + qty * unit;
+          }, 0)
+        : 0;
+      const total = Number.isFinite(totalRaw) ? totalRaw : 0;
+
+      if (typeof fbq === "function") {
+        fbq("track", "InitiateCheckout", {
+          content_ids: skusArray,
+          content_type: "product",
+          value: total,
+          currency: "ARS",
+        });
+      }
+    } catch (_e) {}
+
     const submitBtn = document.getElementById("submit-cart-btn");
     if (submitBtn) submitBtn.disabled = true;
 
@@ -1877,6 +1953,15 @@ async function submitCurrentCart() {
       if (submitBtn) submitBtn.disabled = false;
       return;
     }
+
+    try {
+      if (fylAnalytics.isReady()) {
+        const lines = fylDashboardCartLinesForGa(currentCartItems);
+        const gaItems = fylAnalytics.buildCartItemsFromLines(lines);
+        const val = gaItems.reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.quantity) || 0), 0);
+        fylAnalytics.event("order_submitted", { value: val, item_count: gaItems.length });
+      }
+    } catch (_e) {}
 
     if (window.showToast) {
       window.showToast("Pedido enviado. Lo verás en 'Mi pedido activo'.", "success");
@@ -1930,7 +2015,7 @@ function openPreviousOrdersModal() {
   }
   
   modalContent.innerHTML = `<p style="text-align: center; color: #666; padding: 40px;">Cargando pedidos anteriores...</p>`;
-  console.log("ðŸ“‹ Cargando pedidos anteriores para usuario:", currentUserId);
+  fylDevLog("ðŸ“‹ Cargando pedidos anteriores para usuario:", currentUserId);
   loadClosedOrders(currentUserId);
 }
 
@@ -1988,12 +2073,12 @@ function setupModalControls() {
     }
   });
   
-  console.log("âœ… Controles del modal configurados");
+  fylDevLog("âœ… Controles del modal configurados");
 }
 
 function setupHistoryControls() {
   if (historyControlsInitialized) {
-    console.log("â„¹ï¸ setupHistoryControls ya inicializado, omitiendo...");
+    fylDevLog("â„¹ï¸ setupHistoryControls ya inicializado, omitiendo...");
     return;
   }
 
@@ -2009,18 +2094,18 @@ function setupHistoryControls() {
   }
 
   historyControlsInitialized = true;
-  console.log("âœ… Configurando controles del historial");
+  fylDevLog("âœ… Configurando controles del historial");
 
   // Configurar controles del modal (esto solo se hace una vez)
   setupModalControls();
 
   // Al hacer clic en "Ver pedidos anteriores", abrir el modal
   toggleBtn.addEventListener("click", () => {
-    console.log("ðŸ”˜ BotÃ³n 'Ver pedidos anteriores' presionado");
+    fylDevLog("ðŸ”˜ BotÃ³n 'Ver pedidos anteriores' presionado");
     openPreviousOrdersModal();
   });
   
-  console.log("âœ… Event listener agregado al botÃ³n 'Ver pedidos anteriores'");
+  fylDevLog("âœ… Event listener agregado al botÃ³n 'Ver pedidos anteriores'");
 }
 
 /** Abre/cierra el bottom-sheet de cuenta (#account-trigger / #dash-account-sheet). Antes no tenía listeners. */
@@ -2087,7 +2172,7 @@ function setupAccountSheetControls() {
 // FunciÃ³n para cancelar un producto individual del pedido
 async function cancelOrderItem(itemId) {
   try {
-    console.log("ðŸ”„ Cancelando producto del pedido:", itemId);
+    fylDevLog("ðŸ”„ Cancelando producto del pedido:", itemId);
 
     // Obtener estado actual del item para decidir la acciÃ³n y capturar el order_id
     const { data: itemRow, error: itemErr } = await supabase
@@ -2107,7 +2192,7 @@ async function cancelOrderItem(itemId) {
     if ((itemRow.status || '').toLowerCase() === 'missing') {
       // Si el item fue marcado faltante por el admin, eliminarlo directamente
       const qty = Number(itemRow.quantity || 0) || 0;
-      const price = Number(itemRow.price_snapshot || 0) || 0;
+      const price = parseARSNumber(itemRow.price_snapshot || 0);
       const itemTotal = qty * price;
 
       const { error: delErr } = await supabase
@@ -2158,7 +2243,7 @@ async function cancelOrderItem(itemId) {
       return;
     }
 
-    console.log("âœ… Producto cancelado correctamente:", data);
+    fylDevLog("âœ… Producto cancelado correctamente:", data);
 
     // Si el pedido queda sin items, eliminar el pedido
     await maybeDeleteEmptyOrder(orderId);
@@ -2191,7 +2276,7 @@ async function maybeDeleteEmptyOrder(orderId) {
       .neq("status", "cancelled");
     if (!countErr && (Number(count) || 0) === 0) {
       const { error: delErr } = await supabase.rpc("rpc_delete_empty_order", { p_order_id: orderId });
-      console.log(`ðŸ—‘ï¸ Pedido ${orderId} eliminado por quedar sin productos`);
+      fylDevLog(`ðŸ—‘ï¸ Pedido ${orderId} eliminado por quedar sin productos`);
     }
   } catch (e) {
     console.warn("âš ï¸ No se pudo verificar/eliminar pedido vacÃ­o:", e?.message || e);
@@ -2326,7 +2411,7 @@ async function closeOrder(orderId) {
       }
     }
 
-    console.log("ðŸ”„ Cerrando pedido:", orderId);
+    fylDevLog("ðŸ”„ Cerrando pedido:", orderId);
 
     const { error } = await supabase.rpc("rpc_close_order", {
       p_order_id: orderId,
@@ -2338,7 +2423,7 @@ async function closeOrder(orderId) {
       return;
     }
 
-    console.log("âœ… Pedido cerrado correctamente");
+    fylDevLog("âœ… Pedido cerrado correctamente");
 
     await loadOrders(currentUserId);
 
@@ -2703,13 +2788,13 @@ async function loadCart(userId) {
             submitBtn.style.opacity = "0.5";
             submitBtn.style.cursor = "not-allowed";
             submitBtn.title = "No puedes enviar el pedido mientras haya productos agotados. Elimina los productos agotados para continuar.";
-            console.log("ðŸ”´ BotÃ³n de envÃ­o deshabilitado - hay productos agotados");
+            fylDevLog("ðŸ”´ BotÃ³n de envÃ­o deshabilitado - hay productos agotados");
       } else {
             submitBtn.disabled = false;
             submitBtn.style.opacity = "1";
             submitBtn.style.cursor = "pointer";
             submitBtn.title = "";
-            console.log("ðŸŸ¢ Botones de carrito visibles y habilitados");
+            fylDevLog("ðŸŸ¢ Botones de carrito visibles y habilitados");
           }
         }
         
@@ -2732,7 +2817,7 @@ async function loadCart(userId) {
     const totalPrice = enrichedItems.reduce((sum, item) => {
       const qty = Number(item.quantity ?? item.qty ?? 0);
       // Preferir precio actual de la variante para que el total sea siempre cantidad × precio unitario actual
-      const price = Number(item.variantInfo?.price ?? item.price_snapshot ?? 0) || 0;
+      const price = parseARSNumber(item.variantInfo?.price ?? item.price_snapshot ?? 0);
       return sum + (Number.isFinite(qty) && Number.isFinite(price) ? qty * price : 0);
     }, 0);
 
@@ -2744,7 +2829,7 @@ async function loadCart(userId) {
         
         const qty = Number(item.quantity ?? item.qty ?? 0) || 0;
         // Preferir precio actual de la variante para que Total = cantidad × precio unitario correcto
-        let price = Number(item.variantInfo?.price ?? item.price_snapshot ?? 0) || 0;
+        let price = parseARSNumber(item.variantInfo?.price ?? item.price_snapshot ?? 0);
         let originalPrice = null;
         
         if (promoText) {
@@ -2892,7 +2977,7 @@ async function loadCart(userId) {
         talle: item.size,
         cantidad: Number(item.quantity ?? item.qty ?? 0) || 0,
         precio:
-          Number(item.price_snapshot ?? item.variantInfo?.price ?? 0) || 0,
+          parseARSNumber(item.price_snapshot ?? item.variantInfo?.price ?? 0),
         imagen: item.imagen || item.resolvedImage || null,
         descripcion: null,
         variant_id: item.variant_id || item.variantInfo?.id || null,
@@ -2977,16 +3062,31 @@ async function loadOrders(userId) {
       console.warn("rpc_orders_daily_maintenance:", e?.message || e);
     }
 
-    // Cargar pedidos activos y cerrados (excluir enviados y expirados)
-    // Los pedidos "closed" aparecerán con aviso "En preparación"
-    const { data: orders, error } = await supabase
+    // Mi pedido: solo un pedido abierto (active / closing_soon). "closed" va al historial (sent + closed).
+    const { data: ordersRaw, error } = await supabase
       .from("orders")
       .select(
         "id, order_number, status, total_amount, created_at, updated_at, expires_at, dismantle_at, order_items(id, product_name, color, size, quantity, price_snapshot, imagen, status, variant_id)"
       )
       .eq("customer_id", userId)
-      .in("status", ["active", "closing_soon", "closed"])
+      .in("status", ["active", "closing_soon"])
       .order("created_at", { ascending: false });
+
+    const statusRank = (s) => {
+      const x = String(s || "").toLowerCase().trim();
+      if (x === "active") return 0;
+      if (x === "closing_soon") return 1;
+      return 2;
+    };
+    const orders = (ordersRaw || [])
+      .slice()
+      .sort((a, b) => {
+        const ra = statusRank(a.status);
+        const rb = statusRank(b.status);
+        if (ra !== rb) return ra - rb;
+        return new Date(b.created_at) - new Date(a.created_at);
+      })
+      .slice(0, 1);
 
       if (error) {
         ordersSection.innerHTML = `
@@ -3016,27 +3116,26 @@ async function loadOrders(userId) {
     }
     await ensureVariantSkusLoaded(allVariantIds);
 
-    // Precios: si vienen en "miles abreviados" (ej. 18 = $18.000, 16.5 = $16.500), convertir a pesos para cálculo y visual
-    function normalizeOrderPrice(p) {
-      const n = Number(p) || 0;
-      if (n > 0 && n < 1000) return n * 1000;
-      return n;
-    }
     function formatOrderPrice(num) {
-      return "$" + Math.round(normalizeOrderPrice(num)).toLocaleString("es-AR", { maximumFractionDigits: 0 });
+      return (
+        "$" +
+        Math.round(Number(num) || 0).toLocaleString("es-AR", {
+          maximumFractionDigits: 0,
+        })
+      );
     }
 
     const ordersHtml = await Promise.all(orders.map(async (order) => {
         const items = order.order_items || [];
         const orderStatus = (order.status || "").toLowerCase().trim();
         const isActive = orderStatus === "active";
-        const isClosed = orderStatus === "closed";  // En preparación
+        const isClosingSoon = orderStatus === "closing_soon";
         
         // Calcular total excluyendo items faltantes (con precios normalizados)
         const validItems = items.filter(item => item.status !== 'missing');
         const total = validItems.reduce((sum, item) => {
           const qty = Number(item.quantity || 0) || 0;
-          const price = normalizeOrderPrice(item.price_snapshot || 0);
+          const price = orderItemUnitForDisplay(item);
           return sum + (qty * price);
         }, 0);
         
@@ -3047,14 +3146,20 @@ async function loadOrders(userId) {
         let statusLabel = "Activo";
         let statusStyle = "background:#e6f4ea; color:#1b5e20;";
         
-        if (isClosed) {
-          statusLabel = "En preparación";
-          statusStyle = "background:#fff3cd; color:#856404;";
+        if (isClosingSoon) {
+          statusLabel = "Cierre próximo";
+          statusStyle = "background:#fff4e0; color:#b45309;";
         } else if (isActive) {
           statusLabel = "Activo";
           statusStyle = "background:#e6f4ea; color:#1b5e20;";
-        }        const visibleItems = items.filter((item) => item.status !== "cancelled");
+        }
+        const visibleItems = items.filter((item) => item.status !== "cancelled");
         const normStatus = (s) => (String(s || "").toLowerCase().trim());
+        /** Espera (waiting) es solo interno; el cliente ve todo como reserva. */
+        const clientVisibleStatus = (s) => {
+          const n = normStatus(s);
+          return n === "waiting" ? "reserved" : n;
+        };
         const missingItems = visibleItems.filter((item) => normStatus(item.status) === "missing");
         const itemsForGroups = visibleItems.filter((item) => normStatus(item.status) !== "missing");
 
@@ -3072,18 +3177,19 @@ async function loadOrders(userId) {
             const productName = base.product_name || "Producto";
             const color = abbreviateColorLabel(base.color || "Color unico");
             const totalQty = group.reduce((sum, g) => sum + (Number(g.quantity || 0) || 0), 0);
-            const unitPrice = normalizeOrderPrice(base.price_snapshot || 0);
             const lineTotal = group.reduce((sum, g) => {
               const qty = Number(g.quantity || 0) || 0;
-              const price = normalizeOrderPrice(g.price_snapshot || 0);
+              const price = orderItemUnitForDisplay(g);
               return sum + qty * price;
             }, 0);
+            const unitPrice =
+              totalQty > 0 ? lineTotal / totalQty : orderItemUnitForDisplay(base);
 
             // Agrupar por combinación talla + estado para mostrar cada una como sublínea independiente
             const sizeStatusMap = new Map();
             group.forEach((g) => {
               const size = g.size || "Unico";
-              const st = normStatus(g.status);
+              const st = clientVisibleStatus(g.status);
               const key = `${size}|${st || "reserved"}`;
               const qty = Number(g.quantity || 0) || 0;
               if (!sizeStatusMap.has(key)) {
@@ -3098,8 +3204,8 @@ async function loadOrders(userId) {
               if (!Number.isNaN(na) && !Number.isNaN(nb) && na !== nb) return na - nb;
               const sa = String(a.size), sb = String(b.size);
               if (sa !== sb) return sa.localeCompare(sb);
-              // Ordenar estados de forma consistente: picked, waiting, reserved, missing, otros
-              const order = { picked: 0, waiting: 1, reserved: 2, missing: 3 };
+              // Ordenar estados: apartado, reserva (incluye ex-waiting), sin stock
+              const order = { picked: 0, reserved: 1, missing: 2 };
               const ra = order[a.status] ?? 99;
               const rb = order[b.status] ?? 99;
               return ra - rb;
@@ -3144,13 +3250,6 @@ async function loadOrders(userId) {
                   info: "Apartado: el producto ya se encuentra en su pedido.",
                 };
               }
-              if (st === "waiting") {
-                return {
-                  className: "item-row__status--st-waiting",
-                  text: "Espera",
-                  info: "Estamos preparando tu pedido. El vendedor confirmará estas unidades.",
-                };
-              }
               if (st === "missing") {
                 return {
                   className: "item-row__status--st-missing",
@@ -3167,14 +3266,12 @@ async function loadOrders(userId) {
             }
 
             // Estado principal del grupo (se muestra en la fila principal)
-            const groupStatuses = new Set(group.map((g) => normStatus(g.status)));
+            const groupStatuses = new Set(group.map((g) => clientVisibleStatus(g.status)));
             let mainStatus = "reserved";
             if (groupStatuses.size === 1) {
               mainStatus = groupStatuses.values().next().value || "reserved";
             } else if (groupStatuses.has("reserved")) {
               mainStatus = "reserved";
-            } else if (groupStatuses.has("waiting")) {
-              mainStatus = "waiting";
             } else if (groupStatuses.has("picked")) {
               mainStatus = "picked";
             } else if (groupStatuses.has("missing")) {
@@ -3233,7 +3330,7 @@ async function loadOrders(userId) {
             const size = m.size || "Unico";
             const sizeLabel = String(m.size || "").trim();
             const qty = Number(m.quantity || 0) || 1;
-            const unitPrice = normalizeOrderPrice(m.price_snapshot || 0);
+            const unitPrice = orderItemUnitForDisplay(m);
             const lineTotal = qty * unitPrice;
             const normSize = sizeLabel
               .toLowerCase()
@@ -3304,7 +3401,10 @@ async function loadOrders(userId) {
         const totalUnits = visibleItems.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
         const MIN_UNITS_TO_FINALIZE = 4;
         const allPickedForOrder = visibleItems.length > 0 && visibleItems.every((item) => (item.status || "").toLowerCase() === "picked");
-        const hasReservedInOrder = visibleItems.some((item) => (item.status || "").toLowerCase() === "reserved");
+        const hasReservedInOrder = visibleItems.some((item) => {
+          const s = (item.status || "").toLowerCase();
+          return s === "reserved" || s === "waiting";
+        });
         const hasMissingItems = missingItems.length > 0;
         // Regla UX: 4+ productos habilita, y los items "reservados" no bloquean.
         const canFinalize = totalUnits >= MIN_UNITS_TO_FINALIZE && !hasMissingItems && (allPickedForOrder || hasReservedInOrder);
@@ -3320,31 +3420,23 @@ async function loadOrders(userId) {
         }
 
         return `
-          <div class="dash-order order-item" data-order-id="${order.id}" data-order-closed="${isClosed ? 'true' : 'false'}">
+          <div class="dash-order order-item" data-order-id="${order.id}" data-order-closed="false">
             <div class="dash-order__head--compact dash-order__head--summary">
               <div class="dash-order__head-left">
                 <div class="dash-order__title">📦 Mi pedido</div>
-                <span class="dash-order-header-chip dash-order-header-chip--state ${isClosed ? 'dash-order-header-chip--preparing' : ''}">${isClosed ? 'Preparando pedido' : getOrderStatusSummary(visibleItems)}</span>
+                <span class="dash-order-header-chip dash-order-header-chip--state">${getOrderStatusSummary(visibleItems)}</span>
               </div>
               <div class="dash-order__head-right">
-                ${!isClosed ? `<span class="dash-order-header-chip dash-order-header-chip--days" title="Quedan ${daysRemaining} días para cerrar el pedido (14 días desde la creación)">${daysRemaining} días</span>` : ''}
+                <span class="dash-order-header-chip dash-order-header-chip--days" title="Quedan ${daysRemaining} días para cerrar el pedido (14 días desde la creación)">${daysRemaining} días</span>
                 ${
-                  isActive
+                  isActive || isClosingSoon
                     ? `<div class="dash-order-header-menu-wrap">
                          <button type="button" class="dash-order-header-kebab" aria-label="Opciones del pedido" aria-haspopup="true" aria-expanded="false">…</button>
                          <div class="dash-order-header-popover" role="menu" aria-hidden="true">
                            <button type="button" class="dash-order-header-menuitem" data-cancel-entire-order="${order.id}">Cancelar pedido</button>
                          </div>
                        </div>`
-                    : isClosed
-                      ? `<div class="dash-order-header-menu-wrap">
-                           <button type="button" class="dash-order-header-kebab" aria-label="Opciones del pedido" aria-haspopup="true" aria-expanded="false">…</button>
-                           <div class="dash-order-header-popover" role="menu" aria-hidden="true">
-                             <button type="button" class="dash-order-header-menuitem" data-modify-order="${order.id}">Modificar pedido</button>
-                             <a class="dash-order-header-menuitem" href="${WHATSAPP_ENVIOS_HREF}" target="_blank" rel="noopener noreferrer">Contactar</a>
-                           </div>
-                         </div>`
-                      : `<span class="dash-order-header-kebab" aria-hidden="true">…</span>`
+                    : `<span class="dash-order-header-kebab" aria-hidden="true">…</span>`
                 }
               </div>
             </div>
@@ -3354,8 +3446,7 @@ async function loadOrders(userId) {
                 <div class="dash-order__number">Pedido #${orderDisplayNumber}</div>
                 <div class="dash-order__total-line">Total: ${formatOrderPrice(total)}</div>
               </div>
-              ${isActive ? `<div class="dash-order__cta"><div class="dash-order-finalize-wrap"><button type="button" class="btn btn-finalize-order close-order-btn ${finalizeBtnClass}" data-order-id="${order.id}" data-order-items-count="${totalUnits}" data-all-picked="${allPickedForOrder ? "true" : "false"}" data-has-reserved="${hasReservedInOrder ? "true" : "false"}" data-has-missing-items="${hasMissingItems ? "true" : "false"}" data-finalize-title="${(finalizeTitle || "").replace(/"/g, "&quot;")}" ${canFinalize ? "" : (totalUnits < MIN_UNITS_TO_FINALIZE ? "disabled" : "")} ${finalizeTitle ? `title="${finalizeTitle.replace(/"/g, "&quot;")}"` : ""}>Finalizar pedido</button><div class="dash-order-finalize-tooltip" id="finalize-tooltip-${order.id}" role="tooltip" aria-hidden="true"></div></div></div>` : ""}
-              ${isClosed ? `<div class="dash-order__cta"><button type="button" class="dash-order-modify-link" data-order-id="${order.id}">Modificar pedido</button></div>` : ""}
+              ${isActive || isClosingSoon ? `<div class="dash-order__cta"><div class="dash-order-finalize-wrap"><button type="button" class="btn btn-finalize-order close-order-btn ${finalizeBtnClass}" data-order-id="${order.id}" data-order-items-count="${totalUnits}" data-all-picked="${allPickedForOrder ? "true" : "false"}" data-has-reserved="${hasReservedInOrder ? "true" : "false"}" data-has-missing-items="${hasMissingItems ? "true" : "false"}" data-finalize-title="${(finalizeTitle || "").replace(/"/g, "&quot;")}" ${canFinalize ? "" : (totalUnits < MIN_UNITS_TO_FINALIZE ? "disabled" : "")} ${finalizeTitle ? `title="${finalizeTitle.replace(/"/g, "&quot;")}"` : ""}>Finalizar pedido</button><div class="dash-order-finalize-tooltip" id="finalize-tooltip-${order.id}" role="tooltip" aria-hidden="true"></div></div></div>` : ""}
             </div>
             <div class="dash-divider"></div>
             <div class="dash-order__sub">Productos del pedido (${totalUnits})</div>
@@ -3872,7 +3963,7 @@ async function loadClosedOrders(userId) {
   }
 
   try {
-    console.log("ðŸ“‹ Buscando pedidos cerrados/enviados para usuario:", userId);
+    fylDevLog("ðŸ“‹ Buscando pedidos cerrados/enviados para usuario:", userId);
     
     // Primero, verificar todos los pedidos del usuario para depuraciÃ³n
     const { data: allOrders, error: allOrdersError } = await supabase
@@ -3883,9 +3974,9 @@ async function loadClosedOrders(userId) {
     if (allOrdersError) {
       console.error("âŒ Error obteniendo todos los pedidos:", allOrdersError);
     } else if (allOrders) {
-      console.log("ðŸ“‹ Todos los pedidos del usuario:", allOrders.length, "pedidos encontrados");
+      fylDevLog("ðŸ“‹ Todos los pedidos del usuario:", allOrders.length, "pedidos encontrados");
       allOrders.forEach(o => {
-        console.log(`  - Pedido ${o.order_number || o.id.substring(0, 8)}: estado="${o.status}", customer_id="${o.customer_id}"`);
+        fylDevLog(`  - Pedido ${o.order_number || o.id.substring(0, 8)}: estado="${o.status}", customer_id="${o.customer_id}"`);
       });
       
       // Verificar cuÃ¡ntos pedidos tienen estado sent (solo estos aparecen en Pedidos Anteriores)
@@ -3893,9 +3984,9 @@ async function loadClosedOrders(userId) {
         const status = (o.status || "").toLowerCase().trim();
         return status === "sent";
       });
-      console.log(`ðŸ“‹ Pedidos con estado "sent" (Pedidos Anteriores):`, sentOrders.length);
+      fylDevLog(`ðŸ“‹ Pedidos con estado "sent" (Pedidos Anteriores):`, sentOrders.length);
       sentOrders.forEach(o => {
-        console.log(`  - Pedido ${o.order_number || o.id.substring(0, 8)}: estado="${o.status}", customer_id="${o.customer_id}"`);
+        fylDevLog(`  - Pedido ${o.order_number || o.id.substring(0, 8)}: estado="${o.status}", customer_id="${o.customer_id}"`);
       });
       
       // Verificar pedidos "closed" (aparecen en Mis Pedidos con "En preparación")
@@ -3903,7 +3994,7 @@ async function loadClosedOrders(userId) {
         const status = (o.status || "").toLowerCase().trim();
         return status === "closed";
       });
-      console.log(`📋 Pedidos con estado "closed" (Mis Pedidos - En preparación):`, closedOrders.length);
+      fylDevLog(`📋 Pedidos con estado "closed" (Mis Pedidos - En preparación):`, closedOrders.length);
       
       // Verificar si hay pedidos con estados diferentes
       const otherStatuses = allOrders.filter(o => {
@@ -3911,35 +4002,34 @@ async function loadClosedOrders(userId) {
         return status !== "closed" && status !== "sent" && status !== "active";
       });
       if (otherStatuses.length > 0) {
-        console.log(`ðŸ“‹ Pedidos con otros estados:`, otherStatuses.length);
+        fylDevLog(`ðŸ“‹ Pedidos con otros estados:`, otherStatuses.length);
         otherStatuses.forEach(o => {
-          console.log(`  - Pedido ${o.order_number || o.id.substring(0, 8)}: estado="${o.status}"`);
+          fylDevLog(`  - Pedido ${o.order_number || o.id.substring(0, 8)}: estado="${o.status}"`);
         });
       }
       } else {
-      console.log("âš ï¸ No se encontraron pedidos para el usuario");
+      fylDevLog("âš ï¸ No se encontraron pedidos para el usuario");
     }
     
     // Intentar obtener pedidos cerrados/enviados
     // Primero intentar con consultas separadas que son mÃ¡s confiables
-    console.log("ðŸ“‹ Intentando consultas separadas para closed y sent...");
+    fylDevLog("ðŸ“‹ Intentando consultas separadas para closed y sent...");
     
-    // SOLO pedidos enviados (sent) aparecen en "Pedidos Anteriores"
-    // Los pedidos "closed" aparecen en "Mis Pedidos" con aviso "En preparación"
+    // Historial: enviados (sent) y en preparación (closed), más recientes primero
     const { data: sentOrders, error: sentError } = await supabase
       .from("orders")
       .select(
         "id, order_number, status, total_amount, created_at, updated_at, order_items(id, product_name, color, size, quantity, price_snapshot, imagen, status, variant_id)"
       )
       .eq("customer_id", userId)
-      .eq("status", "sent")
+      .in("status", ["sent", "closed"])
       .order("created_at", { ascending: false });
     
     // Verificar errores
     if (sentError) {
       console.error("âŒ Error obteniendo pedidos enviados:", sentError);
     } else {
-      console.log("ðŸ“‹ Pedidos enviados encontrados:", sentOrders?.length || 0);
+      fylDevLog("ðŸ“‹ Pedidos enviados encontrados:", sentOrders?.length || 0);
     }
     
     const finalOrders = sentOrders || [];
@@ -3958,25 +4048,32 @@ async function loadClosedOrders(userId) {
       return;
     }
 
-    console.log("ðŸ“‹ Total de pedidos enviados (sent):", finalOrders.length);
+    fylDevLog("ðŸ“‹ Total de pedidos enviados (sent):", finalOrders.length);
     if (finalOrders && finalOrders.length > 0) {
       finalOrders.forEach(o => {
-        console.log(`  - Pedido ${o.order_number || o.id.substring(0, 8)}: estado="${o.status}", items=${o.order_items?.length || 0}`);
+        fylDevLog(`  - Pedido ${o.order_number || o.id.substring(0, 8)}: estado="${o.status}", items=${o.order_items?.length || 0}`);
       });
     }
     
     if (!finalOrders || finalOrders.length === 0) {
-      console.log("â„¹ï¸ No se encontraron pedidos enviados (estado 'sent')");
-      console.log("ℹ️ Nota: Los pedidos 'closed' aparecen en 'Mis Pedidos' con aviso 'En preparación'");
+      fylDevLog("ℹ️ No se encontraron pedidos en historial (sent/closed)");
       
       historyContainer.innerHTML = `
-        <p style="text-align: center; color: #666; padding: 40px;">No tienes pedidos anteriores. Los pedidos en preparación aparecen en "Mis Pedidos".</p>
+        <p style="text-align: center; color: #666; padding: 40px;">No tenés pedidos en el historial todavía.</p>
       `;
       return;
     }
 
-    console.log("âœ… Mostrando", finalOrders.length, "pedidos anteriores");
-    
+    fylDevLog("âœ… Mostrando", finalOrders.length, "pedidos anteriores");
+
+    const historyVariantIds = [];
+    for (const o of finalOrders || []) {
+      for (const it of o?.order_items || []) {
+        if (it?.variant_id) historyVariantIds.push(it.variant_id);
+      }
+    }
+    await ensureVariantSkusLoaded(historyVariantIds);
+
     // Ordenar pedidos por fecha mÃ¡s reciente primero
     const sortedOrders = [...finalOrders].sort((a, b) => {
       const dateA = new Date(a.updated_at || a.created_at);
@@ -3995,13 +4092,18 @@ async function loadClosedOrders(userId) {
           minute: "2-digit"
         });
         const orderNumber = order.order_number || order.id.substring(0, 8);
+        const histStatus = String(order.status || "").toLowerCase().trim();
+        const histBadge =
+          histStatus === "closed"
+            ? ` <span style="font-size:12px;color:#b45309;">(En preparación)</span>`
+            : "";
         const items = order.order_items || [];
         
         // Calcular total excluyendo items faltantes
         const validItems = items.filter(item => item.status !== 'missing');
         const total = validItems.reduce((sum, item) => {
           const qty = Number(item.quantity || 0) || 0;
-          const price = Number(item.price_snapshot || 0) || 0;
+          const price = orderItemUnitForDisplay(item);
           return sum + (qty * price);
         }, 0);
         
@@ -4010,7 +4112,7 @@ async function loadClosedOrders(userId) {
           ? items.map(item => {
               const itemImage = item.imagen || FALLBACK_IMAGE;
               const itemQuantity = Number(item.quantity || 0);
-              const itemPrice = Number(item.price_snapshot || 0);
+              const itemPrice = orderItemUnitForDisplay(item);
               const itemSubtotal = itemQuantity * itemPrice;
               const isMissing = item.status === 'missing';
               const itemClass = isMissing ? 'order-item-detail missing' : 'order-item-detail';
@@ -4033,9 +4135,14 @@ async function loadClosedOrders(userId) {
           <div class="order-date-item" data-order-id="${order.id}">
             <div class="order-date-item-header" data-order-toggle="${order.id}">
               <span class="order-date">${formattedDate} <span class="order-expand-icon">â–¼</span></span>
-              <span class="order-number">#${orderNumber}</span>
+              <span class="order-number">#${orderNumber}${histBadge}</span>
             </div>
             <div class="order-total">Total: $${total.toLocaleString("es-AR")}</div>
+            ${
+              histStatus === "closed"
+                ? `<div style="margin:10px 0 0;"><button type="button" class="btn" style="font-size:14px;padding:8px 12px;" data-history-modify-order="${order.id}">Modificar pedido</button></div>`
+                : ""
+            }
             <div class="order-items-detail" id="order-items-${order.id}">
               ${itemsHtml}
               ${items.length > 0 ? `<div class="order-items-summary">Total del pedido: $${total.toLocaleString("es-AR")}</div>` : ""}
@@ -4082,6 +4189,36 @@ async function loadClosedOrders(userId) {
               orderItem.classList.add("expanded");
               itemsDetail.classList.add("visible");
             }
+          }
+        });
+      });
+
+      modalOrdersList.querySelectorAll("[data-history-modify-order]").forEach((btn) => {
+        btn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          const oid = btn.getAttribute("data-history-modify-order");
+          if (!oid || !userId) return;
+          btn.disabled = true;
+          try {
+            const { error: reopenErr } = await supabase.rpc("rpc_reopen_order", {
+              p_order_id: oid,
+            });
+            if (reopenErr) {
+              alert(reopenErr.message || "No se pudo modificar el pedido.");
+              return;
+            }
+            await loadClosedOrders(userId);
+            if (typeof loadOrders === "function") await loadOrders(userId);
+            await showDashboardMessageModal({
+              title: "Pedido listo para modificar",
+              bodyHtml:
+                '<p class="dash-app-message-modal__text">Podés agregar o quitar productos desde Mi pedido.</p>',
+              confirmLabel: "Entendido",
+            });
+          } catch (err) {
+            alert(err?.message || "Error al reabrir el pedido.");
+          } finally {
+            btn.disabled = false;
           }
         });
       });
@@ -4151,13 +4288,13 @@ function showNoSession() {
         const totalUnits = normalizedGuestItems.reduce((sum, item) => sum + (Number(item.cantidad) || 0), 0);
         const totalPrice = normalizedGuestItems.reduce((sum, item) => {
           const qty = Number(item.cantidad) || 0;
-          const price = Number(item.precio) || 0;
+          const price = parseARSNumber(item.precio);
           return sum + qty * price;
         }, 0);
 
         const itemsHtml = normalizedGuestItems
           .map((item, idx) => {
-            const lineTotal = (Number(item.cantidad) || 0) * (Number(item.precio) || 0);
+            const lineTotal = (Number(item.cantidad) || 0) * parseARSNumber(item.precio);
             return `
               <div class="dash-bolsa-item">
                 <div class="dash-bolsa-item__row1">
@@ -4183,7 +4320,7 @@ function showNoSession() {
                         ${[0,1,2,3,4].map((n) => `<option value="${n}" ${n === Number(item.cantidad || 0) ? "selected" : ""}>${n === 0 ? "0" : `${n} uni`}</option>`).join("")}
                         ${(Number(item.cantidad || 0) > 4) ? `<option value="${Number(item.cantidad)}" selected>${Number(item.cantidad)} uni</option>` : ""}
                       </select>
-                      <span class="dash-bolsa-item__unit-price">· $${(Number(item.precio) || 0).toLocaleString("es-AR")} c/u</span>
+                      <span class="dash-bolsa-item__unit-price">· $${parseARSNumber(item.precio).toLocaleString("es-AR")} c/u</span>
                     </div>
                   </div>
                 </div>
@@ -4357,6 +4494,11 @@ async function loadData() {
 
         setContentVisibility(true);
         hideLoader();
+        if (!fylDashboardViewOnce && fylAnalytics.isReady()) {
+          fylDashboardViewOnce = true;
+          fylAnalytics.setPageType("dashboard");
+          fylAnalytics.event("dashboard_view", {});
+        }
         if (typeof window.runDashboardOnboardingIfNeeded === "function") {
           window.runDashboardOnboardingIfNeeded();
         }
@@ -4412,7 +4554,7 @@ async function setupOrdersRealtimeSubscription(userId) {
       async (payload) => {
         // Solo procesar si el pedido pertenece al usuario actual
         if (payload.new && payload.new.customer_id === userId) {
-          console.log("ðŸ”„ Cambio en pedidos detectado:", payload.eventType);
+          fylDevLog("ðŸ”„ Cambio en pedidos detectado:", payload.eventType);
           if (currentUserId) {
             await loadOrders(currentUserId);
             // Si el modal estÃ¡ abierto, recargar pedidos anteriores tambiÃ©n
@@ -4423,7 +4565,7 @@ async function setupOrdersRealtimeSubscription(userId) {
           }
         } else if (payload.old && payload.old.customer_id === userId) {
           // Para DELETE, payload.old contiene los datos antiguos
-          console.log("ðŸ”„ EliminaciÃ³n de pedido detectada:", payload.eventType);
+          fylDevLog("ðŸ”„ EliminaciÃ³n de pedido detectada:", payload.eventType);
           if (currentUserId) {
             await loadOrders(currentUserId);
             // Si el modal estÃ¡ abierto, recargar pedidos anteriores tambiÃ©n
@@ -4455,7 +4597,7 @@ async function setupOrdersRealtimeSubscription(userId) {
             .maybeSingle();
           
           if (order && order.customer_id === userId) {
-            console.log("ðŸ”„ Cambio en items de pedido detectado:", payload.eventType);
+            fylDevLog("ðŸ”„ Cambio en items de pedido detectado:", payload.eventType);
             if (currentUserId) {
               await loadOrders(currentUserId);
               // Si el modal estÃ¡ abierto, recargar pedidos anteriores tambiÃ©n
@@ -4470,7 +4612,7 @@ async function setupOrdersRealtimeSubscription(userId) {
     )
     .subscribe((status) => {
       if (status === "SUBSCRIBED") {
-        console.log("âœ… SuscripciÃ³n en tiempo real de pedidos activa");
+        fylDevLog("âœ… SuscripciÃ³n en tiempo real de pedidos activa");
       } else if (status === "CHANNEL_ERROR") {
         console.error("âŒ Error en suscripciÃ³n en tiempo real de pedidos");
       } else if (status === "TIMED_OUT") {
@@ -4616,7 +4758,7 @@ async function mostrarAlternativasParaProductoFaltante({ articulo, color, talle,
         }
       },
       onCerrar: () => {
-        console.log("Modal de alternativas cerrado");
+        fylDevLog("Modal de alternativas cerrado");
       },
     });
   } catch (error) {

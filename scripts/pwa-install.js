@@ -29,10 +29,16 @@ const __IS_LOCAL =
   (__isLanIpv4(location.hostname) && (__IS_DEV_PORT || true));
 
 // 1) Registrar service worker (solo fuera de localhost)
-const SW_VERSION = "m260328";
+const SW_VERSION = "m260406";
 let __swRefreshing = false;
 
 if ("serviceWorker" in navigator && !__IS_LOCAL) {
+  function __fylCheckSwUpdate(registration) {
+    try {
+      registration.update();
+    } catch (_e) {}
+  }
+
   navigator.serviceWorker
     .register(`sw.js?v=${SW_VERSION}`)
     .then((registration) => {
@@ -54,6 +60,9 @@ if ("serviceWorker" in navigator && !__IS_LOCAL) {
           }
         });
       });
+
+      // Cada carga: pedir al navegador que busque sw.js nuevo (crítico en móvil).
+      __fylCheckSwUpdate(registration);
     })
     .catch((err) => {
       console.warn("[PWA] No se pudo registrar SW:", err);
@@ -64,6 +73,20 @@ if ("serviceWorker" in navigator && !__IS_LOCAL) {
     if (__swRefreshing) return;
     __swRefreshing = true;
     window.location.reload();
+  });
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible") return;
+    navigator.serviceWorker.getRegistration().then((reg) => {
+      if (reg) __fylCheckSwUpdate(reg);
+    });
+  });
+
+  window.addEventListener("pageshow", (ev) => {
+    if (!ev.persisted) return;
+    navigator.serviceWorker.getRegistration().then((reg) => {
+      if (reg) __fylCheckSwUpdate(reg);
+    });
   });
 } else if ("serviceWorker" in navigator && __IS_LOCAL) {
   // En local, intentar desregistrar cualquier SW previo para evitar caché
@@ -123,10 +146,11 @@ document
   .addEventListener("click", async () => {
     document.getElementById("install-modal").classList.add("hidden");
     localStorage.setItem(ACCEPT_KEY, "true");
-    gtag('event', 'pwa_instalada', {
-  event_category: 'pwa',
-  event_label: 'Instalación aceptada'
-});
+    try {
+      if (window.fylAnalytics && window.fylAnalytics.isReady()) {
+        window.fylAnalytics.event("pwa_prompt_accept", {});
+      }
+    } catch (_e) {}
 
     deferredPrompt.prompt();
     await deferredPrompt.userChoice;
@@ -137,4 +161,7 @@ document
 document.getElementById("install-later").addEventListener("click", () => {
   document.getElementById("install-modal").classList.add("hidden");
   localStorage.setItem(DISMISS_KEY, Date.now().toString());
+  try {
+    if (window.fylAnalytics && window.fylAnalytics.isReady()) window.fylAnalytics.event("pwa_prompt_dismiss", {});
+  } catch (_e) {}
 });

@@ -322,8 +322,8 @@ function copyFeedURL() {
     url.searchParams.set("token", config.feedToken);
   }
 
-  // Construir URL completa con extensión .csv
-  const fullUrl = url.toString() + ".csv";
+  // Copiar endpoint real de la Edge Function (Meta consume CSV por content-type)
+  const fullUrl = url.toString();
 
   navigator.clipboard
     .writeText(fullUrl)

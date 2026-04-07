@@ -38,10 +38,52 @@ images_data AS (
 )
 SELECT
   pv.sku::text as id,
-  p.name::text as item_group_id,
-  (p.name || ' - ' || pv.color || ' - Talle ' || pv.size)::text as title,
-  COALESCE(p.description, '')::text as description,
-  (to_char(pv.price, 'FM999999999.00') || ' ARS')::text as price,
+  p.id::text as item_group_id,
+  (
+    CASE
+      WHEN NULLIF(BTRIM(pv.size), '') IS NOT NULL THEN
+        initcap(
+          regexp_replace(
+            concat_ws(
+              ' ',
+              NULLIF(BTRIM(t1.name), ''),
+              NULLIF(BTRIM(t2.name), ''),
+              NULLIF(BTRIM(pv.color), ''),
+              'Talle',
+              NULLIF(BTRIM(pv.size), '')
+            ),
+            '\s+',
+            ' ',
+            'g'
+          )
+        )
+      ELSE
+        initcap(
+          regexp_replace(
+            concat_ws(
+              ' ',
+              NULLIF(BTRIM(t1.name), ''),
+              NULLIF(BTRIM(t2.name), ''),
+              NULLIF(BTRIM(pv.color), '')
+            ),
+            '\s+',
+            ' ',
+            'g'
+          )
+        )
+    END
+  )::text as title,
+  COALESCE(
+    NULLIF(BTRIM(p.description), ''),
+    ('Calzado femenino por mayor. Modelo ' || p.name || '.')
+  )::text as description,
+  (
+    CASE
+      WHEN trunc(pv.price) = pv.price THEN to_char(pv.price, 'FM999999999')
+      ELSE to_char(pv.price, 'FM999999999.00')
+    END
+    || ' ARS'
+  )::text as price,
   CASE 
     WHEN GREATEST(0, COALESCE(sa.total_stock, 0) - COALESCE(pv.reserved_qty, 0)) > 0 
     THEN 'in stock' 
@@ -60,10 +102,40 @@ SELECT
 FROM public.product_variants pv
 INNER JOIN public.products p ON p.id = pv.product_id
 LEFT JOIN stock_aggregated sa ON sa.variant_id = pv.id
+LEFT JOIN public.product_tags pt ON pt.product_id = p.id
+LEFT JOIN public.tags t1 ON t1.id = pt.tag1_id
+LEFT JOIN public.tags t2 ON t2.id = pt.tag2_id
 WHERE pv.active = true 
   AND p.status = 'active' 
   AND pv.sku IS NOT NULL 
   AND pv.sku != ''
+  AND pv.price IS NOT NULL
+  AND pv.price > 0
+  AND NULLIF(
+    BTRIM(
+      CASE
+        WHEN NULLIF(BTRIM(t1.name), '') IS NOT NULL AND NULLIF(BTRIM(pv.size), '') IS NOT NULL THEN
+          concat_ws(
+            ' ',
+            NULLIF(BTRIM(t1.name), ''),
+            NULLIF(BTRIM(t2.name), ''),
+            NULLIF(BTRIM(pv.color), ''),
+            'Talle',
+            NULLIF(BTRIM(pv.size), '')
+          )
+        WHEN NULLIF(BTRIM(t1.name), '') IS NOT NULL THEN
+          concat_ws(
+            ' ',
+            NULLIF(BTRIM(t1.name), ''),
+            NULLIF(BTRIM(t2.name), ''),
+            NULLIF(BTRIM(pv.color), '')
+          )
+        ELSE
+          NULL
+      END
+    ),
+    ''
+  ) IS NOT NULL
 ORDER BY p.name, pv.color, pv.size;
 $$;
 

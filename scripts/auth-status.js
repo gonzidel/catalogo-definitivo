@@ -12,8 +12,31 @@ import {
   maybeShowProfileOnboardingModal,
   clearProfileOnboardingSessionFlag,
 } from "./profile-onboarding-modal.js";
+import { fylAnalytics } from "./analytics.js";
 
 remindSupabaseRedirectUrlsIfLocal();
+
+/** Logs de arranque (auth / carrito). Activar: `window.FYL_DEBUG_CATALOG = true` o `?debug=catalog`. */
+function fylDevLog(...args) {
+  if (
+    typeof window !== "undefined" &&
+    (window.FYL_DEBUG_CATALOG === true ||
+      /(?:^|[&?])debug=catalog(?:&|$)/.test(window.location.search || ""))
+  ) {
+    console.log.apply(console, args);
+  }
+}
+
+/** Evita múltiples `syncCartWithSupabase` cuando `showAuthenticatedUser` se llama seguido. */
+let fylCartSyncDebounceTimer = null;
+function scheduleDebouncedCartSyncAfterAuth() {
+  if (!window.syncCartWithSupabase) return;
+  if (fylCartSyncDebounceTimer) clearTimeout(fylCartSyncDebounceTimer);
+  fylCartSyncDebounceTimer = setTimeout(() => {
+    fylCartSyncDebounceTimer = null;
+    window.syncCartWithSupabase();
+  }, 1000);
+}
 
 const loginModal = document.getElementById("login-modal");
 const loginModalMsg = document.getElementById("login-modal-msg");
@@ -69,6 +92,9 @@ function showLoginModal(message) {
   }
   loginModal.classList.add("active");
   document.body.classList.add("modal-open");
+  try {
+    if (fylAnalytics.isReady()) fylAnalytics.event("login_start", { surface: "modal_message" });
+  } catch (_e) {}
 }
 
 // Mostrar paso 1 del modal (solicitar email)
@@ -84,6 +110,9 @@ function showLoginModalStep1() {
 
   loginModal.classList.add("active");
   document.body.classList.add("modal-open");
+  try {
+    if (fylAnalytics.isReady()) fylAnalytics.event("login_start", { surface: "modal_step1" });
+  } catch (_e) {}
 }
 
 // Mostrar paso 3 del modal (confirmación de email enviado)
@@ -404,7 +433,7 @@ async function updateClientAreaLink() {
 
     if (!session) {
       if (shouldLog && lastLoggedUser !== null) {
-        console.log("👤 No hay sesión activa");
+        fylDevLog("👤 No hay sesión activa");
         lastLoggedUser = null;
       }
       showDefaultLink();
@@ -413,7 +442,7 @@ async function updateClientAreaLink() {
 
     // Solo loguear si cambió el usuario o si pasó tiempo suficiente
     if (shouldLog && lastLoggedUser !== session.user.email) {
-      console.log("✅ Usuario autenticado:", session.user.email);
+      fylDevLog("✅ Usuario autenticado:", session.user.email);
       lastLoggedUser = session.user.email;
       // console.log("📊 Datos del usuario:", {
       //   email: session.user.email,
@@ -493,12 +522,9 @@ function showAuthenticatedUser(user, customer) {
     user.email?.split("@")[0] ||
     "Usuario";
 
-  // Sincronizar carrito cuando el usuario se autentica
   if (window.syncCartWithSupabase) {
-    console.log("🔄 Sincronizando carrito al autenticar usuario...");
-    setTimeout(() => {
-      window.syncCartWithSupabase();
-    }, 1000);
+    fylDevLog("🔄 Programando sincronización de carrito (debounced)…");
+    scheduleDebouncedCartSyncAfterAuth();
   }
 
   // Usar avatar de Google si está disponible, sino generar uno
@@ -563,7 +589,7 @@ async function handleClientAreaClick(event) {
   event.stopPropagation();
   event.stopImmediatePropagation();
 
-  console.log("🖱️ Click en área de clientes detectado");
+  fylDevLog("🖱️ Click en área de clientes detectado");
 
   if (!supabase?.auth?.getSession) {
     showLoginModalStep1();
@@ -575,7 +601,7 @@ async function handleClientAreaClick(event) {
     const { data: { session }, error: sessionError } = await supabase.auth.getSession();
     
     if (!sessionError && session) {
-      console.log("✅ Usuario ya autenticado, redirigiendo a dashboard");
+      fylDevLog("✅ Usuario ya autenticado, redirigiendo a dashboard");
       // Usuario ya está autenticado, redirigir directamente
       console.log("[FYL DEBUG AUTH] auth-status.js window.location.href = client/dashboard.html");
       window.location.href = "client/dashboard.html";
@@ -586,7 +612,7 @@ async function handleClientAreaClick(event) {
     // Si hay error, continuar con el modal de login
   }
 
-  console.log("👤 Usuario no autenticado, mostrando modal de login");
+  fylDevLog("👤 Usuario no autenticado, mostrando modal de login");
 
   // Mostrar modal de login (paso 1: email)
   showLoginModalStep1();
@@ -594,7 +620,7 @@ async function handleClientAreaClick(event) {
 
 // Override de la función original que estaba causando problemas
 window.redirectToClientArea = async function () {
-  console.log("🔄 Función redirectToClientArea llamada");
+  fylDevLog("🔄 Función redirectToClientArea llamada");
 
   if (!supabase?.auth?.getSession) {
     showLoginModalStep1();
@@ -606,7 +632,7 @@ window.redirectToClientArea = async function () {
     const { data: { session }, error: sessionError } = await supabase.auth.getSession();
     
     if (!sessionError && session) {
-      console.log("✅ Usuario ya autenticado, redirigiendo a dashboard");
+      fylDevLog("✅ Usuario ya autenticado, redirigiendo a dashboard");
       // Usuario ya está autenticado, redirigir directamente
       console.log("[FYL DEBUG AUTH] auth-status.js window.location.href = client/dashboard.html");
       window.location.href = "client/dashboard.html";
@@ -617,7 +643,7 @@ window.redirectToClientArea = async function () {
     // Si hay error, continuar con el modal de login
   }
 
-  console.log("👤 Usuario no autenticado, mostrando modal de login");
+  fylDevLog("👤 Usuario no autenticado, mostrando modal de login");
 
   // Mostrar modal de login (paso 1: email)
   showLoginModalStep1();
@@ -692,7 +718,7 @@ window.logoutUser = async function () {
       window.location.reload();
       return;
     }
-    console.log("🚪 Cerrando sesión...");
+    fylDevLog("🚪 Cerrando sesión...");
     clearProfileOnboardingSessionFlag();
     await supabase.auth.signOut();
     window.location.reload();
@@ -703,14 +729,14 @@ window.logoutUser = async function () {
 
 // Función para mostrar/ocultar dropdown
 function toggleUserDropdown() {
-  console.log("🔄 Toggle dropdown...");
+  fylDevLog("🔄 Toggle dropdown...");
 
   const clienteLink = document.querySelector(".cliente-link");
   const existingDropdown = document.querySelector(".user-dropdown");
 
   // Si ya existe, cerrarlo
   if (existingDropdown) {
-    console.log("❌ Cerrando dropdown existente");
+    fylDevLog("❌ Cerrando dropdown existente");
     existingDropdown.remove();
     return;
   }
@@ -725,11 +751,11 @@ function toggleUserDropdown() {
     .getSession()
     .then(async ({ data: { session } }) => {
       if (!session) {
-        console.log("👤 No hay sesión, no se puede mostrar dropdown");
+        fylDevLog("👤 No hay sesión, no se puede mostrar dropdown");
         return;
       }
 
-      console.log("✅ Creando dropdown para usuario:", session.user.email);
+      fylDevLog("✅ Creando dropdown para usuario:", session.user.email);
 
       // Obtener datos del cliente
       let customer = null;
@@ -749,13 +775,13 @@ function toggleUserDropdown() {
       clienteLink.parentNode.appendChild(dropdown);
       dropdown.style.display = "block";
 
-      console.log("✅ Dropdown creado y mostrado");
+      fylDevLog("✅ Dropdown creado y mostrado");
 
       // Cerrar dropdown al hacer clic fuera
       setTimeout(() => {
         const closeDropdown = function (e) {
           if (!clienteLink.contains(e.target) && !dropdown.contains(e.target)) {
-            console.log("🔄 Cerrando dropdown por clic fuera");
+            fylDevLog("🔄 Cerrando dropdown por clic fuera");
             dropdown.remove();
             document.removeEventListener("click", closeDropdown);
           }
@@ -788,7 +814,7 @@ async function initializeAuth() {
   }
 
   isInitializing = true;
-  console.log("🔧 Inicializando estado de autenticación...");
+  fylDevLog("🔧 Inicializando estado de autenticación...");
 
   try {
     // Actualizar enlace del área de clientes
@@ -800,7 +826,7 @@ async function initializeAuth() {
       // Agregar solo el listener principal
       newClienteLink.addEventListener("click", handleClientAreaClick);
       if (!window.__listenerConfigured) {
-        console.log("✅ Listener de click configurado (sin duplicados)");
+        fylDevLog("✅ Listener de click configurado (sin duplicados)");
         window.__listenerConfigured = true;
       }
     }
@@ -851,13 +877,16 @@ if (
   if (event === "SIGNED_OUT") {
     clearProfileOnboardingSessionFlag();
   }
+  try {
+    fylAnalytics.onSupabaseAuthEvent(event, session);
+  } catch (_e) {}
 
   const currentState = session ? "SIGNED_IN" : "SIGNED_OUT";
   
   // Solo loguear si el estado realmente cambió o si es un evento diferente importante
   // Ignorar INITIAL_SESSION si ya estamos en el mismo estado
   if (currentState !== lastAuthState || (event !== lastAuthEvent && event !== 'INITIAL_SESSION')) {
-    console.log(
+    fylDevLog(
       "🔄 Cambio de estado de autenticación:",
       event,
       session ? "Usuario logueado" : "Usuario deslogueado"
@@ -895,13 +924,13 @@ window.addEventListener('resize', () => {
 
 // Función de fallback inmediata
 function forceUpdateAuth() {
-  console.log("🔄 Forzando actualización de autenticación...");
+  fylDevLog("🔄 Forzando actualización de autenticación...");
   updateClientAreaLink();
 }
 
 // Función para limpiar completamente todos los listeners
 function clearAllListeners() {
-  console.log("🧹 Limpiando todos los listeners...");
+  fylDevLog("🧹 Limpiando todos los listeners...");
 
   const clienteLink = document.querySelector(".cliente-link");
   if (clienteLink) {
@@ -909,7 +938,7 @@ function clearAllListeners() {
     const newClienteLink = clienteLink.cloneNode(true);
     clienteLink.parentNode.replaceChild(newClienteLink, clienteLink);
 
-    console.log("✅ Todos los listeners eliminados");
+    fylDevLog("✅ Todos los listeners eliminados");
     return newClienteLink;
   }
 
@@ -988,9 +1017,9 @@ window.initializeAuth = initializeAuth;
 window.clearAllListeners = clearAllListeners;
 
 // Override inmediato de la función problemática
-console.log("🔧 Override inmediato de redirectToClientArea...");
+fylDevLog("🔧 Override inmediato de redirectToClientArea...");
 window.redirectToClientArea = function () {
-  console.log("🔄 redirectToClientArea interceptado - mostrando modal de login");
+  fylDevLog("🔄 redirectToClientArea interceptado - mostrando modal de login");
 
   // Mostrar modal de login (paso 1: email)
   showLoginModalStep1();

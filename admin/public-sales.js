@@ -1,4 +1,4 @@
-// admin/public-sales.js
+﻿// admin/public-sales.js
 import { requireAuth } from "./admin-auth.js";
 import { supabase } from "../scripts/supabase-client.js";
 import { SUPABASE_URL, QZ_SIGN_SECRET } from "../scripts/config.js";
@@ -549,12 +549,15 @@ const pendingSalesContainer = document.getElementById("pending-sales-container")
 const pendingSalesGrid = document.getElementById("pending-sales-grid");
 const caja2Btn = document.getElementById("caja2-btn");
 const caja3Btn = document.getElementById("caja3-btn");
-// Reservas (campana)
+// Campana: pendientes en local (pedidos web)
 const reservasBellBtn = document.getElementById("reservas-bell-btn");
 const reservasBellBadge = document.getElementById("reservas-bell-badge");
-const reservasPanel = document.getElementById("reservas-panel");
+const reservasModal = document.getElementById("reservas-modal");
+const closeReservasModalBtn = document.getElementById("close-reservas-modal");
 const reservasList = document.getElementById("reservas-list");
 const reservasRefreshBtn = document.getElementById("reservas-refresh-btn");
+let reservasRealtimeChannel = null;
+let reservasRefreshDebounceTimer = null;
 const manualProduct = document.getElementById("manual-product");
 const manualSearchBtn = document.getElementById("manual-search-btn");
 const manualProductSelection = document.getElementById("manual-product-selection");
@@ -619,7 +622,7 @@ let currentPendingSale = null;
 let currentLocalOrderId = null; // ID del pedido local si viene de un pedido local
 
 // =============================================================================
-// Reservas (Pedidos): ítems que salen 100% de venta-publico
+// Campana: líneas de pedidos web con stock desde venta-público (espera en local)
 // =============================================================================
 
 function _safeText(v) {
@@ -639,16 +642,20 @@ function setBellCount(units) {
 }
 
 function toggleReservasPanel(forceOpen = null) {
-  if (!reservasPanel) return;
-  const open = forceOpen == null ? !reservasPanel.classList.contains("is-open") : !!forceOpen;
-  reservasPanel.classList.toggle("is-open", open);
+  if (!reservasModal) return;
+  const open = forceOpen == null ? !reservasModal.classList.contains("active") : !!forceOpen;
+  reservasModal.classList.toggle("active", open);
+  reservasModal.setAttribute("aria-hidden", open ? "false" : "true");
   if (open) {
+    document.body.style.overflow = "hidden";
     refreshReservas().catch((e) => console.warn("refreshReservas:", e?.message || e));
+  } else {
+    document.body.style.overflow = "";
   }
 }
 
 async function fetchLocalReservations() {
-  if (!supabase) return [];
+  if (!supabase) return { items: [], ventaPublicoId: null };
 
   // A) Resolver IDs de warehouses (general / venta-publico)
   const { data: whData, error: whErr } = await supabase
@@ -660,9 +667,9 @@ async function fetchLocalReservations() {
   const generalId = (whData || []).find((w) => w.code === "general")?.id;
   const ventaId = (whData || []).find((w) => w.code === "venta-publico")?.id;
 
-  if (!generalId || !ventaId) return [];
+  if (!generalId || !ventaId) return { items: [], ventaPublicoId: null };
 
-  // B) Cargar order_items reservados con joins mínimos
+  // B) Líneas en espera (nuevo checkout) o reservadas solo-VP (legado antes del split)
   const { data, error } = await supabase
     .from("order_items")
     .select(
@@ -679,18 +686,17 @@ async function fetchLocalReservations() {
         "order_item_stock_sources(qty, warehouse_id)"
       ].join(",")
     )
-    .eq("status", "reserved");
+    .in("status", ["waiting", "reserved"]);
 
   if (error) throw error;
 
-  // C) Filtrar solo órdenes activas y SOLO FULL local (venta-publico == quantity, general==0)
-  const finalStatuses = new Set(["closed", "sent", "devolucion", "devolucion_alt", "cancelled"]);
+  const finalStatuses = new Set(["closed", "sent", "devolucion", "devolución", "devolucion_alt", "cancelled"]);
   const rows = Array.isArray(data) ? data : [];
 
   const filtered = rows.filter((oi) => {
     const order = oi.orders;
     if (!order) return false;
-    const orderStatus = (_safeText(order.status).trim().toLowerCase());
+    const orderStatus = _safeText(order.status).trim().toLowerCase();
     if (finalStatuses.has(orderStatus)) return false;
 
     const qty = Number(oi.quantity || 0) || 0;
@@ -705,10 +711,30 @@ async function fetchLocalReservations() {
       if (s?.warehouse_id === generalId) generalQty += q;
     });
 
-    return (ventaQty === qty) && (generalQty === 0);
+    if (ventaQty <= 0) return false;
+
+    const st = _safeText(oi.status).trim().toLowerCase();
+    if (st === "waiting") return true;
+    // Legado: una sola línea reserved con todo el stock en venta-público
+    if (st === "reserved" && generalQty === 0 && ventaQty === qty) return true;
+    return false;
   });
 
-  return filtered;
+  return { items: filtered, ventaPublicoId: ventaId };
+}
+
+function sumVentaUnitsForBell(items, ventaId) {
+  if (!ventaId) {
+    return (items || []).reduce((sum, oi) => sum + (Number(oi.quantity || 0) || 0), 0);
+  }
+  return (items || []).reduce((sum, oi) => {
+    const sources = Array.isArray(oi.order_item_stock_sources) ? oi.order_item_stock_sources : [];
+    let v = 0;
+    sources.forEach((s) => {
+      if (s?.warehouse_id === ventaId) v += Number(s?.qty || 0) || 0;
+    });
+    return sum + (v > 0 ? v : Number(oi.quantity || 0) || 0);
+  }, 0);
 }
 
 function groupReservationsByOrder(items) {
@@ -733,7 +759,7 @@ function renderReservations(items) {
   if (!reservasList) return;
   const groups = groupReservationsByOrder(items);
   if (groups.length === 0) {
-    reservasList.innerHTML = `<div style="color:#666;font-size:13px;padding:8px 0;">No hay reservas pendientes.</div>`;
+    reservasList.innerHTML = `<div style="color:#666;font-size:13px;padding:8px 0;">No hay productos pendientes de retirar en local.</div>`;
     return;
   }
 
@@ -762,8 +788,8 @@ function renderReservations(items) {
                 <div class="reserva-item__meta">Color: <strong>${color}</strong> • Talle: <strong>${size}</strong> • Cant: <strong>${qty}</strong></div>
               </div>
               <div class="reserva-item__actions">
-                <button type="button" class="reserva-action-btn reserva-action-btn--ok" data-reserva-action="confirm" data-order-item-id="${oi.id}">Confirmar</button>
-                <button type="button" class="reserva-action-btn reserva-action-btn--no" data-reserva-action="reject" data-order-item-id="${oi.id}">Rechazar</button>
+                <button type="button" class="reserva-action-btn reserva-action-btn--ok" data-reserva-action="confirm" data-order-item-id="${oi.id}">Apartado</button>
+                <button type="button" class="reserva-action-btn reserva-action-btn--no" data-reserva-action="reject" data-order-item-id="${oi.id}">Faltante</button>
               </div>
             </div>
           `;
@@ -776,23 +802,64 @@ function renderReservations(items) {
 }
 
 async function refreshReservas() {
-  const items = await fetchLocalReservations();
-  const totalUnits = (items || []).reduce((sum, oi) => sum + (Number(oi.quantity || 0) || 0), 0);
-  setBellCount(totalUnits);
-  renderReservations(items);
+  if (!supabase) return;
+  const { items, ventaPublicoId } = await fetchLocalReservations();
+  setBellCount(sumVentaUnitsForBell(items, ventaPublicoId));
+  if (reservasModal?.classList.contains("active")) {
+    renderReservations(items);
+  }
+}
+
+function scheduleReservasRefreshFromRealtime() {
+  if (reservasRefreshDebounceTimer) clearTimeout(reservasRefreshDebounceTimer);
+  reservasRefreshDebounceTimer = setTimeout(() => {
+    reservasRefreshDebounceTimer = null;
+    refreshReservas().catch((e) => console.warn("refreshReservas (realtime):", e?.message || e));
+  }, 400);
+}
+
+function setupReservasRealtime() {
+  if (!supabase || reservasRealtimeChannel) return;
+  try {
+    reservasRealtimeChannel = supabase
+      .channel("public-sales-pendientes-local")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "order_items" },
+        () => scheduleReservasRefreshFromRealtime()
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "orders" },
+        () => scheduleReservasRefreshFromRealtime()
+      )
+      .subscribe((status) => {
+        if (status === "CHANNEL_ERROR") {
+          console.warn("Campana pendientes: error de canal Realtime (¿tabla en publicación?)");
+        }
+      });
+  } catch (e) {
+    console.warn("setupReservasRealtime:", e?.message || e);
+  }
 }
 
 async function handleReservaAction(action, orderItemId) {
   if (!supabase) throw new Error("Supabase no disponible");
   const a = _safeText(action).trim().toLowerCase();
-  const nextStatus = a === "confirm" ? "picked" : (a === "reject" ? "missing" : null);
+  const nextStatus = a === "confirm" ? "picked" : a === "reject" ? "missing" : null;
   if (!nextStatus) return;
 
-  const { error } = await supabase
-    .from("order_items")
-    .update({ status: nextStatus, checked_at: new Date().toISOString() })
-    .eq("id", orderItemId);
+  const {
+    data: { user },
+    error: userErr,
+  } = await supabase.auth.getUser();
+  if (userErr || !user?.id) throw new Error("Sesión no disponible");
 
+  const { error } = await supabase.rpc("rpc_update_order_item_status", {
+    p_item_id: orderItemId,
+    p_status: nextStatus,
+    p_checked_by: user.id,
+  });
   if (error) throw error;
   await refreshReservas();
 }
@@ -1377,6 +1444,16 @@ async function searchManualProduct() {
 // Cargar variantes del producto para modo manual
 async function loadManualProductVariants(productId) {
   try {
+    // Nuevo producto: invalidar renders async previos y limpiar UI de talles/cantidades
+    // (si no, manualSelectedColor sigue seteado y renderManualColorButtons no vuelve a llamar renderManualSizeButtons)
+    renderManualSizeButtonsVersion++;
+    manualSelectedColor = null;
+    manualSelectedSizes = {};
+    manualSelectedSizesSource = {};
+    manualSelectedSizesConfirmedWithoutStock = {};
+    if (manualSizeButtons) manualSizeButtons.innerHTML = "";
+    if (manualLoadBtn) manualLoadBtn.disabled = true;
+
     // Cargar variantes (sin size, ya que los talles están en variant_sizes)
     const { data: variants, error } = await supabase
       .from("product_variants")
@@ -1576,16 +1653,21 @@ async function renderManualColorButtons() {
     manualColorButtons.appendChild(btn);
   });
 
-  if (colors.length > 0 && !manualSelectedColor) {
-    manualSelectedColor = colors[0];
-    document.querySelectorAll("#manual-color-buttons .color-btn")[0]?.classList.add("active");
+  // Siempre refrescar talles al reconstruir colores (nuevo producto o 2.ª pasada tras enriquecer variantes).
+  // Antes solo se llamaba con !manualSelectedColor: al buscar otro producto el color seguía seteado y los cuadros quedaban del producto anterior.
+  if (colors.length > 0) {
+    if (!manualSelectedColor || !colors.includes(manualSelectedColor)) {
+      manualSelectedColor = colors[0];
+    }
+    document.querySelectorAll("#manual-color-buttons .color-btn").forEach((b) => {
+      b.classList.toggle("active", b.textContent === manualSelectedColor);
+    });
 
-    // Actualizar precio e información de oferta para el primer color
-    const variantsByColor = manualCurrentVariants.filter(v => v.color === manualSelectedColor);
+    const variantsByColor = manualCurrentVariants.filter((v) => v.color === manualSelectedColor);
     if (variantsByColor.length > 0) {
       const firstVariant = variantsByColor[0];
       const effectivePrice = firstVariant.effectivePrice || firstVariant.price;
-      manualProductPrice.textContent = `$${effectivePrice.toLocaleString('es-AR')}`;
+      manualProductPrice.textContent = `$${effectivePrice.toLocaleString("es-AR")}`;
       updateProductOfferDisplay(firstVariant, manualProductOfferInfo);
     }
 
@@ -4573,51 +4655,24 @@ window.decreaseExtraQuantity = async function (itemIndex) {
 window.removeSaleItem = async function (index) {
   const item = saleItems[index];
 
-  // Si el item viene de un pedido local, liberar stock al local de venta al público
+  // Pedido local: stock por talle en venta-publico (variant_size_warehouse_stock)
   if (item && item.fromLocalOrder && item.sizes && item.sizes.length > 0) {
     for (const size of item.sizes) {
-      if (size.variantId) {
-        try {
-          // Obtener el warehouse_id de venta al público
-          const { data: warehouseData } = await supabase
-            .from("warehouses")
-            .select("id")
-            .eq("code", "venta-publico")
-            .maybeSingle();
-
-          if (warehouseData) {
-            // Obtener stock actual
-            const { data: stockData } = await supabase
-              .from("variant_warehouse_stock")
-              .select("stock_qty")
-              .eq("variant_id", size.variantId)
-              .eq("warehouse_id", warehouseData.id)
-              .maybeSingle();
-
-            // Incrementar stock en venta al público
-            const currentStock = stockData?.stock_qty || 0;
-            const newStock = currentStock + size.quantity;
-
-            // Actualizar o insertar stock
-            const { error: stockError } = await supabase
-              .from("variant_warehouse_stock")
-              .upsert({
-                variant_id: size.variantId,
-                warehouse_id: warehouseData.id,
-                stock_qty: newStock
-              }, {
-                onConflict: "variant_id,warehouse_id"
-              });
-
-            if (stockError) {
-              console.error("Error liberando stock:", stockError);
-            } else {
-              console.log(`Stock liberado: ${size.quantity} unidades de variante ${size.variantId} al local`);
-            }
+      if (!size.variantId || !size.quantity || size.quantity <= 0) continue;
+      try {
+        const { error: rpcError } = await supabase.rpc(
+          "rpc_release_public_sale_draft_line",
+          {
+            p_variant_id: size.variantId,
+            p_size: String(size.size ?? ""),
+            p_qty: size.quantity,
           }
-        } catch (error) {
-          console.error("Error al liberar stock del item eliminado:", error);
+        );
+        if (rpcError) {
+          console.error("Error liberando stock (rpc_release_public_sale_draft_line):", rpcError);
         }
+      } catch (error) {
+        console.error("Error al liberar stock del item eliminado:", error);
       }
     }
   }
@@ -5510,6 +5565,10 @@ finalizeSaleBtn.addEventListener("click", async () => {
 
         // Obtener fuente del stock (venta-publico y general)
         const source = size.source || { ventaPublico: size.quantity, general: 0 };
+        const srcVp = source.ventaPublico || 0;
+        const srcGen = source.general || 0;
+        // Confirmación "agregar sin stock" → rpc_create_public_sale no descuenta depósitos (conteo desfasado, producto físico existe)
+        const sellWithoutStock = size.quantity > 0 && srcVp === 0 && srcGen === 0;
 
         items.push({
           variant_id: variant.id,
@@ -5518,9 +5577,10 @@ finalizeSaleBtn.addEventListener("click", async () => {
           size: size.size ? String(size.size) : null, // Incluir tamaño como string para descontar stock por talle
           is_return: item.isReturn || false,
           from_local_order: item.fromLocalOrder || false, // Flag para indicar que viene de pedido local
+          sell_without_stock: sellWithoutStock,
           source: {
-            venta_publico: source.ventaPublico || 0,
-            general: source.general || 0
+            venta_publico: srcVp,
+            general: srcGen
           }
         });
       }
@@ -6537,12 +6597,30 @@ if (caja3Btn) {
   });
 }
 
-// Reservas (campana)
+// Campana: abre/cierra modal de pendientes en local
 if (reservasBellBtn) {
   reservasBellBtn.addEventListener("click", () => {
     toggleReservasPanel();
   });
 }
+if (closeReservasModalBtn) {
+  closeReservasModalBtn.addEventListener("click", () => toggleReservasPanel(false));
+  closeReservasModalBtn.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      toggleReservasPanel(false);
+    }
+  });
+}
+if (reservasModal) {
+  reservasModal.addEventListener("click", (e) => {
+    if (e.target === reservasModal) toggleReservasPanel(false);
+  });
+}
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (reservasModal?.classList.contains("active")) toggleReservasPanel(false);
+});
 if (reservasRefreshBtn) {
   reservasRefreshBtn.addEventListener("click", () => {
     refreshReservas().catch((e) => console.warn("refreshReservas:", e?.message || e));
@@ -6565,6 +6643,15 @@ document.addEventListener("click", (e) => {
 // Cargar compras pendientes al iniciar y configurar polling
 loadPendingSales();
 setInterval(checkPendingSales, 5000); // Verificar cada 5 segundos
+
+// Badge campana: conteo al cargar + Supabase Realtime (order_items / orders)
+refreshReservas().catch((e) => console.warn("refreshReservas inicial:", e?.message || e));
+setupReservasRealtime();
+// Respaldo si Realtime no está habilitado o falla el canal
+setInterval(() => {
+  if (document.visibilityState !== "visible") return;
+  refreshReservas().catch((e) => console.warn("refreshReservas (intervalo):", e?.message || e));
+}, 45000);
 
 // Modal de clientes
 customersBtn.addEventListener("click", () => {
@@ -7001,10 +7088,6 @@ async function loadLocalOrders(searchTerm = '') {
 
     if (ordersError) throw ordersError;
 
-    // Debug: Verificar pedidos obtenidos
-    console.log("📦 Todos los pedidos obtenidos:", allOrders);
-    console.log("📦 Cantidad total de pedidos:", (allOrders || []).length);
-
     // Separar pedidos recibidos (con source_order_id) de pedidos guardados (sin source_order_id)
     let ordersFromOrders = (allOrders || []).filter(order => order.source_order_id !== null);
     let savedOrders = (allOrders || []).filter(order => order.source_order_id === null);
@@ -7035,11 +7118,6 @@ async function loadLocalOrders(searchTerm = '') {
       savedOrders = savedOrders.filter(matchesSearch);
     }
 
-    // Debug: Verificar filtrado
-    console.log("📦 Pedidos recibidos (con source_order_id):", ordersFromOrders.length);
-    console.log("📦 Pedidos guardados (sin source_order_id):", savedOrders.length);
-    console.log("📦 Pedidos guardados:", savedOrders);
-
     // Cargar pedidos recibidos
     if (ordersFromOrders.length === 0) {
       ordersReceivedList.innerHTML = `
@@ -7054,9 +7132,13 @@ async function loadLocalOrders(searchTerm = '') {
           const { data: items, error: itemsError } = await supabase.rpc("rpc_get_local_order_items", {
             p_local_order_id: order.id
           });
+          if (itemsError) {
+            console.error("Error obteniendo ítems del pedido local", order.id, itemsError);
+          }
           return {
             ...order,
-            items: items || []
+            items: items || [],
+            itemsLoadError: !!itemsError
           };
         })
       );
@@ -7082,37 +7164,26 @@ async function loadLocalOrders(searchTerm = '') {
           </div>
         `;
       } else {
-        // Obtener items para cada pedido guardado
-        console.log("🔄 Obteniendo items para", savedOrders.length, "pedidos guardados...");
         const savedOrdersWithItems = await Promise.all(
           savedOrders.map(async (order) => {
             const { data: items, error: itemsError } = await supabase.rpc("rpc_get_local_order_items", {
               p_local_order_id: order.id
             });
             if (itemsError) {
-              console.error("❌ Error obteniendo items para pedido", order.id, ":", itemsError);
+              console.error("Error obteniendo ítems del pedido local", order.id, itemsError);
             }
             return {
               ...order,
-              items: items || []
+              items: items || [],
+              itemsLoadError: !!itemsError
             };
           })
         );
 
-        console.log("✅ Pedidos con items obtenidos:", savedOrdersWithItems.length);
-        console.log("📋 Primer pedido con items:", savedOrdersWithItems[0]);
-
-        // Renderizar pedidos guardados
         const renderedHTML = savedOrdersWithItems.map(order => renderLocalOrderCard(order)).join('');
-        console.log("🎨 HTML renderizado (primeros 500 caracteres):", renderedHTML.substring(0, 500));
-        console.log("📍 Elemento ordersNewList:", ordersNewList);
-        console.log("📍 ordersNewList existe?", !!ordersNewList);
 
         if (ordersNewList) {
           ordersNewList.innerHTML = renderedHTML;
-          console.log("✅ HTML insertado en ordersNewList");
-        } else {
-          console.error("❌ ordersNewList no existe!");
         }
 
         // Agregar event listeners: "Cargar en Caja 1" abre modal flotante de edición (como Pedidos Locales)
@@ -7150,7 +7221,49 @@ let editOrderItems = [];
 let editManualProduct = null;
 let editManualVariants = [];
 let editManualSelectedColor = null;
-let editManualSelectedSize = null;
+/** Misma lógica que búsqueda manual principal: cantidades por talle antes de "Agregar". */
+let editManualSelectedSizes = {};
+let editManualSelectedSizesSource = {};
+let editManualSelectedSizesConfirmedWithoutStock = {};
+let editManualSizeRenderVersion = 0;
+/** JSON de local_orders.notes (shipping, discount, extras_amount, extras_percentage) — alineado a rpc_create_local_order */
+let editOrderParsedNotes = null;
+
+function parseLocalOrderNotes(notesRaw) {
+  if (notesRaw == null || String(notesRaw).trim() === "") return {};
+  try {
+    const o = typeof notesRaw === "string" ? JSON.parse(notesRaw) : notesRaw;
+    return o && typeof o === "object" ? o : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Suma solo líneas del pedido (productos + extras guardados como ítems). */
+function getEditOrderLinesSumOnly() {
+  return editOrderItems.reduce((sum, it) => sum + it.quantity * parseFloat(it.price_snapshot || 0), 0);
+}
+
+/** Misma fórmula que rpc_create_local_order sobre el subtotal de líneas. */
+function applyLocalOrderNotesToTotal(linesSum, parsed) {
+  const p = parsed && typeof parsed === "object" ? parsed : {};
+  let t = linesSum;
+  t += Number(p.shipping) || 0;
+  t -= Number(p.discount) || 0;
+  t += Number(p.extras_amount) || 0;
+  const pct = Number(p.extras_percentage) || 0;
+  if (pct) t += t * (pct / 100);
+  return Math.max(t, 0);
+}
+
+function getLocalOrderBaseBeforePercentage(parsed) {
+  const p = parsed && typeof parsed === "object" ? parsed : {};
+  let t = getEditOrderLinesSumOnly();
+  t += Number(p.shipping) || 0;
+  t -= Number(p.discount) || 0;
+  t += Number(p.extras_amount) || 0;
+  return t;
+}
 
 async function openOrderEditModal(localOrderId) {
   const modal = document.getElementById("order-edit-modal");
@@ -7164,11 +7277,12 @@ async function openOrderEditModal(localOrderId) {
   if (returnModeIndicatorEl) returnModeIndicatorEl.style.display = "none";
   editOrderId = localOrderId;
   editOrderItems = [];
+  editOrderParsedNotes = null;
   document.getElementById("order-edit-items-tbody").innerHTML = '<tr><td colspan="5" style="text-align: center; color: #999;">Cargando...</td></tr>';
 
   const { data: orderData, error: orderError } = await supabase
     .from("local_orders")
-    .select("id, order_number, customer_id, total_amount")
+    .select("id, order_number, customer_id, total_amount, notes")
     .eq("id", localOrderId)
     .single();
   if (orderError || !orderData) {
@@ -7177,6 +7291,7 @@ async function openOrderEditModal(localOrderId) {
     return;
   }
   editOrder = orderData;
+  editOrderParsedNotes = parseLocalOrderNotes(orderData.notes);
 
   const { data: customerData, error: customerError } = await supabase
     .from("public_sales_customers")
@@ -7211,7 +7326,7 @@ async function openOrderEditModal(localOrderId) {
 }
 
 function getEditOrderTotal() {
-  return editOrderItems.reduce((sum, it) => sum + it.quantity * parseFloat(it.price_snapshot || 0), 0);
+  return applyLocalOrderNotesToTotal(getEditOrderLinesSumOnly(), editOrderParsedNotes);
 }
 
 function buildEditOrderPayload() {
@@ -7240,26 +7355,55 @@ function renderOrderEditModal() {
     totalElMain.style.color = total < 0 ? "#dc3545" : "#CD844D";
   }
 
+  const n = editOrderParsedNotes || {};
+  const noteExtraRows = [];
+  if (Number(n.extras_amount) > 0) {
+    const amt = Number(n.extras_amount);
+    noteExtraRows.push(`<tr class="extra-item order-edit-note-extra">
+      <td><span style="font-style: italic;">Extra (monto fijo)</span> <span style="font-size: 10px; color: #666;">(notas del pedido)</span></td>
+      <td style="text-align: center; color: #666;">1</td>
+      <td>$${amt.toLocaleString("es-AR")}</td>
+      <td>$${amt.toLocaleString("es-AR")}</td>
+      <td style="color: #999; font-size: 11px;">—</td>
+    </tr>`);
+  }
+  if (Number(n.extras_percentage) > 0) {
+    const pct = Number(n.extras_percentage);
+    const base = getLocalOrderBaseBeforePercentage(editOrderParsedNotes);
+    const pctAmt = base * (pct / 100);
+    noteExtraRows.push(`<tr class="extra-item order-edit-note-extra">
+      <td><span style="font-style: italic;">Extra ${pct}%</span> <span style="font-size: 10px; color: #666;">(sobre subtotal + monto fijo)</span></td>
+      <td style="text-align: center; color: #666;">1</td>
+      <td>${pct}%</td>
+      <td>$${pctAmt.toLocaleString("es-AR")}</td>
+      <td style="color: #999; font-size: 11px;">—</td>
+    </tr>`);
+  }
+
   if (editOrderItems.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: #999;">No hay ítems</td></tr>';
+    tbody.innerHTML =
+      '<tr><td colspan="5" style="text-align: center; color: #999;">No hay ítems</td></tr>' + noteExtraRows.join("");
   } else {
-    tbody.innerHTML = editOrderItems.map((it, idx) => {
-      const subtotal = it.quantity * parseFloat(it.price_snapshot || 0);
-      const isReturn = !it.variant_id ? false : parseFloat(it.price_snapshot || 0) < 0;
-      const isExtra = !it.variant_id;
-      const nameCell = isExtra
-        ? `<span style="font-style: italic;">${escapeHtml(it.product_name)}</span> <span style="font-size: 11px; color: #0066cc;">(Extra)</span>`
-        : `${escapeHtml(it.product_name)}${isReturn ? ' <span style="color: #dc3545; font-weight: 700; font-size: 11px; text-transform: uppercase;">[DEV]</span>' : ""}` +
-          (it.color ? ` - ${escapeHtml(it.color)}` : "") +
-          (it.size ? ` (${escapeHtml(it.size)})` : "");
-      return `<tr class="${isExtra ? "extra-item" : (isReturn ? "return-item" : "")}" data-edit-idx="${idx}">
+    tbody.innerHTML =
+      editOrderItems
+        .map((it, idx) => {
+          const subtotal = it.quantity * parseFloat(it.price_snapshot || 0);
+          const isReturn = !it.variant_id ? false : parseFloat(it.price_snapshot || 0) < 0;
+          const isExtra = !it.variant_id;
+          const nameCell = isExtra
+            ? `<span style="font-style: italic;">${escapeHtml(it.product_name)}</span> <span style="font-size: 11px; color: #0066cc;">(Extra)</span>`
+            : `${escapeHtml(it.product_name)}${isReturn ? ' <span style="color: #dc3545; font-weight: 700; font-size: 11px; text-transform: uppercase;">[DEV]</span>' : ""}` +
+              (it.color ? ` - ${escapeHtml(it.color)}` : "") +
+              (it.size ? ` (${escapeHtml(it.size)})` : "");
+          return `<tr class="${isExtra ? "extra-item" : isReturn ? "return-item" : ""}" data-edit-idx="${idx}">
         <td>${nameCell}</td>
         <td><input type="number" min="1" value="${it.quantity}" data-edit-idx="${idx}" class="order-edit-qty" style="width: 50px; padding: 4px; text-align: center;" /></td>
-        <td>${isReturn ? '-' : ''}$${Math.abs(parseFloat(it.price_snapshot || 0)).toLocaleString("es-AR")}</td>
-        <td>${subtotal < 0 ? '-' : ''}$${Math.abs(subtotal).toLocaleString("es-AR")}</td>
+        <td>${isReturn ? "-" : ""}$${Math.abs(parseFloat(it.price_snapshot || 0)).toLocaleString("es-AR")}</td>
+        <td>${subtotal < 0 ? "-" : ""}$${Math.abs(subtotal).toLocaleString("es-AR")}</td>
         <td><button type="button" class="btn btn-secondary order-edit-remove" data-edit-idx="${idx}" style="padding: 4px 8px; font-size: 11px;">Quitar</button></td>
       </tr>`;
-    }).join("");
+        })
+        .join("") + noteExtraRows.join("");
   }
   totalEl.textContent = `Total: ${totalText}`;
   totalEl.style.color = total < 0 ? "#dc3545" : "#CD844D";
@@ -7402,7 +7546,7 @@ document.getElementById("order-edit-finalize-btn")?.addEventListener("click", as
       if (it.variant_id) {
         const rawPrice = parseFloat(it.price_snapshot || 0);
         const isReturn = rawPrice < 0;
-        saleItems.push({
+        const line = {
           variant_id: it.variant_id,
           qty: it.quantity,
           price: Math.abs(rawPrice),
@@ -7410,8 +7554,16 @@ document.getElementById("order-edit-finalize-btn")?.addEventListener("click", as
           // Ventas del pedido local: stock ya reservado/descontado.
           // Devoluciones: deben reingresar stock, así que NO deben llevar from_local_order=true.
           from_local_order: !isReturn,
-          ...(isReturn ? {} : { source: { venta_publico: it.quantity, general: 0 } }),
-        });
+        };
+        // Sin talle, rpc_create_public_sale usa variant_warehouse_stock (legacy) y el reingreso no toca variant_size_warehouse_stock (venta al público por talle).
+        const sizeStr = it.size != null ? String(it.size).trim() : "";
+        if (sizeStr !== "") {
+          line.size = sizeStr;
+        }
+        if (!isReturn) {
+          line.source = { venta_publico: it.quantity, general: 0 };
+        }
+        saleItems.push(line);
       } else {
         saleItems.push({
           product_name: it.product_name,
@@ -7421,6 +7573,31 @@ document.getElementById("order-edit-finalize-btn")?.addEventListener("click", as
           is_special_extra: true,
         });
       }
+    }
+    const notesFin = editOrderParsedNotes || {};
+    if (Number(notesFin.extras_amount) > 0) {
+      saleItems.push({
+        product_name: "Extra (monto fijo)",
+        qty: 1,
+        price: Number(notesFin.extras_amount),
+        is_return: false,
+        is_special_extra: true,
+      });
+    }
+    const pctFin = Number(notesFin.extras_percentage) || 0;
+    if (pctFin > 0) {
+      let basePct = pItems.reduce((s, it) => s + it.quantity * parseFloat(it.price_snapshot || 0), 0);
+      basePct += Number(notesFin.shipping) || 0;
+      basePct -= Number(notesFin.discount) || 0;
+      basePct += Number(notesFin.extras_amount) || 0;
+      const pctAmt = basePct * (pctFin / 100);
+      saleItems.push({
+        product_name: `Extra ${pctFin}%`,
+        qty: 1,
+        price: pctAmt,
+        is_return: false,
+        is_special_extra: true,
+      });
     }
     const finalTotal = getEditOrderTotal();
     const { data: saleData, error: saleError } = await supabase.rpc("rpc_create_public_sale", {
@@ -7474,6 +7651,468 @@ document.getElementById("order-edit-manual-product")?.addEventListener("input", 
   }, 300);
 });
 
+/** Stock por variante+talle (warehouses general + venta-público), misma lógica que búsqueda manual. */
+async function fetchEditOrderManualSizeStockMap(variantIds, normalizedSizes) {
+  const sizeStockMap = new Map();
+  if (!variantIds.length || !normalizedSizes.length) return sizeStockMap;
+
+  const { data: warehouses } = await supabase
+    .from("warehouses")
+    .select("id, code")
+    .in("code", ["general", "venta-publico"]);
+
+  const warehouseMap = new Map();
+  let generalWarehouseId = null;
+  let ventaPublicoWarehouseId = null;
+  if (warehouses?.length) {
+    warehouses.forEach((w) => warehouseMap.set(w.code, w.id));
+    generalWarehouseId = warehouseMap.get("general");
+    ventaPublicoWarehouseId = warehouseMap.get("venta-publico");
+  }
+  if (!generalWarehouseId || !ventaPublicoWarehouseId) return sizeStockMap;
+
+  const { data: sizeWarehouseStocks, error: sizeError } = await supabase
+    .from("variant_size_warehouse_stock")
+    .select("variant_id, size, warehouse_id, stock_qty")
+    .in("variant_id", variantIds)
+    .in("warehouse_id", [generalWarehouseId, ventaPublicoWarehouseId]);
+
+  if (sizeError || !sizeWarehouseStocks?.length) return sizeStockMap;
+
+  sizeWarehouseStocks.forEach((sws) => {
+    const normalizedSize = normalizeSize(sws.size);
+    if (!normalizedSize || !normalizedSizes.includes(normalizedSize)) return;
+    const key = `${sws.variant_id}_${normalizedSize}`;
+    if (!sizeStockMap.has(key)) {
+      sizeStockMap.set(key, { general: 0, ventaPublico: 0, total: 0 });
+    }
+    const stock = sizeStockMap.get(key);
+    if (sws.warehouse_id === generalWarehouseId) {
+      stock.general = sws.stock_qty || 0;
+    } else if (sws.warehouse_id === ventaPublicoWarehouseId) {
+      stock.ventaPublico = sws.stock_qty || 0;
+    }
+    stock.total = stock.general + stock.ventaPublico;
+  });
+
+  return sizeStockMap;
+}
+
+function updateEditManualLoadButton() {
+  const addBtn = document.getElementById("order-edit-manual-add-btn");
+  const hasSelections = Object.keys(editManualSelectedSizes).some((sz) => editManualSelectedSizes[sz] > 0);
+  if (addBtn) addBtn.disabled = !hasSelections || !editManualSelectedColor;
+}
+
+function updateEditManualSizeButton(size, generalStock, ventaPublicoStock, totalStock) {
+  const sizesEl = document.getElementById("order-edit-manual-sizes");
+  if (!sizesEl) return;
+
+  const btn = sizesEl.querySelector(`[data-size="${size}"]`);
+  if (!btn) return;
+
+  const quantity = editManualSelectedSizes[size] || 0;
+  const source = editManualSelectedSizesSource[size] || { ventaPublico: 0, general: 0 };
+
+  btn.className = "size-btn edit-manual-size";
+  if (totalStock === 0) {
+    btn.classList.add("size-zero");
+  } else if (source.general > 0) {
+    btn.classList.add("size-green");
+  } else if (ventaPublicoStock > 0 && source.general === 0) {
+    btn.classList.add("size-available");
+  } else if (generalStock > 0) {
+    btn.classList.add("size-green");
+  } else {
+    btn.classList.add("size-zero");
+  }
+
+  let counter = btn.querySelector(".size-counter");
+  if (quantity > 0) {
+    if (!counter) {
+      counter = document.createElement("div");
+      counter.className = "size-counter";
+      counter.style.width = "18px";
+      counter.style.height = "18px";
+      counter.style.fontSize = "11px";
+      btn.appendChild(counter);
+    }
+    counter.textContent = quantity;
+  } else if (counter) {
+    counter.remove();
+  }
+
+  let decrementBtn = btn.querySelector(".size-decrement");
+  if (quantity > 0) {
+    if (!decrementBtn) {
+      decrementBtn = document.createElement("button");
+      decrementBtn.className = "size-decrement";
+      decrementBtn.textContent = "-";
+      decrementBtn.type = "button";
+      decrementBtn.style.width = "16px";
+      decrementBtn.style.height = "16px";
+      decrementBtn.style.fontSize = "12px";
+      decrementBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        if (editManualSelectedSizes[size] > 0) {
+          editManualSelectedSizes[size]--;
+          if (editManualSelectedSizesSource[size]) {
+            if (editManualSelectedSizesSource[size].general > 0) {
+              editManualSelectedSizesSource[size].general--;
+            } else if (editManualSelectedSizesSource[size].ventaPublico > 0) {
+              editManualSelectedSizesSource[size].ventaPublico--;
+            }
+            if (
+              editManualSelectedSizesSource[size].ventaPublico === 0 &&
+              editManualSelectedSizesSource[size].general === 0
+            ) {
+              delete editManualSelectedSizesSource[size];
+            }
+          }
+          if (editManualSelectedSizes[size] === 0) {
+            delete editManualSelectedSizes[size];
+            delete editManualSelectedSizesSource[size];
+          }
+          const variant = editManualVariants.find(
+            (v) => v.color === editManualSelectedColor && normalizeSize(v.size) === normalizeSize(size)
+          );
+          if (variant) {
+            const { data: warehouses } = await supabase
+              .from("warehouses")
+              .select("id, code")
+              .in("code", ["general", "venta-publico"]);
+            const warehouseMap = new Map();
+            let generalWarehouseId = null;
+            let ventaPublicoWarehouseId = null;
+            if (warehouses && warehouses.length > 0) {
+              warehouses.forEach((w) => warehouseMap.set(w.code, w.id));
+              generalWarehouseId = warehouseMap.get("general");
+              ventaPublicoWarehouseId = warehouseMap.get("venta-publico");
+            }
+            let genStock = 0;
+            let ventaStock = 0;
+            if (generalWarehouseId && ventaPublicoWarehouseId) {
+              const normalizedSize = normalizeSize(size);
+              const { data: sizeWarehouseStocks } = await supabase
+                .from("variant_size_warehouse_stock")
+                .select("size, warehouse_id, stock_qty")
+                .eq("variant_id", variant.id)
+                .in("warehouse_id", [generalWarehouseId, ventaPublicoWarehouseId]);
+              if (sizeWarehouseStocks) {
+                sizeWarehouseStocks.forEach((sws) => {
+                  const swsNormalizedSize = normalizeSize(sws.size);
+                  if (swsNormalizedSize !== normalizedSize) return;
+                  if (sws.warehouse_id === generalWarehouseId) {
+                    genStock = sws.stock_qty || 0;
+                  } else if (sws.warehouse_id === ventaPublicoWarehouseId) {
+                    ventaStock = sws.stock_qty || 0;
+                  }
+                });
+              }
+            }
+            updateEditManualSizeButton(size, genStock, ventaStock, genStock + ventaStock);
+          } else {
+            updateEditManualSizeButton(size, 0, 0, 0);
+          }
+          updateEditManualLoadButton();
+        }
+      });
+      btn.appendChild(decrementBtn);
+    }
+  } else if (decrementBtn) {
+    decrementBtn.remove();
+  }
+}
+
+async function paintOrderEditManualSizesForColor(color) {
+  const currentVersion = ++editManualSizeRenderVersion;
+  const sizesEl = document.getElementById("order-edit-manual-sizes");
+  if (!sizesEl) return;
+
+  sizesEl.innerHTML = "";
+
+  const byColor = editManualVariants.filter((v) => v.color === color);
+  const sizes = [...new Set(byColor.map((v) => v.size).filter(Boolean))].sort((a, b) => {
+    const numA = parseFloat(a) || 0;
+    const numB = parseFloat(b) || 0;
+    return numA - numB;
+  });
+
+  if (currentVersion !== editManualSizeRenderVersion) return;
+
+  const variantIds = byColor.map((v) => v.id).filter(Boolean);
+  const normalizedSizes = sizes.map((s) => normalizeSize(s)).filter(Boolean);
+  const sizeStockMap = await fetchEditOrderManualSizeStockMap(variantIds, normalizedSizes);
+
+  if (currentVersion !== editManualSizeRenderVersion) return;
+
+  const { data: warehouses } = await supabase
+    .from("warehouses")
+    .select("id, code")
+    .in("code", ["general", "venta-publico"]);
+
+  const warehouseMap = new Map();
+  let generalWarehouseId = null;
+  let ventaPublicoWarehouseId = null;
+  if (warehouses && warehouses.length > 0) {
+    warehouses.forEach((w) => warehouseMap.set(w.code, w.id));
+    generalWarehouseId = warehouseMap.get("general");
+    ventaPublicoWarehouseId = warehouseMap.get("venta-publico");
+  }
+
+  if (currentVersion !== editManualSizeRenderVersion) return;
+
+  const orderEditReturnMode = () => !!document.getElementById("order-edit-return-mode")?.checked;
+
+  sizes.forEach((size) => {
+    const normalizedSize = normalizeSize(size);
+    if (!normalizedSize) return;
+
+    const variant = byColor.find((v) => normalizeSize(v.size) === normalizedSize);
+    if (!variant) return;
+
+    const stockKey = `${variant.id}_${normalizedSize}`;
+    let totalStock = 0;
+    let generalStock = 0;
+    let ventaPublicoStock = 0;
+
+    if (sizeStockMap.has(stockKey)) {
+      const sizeStock = sizeStockMap.get(stockKey);
+      generalStock = sizeStock.general || 0;
+      ventaPublicoStock = sizeStock.ventaPublico || 0;
+      totalStock = sizeStock.total || 0;
+    } else {
+      for (const [key, stock] of sizeStockMap.entries()) {
+        const u = key.lastIndexOf("_");
+        const keyVariantId = u >= 0 ? key.slice(0, u) : key;
+        const keySize = u >= 0 ? key.slice(u + 1) : "";
+        if (keySize === normalizedSize && variantIds.includes(keyVariantId)) {
+          const matchingVariant = byColor.find((v) => v.id === keyVariantId);
+          if (matchingVariant && normalizeSize(matchingVariant.size) === normalizedSize) {
+            generalStock = stock.general || 0;
+            ventaPublicoStock = stock.ventaPublico || 0;
+            totalStock = stock.total || 0;
+            break;
+          }
+        }
+      }
+    }
+
+    if (generalStock === 0 && ventaPublicoStock === 0 && Number(variant.stock_qty) > 0) {
+      generalStock = Number(variant.stock_qty);
+      totalStock = generalStock;
+    }
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "size-btn edit-manual-size";
+    btn.setAttribute("data-size", size);
+    btn.textContent = size;
+    btn.style.width = "40px";
+    btn.style.height = "40px";
+    btn.style.fontSize = "14px";
+
+    const quantity = editManualSelectedSizes[size] || 0;
+    const source = editManualSelectedSizesSource[size] || { ventaPublico: 0, general: 0 };
+
+    if (totalStock === 0) {
+      btn.classList.add("size-zero");
+    } else if (source.general > 0) {
+      btn.classList.add("size-green");
+    } else if (ventaPublicoStock > 0 && source.general === 0) {
+      btn.classList.add("size-available");
+    } else if (generalStock > 0) {
+      btn.classList.add("size-green");
+    } else {
+      btn.classList.add("size-zero");
+    }
+
+    if (quantity > 0) {
+      const counter = document.createElement("div");
+      counter.className = "size-counter";
+      counter.textContent = quantity;
+      counter.style.width = "18px";
+      counter.style.height = "18px";
+      counter.style.fontSize = "11px";
+      btn.appendChild(counter);
+    }
+
+    if (quantity > 0) {
+      const decrementBtn = document.createElement("button");
+      decrementBtn.className = "size-decrement";
+      decrementBtn.textContent = "-";
+      decrementBtn.type = "button";
+      decrementBtn.style.width = "16px";
+      decrementBtn.style.height = "16px";
+      decrementBtn.style.fontSize = "12px";
+      decrementBtn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        if (editManualSelectedSizes[size] > 0) {
+          editManualSelectedSizes[size]--;
+          if (editManualSelectedSizesSource[size]) {
+            if (editManualSelectedSizesSource[size].general > 0) {
+              editManualSelectedSizesSource[size].general--;
+            } else if (editManualSelectedSizesSource[size].ventaPublico > 0) {
+              editManualSelectedSizesSource[size].ventaPublico--;
+            }
+            if (
+              editManualSelectedSizesSource[size].ventaPublico === 0 &&
+              editManualSelectedSizesSource[size].general === 0
+            ) {
+              delete editManualSelectedSizesSource[size];
+            }
+          }
+          if (editManualSelectedSizes[size] === 0) {
+            delete editManualSelectedSizes[size];
+            delete editManualSelectedSizesSource[size];
+          }
+          updateEditManualSizeButton(size, generalStock, ventaPublicoStock, totalStock);
+          updateEditManualLoadButton();
+        }
+      });
+      btn.appendChild(decrementBtn);
+    }
+
+    if (orderEditReturnMode() || totalStock > 0) {
+      btn.addEventListener("click", async () => {
+        const currentQty = editManualSelectedSizes[size] || 0;
+        const currentSource = editManualSelectedSizesSource[size] || { ventaPublico: 0, general: 0 };
+
+        if (orderEditReturnMode()) {
+          editManualSelectedSizes[size] = currentQty + 1;
+          if (!editManualSelectedSizesSource[size]) {
+            editManualSelectedSizesSource[size] = { ventaPublico: 0, general: 0 };
+          }
+          updateEditManualSizeButton(size, generalStock, ventaPublicoStock, totalStock);
+          updateEditManualLoadButton();
+        } else {
+          const totalStockAvailable = ventaPublicoStock + generalStock;
+
+          if (currentQty < totalStockAvailable) {
+            editManualSelectedSizes[size] = currentQty + 1;
+            if (!editManualSelectedSizesSource[size]) {
+              editManualSelectedSizesSource[size] = { ventaPublico: 0, general: 0 };
+            }
+            const remainingVentaPublico = Math.max(0, ventaPublicoStock - currentSource.ventaPublico);
+            const remainingGeneral = Math.max(0, generalStock - currentSource.general);
+            if (remainingVentaPublico > 0) {
+              editManualSelectedSizesSource[size].ventaPublico++;
+            } else if (remainingGeneral > 0) {
+              editManualSelectedSizesSource[size].general++;
+            }
+            updateEditManualSizeButton(size, generalStock, ventaPublicoStock, totalStock);
+            updateEditManualLoadButton();
+          } else {
+            const modal = document.getElementById("no-stock-confirm-modal");
+            const confirmYes = document.getElementById("no-stock-confirm-yes");
+            const confirmNo = document.getElementById("no-stock-confirm-no");
+            if (!modal || !confirmYes || !confirmNo) {
+              showOrderEditMessage(
+                `Stock máximo alcanzado para talle ${size}. Disponible: ${totalStockAvailable} (Venta Público: ${ventaPublicoStock}, General: ${generalStock})`,
+                "error"
+              );
+              return;
+            }
+            const modalMessage = modal.querySelector("p");
+            if (modalMessage) {
+              modalMessage.textContent = `Stock máximo alcanzado para talle ${size}. Disponible: ${totalStockAvailable} (Venta Público: ${ventaPublicoStock}, General: ${generalStock}). ¿Desea agregarlo de todas formas? (Útil en caso de mal conteo de stock)`;
+            }
+            modal.classList.add("active");
+            const userConfirmed = await new Promise((resolve) => {
+              const handleYes = () => {
+                modal.classList.remove("active");
+                const msg = modal.querySelector("p");
+                if (msg) {
+                  msg.textContent =
+                    "Este producto no tiene stock disponible. ¿Está seguro de que desea agregarlo de todas formas?";
+                }
+                confirmYes.removeEventListener("click", handleYes);
+                confirmNo.removeEventListener("click", handleNo);
+                resolve(true);
+              };
+              const handleNo = () => {
+                modal.classList.remove("active");
+                const msg = modal.querySelector("p");
+                if (msg) {
+                  msg.textContent =
+                    "Este producto no tiene stock disponible. ¿Está seguro de que desea agregarlo de todas formas?";
+                }
+                confirmYes.removeEventListener("click", handleYes);
+                confirmNo.removeEventListener("click", handleNo);
+                resolve(false);
+              };
+              confirmYes.addEventListener("click", handleYes);
+              confirmNo.addEventListener("click", handleNo);
+            });
+            if (userConfirmed) {
+              editManualSelectedSizes[size] = currentQty + 1;
+              editManualSelectedSizesConfirmedWithoutStock[size] = true;
+              editManualSelectedSizesSource[size] = { ventaPublico: 0, general: 0 };
+              updateEditManualSizeButton(size, generalStock, ventaPublicoStock, totalStock);
+              updateEditManualLoadButton();
+            }
+          }
+        }
+      });
+    } else {
+      btn.addEventListener("click", async () => {
+        const modal = document.getElementById("no-stock-confirm-modal");
+        const confirmYes = document.getElementById("no-stock-confirm-yes");
+        const confirmNo = document.getElementById("no-stock-confirm-no");
+        if (!modal || !confirmYes || !confirmNo) return;
+        modal.classList.add("active");
+        const userConfirmed = await new Promise((resolve) => {
+          const handleYes = () => {
+            modal.classList.remove("active");
+            confirmYes.removeEventListener("click", handleYes);
+            confirmNo.removeEventListener("click", handleNo);
+            resolve(true);
+          };
+          const handleNo = () => {
+            modal.classList.remove("active");
+            confirmYes.removeEventListener("click", handleYes);
+            confirmNo.removeEventListener("click", handleNo);
+            resolve(false);
+          };
+          confirmYes.addEventListener("click", handleYes);
+          confirmNo.addEventListener("click", handleNo);
+        });
+        if (userConfirmed) {
+          const currentQty = editManualSelectedSizes[size] || 0;
+          editManualSelectedSizes[size] = currentQty + 1;
+          editManualSelectedSizesConfirmedWithoutStock[size] = true;
+          editManualSelectedSizesSource[size] = { ventaPublico: 0, general: 0 };
+          let genStock = generalStock;
+          let ventaStock = ventaPublicoStock;
+          if (variant && generalWarehouseId && ventaPublicoWarehouseId) {
+            const { data: sizeWarehouseStocks } = await supabase
+              .from("variant_size_warehouse_stock")
+              .select("size, warehouse_id, stock_qty")
+              .eq("variant_id", variant.id)
+              .in("warehouse_id", [generalWarehouseId, ventaPublicoWarehouseId]);
+            if (sizeWarehouseStocks) {
+              genStock = 0;
+              ventaStock = 0;
+              sizeWarehouseStocks.forEach((sws) => {
+                const swsNormalizedSize = normalizeSize(sws.size);
+                if (swsNormalizedSize !== normalizedSize) return;
+                if (sws.warehouse_id === generalWarehouseId) genStock = sws.stock_qty || 0;
+                else if (sws.warehouse_id === ventaPublicoWarehouseId) ventaStock = sws.stock_qty || 0;
+              });
+            }
+          }
+          updateEditManualSizeButton(size, genStock, ventaStock, genStock + ventaStock);
+          updateEditManualLoadButton();
+        }
+      });
+    }
+
+    sizesEl.appendChild(btn);
+  });
+
+  updateEditManualLoadButton();
+}
+
 async function loadEditOrderProductVariants(productId) {
   const { data: variants, error } = await supabase
     .from("product_variants")
@@ -7485,99 +8124,146 @@ async function loadEditOrderProductVariants(productId) {
     return;
   }
   const variantIds = variants.map((v) => v.id);
-  const { data: sizesData } = await supabase.from("variant_sizes").select("variant_id, size").in("variant_id", variantIds).order("size");
+  const { data: sizesData } = await supabase
+    .from("variant_sizes")
+    .select("variant_id, size, stock_qty")
+    .in("variant_id", variantIds)
+    .order("size");
   const sizesByVariant = new Map();
   (sizesData || []).forEach((row) => {
     if (!sizesByVariant.has(row.variant_id)) sizesByVariant.set(row.variant_id, []);
     const norm = normalizeSize(row.size);
-    if (norm) sizesByVariant.get(row.variant_id).push(norm);
+    if (norm) sizesByVariant.get(row.variant_id).push({ size: norm, stock_qty: row.stock_qty || 0 });
   });
   editManualProduct = variants[0].products;
   editManualVariants = [];
   variants.forEach((v) => {
-    const sizes = sizesByVariant.get(v.id) || [];
-    if (sizes.length) sizes.forEach((s) => editManualVariants.push({ ...v, size: s }));
-    else editManualVariants.push({ ...v, size: null });
+    const sizeRows = sizesByVariant.get(v.id) || [];
+    if (sizeRows.length) {
+      sizeRows.forEach((row) => editManualVariants.push({ ...v, size: row.size, stock_qty: row.stock_qty }));
+    } else {
+      editManualVariants.push({ ...v, size: null, stock_qty: 0 });
+    }
   });
   editManualSelectedColor = null;
-  editManualSelectedSize = null;
-  document.getElementById("order-edit-manual-info").style.display = "block";
-  document.getElementById("order-edit-manual-name").textContent = editManualProduct.name;
-  document.getElementById("order-edit-manual-price").textContent = `$${variants[0].price.toLocaleString("es-AR")}`;
+  editManualSelectedSizes = {};
+  editManualSelectedSizesSource = {};
+  editManualSelectedSizesConfirmedWithoutStock = {};
+  const infoEl = document.getElementById("order-edit-manual-info");
+  const nameEl = document.getElementById("order-edit-manual-name");
+  const priceEl = document.getElementById("order-edit-manual-price");
+  if (infoEl) infoEl.style.display = "flex";
+  if (nameEl) nameEl.textContent = editManualProduct.name;
+
   const addBtn = document.getElementById("order-edit-manual-add-btn");
   if (addBtn) addBtn.disabled = true;
   const colors = [...new Set(editManualVariants.map((x) => x.color).filter(Boolean))];
   const colorsEl = document.getElementById("order-edit-manual-colors");
   const sizesEl = document.getElementById("order-edit-manual-sizes");
-  colorsEl.innerHTML = colors.map((c) => `<button type="button" class="btn btn-secondary edit-manual-color" data-color="${escapeHtml(c)}" style="margin: 2px;">${escapeHtml(c)}</button>`).join("");
-  colorsEl.querySelectorAll(".edit-manual-color").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
+  if (!colorsEl || !sizesEl) return;
+  colorsEl.innerHTML = "";
+  sizesEl.innerHTML = "";
+
+  colors.forEach((c) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "color-btn edit-manual-color";
+    btn.dataset.color = c;
+    btn.textContent = c;
+    btn.addEventListener("click", async (e) => {
       e.preventDefault();
       e.stopPropagation();
-      editManualSelectedColor = btn.dataset.color;
-      editManualSelectedSize = null;
-      if (addBtn) addBtn.disabled = true;
+      editManualSelectedColor = c;
+      editManualSelectedSizes = {};
+      editManualSelectedSizesSource = {};
+      editManualSelectedSizesConfirmedWithoutStock = {};
       colorsEl.querySelectorAll(".edit-manual-color").forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
-      const byColor = editManualVariants.filter((v) => v.color === editManualSelectedColor);
-      const sizes = [...new Set(byColor.map((v) => v.size).filter(Boolean))];
-      sizesEl.innerHTML = sizes.map((s) => {
-        const v = byColor.find((x) => x.size === s);
-        return `<button type="button" class="btn btn-secondary edit-manual-size" data-size="${escapeHtml(s)}" data-variant-id="${v.id}" data-price="${v.price}" style="margin: 2px;">${escapeHtml(s)}</button>`;
-      }).join("");
-      sizesEl.querySelectorAll(".edit-manual-size").forEach((b) => {
-        b.addEventListener("click", (ev) => {
-          ev.preventDefault();
-          ev.stopPropagation();
-          editManualSelectedSize = { size: b.dataset.size, variantId: b.dataset.variantId, price: parseFloat(b.dataset.price) };
-          sizesEl.querySelectorAll(".edit-manual-size").forEach((x) => x.classList.remove("active"));
-          b.classList.add("active");
-          if (addBtn) addBtn.disabled = false;
-        });
-      });
+      const firstOfColor = editManualVariants.find((v) => v.color === c);
+      if (firstOfColor && priceEl) {
+        priceEl.textContent = `$${Number(firstOfColor.price).toLocaleString("es-AR")}`;
+      }
+      await paintOrderEditManualSizesForColor(c);
     });
+    colorsEl.appendChild(btn);
   });
+
   if (colors.length) {
     editManualSelectedColor = colors[0];
     colorsEl.querySelector(".edit-manual-color")?.classList.add("active");
-    const byColor = editManualVariants.filter((v) => v.color === editManualSelectedColor);
-    const sizes = [...new Set(byColor.map((v) => v.size).filter(Boolean))];
-    sizesEl.innerHTML = sizes.map((s) => {
-      const v = byColor.find((x) => x.size === s);
-      return `<button type="button" class="btn btn-secondary edit-manual-size" data-size="${escapeHtml(s)}" data-variant-id="${v.id}" data-price="${v.price}" style="margin: 2px;">${escapeHtml(s)}</button>`;
-    }).join("");
-    sizesEl.querySelectorAll(".edit-manual-size").forEach((b) => {
-      b.addEventListener("click", (ev) => {
-        ev.preventDefault();
-        ev.stopPropagation();
-        editManualSelectedSize = { size: b.dataset.size, variantId: b.dataset.variantId, price: parseFloat(b.dataset.price) };
-        sizesEl.querySelectorAll(".edit-manual-size").forEach((x) => x.classList.remove("active"));
-        b.classList.add("active");
-        if (addBtn) addBtn.disabled = false;
-      });
-    });
+    const firstOfColor = editManualVariants.find((v) => v.color === colors[0]);
+    if (firstOfColor && priceEl) {
+      priceEl.textContent = `$${Number(firstOfColor.price).toLocaleString("es-AR")}`;
+    }
+    await paintOrderEditManualSizesForColor(colors[0]);
   }
 }
 
-document.getElementById("order-edit-manual-add-btn")?.addEventListener("click", () => {
-  if (!editManualSelectedSize || !editManualProduct) return;
+document.getElementById("order-edit-manual-add-btn")?.addEventListener("click", async () => {
+  if (!editManualProduct || !editManualSelectedColor) return;
+  const hasSelections = Object.keys(editManualSelectedSizes).some((sz) => editManualSelectedSizes[sz] > 0);
+  if (!hasSelections) return;
+
   const isReturnMode = !!document.getElementById("order-edit-return-mode")?.checked;
-  const unitPrice = Math.abs(parseFloat(editManualSelectedSize.price || 0));
-  editOrderItems.push({
-    variant_id: editManualSelectedSize.variantId,
-    product_name: editManualProduct.name,
-    color: editManualSelectedColor || "",
-    size: editManualSelectedSize.size || "",
-    quantity: 1,
-    // Persistimos devoluciones usando price_snapshot negativo (RPC no tiene is_return)
-    price_snapshot: isReturnMode ? -unitPrice : unitPrice,
-  });
+  const variantsByColor = editManualVariants.filter((v) => v.color === editManualSelectedColor);
+  const variantIds = variantsByColor.map((v) => v.id).filter(Boolean);
+  const normalizedSizes = Object.keys(editManualSelectedSizes)
+    .map((sz) => normalizeSize(sz))
+    .filter(Boolean);
+  const sizeStockMap = await fetchEditOrderManualSizeStockMap(variantIds, normalizedSizes);
+
+  let hasStockError = false;
+  for (const size of Object.keys(editManualSelectedSizes)) {
+    const quantity = editManualSelectedSizes[size];
+    if (quantity <= 0) continue;
+    const variant = variantsByColor.find((v) => normalizeSize(v.size) === normalizeSize(size));
+    if (!variant) continue;
+
+    const norm = normalizeSize(size);
+    const stockKey = `${variant.id}_${norm}`;
+    let totalStock = 0;
+    if (sizeStockMap.has(stockKey)) {
+      totalStock = sizeStockMap.get(stockKey).total || 0;
+    }
+    if (totalStock === 0 && Number(variant.stock_qty) > 0) {
+      totalStock = Number(variant.stock_qty);
+    }
+
+    if (!isReturnMode && quantity > totalStock && !editManualSelectedSizesConfirmedWithoutStock[size]) {
+      showOrderEditMessage(
+        `La cantidad (${quantity}) para talle ${size} supera el stock disponible (${totalStock}).`,
+        "error"
+      );
+      hasStockError = true;
+      break;
+    }
+  }
+  if (hasStockError) return;
+
+  for (const size of Object.keys(editManualSelectedSizes)) {
+    const quantity = editManualSelectedSizes[size];
+    if (quantity <= 0) continue;
+    const variant = variantsByColor.find((v) => normalizeSize(v.size) === normalizeSize(size));
+    if (!variant) continue;
+    const unitPrice = Math.abs(parseFloat(variant.price || 0));
+    editOrderItems.push({
+      variant_id: variant.id,
+      product_name: editManualProduct.name,
+      color: editManualSelectedColor || "",
+      size: size || "",
+      quantity,
+      price_snapshot: isReturnMode ? -unitPrice : unitPrice,
+    });
+  }
+
   document.getElementById("order-edit-manual-product").value = "";
   document.getElementById("order-edit-manual-info").style.display = "none";
   editManualProduct = null;
   editManualVariants = [];
   editManualSelectedColor = null;
-  editManualSelectedSize = null;
+  editManualSelectedSizes = {};
+  editManualSelectedSizesSource = {};
+  editManualSelectedSizesConfirmedWithoutStock = {};
   renderOrderEditModal();
   showOrderEditMessage(isReturnMode ? "Devolución agregada al pedido" : "Producto agregado al pedido", "success");
 });
@@ -7601,11 +8287,45 @@ function renderLocalOrderCard(order) {
   const statusLabel = statusLabels[order.status] || order.status;
   const statusClass = statusClasses[order.status] || 'pending';
 
-  const itemsSummary = order.items.slice(0, 3).map(item =>
-    `${item.product_name}${item.color ? ` - ${item.color}` : ''}${item.size ? ` (${item.size})` : ''} x${item.quantity}`
-  ).join(', ');
+  const items = Array.isArray(order.items) ? order.items : [];
+  const nCount = Number(order.item_count);
+  const lineCount =
+    Number.isFinite(nCount) && nCount > 0 ? Math.floor(nCount) : items.length;
+  const lineCountLabel = lineCount === 1 ? "1 línea" : `${lineCount} líneas`;
 
-  const moreItems = order.items.length > 3 ? ` y ${order.items.length - 3} más` : '';
+  const formatLine = (item) => {
+    const q = Number(item.quantity) || 0;
+    return (
+      `${escapeHtml(item.product_name || "")}` +
+      (item.color ? ` - ${escapeHtml(item.color)}` : "") +
+      (item.size ? ` (${escapeHtml(item.size)})` : "") +
+      ` x${q}`
+    );
+  };
+
+  const itemsSummary = items.slice(0, 3).map(formatLine).join(", ");
+  const moreItems = items.length > 3 ? ` y ${items.length - 3} más` : "";
+
+  const fullListHtml = items.map((item) => `<div class="local-order-line">${formatLine(item)}</div>`).join("");
+
+  let itemsBody = "";
+  if (order.itemsLoadError && items.length === 0 && lineCount > 0) {
+    itemsBody = `
+      <p class="local-order-items-warn">${lineCountLabel}. No se pudieron cargar las líneas aquí. Usá «Cargar en Caja 1» para ver y editar el pedido completo.</p>`;
+  } else {
+    itemsBody = `
+      <div class="local-order-line-count" aria-label="Cantidad de líneas del pedido">${escapeHtml(lineCountLabel)} · resumen</div>
+      <div class="local-order-items-preview">${itemsSummary}${moreItems}</div>
+      ${
+        items.length > 3
+          ? `<details class="local-order-items-detail">
+        <summary class="local-order-items-summary">Ver listado completo (${lineCount} líneas)</summary>
+        <div class="local-order-items-full">${fullListHtml}</div>
+      </details>`
+          : ""
+      }
+      <p class="local-order-items-hint">Podés revisar y modificar todo en «Cargar en Caja 1».</p>`;
+  }
 
   const createdAt = new Date(order.created_at);
   const dateStr = createdAt.toLocaleDateString('es-AR', {
@@ -7624,13 +8344,13 @@ function renderLocalOrderCard(order) {
           ${order.source_order_id ? '<span class="local-order-badge">Desde Orders</span>' : ''}
         </div>
         <div class="local-order-customer-name">
-          ${order.customer_name || 'Cliente sin nombre'}
-          ${order.customer_number ? ` <span style="font-size: 13px; color: #666;">(Nº ${order.customer_number})</span>` : ''}
+          ${escapeHtml(order.customer_name || 'Cliente sin nombre')}
+          ${order.customer_number ? ` <span style="font-size: 13px; color: #666;">(Nº ${escapeHtml(order.customer_number)})</span>` : ''}
         </div>
         <div class="local-order-status ${statusClass}">${statusLabel}</div>
       </div>
       <div class="local-order-items">
-        ${itemsSummary}${moreItems}
+        ${itemsBody}
       </div>
       <div class="local-order-total">
         <span>Total:</span>

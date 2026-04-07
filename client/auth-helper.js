@@ -1,5 +1,15 @@
 // client/auth-helper.js - Ayuda para autenticación y perfil
 
+function fylDevLog(...args) {
+  if (
+    typeof window !== "undefined" &&
+    (window.FYL_DEBUG_CATALOG === true ||
+      /(?:^|[&?])debug=catalog(?:&|$)/.test(window.location.search || ""))
+  ) {
+    console.log.apply(console, args);
+  }
+}
+
 // Verificar si el usuario tiene perfil completo (incluyendo datos iniciales)
 async function hasCompleteProfile() {
   try {
@@ -13,7 +23,7 @@ async function hasCompleteProfile() {
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) {
-      console.log("👤 Usuario no autenticado");
+      fylDevLog("👤 Usuario no autenticado");
       return false;
     }
 
@@ -24,7 +34,7 @@ async function hasCompleteProfile() {
       .single();
 
     if (error || !customer) {
-      console.log("📝 Perfil de cliente no encontrado");
+      fylDevLog("📝 Perfil de cliente no encontrado");
       return false;
     }
 
@@ -37,8 +47,8 @@ async function hasCompleteProfile() {
     // Verificar también address para perfil completo (opcional pero recomendado)
     const hasAddress = customer.address && customer.address.trim() !== "";
 
-    console.log("✅ Perfil inicial completo:", hasInitialFields);
-    console.log("✅ Tiene dirección:", hasAddress);
+    fylDevLog("✅ Perfil inicial completo:", hasInitialFields);
+    fylDevLog("✅ Tiene dirección:", hasAddress);
     
     return hasInitialFields;
   } catch (error) {
@@ -60,7 +70,7 @@ async function hasInitialProfileComplete() {
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) {
-      console.log("👤 Usuario no autenticado");
+      fylDevLog("👤 Usuario no autenticado");
       return false;
     }
 
@@ -71,7 +81,7 @@ async function hasInitialProfileComplete() {
       .single();
 
     if (error || !customer) {
-      console.log("📝 Perfil de cliente no encontrado");
+      fylDevLog("📝 Perfil de cliente no encontrado");
       return false;
     }
 
@@ -80,7 +90,7 @@ async function hasInitialProfileComplete() {
       (field) => customer[field] && String(customer[field]).trim() !== ""
     );
 
-    console.log("✅ Perfil inicial completo:", hasAllFields);
+    fylDevLog("✅ Perfil inicial completo:", hasAllFields);
     return hasAllFields;
   } catch (error) {
     console.error("❌ Error verificando perfil inicial:", error);
@@ -103,7 +113,7 @@ async function requireAuth() {
     } = await supabase.auth.getUser();
 
     if (userError || !user) {
-      console.log("Usuario no autenticado");
+      fylDevLog("Usuario no autenticado");
       return null;
     }
 
@@ -114,7 +124,7 @@ async function requireAuth() {
       .single();
 
     if (customerError || !customer) {
-      console.log("Perfil de cliente no encontrado");
+      fylDevLog("Perfil de cliente no encontrado");
       return null;
     }
 

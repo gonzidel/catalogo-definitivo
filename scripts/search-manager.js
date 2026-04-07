@@ -1,5 +1,7 @@
 // scripts/search-manager.js
 
+import { fylAnalytics } from "./analytics.js";
+
 // Search functionality
 const searchInput = document.getElementById("searchInput");
 const searchBarMobile = document.getElementById("search-bar-mobile");
@@ -9,6 +11,27 @@ let autocompleteSuggestions = new Set();
 let suggestionTypes = new Map(); // Guarda el tipo de cada sugerencia: 'product' o 'tag'
 let currentSuggestions = [];
 let selectedSuggestionIndex = -1;
+
+function trackMetaSearch(query) {
+  const term = String(query || "").trim();
+  if (!term) return;
+
+  const send = () => {
+    if (typeof fbq === "function") {
+      fbq("track", "Search", {
+        search_string: term,
+      });
+      return true;
+    }
+    return false;
+  };
+
+  if (send()) return;
+  // Delay corto defensivo para casos de timing del pixel.
+  setTimeout(() => {
+    send();
+  }, 300);
+}
 let autocompleteDropdown = null;
 let isAutocompleteVisible = false;
 
@@ -218,13 +241,13 @@ function selectSuggestion(suggestion, inputElement) {
   hideAutocomplete();
   performSearch(suggestion);
   
-  // Track
-  if (typeof gtag === "function") {
-    gtag("event", "autocomplete_selected", {
-      event_category: "busqueda",
-      event_label: suggestion,
-    });
-  }
+  try {
+    if (fylAnalytics.isReady()) {
+      fylAnalytics.setPageType("search_results");
+      fylAnalytics.event("search", { search_term: String(suggestion || ""), source: "autocomplete" });
+    }
+  } catch (_e) {}
+  trackMetaSearch(suggestion);
 }
 
 // Manejar navegación con teclado
@@ -285,13 +308,13 @@ const performSearch = debounce(async (term) => {
   if (typeof window.buscarProductosEnTodos === 'function') {
     await window.buscarProductosEnTodos(term);
     
-    // Track search
-    if (typeof gtag === "function") {
-      gtag("event", "buscar", {
-        event_category: "busqueda",
-        event_label: term,
-      });
-    }
+    try {
+      if (fylAnalytics.isReady()) {
+        fylAnalytics.setPageType(term ? "search_results" : "home");
+        fylAnalytics.event("search", { search_term: String(term || ""), source: "submit" });
+      }
+    } catch (_e) {}
+    trackMetaSearch(term);
     return;
   }
 
@@ -335,13 +358,13 @@ const performSearch = debounce(async (term) => {
     noResults.remove();
   }
 
-  // Track search
-  if (typeof gtag === "function") {
-    gtag("event", "buscar", {
-      event_category: "busqueda",
-      event_label: term,
-    });
-  }
+  try {
+    if (fylAnalytics.isReady()) {
+      fylAnalytics.setPageType(term ? "search_results" : "home");
+      fylAnalytics.event("search", { search_term: String(term || ""), source: "submit" });
+    }
+  } catch (_e) {}
+  trackMetaSearch(term);
 }, 300);
 
 // Sincronizar ambos inputs de búsqueda

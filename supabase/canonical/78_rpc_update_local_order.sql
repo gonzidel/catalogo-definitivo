@@ -32,9 +32,18 @@ declare
   v_deduct_gen int;
   v_add_without_stock boolean;
   v_remaining int;
+  v_notes_text text;
+  v_notes jsonb;
+  v_lines_sum numeric(12,2);
+  v_shipping numeric := 0;
+  v_discount numeric := 0;
+  v_extras_amount numeric := 0;
+  v_extras_percentage numeric := 0;
 begin
-  -- Validar que el pedido existe
-  select id into v_order_id from public.local_orders where id = p_local_order_id;
+  -- Validar que el pedido existe y conservar notas (extras % / monto fijo viven aquí, no en líneas)
+  select lo.id, lo.notes into v_order_id, v_notes_text
+  from public.local_orders lo
+  where lo.id = p_local_order_id;
   if v_order_id is null then
     raise exception 'Pedido local no encontrado';
   end if;
@@ -46,12 +55,14 @@ begin
     raise exception 'Warehouses venta-publico o general no encontrados';
   end if;
 
-  -- 1) Devolver stock por ítems quitados o con cantidad reducida (solo productos con variant_id)
+  -- 1) Devolver stock por ítems quitados o con cantidad reducida (solo ventas: price_snapshot >= 0).
+  --     Líneas de devolución (precio negativo) no reservaron stock al guardar; no reingresar aquí al quitarlas.
   for v_current in
     select loi.id, loi.variant_id, loi.size, loi.quantity
     from public.local_order_items loi
     where loi.local_order_id = p_local_order_id
       and loi.variant_id is not null
+      and coalesce(loi.price_snapshot, 0) >= 0
   loop
     v_new_qty := 0;
     for v_item in select * from jsonb_array_elements(p_items) loop
@@ -92,6 +103,11 @@ begin
   for v_item in select * from jsonb_array_elements(p_items) loop
     if (v_item->>'variant_id')::text is null or (v_item->>'variant_id')::text = 'null' or (v_item->>'variant_id')::text = '' then
       continue; -- extras especiales, no tocan stock
+    end if;
+
+    -- Devolución (precio negativo en el pedido): solo persistir en local_order_items; el stock se ajusta al finalizar la venta (rpc_create_public_sale + is_return)
+    if coalesce((v_item->>'price_snapshot')::numeric, 0) < 0 then
+      continue;
     end if;
 
     v_variant_id := (v_item->>'variant_id')::uuid;
@@ -267,6 +283,37 @@ begin
     );
   end loop;
 
+  -- Igual que rpc_create_local_order: subtotal de líneas + shipping/discount + extras_amount + % sobre ese acumulado
+  v_lines_sum := v_total_amount;
+  v_total_amount := v_lines_sum;
+  if v_notes_text is not null and btrim(v_notes_text) <> '' then
+    begin
+      v_notes := v_notes_text::jsonb;
+    exception
+      when others then
+        v_notes := '{}'::jsonb;
+    end;
+  else
+    v_notes := '{}'::jsonb;
+  end if;
+  if v_notes ? 'shipping' then
+    v_shipping := coalesce((v_notes->>'shipping')::numeric, 0);
+    v_total_amount := v_total_amount + v_shipping;
+  end if;
+  if v_notes ? 'discount' then
+    v_discount := coalesce((v_notes->>'discount')::numeric, 0);
+    v_total_amount := v_total_amount - v_discount;
+  end if;
+  if v_notes ? 'extras_amount' then
+    v_extras_amount := coalesce((v_notes->>'extras_amount')::numeric, 0);
+    v_total_amount := v_total_amount + v_extras_amount;
+  end if;
+  if v_notes ? 'extras_percentage' then
+    v_extras_percentage := coalesce((v_notes->>'extras_percentage')::numeric, 0);
+    v_total_amount := v_total_amount + (v_total_amount * v_extras_percentage / 100);
+  end if;
+  v_total_amount := greatest(v_total_amount, 0);
+
   update public.local_orders
   set total_amount = v_total_amount, updated_at = now()
   where id = p_local_order_id;
@@ -277,106 +324,4 @@ begin
     'total_amount', v_total_amount
   );
 end $$;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 

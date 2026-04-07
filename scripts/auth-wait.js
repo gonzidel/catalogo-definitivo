@@ -4,6 +4,8 @@
  * antes de ejecutar cualquier lógica que dependa de ella
  */
 
+import { fylDevLog } from "./config.js";
+
 // Función para esperar autenticación completa
 // Reducimos la espera por defecto para que el fallback de no autenticado
 // no demore tanto en páginas cliente.
@@ -18,7 +20,7 @@ async function waitForAuth(maxWaitTime = 1800) {
       try {
         if (!window.supabase) {
           if (attempts >= maxAttempts) {
-            console.log("⏰ Timeout: Supabase no disponible");
+            fylDevLog("⏰ Timeout: Supabase no disponible");
             resolve({ user: null, error: "Supabase no disponible" });
             return;
           }
@@ -32,25 +34,25 @@ async function waitForAuth(maxWaitTime = 1800) {
         } = await window.supabase.auth.getUser();
 
         if (user && !error) {
-          console.log("✅ Autenticación confirmada:", user.email);
+          fylDevLog("✅ Autenticación confirmada:", user.email);
           resolve({ user, error: null });
           return;
         }
 
         if (error && error.message !== "Auth session missing!") {
-          console.log("❌ Error de autenticación:", error.message);
+          fylDevLog("❌ Error de autenticación:", error.message);
           resolve({ user: null, error: error.message });
           return;
         }
 
         // Si no hay usuario pero tampoco error crítico, seguir esperando
         if (attempts >= maxAttempts) {
-          console.log("⏰ Timeout: No se pudo confirmar autenticación");
+          fylDevLog("⏰ Timeout: No se pudo confirmar autenticación");
           resolve({ user: null, error: "Timeout de autenticación" });
           return;
         }
 
-        console.log(
+        fylDevLog(
           `⏳ Esperando autenticación... (${attempts}/${maxAttempts})`
         );
         setTimeout(checkAuth, 100);
@@ -76,7 +78,7 @@ async function withAuth(callback, fallback = null) {
     if (authResult.user) {
       return await callback(authResult.user);
     } else {
-      console.log("👤 Usuario no autenticado, ejecutando fallback");
+      fylDevLog("👤 Usuario no autenticado, ejecutando fallback");
       if (fallback) {
         return await fallback(authResult.error);
       }
@@ -150,12 +152,12 @@ async function initPageWithAuth(
     hideAuthLoader();
 
     if (authResult.user) {
-      console.log("✅ Página inicializada con usuario autenticado");
+      fylDevLog("✅ Página inicializada con usuario autenticado");
       if (authenticatedCallback) {
         await authenticatedCallback(authResult.user);
       }
     } else {
-      console.log("👤 Usuario no autenticado");
+      fylDevLog("👤 Usuario no autenticado");
       if (notAuthenticatedCallback) {
         await notAuthenticatedCallback(authResult.error);
       }
@@ -177,6 +179,4 @@ window.showAuthLoader = showAuthLoader;
 window.hideAuthLoader = hideAuthLoader;
 window.initPageWithAuth = initPageWithAuth;
 
-console.log(
-  "🔐 Auth-wait.js cargado - Utilidades de autenticación disponibles"
-);
+fylDevLog("Auth-wait.js cargado - utilidades de autenticación disponibles");

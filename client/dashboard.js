@@ -1,11 +1,12 @@
 // client/dashboard.js - Dashboard del cliente
+import { fylDevLog } from "../scripts/config.js";
 import { supabase } from "../scripts/supabase-client.js";
 import { hasInitialProfileComplete } from "./auth-helper.js";
 
 // Función para verificar autenticación y perfil
 async function checkAuthAndProfile() {
   try {
-    console.log("🔍 Verificando autenticación y perfil...");
+    fylDevLog("🔍 Verificando autenticación y perfil...");
 
     // Verificar sesión
     const {
@@ -23,17 +24,17 @@ async function checkAuthAndProfile() {
     }
 
     if (!session) {
-      console.log("👤 No hay sesión activa");
+      fylDevLog("👤 No hay sesión activa");
       return { hasSession: false, hasProfile: false };
     }
 
-    console.log("✅ Sesión activa encontrada:", session.user.email);
+    fylDevLog("✅ Sesión activa encontrada:", session.user.email);
 
     // Verificar si tiene perfil inicial completo (DNI, provincia, ciudad)
     const hasInitialProfile = await hasInitialProfileComplete();
     
     if (!hasInitialProfile) {
-      console.log("📝 Usuario sin perfil completo");
+      fylDevLog("📝 Usuario sin perfil completo");
       return {
         hasSession: true,
         hasProfile: false,
@@ -67,13 +68,11 @@ async function checkAuthAndProfile() {
       customerError = { message: "Timeout" };
     }
 
-    console.log("📊 Datos del cliente:");
-    console.log("- customer:", customer);
-    console.log("- customerError:", customerError);
+    fylDevLog("📊 Datos del cliente:", { customer, customerError });
 
     // Si no hay perfil completo, no bloquear dashboard.
     if (customerError && customerError.code !== "PGRST116") {
-      console.log("📝 Error obteniendo perfil");
+      fylDevLog("📝 Error obteniendo perfil");
       return {
         hasSession: true,
         hasProfile: false,
@@ -83,7 +82,7 @@ async function checkAuthAndProfile() {
     }
 
     if (!customer) {
-      console.log("📝 Sin perfil");
+      fylDevLog("📝 Sin perfil");
       return {
         hasSession: true,
         hasProfile: false,
@@ -102,16 +101,14 @@ async function checkAuthAndProfile() {
       customer.address &&
       String(customer.address).trim() !== "";
 
-    console.log("📋 Campos del cliente:");
-    console.log("- full_name:", customer.full_name);
-    console.log("- phone:", customer.phone);
-    console.log("- dni:", customer.dni);
-    console.log("- province:", customer.province);
-    console.log("- city:", customer.city);
-    console.log("- hasAllInitialFields:", hasAllInitialFields);
+    fylDevLog("📋 Campos del cliente (resumen):", {
+      hasAllInitialFields,
+      hasName: !!customer.full_name,
+      hasPhone: !!customer.phone,
+    });
 
     if (!hasAllInitialFields) {
-      console.log("📝 Perfil inicial incompleto");
+      fylDevLog("📝 Perfil inicial incompleto");
       return {
         hasSession: true,
         hasProfile: false,
@@ -121,7 +118,7 @@ async function checkAuthAndProfile() {
       };
     }
 
-    console.log("✅ Usuario tiene perfil inicial completo");
+    fylDevLog("✅ Usuario tiene perfil inicial completo");
     return {
       hasSession: true,
       hasProfile: true,
@@ -144,7 +141,7 @@ function getFirstNameForGreeting(displayName) {
 // Función para mostrar información del usuario
 function displayUserInfo(user, customer) {
   try {
-    console.log("👤 Mostrando información del usuario...");
+    fylDevLog("👤 Mostrando información del usuario...");
 
     const userProfile = document.getElementById("user-profile");
     const userAvatar = document.getElementById("user-avatar");
@@ -181,7 +178,7 @@ function displayUserInfo(user, customer) {
       userName.textContent = getFirstNameForGreeting(raw);
     }
 
-    console.log("✅ Información del usuario mostrada");
+    fylDevLog("✅ Información del usuario mostrada");
   } catch (error) {
     console.error("❌ Error mostrando información del usuario:", error);
   }
@@ -191,7 +188,7 @@ function displayUserInfo(user, customer) {
 // IMPORTANTE: No reemplazar .dashboard-content ni cargar carrito/pedidos aquí.
 // El contenido lo pinta únicamente dashboard-instant.js (loadCart, loadOrders).
 async function initDashboard() {
-  console.log("🏠 Inicializando dashboard...");
+  fylDevLog("🏠 Inicializando dashboard...");
 
   // Ocultar loader inmediatamente
   const loader = document.getElementById("loader");
@@ -209,7 +206,7 @@ async function initDashboard() {
       if (authResult.redirecting) return;
 
       if (authResult.hasSession && authResult.hasProfile) {
-        console.log("✅ Usuario autenticado, actualizando header...");
+        fylDevLog("✅ Usuario autenticado, actualizando header...");
         displayUserInfo(authResult.user, authResult.customer);
       }
       // Mensajes de no-sesión y errores los muestra dashboard-instant.js (withAuth fallback).
@@ -218,7 +215,7 @@ async function initDashboard() {
     }
   }, 100);
 
-  console.log("✅ Dashboard inicializado (solo auth/header; contenido por dashboard-instant)");
+  fylDevLog("✅ Dashboard inicializado (solo auth/header; contenido por dashboard-instant)");
 }
 
 // showBasicDashboard / loadDataInBackground / loadCartItems / loadOrders eliminados como
@@ -230,4 +227,4 @@ document.addEventListener("DOMContentLoaded", () => {
   initDashboard();
 });
 
-console.log("🔧 Script del dashboard cargado");
+fylDevLog("🔧 Script del dashboard cargado");

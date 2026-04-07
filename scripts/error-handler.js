@@ -87,17 +87,15 @@ class ErrorHandler {
 
   trackError(errorEntry) {
     try {
-      // Google Analytics
-      if (typeof gtag === "function") {
-        gtag("event", "exception", {
-          description: errorEntry.message,
-          fatal: errorEntry.level === "error",
-          custom_map: {
-            context: errorEntry.context,
-            timestamp: errorEntry.timestamp,
-          },
-        });
-      }
+      try {
+        if (typeof window !== "undefined" && window.fylAnalytics && window.fylAnalytics.isReady()) {
+          window.fylAnalytics.event("js_error", {
+            fatal: errorEntry.level === "error",
+            description: String((errorEntry.message || "")).slice(0, 120),
+            context: String(errorEntry.context || "").slice(0, 80),
+          });
+        }
+      } catch (_e) {}
     } catch (e) {
       console.warn("Error tracking failed:", e);
     }

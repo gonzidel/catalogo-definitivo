@@ -1,5 +1,21 @@
 import { supabase } from "./supabase-client.js";
 import { normalizeSize } from "./utils/size-normalizer.js";
+import { fylAnalytics } from "./analytics.js";
+import { parseARSNumber, formatARS as formatARSValue } from "./utils/price.js";
+
+function fylDevLog(...args) {
+  if (
+    typeof window !== "undefined" &&
+    (window.FYL_DEBUG_CATALOG === true ||
+      /(?:^|[&?])debug=catalog(?:&|$)/.test(window.location.search || ""))
+  ) {
+    console.log.apply(console, args);
+  }
+}
+
+/** Evita llamadas repetidas a rpc_link_or_create_customer en el mismo usuario (mismo refresh). */
+let fylEnsureCustomerCache = { userId: null, until: 0 };
+const FYL_ENSURE_CUSTOMER_TTL_MS = 120_000;
 
 let cartItems = [];
 let cartCount = 0;
@@ -81,9 +97,14 @@ async function withCrossTabLock(lockName, fn, opts = {}) {
 }
 
 async function ensureCustomerRecord(user) {
+  if (!user?.id) return false;
+  const now = Date.now();
+  if (fylEnsureCustomerCache.userId === user.id && now < fylEnsureCustomerCache.until) {
+    return true;
+  }
   try {
-    console.log("🔍 Verificando/vinculando cliente para:", user.email);
-    
+    fylDevLog("🔍 Verificando/vinculando cliente para:", user.email);
+
     // Usar la función RPC que busca coincidencias y vincula automáticamente
     const email = user.email || null;
     const phone = user.user_metadata?.phone || null;
@@ -109,19 +130,20 @@ async function ensureCustomerRecord(user) {
       return false;
     }
 
-    console.log("✅ Resultado de vinculación/creación:", result);
-    
+    fylDevLog("✅ Resultado de vinculación/creación:", result);
+
     if (result.action === 'linked') {
-      console.log(`✅ Cliente vinculado exitosamente por ${result.match_type}:`, result.customer_id);
+      fylDevLog(`✅ Cliente vinculado exitosamente por ${result.match_type}:`, result.customer_id);
       if (result.match_type) {
-        console.log(`🔗 Se encontró coincidencia por ${result.match_type} y se vinculó el cliente`);
+        fylDevLog(`🔗 Se encontró coincidencia por ${result.match_type} y se vinculó el cliente`);
       }
     } else if (result.action === 'created') {
-      console.log("🆕 Nuevo cliente creado:", result.customer_id);
+      fylDevLog("🆕 Nuevo cliente creado:", result.customer_id);
     } else if (result.action === 'already_linked') {
-      console.log("ℹ️ Cliente ya estaba vinculado:", result.customer_id);
+      fylDevLog("ℹ️ Cliente ya estaba vinculado:", result.customer_id);
     }
 
+    fylEnsureCustomerCache = { userId: user.id, until: Date.now() + FYL_ENSURE_CUSTOMER_TTL_MS };
     return true;
 
   } catch (err) {
@@ -436,7 +458,7 @@ function loadCartFromStorage() {
     if (savedCart) {
       cartItems = normalizeCartItems(JSON.parse(savedCart));
       updateCartCount();
-      console.log(
+      fylDevLog(
         "🛒 Carrito cargado desde localStorage:",
         cartItems.length,
         "items"
@@ -467,23 +489,17 @@ function getCartTotal() {
   let total = cartItems.reduce((total, item) => {
     const qty = Number(item.cantidad || 0);
     const raw = item.precio ?? item.price_snapshot ?? 0;
-    let precio = parseFloat(String(raw).replace(/[^\d.,]/g, "").replace(",", ".")) || 0;
-    /* Si precio parece "miles abreviados" (ej. 16.5 = $16.500): típico cuando DB guarda 16.5 */
-    if (precio > 0 && precio < 1000 && precio % 1 !== 0) {
-      precio = precio * 1000;
-    }
+    const precio = parseARSNumber(raw);
     return total + qty * precio;
   }, 0);
   return total;
 }
 
 function formatPriceLocal(precio) {
-  if (precio == null || precio === '') return '$0';
-  let n = parseFloat(String(precio).replace(/[^\d.,]/g, '').replace(',', '.'));
-  if (isNaN(n)) return '$0';
+  const n = parseARSNumber(precio);
   return (typeof window.formatARS === 'function' ? window.formatARS(n) : null) ||
     (typeof window.formatPrice === 'function' ? window.formatPrice(n) : null) ||
-    ('$' + new Intl.NumberFormat('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(Math.round(n)));
+    formatARSValue(n);
 }
 
 function createFloatingCartButton() {
@@ -1163,6 +1179,30 @@ async function addToCart(productData, options = {}) {
       await syncCartWithSupabase();
     }
     
+    const sku =
+      String(
+        productData?.sku ||
+        productData?.variant_id ||
+        productData?.articulo ||
+        ""
+      ).trim();
+    const parsedPrice = Number(
+      parseARSNumber(productData?.precio ?? variantInfo?.price ?? 0)
+    );
+    const priceNumber = Number.isFinite(parsedPrice) ? parsedPrice : 0;
+    console.log("FB EVENT: AddToCart", sku);
+    if (sku && typeof fbq === "function") {
+      if (!window._fb_last_add || window._fb_last_add !== sku) {
+        fbq("track", "AddToCart", {
+          content_ids: [sku],
+          content_type: "product",
+          value: priceNumber,
+          currency: "ARS",
+        });
+        window._fb_last_add = sku;
+      }
+    }
+
     // Retornar true para indicar que se agregó exitosamente
     return true;
   } catch (error) {
@@ -1175,6 +1215,15 @@ async function addToCart(productData, options = {}) {
 function removeFromCart(itemId) {
   try {
     const targetId = String(itemId);
+    const removed = cartItems.find((item) => String(item.id) === targetId);
+
+    try {
+      if (removed && fylAnalytics.isReady()) {
+        const items = fylAnalytics.buildCartItemsFromLines([removed]);
+        const val = items.reduce(function (s, it) { return s + (Number(it.price) || 0) * (Number(it.quantity) || 0); }, 0);
+        fylAnalytics.ecommerceEvent("remove_from_cart", { currency: "ARS", value: val, items: items });
+      }
+    } catch (_e) {}
     cartItems = cartItems.filter((item) => String(item.id) !== targetId);
     cartItems = normalizeCartItems(cartItems);
     saveCartToStorage();
@@ -1186,6 +1235,22 @@ function removeFromCart(itemId) {
 }
 
 function goToCart() {
+  try {
+    if (fylAnalytics.isReady()) {
+      const raw = localStorage.getItem("fyl_cart");
+      let lines = [];
+      try {
+        lines = raw ? JSON.parse(raw) : [];
+      } catch (_e) {
+        lines = [];
+      }
+      if (!Array.isArray(lines)) lines = [];
+      const items = fylAnalytics.buildCartItemsFromLines(lines);
+      const val = items.reduce(function (s, it) { return s + (Number(it.price) || 0) * (Number(it.quantity) || 0); }, 0);
+      fylAnalytics.ecommerceEvent("view_cart", { currency: "ARS", value: val, items: items });
+      fylAnalytics.event("make_order_click", { destination: "client_area" });
+    }
+  } catch (_e) {}
   if (window.requireAuth) {
     window
       .requireAuth()
@@ -1236,6 +1301,9 @@ function setupAuthListener() {
   if (!supabase || authListenerAttached) return;
   authListenerAttached = true;
   supabase.auth.onAuthStateChange((event, session) => {
+    if (event === "SIGNED_OUT") {
+      fylEnsureCustomerCache = { userId: null, until: 0 };
+    }
     if (event === "SIGNED_IN" && session) {
       const mergeSessionKey = `fyl_cart_merged_for_${session.user.id}`;
       const hasLocalGuestCart = (() => {
@@ -1305,6 +1373,14 @@ function initPersistentCart() {
   window.removeCartItem = async function (itemId) {
     try {
       const targetId = String(itemId);
+      const removedRow = cartItems.find((item) => String(item.id) === targetId);
+      try {
+        if (removedRow && fylAnalytics.isReady()) {
+          const items = fylAnalytics.buildCartItemsFromLines([removedRow]);
+          const val = items.reduce(function (s, it) { return s + (Number(it.price) || 0) * (Number(it.quantity) || 0); }, 0);
+          fylAnalytics.ecommerceEvent("remove_from_cart", { currency: "ARS", value: val, items: items });
+        }
+      } catch (_e) {}
       cartItems = cartItems.filter((item) => String(item.id) !== targetId);
       cartItems = normalizeCartItems(cartItems);
       saveCartToStorage();

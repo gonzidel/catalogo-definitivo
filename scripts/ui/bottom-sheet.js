@@ -2,6 +2,7 @@
 // Bottom Sheet modular para agregar productos al carrito
 
 import { normalizeSize } from '../utils/size-normalizer.js';
+import { parseARSNumber, formatARS } from '../utils/price.js';
 
 (function() {
   'use strict';
@@ -61,12 +62,7 @@ import { normalizeSize } from '../utils/size-normalizer.js';
   }
 
   function formatPrice(precio) {
-    if (!precio) return '$0';
-    let precioLimpio = precio.toString().replace(/[^\d.,]/g, '').replace(',', '.');
-    const precioNum = parseFloat(precioLimpio);
-    if (isNaN(precioNum)) return '$0';
-    const precioFormateado = Math.round(precioNum).toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-    return `$${precioFormateado}`;
+    return formatARS(precio);
   }
 
   function cloudinaryOptimized(url, w) {
@@ -364,7 +360,7 @@ import { normalizeSize } from '../utils/size-normalizer.js';
 
     const hasOffer = currentProducto.OfertaActiva === true || currentProducto.OfertaActiva === 'true';
     const precio = hasOffer && currentProducto.PrecioOferta ? currentProducto.PrecioOferta : currentProducto.Precio;
-    const precioLimpio = parseFloat(precio.toString().replace(/[^\d.,]/g, '').replace(',', '.')) || 0;
+    const precioLimpio = parseARSNumber(precio);
 
     // Agregar cada combinación color/talle
     selectedQuantities.forEach((rawQty, key) => {

@@ -10,6 +10,27 @@ function cleanWindowValue(value) {
   return value.trim().replace(/^["']|["']$/g, "");
 }
 
+/** Logs de arranque (config / Supabase). Activar: `window.FYL_DEBUG_CATALOG = true` o `?debug=catalog`. */
+export function fylDevLog(...args) {
+  if (
+    typeof window !== "undefined" &&
+    (window.FYL_DEBUG_CATALOG === true ||
+      /(?:^|[&?])debug=catalog(?:&|$)/.test(window.location.search || ""))
+  ) {
+    console.log.apply(console, args);
+  }
+}
+
+export function fylDevInfo(...args) {
+  if (
+    typeof window !== "undefined" &&
+    (window.FYL_DEBUG_CATALOG === true ||
+      /(?:^|[&?])debug=catalog(?:&|$)/.test(window.location.search || ""))
+  ) {
+    console.info.apply(console, args);
+  }
+}
+
 /** No volcar la anon key completa en consola (móvil / capturas de pantalla). */
 function maskAnonKeyForLog(key) {
   if (!key || typeof key !== "string") return "(vacío)";
@@ -150,14 +171,14 @@ const configReady = (async () => {
           : null;
 
       if (marker) {
-        console.info(
+        fylDevInfo(
           `${logPrefix} config.prod.js: script ejecutado OK (marca __FYL_CONFIG_PROD_LOADED__)`,
           fylConfigDiagnostics.configProdAt
             ? { generado: fylConfigDiagnostics.configProdAt }
             : {}
         );
       } else if (local) {
-        console.info(
+        fylDevInfo(
           `${logPrefix} config.prod.js: sin marca de carga (normal en local si no generaste config.prod.js en la raíz)`
         );
       } else {
@@ -218,19 +239,21 @@ const configReady = (async () => {
           if (typeof loc.USE_SUPABASE !== "undefined") USE_SUPABASE = loc.USE_SUPABASE;
           if (typeof loc.USE_OPEN_SHEET_FALLBACK !== "undefined")
             USE_OPEN_SHEET_FALLBACK = loc.USE_OPEN_SHEET_FALLBACK;
-          console.log(`${logPrefix} config.local.js: overrides aplicados`);
+          fylDevLog(`${logPrefix} config.local.js: overrides aplicados`);
         }
       } catch (_e) {
         // Ignorar error si no existe config.local.js
       }
     } else {
-      console.log(`${logPrefix} credenciales: usando valores ya resueltos (window/config.js), sin importar config.local.js`);
+      fylDevLog(
+        `${logPrefix} credenciales: usando valores ya resueltos (window/config.js), sin importar config.local.js`
+      );
     }
 
     fylConfigDiagnostics.resolvedSupabaseUrl = SUPABASE_URL || "";
     fylConfigDiagnostics.resolvedAnonKeyMasked = maskAnonKeyForLog(SUPABASE_ANON_KEY);
 
-    console.info(`${logPrefix} Supabase listo para cliente:`, {
+    fylDevInfo(`${logPrefix} Supabase listo para cliente:`, {
       SUPABASE_URL: fylConfigDiagnostics.resolvedSupabaseUrl || "(vacío)",
       SUPABASE_ANON_KEY: fylConfigDiagnostics.resolvedAnonKeyMasked,
       USE_SUPABASE,
@@ -250,7 +273,7 @@ const configReady = (async () => {
     });
   } catch (err) {
     if (SUPABASE_ANON_KEY && SUPABASE_ANON_KEY !== "") {
-      console.log("✅ Usando credenciales de config.js (config.local.js no disponible)");
+      fylDevLog("✅ Usando credenciales de config.js (config.local.js no disponible)");
     } else {
       console.warn("⚠️ No se pudo cargar config.local.js y config.js no tiene credenciales");
     }

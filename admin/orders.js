@@ -135,6 +135,33 @@ const ITEM_STATUS_INFO = {
   waiting: { text: "Espera", className: "waiting" },
 };
 
+/** Línea en waiting que sale del depósito venta-público (local). */
+function isWaitingFromVentaPublico(item, warehouseInfoMap) {
+  if (String(item?.status || "").trim().toLowerCase() !== "waiting") return false;
+  if (warehouseInfoMap.get(item.id) === "Local") return true;
+  const vId = warehousesCache.ventaPublico;
+  const gId = warehousesCache.general;
+  if (!vId) return false;
+  const src = item.order_item_stock_sources;
+  if (!Array.isArray(src) || src.length === 0) return false;
+  let vq = 0;
+  let gq = 0;
+  for (const s of src) {
+    const q = Number(s?.qty || 0) || 0;
+    if (s?.warehouse_id === vId) vq += q;
+    if (gId && s?.warehouse_id === gId) gq += q;
+  }
+  return vq > 0 && gq === 0;
+}
+
+function getOrderItemStatusDisplayInfo(item, warehouseInfoMap = new Map()) {
+  const base = ITEM_STATUS_INFO[item.status] || ITEM_STATUS_INFO.reserved;
+  if (isWaitingFromVentaPublico(item, warehouseInfoMap)) {
+    return { ...base, text: "Espera en local" };
+  }
+  return base;
+}
+
 // Función auxiliar para verificar si un pedido tiene todos los items apartados
 // waiting se trata como picked para verificación de completitud
 // Regla: sin order_items o array vacío => NO "todos apartados" (return false)
@@ -282,6 +309,8 @@ const DEBUG_ACTIVE_FILTER = false; // true = logs por qué cada order se excluye
 const ordersMap = new Map();
 const pendingOrderIds = new Set();
 let pendingTimer = null;
+/** Evita que realtime inserte parches en el DOM mientras displayOrders reemplaza la lista por lotes (causa duplicados y refs obsoletas). */
+let ordersUiFullReplaceInProgress = false;
 let lastHiddenAt = 0;
 let realtimeStatus = "UNKNOWN";
 let lastVisibilityRefresh = 0;
@@ -960,7 +989,7 @@ async function orders2RemoveMissingItemImmediate(itemId) {
 
   const { data: itemRow, error: itemErr } = await supabase
     .from("order_items")
-    .select("id, order_id, status, quantity, price_snapshot")
+    .select("id, order_id, status")
     .eq("id", itemId)
     .maybeSingle();
   if (itemErr || !itemRow) return { ok: false, orderId: null, reason: "item not found" };
@@ -969,42 +998,15 @@ async function orders2RemoveMissingItemImmediate(itemId) {
   const status = String(itemRow.status || "").toLowerCase();
   if (status !== "missing") return { ok: false, orderId, reason: "not missing" };
 
-  const qty = Number(itemRow.quantity || 0) || 0;
-  const price = normalizeOrderPrice(itemRow.price_snapshot || 0);
-  const itemTotal = qty * price;
-
-  const { error: delErr } = await supabase.from("order_items").delete().eq("id", itemId);
-  if (delErr) return { ok: false, orderId, reason: delErr.message || "delete failed" };
-
-  if (orderId && itemTotal > 0) {
-    const { data: orderData } = await supabase
-      .from("orders")
-      .select("total_amount")
-      .eq("id", orderId)
-      .maybeSingle();
-    if (orderData) {
-      const currentTotal = normalizeOrderPrice(orderData.total_amount || 0);
-      const newTotal = Math.max(0, Number(currentTotal || 0) - itemTotal);
-      await supabase
-        .from("orders")
-        .update({ total_amount: newTotal, updated_at: new Date().toISOString() })
-        .eq("id", orderId);
-    }
+  const { data: rpcData, error: rpcErr } = await supabase.rpc("rpc_remove_order_item_restore_stock", {
+    p_order_item_id: itemId,
+  });
+  if (rpcErr) return { ok: false, orderId, reason: rpcErr.message || "rpc failed" };
+  if (!rpcData || rpcData.ok !== true) {
+    return { ok: false, orderId, reason: "rpc invalid response" };
   }
 
-  // Si el pedido queda sin items (excluir cancelled), eliminarlo
-  if (orderId) {
-    const { count, error: countErr } = await supabase
-      .from("order_items")
-      .select("id", { count: "exact", head: true })
-      .eq("order_id", orderId)
-      .neq("status", "cancelled");
-    if (!countErr && (Number(count) || 0) === 0) {
-      await supabase.rpc("rpc_delete_empty_order", { p_order_id: orderId });
-    }
-  }
-
-  return { ok: true, orderId };
+  return { ok: true, orderId: rpcData.order_id || orderId, order_deleted: !!rpcData.order_deleted };
 }
 
 function setupOrders2ItemKebabMenu() {
@@ -1402,7 +1404,8 @@ async function loadOrders(resetPagination = true) {
           price_snapshot,
           status,
           imagen,
-          variant_id
+          variant_id,
+          order_item_stock_sources ( qty, warehouse_id )
         ),
         customers:customer_id!left (
           id,
@@ -1449,7 +1452,7 @@ async function loadOrders(resetPagination = true) {
           .from("orders")
           .select(`
             id, order_number, status, total_amount, created_at, updated_at, sent_at, customer_id, notes, source,
-            order_items ( id, product_name, color, size, quantity, price_snapshot, status, imagen, variant_id ),
+            order_items ( id, product_name, color, size, quantity, price_snapshot, status, imagen, variant_id, order_item_stock_sources ( qty, warehouse_id ) ),
             customers:customer_id!left ( id, customer_number, full_name, phone, city, province, dni, email )
           `)
           .in("id", pageIds)
@@ -1671,7 +1674,8 @@ async function searchOrdersInDatabase(searchTerm) {
             price_snapshot,
             status,
             imagen,
-            variant_id
+            variant_id,
+            order_item_stock_sources ( qty, warehouse_id )
           )
         `
       )
@@ -1772,6 +1776,7 @@ window.updatePickedOrdersBadge = updatePickedOrdersBadge;
 window.updateClosedOrdersBadge = updateClosedOrdersBadge;
 window.updateCancelledOrdersBadge = updateCancelledOrdersBadge;
 window.updateWaitingOrdersBadge = updateWaitingOrdersBadge;
+window.loadOrders = loadOrders;
 
 // Función auxiliar para actualizar un badge con conteo
 function updateBadgeWithCount(badgeId, count) {
@@ -1894,6 +1899,21 @@ function removeOrderCard(orderId) {
   if (card) card.remove();
 }
 
+function dedupeOrderCardsInList() {
+  const list = document.querySelector("#orders-content .orders-list");
+  if (!list) return;
+  const seen = new Set();
+  list.querySelectorAll(".order-card[data-order-id]").forEach((card) => {
+    const id = card.getAttribute("data-order-id");
+    if (!id) return;
+    if (seen.has(id)) {
+      card.remove();
+      return;
+    }
+    seen.add(id);
+  });
+}
+
 async function patchOrderCard(orderId, order) {
   const list = document.querySelector("#orders-content .orders-list");
   if (!list) return;
@@ -1906,6 +1926,7 @@ async function patchOrderCard(orderId, order) {
 }
 
 async function insertOrderCardInList(order) {
+  if (ordersUiFullReplaceInProgress) return;
   if (document.querySelector(`.order-card[data-order-id="${order.id}"]`)) return;
   const list = document.querySelector("#orders-content .orders-list");
   if (!list) return;
@@ -1971,6 +1992,11 @@ async function refreshOneOrder(orderId) {
 
   const belongs = orderBelongsToCurrentTab(full);
   upsertOrder(full);
+  if (ordersUiFullReplaceInProgress) {
+    const t2 = performance.now();
+    if (DEBUG_ORDERS) console.log("[perf] refreshOneOrder", orderId, "skipped DOM (full list replace)", (t2 - t1).toFixed(0) + "ms");
+    return;
+  }
   const card = document.querySelector(`.order-card[data-order-id="${orderId}"]`);
 
   if (belongs) {
@@ -1995,7 +2021,8 @@ async function fetchOrderById(orderId) {
     .select(`
       id, order_number, status, total_amount, created_at, updated_at, sent_at, customer_id, notes, source,
       order_items (
-        id, product_name, color, size, quantity, price_snapshot, status, imagen, variant_id
+        id, product_name, color, size, quantity, price_snapshot, status, imagen, variant_id,
+        order_item_stock_sources ( qty, warehouse_id )
       )
     `)
     .eq("id", orderId)
@@ -2199,41 +2226,46 @@ async function displayOrders(append = false) {
       }
     }
   } else {
-    // IMPORTANTE: Limpiar contenedor antes de renderizar
-    container.innerHTML = '';
-    
-    // Crear contenedor de lista inmediatamente
-    const ordersList = document.createElement('div');
-    ordersList.className = 'orders-list';
-    container.appendChild(ordersList);
-    
-    // Renderizar pedidos de forma progresiva (no bloquear esperando todos)
-    // Esto permite que el usuario vea los pedidos tan pronto como estén listos
-    // Renderizar en batches para mejor performance
-    const batchSize = 5;
-    for (let i = 0; i < sorted.length; i += batchSize) {
-      const batch = sorted.slice(i, i + batchSize);
-      const batchPromises = batch.map(async (order) => {
-        try {
-          const cardHtml = await renderOrderCard(order);
-          return cardHtml || '';
-        } catch (error) {
-          console.error(`❌ Error renderizando pedido ${order.id}:`, error);
-          return '';
-        }
-      });
+    ordersUiFullReplaceInProgress = true;
+    try {
+      // IMPORTANTE: Limpiar contenedor antes de renderizar
+      container.innerHTML = '';
       
-      const batchHtml = (await Promise.all(batchPromises)).join('');
-      if (DEBUG_ORDERS) console.log("[debug] displayOrders batch", i / batchSize + 1, "batchSize", batch.length, "batchHtml.length", batchHtml.length);
-      if (batchHtml) {
-        ordersList.insertAdjacentHTML('beforeend', batchHtml);
-        // Attach handlers después de cada batch para que los botones funcionen inmediatamente
-        attachOrderEventHandlers();
+      // Crear contenedor de lista inmediatamente
+      const ordersList = document.createElement('div');
+      ordersList.className = 'orders-list';
+      container.appendChild(ordersList);
+      
+      // Renderizar pedidos de forma progresiva (no bloquear esperando todos)
+      // Usar siempre la copia en ordersMap si existe: durante los awaits el realtime puede
+      // sustituir el objeto en `orders` y las refs del array `sorted` quedarían obsoletas.
+      const batchSize = 5;
+      for (let i = 0; i < sorted.length; i += batchSize) {
+        const batch = sorted.slice(i, i + batchSize);
+        const batchPromises = batch.map(async (order) => {
+          try {
+            const fresh = ordersMap.get(order.id) || order;
+            const cardHtml = await renderOrderCard(fresh);
+            return cardHtml || '';
+          } catch (error) {
+            console.error(`❌ Error renderizando pedido ${order.id}:`, error);
+            return '';
+          }
+        });
+        
+        const batchHtml = (await Promise.all(batchPromises)).join('');
+        if (DEBUG_ORDERS) console.log("[debug] displayOrders batch", i / batchSize + 1, "batchSize", batch.length, "batchHtml.length", batchHtml.length);
+        if (batchHtml) {
+          ordersList.insertAdjacentHTML('beforeend', batchHtml);
+          attachOrderEventHandlers();
+        }
       }
+      
+      dedupeOrderCardsInList();
+      hideLoading();
+    } finally {
+      ordersUiFullReplaceInProgress = false;
     }
-    
-    // Ocultar loading después de renderizar todos los pedidos
-    hideLoading();
   }
   
   updateActiveOrdersBadge();
@@ -2503,6 +2535,71 @@ async function loadWarehouses() {
   return warehousesCache;
 }
 
+function orderItemSplitGroupKey(item) {
+  const vid = item.variant_id ?? "";
+  const sz = normalizeSize(item.size || "") || "";
+  const col = String(item.color ?? "").trim().toLowerCase();
+  return `${vid}|${sz}|${col}`;
+}
+
+function splitGroupSortKey(item, generalId, ventaId) {
+  const src = item.order_item_stock_sources;
+  if (Array.isArray(src) && src.length === 1) {
+    const wid = src[0].warehouse_id;
+    if (wid === generalId) return 0;
+    if (wid === ventaId) return 1;
+  }
+  const st = String(item.status || "").trim().toLowerCase();
+  if (st === "reserved") return 0;
+  if (st === "waiting") return 1;
+  return 2;
+}
+
+function sortSplitGroupItems(items) {
+  const g = warehousesCache.general;
+  const v = warehousesCache.ventaPublico;
+  if (!g || !v) return [...items];
+  return [...items].sort((a, b) => splitGroupSortKey(a, g, v) - splitGroupSortKey(b, g, v));
+}
+
+/** Agrupa líneas del mismo producto/talle/color para mostrar una sola tarjeta (stock general + local). */
+function groupOrderItemsForDisplayFlat(items) {
+  const buckets = new Map();
+  const keyOrder = [];
+  for (const it of items || []) {
+    const k = orderItemSplitGroupKey(it);
+    if (!buckets.has(k)) {
+      buckets.set(k, []);
+      keyOrder.push(k);
+    }
+    buckets.get(k).push(it);
+  }
+  const out = [];
+  for (const k of keyOrder) {
+    const arr = sortSplitGroupItems(buckets.get(k));
+    if (arr.length >= 2) out.push({ type: "group", items: arr });
+    else out.push({ type: "single", item: arr[0] });
+  }
+  return out;
+}
+
+function fillWarehouseMapFromItemSources(items, map) {
+  const g = warehousesCache.general;
+  const v = warehousesCache.ventaPublico;
+  if (!g || !v) return;
+  for (const item of items || []) {
+    const src = item.order_item_stock_sources;
+    if (!Array.isArray(src) || src.length === 0) continue;
+    if (src.length === 1) {
+      const wid = src[0].warehouse_id;
+      if (wid === g) map.set(item.id, "General");
+      else if (wid === v) map.set(item.id, "Local");
+    } else {
+      map.set(item.id, "Mixto");
+    }
+  }
+}
+
 // Función para obtener el depósito de un item reservado
 async function getItemWarehouse(item) {
   // Solo para items en estado reservado con variant_id
@@ -2754,10 +2851,13 @@ async function renderOrderCard(order) {
       // Modo completo: mostrar todos excepto cancelados
       activeItems = allItems.filter(item => item.status !== 'cancelled');
     } else {
-      // En Activos solo se muestran productos en estado Reservado; no "espera"
-      activeItems = allItems.filter(item =>
-        item.status === 'reserved'
-      );
+      // Reservado + líneas en espera del mismo pedido (checkout mixto general + local)
+      const orderHasReserved = allItems.some((i) => i.status === "reserved");
+      activeItems = allItems.filter((item) => {
+        if (item.status === "reserved") return true;
+        if (item.status === "waiting" && orderHasReserved) return true;
+        return false;
+      });
     }
   } else {
     // En otros filtros, mostrar todos excepto cancelados
@@ -2863,19 +2963,20 @@ async function renderOrderCard(order) {
     }
   }
   
-  // Obtener información de depósitos para items reservados
   const warehouseInfoMap = new Map();
-  if (activeItems.some(item => item.status === 'reserved')) {
-    await Promise.all(activeItems
-      .filter(item => item.status === 'reserved')
+  await loadWarehouses();
+  const itemsForWarehouse = activeItems.filter(
+    (item) => item.status === "reserved" || item.status === "waiting"
+  );
+  fillWarehouseMapFromItemSources(itemsForWarehouse, warehouseInfoMap);
+  await Promise.all(
+    activeItems
+      .filter((item) => item.status === "reserved" && !warehouseInfoMap.has(item.id))
       .map(async (item) => {
         const warehouse = await getItemWarehouse(item);
-        if (warehouse) {
-          warehouseInfoMap.set(item.id, warehouse);
-        }
+        if (warehouse) warehouseInfoMap.set(item.id, warehouse);
       })
-    );
-  }
+  );
   
   // Renderizar items: primero cancelados, luego activos, luego valores extra
   // En pestaña Activos modo "solo reservados", no mostrar valores extra
@@ -2885,17 +2986,17 @@ async function renderOrderCard(order) {
   let itemsHtml;
   if (currentFilter === 'cancelled') {
     // En Cancelaciones: solo productos cancelados visibles por defecto; el resto en bloque colapsable
-    const restHtml = activeItems.map((item) => renderOrderItem(item, customer, offersData, warehouseInfoMap)).join("") +
+    const restHtml = renderOrderItemsChunk(activeItems, customer, offersData, warehouseInfoMap) +
       (showExtraValues ? extraValuesHtml : "");
     itemsHtml = cancelledWarning +
-      cancelledItems.map((item) => renderOrderItem(item, customer, offersData, warehouseInfoMap)).join("") +
+      renderOrderItemsChunk(cancelledItems, customer, offersData, warehouseInfoMap) +
       (restHtml ? `<div class="order-items-rest" style="display:none;">${restHtml}</div>` : "");
   } else {
     const shouldRenderItemsNow =
       !(isOrders2Page() && currentFilter === "closed" && orderClosedViewMode.get(order.id) !== true);
     itemsHtml = cancelledWarning +
-      (shouldRenderItemsNow && currentFilter !== 'waiting' ? cancelledItems.map((item) => renderOrderItem(item, customer, offersData, warehouseInfoMap)).join("") : "") +
-      (shouldRenderItemsNow ? activeItems.map((item) => renderOrderItem(item, customer, offersData, warehouseInfoMap)).join("") : "") +
+      (shouldRenderItemsNow && currentFilter !== 'waiting' ? renderOrderItemsChunk(cancelledItems, customer, offersData, warehouseInfoMap) : "") +
+      (shouldRenderItemsNow ? renderOrderItemsChunk(activeItems, customer, offersData, warehouseInfoMap) : "") +
       (shouldRenderItemsNow && showExtraValues ? extraValuesHtml : "");
   }
   
@@ -3293,82 +3394,22 @@ function showOrderSummaryModal(order) {
   modal.classList.add('active');
 }
 
-function isExtraSpecialItem(item) {
-  if (!item) return false;
-  const empty = (v) => {
-    if (v == null) return true;
-    const s = String(v).trim();
-    return s === "" || s === "-" || s === "—" || s.toLowerCase() === "undefined";
-  };
-  const noVariant = item.variant_id == null || item.variant_id === "";
-  const noImage = empty(item.imagen) && empty(item.image_url);
-  const noColor = empty(item.color);
-  const noSize = empty(item.size);
-  return !!(noVariant && noImage && noColor && noSize);
-}
-
-function renderOrderItem(item, customer = {}, offersData = { itemOffers: new Map(), itemPromos: new Map() }, warehouseInfoMap = new Map()) {
-  const info = ITEM_STATUS_INFO[item.status] || ITEM_STATUS_INFO.reserved;
-  
-  // Obtener información del depósito si el item está reservado
-  const warehouse = item.status === 'reserved' ? warehouseInfoMap.get(item.id) : null;
-  const warehouseLabel = warehouse === "Local" ? "en local" : warehouse;
-  
-  // Verificar si tiene promoción (prioridad sobre oferta)
-  const promoText = offersData.itemPromos?.get(item.id);
-  const offerInfo = offersData.itemOffers?.get(item.id);
-  
-  // Calcular precio y subtotal (normalizar miles abreviados: 18 → 18000)
-  let displayPrice = normalizeOrderPrice(item.price_snapshot || 0);
-  let originalPrice = null;
-  
-  if (promoText) {
-    originalPrice = displayPrice;
-  } else if (offerInfo) {
-    originalPrice = offerInfo.originalPrice;
-    displayPrice = offerInfo.offerPrice;
-  }
-  
-  const subtotal = (item.quantity || 0) * displayPrice;
-  const isCancelled = item.status === 'cancelled';
-  const isMissing = item.status === 'missing';
-  const isWaiting = item.status === 'waiting';
+function renderOrderItemActionButtonsHtml(item) {
+  const isCancelled = item.status === "cancelled";
+  const isMissing = item.status === "missing";
+  const isWaiting = item.status === "waiting";
   const useKebabMenu = isOrders2Page();
-
-  const displayColor = (item.color || "-").toString().trim() || "-";
-  const displaySize = (item.size || "-").toString().trim() || "-";
-  const displayQty = Number(item.quantity || 0) || 0;
-  const compactLine = `${item.product_name} - ${displayColor} - ${displaySize} - x${displayQty}`;
-
-  const imageHtml = item.imagen
-    ? `<img src="${item.imagen}" alt="${item.product_name}" class="item-thumb" onerror="this.remove()" />`
-    : "";
-
-  // Mostrar leyenda de oferta o promoción
-  let offerPromoBadge = '';
-  if (promoText) {
-    offerPromoBadge = `<div style="margin-top: 4px; display: inline-block; padding: 4px 8px; background: #ff9800; color: white; border-radius: 4px; font-size: 11px; font-weight: 600;">${promoText}</div>`;
-  } else if (offerInfo) {
-    offerPromoBadge = `<div style="margin-top: 4px; display: inline-block; padding: 4px 8px; background: #e74c3c; color: white; border-radius: 4px; font-size: 11px; font-weight: 600;">🔥 Oferta</div>`;
-  }
-
-  // Si está cancelado, mostrar información del cliente que lo canceló
-  const cancelledInfo = isCancelled ? `
-    <div style="margin-top: 8px; padding: 8px; background: #fff3e0; border-radius: 6px; font-size: 12px; color: #e65100;">
-      <strong>Cancelado por:</strong> ${customer.full_name || 'Cliente sin nombre'}${customer.customer_number ? ` (Nº ${customer.customer_number})` : ''}${customer.phone ? ` • Tel: ${customer.phone}` : ''}${customer.email ? ` • Email: ${customer.email}` : ''}
-    </div>
-  ` : '';
-
-  // Si está cancelado, mostrar botón para aceptar y limpiar la cancelación
-  // Si está faltante, mostrar botón para eliminar del pedido
-  // Si está en espera, mostrar botón para confirmar (cambiar a picked)
-  const actionButtons = isCancelled ? `
+  if (isCancelled) {
+    return `
     <div class="item-actions">
       <button class="item-action-btn success" title="Aceptar cancelación y eliminar del pedido" data-item-id="${
         item.id
       }" data-item-action="cleanup-cancelled">✓</button>
     </div>
-  ` : isMissing ? `
+  `;
+  }
+  if (isMissing) {
+    return `
     <div class="item-actions">
       <button class="item-action-btn danger" title="Eliminar producto faltante del pedido" data-item-id="${
         item.id
@@ -3377,37 +3418,10 @@ function renderOrderItem(item, customer = {}, offersData = { itemOffers: new Map
         item.id
       }" data-item-action="reserved">↺</button>
     </div>
-  ` : (isWaiting || item.status === 'reserved' || item.status === 'picked') ? `
-    <div class="item-actions">
-      <button class="item-action-btn success" title="Producto apartado" data-item-id="${
-        item.id
-      }" data-item-action="picked">✓</button>
-      <button class="item-action-btn danger" title="Producto faltante" data-item-id="${
-        item.id
-      }" data-item-action="missing">✕</button>
-      ${
-        useKebabMenu
-          ? `
-        <div class="item-more">
-          <button type="button" class="item-action-btn neutral item-kebab-toggle" title="Más acciones" aria-label="Más acciones" data-kebab-toggle="1">⋮</button>
-          <div class="item-kebab-menu" role="menu">
-            <button type="button" class="item-kebab-item" role="menuitem" data-kebab-action="waiting">⏳ Producto en espera</button>
-            <button type="button" class="item-kebab-item" role="menuitem" data-kebab-action="reserved">↺ Restaurar estado</button>
-            <button type="button" class="item-kebab-item danger" role="menuitem" data-kebab-action="delete-item">🗑️ Eliminar</button>
-          </div>
-        </div>
-        <button class="item-action-btn" title="Producto en espera" data-item-id="${item.id}" data-item-action="waiting" style="display:none;background:#ff9800;color:white;">⏳</button>
-        <button class="item-action-btn neutral" title="Restaurar estado" data-item-id="${item.id}" data-item-action="reserved" style="display:none;">↺</button>
-        <button class="item-action-btn danger" title="Eliminar del pedido" data-item-id="${item.id}" data-item-action="delete-item" style="display:none;">🗑️</button>
-          `
-          : `
-        <button class="item-action-btn" title="Producto en espera" data-item-id="${item.id}" data-item-action="waiting" style="background: #ff9800; color: white;">⏳</button>
-        <button class="item-action-btn neutral" title="Restaurar estado" data-item-id="${item.id}" data-item-action="reserved">↺</button>
-        <button class="item-action-btn danger" title="Eliminar del pedido" data-item-id="${item.id}" data-item-action="delete-item">🗑️</button>
-          `
-      }
-    </div>
-  ` : `
+  `;
+  }
+  if (isWaiting || item.status === "reserved" || item.status === "picked") {
+    return `
     <div class="item-actions">
       <button class="item-action-btn success" title="Producto apartado" data-item-id="${
         item.id
@@ -3438,6 +3452,216 @@ function renderOrderItem(item, customer = {}, offersData = { itemOffers: new Map
       }
     </div>
   `;
+  }
+  return `
+    <div class="item-actions">
+      <button class="item-action-btn success" title="Producto apartado" data-item-id="${
+        item.id
+      }" data-item-action="picked">✓</button>
+      <button class="item-action-btn danger" title="Producto faltante" data-item-id="${
+        item.id
+      }" data-item-action="missing">✕</button>
+      ${
+        useKebabMenu
+          ? `
+        <div class="item-more">
+          <button type="button" class="item-action-btn neutral item-kebab-toggle" title="Más acciones" aria-label="Más acciones" data-kebab-toggle="1">⋮</button>
+          <div class="item-kebab-menu" role="menu">
+            <button type="button" class="item-kebab-item" role="menuitem" data-kebab-action="waiting">⏳ Producto en espera</button>
+            <button type="button" class="item-kebab-item" role="menuitem" data-kebab-action="reserved">↺ Restaurar estado</button>
+            <button type="button" class="item-kebab-item danger" role="menuitem" data-kebab-action="delete-item">🗑️ Eliminar</button>
+          </div>
+        </div>
+        <button class="item-action-btn" title="Producto en espera" data-item-id="${item.id}" data-item-action="waiting" style="display:none;background:#ff9800;color:white;">⏳</button>
+        <button class="item-action-btn neutral" title="Restaurar estado" data-item-id="${item.id}" data-item-action="reserved" style="display:none;">↺</button>
+        <button class="item-action-btn danger" title="Eliminar del pedido" data-item-id="${item.id}" data-item-action="delete-item" style="display:none;">🗑️</button>
+          `
+          : `
+        <button class="item-action-btn" title="Producto en espera" data-item-id="${item.id}" data-item-action="waiting" style="background: #ff9800; color: white;">⏳</button>
+        <button class="item-action-btn neutral" title="Restaurar estado" data-item-id="${item.id}" data-item-action="reserved">↺</button>
+        <button class="item-action-btn danger" title="Eliminar del pedido" data-item-id="${item.id}" data-item-action="delete-item">🗑️</button>
+          `
+      }
+    </div>
+  `;
+}
+
+/** Tarjeta única para varias líneas order_items del mismo producto/talle/color (general + local). */
+function renderOrderItemGroup(items, customer = {}, offersData = { itemOffers: new Map(), itemPromos: new Map() }, warehouseInfoMap = new Map()) {
+  const base = items[0];
+  const displayColor = (base.color || "-").toString().trim() || "-";
+  const displaySize = (base.size || "-").toString().trim() || "-";
+  const titleBase = `${base.product_name} - ${displayColor} - ${displaySize}`;
+  const imageHtml = base.imagen
+    ? `<img src="${base.imagen}" alt="${base.product_name}" class="item-thumb" onerror="this.remove()" />`
+    : "";
+
+  let offerPromoBadge = "";
+  for (const it of items) {
+    const promoText = offersData.itemPromos?.get(it.id);
+    const offerInfo = offersData.itemOffers?.get(it.id);
+    if (promoText) {
+      offerPromoBadge = `<div style="margin-top: 4px; display: inline-block; padding: 4px 8px; background: #ff9800; color: white; border-radius: 4px; font-size: 11px; font-weight: 600;">${promoText}</div>`;
+      break;
+    }
+    if (offerInfo) {
+      offerPromoBadge = `<div style="margin-top: 4px; display: inline-block; padding: 4px 8px; background: #e74c3c; color: white; border-radius: 4px; font-size: 11px; font-weight: 600;">🔥 Oferta</div>`;
+      break;
+    }
+  }
+
+  let totalSubtotal = 0;
+  let totalOriginal = 0;
+  const sublinesHtml = items
+    .map((item) => {
+      const info = getOrderItemStatusDisplayInfo(item, warehouseInfoMap);
+      const warehouse = warehouseInfoMap.get(item.id);
+      const warehouseLabel = warehouse === "Local" ? "en local" : warehouse;
+      const qty = Number(item.quantity || 0) || 0;
+      let displayPrice = normalizeOrderPrice(item.price_snapshot || 0);
+      let originalPrice = null;
+      const promoText = offersData.itemPromos?.get(item.id);
+      const offerInfo = offersData.itemOffers?.get(item.id);
+      if (promoText) {
+        originalPrice = displayPrice;
+      } else if (offerInfo) {
+        originalPrice = offerInfo.originalPrice;
+        displayPrice = offerInfo.offerPrice;
+      }
+      const lineSubtotal = qty * displayPrice;
+      totalSubtotal += lineSubtotal;
+      if (originalPrice != null) totalOriginal += originalPrice * qty;
+      return `
+      <div class="order-item-split-row" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(0,0,0,0.08);">
+        <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px;">
+          <strong style="font-size: 14px;">x${qty}</strong>
+          <span class="item-status ${info.className}">${info.text}</span>
+          ${warehouseLabel ? `<span style="background: #e3f2fd; color: #1565c0; padding: 3px 6px; border-radius: 10px; font-size: 10px; font-weight: 600;">📍 ${warehouseLabel}</span>` : ""}
+          <span style="margin-left: auto; font-weight: 700; font-size: 14px;">${formatCurrency(lineSubtotal)}</span>
+        </div>
+        ${renderOrderItemActionButtonsHtml(item)}
+      </div>`;
+    })
+    .join("");
+
+  const isMobile = window.innerWidth <= 768;
+  const anyCancelled = items.some((i) => i.status === "cancelled");
+  const cancelledInfo = anyCancelled
+    ? `
+    <div style="margin-top: 8px; padding: 8px; background: #fff3e0; border-radius: 6px; font-size: 12px; color: #e65100;">
+      <strong>Cancelado por:</strong> ${customer.full_name || "Cliente sin nombre"}${customer.customer_number ? ` (Nº ${customer.customer_number})` : ""}${customer.phone ? ` • Tel: ${customer.phone}` : ""}${customer.email ? ` • Email: ${customer.email}` : ""}
+    </div>
+  `
+    : "";
+
+  if (isMobile) {
+    return `
+      <div class="order-item ${anyCancelled ? "cancelled-item" : ""}">
+        <div style="display: flex; gap: 10px; align-items: flex-start;">
+          ${imageHtml}
+          <div class="item-main" style="flex: 1; min-width: 0;">
+            <div class="item-name" style="font-size: 15px; font-weight: 700; margin-bottom: 6px; line-height: 1.3;">${titleBase}</div>
+            ${offerPromoBadge}
+            ${sublinesHtml}
+            <div class="item-price" style="margin-top: 10px; font-size: 16px; font-weight: 700;">
+              ${totalOriginal > 0 ? `<span style="text-decoration: line-through; color: #888; font-size: 0.85em; margin-right: 6px;">${formatCurrency(totalOriginal)}</span>` : ""}
+              ${formatCurrency(totalSubtotal)}
+            </div>
+            ${cancelledInfo}
+          </div>
+        </div>
+      </div>`;
+  }
+  return `
+      <div class="order-item ${anyCancelled ? "cancelled-item" : ""}">
+        ${imageHtml}
+        <div class="item-main">
+          <div class="item-name">${titleBase}</div>
+          ${offerPromoBadge}
+          ${sublinesHtml}
+          <div class="item-price" style="margin-top: 10px;">
+            ${totalOriginal > 0 ? `<span style="text-decoration: line-through; color: #888; font-size: 0.9em; margin-right: 8px;">${formatCurrency(totalOriginal)}</span>` : ""}
+            ${formatCurrency(totalSubtotal)}
+          </div>
+          ${cancelledInfo}
+        </div>
+      </div>`;
+}
+
+function renderOrderItemsChunk(items, customer, offersData, warehouseInfoMap) {
+  return groupOrderItemsForDisplayFlat(items)
+    .map((g) =>
+      g.type === "single"
+        ? renderOrderItem(g.item, customer, offersData, warehouseInfoMap)
+        : renderOrderItemGroup(g.items, customer, offersData, warehouseInfoMap)
+    )
+    .join("");
+}
+
+function isExtraSpecialItem(item) {
+  if (!item) return false;
+  const empty = (v) => {
+    if (v == null) return true;
+    const s = String(v).trim();
+    return s === "" || s === "-" || s === "—" || s.toLowerCase() === "undefined";
+  };
+  const noVariant = item.variant_id == null || item.variant_id === "";
+  const noImage = empty(item.imagen) && empty(item.image_url);
+  const noColor = empty(item.color);
+  const noSize = empty(item.size);
+  return !!(noVariant && noImage && noColor && noSize);
+}
+
+function renderOrderItem(item, customer = {}, offersData = { itemOffers: new Map(), itemPromos: new Map() }, warehouseInfoMap = new Map()) {
+  const info = getOrderItemStatusDisplayInfo(item, warehouseInfoMap);
+
+  const warehouse =
+    item.status === "reserved" || item.status === "waiting" ? warehouseInfoMap.get(item.id) : null;
+  const warehouseLabel = warehouse === "Local" ? "en local" : warehouse;
+  
+  // Verificar si tiene promoción (prioridad sobre oferta)
+  const promoText = offersData.itemPromos?.get(item.id);
+  const offerInfo = offersData.itemOffers?.get(item.id);
+  
+  // Calcular precio y subtotal (normalizar miles abreviados: 18 → 18000)
+  let displayPrice = normalizeOrderPrice(item.price_snapshot || 0);
+  let originalPrice = null;
+  
+  if (promoText) {
+    originalPrice = displayPrice;
+  } else if (offerInfo) {
+    originalPrice = offerInfo.originalPrice;
+    displayPrice = offerInfo.offerPrice;
+  }
+  
+  const subtotal = (item.quantity || 0) * displayPrice;
+  const isCancelled = item.status === 'cancelled';
+
+  const displayColor = (item.color || "-").toString().trim() || "-";
+  const displaySize = (item.size || "-").toString().trim() || "-";
+  const displayQty = Number(item.quantity || 0) || 0;
+  const compactLine = `${item.product_name} - ${displayColor} - ${displaySize} - x${displayQty}`;
+
+  const imageHtml = item.imagen
+    ? `<img src="${item.imagen}" alt="${item.product_name}" class="item-thumb" onerror="this.remove()" />`
+    : "";
+
+  // Mostrar leyenda de oferta o promoción
+  let offerPromoBadge = '';
+  if (promoText) {
+    offerPromoBadge = `<div style="margin-top: 4px; display: inline-block; padding: 4px 8px; background: #ff9800; color: white; border-radius: 4px; font-size: 11px; font-weight: 600;">${promoText}</div>`;
+  } else if (offerInfo) {
+    offerPromoBadge = `<div style="margin-top: 4px; display: inline-block; padding: 4px 8px; background: #e74c3c; color: white; border-radius: 4px; font-size: 11px; font-weight: 600;">🔥 Oferta</div>`;
+  }
+
+  // Si está cancelado, mostrar información del cliente que lo canceló
+  const cancelledInfo = isCancelled ? `
+    <div style="margin-top: 8px; padding: 8px; background: #fff3e0; border-radius: 6px; font-size: 12px; color: #e65100;">
+      <strong>Cancelado por:</strong> ${customer.full_name || 'Cliente sin nombre'}${customer.customer_number ? ` (Nº ${customer.customer_number})` : ''}${customer.phone ? ` • Tel: ${customer.phone}` : ''}${customer.email ? ` • Email: ${customer.email}` : ''}
+    </div>
+  ` : '';
+
+  const actionButtons = renderOrderItemActionButtonsHtml(item);
 
   // Detectar si es móvil
   const isMobile = window.innerWidth <= 768;
@@ -4224,49 +4448,18 @@ async function removeMissingItem(itemId) {
   }
   
   const orderId = itemData.order_id;
-  const itemPrice = normalizeOrderPrice(itemData.price_snapshot || 0);
-  const itemQuantity = Number(itemData.quantity || 0);
-  const itemTotal = itemPrice * itemQuantity;
-  
-  // Eliminar el item de la base de datos
-  const { error: deleteError } = await supabase
-    .from("order_items")
-    .delete()
-    .eq("id", itemId);
-  
-  if (deleteError) {
-    console.error("❌ Error eliminando item faltante:", deleteError);
-    alert("No se pudo eliminar el producto faltante.");
+
+  const { error: rpcError } = await supabase.rpc("rpc_remove_order_item_restore_stock", {
+    p_order_item_id: itemId,
+  });
+
+  if (rpcError) {
+    console.error("❌ Error eliminando item faltante (RPC):", rpcError);
+    alert(rpcError.message || "No se pudo eliminar el producto faltante.");
     return;
   }
-  
-  // Actualizar el total del pedido restando el precio del item eliminado
-  if (orderId && itemTotal > 0) {
-    const { data: orderData, error: orderError } = await supabase
-      .from("orders")
-      .select("total_amount")
-      .eq("id", orderId)
-      .maybeSingle();
-    
-    if (!orderError && orderData) {
-      const currentTotal = Number(orderData.total_amount || 0);
-      const newTotal = Math.max(0, currentTotal - itemTotal);
-      
-      const { error: updateError } = await supabase
-        .from("orders")
-        .update({ 
-          total_amount: newTotal,
-          updated_at: new Date().toISOString()
-        })
-        .eq("id", orderId);
-      
-      if (updateError) {
-        console.warn("⚠️ No se pudo actualizar el total del pedido:", updateError);
-      }
-    }
-  }
-  
-  console.log("✅ Item faltante eliminado correctamente");
+
+  console.log("✅ Item faltante eliminado correctamente", orderId ? `(pedido ${orderId})` : "");
   
   updateActiveOrdersBadge();
   updatePickedOrdersBadge();
@@ -4326,106 +4519,17 @@ async function cleanupCancelledItem(itemId) {
     alert("Este producto no está cancelado.");
     return;
   }
-  
-  // Obtener información completa del item (variant_id y size para devolver stock)
-  const { data: fullItemData, error: fullItemError } = await supabase
-    .from("order_items")
-    .select("id, order_id, quantity, price_snapshot, variant_id, size")
-    .eq("id", itemId)
-    .maybeSingle();
-  
-  if (fullItemError || !fullItemData) {
-    console.error("❌ Error obteniendo información completa del item:", fullItemError);
-    alert("No se pudo obtener la información del producto.");
+
+  const { error: rpcError } = await supabase.rpc("rpc_remove_order_item_restore_stock", {
+    p_order_item_id: itemId,
+  });
+
+  if (rpcError) {
+    console.error("❌ Error limpiando item cancelado (RPC):", rpcError);
+    alert(rpcError.message || "No se pudo eliminar el producto cancelado.");
     return;
   }
-  
-  const orderId = fullItemData.order_id;
-  const itemPrice = Number(fullItemData.price_snapshot || 0);
-  const itemQuantity = Number(fullItemData.quantity || 0);
-  const itemTotal = itemPrice * itemQuantity;
-  
-  // Devolver cantidad al stock general (el producto estaba apartado, se había descontado)
-  const variantId = fullItemData.variant_id;
-  const itemSize = fullItemData.size || null;
-  if (variantId && itemSize) {
-    try {
-      await loadWarehouses();
-      if (warehousesCache.general) {
-        const normalizedItemSize = normalizeSize(itemSize);
-        if (normalizedItemSize) {
-          const { data: sizeStockData, error: sizeStockError } = await supabase
-            .from("variant_size_warehouse_stock")
-            .select("size, stock_qty")
-            .eq("variant_id", variantId)
-            .eq("warehouse_id", warehousesCache.general);
-          let matchingStock = null;
-          if (!sizeStockError && sizeStockData && sizeStockData.length > 0) {
-            matchingStock = sizeStockData.find((sws) => {
-              const swsNormalizedSize = normalizeSize(sws.size || "");
-              return swsNormalizedSize === normalizedItemSize;
-            });
-          }
-          const currentQty = matchingStock ? (matchingStock.stock_qty || 0) : 0;
-          const newQty = currentQty + itemQuantity;
-          const { error: updateSizeError } = await supabase
-            .from("variant_size_warehouse_stock")
-            .upsert({
-              variant_id: variantId,
-              size: normalizedItemSize,
-              warehouse_id: warehousesCache.general,
-              stock_qty: newQty
-            }, { onConflict: "variant_id,size,warehouse_id" });
-          if (updateSizeError) {
-            console.warn("⚠️ Error devolviendo stock al general en cleanup cancelado:", updateSizeError);
-          } else {
-            console.log("✅ Stock devuelto al general:", variantId, normalizedItemSize, "+", itemQuantity);
-          }
-        }
-      }
-    } catch (e) {
-      console.warn("⚠️ Error al devolver stock en cleanup cancelado:", e);
-    }
-  }
-  
-  // Eliminar el item de la base de datos
-  const { error: deleteError } = await supabase
-    .from("order_items")
-    .delete()
-    .eq("id", itemId);
-  
-  if (deleteError) {
-    console.error("❌ Error eliminando item cancelado:", deleteError);
-    alert("No se pudo eliminar el producto cancelado.");
-    return;
-  }
-  
-  // Actualizar el total del pedido restando el precio del item eliminado
-  if (orderId && itemTotal > 0) {
-    const { data: orderData, error: orderError } = await supabase
-      .from("orders")
-      .select("total_amount")
-      .eq("id", orderId)
-      .maybeSingle();
-    
-    if (!orderError && orderData) {
-      const currentTotal = Number(orderData.total_amount || 0);
-      const newTotal = Math.max(0, currentTotal - itemTotal);
-      
-      const { error: updateError } = await supabase
-        .from("orders")
-        .update({ 
-          total_amount: newTotal,
-          updated_at: new Date().toISOString()
-        })
-        .eq("id", orderId);
-      
-      if (updateError) {
-        console.warn("⚠️ No se pudo actualizar el total del pedido:", updateError);
-      }
-    }
-  }
-  
+
   console.log("✅ Item cancelado eliminado correctamente");
   
   updateActiveOrdersBadge();
@@ -4434,7 +4538,7 @@ async function cleanupCancelledItem(itemId) {
   updateCancelledOrdersBadge();
   await loadOrders();
   if (historyVisible) await loadClosedOrders();
-  alert("✅ Producto cancelado eliminado correctamente. La cantidad se devolvió al stock general y el pedido fue actualizado.");
+  alert("✅ Producto cancelado eliminado correctamente. Stock y total se actualizaron vía el flujo del servidor.");
 }
 
 function findOrderIdByItemId(itemId) {
@@ -5357,8 +5461,11 @@ async function sendOrderToLocal(orderId) {
 
   console.log("✅ Pedido enviado al local correctamente:", data);
 
+  const already = data && data.already_exists === true;
   showToastNotification(
-    `Pedido enviado al local correctamente. Número de pedido local: ${data.order_number || 'N/A'}`,
+    already
+      ? `Este pedido ya estaba en el local (n.º ${data.order_number || "N/A"}).`
+      : `Pedido enviado al local correctamente. Número de pedido local: ${data.order_number || "N/A"}`,
     "success"
   );
 
@@ -5439,7 +5546,8 @@ async function loadClosedOrders() {
           price_snapshot,
           status,
           imagen,
-          variant_id
+          variant_id,
+          order_item_stock_sources ( qty, warehouse_id )
         )
       `
     )
@@ -5528,10 +5636,10 @@ function formatCurrency(value) {
   return `$${amount.toLocaleString("es-AR")}`;
 }
 
-// Precios en "miles abreviados" (ej. 18 = $18.000): normalizar para cálculo y visual
+// Legacy solo con decimales (ej. 16.5 → 16500). Enteros < 1000 son pesos reales; no multiplicar.
 function normalizeOrderPrice(p) {
   const n = Number(p) || 0;
-  if (n > 0 && n < 1000) return n * 1000;
+  if (n > 0 && n < 1000 && n % 1 !== 0) return n * 1000;
   return n;
 }
 
@@ -5632,231 +5740,17 @@ async function deleteOrderItemImmediate(itemId) {
     return;
   }
 
-  // Obtener datos del item
-  const { data: item, error: itemErr } = await supabase
-    .from("order_items")
-    .select("id, order_id, status, quantity, price_snapshot, variant_id, size")
-    .eq("id", itemId)
-    .maybeSingle();
-  if (itemErr || !item) {
-    alert("No se encontró el producto.");
+  const { data: rpcData, error: rpcErr } = await supabase.rpc("rpc_remove_order_item_restore_stock", {
+    p_order_item_id: itemId,
+  });
+  if (rpcErr) {
+    console.error("❌ rpc_remove_order_item_restore_stock:", rpcErr);
+    alert(rpcErr.message || "No se pudo eliminar el producto.");
     return;
   }
-
-  const qty = Number(item.quantity || 0) || 0;
-  const price = Number(item.price_snapshot || 0) || 0;
-  const itemTotal = qty * price;
-
-  // Ajuste de stock básico: si estaba 'picked' devolver al stock físico; si 'reserved', liberar reserva
-  // Si estaba 'waiting', liberar reserva si existe (ya que los items en espera pueden tener stock reservado)
-  if (item.variant_id) {
-    try {
-      const itemStatus = (item.status || '').toLowerCase();
-      const itemSize = item.size || null;
-      
-      // Cargar almacenes si no están en cache
-      await loadWarehouses();
-      
-      if (itemStatus === 'picked') {
-        // Si el item tiene un talle específico, devolver stock a variant_size_warehouse_stock
-        if (itemSize && warehousesCache.general && warehousesCache.ventaPublico) {
-          const warehouseIds = [warehousesCache.general, warehousesCache.ventaPublico].filter(Boolean);
-          
-          // IMPORTANTE: Normalizar el tamaño antes de consultar
-          const normalizedItemSize = normalizeSize(itemSize);
-          if (!normalizedItemSize) return; // Saltar si el tamaño está vacío después de normalizar
-          
-          for (const warehouseId of warehouseIds) {
-            // Obtener stock actual del talle en el almacén
-            // IMPORTANTE: Cargar todos los registros y normalizar después para evitar problemas de comparación
-            const { data: sizeStockData, error: sizeStockError } = await supabase
-              .from("variant_size_warehouse_stock")
-              .select("size, stock_qty")
-              .eq("variant_id", item.variant_id)
-              .eq("warehouse_id", warehouseId);
-            
-            // Filtrar por tamaño normalizado después de obtener los datos
-            let matchingStock = null;
-            if (!sizeStockError && sizeStockData && sizeStockData.length > 0) {
-              matchingStock = sizeStockData.find(sws => {
-                const swsNormalizedSize = normalizeSize(sws.size || "");
-                return swsNormalizedSize === normalizedItemSize;
-              });
-            }
-            
-            if (matchingStock) {
-              const currentQty = matchingStock.stock_qty || 0;
-              const newQty = currentQty + qty;
-              
-              // Actualizar stock por talle usando el tamaño normalizado
-              const { error: updateSizeError } = await supabase
-                .from("variant_size_warehouse_stock")
-                .upsert({
-                  variant_id: item.variant_id,
-                  size: normalizedItemSize, // Usar tamaño normalizado
-                  warehouse_id: warehouseId,
-                  stock_qty: newQty
-                }, {
-                  onConflict: 'variant_id,size,warehouse_id'
-                });
-              
-              if (updateSizeError) {
-                console.warn(`⚠️ Error devolviendo stock por talle para variant ${item.variant_id}, size ${normalizedItemSize}, warehouse ${warehouseId}:`, updateSizeError);
-              }
-            } else if (!sizeStockError) {
-              // Si no existe el registro, crearlo usando el tamaño normalizado
-              const { error: insertSizeError } = await supabase
-                .from("variant_size_warehouse_stock")
-                .insert({
-                  variant_id: item.variant_id,
-                  size: normalizedItemSize, // Usar tamaño normalizado
-                  warehouse_id: warehouseId,
-                  stock_qty: qty
-                });
-              
-              if (insertSizeError) {
-                console.warn(`⚠️ Error creando stock por talle para variant ${item.variant_id}, size ${normalizedItemSize}, warehouse ${warehouseId}:`, insertSizeError);
-              }
-            }
-          }
-        }
-        // NOTA: Ya no actualizamos product_variants.stock_qty (código legacy eliminado)
-      } else if (itemStatus === 'reserved' || itemStatus === 'waiting') {
-        // Para 'reserved' y 'waiting', devolver el stock a variant_size_warehouse_stock
-        // porque cuando se crea un pedido con status 'reserved', el stock se descuenta de variant_size_warehouse_stock
-        if (itemSize && warehousesCache.general) {
-          // IMPORTANTE: Normalizar el tamaño antes de consultar
-          const normalizedItemSize = normalizeSize(itemSize);
-          if (normalizedItemSize) {
-            console.log(`🔄 Devolviendo stock para item 'reserved': variant ${item.variant_id}, size ${normalizedItemSize}, cantidad ${qty}`);
-            
-            // Obtener stock actual del talle en el almacén general
-            const { data: sizeStockData, error: sizeStockError } = await supabase
-              .from("variant_size_warehouse_stock")
-              .select("size, stock_qty")
-              .eq("variant_id", item.variant_id)
-              .eq("warehouse_id", warehousesCache.general);
-            
-            // Filtrar por tamaño normalizado después de obtener los datos
-            let matchingStock = null;
-            if (!sizeStockError && sizeStockData && sizeStockData.length > 0) {
-              matchingStock = sizeStockData.find(sws => {
-                const swsNormalizedSize = normalizeSize(sws.size || "");
-                return swsNormalizedSize === normalizedItemSize;
-              });
-            }
-            
-            let currentQty = 0;
-            if (matchingStock) {
-              currentQty = matchingStock.stock_qty || 0;
-            } else {
-              // Si no existe en variant_size_warehouse_stock, verificar variant_sizes como fallback
-              const { data: variantSizeData } = await supabase
-                .from("variant_sizes")
-                .select("stock_qty")
-                .eq("variant_id", item.variant_id)
-                .eq("size", normalizedItemSize)
-                .maybeSingle();
-              
-              if (variantSizeData) {
-                currentQty = variantSizeData.stock_qty || 0;
-                console.log(`🔵 Usando fallback desde variant_sizes: ${currentQty} unidades`);
-              }
-            }
-            
-            const newQty = currentQty + qty;
-            console.log(`📦 Stock actual: ${currentQty}, Cantidad a devolver: ${qty}, Nuevo stock: ${newQty}`);
-            
-            // Actualizar o insertar el stock en variant_size_warehouse_stock
-            const { error: updateSizeError } = await supabase
-              .from("variant_size_warehouse_stock")
-              .upsert({
-                variant_id: item.variant_id,
-                size: normalizedItemSize,
-                warehouse_id: warehousesCache.general,
-                stock_qty: newQty
-              }, {
-                onConflict: 'variant_id,size,warehouse_id'
-              });
-            
-            if (updateSizeError) {
-              console.warn(`⚠️ Error devolviendo stock por talle para variant ${item.variant_id}, size ${normalizedItemSize}:`, updateSizeError);
-            } else {
-              console.log(`✅ Stock devuelto correctamente: ${qty} unidades agregadas al almacén 'general' para variant ${item.variant_id}, talle ${normalizedItemSize}`);
-              
-              // Si se usó fallback (no había stock en variant_size_warehouse_stock), también actualizar variant_sizes
-              if (!matchingStock) {
-                const { data: variantSizeData } = await supabase
-                  .from("variant_sizes")
-                  .select("stock_qty")
-                  .eq("variant_id", item.variant_id)
-                  .eq("size", normalizedItemSize)
-                  .maybeSingle();
-                
-                if (variantSizeData) {
-                  const variantSizeCurrentQty = variantSizeData.stock_qty || 0;
-                  const variantSizeNewQty = variantSizeCurrentQty + qty;
-                  
-                  const { error: variantSizeUpdateError } = await supabase
-                    .from("variant_sizes")
-                    .upsert({
-                      variant_id: item.variant_id,
-                      size: normalizedItemSize,
-                      stock_qty: variantSizeNewQty
-                    }, {
-                      onConflict: 'variant_id,size'
-                    });
-                  
-                  if (variantSizeUpdateError) {
-                    console.warn(`⚠️ Error actualizando variant_sizes:`, variantSizeUpdateError);
-                  } else {
-                    console.log(`✅ variant_sizes actualizado: ${variantSizeCurrentQty} → ${variantSizeNewQty}`);
-                  }
-                }
-              }
-            }
-          }
-        }
-        
-        // También liberar la reserva en product_variants (por compatibilidad)
-        const { data: varRow } = await supabase
-          .from("product_variants")
-          .select("reserved_qty")
-          .eq("id", item.variant_id)
-          .maybeSingle();
-        if (varRow) {
-          await supabase
-            .from("product_variants")
-            .update({ reserved_qty: Math.max(0, Number(varRow.reserved_qty || 0) - qty) })
-            .eq("id", item.variant_id);
-        }
-      }
-    } catch (e) {
-      console.warn("⚠️ No se pudo ajustar stock del ítem eliminado:", e?.message || e);
-    }
-  }
-
-  // Eliminar el item
-  const { error: delErr } = await supabase.from("order_items").delete().eq("id", itemId);
-  if (delErr) {
+  if (!rpcData || rpcData.ok !== true) {
     alert("No se pudo eliminar el producto.");
     return;
-  }
-
-  // Actualizar total del pedido
-  if (item.order_id && itemTotal > 0) {
-    const { data: orderRow } = await supabase
-      .from("orders")
-      .select("total_amount")
-      .eq("id", item.order_id)
-      .maybeSingle();
-    if (orderRow) {
-      const newTotal = Math.max(0, Number(orderRow.total_amount || 0) - itemTotal);
-      await supabase
-        .from("orders")
-        .update({ total_amount: newTotal, updated_at: new Date().toISOString() })
-        .eq("id", item.order_id);
-    }
   }
 
   updateActiveOrdersBadge();

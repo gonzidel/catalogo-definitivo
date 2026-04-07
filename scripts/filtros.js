@@ -73,13 +73,12 @@ window.addEventListener("DOMContentLoaded", () => {
           prod.style.display = visible ? "" : "none";
         });
 
-        // GA Tracking (si querés dejarlo)
-        if (filtroActivo && typeof gtag === "function") {
-          gtag("event", "filtro_seleccionado", {
-            event_category: "interaccion",
-            event_label: filtroActivo,
-          });
-        }
+        try {
+          if (filtroActivo && window.fylAnalytics && window.fylAnalytics.isReady()) {
+            window.fylAnalytics.setPageType("category");
+            window.fylAnalytics.event("filter_apply", { filter_value: filtroActivo });
+          }
+        } catch (_e) {}
       });
     });
   }

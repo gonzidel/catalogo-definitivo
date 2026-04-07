@@ -1566,126 +1566,87 @@ async function saveVariantSizes(variantId, row) {
     return false;
   }
 
-  // Primero eliminar talles que ya no existen
-  const currentSizes = new Set(sizes.map(s => s.size));
-  const { data: existingSizes } = await supabase
-    .from("variant_sizes")
-    .select("size")
-    .eq("variant_id", variantId);
-  
-  if (existingSizes) {
-    const toDelete = existingSizes
-      .map(e => e.size)
-      .filter(size => !currentSizes.has(size));
-    
-    if (toDelete.length > 0) {
-      await supabase
-        .from("variant_sizes")
-        .delete()
-        .eq("variant_id", variantId)
-        .in("size", toDelete);
-    }
-  }
+  console.log(`🔧 [VARIANTE ${variantId}] Guardando ${payload.length} talles (RPC atómico):`, payload);
 
-  // Upsert los talles (insert o update)
-  console.log(`🔧 [VARIANTE ${variantId}] Guardando ${payload.length} talles:`, payload);
-  
-  if (payload.length === 0) {
-    console.warn(`⚠️ [VARIANTE ${variantId}] No hay talles en el payload para guardar`);
-    return false;
-  }
-  
-  // Verificar que todos los talles tengan valores válidos
-  const invalidSizes = payload.filter(p => !p.size || isNaN(p.stock_qty) || p.stock_qty < 0 || p.variant_id !== variantId);
+  const invalidSizes = payload.filter(
+    (p) => !p.size || isNaN(p.stock_qty) || p.stock_qty < 0 || p.variant_id !== variantId
+  );
   if (invalidSizes.length > 0) {
     console.error(`❌ [VARIANTE ${variantId}] Hay talles inválidos en el payload:`, invalidSizes);
     return false;
   }
-  
-  console.log(`🔧 [VARIANTE ${variantId}] Ejecutando upsert en variant_sizes...`);
-  console.log(`🔧 [VARIANTE ${variantId}] Payload final (verificar variant_id):`, payload.map(p => ({ variant_id: p.variant_id, size: p.size, stock_qty: p.stock_qty })));
-  
-  const { data: upsertedData, error: upsertErr } = await supabase
-    .from("variant_sizes")
-    .upsert(payload, {
-      onConflict: "variant_id,size",
-    })
-    .select();
-  
-  // Asignar códigos QR a los registros que no los tengan
-  if (upsertedData && !upsertErr) {
-    for (const record of upsertedData) {
-      if (!record.qr_code) {
-        try {
-          const { data: qrCodeData, error: qrCodeError } = await supabase
-            .rpc('assign_qr_code_to_variant_size', { p_variant_size_id: record.id });
-          
-          if (qrCodeError) {
-            console.warn(`⚠️ [VARIANTE ${variantId}] Error asignando código QR a variant_size ${record.id}:`, qrCodeError);
-          } else {
-            console.log(`✅ [VARIANTE ${variantId}] Código QR asignado: ${qrCodeData} para talle ${record.size}`);
-          }
-        } catch (error) {
-          console.warn(`⚠️ [VARIANTE ${variantId}] Excepción al asignar código QR:`, error);
+
+  const pItems = payload.map((p) => ({
+    size: p.size,
+    stock_qty: p.stock_qty,
+    sku: p.sku,
+  }));
+
+  const errMsgTransactional =
+    "No se pudo guardar el stock de los talles. No se aplicaron cambios completos. Reintentá o revisá en Stock.";
+
+  const { data: rpcData, error: rpcErr } = await supabase.rpc(
+    "rpc_save_product_variant_initial_stock",
+    { p_variant_id: variantId, p_items: pItems }
+  );
+
+  if (rpcErr) {
+    console.error(`❌ [VARIANTE ${variantId}] RPC stock inicial:`, rpcErr);
+    if (statusEl) {
+      statusEl.textContent = errMsgTransactional;
+      statusEl.style.color = "#c00";
+    }
+    return false;
+  }
+
+  if (!rpcData || rpcData.ok !== true) {
+    console.error(`❌ [VARIANTE ${variantId}] RPC stock inicial respuesta inválida:`, rpcData);
+    if (statusEl) {
+      statusEl.textContent = errMsgTransactional;
+      statusEl.style.color = "#c00";
+    }
+    return false;
+  }
+
+  console.log(
+    `✅ [VARIANTE ${variantId}] Stock general guardado (RPC): warehouse_id=${rpcData.warehouse_id}, total_qty=${rpcData.total_qty}`
+  );
+
+  const upsertedData = Array.isArray(rpcData.variant_sizes)
+    ? rpcData.variant_sizes
+    : [];
+
+  for (const record of upsertedData) {
+    if (!record.qr_code) {
+      try {
+        const { data: qrCodeData, error: qrCodeError } = await supabase.rpc(
+          "assign_qr_code_to_variant_size",
+          { p_variant_size_id: record.id }
+        );
+
+        if (qrCodeError) {
+          console.warn(
+            `⚠️ [VARIANTE ${variantId}] Error asignando código QR a variant_size ${record.id}:`,
+            qrCodeError
+          );
+        } else {
+          console.log(
+            `✅ [VARIANTE ${variantId}] Código QR asignado: ${qrCodeData} para talle ${record.size}`
+          );
         }
+      } catch (error) {
+        console.warn(`⚠️ [VARIANTE ${variantId}] Excepción al asignar código QR:`, error);
       }
     }
   }
 
-  if (upsertErr) {
-    console.error(`❌ [VARIANTE ${variantId}] Error guardando talles:`, upsertErr);
-    console.error(`❌ [VARIANTE ${variantId}] Payload que falló:`, payload);
-    return false;
-  }
-
-  console.log(`✅ [VARIANTE ${variantId}] Guardados ${payload.length} talles (incluyendo talles con stock 0)`);
-  console.log(`✅ [VARIANTE ${variantId}] Datos guardados en BD:`, upsertedData);
-  
-  // Verificar que los datos guardados tengan el variant_id correcto
-  if (upsertedData) {
-    const wrongVariants = upsertedData.filter(d => d.variant_id !== variantId);
+  if (upsertedData.length > 0) {
+    const wrongVariants = upsertedData.filter((d) => d.variant_id !== variantId);
     if (wrongVariants.length > 0) {
-      console.error(`❌ [VARIANTE ${variantId}] ERROR CRÍTICO: Se guardaron talles con variant_id incorrecto:`, wrongVariants);
-    } else {
-      console.log(`✅ [VARIANTE ${variantId}] Todos los talles guardados tienen el variant_id correcto`);
-    }
-  }
-
-  // Guardar stock total en variant_warehouse_stock para el depósito general
-  // Sumar el stock de todos los talles
-  const totalStock = sizes.reduce((sum, s) => sum + (s.stock_qty || 0), 0);
-  console.log(`🔧 Stock total calculado para variante ${variantId}: ${totalStock} (suma de ${sizes.length} talles)`);
-
-  // Obtener ID del depósito general
-  const { data: warehouse, error: warehouseError } = await supabase
-    .from("warehouses")
-    .select("id")
-    .eq("code", "general")
-    .single();
-
-  if (warehouseError || !warehouse) {
-    console.error("❌ Error obteniendo depósito general:", warehouseError);
-    // No fallar completamente, solo registrar el error
-  } else {
-    console.log(`🔧 Guardando stock total (${totalStock}) en variant_warehouse_stock para depósito general (warehouse_id: ${warehouse.id})`);
-    
-    // Upsert en variant_warehouse_stock
-    const { data: warehouseStockData, error: warehouseStockError } = await supabase
-      .from("variant_warehouse_stock")
-      .upsert({
-        variant_id: variantId,
-        warehouse_id: warehouse.id,
-        stock_qty: totalStock,
-      }, {
-        onConflict: "variant_id,warehouse_id",
-      })
-      .select();
-
-    if (warehouseStockError) {
-      console.error("❌ Error guardando stock en variant_warehouse_stock:", warehouseStockError);
-      // No fallar completamente, solo registrar el error
-    } else {
-      console.log(`✅ Stock total guardado en variant_warehouse_stock para variante ${variantId}:`, warehouseStockData);
+      console.error(
+        `❌ [VARIANTE ${variantId}] ERROR: variant_sizes devueltos con variant_id incorrecto:`,
+        wrongVariants
+      );
     }
   }
 

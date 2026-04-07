@@ -3707,6 +3707,19 @@ body.modal-open {
   }
 }
 
+/* PDP: barra "Agregar al carrito" solo cuando hay cantidad > 0 en algún talle */
+#product-modal-footer.pdp-footer-bar-hidden {
+  padding: 0 !important;
+  min-height: 0 !important;
+  border-top-width: 0 !important;
+  box-shadow: none !important;
+  overflow: hidden !important;
+  pointer-events: none !important;
+}
+#product-modal-footer.pdp-footer-bar-hidden .product-modal-cta {
+  display: none !important;
+}
+
 .product-modal-cta-controls {
   display: flex;
   align-items: center;
@@ -7058,6 +7071,41 @@ body.modal-open {
   html.client-area body.has-cart-bar #product-modal.active #product-modal-body {
     padding-bottom: calc(
       var(--bottom-nav-h, 56px) + var(--sticky-cart-h, 48px) + 168px + env(safe-area-inset-bottom, 0px)
+    ) !important;
+  }
+
+  /* Sin barra de checkout (aún no eligió cantidad): menos padding, footer colapsado */
+  #product-modal.active:not(.pdp-checkout-bar-visible) #product-modal-footer.product-modal-footer {
+    height: 0 !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    overflow: hidden !important;
+    pointer-events: none !important;
+  }
+  #product-modal.active:not(.pdp-checkout-bar-visible) #product-modal-body {
+    padding-bottom: calc(var(--bottom-nav-h, 56px) + 72px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+  body:has(#product-modal.active)
+    #product-modal.active:not(.pdp-checkout-bar-visible)
+    #product-modal-body {
+    padding-bottom: calc(var(--bottom-nav-h, 56px) + 72px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+  body:has(#product-modal.active).has-cart-bar
+    #product-modal.active:not(.pdp-checkout-bar-visible)
+    #product-modal-body {
+    padding-bottom: calc(
+      var(--bottom-nav-h, 56px) + var(--sticky-cart-h, 48px) + 72px + env(safe-area-inset-bottom, 0px)
+    ) !important;
+  }
+  html.client-area #product-modal.active:not(.pdp-checkout-bar-visible) #product-modal-body {
+    padding-bottom: calc(var(--bottom-nav-h, 56px) + 72px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+  html.client-area body.has-cart-bar #product-modal.active:not(.pdp-checkout-bar-visible) #product-modal-body {
+    padding-bottom: calc(
+      var(--bottom-nav-h, 56px) + var(--sticky-cart-h, 48px) + 72px + env(safe-area-inset-bottom, 0px)
     ) !important;
   }
 }

@@ -3,12 +3,52 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="app-version" content="m260328">
+    <meta name="app-version" content="m260407">
     <title>Dashboard - Catálogo FYL</title>
     <script>document.documentElement.classList.add("client-area");</script>
     <script>window.__DASHBOARD__ = true;</script>
-    <link rel="stylesheet" href="../styles.css?v=m260328">
-    <link rel="stylesheet" href="./dashboard.css?v=m260328">
+
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-2JDYZW1KD6"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag("js", new Date());
+      gtag("config", "G-2JDYZW1KD6", { send_page_view: false });
+    </script>
+    <!-- Meta Pixel Code -->
+    <script>
+      !(function (f, b, e, v, n, t, s) {
+        if (f.fbq) return;
+        n = f.fbq = function () {
+          n.callMethod ? n.callMethod.apply(n, arguments) : n.queue.push(arguments);
+        };
+        if (!f._fbq) f._fbq = n;
+        n.push = n;
+        n.loaded = true;
+        n.version = "2.0";
+        n.queue = [];
+        t = b.createElement(e);
+        t.async = true;
+        t.src = v;
+        s = b.getElementsByTagName(e)[0];
+        s.parentNode.insertBefore(t, s);
+      })(window, document, "script", "https://connect.facebook.net/en_US/fbevents.js");
+      fbq("init", "566182527509606");
+      fbq("track", "PageView");
+    </script>
+    <noscript>
+      <img
+        height="1"
+        width="1"
+        style="display:none"
+        src="https://www.facebook.com/tr?id=566182527509606&ev=PageView&noscript=1"
+        alt=""
+      />
+    </noscript>
+    <!-- End Meta Pixel Code -->
+
+    <link rel="stylesheet" href="../styles.css?v=m260407">
+    <link rel="stylesheet" href="./dashboard.css?v=m260407">
     <style>
         /* Misma familia visual que index2: fondo claro, cards blancas, sombras suaves, #CD844D */
         .dashboard-container {
@@ -470,7 +510,7 @@
             c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
             t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
             y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
-        })(window, document, "clarity", "script", "vuuq665971");
+        })(window, document, "clarity", "script", "w7h6cytm9j");
     </script>
 </head>
 <body class="dashboard-has-bottom-nav">
@@ -625,14 +665,20 @@
         </a>
     </nav>
 
-    <script type="module" src="../scripts/supabase-client.js?v=m260328"></script>
-    <script type="module" src="../scripts/auth-wait.js?v=m260328"></script>
-    <script type="module" src="auth-helper.js?v=m260328"></script>
-    <script type="module" src="../scripts/passkeys.js?v=m260328"></script>
-    <script type="module" src="../scripts/cart-persistent.js?v=m260328"></script>
-    <script type="module" src="../scripts/product-alternatives.js?v=m260328"></script>
-    <script type="module" src="dashboard-instant.js?v=m260328"></script>
-    <script type="module" src="dashboard-onboarding.js?v=m260328"></script>
-    <script type="module" src="dashboard.js?v=m260328"></script>
+    <script type="module" src="../scripts/supabase-client.js?v=m260407"></script>
+    <script type="module">
+      import { fylAnalytics } from "../scripts/analytics.js?v=m260407";
+      import { attachClientAnalyticsAuthListener } from "../scripts/analytics-auth-hook.js?v=m260407";
+      fylAnalytics.init({ app_area: "client", page_type: "dashboard", user_role: "guest" });
+      attachClientAnalyticsAuthListener();
+    </script>
+    <script type="module" src="../scripts/auth-wait.js?v=m260407"></script>
+    <script type="module" src="auth-helper.js?v=m260407"></script>
+    <script type="module" src="../scripts/passkeys.js?v=m260407"></script>
+    <script type="module" src="../scripts/cart-persistent.js?v=m260407"></script>
+    <script type="module" src="../scripts/product-alternatives.js?v=m260407"></script>
+    <script type="module" src="dashboard-instant.js?v=m260407"></script>
+    <script type="module" src="dashboard-onboarding.js?v=m260407"></script>
+    <script type="module" src="dashboard.js?v=m260407"></script>
 </body>
 </html>

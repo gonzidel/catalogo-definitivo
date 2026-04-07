@@ -52,18 +52,36 @@ BEGIN
   SELECT id, expires_at, dismantle_at
   INTO v_order_id, v_expires_at, v_dismantle_at
   FROM public.orders
-  WHERE customer_id = auth.uid() AND status = 'active'
-  ORDER BY created_at DESC LIMIT 1;
+  WHERE customer_id = auth.uid() AND status IN ('active', 'closing_soon')
+  ORDER BY
+    CASE WHEN status = 'active' THEN 0 WHEN status = 'closing_soon' THEN 1 ELSE 2 END,
+    created_at DESC
+  LIMIT 1;
 
   IF v_order_id IS NULL THEN
-    INSERT INTO public.orders (customer_id, status, expires_at, dismantle_at)
-    VALUES (
-      auth.uid(),
-      'active',
-      now() + interval '7 days',
-      now() + interval '14 days'
-    )
-    RETURNING id INTO v_order_id;
+    BEGIN
+      INSERT INTO public.orders (customer_id, status, expires_at, dismantle_at)
+      VALUES (
+        auth.uid(),
+        'active',
+        now() + interval '7 days',
+        now() + interval '14 days'
+      )
+      RETURNING id INTO v_order_id;
+    EXCEPTION
+      WHEN unique_violation THEN
+        SELECT id, expires_at, dismantle_at
+        INTO v_order_id, v_expires_at, v_dismantle_at
+        FROM public.orders
+        WHERE customer_id = auth.uid() AND status IN ('active', 'closing_soon')
+        ORDER BY
+          CASE WHEN status = 'active' THEN 0 WHEN status = 'closing_soon' THEN 1 ELSE 2 END,
+          created_at DESC
+        LIMIT 1;
+        IF v_order_id IS NULL THEN
+          RAISE;
+        END IF;
+    END;
   ELSE
     IF v_expires_at IS NULL OR v_dismantle_at IS NULL THEN
       UPDATE public.orders

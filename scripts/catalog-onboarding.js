@@ -3,6 +3,7 @@
  * Tras el evento fyl-catalog-boot-done (o si el boot ya terminó).
  */
 import { supabase } from "./supabase-client.js";
+import { fylAnalytics } from "./analytics.js";
 
 const STORAGE_KEY = "fyl-catalog-onboarding-hide";
 const SEEN_KEY = "fyl-catalog-onboarding-seen";
@@ -61,12 +62,9 @@ function closeOnboarding(markAsSeen = true) {
   if (chkNever?.checked) {
     localStorage.setItem(STORAGE_KEY, "1");
   }
-  if (typeof gtag === "function") {
-    gtag("event", "catalog_onboarding_close", {
-      event_category: "onboarding",
-      event_label: `step_${step + 1}`,
-    });
-  }
+  try {
+    if (fylAnalytics.isReady()) fylAnalytics.event("catalog_onboarding_close", { step: step + 1 });
+  } catch (_e) {}
 }
 
 function openOnboarding() {
@@ -81,11 +79,9 @@ function openOnboarding() {
   requestAnimationFrame(() => root.classList.add("is-visible"));
   root.setAttribute("aria-hidden", "false");
   document.body.classList.add("modal-open");
-  if (typeof gtag === "function") {
-    gtag("event", "catalog_onboarding_open", {
-      event_category: "onboarding",
-    });
-  }
+  try {
+    if (fylAnalytics.isReady()) fylAnalytics.event("catalog_onboarding_open", {});
+  } catch (_e) {}
 }
 
 async function tryShowOnboarding() {

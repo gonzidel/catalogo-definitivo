@@ -4,11 +4,11 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <!-- Cache bust: subí la versión en app-version.json y ejecutá npm run build (o deploy con predeploy). -->
-  <meta name="app-version" content="m260328">
+  <meta name="app-version" content="m260406">
   <title>Catálogo FYL</title>
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
-  <link rel="manifest" href="manifest.json?v=m260328">
-  <link rel="stylesheet" href="styles.css?v=m260328">
+  <link rel="manifest" href="manifest.json?v=m260406">
+  <link rel="stylesheet" href="styles.css?v=m260406">
   <link rel="icon" href="icons/icon-192x192.png" type="image/png">
   <meta name="theme-color" content="#CD844D">
   <style>
@@ -211,8 +211,39 @@
     window.dataLayer = window.dataLayer || [];
     function gtag(){dataLayer.push(arguments);}
     gtag('js', new Date());
-    gtag('config', 'G-2JDYZW1KD6');
+    gtag('config', 'G-2JDYZW1KD6', { send_page_view: false });
   </script>
+  <!-- Meta Pixel Code -->
+  <script>
+    !(function (f, b, e, v, n, t, s) {
+      if (f.fbq) return;
+      n = f.fbq = function () {
+        n.callMethod ? n.callMethod.apply(n, arguments) : n.queue.push(arguments);
+      };
+      if (!f._fbq) f._fbq = n;
+      n.push = n;
+      n.loaded = true;
+      n.version = "2.0";
+      n.queue = [];
+      t = b.createElement(e);
+      t.async = true;
+      t.src = v;
+      s = b.getElementsByTagName(e)[0];
+      s.parentNode.insertBefore(t, s);
+    })(window, document, "script", "https://connect.facebook.net/en_US/fbevents.js");
+    fbq("init", "566182527509606");
+    fbq("track", "PageView");
+  </script>
+  <noscript>
+    <img
+      height="1"
+      width="1"
+      style="display:none"
+      src="https://www.facebook.com/tr?id=566182527509606&ev=PageView&noscript=1"
+      alt=""
+    />
+  </noscript>
+  <!-- End Meta Pixel Code -->
   
   <!-- Suprimir errores 401 esperados de Supabase cuando no hay sesión activa -->
   <script>
@@ -253,7 +284,20 @@
         c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
         t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
         y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
-    })(window, document, "clarity", "script", "vuuq665971");
+    })(window, document, "clarity", "script", "w7h6cytm9j");
+  </script>
+  <script>
+    (function () {
+      function trackHashRouteInClarity() {
+        var hash = window.location.hash || "";
+        if (hash === "#/como-comprar" || hash === "#/quienes-somos") {
+          window.clarity("set", "page", window.location.pathname + hash);
+        }
+      }
+
+      window.addEventListener("hashchange", trackHashRouteInClarity);
+      trackHashRouteInClarity();
+    })();
   </script>
 </head>
 <body class="catalog-boot-active">
@@ -994,29 +1038,34 @@
 
   <!-- Scripts esenciales -->
   <script src="/config.prod.js"></script>
-  <script type="module" src="scripts/boot-telemetry.js?v=m260328"></script>
-  <script type="module" src="scripts/config.js?v=m260328"></script>
-  <script type="module" src="scripts/supabase-client.js?v=m260328"></script>
-  <script type="module" src="scripts/main-supabase.js?v=m260328"></script>
-  <script type="module" src="scripts/auth-status.js?v=m260328"></script>
-  <script type="module" src="scripts/notifications.js?v=m260328"></script>
-  <script type="module" src="scripts/catalog-onboarding.js?v=m260328"></script>
-  <script type="module" src="scripts/product-alternatives.js?v=m260328"></script>
-  <script type="module" src="scripts/cart-persistent.js?v=m260328"></script>
-  <script type="module" src="scripts/ui/toast.js?v=m260328"></script>
-  <script type="module" src="scripts/search-manager.js?v=m260328"></script>
-  <script type="module" src="scripts/whatsapp.js?v=m260328"></script>
-  <script type="module" src="scripts/scroll.js?v=m260328"></script>
-  <script src="scripts/pwa-install.js?v=m260328"></script>
-  <script src="scripts/filtros.js?v=m260328"></script>
-  <script type="module" src="scripts/quick-actions.js?v=m260328"></script>
-  <script type="module" src="scripts/mobile-nav.js?v=m260328"></script>
-  <script type="module" src="scripts/banner.js?v=m260328"></script>
-  <script type="module" src="scripts/size-filter.js?v=m260328"></script>
-  <script type="module" src="scripts/fyl-originals-banner.js?v=m260328"></script>
-  <script type="module" src="scripts/custom-banner.js?v=m260328"></script>
-  <script type="module" src="scripts/como-comprar.js?v=m260328"></script>
-  <script type="module" src="scripts/ui/bottom-sheet.js?v=m260328"></script>
+  <script type="module" src="scripts/boot-telemetry.js?v=m260406"></script>
+  <script type="module" src="scripts/config.js?v=m260406"></script>
+  <script type="module" src="scripts/supabase-client.js?v=m260406"></script>
+  <script type="module" src="scripts/analytics.js?v=m260406"></script>
+  <script type="module">
+    import { fylAnalytics } from "./scripts/analytics.js?v=m260406";
+    fylAnalytics.init({ app_area: "catalog", page_type: "home", user_role: "guest" });
+  </script>
+  <script type="module" src="scripts/main-supabase.js?v=m260406"></script>
+  <script type="module" src="scripts/auth-status.js?v=m260406"></script>
+  <script type="module" src="scripts/notifications.js?v=m260406"></script>
+  <script type="module" src="scripts/catalog-onboarding.js?v=m260406"></script>
+  <script type="module" src="scripts/product-alternatives.js?v=m260406"></script>
+  <script type="module" src="scripts/cart-persistent.js?v=m260406"></script>
+  <script type="module" src="scripts/ui/toast.js?v=m260406"></script>
+  <script type="module" src="scripts/search-manager.js?v=m260406"></script>
+  <script type="module" src="scripts/whatsapp.js?v=m260406"></script>
+  <script type="module" src="scripts/scroll.js?v=m260406"></script>
+  <script src="scripts/pwa-install.js?v=m260406"></script>
+  <script src="scripts/filtros.js?v=m260406"></script>
+  <script type="module" src="scripts/quick-actions.js?v=m260406"></script>
+  <script type="module" src="scripts/mobile-nav.js?v=m260406"></script>
+  <script type="module" src="scripts/banner.js?v=m260406"></script>
+  <script type="module" src="scripts/size-filter.js?v=m260406"></script>
+  <script type="module" src="scripts/fyl-originals-banner.js?v=m260406"></script>
+  <script type="module" src="scripts/custom-banner.js?v=m260406"></script>
+  <script type="module" src="scripts/como-comprar.js?v=m260406"></script>
+  <script type="module" src="scripts/ui/bottom-sheet.js?v=m260406"></script>
   
   <!-- Modal de producto con SKU -->
   <div id="product-modal" class="product-modal">

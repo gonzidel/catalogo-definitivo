@@ -3371,7 +3371,28 @@ async function createNewOrder(customerId, items, total, extraValues = {}) {
   
   console.log("🔵 createNewOrder: Creando pedido en base de datos...");
   console.log("🔵 createNewOrder: customer_id a insertar:", customerId, "tipo:", typeof customerId, "formato válido:", isValidUUID(customerId));
-  // Crear el pedido
+
+  const { data: existingOpen, error: openErr } = await supabase
+    .from("orders")
+    .select("id, order_number, status")
+    .eq("customer_id", customerId)
+    .in("status", ["active", "closing_soon"])
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!openErr && existingOpen?.id) {
+    const label = existingOpen.order_number || String(existingOpen.id).slice(0, 8);
+    const reuse = confirm(
+      `El cliente ya tiene un pedido abierto (#${label}). ¿Agregar estos productos a ese pedido en lugar de crear uno nuevo?\n\nAceptar = agregar al pedido existente.\nCancelar = no crear (revisá el pedido en el panel).`
+    );
+    if (reuse) {
+      await addItemsToExistingOrder(existingOpen.id, items, total, extraValues);
+      return { success: true, order: existingOpen, reusedExisting: true };
+    }
+    throw new Error("Creación cancelada: el cliente ya tiene un pedido abierto.");
+  }
+
   const { data: order, error: orderError } = await supabase
     .from("orders")
     .insert({
@@ -3388,8 +3409,14 @@ async function createNewOrder(customerId, items, total, extraValues = {}) {
     console.error("❌ createNewOrder: Error creando pedido:", orderError);
     console.error("❌ createNewOrder: customer_id que causó el error:", customerId);
     console.error("❌ createNewOrder: Detalles del error:", JSON.stringify(orderError, null, 2));
+
+    const msg = String(orderError.message || "");
+    if (orderError.code === "23505" || /duplicate key|unique constraint/i.test(msg)) {
+      throw new Error(
+        "Ya existe un pedido abierto para este cliente (concurrencia o índice único). Recargá la página, abrí ese pedido y agregá los productos allí."
+      );
+    }
     
-    // Mensaje de error más descriptivo si es foreign key constraint
     if (orderError.message && orderError.message.includes("foreign key constraint")) {
       throw new Error(`Error: El cliente con ID "${customerId}" no puede ser usado porque su ID no existe en auth.users. Esto suele pasar con clientes importados. Por favor, verifica que el cliente tenga un usuario asociado válido.`);
     }

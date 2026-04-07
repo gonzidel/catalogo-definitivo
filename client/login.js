@@ -1,6 +1,7 @@
 import { supabase } from "../scripts/supabase-client.js";
 import { checkPasskeySupport, authenticateWithPasskey } from "../scripts/passkeys.js";
 import { hasInitialProfileComplete } from "./auth-helper.js";
+import { fylAnalytics } from "../scripts/analytics.js";
 import {
   getPostLoginRedirectUrl,
   initLoginPageReturnPath,
@@ -22,6 +23,9 @@ btn?.addEventListener("click", async () => {
   msg.className = "";
   btn.disabled = true;
   btn.textContent = "Iniciando sesión...";
+  try {
+    if (fylAnalytics.isReady()) fylAnalytics.event("login_start", { method: "google", surface: "login_page" });
+  } catch (_e) {}
 
   try {
     console.log("🔐 Iniciando login con Google...");

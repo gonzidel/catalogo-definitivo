@@ -482,11 +482,12 @@ begin
       v_variant_id := (v_item->>'variant_id')::uuid;
       v_quantity := (v_item->>'quantity')::int;
       v_size := v_item->>'size';
-      -- Detectar confirmación de "agregar sin stock" (frontend envía source 0,0)
+      -- Detectar confirmación de "agregar sin stock" (frontend envía source 0,0 y cantidad > 0)
       v_add_without_stock := (
         v_item->'source' is not null
         and coalesce((v_item->'source'->>'venta_publico')::int, 0) = 0
         and coalesce((v_item->'source'->>'general')::int, 0) = 0
+        and v_quantity > 0
       );
       if v_size is not null and trim(v_size) <> '' then
         -- Validar stock por talle usando variant_size_warehouse_stock
@@ -612,6 +613,13 @@ begin
       v_variant_id := (v_item->>'variant_id')::uuid;
       v_quantity := (v_item->>'quantity')::int;
       v_size := v_item->>'size';
+      -- Por ítem (antes se reutilizaba el valor del último ítem del bucle de validación)
+      v_add_without_stock := (
+        v_item->'source' is not null
+        and coalesce((v_item->'source'->>'venta_publico')::int, 0) = 0
+        and coalesce((v_item->'source'->>'general')::int, 0) = 0
+        and v_quantity > 0
+      );
 
       -- Si el usuario confirmó agregar sin stock, NO descontar stock (evita violar constraints de no-negativo)
       if not v_add_without_stock then

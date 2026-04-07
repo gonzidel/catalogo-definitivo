@@ -1,3 +1,6 @@
+import { fylDevLog } from "./config.js";
+import { fylAnalytics } from "./analytics.js";
+
 // Scroll to top button functionality
 const scrollBtn = document.getElementById("btn-scroll-top");
 
@@ -16,11 +19,9 @@ if (scrollBtn) {
       behavior: "smooth",
     });
 
-    if (typeof gtag !== "undefined") {
-      gtag("event", "scroll_top", {
-        event_category: "navegacion",
-      });
-    }
+    try {
+      if (fylAnalytics.isReady()) fylAnalytics.event("scroll_top", {});
+    } catch (_e) {}
   });
 }
 
@@ -39,7 +40,7 @@ function ensureHeaderSticky() {
     header.style.zIndex = '1000';
     header.style.width = '100%';
     header.style.background = '#fff';
-    console.log('🔧 Header sticky forzado mediante JavaScript');
+    fylDevLog("🔧 Header sticky forzado mediante JavaScript");
   }
 }
 

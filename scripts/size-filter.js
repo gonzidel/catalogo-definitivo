@@ -1,5 +1,6 @@
 // scripts/size-filter.js - Filtro de talles con modal bottom sheet
 
+import { fylDevLog } from "./config.js";
 import { supabase } from "./supabase-client.js";
 import { normalizeSize } from "./utils/size-normalizer.js";
 
@@ -876,7 +877,7 @@ function hookCambiarCategoria() {
           closeSizeFilterModal();
           return originalCambiarCategoria.apply(this, arguments);
         };
-        console.log('✅ Hook de cambiarCategoria configurado');
+        fylDevLog("✅ Hook de cambiarCategoria configurado");
       }
     }
   }, 100);
@@ -899,7 +900,7 @@ if (typeof window !== 'undefined') {
   window.openSizeFilterModal = openSizeFilterModal;
   window.clearSizeFilter = clearSizeFilter;
   window.applySizeFilterFromURL = applySizeFilterFromURL;
-  console.log('✅ Funciones de size-filter exportadas globalmente');
+  fylDevLog("✅ Funciones de size-filter exportadas globalmente");
 }
 
 // Actualizar categoría cuando cambia

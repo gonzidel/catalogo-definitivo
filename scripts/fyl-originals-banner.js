@@ -2,6 +2,16 @@
 
 import { supabase } from "./supabase-client.js";
 
+function fylDevLog(...args) {
+  if (
+    typeof window !== "undefined" &&
+    (window.FYL_DEBUG_CATALOG === true ||
+      /(?:^|[&?])debug=catalog(?:&|$)/.test(window.location.search || ""))
+  ) {
+    console.log.apply(console, args);
+  }
+}
+
 let fylProducts = [];
 let fylProductsLoaded = 0; // Contador de productos mostrados
 const PRODUCTS_PER_PAGE = 10; // Cantidad de productos a cargar por página
@@ -37,7 +47,7 @@ export async function loadFYLOriginals() {
     }
 
     if (!data || data.length === 0) {
-      console.log("ℹ️ No hay productos del proveedor FYL");
+      fylDevLog("ℹ️ No hay productos del proveedor FYL");
       return [];
     }
 
@@ -99,7 +109,7 @@ export async function loadFYLOriginals() {
     }, {});
 
     fylProducts = Object.values(grupos);
-    console.log(`✅ Productos FYL cargados: ${fylProducts.length}`);
+    fylDevLog(`✅ Productos FYL cargados: ${fylProducts.length}`);
 
     return fylProducts;
   } catch (error) {

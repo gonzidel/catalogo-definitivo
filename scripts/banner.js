@@ -1,37 +1,44 @@
 // scripts/banner.js - Carga y renderiza banner promocional
 
 import { supabase } from "./supabase-client.js";
+import { fylAnalytics } from "./analytics.js";
 
 let currentBanner = null;
+/** Evita 406 de PostgREST con `.single()` sin filas y peticiones duplicadas al inicio. */
+let loadBannerInFlight = null;
 
 // Cargar banner desde Supabase
 export async function loadBanner() {
-  try {
-    const { data, error } = await supabase
-      .from("promotional_banners")
-      .select("*")
-      .eq("enabled", true)
-      .order("order", { ascending: true })
-      .limit(1)
-      .single();
+  if (loadBannerInFlight) return loadBannerInFlight;
+  loadBannerInFlight = (async () => {
+    try {
+      const { data, error } = await supabase
+        .from("promotional_banners")
+        .select("*")
+        .eq("enabled", true)
+        .order("order", { ascending: true })
+        .limit(1)
+        .maybeSingle();
 
-    if (error) {
-      // Si no hay banner o error, no mostrar nada
-      if (error.code === 'PGRST116') {
-        // No rows returned - es normal
+      if (error) {
+        if (error.code === "PGRST116") return;
+        console.error("Error cargando banner:", error);
         return;
       }
-      console.error("Error cargando banner:", error);
-      return;
-    }
 
-    if (data) {
-      currentBanner = data;
-      renderBanner();
+      if (data) {
+        currentBanner = data;
+        renderBanner();
+      } else {
+        currentBanner = null;
+      }
+    } catch (error) {
+      console.error("Error en loadBanner:", error);
+    } finally {
+      loadBannerInFlight = null;
     }
-  } catch (error) {
-    console.error("Error en loadBanner:", error);
-  }
+  })();
+  return loadBannerInFlight;
 }
 
 // Renderizar banner
@@ -93,6 +100,14 @@ export function hidePromotionalBanner() {
 // Manejar click en banner
 function handleBannerClick() {
   if (!currentBanner || !currentBanner.link) return;
+  try {
+    if (fylAnalytics.isReady()) {
+      fylAnalytics.event("banner_click", {
+        link_type: currentBanner.link_type || "",
+        link: String(currentBanner.link || "").slice(0, 120),
+      });
+    }
+  } catch (_e) {}
 
   if (currentBanner.link_type === "category") {
     // Filtrar por categoría

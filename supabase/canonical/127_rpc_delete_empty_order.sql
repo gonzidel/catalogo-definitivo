@@ -1,45 +1,42 @@
 -- 127_rpc_delete_empty_order.sql
--- Permite al cliente eliminar su pedido cuando ya no tiene productos (todos cancelados).
--- Sin esta RPC, el cliente no puede hacer DELETE en orders por RLS.
+-- Permite al cliente eliminar su pedido cuando ya no tiene ítems operacionales
+-- (solo cancelled/expired u sin filas). Sin esta RPC, el cliente no puede hacer DELETE en orders por RLS.
+-- Delega el borrado en maint_try_delete_order_if_eligible (mismo núcleo que el trigger).
 
-create or replace function public.rpc_delete_empty_order(p_order_id uuid)
-returns void
-language plpgsql
-security definer
-set search_path = public, pg_catalog
-as $$
-declare
+CREATE OR REPLACE FUNCTION public.rpc_delete_empty_order(p_order_id uuid)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_catalog
+AS $$
+DECLARE
   v_customer_id uuid;
-  v_non_cancelled_count int;
-begin
-  select customer_id into v_customer_id
-  from public.orders
-  where id = p_order_id;
+BEGIN
+  SELECT customer_id INTO v_customer_id
+  FROM public.orders
+  WHERE id = p_order_id;
 
-  if v_customer_id is null then
-    raise exception 'Pedido no encontrado';
-  end if;
+  IF v_customer_id IS NULL THEN
+    RAISE EXCEPTION 'Pedido no encontrado';
+  END IF;
 
-  if v_customer_id != auth.uid() then
-    if not exists (select 1 from public.admins where user_id = auth.uid()) then
-      raise exception 'No tienes permiso para eliminar este pedido';
-    end if;
-  end if;
+  IF v_customer_id != auth.uid() THEN
+    IF NOT EXISTS (SELECT 1 FROM public.admins WHERE user_id = auth.uid()) THEN
+      RAISE EXCEPTION 'No tienes permiso para eliminar este pedido';
+    END IF;
+  END IF;
 
-  select count(*)::int into v_non_cancelled_count
-  from public.order_items
-  where order_id = p_order_id
-    and coalesce(status, '') != 'cancelled';
+  IF NOT public.order_eligible_for_empty_deletion(p_order_id) THEN
+    RAISE EXCEPTION 'El pedido aún tiene productos operativos. Solo se puede eliminar cuando no queden ítems reservados, en espera, apartados, sin stock (missing) o estados desconocidos.';
+  END IF;
 
-  if coalesce(v_non_cancelled_count, 0) > 0 then
-    raise exception 'El pedido aún tiene productos. Solo se puede eliminar cuando no queden productos.';
-  end if;
-
-  delete from public.orders where id = p_order_id;
-end;
+  PERFORM public.maint_try_delete_order_if_eligible(p_order_id, 'rpc_delete_empty_order');
+END;
 $$;
 
-comment on function public.rpc_delete_empty_order(uuid) is
-  'Elimina un pedido que ya no tiene productos (solo ítems cancelados). Solo el dueño o admin.';
+COMMENT ON FUNCTION public.rpc_delete_empty_order(uuid) IS
+  'Elimina un pedido sin ítems operacionales (order_eligible_for_empty_deletion). Dueño o admin.';
 
-select pg_notify('pgrst', 'reload schema');
+GRANT EXECUTE ON FUNCTION public.rpc_delete_empty_order(uuid) TO authenticated;
+
+SELECT pg_notify('pgrst', 'reload schema');

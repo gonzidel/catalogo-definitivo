@@ -56,7 +56,7 @@
     window.dataLayer = window.dataLayer || [];
     function gtag(){dataLayer.push(arguments);}
     gtag('js', new Date());
-    gtag('config', 'G-2JDYZW1KD6');
+    gtag('config', 'G-2JDYZW1KD6', { send_page_view: false });
   </script>
   
   <!-- Suprimir errores 401 esperados de Supabase cuando no hay sesión activa -->
@@ -86,6 +86,13 @@
         });
       }
     })();
+  </script>
+  <script type="text/javascript">
+    (function(c,l,a,r,i,t,y){
+        c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
+        t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
+        y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
+    })(window, document, "clarity", "script", "w7h6cytm9j");
   </script>
 </head>
 <body>
@@ -258,20 +265,25 @@
 
   <!-- Scripts esenciales -->
   <script src="/config.prod.js"></script>
-  <script type="module" src="scripts/config.js?v=m260328"></script>
-  <script type="module" src="scripts/supabase-client.js?v=m260328"></script>
-  <script type="module" src="scripts/main-supabase.js?v=m260328"></script>
-  <script type="module" src="scripts/auth-status.js?v=m260328"></script>
+  <script type="module" src="scripts/config.js?v=m260406"></script>
+  <script type="module" src="scripts/supabase-client.js?v=m260406"></script>
+  <script type="module" src="scripts/analytics.js?v=m260406"></script>
+  <script type="module">
+    import { fylAnalytics } from "./scripts/analytics.js?v=m260406";
+    fylAnalytics.init({ app_area: "catalog", page_type: "banner", user_role: "guest" });
+  </script>
+  <script type="module" src="scripts/main-supabase.js?v=m260406"></script>
+  <script type="module" src="scripts/auth-status.js?v=m260406"></script>
   <script type="module" src="scripts/product-alternatives.js"></script>
-  <script type="module" src="scripts/cart-persistent.js?v=m260328"></script>
-  <script type="module" src="scripts/search-manager.js?v=m260328"></script>
-  <script type="module" src="scripts/whatsapp.js?v=m260328"></script>
-  <script type="module" src="scripts/scroll.js?v=m260328"></script>
-  <script src="scripts/pwa-install.js?v=m260328"></script>
-  <script src="scripts/filtros.js?v=m260328"></script>
-  <script type="module" src="scripts/quick-actions.js?v=m260328"></script>
-  <script type="module" src="scripts/mobile-nav.js?v=m260328"></script>
-  <script type="module" src="scripts/size-filter.js?v=m260328"></script>
+  <script type="module" src="scripts/cart-persistent.js?v=m260406"></script>
+  <script type="module" src="scripts/search-manager.js?v=m260406"></script>
+  <script type="module" src="scripts/whatsapp.js?v=m260406"></script>
+  <script type="module" src="scripts/scroll.js?v=m260406"></script>
+  <script src="scripts/pwa-install.js?v=m260406"></script>
+  <script src="scripts/filtros.js?v=m260406"></script>
+  <script type="module" src="scripts/quick-actions.js?v=m260406"></script>
+  <script type="module" src="scripts/mobile-nav.js?v=m260406"></script>
+  <script type="module" src="scripts/size-filter.js?v=m260406"></script>
   <script type="module" src="scripts/ui/bottom-sheet.js"></script>
   
   <!-- Modal de producto con SKU -->

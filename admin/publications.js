@@ -1,6 +1,7 @@
 // admin/publications.js
 import { requireAuth } from "./admin-auth.js";
 import { supabase } from "../scripts/supabase-client.js";
+import { normalizeSize } from "../scripts/utils/size-normalizer.js";
 
 await requireAuth();
 
@@ -80,6 +81,31 @@ function cloudinaryOptimized(url, width) {
     }
   }
   return u.replace("/upload/", `/upload/f_auto,q_auto,c_scale,w_${width}/`);
+}
+
+function isNumericSize(value) {
+  return /^-?\d+(\.\d+)?$/.test(String(value ?? "").trim());
+}
+
+function normalizeUniqueSortedSizes(rawSizes) {
+  const normalized = (rawSizes || [])
+    .map(size => normalizeSize(size))
+    .filter(Boolean);
+
+  const unique = [...new Set(normalized)];
+  unique.sort((a, b) => {
+    const aIsNumeric = isNumericSize(a);
+    const bIsNumeric = isNumericSize(b);
+
+    if (aIsNumeric && bIsNumeric) {
+      return Number(a) - Number(b);
+    }
+    if (aIsNumeric && !bIsNumeric) return -1;
+    if (!aIsNumeric && bIsNumeric) return 1;
+    return String(a).localeCompare(String(b), "es", { numeric: true, sensitivity: "base" });
+  });
+
+  return unique;
 }
 
 // Funciones para mostrar/ocultar indicador de carga
@@ -196,7 +222,7 @@ async function getProductColorData(productId, color) {
   // Obtener variantes del color específico (sin size ni stock_qty, esos están en variant_sizes)
   const { data: variants, error } = await supabase
     .from("product_variants")
-    .select("id, sku, price")
+    .select("id, sku, price, last_published_at")
     .eq("product_id", productId)
     .eq("color", color)
     .eq("active", true);
@@ -238,11 +264,7 @@ async function getProductColorData(productId, color) {
   }
   
   // Obtener talles únicos ordenados
-  const sizes = [...new Set(variantSizes.map(vs => vs.size).filter(Boolean))].sort((a, b) => {
-    const numA = parseInt(a, 10) || 0;
-    const numB = parseInt(b, 10) || 0;
-    return numA - numB;
-  });
+  const sizes = normalizeUniqueSortedSizes(variantSizes.map(vs => vs.size));
   
   // Obtener imágenes de las variantes (url, public_id para optimización)
   const { data: images } = await supabase
@@ -263,22 +285,34 @@ async function getProductColorData(productId, color) {
   const price = availableVariants.length > 0 && availableVariants[0].price 
     ? parseFloat(availableVariants[0].price) 
     : null;
+  const colorLastPublishedAt = availableVariants
+    .map(v => v.last_published_at)
+    .filter(Boolean)
+    .sort((a, b) => new Date(b) - new Date(a))[0] || null;
   
   return {
     variants: availableVariants.map(v => ({
       ...v,
-      sizes: variantSizes.filter(vs => vs.variant_id === v.id).map(vs => ({ size: vs.size, stock: vs.stock_qty }))
+      sizes: variantSizes
+        .filter(vs => vs.variant_id === v.id)
+        .map(vs => ({ size: normalizeSize(vs.size), stock: vs.stock_qty }))
     })),
     sizes,
     imageUrls: uniqueImageUrls,
     firstImage: uniqueImageUrls[0] || null,
     price,
+    last_published_at: colorLastPublishedAt,
   };
 }
 
 // Formatear talles como string
 function formatSizes(sizes) {
-  return sizes.join(",");
+  return normalizeUniqueSortedSizes(sizes).join(", ");
+}
+
+function resolveColorPublishedAt(productLastPublishedAt, colorData) {
+  if (colorData?.last_published_at) return colorData.last_published_at;
+  return productLastPublishedAt || null;
 }
 
 function getNumericPrice(value) {
@@ -347,7 +381,7 @@ async function groupProductsByColor(products, batchSize = 10) {
                 description: product.description || "",
                 color,
                 created_at: product.created_at,
-                last_published_at: product.last_published_at,
+                last_published_at: resolveColorPublishedAt(product.last_published_at, colorData),
                 publication_status: product.publication_status || 'nuevo',
                 ...colorData,
               };
@@ -360,7 +394,7 @@ async function groupProductsByColor(products, batchSize = 10) {
                 description: product.description || "",
                 color,
                 created_at: product.created_at,
-                last_published_at: product.last_published_at,
+                last_published_at: resolveColorPublishedAt(product.last_published_at, colorData),
                 publication_status: product.publication_status || 'nuevo',
                 sizes: [],
                 imageUrls: [],
@@ -947,7 +981,7 @@ async function groupProductsByColorLowStock(products, batchSize = 10) {
                 description: product.description || "",
                 color,
                 created_at: product.created_at,
-                last_published_at: product.last_published_at,
+                last_published_at: resolveColorPublishedAt(product.last_published_at, colorData),
                 publication_status: product.publication_status || 'nuevo',
                 stockInfo: colorData.stockInfo,
                 ...colorData,
@@ -989,7 +1023,7 @@ async function getProductColorDataLowStock(productId, color) {
   // Obtener variantes del color específico (sin size ni stock_qty, esos están en variant_sizes)
   const { data: variants, error } = await supabase
     .from("product_variants")
-    .select("id, sku, price")
+    .select("id, sku, price, last_published_at")
     .eq("product_id", productId)
     .eq("color", color)
     .eq("active", true);
@@ -1026,15 +1060,11 @@ async function getProductColorDataLowStock(productId, color) {
   }
   
   // Obtener talles únicos ordenados
-  const sizes = [...new Set(variantSizes.map(vs => vs.size).filter(Boolean))].sort((a, b) => {
-    const numA = parseInt(a, 10) || 0;
-    const numB = parseInt(b, 10) || 0;
-    return numA - numB;
-  });
+  const sizes = normalizeUniqueSortedSizes(variantSizes.map(vs => vs.size));
   
   // Obtener información de stock por talle
   const stockInfo = variantSizes.map(vs => ({
-    size: vs.size,
+    size: normalizeSize(vs.size),
     stock: vs.stock_qty || 0
   }));
   
@@ -1056,17 +1086,24 @@ async function getProductColorDataLowStock(productId, color) {
   const price = availableVariants.length > 0 && availableVariants[0].price 
     ? parseFloat(availableVariants[0].price) 
     : null;
+  const colorLastPublishedAt = availableVariants
+    .map(v => v.last_published_at)
+    .filter(Boolean)
+    .sort((a, b) => new Date(b) - new Date(a))[0] || null;
   
   return {
     variants: availableVariants.map(v => ({
       ...v,
-      sizes: variantSizes.filter(vs => vs.variant_id === v.id).map(vs => ({ size: vs.size, stock: vs.stock_qty }))
+      sizes: variantSizes
+        .filter(vs => vs.variant_id === v.id)
+        .map(vs => ({ size: normalizeSize(vs.size), stock: vs.stock_qty }))
     })),
     sizes,
     imageUrls: uniqueImageUrls,
     firstImage: uniqueImageUrls[0] || null,
     price,
     stockInfo, // Información de stock para mostrar
+    last_published_at: colorLastPublishedAt,
   };
 }
 
@@ -1638,7 +1675,7 @@ async function renderPublicationTable(filtered = null) {
             description: product.description || "",
             color,
             created_at: product.created_at,
-            last_published_at: product.last_published_at,
+            last_published_at: resolveColorPublishedAt(product.last_published_at, colorData),
             publication_status: product.publication_status || 'nuevo',
             ...colorData,
           };
@@ -1937,7 +1974,7 @@ async function copyToSheet() {
             description: product.description || "",
             color,
             created_at: product.created_at,
-            last_published_at: product.last_published_at,
+            last_published_at: resolveColorPublishedAt(product.last_published_at, colorData),
             publication_status: product.publication_status || 'nuevo',
             ...colorData,
           };
@@ -2014,11 +2051,7 @@ async function copyToSheet() {
       items.forEach(i => {
         (i.sizes || []).forEach(s => allSizes.add(String(s)));
       });
-      const sizesSorted = [...allSizes].sort((a, b) => {
-        const na = parseInt(a, 10) || 0;
-        const nb = parseInt(b, 10) || 0;
-        return na - nb;
-      });
+      const sizesSorted = normalizeUniqueSortedSizes([...allSizes]);
       const tallesCell = formatSizes(sizesSorted);
       
       const descriptionCell = (first.description || "").trim();
@@ -2081,6 +2114,7 @@ async function publishSelected() {
   
   // Obtener productIds únicos (puede haber varios colores del mismo producto)
   const uniqueProductIds = [...new Set(selectedForPublication.map(s => s.productId))];
+  const selectedColorKeys = new Set(selectedForPublication.map(s => `${s.productId}|${s.color}`));
   
   try {
     if (publishBtn) {
@@ -2088,22 +2122,36 @@ async function publishSelected() {
       publishBtn.innerHTML = '<span>⏳</span><span>Publicando...</span>';
     }
     
-    // Actualizar todos los productos en la base de datos
+    const nowIso = new Date().toISOString();
+
+    // Actualizar variantes por color seleccionado para mantener fecha por variante/color
+    const updateVariantPromises = selectedForPublication.map(({ productId, color }) =>
+      supabase
+        .from("product_variants")
+        .update({ last_published_at: nowIso })
+        .eq("product_id", productId)
+        .eq("color", color)
+        .eq("active", true)
+    );
+    const variantResults = await Promise.all(updateVariantPromises);
+    const variantError = variantResults.find(result => result.error)?.error;
+    if (variantError) throw variantError;
+
+    // Actualizar productos para mantener compatibilidad con filtros actuales
     const { error } = await supabase
       .from("products")
       .update({
-        last_published_at: new Date().toISOString(),
+        last_published_at: nowIso,
         publication_status: 'ya_publicado'
       })
       .in("id", uniqueProductIds);
     
     if (error) throw error;
     
-    showMessage(`✅ ${uniqueProductIds.length} producto(s) publicado(s) exitosamente`, "ok");
+    showMessage(`✅ ${selectedForPublication.length} variante(s)/color(es) publicado(s) exitosamente`, "ok");
     
-    // Actualizar datos en memoria (remover productos publicados de la lista "nuevos")
-    const publishedProductIdsSet = new Set(uniqueProductIds);
-    newProducts = newProducts.filter(item => !publishedProductIdsSet.has(item.productId));
+    // Actualizar datos en memoria (remover solo colores publicados de la lista "nuevos")
+    newProducts = newProducts.filter(item => !selectedColorKeys.has(`${item.productId}|${item.color}`));
     
     // Limpiar selección
     selectedForPublication = [];

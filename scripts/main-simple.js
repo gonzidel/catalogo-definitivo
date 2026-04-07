@@ -19,6 +19,28 @@ function cloudinaryOptimized(url, w) {
   return url.replace("/upload/", `/upload/f_auto,q_auto,c_scale,w_${w}/`);
 }
 
+function parseARSPrice(raw) {
+  if (raw == null || raw === "") return 0;
+  const cleaned = String(raw).replace(/[^\d.,-]/g, "").trim();
+  if (!cleaned) return 0;
+  const hasDot = cleaned.includes(".");
+  const hasComma = cleaned.includes(",");
+  let normalized = cleaned;
+  if (hasDot && hasComma) {
+    const decimalSep = cleaned.lastIndexOf(".") > cleaned.lastIndexOf(",") ? "." : ",";
+    const thousandsSep = decimalSep === "." ? "," : ".";
+    normalized = cleaned.split(thousandsSep).join("");
+    if (decimalSep === ",") normalized = normalized.replace(",", ".");
+  } else if (hasDot || hasComma) {
+    const sep = hasDot ? "." : ",";
+    const parts = cleaned.split(sep);
+    normalized = parts.length === 2 && /^\d{3}$/.test(parts[1]) ? parts.join("") : cleaned.replace(",", ".");
+  }
+  const n = Number(normalized);
+  if (!Number.isFinite(n)) return 0;
+  return n > 0 && n < 1000 && n % 1 !== 0 ? n * 1000 : n;
+}
+
 // Función principal de carga de categoría
 async function cargarCategoria(cat) {
   console.log("🔄 Cargando categoría:", cat);
@@ -328,8 +350,7 @@ function configurarEventos() {
         color,
         talle: size,
         cantidad: qty,
-        precio:
-          parseFloat(precio.replace(/[^0-9.,]/g, "").replace(",", ".")) || 0,
+        precio: parseARSPrice(precio),
         imagen,
         descripcion,
       };

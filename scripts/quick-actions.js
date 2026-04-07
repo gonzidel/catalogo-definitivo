@@ -1,6 +1,8 @@
 // scripts/quick-actions.js - Gestión de acciones rápidas configurables
 
+import { fylDevLog } from "./config.js";
 import { supabase } from "./supabase-client.js";
+import { fylAnalytics } from "./analytics.js";
 
 let quickActionsData = [];
 let activeAction = null;
@@ -41,7 +43,7 @@ export async function loadQuickActions() {
             .filter(tag => tag !== "")
         )].sort(); // Ordenar alfabéticamente
 
-        console.log(`📋 Tags 1 únicos encontrados en "Otros":`, uniqueTags);
+        fylDevLog(`📋 Tags 1 únicos encontrados en "Otros":`, uniqueTags);
 
         // Crear acciones rápidas dinámicas para cada tag
         dynamicTagActions = uniqueTags.map((tag, index) => ({
@@ -61,7 +63,7 @@ export async function loadQuickActions() {
     // 3. Combinar acciones configuradas con acciones dinámicas
     quickActionsData = [...configuredActions, ...dynamicTagActions];
     
-    console.log(`✅ Acciones rápidas cargadas: ${configuredActions.length} configuradas + ${dynamicTagActions.length} dinámicas`);
+    fylDevLog(`✅ Acciones rápidas cargadas: ${configuredActions.length} configuradas + ${dynamicTagActions.length} dinámicas`);
     
     renderQuickActions();
   } catch (error) {
@@ -156,6 +158,15 @@ async function handleQuickAction(action) {
   }
 
   activeAction = action;
+  try {
+    if (fylAnalytics.isReady()) {
+      fylAnalytics.event("quick_action_click", {
+        action_id: action.id,
+        action_type: action.type,
+        action_value: action.value || "",
+      });
+    }
+  } catch (_e) {}
 
   // Aplicar filtro según tipo
   if (action.type === "inicio" || action.value === "all") {

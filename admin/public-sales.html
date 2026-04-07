@@ -278,6 +278,15 @@
       cursor: not-allowed;
       opacity: 0.5;
     }
+    /* Búsqueda manual: columna ~200px + bloque detalle auto, contenido agrupado a la izquierda */
+    @media (max-width: 540px) {
+      .manual-product-row-grid {
+        grid-template-columns: 1fr !important;
+      }
+      .manual-product-row-grid > .search-group {
+        max-width: none !important;
+      }
+    }
     .load-btn {
       padding: 12px 24px;
       background: #CD844D;
@@ -786,6 +795,59 @@
       max-width: 300px;
       padding: 0 12px;
     }
+    .local-order-line-count {
+      font-size: 12px;
+      font-weight: 600;
+      color: #444;
+      margin-bottom: 6px;
+    }
+    .local-order-items-preview {
+      line-height: 1.45;
+    }
+    .local-order-items-detail {
+      margin-top: 8px;
+      border-radius: 8px;
+      border: 1px solid #e9ecef;
+      padding: 4px 8px;
+      background: #fafafa;
+    }
+    .local-order-items-summary {
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      color: #CD844D;
+      padding: 6px 4px;
+      list-style-position: outside;
+    }
+    .local-order-items-full {
+      max-height: min(220px, 40vh);
+      overflow-y: auto;
+      padding: 4px 0 8px;
+      -webkit-overflow-scrolling: touch;
+    }
+    .local-order-line {
+      font-size: 12px;
+      padding: 4px 0;
+      border-bottom: 1px solid #eee;
+    }
+    .local-order-line:last-child {
+      border-bottom: none;
+    }
+    .local-order-items-hint {
+      font-size: 11px;
+      color: #888;
+      margin: 8px 0 0;
+      line-height: 1.35;
+    }
+    .local-order-items-warn {
+      font-size: 12px;
+      color: #856404;
+      background: #fff3cd;
+      border-radius: 8px;
+      padding: 8px 10px;
+      margin: 0;
+      line-height: 1.4;
+    }
     .local-order-total {
       display: flex;
       flex-direction: column;
@@ -857,7 +919,7 @@
       font-weight: 600;
     }
 
-    /* Reservas (campana) */
+    /* Campana: espera / pendientes en local (pedidos web) */
     .reservas-bell-btn {
       position: relative;
       width: 38px;
@@ -892,44 +954,58 @@
       justify-content: center;
       box-shadow: 0 2px 8px rgba(0,0,0,0.18);
     }
-    .reservas-panel {
-      background: #fff;
-      border-radius: 8px;
-      border: 2px solid #e9ecef;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-      margin-bottom: 10px;
+    /* Modal campana: pendientes en local */
+    #reservas-modal .reservas-modal-content {
+      max-width: min(540px, 96vw);
+      width: 100%;
+      padding: 0;
       overflow: hidden;
-      display: none;
+      display: flex;
+      flex-direction: column;
+      max-height: min(90vh, 760px);
     }
-    .reservas-panel.is-open {
-      display: block;
-    }
-    .reservas-panel__head {
-      padding: 10px 12px;
+    #reservas-modal .reservas-modal__head {
+      padding: 14px 48px 14px 18px;
+      border-bottom: 1px solid #eee;
+      background: linear-gradient(180deg, #fff, #fff8f0);
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 10px;
-      border-bottom: 1px solid #f0f0f0;
-      background: linear-gradient(180deg, #fff, #fff8f0);
+      gap: 12px;
+      flex-shrink: 0;
     }
-    .reservas-panel__title {
-      font-size: 14px;
+    #reservas-modal .reservas-modal__head h2 {
+      margin: 0;
+      font-size: 16px;
       font-weight: 800;
       color: #333;
-      display: flex;
-      align-items: center;
-      gap: 8px;
+      line-height: 1.25;
+      flex: 1;
+      min-width: 0;
     }
-    .reservas-panel__body {
-      padding: 10px 12px;
+    #reservas-modal .reservas-modal__body {
+      padding: 14px 16px 20px;
+      overflow-y: auto;
+      flex: 1;
+      min-height: 0;
+      -webkit-overflow-scrolling: touch;
     }
-    .reserva-order {
-      border: 1px solid #eee;
-      border-radius: 8px;
-      padding: 10px;
+    #reservas-modal .reserva-order {
+      border: 1px solid #e8e8e8;
+      border-radius: 12px;
+      padding: 14px 14px 12px;
+      margin-bottom: 14px;
+      background: #fafafa;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+    }
+    #reservas-modal .reserva-order:last-child {
+      margin-bottom: 0;
+    }
+    #reservas-modal .reserva-order__meta {
       margin-bottom: 10px;
-      background: #fff;
+    }
+    #reservas-modal .reserva-order__customer {
+      font-size: 16px;
     }
     .reserva-order__meta {
       display: flex;
@@ -942,40 +1018,45 @@
       font-weight: 800;
       color: #333;
     }
-    .reserva-item {
-      display: grid;
-      grid-template-columns: 1fr auto;
-      gap: 10px;
-      padding: 8px 0;
-      border-top: 1px dashed #eee;
-    }
-    .reserva-item:first-of-type {
-      border-top: none;
-    }
-    .reserva-item__name {
-      font-weight: 700;
-      color: #333;
-      font-size: 13px;
-      line-height: 1.2;
-    }
-    .reserva-item__meta {
-      font-size: 12px;
-      color: #666;
-      margin-top: 2px;
-    }
-    .reserva-item__actions {
+    #reservas-modal .reserva-item {
       display: flex;
-      gap: 6px;
-      align-items: center;
-      justify-content: flex-end;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 12px;
+      padding: 12px 0;
+      border-top: 1px dashed #ddd;
     }
-    .reserva-action-btn {
+    #reservas-modal .reserva-item:first-of-type {
+      border-top: none;
+      padding-top: 4px;
+    }
+    #reservas-modal .reserva-item__name {
+      font-weight: 700;
+      color: #222;
+      font-size: 15px;
+      line-height: 1.3;
+    }
+    #reservas-modal .reserva-item__meta {
+      font-size: 13px;
+      color: #555;
+      margin-top: 4px;
+      line-height: 1.4;
+    }
+    #reservas-modal .reserva-item__actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      justify-content: flex-start;
+      flex-wrap: wrap;
+    }
+    #reservas-modal .reserva-action-btn {
       border: none;
-      border-radius: 8px;
-      padding: 6px 10px;
-      font-size: 12px;
+      border-radius: 10px;
+      padding: 10px 16px;
+      font-size: 13px;
       font-weight: 700;
       cursor: pointer;
+      min-height: 42px;
     }
     .reserva-action-btn--ok {
       background: #28a745;
@@ -992,7 +1073,7 @@
     <div class="header">
       <h1>Venta al Público - Caja 1</h1>
       <div class="header-actions">
-        <button type="button" class="reservas-bell-btn" id="reservas-bell-btn" aria-label="Reservas" title="Reservas">
+        <button type="button" class="reservas-bell-btn" id="reservas-bell-btn" aria-label="Pendientes en local (pedidos web)" title="Pendientes en local (pedidos web)">
           <span aria-hidden="true">🔔</span>
           <span class="reservas-bell-badge" id="reservas-bell-badge">0</span>
         </button>
@@ -1004,17 +1085,6 @@
     </div>
 
     <div id="message-container"></div>
-
-    <!-- Reservas (ítems de pedidos que salen 100% de venta-publico) -->
-    <div class="reservas-panel" id="reservas-panel" aria-live="polite">
-      <div class="reservas-panel__head">
-        <div class="reservas-panel__title">Reservas</div>
-        <button type="button" class="btn btn-secondary" id="reservas-refresh-btn">Refrescar</button>
-      </div>
-      <div class="reservas-panel__body">
-        <div id="reservas-list"></div>
-      </div>
-    </div>
 
     <!-- Área de compras pendientes -->
     <div id="pending-sales-container" style="display: none; margin-bottom: 10px; padding: 10px; background: #fff; border-radius: 8px; border: 2px solid #CD844D; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
@@ -1046,30 +1116,26 @@
             <div style="margin-bottom: 8px; font-size: 12px;">
               <strong>O agregar producto manualmente:</strong>
             </div>
-            <div id="manual-product-row" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px; background: #f8f9fa; border-radius: 6px;">
-              <div class="search-group" style="min-width: 200px; margin: 0; position: relative;">
+            <div id="manual-product-row" class="manual-product-row-grid" style="display: grid; grid-template-columns: minmax(0, 200px) auto; gap: 8px; align-items: center; justify-content: start; padding: 8px; background: #f8f9fa; border-radius: 6px;">
+              <div class="search-group" style="min-width: 0; margin: 0; position: relative; width: 100%; max-width: 200px;">
                 <label style="font-size: 12px; margin-bottom: 4px;">Artículo/Producto</label>
-                <input type="text" id="manual-product" placeholder="Nombre del producto..." style="margin: 0;" />
+                <input type="text" id="manual-product" placeholder="Nombre del producto..." style="margin: 0; width: 100%; box-sizing: border-box;" />
                 <div id="autocomplete-dropdown" class="autocomplete-dropdown" style="display: none;"></div>
               </div>
-              <div id="manual-product-info" style="display: none; flex-direction: column; gap: 8px; flex: 1; width: 100%;">
-                <!-- Fila 1: Nombre y Precio -->
-                <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
-                  <div style="display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 200px;">
-                    <div style="font-weight: 700; font-size: 16px; color: #333;" id="manual-product-name"></div>
-                    <div id="manual-product-offer-info" style="font-size: 12px; color: #dc3545; font-weight: 600; display: none;"></div>
-                  </div>
-                  <div class="price" id="manual-product-price" style="font-size: 16px; margin: 0; white-space: nowrap;"></div>
+              <div id="manual-product-info" style="display: none; flex-wrap: wrap; align-items: center; gap: 8px 10px; min-width: 0; width: auto; max-width: 100%;">
+                <!-- Fila compacta a la izquierda: sin 1fr ni margin-left:auto que estiren el bloque -->
+                <div style="display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 4px; width: auto; max-width: 180px; min-width: 0; text-align: left; flex-shrink: 0;">
+                  <div style="font-weight: 700; font-size: clamp(18px, 4.5vw, 22px); color: #333; line-height: 1.2; max-width: 100%; word-break: break-word;" id="manual-product-name"></div>
+                  <div id="manual-product-offer-info" style="font-size: 12px; color: #dc3545; font-weight: 600; display: none; width: 100%;"></div>
+                  <span class="price" id="manual-product-price" style="font-size: 24px; font-weight: 700; color: #CD844D; margin: 0; white-space: nowrap; line-height: 1.1;"></span>
                 </div>
-                <!-- Fila 2: Botones de Colores y Talles -->
-                <div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: center;">
-                  <div id="manual-color-buttons" style="display: flex; gap: 6px; flex-wrap: wrap; min-width: 0;"></div>
-                  <div id="manual-size-buttons" style="display: flex; gap: 6px; flex-wrap: wrap; min-width: 0;"></div>
+                <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 0 0 auto;">
+                  <div id="manual-color-buttons" style="display: flex; flex-direction: column; gap: 6px; align-items: center;"></div>
                 </div>
-                <!-- Fila 3: Botón Agregar -->
-                <div style="display: flex; justify-content: flex-end;">
-                  <button class="btn btn-primary" id="manual-load-btn" disabled style="padding: 8px 16px; font-size: 14px; white-space: nowrap;">Agregar</button>
+                <div style="display: flex; align-items: center; flex: 0 0 auto; min-width: 0;">
+                  <div id="manual-size-buttons" style="display: flex; gap: 4px; flex-wrap: wrap;"></div>
                 </div>
+                <button class="btn btn-primary" id="manual-load-btn" disabled style="padding: 8px 14px; font-size: 14px; white-space: nowrap; flex-shrink: 0; align-self: center;">Agregar</button>
               </div>
             </div>
           </div>
@@ -1235,6 +1301,20 @@
             </style>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal campana: pendientes en local (pedidos web) -->
+  <div class="modal" id="reservas-modal" role="dialog" aria-modal="true" aria-labelledby="reservas-modal-title" aria-hidden="true">
+    <div class="modal-content reservas-modal-content">
+      <span class="modal-close" id="close-reservas-modal" role="button" tabindex="0" aria-label="Cerrar">&times;</span>
+      <div class="reservas-modal__head">
+        <h2 id="reservas-modal-title">Espera — pendientes en local</h2>
+        <button type="button" class="btn btn-secondary" id="reservas-refresh-btn">Refrescar</button>
+      </div>
+      <div class="reservas-modal__body" id="reservas-modal-body">
+        <div id="reservas-list" aria-live="polite"></div>
       </div>
     </div>
   </div>
@@ -1415,17 +1495,20 @@
     </div>
   </div>
 
-  <!-- Estilos para selección de color/talle en modal Editar pedido -->
+  <!-- Estilos modal Editar pedido: mismas clases .size-btn / .size-counter / .size-decrement que venta principal -->
   <style>
-    #order-edit-modal .edit-manual-color,
-    #order-edit-modal .edit-manual-size {
-      cursor: pointer;
+    #order-edit-modal #order-edit-manual-row {
+      box-sizing: border-box;
     }
-    #order-edit-modal .edit-manual-color.active,
-    #order-edit-modal .edit-manual-size.active {
-      background: #CD844D !important;
-      color: white !important;
-      border-color: #B8734A;
+    #order-edit-modal #order-edit-manual-row input {
+      box-sizing: border-box;
+    }
+    #order-edit-modal .size-btn.edit-manual-size {
+      cursor: pointer;
+      position: relative;
+    }
+    #order-edit-modal .color-btn.active {
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.85);
     }
   </style>
   <!-- Modal flotante: Editar pedido local (como Pedidos Locales) -->
@@ -1472,16 +1555,25 @@
           <div class="return-mode" id="order-edit-return-mode-indicator" style="display: none; margin: 0 0 10px;">
             ⚠️ Modo Devoluciones activado - Los productos devueltos se sumarán al stock
           </div>
-          <div style="position: relative;">
-            <input type="text" id="order-edit-manual-product" placeholder="Nombre del producto..." style="width: 100%; padding: 8px; border: 2px solid #ddd; border-radius: 6px;" />
-            <div id="order-edit-autocomplete" class="autocomplete-dropdown" style="display: none; max-height: 200px;"></div>
-          </div>
-          <div id="order-edit-manual-info" style="display: none; margin-top: 10px;">
-            <div id="order-edit-manual-name" style="font-weight: 700; margin-bottom: 6px;"></div>
-            <div id="order-edit-manual-price" style="margin-bottom: 6px;"></div>
-            <div id="order-edit-manual-colors" style="display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px;"></div>
-            <div id="order-edit-manual-sizes" style="display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px;"></div>
-            <button type="button" class="btn btn-primary" id="order-edit-manual-add-btn" disabled>Agregar al pedido</button>
+          <div id="order-edit-manual-row" class="manual-product-row-grid" style="display: grid; grid-template-columns: minmax(0, 200px) auto; gap: 8px; align-items: center; justify-content: start; padding: 10px; background: #f0f0f0; border-radius: 8px; max-width: 100%;">
+            <div class="search-group" style="min-width: 0; margin: 0; position: relative; width: 100%; max-width: 200px;">
+              <label style="font-size: 12px; margin-bottom: 4px; display: block;">Artículo/Producto</label>
+              <input type="text" id="order-edit-manual-product" placeholder="Nombre del producto..." style="width: 100%; box-sizing: border-box; padding: 8px; border: 2px solid #ddd; border-radius: 6px;" />
+              <div id="order-edit-autocomplete" class="autocomplete-dropdown" style="display: none; max-height: 200px;"></div>
+            </div>
+            <div id="order-edit-manual-info" style="display: none; flex-wrap: wrap; align-items: center; gap: 8px 10px; min-width: 0; width: auto; max-width: 100%;">
+              <div style="display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 4px; width: auto; max-width: 180px; min-width: 0; text-align: left; flex-shrink: 0;">
+                <div id="order-edit-manual-name" style="font-weight: 700; font-size: clamp(18px, 4.5vw, 22px); color: #333; line-height: 1.2; max-width: 100%; word-break: break-word;"></div>
+                <span id="order-edit-manual-price" class="price" style="font-size: 24px; font-weight: 700; color: #CD844D; margin: 0; white-space: nowrap; line-height: 1.1;"></span>
+              </div>
+              <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 0 0 auto;">
+                <div id="order-edit-manual-colors" style="display: flex; flex-direction: column; gap: 6px; align-items: center;"></div>
+              </div>
+              <div style="display: flex; align-items: center; flex: 0 0 auto; min-width: 0;">
+                <div id="order-edit-manual-sizes" style="display: flex; gap: 4px; flex-wrap: wrap;"></div>
+              </div>
+              <button type="button" class="btn btn-primary" id="order-edit-manual-add-btn" disabled style="padding: 8px 14px; font-size: 14px; white-space: nowrap; flex-shrink: 0; align-self: center;">Agregar</button>
+            </div>
           </div>
         </div>
         <div style="display: flex; gap: 12px; margin-top: 16px;">

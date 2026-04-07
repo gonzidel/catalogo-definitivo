@@ -8,10 +8,78 @@ import {
   USE_OPEN_SHEET_FALLBACK as CONFIG_USE_OPEN_SHEET_FALLBACK,
   configReady,
 } from "./config.js";
-import { supabase as supabaseClient } from "./supabase-client.js?v=m260328";
+import { supabase as supabaseClient } from "./supabase-client.js?v=m260406";
 import { normalizeSize } from "./utils/size-normalizer.js";
+import { fylAnalytics } from "./analytics.js";
+import { formatARS as formatARSValue, parseARSNumber } from "./utils/price.js";
 
 await configReady;
+
+function fylCatalogTrackViewItemList(contextKey, groupedProducts, itemListName) {
+  try {
+    if (!fylAnalytics.isReady()) return;
+    const items = fylAnalytics.buildItemsFromGroupedProducts(groupedProducts || []);
+    if (!items.length) return;
+    fylAnalytics.trackViewItemListOnce(contextKey, {
+      item_list_id: contextKey,
+      item_list_name: itemListName || contextKey,
+      items,
+      currency: "ARS",
+    });
+  } catch (_e) {}
+}
+
+function fylCatalogViewItemForProducto(producto, skuHint) {
+  try {
+    if (!fylAnalytics.isReady() || !producto) return;
+    const items = fylAnalytics.buildItemsFromGroupedProducts([producto], 1);
+    if (!items.length) return;
+    if (skuHint) items[0].item_variant = String(skuHint);
+    const val = fylAnalytics.parsePriceNumberFromProduct(producto);
+    fylAnalytics.ecommerceEvent("view_item", { currency: "ARS", value: val, items });
+  } catch (_e) {}
+}
+
+function trackMetaViewContent(producto, skuHint) {
+  if (!producto) return;
+  const contentName = String(producto.Articulo || "").trim();
+  const sku = String(skuHint || "").trim();
+  if (!sku) return;
+
+  const hasOffer = producto.OfertaActiva === true || producto.OfertaActiva === "true";
+  const rawPrice = hasOffer && producto.PrecioOferta ? producto.PrecioOferta : producto.Precio;
+  const parsed = Number(parseARSNumber(rawPrice));
+  const priceNumber = Number.isFinite(parsed) ? parsed : 0;
+
+  const payload = {
+    content_name: contentName,
+    content_ids: [sku],
+    content_type: "product",
+    value: priceNumber,
+    currency: "ARS",
+  };
+
+  if (typeof fbq === "function") {
+    fbq("track", "ViewContent", payload);
+    return;
+  }
+
+  // Delay corto defensivo para carreras de carga del pixel.
+  setTimeout(() => {
+    if (typeof fbq === "function") {
+      fbq("track", "ViewContent", payload);
+    }
+  }, 300);
+}
+
+function fylCatalogPdpSurface() {
+  try {
+    if (!fylAnalytics.isReady()) return;
+    fylAnalytics.setPageType("pdp");
+    fylAnalytics.syncCatalogSurface({ emit: true });
+  } catch (_e) {}
+}
+
 
 // Constantes
 const SHEET_ID = "1kdhxSWHl3Rg0tXpaRsKhR_m30oTZhzqYj5ypsjtcTig";
@@ -43,9 +111,25 @@ let productosActualesMap = new Map(); // Articulo -> producto (para Bottom Sheet
 let productosPendientes = []; // Array de productos pendientes de renderizar
 let productosRenderizados = 0; // Cantidad de productos ya renderizados
 let offersCardsPendientes = []; // Ofertas pendientes de renderizar
+/** Tras insertar el banner destacado inline (4.ª card en Inicio), se dispara carga al finalizar el render. */
+let fylPendingHomeCustomBanner = false;
 let isLoadingMore = false; // Flag para evitar múltiples cargas simultáneas
 const PRODUCTOS_INICIALES = 20; // Cantidad de productos en la primera carga
 const PRODUCTOS_POR_PAGINA = 14; // Cantidad de productos a cargar por página con el botón
+
+/** Logs verbosos del catálogo/stock. Activar: `window.FYL_DEBUG_CATALOG = true` antes de cargar, o `?debug=catalog` en la URL. */
+function fylCatalogDebugEnabled() {
+  if (typeof window === "undefined") return false;
+  if (window.FYL_DEBUG_CATALOG === true) return true;
+  try {
+    return /(?:^|[&?])debug=catalog(?:&|$)/.test(window.location.search || "");
+  } catch (_) {
+    return false;
+  }
+}
+function fylCatalogDbg(...args) {
+  if (fylCatalogDebugEnabled()) console.log.apply(console, args);
+}
 
 /** Oculta el overlay de arranque (index2) y restaura scroll del body. */
 function hideCatalogBootOverlay() {
@@ -227,7 +311,7 @@ async function inicializarSupabase() {
       return setFail("missing_config", "Faltan SUPABASE_URL o SUPABASE_ANON_KEY.");
     }
 
-    console.log("🔧 Configuración Supabase cargada:", {
+    fylCatalogDbg("🔧 Configuración Supabase cargada:", {
       URL: SUPABASE_URL,
       KEY: SUPABASE_ANON_KEY ? "Configurada" : "No configurada",
       USE_SUPABASE: USE_SUPABASE,
@@ -250,7 +334,7 @@ async function inicializarSupabase() {
       window.supabase = supabase;
       window.supabaseClient = supabase;
     }
-    console.log("✅ Cliente de Supabase disponible (usando instancia única de supabase-client.js)");
+    fylCatalogDbg("✅ Cliente de Supabase disponible (usando instancia única de supabase-client.js)");
 
     // Red móvil real + CPU lenta: 22s generaba falsos timeout con internet “bien”.
     const PROBE_MS = 60000;
@@ -288,7 +372,7 @@ async function inicializarSupabase() {
       );
     }
 
-    console.log("✅ Supabase inicializado y verificado correctamente");
+    fylCatalogDbg("✅ Supabase inicializado y verificado correctamente");
     if (typeof globalThis !== "undefined") {
       delete globalThis.__FYL_SUPABASE_INIT_FAIL__;
     }
@@ -310,7 +394,7 @@ async function cargarDesdeSupabase(cat) {
   }
 
   try {
-    console.log(`🗄️ Cargando desde Supabase: ${cat}`);
+    fylCatalogDbg(`🗄️ Cargando desde Supabase: ${cat}`);
 
     // Primero, verificar qué categorías existen en la vista
     const { data: allCategories, error: catError } = await supabase
@@ -320,15 +404,20 @@ async function cargarDesdeSupabase(cat) {
     
     if (!catError && allCategories) {
       const uniqueCategories = [...new Set(allCategories.map(c => c.Categoria))];
-      console.log(`📋 Categorías disponibles en la vista:`, uniqueCategories);
-      console.log(`🔍 Buscando categoría: "${cat}"`);
+      fylCatalogDbg(`📋 Categorías disponibles en la vista:`, uniqueCategories);
+      fylCatalogDbg(`🔍 Buscando categoría: "${cat}"`);
       
       // Verificar si la categoría existe (case-insensitive)
       const categoryExists = uniqueCategories.some(c => 
         c && c.toLowerCase() === cat.toLowerCase()
       );
       
-      if (!categoryExists && cat !== "Novedades" && cat !== "Ofertas") {
+      if (
+        !categoryExists &&
+        cat !== "Novedades" &&
+        cat !== "Ofertas" &&
+        cat !== "all"
+      ) {
         console.warn(`⚠️ La categoría "${cat}" no existe en la vista.`);
         console.warn(`💡 Categorías disponibles: ${uniqueCategories.join(", ")}`);
       }
@@ -338,14 +427,14 @@ async function cargarDesdeSupabase(cat) {
 
     if (cat === "Novedades" || cat === "Ofertas" || cat === "all") {
       // Para categorías especiales o 'all', cargar todas las categorías
-      console.log(`📦 Cargando todas las categorías para: ${cat}`);
+      fylCatalogDbg(`📦 Cargando todas las categorías para: ${cat}`);
       const { data, error } = await query;
       if (error) {
         console.error("❌ Error en consulta:", error);
         throw error;
       }
 
-      console.log(`📊 Total de registros obtenidos: ${data?.length || 0}`);
+      fylCatalogDbg(`📊 Total de registros obtenidos: ${data?.length || 0}`);
       let items = data || [];
 
       if (cat === "Novedades") {
@@ -360,7 +449,7 @@ async function cargarDesdeSupabase(cat) {
           const mostrarOk = mostrar === "TRUE" || mostrar === true || mostrar === "true" || mostrar === 1;
           return mostrarOk && i.FechaIngreso && parseFecha(i.FechaIngreso) >= hace7;
         });
-        console.log(`🆕 Productos de novedades (últimos 7 días): ${items.length}`);
+        fylCatalogDbg(`🆕 Productos de novedades (últimos 7 días): ${items.length}`);
       }
 
       if (cat === "Ofertas") {
@@ -371,7 +460,7 @@ async function cargarDesdeSupabase(cat) {
           const ofertaOk = oferta === "TRUE" || oferta === true || oferta === "true" || oferta === 1;
           return mostrarOk && ofertaOk;
         });
-        console.log(`🔥 Productos en ofertas: ${items.length}`);
+        fylCatalogDbg(`🔥 Productos en ofertas: ${items.length}`);
       }
 
       if (cat === "all") {
@@ -380,7 +469,7 @@ async function cargarDesdeSupabase(cat) {
           const mostrar = i.Mostrar;
           return mostrar === "TRUE" || mostrar === true || mostrar === "true" || mostrar === 1;
         });
-        console.log(`📦 Productos en "all" (filtrados por Mostrar): ${items.length}`);
+        fylCatalogDbg(`📦 Productos en "all" (filtrados por Mostrar): ${items.length}`);
       }
 
       return items;
@@ -417,7 +506,7 @@ async function cargarDesdeSupabase(cat) {
             });
             
             const uniqueTags = Array.from(allTags);
-            console.log(`🔍 Tags únicos encontrados en "Otros":`, uniqueTags);
+            fylCatalogDbg(`🔍 Tags únicos encontrados en "Otros":`, uniqueTags);
             
             // Verificar si la categoría coincide con algún tag (case-insensitive)
             const catLower = cat.toLowerCase();
@@ -430,9 +519,9 @@ async function cargarDesdeSupabase(cat) {
             if (matchingTag) {
               isOtrosTag = true;
               tagValue = matchingTag;
-              console.log(`📋 Detectado tag de "Otros": "${cat}" -> "${tagValue}"`);
+              fylCatalogDbg(`📋 Detectado tag de "Otros": "${cat}" -> "${tagValue}"`);
             } else {
-              console.log(`⚠️ Tag "${cat}" no encontrado en tags de "Otros"`);
+              fylCatalogDbg(`⚠️ Tag "${cat}" no encontrado en tags de "Otros"`);
             }
           }
         } catch (error) {
@@ -441,7 +530,7 @@ async function cargarDesdeSupabase(cat) {
       }
       
       if (isOtrosTag && tagValue) {
-        console.log(`📦 Filtrando por tag "${tagValue}" en TODAS las categorías`);
+        fylCatalogDbg(`📦 Filtrando por tag "${tagValue}" en TODAS las categorías`);
         
         // Obtener TODOS los productos (no limitar a "Otros")
         const { data: todosProductos, error: errorProductos } = await query;
@@ -456,16 +545,16 @@ async function cargarDesdeSupabase(cat) {
           throw errorProductos;
         }
 
-        console.log(`📊 Registros obtenidos (todas las categorías): ${todosProductos?.length || 0}`);
+        fylCatalogDbg(`📊 Registros obtenidos (todas las categorías): ${todosProductos?.length || 0}`);
         
         // Filtrar en memoria para usar búsqueda más flexible (como en custom-banner.js)
         const tagValueNormalized = tagValue.toLowerCase().trim();
-        console.log(`🔍 Buscando productos con tag normalizado: "${tagValueNormalized}"`);
+        fylCatalogDbg(`🔍 Buscando productos con tag normalizado: "${tagValueNormalized}"`);
         
         // Primero, ver TODOS los productos y sus tags
         if (todosProductos && todosProductos.length > 0) {
           const ejemplos = todosProductos.slice(0, 5);
-          console.log(`📋 Ejemplos de productos (primeros 5):`, ejemplos.map(p => ({
+          fylCatalogDbg(`📋 Ejemplos de productos (primeros 5):`, ejemplos.map(p => ({
             Articulo: p.Articulo,
             Categoria: p.Categoria,
             Filtro1: p.Filtro1,
@@ -489,13 +578,13 @@ async function cargarDesdeSupabase(cat) {
                         filtro3Tags.some(tag => tag.includes(tagValueNormalized));
           
           if (match) {
-            console.log(`✓ INCLUIDO: ${i.Articulo} - F1:"${i.Filtro1}" F2:"${i.Filtro2}" F3:"${i.Filtro3}"`);
+            fylCatalogDbg(`✓ INCLUIDO: ${i.Articulo} - F1:"${i.Filtro1}" F2:"${i.Filtro2}" F3:"${i.Filtro3}"`);
           }
           
           return match;
         });
         
-        console.log(`📋 Registros filtrados por tag "${tagValue}": ${dataFiltrada.length} de ${todosProductos?.length || 0}`);
+        fylCatalogDbg(`📋 Registros filtrados por tag "${tagValue}": ${dataFiltrada.length} de ${todosProductos?.length || 0}`);
         
         // Mostrar algunos productos que NO coincidieron (para debug)
         const noCoincidieron = (todosProductos || []).filter((i) => {
@@ -512,7 +601,7 @@ async function cargarDesdeSupabase(cat) {
         });
         
         if (noCoincidieron.length > 0) {
-          console.log(`❌ Productos excluidos (primeros 10):`, noCoincidieron.slice(0, 10).map(p => ({
+          fylCatalogDbg(`❌ Productos excluidos (primeros 10):`, noCoincidieron.slice(0, 10).map(p => ({
             Articulo: p.Articulo,
             Filtro1: p.Filtro1,
             Filtro2: p.Filtro2,
@@ -526,7 +615,7 @@ async function cargarDesdeSupabase(cat) {
           const mostrar = i.Mostrar;
           return mostrar === "TRUE" || mostrar === true || mostrar === "true" || mostrar === 1;
         });
-        console.log(`✅ Registros después de filtrar Mostrar: ${filtered.length}`);
+        fylCatalogDbg(`✅ Registros después de filtrar Mostrar: ${filtered.length}`);
         
         if (filtered.length === 0 && dataFiltrada.length > 0) {
           console.warn(`⚠️ Hay ${dataFiltrada.length} registros pero ninguno pasa el filtro de Mostrar`);
@@ -544,7 +633,7 @@ async function cargarDesdeSupabase(cat) {
       }
       
       // Para categorías normales, filtrar por categoría
-      console.log(`📦 Filtrando por categoría: "${cat}"`);
+      fylCatalogDbg(`📦 Filtrando por categoría: "${cat}"`);
       const { data, error } = await query.eq("Categoria", cat);
       
       if (error) {
@@ -557,7 +646,7 @@ async function cargarDesdeSupabase(cat) {
         throw error;
       }
 
-      console.log(`📊 Registros obtenidos antes de filtrar Mostrar: ${data?.length || 0}`);
+      fylCatalogDbg(`📊 Registros obtenidos antes de filtrar Mostrar: ${data?.length || 0}`);
       
       // La vista devuelve Mostrar como booleano true, no como string "TRUE"
       // Aceptar ambos: true (booleano) y "TRUE" (string)
@@ -565,7 +654,7 @@ async function cargarDesdeSupabase(cat) {
         const mostrar = i.Mostrar;
         return mostrar === "TRUE" || mostrar === true || mostrar === "true" || mostrar === 1;
       });
-      console.log(`✅ Registros después de filtrar Mostrar: ${filtered.length}`);
+      fylCatalogDbg(`✅ Registros después de filtrar Mostrar: ${filtered.length}`);
       
       if (filtered.length === 0 && data && data.length > 0) {
         console.warn(`⚠️ Hay ${data.length} registros pero ninguno pasa el filtro de Mostrar`);
@@ -589,7 +678,7 @@ async function cargarDesdeSupabase(cat) {
 
 // Cargar datos desde Google Sheets (fallback)
 async function cargarDesdeGoogleSheets(cat) {
-  console.log(`📊 Cargando desde Google Sheets (fallback): ${cat}`);
+  fylCatalogDbg(`📊 Cargando desde Google Sheets (fallback): ${cat}`);
 
   try {
     let data = [];
@@ -760,8 +849,8 @@ function intercalarProductosPorCategoria(productos) {
     }
   }
   
-  console.log(`🔄 Productos intercalados: ${resultado.length} productos siguiendo el patrón`);
-  console.log(`📊 Distribución: Calzado=${idxCalzado}, Ropa=${idxRopa}, Otros(Marroquineria)=${idxOtrosMarroquineria}, Otros(Lenceria)=${idxOtrosLenceria}`);
+  fylCatalogDbg(`🔄 Productos intercalados: ${resultado.length} productos siguiendo el patrón`);
+  fylCatalogDbg(`📊 Distribución: Calzado=${idxCalzado}, Ropa=${idxRopa}, Otros(Marroquineria)=${idxOtrosMarroquineria}, Otros(Lenceria)=${idxOtrosLenceria}`);
   
   return resultado;
 }
@@ -819,7 +908,7 @@ function agruparProductos(rows) {
 
 // Función principal de carga de categoría
 async function cargarCategoria(cat) {
-  console.log("🔄 Cargando categoría:", cat);
+  fylCatalogDbg("🔄 Cargando categoría:", cat);
 
   // Actualizar categoría actual
   categoriaActual = cat || 'all';
@@ -856,16 +945,16 @@ async function cargarCategoria(cat) {
       );
     }
 
-    console.log(`🔄 Intentando cargar categoría "${cat}" desde Supabase...`);
-    console.log(`🔧 Cliente Supabase disponible:`, supabase ? "SÍ" : "NO");
+    fylCatalogDbg(`🔄 Intentando cargar categoría "${cat}" desde Supabase...`);
+    fylCatalogDbg(`🔧 Cliente Supabase disponible:`, supabase ? "SÍ" : "NO");
     
     data = await cargarDesdeSupabase(cat);
-    console.log(`✅ Datos cargados desde Supabase: ${data.length} productos`);
-    console.log(`📊 Fuente de datos: ${fuente}`);
+    fylCatalogDbg(`✅ Datos cargados desde Supabase: ${data.length} productos`);
+    fylCatalogDbg(`📊 Fuente de datos: ${fuente}`);
     
     // Log detallado de los primeros productos
     if (data.length > 0) {
-      console.log("📋 Primeros productos cargados:", data.slice(0, 3).map(p => ({
+      fylCatalogDbg("📋 Primeros productos cargados:", data.slice(0, 3).map(p => ({
         Articulo: p.Articulo,
         Categoria: p.Categoria,
         Color: p.Color,
@@ -877,8 +966,8 @@ async function cargarCategoria(cat) {
       // Verificar si hay ofertas activas
       const productosConOferta = data.filter(p => p.OfertaActiva === true || p.OfertaActiva === 'true');
       if (productosConOferta.length > 0) {
-        console.log(`🔥 Se encontraron ${productosConOferta.length} variantes con ofertas activas`);
-        console.log("📊 Ejemplos de ofertas:", productosConOferta.slice(0, 3).map(p => ({
+        fylCatalogDbg(`🔥 Se encontraron ${productosConOferta.length} variantes con ofertas activas`);
+        fylCatalogDbg("📊 Ejemplos de ofertas:", productosConOferta.slice(0, 3).map(p => ({
           Articulo: p.Articulo,
           Color: p.Color,
           PrecioOriginal: p.Precio,
@@ -897,7 +986,7 @@ async function cargarCategoria(cat) {
         cont.innerHTML =
           '<div class="no-data">No hay productos disponibles en esta categoría</div>';
       }
-      console.log("⚠️ No hay productos para mostrar en la categoría:", cat);
+      fylCatalogDbg("⚠️ No hay productos para mostrar en la categoría:", cat);
       return;
     }
 
@@ -966,7 +1055,7 @@ async function cargarCategoria(cat) {
       });
 
     */
-    console.log(`📦 Productos agrupados: ${gruposArray.length}`);
+    fylCatalogDbg(`📦 Productos agrupados: ${gruposArray.length}`);
 
     // Obtener ofertas activas con imágenes
     let offersCards = [];
@@ -975,7 +1064,7 @@ async function cargarCategoria(cat) {
         .rpc('get_active_offers_with_images');
       
       if (!offersError && offers && offers.length > 0) {
-        console.log(`🔥 Se encontraron ${offers.length} campañas de ofertas con imágenes`);
+        fylCatalogDbg(`🔥 Se encontraron ${offers.length} campañas de ofertas con imágenes`);
         offersCards = offers.map(offer => ({
           type: 'offer',
           campaignId: offer.offer_campaign_id,
@@ -1021,22 +1110,39 @@ async function cargarCategoria(cat) {
     // Mostrar botón "Ver más modelos" si hay más productos
     mostrarBotonVerMas();
     
+    fylCatalogTrackViewItemList("category:" + (cat || "all"), productosPendientes, "category_grid");
+    
     // Reiniciar verificación de carga de imágenes
     iniciarVerificacionCargaImagenes();
     
-    // Si estamos en vista Inicio, cargar banners
     if (cat === "all") {
-      // Mostrar banner FYL Originals
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const hashOk = location.hash !== "#/coleccion/fyl-originals";
+      const hayBusquedaActiva = !!document.getElementById("searchInput")?.value?.trim();
+      const hayFiltroActivo = !!document.querySelector('#filtroMenu input[type="checkbox"]:checked');
+      const paralelos = [];
       if (typeof window.loadAndShowFYLBanner === "function") {
-        window.loadAndShowFYLBanner();
+        paralelos.push(window.loadAndShowFYLBanner());
       }
-      // Mostrar banner promocional (con un pequeño delay para asegurar que esté cargado)
-      setTimeout(() => {
-        if (typeof window.showPromotionalBanner === "function") {
-          window.showPromotionalBanner();
-        }
-      }, 200);
-      // Mostrar info-banner mayorista
+      if (
+        hashOk &&
+        !hayBusquedaActiva &&
+        !hayFiltroActivo &&
+        fylPendingHomeCustomBanner &&
+        typeof window.loadAndShowCustomBanner === "function"
+      ) {
+        fylPendingHomeCustomBanner = false;
+        paralelos.push(window.loadAndShowCustomBanner());
+      } else {
+        fylPendingHomeCustomBanner = false;
+      }
+      if (typeof window.loadBanner === "function") {
+        paralelos.push(window.loadBanner());
+      }
+      await Promise.all(paralelos);
+      if (typeof window.showPromotionalBanner === "function") {
+        window.showPromotionalBanner();
+      }
       syncInfoBannerVisibility();
     } else {
       // Ocultar banners si no estamos en Inicio
@@ -1129,11 +1235,7 @@ function formatPrice(precio) {
 
 // Helper ARS: siempre muestra $X.XXX con Intl.NumberFormat
 function formatARS(n) {
-  if (n == null || n === '') return '$0';
-  const str = String(n).replace(/[^\d.,]/g, '').replace(',', '.');
-  const num = parseFloat(str);
-  if (isNaN(num)) return '$0';
-  return '$' + new Intl.NumberFormat('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(Math.round(num));
+  return formatARSValue(n);
 }
 
 function renderPriceWithOffer(producto) {
@@ -1207,6 +1309,7 @@ if (typeof window !== "undefined") window.syncInfoBannerVisibility = syncInfoBan
 // options.skipBanner: si true, no insertar el banner dinámico (solo debe mostrarse en index puro)
 async function renderizarProductosPagina(productos, container, offersCards = [], startIndex = 0, count = null, options = {}) {
   if (productos.length === 0 && offersCards.length === 0) return;
+  if (startIndex === 0) fylPendingHomeCustomBanner = false;
   
   // Enriquecer productos con stock (solo los que vamos a renderizar)
   const productosARenderizar = count !== null 
@@ -1341,14 +1444,7 @@ async function renderizarProductosPagina(productos, container, offersCards = [],
             cuartoProducto.parentNode.insertBefore(bannerWrapper, cuartoProducto.nextSibling);
           }
         }
-        // Usar setTimeout para asegurar que el DOM se haya actualizado
-        setTimeout(() => {
-          const inlineBanner = document.getElementById('custom-banner-container-inline');
-          if (inlineBanner && typeof window.loadAndShowCustomBanner === 'function') {
-            // Cargar y mostrar el banner en el contenedor inline
-            window.loadAndShowCustomBanner();
-          }
-        }, 200);
+        fylPendingHomeCustomBanner = true;
       }
     }
   });
@@ -1565,7 +1661,7 @@ async function renderizarProductos(productos, container, offersCards = []) {
 
 // Función para filtrar productos por oferta
 async function filterByOffer(campaignId) {
-  console.log('🔥 Filtrando productos por oferta:', campaignId);
+  fylCatalogDbg('🔥 Filtrando productos por oferta:', campaignId);
   
   const loader = document.getElementById("loader");
   const cont = document.getElementById("catalogo");
@@ -1698,7 +1794,7 @@ async function filterByOffer(campaignId) {
 // options.forCollectionView: si true, no muestra la card redundante y actualiza #collection-count
 async function filterBySupplierFYL(options = {}) {
   const forCollectionView = !!options.forCollectionView;
-  console.log('🏭 Filtrando productos por proveedor FYL', forCollectionView ? '(vista colección)' : '');
+  fylCatalogDbg('🏭 Filtrando productos por proveedor FYL', forCollectionView ? '(vista colección)' : '');
   
   const loader = document.getElementById("loader");
   const cont = document.getElementById("catalogo");
@@ -1977,7 +2073,7 @@ async function enrichProductsWithStock(productos = [], { mergeSkuIndex = false }
         warehouses.forEach(w => warehouseMap.set(w.code, w.id));
         generalWarehouseId = warehouseMap.get("general");
         ventaPublicoWarehouseId = warehouseMap.get("venta-publico");
-        console.log(`📦 Warehouses obtenidos: general=${generalWarehouseId}, venta-publico=${ventaPublicoWarehouseId}`);
+        fylCatalogDbg(`📦 Warehouses obtenidos: general=${generalWarehouseId}, venta-publico=${ventaPublicoWarehouseId}`);
       } else {
         console.warn("⚠️ No se encontraron warehouses 'general' o 'venta-publico'. Continuando sin stock por warehouse.");
       }
@@ -2011,7 +2107,7 @@ async function enrichProductsWithStock(productos = [], { mergeSkuIndex = false }
               stock_qty: sizeRow.stock_qty || 0
             });
           });
-          console.log(`📊 Se obtuvieron ${sizesData.length} registros de variant_sizes para ${allVariantIds.length} variantes. Variantes con talles: ${variantSizesMap.size}`);
+          fylCatalogDbg(`📊 Se obtuvieron ${sizesData.length} registros de variant_sizes para ${allVariantIds.length} variantes. Variantes con talles: ${variantSizesMap.size}`);
         } else if (sizesError) {
           console.error("❌ Error obteniendo talles desde variant_sizes:", sizesError);
         } else {
@@ -2028,7 +2124,7 @@ async function enrichProductsWithStock(productos = [], { mergeSkuIndex = false }
     const sizeStockMap = new Map(); // key: `${variant_id}_${normalizedSize}_${warehouse_id}` -> stock_qty
     if (allVariantIds.length > 0 && generalWarehouseId && ventaPublicoWarehouseId) {
       try {
-        console.log(`📊 Consultando variant_size_warehouse_stock para ${allVariantIds.length} variantes...`);
+        fylCatalogDbg(`📊 Consultando variant_size_warehouse_stock para ${allVariantIds.length} variantes...`);
         const { data: sizeWarehouseStocks, error: sizeStockError } = await supabase
           .from("variant_size_warehouse_stock")
           .select("variant_id, size, warehouse_id, stock_qty")
@@ -2049,7 +2145,7 @@ async function enrichProductsWithStock(productos = [], { mergeSkuIndex = false }
             const existingStock = sizeStockMap.get(key) || 0;
             sizeStockMap.set(key, existingStock + (sws.stock_qty || 0));
           });
-          console.log(`✅ Se obtuvieron ${sizeWarehouseStocks.length} registros de variant_size_warehouse_stock`);
+          fylCatalogDbg(`✅ Se obtuvieron ${sizeWarehouseStocks.length} registros de variant_size_warehouse_stock`);
         } else {
           console.warn("⚠️ variant_size_warehouse_stock retornó null o undefined");
         }
@@ -2773,6 +2869,7 @@ async function applyTagFilterAndRender(tagValue, { pushHash = true } = {}) {
   configurarEventos();
   mostrarBotonVerMas();
   iniciarVerificacionCargaImagenes();
+  fylCatalogTrackViewItemList("tag:" + tagValue, productosPendientes, "tag_filter");
   if (pushHash) {
     try { location.hash = '#/tag/' + encodeURIComponent(tagValue); } catch (_) {}
   }
@@ -2808,7 +2905,9 @@ function abrirModalPorSKU(sku, { pushState = true } = {}) {
   if (modalBody) modalBody.scrollTop = 0;
 
   if (typeof window.updateFloatingCartCta === 'function') window.updateFloatingCartCta();
-  
+  fylCatalogViewItemForProducto(resultado.producto, sku);
+  trackMetaViewContent(resultado.producto, sku);
+  fylCatalogPdpSurface();
   return true;
 }
 
@@ -2843,7 +2942,9 @@ function abrirModalConResultado(resultado, { pushState = true } = {}) {
   if (modalBody) modalBody.scrollTop = 0;
 
   if (typeof window.updateFloatingCartCta === 'function') window.updateFloatingCartCta();
-  
+  fylCatalogViewItemForProducto(resultado.producto, sku);
+  trackMetaViewContent(resultado.producto, sku);
+  fylCatalogPdpSurface();
   return true;
 }
 
@@ -2860,12 +2961,17 @@ function cerrarModal(skipHistory = false) {
   const modal = document.getElementById('product-modal');
   if (modal) {
     modal.classList.remove('active');
+    modal.classList.remove('pdp-checkout-bar-visible');
     modal.dataset.sku = '';
   }
+  document.getElementById('product-modal-footer')?.classList.remove('pdp-footer-bar-hidden');
   document.body.classList.remove('modal-open');
   productoActualEnModal = null;
 
   if (typeof window.updateFloatingCartCta === 'function') window.updateFloatingCartCta();
+  try {
+    if (fylAnalytics.isReady()) fylAnalytics.syncCatalogSurface({ emit: true });
+  } catch (_e) {}
 
   if (skipHistory) return;
   if (history.state?.pdp) {
@@ -3049,7 +3155,9 @@ function renderizarModalProducto(producto, colorSeleccionado, talleSeleccionado)
   const featuresHtml = renderizarCaracteristicasPDP(producto);
   const hasOffer = producto.OfertaActiva === true || producto.OfertaActiva === 'true';
   const offerPrice = producto.PrecioOferta || '';
-  const precioUnidad = hasOffer && offerPrice ? parseFloat(String(offerPrice).replace(/[^\d.,]/g, '').replace(',', '.')) : parseFloat(String(producto.Precio || '0').replace(/[^\d.,]/g, '').replace(',', '.')) || 0;
+  const precioUnidad = hasOffer && offerPrice
+    ? parseARSNumber(offerPrice)
+    : parseARSNumber(producto.Precio || 0);
 
   const modalFooter = document.getElementById('product-modal-footer');
 
@@ -3105,6 +3213,8 @@ function renderizarModalProducto(producto, colorSeleccionado, talleSeleccionado)
 
   if (modalFooter) {
     if (window.__CATALOG_ONLY__) {
+      modalFooter.classList.remove("pdp-footer-bar-hidden");
+      modal.classList.remove("pdp-checkout-bar-visible");
       const waText = encodeURIComponent(`Hola, consulto por: ${producto.Articulo || ''}${detalleColor?.color ? ' - ' + detalleColor.color : ''}`);
       const waUrl = `https://wa.me/5493624118637?text=${waText}`;
       modalFooter.innerHTML = `
@@ -3120,6 +3230,7 @@ function renderizarModalProducto(producto, colorSeleccionado, talleSeleccionado)
                   data-articulo="${producto.Articulo}" 
                   data-color="${detalleColor?.color || ''}">Agregar al carrito</button>
         </div>`;
+      updateModalPDPTotal(modal);
     }
   }
 
@@ -3142,7 +3253,7 @@ function renderizarModalProducto(producto, colorSeleccionado, talleSeleccionado)
       const cx = rect ? rect.left + rect.width / 2 : 0;
       const cy = rect ? rect.top + rect.height / 2 : 0;
       const els = (document.elementsFromPoint && document.elementsFromPoint(cx, cy) || []).slice(0, 6).map(e => ({ tag: e.tagName, class: e.className, id: e.id }));
-      console.log('PDP IMG DIAG', {
+      fylCatalogDbg('PDP IMG DIAG', {
         event: ev,
         srcAttr: mainImg.getAttribute('src'),
         srcResolved: mainImg.src,
@@ -3681,6 +3792,12 @@ function clearPdpAddAddedState(modal) {
 
 function updateModalPDPTotal(modal) {
   if (!modal) return;
+  const footer = document.getElementById("product-modal-footer");
+  if (window.__CATALOG_ONLY__) {
+    footer?.classList.remove("pdp-footer-bar-hidden");
+    modal.classList.remove("pdp-checkout-bar-visible");
+    return;
+  }
   let total = 0;
   const chips = modal.querySelectorAll('.size-chip[data-size][data-max]:not(.size-chip--disabled)');
   chips.forEach((chip) => {
@@ -3692,6 +3809,11 @@ function updateModalPDPTotal(modal) {
   const totalPrecio = total * precioUnidad;
   const pairsEl = modal.querySelector('.product-modal-cta-pairs');
   const totalEl = modal.querySelector('.product-modal-cta-total');
+  if (!cta) {
+    footer?.classList.remove("pdp-footer-bar-hidden");
+    modal.classList.remove("pdp-checkout-bar-visible");
+    return;
+  }
   if (pairsEl) {
     pairsEl.innerHTML = total === 0
       ? 'Seleccioná talles para agregar'
@@ -3700,6 +3822,9 @@ function updateModalPDPTotal(modal) {
   if (totalEl) totalEl.textContent = formatPrice(totalPrecio);
   const addBtn = modal.querySelector('.pdp-add-btn');
   if (addBtn) addBtn.classList.toggle('is-empty', total === 0);
+  const showCheckoutBar = total > 0;
+  footer?.classList.toggle("pdp-footer-bar-hidden", !showCheckoutBar);
+  modal.classList.toggle("pdp-checkout-bar-visible", showCheckoutBar);
 }
 
 // Inicialización de eventos del modal (UNA sola vez)
@@ -3719,6 +3844,9 @@ function initModalEvents() {
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation();
+        try {
+          if (fylAnalytics.isReady()) fylAnalytics.event("whatsapp_click", { surface: "pdp" });
+        } catch (_e) {}
         window.open(wa.href, '_blank', 'noopener');
         return;
       }
@@ -3778,6 +3906,7 @@ function initModalEvents() {
     const recoMore = e.target.closest('[data-action="go-reco-filter"]');
     if (recoMore && productoActualEnModal) {
       const f1 = (productoActualEnModal.Filtro1 || '').trim();
+      try { if (fylAnalytics.isReady()) fylAnalytics.event("related_product_click", { tag: f1 || "" }); } catch (_e) {}
       cerrarModal();
       if (f1) window.setQuickFilter?.('filtro1', f1);
       return;
@@ -3788,14 +3917,20 @@ function initModalEvents() {
     if (pdpDownload) {
       e.preventDefault();
       const imgUrl = modal.querySelector('.product-modal-main-image')?.src;
-      if (imgUrl) downloadImageFromUrl(imgUrl);
+      if (imgUrl) {
+        try { if (fylAnalytics.isReady()) fylAnalytics.event("download_product_image", { surface: "pdp" }); } catch (_e) {}
+        downloadImageFromUrl(imgUrl);
+      }
       return;
     }
     const pdpShare = e.target.closest('.pdp-share');
     if (pdpShare) {
       e.preventDefault();
       const imgUrl = modal.querySelector('.product-modal-main-image')?.src;
-      if (imgUrl) shareImageUrl(imgUrl);
+      if (imgUrl) {
+        try { if (fylAnalytics.isReady()) fylAnalytics.event("share_product", { surface: "pdp" }); } catch (_e) {}
+        shareImageUrl(imgUrl);
+      }
       return;
     }
 
@@ -3806,11 +3941,13 @@ function initModalEvents() {
       const imgUrl = modal.querySelector('.product-modal-main-image')?.src;
       if (imgUrl && action === 'pm-download') {
         e.preventDefault();
+        try { if (fylAnalytics.isReady()) fylAnalytics.event("download_product_image", { surface: "pdp_header" }); } catch (_e) {}
         downloadImageFromUrl(imgUrl);
         return;
       }
       if (imgUrl && action === 'pm-share') {
         e.preventDefault();
+        try { if (fylAnalytics.isReady()) fylAnalytics.event("share_product", { surface: "pdp_header" }); } catch (_e) {}
         shareImageUrl(imgUrl);
         return;
       }
@@ -3834,6 +3971,14 @@ function initModalEvents() {
         (d.color || "").trim().toLowerCase() === (color || "").trim().toLowerCase()
       );
       if (detalleColor) {
+        try {
+          if (fylAnalytics.isReady() && productoActualEnModal && color) {
+            fylAnalytics.event("select_item_variant", {
+              item_id: String(productoActualEnModal.Articulo || ""),
+              item_variant: String(color),
+            });
+          }
+        } catch (_e) {}
         const variantesHTML = renderizarVariantesModalPDP(productoActualEnModal, color, color);
         const variantsContainer = modal.querySelector('.product-modal-variants');
         if (variantsContainer) variantsContainer.innerHTML = variantesHTML;
@@ -3999,7 +4144,7 @@ function initModalEvents() {
         try {
         const countAntes = window.getCartCount?.() ?? 0;
         const precioStr = modal.querySelector('.product-modal-price-container .price')?.textContent || modal.querySelector('.product-modal-price-container')?.textContent || '0';
-        const precio = parseFloat(precioStr.replace(/[^0-9.,]/g, '').replace(',', '.')) || 0;
+        const precio = parseARSNumber(precioStr);
         const imagen = modal.querySelector('.product-modal-main-image')?.src || '';
         const descripcion = (modal.querySelector('.pdp-title') || modal.querySelector('.product-modal-title'))?.textContent || '';
 
@@ -4041,6 +4186,25 @@ function initModalEvents() {
         }
 
         if (rowsAdded > 0) {
+          try {
+            if (fylAnalytics.isReady() && productoActualEnModal) {
+              const lineItems = [];
+              for (const row of itemsToAdd) {
+                const vd = variantDetails.find(v => `${color}_${v.talle}` === row.key);
+                lineItems.push({
+                  articulo,
+                  color,
+                  talle: row.talle,
+                  cantidad: row.qty,
+                  precio,
+                  variant_id: vd?.variant_id,
+                });
+              }
+              const gaItems = fylAnalytics.buildCartItemsFromLines(lineItems);
+              const val = gaItems.reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.quantity) || 0), 0);
+              fylAnalytics.ecommerceEvent("add_to_cart", { currency: "ARS", value: val, items: gaItems });
+            }
+          } catch (_e) {}
           btn.textContent = 'Agregado';
           btn.classList.add('pdp-add-btn--added');
           btn.style.background = '';
@@ -4097,6 +4261,14 @@ function initModalEvents() {
       
       updateSKUEnURL(sku);
       modal.dataset.sku = sku;
+      try {
+        if (fylAnalytics.isReady() && productoActualEnModal) {
+          fylAnalytics.event("select_item_variant", {
+            item_id: String(productoActualEnModal.Articulo || ""),
+            item_variant: String(size || ""),
+          });
+        }
+      } catch (_e) {}
       
       const variantContainer = select.closest('.variant');
       if (variantContainer) {
@@ -4146,7 +4318,22 @@ function initGridEvents() {
     let sku = (card.dataset.sku || card.querySelector('.main-image')?.dataset.sku || '').trim();
     
     // 1) SKU en skuIndex → abrir al instante con URL
-    if (sku && abrirModalPorSKU(sku)) return;
+    if (sku && abrirModalPorSKU(sku)) {
+      try {
+        if (fylAnalytics.isReady() && window.productosActualesMap) {
+          const art = card.querySelector('[data-articulo]')?.dataset?.articulo;
+          const p = art ? window.productosActualesMap.get(art) : null;
+          if (p) {
+            const items = fylAnalytics.buildItemsFromGroupedProducts([p], 1);
+            if (items.length) {
+              items[0].item_variant = String(sku);
+              fylAnalytics.ecommerceEvent("select_item", { items, item_list_name: "catalog_grid", currency: "ARS" });
+            }
+          }
+        }
+      } catch (_e) {}
+      return;
+    }
     
     // 2) Producto en página → usar datos completos (colores, imágenes), rápido
     const articulo = card.querySelector('[data-articulo]')?.dataset?.articulo;
@@ -4164,6 +4351,15 @@ function initGridEvents() {
           const d0 = producto.DetalleColor?.[0];
           color = d0?.color; talle = d0?.variantDetails?.[0]?.talle;
         }
+        try {
+          if (fylAnalytics.isReady()) {
+            const items = fylAnalytics.buildItemsFromGroupedProducts([producto], 1);
+            if (items.length) {
+              items[0].item_variant = String(sku || color || "");
+              fylAnalytics.ecommerceEvent("select_item", { items, item_list_name: "catalog_grid", currency: "ARS" });
+            }
+          }
+        } catch (_e) {}
         abrirModalConResultado({
           producto,
           color,
@@ -4487,7 +4683,7 @@ function configurarEventos() {
 
 // Función para cambiar categoría
 async function cambiarCategoria(cat) {
-  console.log("🔄 Cambiando a categoría:", cat);
+  fylCatalogDbg("🔄 Cambiando a categoría:", cat);
 
   // Actualizar botón activo
   document.querySelectorAll(".menu button").forEach((btn) => {
@@ -4641,50 +4837,50 @@ async function existeNovedades() {
 
 // Función de diagnóstico
 function ejecutarDiagnostico() {
-  console.log("🔍 DIAGNÓSTICO RÁPIDO - CATÁLOGO FYL (SUPABASE)");
-  console.log("================================================");
+  fylCatalogDbg("🔍 DIAGNÓSTICO RÁPIDO - CATÁLOGO FYL (SUPABASE)");
+  fylCatalogDbg("================================================");
 
   // 1. Verificar configuración
-  console.log("\n1. 📋 CONFIGURACIÓN:");
-  console.log("USE_SUPABASE:", USE_SUPABASE);
-  console.log(
+  fylCatalogDbg("\n1. 📋 CONFIGURACIÓN:");
+  fylCatalogDbg("USE_SUPABASE:", USE_SUPABASE);
+  fylCatalogDbg(
     "USE_OPEN_SHEET_FALLBACK:",
     USE_OPEN_SHEET_FALLBACK,
     "(DESHABILITADO - Solo Supabase)"
   );
-  console.log("SUPABASE_URL:", SUPABASE_URL);
-  console.log(
+  fylCatalogDbg("SUPABASE_URL:", SUPABASE_URL);
+  fylCatalogDbg(
     "SUPABASE_ANON_KEY:",
     SUPABASE_ANON_KEY ? "Configurada" : "NO CONFIGURADA"
   );
 
   // 2. Verificar cliente de Supabase
-  console.log("\n2. 🗄️ CLIENTE SUPABASE:");
-  console.log("Cliente disponible:", supabase ? "SÍ" : "NO");
-  console.log(
+  fylCatalogDbg("\n2. 🗄️ CLIENTE SUPABASE:");
+  fylCatalogDbg("Cliente disponible:", supabase ? "SÍ" : "NO");
+  fylCatalogDbg(
     "Estado de conexión:",
     supabase ? "Inicializado" : "No inicializado"
   );
 
   // 3. Verificar funciones disponibles
-  console.log("\n3. 🔧 FUNCIONES DISPONIBLES:");
-  console.log("cargarCategoria:", typeof window.cargarCategoria);
-  console.log("cambiarCategoria:", typeof window.cambiarCategoria);
-  console.log("downloadImage:", typeof window.downloadImage);
+  fylCatalogDbg("\n3. 🔧 FUNCIONES DISPONIBLES:");
+  fylCatalogDbg("cargarCategoria:", typeof window.cargarCategoria);
+  fylCatalogDbg("cambiarCategoria:", typeof window.cambiarCategoria);
+  fylCatalogDbg("downloadImage:", typeof window.downloadImage);
 
   // 4. Verificar estado del catálogo
-  console.log("\n4. 🎯 ESTADO DEL CATÁLOGO:");
+  fylCatalogDbg("\n4. 🎯 ESTADO DEL CATÁLOGO:");
   const catalogo = document.getElementById("catalogo");
   const loader = document.getElementById("loader");
-  console.log("Elemento catálogo:", catalogo ? "Encontrado" : "NO ENCONTRADO");
-  console.log("Elemento loader:", loader ? "Encontrado" : "NO ENCONTRADO");
-  console.log(
+  fylCatalogDbg("Elemento catálogo:", catalogo ? "Encontrado" : "NO ENCONTRADO");
+  fylCatalogDbg("Elemento loader:", loader ? "Encontrado" : "NO ENCONTRADO");
+  fylCatalogDbg(
     "Contenido del catálogo:",
     catalogo?.innerHTML?.substring(0, 100) + "..."
   );
 
-  console.log("\n================================================");
-  console.log("🔍 DIAGNÓSTICO COMPLETADO");
+  fylCatalogDbg("\n================================================");
+  fylCatalogDbg("🔍 DIAGNÓSTICO COMPLETADO");
 }
 
 // Inicialización
@@ -4692,7 +4888,7 @@ async function inicializarCatalogo() {
   window.__FYL_BOOT_SUPPRESS_ROUTE = true;
   globalThis.markBootStage?.("catalog.init.start");
   try {
-    console.log("🚀 Inicializando catálogo con Supabase...");
+    fylCatalogDbg("🚀 Inicializando catálogo con Supabase...");
 
     // Inicializar Supabase
     const supabaseInicializado = await inicializarSupabase();
@@ -4739,7 +4935,7 @@ async function inicializarCatalogo() {
 
     try {
     // Verificar que podemos consultar la vista antes de cargar
-    console.log("🔍 Verificando acceso a catalog_public_view...");
+    fylCatalogDbg("🔍 Verificando acceso a catalog_public_view...");
     const VIEW_PROBE_MS = 60000;
     let testData;
     let testError;
@@ -4799,13 +4995,10 @@ async function inicializarCatalogo() {
       ok: true,
       rows: testData?.length ?? 0,
     });
-    // Quitar overlay de 3 puntos antes de cargar categoría / banners (puede tardar mucho en Android)
-    hideCatalogBootOverlay();
-    globalThis.markBootStage?.("catalog.overlay.dismissed", { phase: "after_view_ok" });
 
-    console.log(`✅ Acceso a vista OK. Total de productos en vista: ${testData?.length || 0}`);
+    fylCatalogDbg(`✅ Acceso a vista OK. Total de productos en vista: ${testData?.length || 0}`);
     if (testData && testData.length > 0) {
-      console.log("📋 Primeros productos en la vista:", testData.slice(0, 5).map(p => ({
+      fylCatalogDbg("📋 Primeros productos en la vista:", testData.slice(0, 5).map(p => ({
         Articulo: p.Articulo,
         Categoria: p.Categoria,
         Color: p.Color
@@ -4813,7 +5006,7 @@ async function inicializarCatalogo() {
       
       // Verificar categorías únicas
       const categorias = [...new Set(testData.map(p => p.Categoria).filter(Boolean))];
-      console.log("📂 Categorías encontradas:", categorias);
+      fylCatalogDbg("📂 Categorías encontradas:", categorias);
     } else {
       console.warn("⚠️ La vista está vacía. Verifica que:");
       console.warn("   1. Hay productos con status='active' en la tabla products");
@@ -4839,9 +5032,9 @@ async function inicializarCatalogo() {
     let categoriaInicial;
     let similaresFirstTag = null; // tag para filtrar cuando viene de "Ver similares"
 
-    console.log(`🔍 URL actual: ${window.location.href}`);
-    console.log(`🔍 Tab slug desde URL: ${tabSlug || '(ninguno)'}`);
-    console.log(`🔍 Banner param desde URL: ${bannerParam || '(ninguno)'}`);
+    fylCatalogDbg(`🔍 URL actual: ${window.location.href}`);
+    fylCatalogDbg(`🔍 Tab slug desde URL: ${tabSlug || '(ninguno)'}`);
+    fylCatalogDbg(`🔍 Banner param desde URL: ${bannerParam || '(ninguno)'}`);
 
     // "Ver similares": obtener tags del producto para filtrar por similares
     if (similaresParam === '1' && articuloParam && articuloParam.trim()) {
@@ -4866,7 +5059,7 @@ async function inicializarCatalogo() {
     // Si hay parámetro banner, cargar productos de "Otros" filtrados por ese tag
     if (bannerParam) {
       const bannerTag = bannerParam.trim().toLowerCase();
-      console.log(`📋 Detectado parámetro banner: "${bannerTag}"`);
+      fylCatalogDbg(`📋 Detectado parámetro banner: "${bannerTag}"`);
       
       // Verificar si es un tag de "Otros" (buscar en Filtro1, Filtro2, Filtro3)
       try {
@@ -4890,7 +5083,7 @@ async function inicializarCatalogo() {
           });
           
           const uniqueTags = Array.from(allTags);
-          console.log(`📋 Tags únicos encontrados en "Otros":`, uniqueTags);
+          fylCatalogDbg(`📋 Tags únicos encontrados en "Otros":`, uniqueTags);
           
           // Buscar el tag que coincida
           const matchingTag = uniqueTags.find(tag => 
@@ -4902,13 +5095,13 @@ async function inicializarCatalogo() {
           if (matchingTag) {
             // Usar el tag como categoría (el sistema ya lo maneja en cargarDesdeSupabase)
             categoriaInicial = matchingTag.charAt(0).toUpperCase() + matchingTag.slice(1);
-            console.log(`✅ Cargando productos de "Otros" con tag: ${matchingTag}`);
-            console.log(`🎯 Tag seleccionado: "${matchingTag}" -> categoriaInicial: "${categoriaInicial}"`);
+            fylCatalogDbg(`✅ Cargando productos de "Otros" con tag: ${matchingTag}`);
+            fylCatalogDbg(`🎯 Tag seleccionado: "${matchingTag}" -> categoriaInicial: "${categoriaInicial}"`);
           } else {
             categoriaInicial = "all";
-            console.log(`⚠️ Tag no encontrado en "Otros", usando "all" (Inicio)`);
-            console.log(`📋 Tags disponibles:`, uniqueTags);
-            console.log(`🔍 Tag buscado: "${bannerTag}"`);
+            fylCatalogDbg(`⚠️ Tag no encontrado en "Otros", usando "all" (Inicio)`);
+            fylCatalogDbg(`📋 Tags disponibles:`, uniqueTags);
+            fylCatalogDbg(`🔍 Tag buscado: "${bannerTag}"`);
           }
         } else {
           categoriaInicial = "all";
@@ -4921,28 +5114,28 @@ async function inicializarCatalogo() {
       const categoria = slugToCategoria(tabSlug);
       if (categoria) {
         categoriaInicial = categoria;
-        console.log(`✅ Categoría encontrada desde slug: ${categoria}`);
+        fylCatalogDbg(`✅ Categoría encontrada desde slug: ${categoria}`);
       } else {
         // Slug inválido, usar "Inicio" (all)
         categoriaInicial = "all";
-        console.log(`⚠️ Slug inválido, usando "all" (Inicio)`);
+        fylCatalogDbg(`⚠️ Slug inválido, usando "all" (Inicio)`);
       }
     } else {
       // No hay tab ni banner en URL, usar "Inicio" por defecto
       categoriaInicial = "all";
-      console.log(`🏠 No hay tab/banner en URL, usando "all" (Inicio) por defecto`);
+      fylCatalogDbg(`🏠 No hay tab/banner en URL, usando "all" (Inicio) por defecto`);
     }
     
     // Si el hash apunta a colección FYL, NO cargar Home (el router en como-comprar.js lo maneja)
     if (isCollectionFYL) {
-      console.log(`📂 Deep link a colección FYL detectado: no cargar categoría inicial`);
+      fylCatalogDbg(`📂 Deep link a colección FYL detectado: no cargar categoría inicial`);
       // Saltar cargarCategoria; applyHashRoute (como-comprar) aplicará filterBySupplierFYL
     } else if (similaresParam === '1' && articuloParam?.trim()) {
       if (similaresFirstTag) {
-        console.log(`📋 Ver similares: filtrando por tag "${similaresFirstTag}"`);
+        fylCatalogDbg(`📋 Ver similares: filtrando por tag "${similaresFirstTag}"`);
         await applyTagFilterAndRender(similaresFirstTag, { pushHash: false });
       } else {
-        console.log(`📋 Ver similares: sin tags del producto, cargando Inicio`);
+        fylCatalogDbg(`📋 Ver similares: sin tags del producto, cargando Inicio`);
         await cargarCategoria('all');
       }
       if (talleParam && typeof window.applySizeFilterFromURL === 'function') {
@@ -4952,10 +5145,10 @@ async function inicializarCatalogo() {
       const tagMatch = (location.hash || '').match(/^#\/tag\/(.+)$/);
       if (tagMatch) {
         const tagValue = decodeURIComponent(tagMatch[1]);
-        console.log(`📋 Deep link a filtro por tag: "${tagValue}"`);
+        fylCatalogDbg(`📋 Deep link a filtro por tag: "${tagValue}"`);
         await applyTagFilterAndRender(tagValue, { pushHash: false });
       } else {
-        console.log(`📦 Cargando categoría inicial: ${categoriaInicial}`);
+        fylCatalogDbg(`📦 Cargando categoría inicial: ${categoriaInicial}`);
         await cargarCategoria(categoriaInicial);
       }
     }
@@ -5052,9 +5245,9 @@ async function inicializarCatalogo() {
         }
       }, 350);
     }
-    console.log("✅ Catálogo inicializado correctamente");
-    console.log("📊 Fuente de datos: Supabase (ÚNICA FUENTE)");
-    console.log("🚫 Google Sheets: DESHABILITADO");
+    fylCatalogDbg("✅ Catálogo inicializado correctamente");
+    fylCatalogDbg("📊 Fuente de datos: Supabase (ÚNICA FUENTE)");
+    fylCatalogDbg("🚫 Google Sheets: DESHABILITADO");
     globalThis.markBootStage?.("catalog.ready", { ok: true });
     } catch (error) {
       console.error("❌ Error inicializando catálogo:", error);
@@ -5206,7 +5399,7 @@ async function mostrarAlternativasParaTalleSinStock(producto) {
         }
       },
       onCerrar: () => {
-        console.log("Modal de alternativas cerrado");
+        fylCatalogDbg("Modal de alternativas cerrado");
       },
     });
   } catch (error) {
@@ -5231,11 +5424,25 @@ async function buscarProductosEnTodos(term) {
       configurarEventos();
       mostrarBotonVerMas();
       if (categoriaActual === 'all') {
-        if (typeof window.loadAndShowFYLBanner === 'function') window.loadAndShowFYLBanner();
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+        const paralelos = [];
+        if (typeof window.loadAndShowFYLBanner === 'function') paralelos.push(window.loadAndShowFYLBanner());
+        if (
+          fylPendingHomeCustomBanner &&
+          typeof window.loadAndShowCustomBanner === 'function'
+        ) {
+          fylPendingHomeCustomBanner = false;
+          paralelos.push(window.loadAndShowCustomBanner());
+        } else {
+          fylPendingHomeCustomBanner = false;
+        }
+        if (typeof window.loadBanner === 'function') paralelos.push(window.loadBanner());
+        await Promise.all(paralelos);
         if (typeof window.showPromotionalBanner === 'function') window.showPromotionalBanner();
         syncInfoBannerVisibility();
       }
     }
+    fylCatalogTrackViewItemList("category:" + (typeof categoriaActual !== "undefined" ? categoriaActual : "all"), productosPendientes, "category_grid");
     return;
   }
 
@@ -5276,6 +5483,7 @@ async function buscarProductosEnTodos(term) {
   }
   initTagFilterClearDelegation();
   renderTagFilterBar(term, { type: 'search' });
+  fylCatalogTrackViewItemList("search:" + termLower, productosFiltrados, "search_results");
 }
 
 // Exportar funciones globales

@@ -41,7 +41,6 @@ function getCorsHeaders(origin: string | null) {
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SERVICE_ROLE_KEY") || "";
 const META_FEED_TOKEN = Deno.env.get("META_FEED_TOKEN") || "";
-const BASE_URL = Deno.env.get("BASE_URL") || "https://tudominio.com";
 
 // Crear cliente Supabase con service role
 const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
@@ -64,16 +63,17 @@ function escapeCSV(value: string): string {
 
 // Generar CSV desde array de objetos
 function generateCSV(data: any[]): string {
+  const metaHeaders = ["id", "title", "description", "availability", "condition", "price", "link", "image_link", "brand"];
+
   if (!data || data.length === 0) {
-    return "id,item_group_id,title,description,price,availability,condition,brand,link,image_link,color,size\n";
+    return `${metaHeaders.join(",")}\n`;
   }
 
-  const headers = ["id", "item_group_id", "title", "description", "price", "availability", "condition", "brand", "link", "image_link", "color", "size"];
   const rows = data.map((row) => {
-    return headers.map((header) => escapeCSV(row[header] || "")).join(",");
+    return metaHeaders.map((header) => escapeCSV(row[header] || "")).join(",");
   });
 
-  return [headers.join(","), ...rows].join("\n");
+  return [metaHeaders.join(","), ...rows].join("\n");
 }
 
 // Normalizar URL de Cloudinary para optimización
@@ -106,6 +106,52 @@ function normalizeCloudinaryURL(url: string): string {
   return url;
 }
 
+function isAbsoluteUrl(value: string): boolean {
+  if (!value || typeof value !== "string") return false;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function normalizeAvailability(value: string | null | undefined): "in stock" | "out of stock" {
+  const t = value == null ? "" : String(value).trim().toLowerCase();
+  if (t === "in stock") return "in stock";
+  return "out of stock";
+}
+
+/** Quita NBSP y caracteres invisibles que Meta a veces no parsea bien. */
+function sanitizeAsciiSpaces(s: string): string {
+  return String(s)
+    .replace(/\u00a0/g, " ")
+    .replace(/[\u200b-\u200d\ufeff]/g, "")
+    .trim();
+}
+
+function parsePriceValue(priceText: string): number {
+  if (!priceText || typeof priceText !== "string") return Number.NaN;
+  const cleaned = sanitizeAsciiSpaces(priceText.replace(/\s+ARS$/i, ""));
+  return Number.parseFloat(cleaned);
+}
+
+/** Meta: número + un espacio + código ISO 4217 (ej. "15000 ARS"). */
+function normalizePriceForMeta(priceText: string | null | undefined): string {
+  if (priceText == null || typeof priceText !== "string") return "";
+  const parsed = parsePriceValue(priceText);
+  if (!Number.isFinite(parsed) || parsed <= 0) return "";
+  const isInteger = Number.isInteger(parsed);
+  const amount = isInteger ? String(parsed) : parsed.toFixed(2);
+  return `${amount} ARS`;
+}
+
+function hasRealImage(imageUrl: string): boolean {
+  if (!imageUrl || typeof imageUrl !== "string") return false;
+  const normalized = imageUrl.toLowerCase();
+  return !normalized.includes("placeholder");
+}
+
 // Calcular métricas
 function calculateMetrics(data: any[]): any {
   const total = data.length;
@@ -114,11 +160,10 @@ function calculateMetrics(data: any[]): any {
     row.image_link === "" || 
     row.image_link.includes("placeholder")
   ).length;
-  const sinPrecio = data.filter((row) => 
-    !row.price || 
-    row.price === "" || 
-    !row.price.match(/\d+\.\d{2}\s+ARS/)
-  ).length;
+  const sinPrecio = data.filter((row) => {
+    const p = row.price == null ? "" : String(row.price);
+    return !p || !/^\d+(\.\d{1,2})?\s+ARS$/i.test(sanitizeAsciiSpaces(p));
+  }).length;
   const inactivas = data.filter((row) => 
     row.availability === "out of stock"
   ).length;
@@ -205,27 +250,83 @@ serve(async (req) => {
     // Log de cantidad de filas devueltas por RPC
     console.log(`[meta-feed] RPC returned ${data.length} rows`);
 
-    // Usar link de RPC si existe, fallback a BASE_URL solo si falta
-    // Normalizar solo image_link
-    const dataWithLinks = data.map((row) => ({
-      ...row,
-      link: row.link || `${BASE_URL}/index.html?sku=${encodeURIComponent(row.id)}`,
-      image_link: normalizeCloudinaryURL(row.image_link || ""),
-    }));
+    const fallbackBaseUrl = "https://fylmoda.com.ar";
+
+    // Normalización defensiva de campos críticos para Meta
+    const normalizedData = data.map((row) => {
+      const safeId = row.id ? String(row.id).trim() : "";
+      const rawLink = row.link ? String(row.link).trim() : "";
+      const fallbackLink = `${fallbackBaseUrl}/index.html?sku=${encodeURIComponent(safeId)}`;
+      const safeLink = isAbsoluteUrl(rawLink) ? rawLink : fallbackLink;
+
+      return {
+        ...row,
+        id: safeId,
+        title: row.title ? String(row.title).trim() : "",
+        description: row.description ? String(row.description).trim() : "",
+        price: normalizePriceForMeta(row.price != null ? String(row.price) : ""),
+        link: safeLink,
+        image_link: normalizeCloudinaryURL(row.image_link || ""),
+        availability: normalizeAvailability(row.availability),
+        condition: "new",
+        brand: row.brand ? String(row.brand).trim() : "FYL",
+      };
+    });
+
+    // Filtro de calidad para catálogo de producción
+    let excludedSinSku = 0;
+    let excludedSinTitulo = 0;
+    let excludedSinImagen = 0;
+    let excludedSinPrecio = 0;
+
+    const filteredData = normalizedData.filter((row) => {
+      if (!row.id) {
+        excludedSinSku += 1;
+        return false;
+      }
+
+      if (!row.title) {
+        excludedSinTitulo += 1;
+        return false;
+      }
+
+      if (!hasRealImage(row.image_link)) {
+        excludedSinImagen += 1;
+        return false;
+      }
+
+      const parsedPrice = parsePriceValue(row.price);
+      if (!Number.isFinite(parsedPrice) || parsedPrice <= 0) {
+        excludedSinPrecio += 1;
+        return false;
+      }
+
+      return true;
+    });
+
+    console.log(
+      `[meta-feed] Filtering summary: total=${normalizedData.length}, excluded_sin_sku=${excludedSinSku}, excluded_sin_titulo=${excludedSinTitulo}, excluded_sin_imagen=${excludedSinImagen}, excluded_sin_precio=${excludedSinPrecio}, published=${filteredData.length}`
+    );
 
     // Aplicar limit si se especifica
-    const finalData = limit !== null && limit > 0 ? dataWithLinks.slice(0, limit) : dataWithLinks;
+    const finalData = limit !== null && limit > 0 ? filteredData.slice(0, limit) : filteredData;
 
     // Calcular métricas
-    const metrics = calculateMetrics(dataWithLinks);
+    const metrics = calculateMetrics(filteredData);
 
     // Si formato es JSON (para admin)
     if (format === "json") {
+      const products = finalData.map((row) => ({
+        title: row.title,
+        price: row.price,
+        availability: row.availability,
+      }));
       return new Response(
         JSON.stringify({
           data: finalData,
+          products,
           metrics,
-          total: dataWithLinks.length,
+          total: filteredData.length,
           returned: finalData.length,
         }),
         {

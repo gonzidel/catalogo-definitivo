@@ -9,6 +9,7 @@ import {
   guardarTransporteElegido,
 } from "./transportes-data.js";
 import { fylAnalytics } from "../scripts/analytics.js";
+import { canonicalizeTransportName } from "../scripts/transport-canonical.js";
 
 let fylDashboardViewOnce = false;
 
@@ -158,12 +159,191 @@ let historyControlsInitialized = false;
 let accountSheetControlsInitialized = false;
 let modalControlsInitialized = false;
 let historyVisible = false;
+const HISTORY_NOTIFICATION_KEY = "fyl_dashboard_history_notification";
 let currentUserId = null;
 let currentCartId = null;
 let currentCartItems = [];
 let ordersRealtimeSubscription = null;
+let isSubmittingCurrentCart = false;
+const closeOrderInFlight = new Set();
+let pendingCheckoutOrderFeedback = null;
+const pendingCloseOrderFeedbackById = new Map();
+
+const DASH_FX_DURATION_MS = 220;
+const ORDER_COMPLETE_ANIMATION_TOTAL_MS = 1120;
 
 fylDevLog("dashboard-instant.js cargado");
+
+function prefersReducedMotion() {
+  try {
+    return !!window.matchMedia("(prefers-reduced-motion: reduce)")?.matches;
+  } catch (_) {
+    return false;
+  }
+}
+
+function nextFrame() {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+function waitMs(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function waitForTransitionEnd(el, fallbackMs = DASH_FX_DURATION_MS + 120) {
+  return new Promise((resolve) => {
+    if (!el || prefersReducedMotion()) {
+      resolve();
+      return;
+    }
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      el.removeEventListener("transitionend", onEnd);
+      resolve();
+    };
+    const onEnd = (evt) => {
+      if (evt.target === el) {
+        finish();
+      }
+    };
+    el.addEventListener("transitionend", onEnd);
+    setTimeout(finish, fallbackMs);
+  });
+}
+
+function setButtonLoading(button, loadingText) {
+  if (!button) return () => {};
+  const prevText = button.textContent;
+  const wasDisabled = button.disabled;
+  button.disabled = true;
+  button.classList.add("is-loading");
+  if (loadingText) {
+    button.textContent = loadingText;
+  }
+  return () => {
+    button.classList.remove("is-loading");
+    button.disabled = wasDisabled;
+    button.textContent = prevText;
+  };
+}
+
+function clearCartTransientState() {
+  const bagSection = document.getElementById("section-bag");
+  if (bagSection) bagSection.classList.remove("dash-fx-pending");
+  document
+    .querySelectorAll("#section-bag .dash-bolsa-item.dash-fx-leave, #section-bag #cart-info.dash-fx-leave")
+    .forEach((el) => el.classList.remove("dash-fx-leave"));
+}
+
+async function runCartExitTransition() {
+  const bagSection = document.getElementById("section-bag");
+  const cartInfo = document.getElementById("cart-info");
+  if (!bagSection || !cartInfo || prefersReducedMotion()) return;
+
+  const rows = Array.from(cartInfo.querySelectorAll(".dash-bolsa-item"));
+  if (rows.length === 0) return;
+
+  await nextFrame();
+
+  // Evitar animación pesada cuando hay muchos items.
+  if (rows.length <= 2) {
+    rows.forEach((row) => row.classList.add("dash-fx-leave"));
+    await Promise.all(rows.map((row) => waitForTransitionEnd(row)));
+    return;
+  }
+
+  cartInfo.classList.add("dash-fx-leave");
+  await waitForTransitionEnd(cartInfo);
+}
+
+function clearOrderInlineFeedback() {
+  document.querySelectorAll(".dash-order-inline-feedback").forEach((node) => node.remove());
+}
+
+function clearOrderVisualTransientState() {
+  document
+    .querySelectorAll(".dash-order.dash-fx-highlight, .dash-order.dash-fx-pulse-soft, .dash-order.dash-order--finalized, .dash-order.is-finalizing")
+    .forEach((card) => {
+      card.classList.remove("dash-fx-highlight", "dash-fx-pulse-soft", "dash-order--finalized", "is-finalizing");
+    });
+  clearOrderInlineFeedback();
+}
+
+function insertInlineOrderFeedback(orderCard, opts) {
+  if (!orderCard || !opts?.message) return;
+  const previous = orderCard.querySelector(".dash-order-inline-feedback");
+  if (previous) previous.remove();
+
+  const feedback = document.createElement("div");
+  feedback.className = "dash-order-inline-feedback";
+  if (opts.kind === "close-success") {
+    feedback.classList.add("is-finalized");
+  }
+  const chipClass =
+    opts.kind === "close-success"
+      ? "dash-order-header-chip dash-order-header-chip--preparing"
+      : "dash-order-header-chip dash-order-header-chip--state";
+  feedback.innerHTML = `
+    <div class="dash-order-inline-feedback__line">
+      <span class="${chipClass}">${opts.chipText || ""}</span>
+      <span class="dash-order-inline-feedback__text">${opts.message}</span>
+    </div>
+  `;
+
+  const insertAfterNode = orderCard.querySelector(".dash-order__head--compact");
+  if (insertAfterNode?.nextSibling) {
+    orderCard.insertBefore(feedback, insertAfterNode.nextSibling);
+  } else if (insertAfterNode) {
+    orderCard.appendChild(feedback);
+  } else {
+    orderCard.prepend(feedback);
+  }
+}
+
+function bindInlineFeedbackCleanup(ordersSection) {
+  if (!ordersSection || ordersSection.dataset.inlineFeedbackCleanupBound === "true") return;
+  const clearHandler = () => clearOrderInlineFeedback();
+  ordersSection.addEventListener("click", clearHandler);
+  ordersSection.addEventListener("change", clearHandler);
+  ordersSection.dataset.inlineFeedbackCleanupBound = "true";
+}
+
+function applyPendingOrderFeedback(ordersSection) {
+  if (!ordersSection) return;
+  bindInlineFeedbackCleanup(ordersSection);
+
+  const cards = Array.from(ordersSection.querySelectorAll(".dash-order[data-order-id]"));
+  if (cards.length === 0) return;
+
+  if (pendingCheckoutOrderFeedback) {
+    const targetCard = cards[0];
+    if (targetCard) {
+      targetCard.classList.add("dash-fx-highlight");
+      insertInlineOrderFeedback(targetCard, pendingCheckoutOrderFeedback);
+    }
+    pendingCheckoutOrderFeedback = null;
+  }
+
+  pendingCloseOrderFeedbackById.forEach((feedback, orderId) => {
+    const targetCard = ordersSection.querySelector(`.dash-order[data-order-id="${CSS.escape(orderId)}"]`);
+    if (!targetCard) return;
+    targetCard.classList.add("dash-order--finalized");
+    const finalizeBtn = targetCard.querySelector(".close-order-btn");
+    if (finalizeBtn) {
+      finalizeBtn.disabled = true;
+      finalizeBtn.classList.add("dash-fx-hidden");
+    }
+    const modifyLink = targetCard.querySelector(`.dash-order-modify-link[data-order-id="${CSS.escape(orderId)}"]`);
+    if (modifyLink) {
+      requestAnimationFrame(() => {
+        modifyLink.classList.add("is-visible");
+      });
+    }
+    pendingCloseOrderFeedbackById.delete(orderId);
+  });
+}
 
 function hideLoader() {
   const loader = document.getElementById("loader");
@@ -177,6 +357,34 @@ function hideLoader() {
   document.querySelectorAll(".spinner").forEach((spinner) => {
     spinner.style.display = "none";
   });
+}
+
+function setHistoryNotificationVisible(visible) {
+  const toggleBtn = document.getElementById("toggle-history-btn");
+  if (toggleBtn) {
+    toggleBtn.classList.toggle("has-notification", !!visible);
+  }
+  try {
+    if (visible) {
+      window.localStorage.setItem(HISTORY_NOTIFICATION_KEY, "1");
+    } else {
+      window.localStorage.removeItem(HISTORY_NOTIFICATION_KEY);
+    }
+  } catch (_) {
+    /* ignore storage */
+  }
+}
+
+function syncHistoryNotificationFromStorage() {
+  try {
+    const visible = window.localStorage.getItem(HISTORY_NOTIFICATION_KEY) === "1";
+    const toggleBtn = document.getElementById("toggle-history-btn");
+    if (toggleBtn) {
+      toggleBtn.classList.toggle("has-notification", visible);
+    }
+  } catch (_) {
+    /* ignore storage */
+  }
 }
 
 function showContent() {
@@ -1464,6 +1672,9 @@ function showTransportFinalizeModal({ province, city, opciones }) {
   const isChacoSpecial = normalizeForMatch(province) === "chaco" && chacoSpecialLocalities.has(normalizeForMatch(city));
   // Regla: para esas localidades, el transporte efectivo es solo "Retiro de Local".
   if (isChacoSpecial) opciones = ["Retiro de Local"];
+  opciones = Array.from(
+    new Set((opciones || []).map((o) => canonicalizeTransportName(o)).filter(Boolean))
+  );
 
   const soloSedeUnico = opciones.length === 1 && opciones[0] === "SEDE";
   const soloRetiroLocalUnico = opciones.length === 1 && opciones[0] === "Retiro de Local";
@@ -1486,7 +1697,7 @@ function showTransportFinalizeModal({ province, city, opciones }) {
     if (soloRetiroLocalUnico) {
       bodyInner = `
         <h3 id="dash-transport-finalize-title" class="dash-remove-cart-item-modal__title">Transporte asignado</h3>
-        <div class="dash-transport-assigned">Retiro del local</div>
+        <div class="dash-transport-assigned">Retiro de Local</div>
         <p class="dash-transport-lead">Acordar en el local.</p>
         <div class="dash-transport-block">
           <p class="dash-transport-block__text">¿Tenés dudas? Escribinos por ${waLink}.</p>
@@ -1621,7 +1832,7 @@ function showTransportFinalizeModal({ province, city, opciones }) {
       }
       const v = selectEl ? selectEl.value : "";
       if (!v) return;
-      done({ ok: true, transportName: v });
+      done({ ok: true, transportName: canonicalizeTransportName(v) });
     };
 
     document.addEventListener("keydown", onKeyDown);
@@ -1809,6 +2020,9 @@ async function clearCurrentCart() {
 }
 
 async function submitCurrentCart() {
+  if (isSubmittingCurrentCart) return;
+  isSubmittingCurrentCart = true;
+  let releaseSubmitBtnLoading = () => {};
   try {
     // Verificar si hay productos agotados antes de enviar
     const hasOutOfStockItems = currentCartItems && currentCartItems.some(item => item.isOutOfStock);
@@ -1944,15 +2158,23 @@ async function submitCurrentCart() {
     } catch (_e) {}
 
     const submitBtn = document.getElementById("submit-cart-btn");
-    if (submitBtn) submitBtn.disabled = true;
+    releaseSubmitBtnLoading = setButtonLoading(submitBtn, "Enviando...");
+    const bagSection = document.getElementById("section-bag");
+    if (bagSection) bagSection.classList.add("dash-fx-pending");
 
     const { data, error } = await supabase.rpc("rpc_checkout_cart");
     if (error) {
       console.error("âŒ Error enviando pedido:", error);
       alert(error.message || "No se pudo enviar el pedido. Intenta nuevamente.");
-      if (submitBtn) submitBtn.disabled = false;
+      clearCartTransientState();
       return;
     }
+
+    const checkoutOrderKey = String(
+      (data && (data.order_number || data.order_id)) || ""
+    ).trim();
+
+    await runCartExitTransition();
 
     try {
       if (fylAnalytics.isReady()) {
@@ -1963,22 +2185,33 @@ async function submitCurrentCart() {
       }
     } catch (_e) {}
 
-    if (window.showToast) {
-      window.showToast("Pedido enviado. Lo verás en 'Mi pedido activo'.", "success");
-    }
+    pendingCheckoutOrderFeedback = {
+      kind: "checkout-success",
+      chipText: "Reserva",
+      message: "Se agregó a tu pedido y quedó en reserva.",
+    };
     window.dispatchEvent(new CustomEvent("cart:synced"));
     await loadCart(currentUserId);
     await loadOrders(currentUserId);
+    if (window.showToast) {
+      window.showToast("Se agregó a tu pedido y quedó en reserva.", "success");
+    }
+
+    if (checkoutOrderKey && typeof window.schedulePwaPromptAfterSuccessfulOrder === "function") {
+      window.schedulePwaPromptAfterSuccessfulOrder(checkoutOrderKey);
+    }
   } catch (error) {
     console.error("âŒ Error enviando pedido:", error);
     alert("OcurriÃ³ un error inesperado al enviar el pedido.");
   } finally {
-    const submitBtn = document.getElementById("submit-cart-btn");
-    if (submitBtn) submitBtn.disabled = false;
+    clearCartTransientState();
+    releaseSubmitBtnLoading();
+    isSubmittingCurrentCart = false;
   }
 }
 
 function openPreviousOrdersModal() {
+  setHistoryNotificationVisible(false);
   const modal = document.getElementById("previous-orders-modal");
   const modalContent = document.getElementById("modal-orders-content");
   
@@ -2095,6 +2328,7 @@ function setupHistoryControls() {
 
   historyControlsInitialized = true;
   fylDevLog("âœ… Configurando controles del historial");
+  syncHistoryNotificationFromStorage();
 
   // Configurar controles del modal (esto solo se hace una vez)
   setupModalControls();
@@ -2102,6 +2336,7 @@ function setupHistoryControls() {
   // Al hacer clic en "Ver pedidos anteriores", abrir el modal
   toggleBtn.addEventListener("click", () => {
     fylDevLog("ðŸ”˜ BotÃ³n 'Ver pedidos anteriores' presionado");
+    setHistoryNotificationVisible(false);
     openPreviousOrdersModal();
   });
   
@@ -2292,7 +2527,12 @@ function isSupabaseRpcMissingError(err) {
   );
 }
 
-async function closeOrder(orderId) {
+async function closeOrder(orderId, opts = {}) {
+  if (!orderId || closeOrderInFlight.has(orderId)) return;
+  closeOrderInFlight.add(orderId);
+  const triggerBtn = opts.triggerBtn || null;
+  const orderCard = triggerBtn?.closest(".dash-order[data-order-id]") || document.querySelector(`.dash-order[data-order-id="${CSS.escape(orderId)}"]`);
+  let releaseCloseBtnLoading = () => {};
   try {
     const customerRow = await fetchCustomerShippingRow();
     if (!customerRow) {
@@ -2360,6 +2600,8 @@ async function closeOrder(orderId) {
       cancelLabel: "Cancelar",
     });
     if (!confirmClose) return;
+    releaseCloseBtnLoading = setButtonLoading(triggerBtn, "Finalizando...");
+    if (orderCard) orderCard.classList.add("is-finalizing");
 
     let transportOnlyLocal = false;
     if (needTransportStep) {
@@ -2425,6 +2667,15 @@ async function closeOrder(orderId) {
 
     fylDevLog("âœ… Pedido cerrado correctamente");
 
+    if (orderCard) {
+      orderCard.classList.add("is-order-completing");
+      await waitMs(prefersReducedMotion() ? 180 : ORDER_COMPLETE_ANIMATION_TOTAL_MS);
+      orderCard.classList.remove("is-order-completing");
+    }
+
+    pendingCloseOrderFeedbackById.set(orderId, {
+      kind: "close-success",
+    });
     await loadOrders(currentUserId);
 
     let successBody = `<p class="dash-app-message-modal__text dash-app-message-modal__text--status-line">Se está <span class="dash-app-status-chip">Preparando pedido</span>.</p><p class="dash-app-message-modal__text">Podrá cambiarlo o modificarlo presionando <strong>Modificar pedido</strong>. Cuando su pedido se envíe, podrá consultarlo en el historial <span class="dash-app-message-modal__clock-wrap" role="img" aria-label="Historial de pedidos">${DASH_MESSAGE_CLOCK_SVG}</span></p>`;
@@ -2441,6 +2692,11 @@ async function closeOrder(orderId) {
   } catch (error) {
     console.error("âŒ Error cerrando pedido:", error);
     alert("Ocurrió un error al cerrar el pedido.");
+    clearOrderVisualTransientState();
+  } finally {
+    releaseCloseBtnLoading();
+    if (orderCard) orderCard.classList.remove("is-finalizing");
+    closeOrderInFlight.delete(orderId);
   }
 }
 
@@ -3062,14 +3318,14 @@ async function loadOrders(userId) {
       console.warn("rpc_orders_daily_maintenance:", e?.message || e);
     }
 
-    // Mi pedido: solo un pedido abierto (active / closing_soon). "closed" va al historial (sent + closed).
+    // Mi pedido: debe seguir visible tras "Finalizar pedido" del cliente (status closed).
     const { data: ordersRaw, error } = await supabase
       .from("orders")
       .select(
         "id, order_number, status, total_amount, created_at, updated_at, expires_at, dismantle_at, order_items(id, product_name, color, size, quantity, price_snapshot, imagen, status, variant_id)"
       )
       .eq("customer_id", userId)
-      .in("status", ["active", "closing_soon"])
+      .in("status", ["active", "closing_soon", "closed"])
       .order("created_at", { ascending: false });
 
     const statusRank = (s) => {
@@ -3130,6 +3386,7 @@ async function loadOrders(userId) {
         const orderStatus = (order.status || "").toLowerCase().trim();
         const isActive = orderStatus === "active";
         const isClosingSoon = orderStatus === "closing_soon";
+        const isClosed = orderStatus === "closed";
         
         // Calcular total excluyendo items faltantes (con precios normalizados)
         const validItems = items.filter(item => item.status !== 'missing');
@@ -3246,8 +3503,8 @@ async function loadOrders(userId) {
               if (st === "picked") {
                 return {
                   className: "item-row__status--st-picked",
-                  text: "Apartado",
-                  info: "Apartado: el producto ya se encuentra en su pedido.",
+                  text: "Listo",
+                  info: "Listo: el producto ya se encuentra en su pedido.",
                 };
               }
               if (st === "missing") {
@@ -3409,6 +3666,10 @@ async function loadOrders(userId) {
         // Regla UX: 4+ productos habilita, y los items "reservados" no bloquean.
         const canFinalize = totalUnits >= MIN_UNITS_TO_FINALIZE && !hasMissingItems && (allPickedForOrder || hasReservedInOrder);
         const finalizeBtnClass = canFinalize ? "btn-finalize-order--enabled" : "btn-finalize-order--disabled";
+        const finalizeBtnText =
+          totalUnits < MIN_UNITS_TO_FINALIZE
+            ? `${Math.max(0, totalUnits)} de ${MIN_UNITS_TO_FINALIZE} productos`
+            : "Finalizar pedido";
         const missingForFinalize = Math.max(0, MIN_UNITS_TO_FINALIZE - totalUnits);
         let finalizeTitle = "";
         if (hasMissingItems) {
@@ -3419,25 +3680,37 @@ async function loadOrders(userId) {
           finalizeTitle = "Para finalizar el pedido debe esperar a que el vendedor confirme el stock de la reserva.";
         }
 
+        const closedStateChip = isClosed
+          ? `<span class="dash-order-header-chip dash-order-header-chip--preparing">Preparando pedido</span>`
+          : "";
+        const daysChip = `<span class="dash-order-header-chip dash-order-header-chip--days" title="Quedan ${daysRemaining} días para cerrar el pedido (14 días desde la creación)">${daysRemaining} días</span>`;
+
         return `
-          <div class="dash-order order-item" data-order-id="${order.id}" data-order-closed="false">
+          <div class="dash-order order-item" data-order-id="${order.id}" data-order-closed="${isClosed ? "true" : "false"}">
             <div class="dash-order__head--compact dash-order__head--summary">
               <div class="dash-order__head-left">
                 <div class="dash-order__title">📦 Mi pedido</div>
-                <span class="dash-order-header-chip dash-order-header-chip--state">${getOrderStatusSummary(visibleItems)}</span>
               </div>
               <div class="dash-order__head-right">
-                <span class="dash-order-header-chip dash-order-header-chip--days" title="Quedan ${daysRemaining} días para cerrar el pedido (14 días desde la creación)">${daysRemaining} días</span>
+                ${daysChip}
                 ${
                   isActive || isClosingSoon
                     ? `<div class="dash-order-header-menu-wrap">
-                         <button type="button" class="dash-order-header-kebab" aria-label="Opciones del pedido" aria-haspopup="true" aria-expanded="false">…</button>
+                         <button type="button" class="dash-order-header-kebab" aria-label="Opciones del pedido" aria-haspopup="true" aria-expanded="false"><svg class="dash-order-header-kebab__icon" width="14" height="4" viewBox="0 0 14 4" aria-hidden="true" focusable="false"><circle cx="2" cy="2" r="1.2"/><circle cx="7" cy="2" r="1.2"/><circle cx="12" cy="2" r="1.2"/></svg></button>
                          <div class="dash-order-header-popover" role="menu" aria-hidden="true">
                            <button type="button" class="dash-order-header-menuitem" data-cancel-entire-order="${order.id}">Cancelar pedido</button>
                          </div>
                        </div>`
-                    : `<span class="dash-order-header-kebab" aria-hidden="true">…</span>`
+                    : `<span class="dash-order-header-kebab" aria-hidden="true"><svg class="dash-order-header-kebab__icon" width="14" height="4" viewBox="0 0 14 4" aria-hidden="true" focusable="false"><circle cx="2" cy="2" r="1.2"/><circle cx="7" cy="2" r="1.2"/><circle cx="12" cy="2" r="1.2"/></svg></span>`
                 }
+              </div>
+              <div class="dash-order__status-row">
+                <div class="dash-order__status-left">
+                  <span class="dash-order-header-chip dash-order-header-chip--state">${getOrderStatusSummary(visibleItems)}</span>
+                </div>
+                <div class="dash-order__status-right">
+                  ${closedStateChip}
+                </div>
               </div>
             </div>
             <div class="dash-divider"></div>
@@ -3446,7 +3719,11 @@ async function loadOrders(userId) {
                 <div class="dash-order__number">Pedido #${orderDisplayNumber}</div>
                 <div class="dash-order__total-line">Total: ${formatOrderPrice(total)}</div>
               </div>
-              ${isActive || isClosingSoon ? `<div class="dash-order__cta"><div class="dash-order-finalize-wrap"><button type="button" class="btn btn-finalize-order close-order-btn ${finalizeBtnClass}" data-order-id="${order.id}" data-order-items-count="${totalUnits}" data-all-picked="${allPickedForOrder ? "true" : "false"}" data-has-reserved="${hasReservedInOrder ? "true" : "false"}" data-has-missing-items="${hasMissingItems ? "true" : "false"}" data-finalize-title="${(finalizeTitle || "").replace(/"/g, "&quot;")}" ${canFinalize ? "" : (totalUnits < MIN_UNITS_TO_FINALIZE ? "disabled" : "")} ${finalizeTitle ? `title="${finalizeTitle.replace(/"/g, "&quot;")}"` : ""}>Finalizar pedido</button><div class="dash-order-finalize-tooltip" id="finalize-tooltip-${order.id}" role="tooltip" aria-hidden="true"></div></div></div>` : ""}
+              ${
+                isActive || isClosingSoon
+                  ? `<div class="dash-order__cta"><div class="dash-order-finalize-wrap"><button type="button" class="btn btn-finalize-order close-order-btn ${finalizeBtnClass}" data-order-id="${order.id}" data-order-items-count="${totalUnits}" data-all-picked="${allPickedForOrder ? "true" : "false"}" data-has-reserved="${hasReservedInOrder ? "true" : "false"}" data-has-missing-items="${hasMissingItems ? "true" : "false"}" data-finalize-title="${(finalizeTitle || "").replace(/"/g, "&quot;")}" ${canFinalize ? "" : (totalUnits < MIN_UNITS_TO_FINALIZE ? "disabled" : "")} ${finalizeTitle ? `title="${finalizeTitle.replace(/"/g, "&quot;")}"` : ""}>${finalizeBtnText}</button><div class="dash-order-finalize-tooltip" id="finalize-tooltip-${order.id}" role="tooltip" aria-hidden="true"></div></div></div>`
+                  : `<div class="dash-order__cta"><button type="button" class="dash-order-modify-link" data-order-id="${order.id}">Modificar pedido</button></div>`
+              }
             </div>
             <div class="dash-divider"></div>
             <div class="dash-order__sub">Productos del pedido (${totalUnits})</div>
@@ -3479,6 +3756,7 @@ async function loadOrders(userId) {
         const hasMissingItems = btn.dataset.hasMissingItems === "true";
         const finalizeTitle = (btn.dataset.finalizeTitle || "").replace(/&quot;/g, '"');
         if (!orderId) return;
+        if (closeOrderInFlight.has(orderId) || btn.classList.contains("is-loading")) return;
 
         if (hasMissingItems) {
           const text =
@@ -3552,9 +3830,11 @@ async function loadOrders(userId) {
           if (!confirmed) return;
         }
 
-        await closeOrder(orderId);
+        await closeOrder(orderId, { triggerBtn: btn });
       };
     });
+
+    applyPendingOrderFeedback(ordersSection);
 
     ordersSection.querySelectorAll(".dash-order-modify-link").forEach((btn) => {
       btn.onclick = async () => {
@@ -3949,6 +4229,7 @@ async function loadOrders(userId) {
 async function loadClosedOrders(userId) {
   // Usar el contenedor del modal en lugar del contenedor de historial
   const historyContainer = document.getElementById("modal-orders-content");
+  const historySummary = document.getElementById("history-modal-summary");
   if (!historyContainer) {
     console.error("âŒ No se encontrÃ³ el contenedor del modal");
     return;
@@ -4015,14 +4296,14 @@ async function loadClosedOrders(userId) {
     // Primero intentar con consultas separadas que son mÃ¡s confiables
     fylDevLog("ðŸ“‹ Intentando consultas separadas para closed y sent...");
     
-    // Historial: enviados (sent) y en preparación (closed), más recientes primero
+    // Historial: solo pedidos finalizados reales (sent), más recientes primero
     const { data: sentOrders, error: sentError } = await supabase
       .from("orders")
       .select(
         "id, order_number, status, total_amount, created_at, updated_at, order_items(id, product_name, color, size, quantity, price_snapshot, imagen, status, variant_id)"
       )
       .eq("customer_id", userId)
-      .in("status", ["sent", "closed"])
+      .eq("status", "sent")
       .order("created_at", { ascending: false });
     
     // Verificar errores
@@ -4056,7 +4337,12 @@ async function loadClosedOrders(userId) {
     }
     
     if (!finalOrders || finalOrders.length === 0) {
-      fylDevLog("ℹ️ No se encontraron pedidos en historial (sent/closed)");
+      fylDevLog("ℹ️ No se encontraron pedidos en historial (sent)");
+      if (historySummary) {
+        historySummary.innerHTML = `
+          <p class="history-modal__support history-modal__support--inline">Revisá tus pedidos anteriores.</p>
+        `;
+      }
       
       historyContainer.innerHTML = `
         <p style="text-align: center; color: #666; padding: 40px;">No tenés pedidos en el historial todavía.</p>
@@ -4080,6 +4366,12 @@ async function loadClosedOrders(userId) {
       const dateB = new Date(b.updated_at || b.created_at);
       return dateB - dateA; // MÃ¡s reciente primero
     });
+
+    if (historySummary) {
+      historySummary.innerHTML = `
+        <p class="history-modal__support history-modal__support--inline">Revisá tus pedidos anteriores.</p>
+      `;
+    }
     
     const ordersHtml = sortedOrders
       .map((order) => {
@@ -4087,16 +4379,15 @@ async function loadClosedOrders(userId) {
         const formattedDate = orderDate.toLocaleDateString("es-AR", {
           year: "numeric",
           month: "long",
-          day: "numeric",
+          day: "numeric"
+        });
+        const formattedTime = orderDate.toLocaleTimeString("es-AR", {
           hour: "2-digit",
-          minute: "2-digit"
+          minute: "2-digit",
         });
         const orderNumber = order.order_number || order.id.substring(0, 8);
         const histStatus = String(order.status || "").toLowerCase().trim();
-        const histBadge =
-          histStatus === "closed"
-            ? ` <span style="font-size:12px;color:#b45309;">(En preparación)</span>`
-            : "";
+        const histBadgeText = histStatus === "sent" ? "Enviado" : "Cerrado";
         const items = order.order_items || [];
         
         // Calcular total excluyendo items faltantes
@@ -4108,8 +4399,10 @@ async function loadClosedOrders(userId) {
         }, 0);
         
         // Generar HTML de items del pedido
+        const visibleItems = items.slice(0, 3);
+        const hiddenCount = Math.max(0, items.length - visibleItems.length);
         const itemsHtml = items.length > 0
-          ? items.map(item => {
+          ? visibleItems.map(item => {
               const itemImage = item.imagen || FALLBACK_IMAGE;
               const itemQuantity = Number(item.quantity || 0);
               const itemPrice = orderItemUnitForDisplay(item);
@@ -4130,21 +4423,25 @@ async function loadClosedOrders(userId) {
               `;
             }).join("")
           : "<p style='color: #666; font-size: 14px;'>No hay productos en este pedido.</p>";
+        const extraItemsHtml =
+          hiddenCount > 0
+            ? `<div class="order-items-more">+${hiddenCount} ${hiddenCount === 1 ? "producto más" : "productos más"}</div>`
+            : "";
         
         return `
-          <div class="order-date-item" data-order-id="${order.id}">
-            <div class="order-date-item-header" data-order-toggle="${order.id}">
-              <span class="order-date">${formattedDate} <span class="order-expand-icon">â–¼</span></span>
-              <span class="order-number">#${orderNumber}${histBadge}</span>
+          <div class="order-date-item history-order-card" data-order-id="${order.id}">
+            <div class="history-order-card__top">
+              <span class="order-number">Pedido #${orderNumber}</span>
+              <span class="history-order-card__status-chip history-order-card__status-chip--${histStatus}">${histBadgeText}</span>
             </div>
-            <div class="order-total">Total: $${total.toLocaleString("es-AR")}</div>
-            ${
-              histStatus === "closed"
-                ? `<div style="margin:10px 0 0;"><button type="button" class="btn" style="font-size:14px;padding:8px 12px;" data-history-modify-order="${order.id}">Modificar pedido</button></div>`
-                : ""
-            }
+            <div class="order-date">${formattedDate} · ${formattedTime}</div>
+            <div class="history-order-card__total-row">
+              <div class="order-total">Total: $${total.toLocaleString("es-AR")}</div>
+              <button type="button" class="history-order-card__toggle" data-order-toggle="${order.id}" aria-expanded="false">Ver detalle</button>
+            </div>
             <div class="order-items-detail" id="order-items-${order.id}">
               ${itemsHtml}
+              ${extraItemsHtml}
               ${items.length > 0 ? `<div class="order-items-summary">Total del pedido: $${total.toLocaleString("es-AR")}</div>` : ""}
             </div>
           </div>
@@ -4174,6 +4471,8 @@ async function loadClosedOrders(userId) {
             if (orderItem.classList.contains("expanded")) {
               orderItem.classList.remove("expanded");
               itemsDetail.classList.remove("visible");
+              toggleBtn.setAttribute("aria-expanded", "false");
+              toggleBtn.textContent = "Ver detalle";
             } else {
               // Cerrar otros pedidos expandidos
               modalOrdersList.querySelectorAll(".order-date-item.expanded").forEach(expanded => {
@@ -4183,11 +4482,18 @@ async function loadClosedOrders(userId) {
                 if (expandedDetail) {
                   expandedDetail.classList.remove("visible");
                 }
+                const otherToggle = expanded.querySelector("[data-order-toggle]");
+                if (otherToggle) {
+                  otherToggle.setAttribute("aria-expanded", "false");
+                  otherToggle.textContent = "Ver detalle";
+                }
               });
               
               // Expandir este pedido
               orderItem.classList.add("expanded");
               itemsDetail.classList.add("visible");
+              toggleBtn.setAttribute("aria-expanded", "true");
+              toggleBtn.textContent = "Ocultar detalle";
             }
           }
         });
@@ -4468,10 +4774,11 @@ async function loadData() {
         // Esto es necesario incluso si no hay pedidos para que el botÃ³n funcione
         setupHistoryControls();
 
-        // Deep-link: abrir historial solo DESPUÉS de auth (cuando currentUserId ya existe)
+        // Deep-link: si viene ?view=history desde admin, abrir historial automáticamente.
         try {
           const url = new URL(window.location.href);
           if (url.searchParams.get("view") === "history") {
+            setHistoryNotificationVisible(true);
             setTimeout(() => {
               try {
                 openPreviousOrdersModal();

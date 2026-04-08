@@ -1150,6 +1150,14 @@ async function searchProducts(query) {
     console.error("❌ Supabase no disponible");
     return;
   }
+
+  // Coincidencia por prefijo del nombre (ej. "80" → 80, 801, 800; no "R1801").
+  // Quitar % y _ del término para que no actúen como comodines en ILIKE.
+  const namePrefix = String(query || "").trim().replace(/[%_]/g, "");
+  if (namePrefix.length < 2) {
+    hideProductResults();
+    return;
+  }
   
   // Cargar almacenes si no están cargados
   if (!warehouses.general || !warehouses.ventaPublico) {
@@ -1157,7 +1165,7 @@ async function searchProducts(query) {
   }
   
   try {
-    // Buscar productos por nombre y sus variantes con stock disponible
+    // Buscar productos cuyo nombre empieza por el término (variantes con stock se filtran después)
     const { data: products, error: productsError } = await supabase
       .from("products")
       .select(`
@@ -1173,7 +1181,7 @@ async function searchProducts(query) {
           active
         )
       `)
-      .ilike("name", `%${query}%`)
+      .ilike("name", `${namePrefix}%`)
       .in("status", ["active", "pending_stock", "draft"]) // Incluir productos activos, con stock pendiente y en borrador
       .limit(20);
     
@@ -1341,7 +1349,7 @@ async function searchProducts(query) {
       })
     );
     
-    displayProductResults(productsWithStock.flat());
+    displayProductResults(productsWithStock.flat(), namePrefix);
   } catch (error) {
     console.error("❌ Error en búsqueda de productos:", error);
   }
@@ -1599,8 +1607,41 @@ function sortSizes(sizes) {
   });
 }
 
+function normalizeSearchText(text) {
+  return String(text || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function getProductSimilarityRank(productName, query) {
+  const normalizedName = normalizeSearchText(productName);
+  const normalizedQuery = normalizeSearchText(query);
+
+  if (!normalizedQuery) {
+    return { bucket: 3, extra: 0, name: normalizedName };
+  }
+
+  if (normalizedName === normalizedQuery) {
+    return { bucket: 0, extra: 0, name: normalizedName };
+  }
+
+  if (normalizedName.startsWith(normalizedQuery)) {
+    // Prefijos más cortos primero: 800 antes que 8005.
+    return { bucket: 1, extra: normalizedName.length - normalizedQuery.length, name: normalizedName };
+  }
+
+  const containsAt = normalizedName.indexOf(normalizedQuery);
+  if (containsAt >= 0) {
+    return { bucket: 2, extra: containsAt, name: normalizedName };
+  }
+
+  return { bucket: 3, extra: Number.MAX_SAFE_INTEGER, name: normalizedName };
+}
+
 // Mostrar resultados de productos
-function displayProductResults(products) {
+function displayProductResults(products, query = "") {
   const resultsDiv = document.getElementById("product-results");
   if (!resultsDiv) return;
   
@@ -1636,8 +1677,18 @@ function displayProductResults(products) {
   Object.values(groupedProducts).forEach(product => {
     product.talles = sortSizes(product.talles);
   });
-  
-  const productsHtml = Object.values(groupedProducts).map(product => `
+
+  // Priorizar por similitud con el término de búsqueda (exacto > prefijo corto > resto).
+  const groupedList = Object.values(groupedProducts).sort((a, b) => {
+    const rankA = getProductSimilarityRank(a.articulo, query);
+    const rankB = getProductSimilarityRank(b.articulo, query);
+
+    if (rankA.bucket !== rankB.bucket) return rankA.bucket - rankB.bucket;
+    if (rankA.extra !== rankB.extra) return rankA.extra - rankB.extra;
+    return rankA.name.localeCompare(rankB.name, "es", { sensitivity: "base" });
+  });
+
+  const productsHtml = groupedList.map(product => `
     <div class="product-result-item">
       <div style="display: flex; gap: 12px; align-items: start;">
         ${product.imagen ? `<img src="${product.imagen}" style="width: 60px; height: 60px; object-fit: cover; border-radius: 6px;" onerror="this.style.display='none'">` : '<div style="width: 60px; height: 60px; background: #f0f0f0; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #999; font-size: 12px;">Sin img</div>'}

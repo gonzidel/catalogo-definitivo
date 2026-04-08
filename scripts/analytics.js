@@ -1,7 +1,7 @@
 /**
  * FYL Analytics (GA4). Solo catalog y client. Admin no se mide.
  * Legado no instrumentado (no cargar en produccion): scripts/main.js, scripts/main-optimized.js,
- * scripts/index2.html, scripts/pwa.js, scripts/image-manager.js (usan gtag directo si se incluyen).
+ * scripts/index2.html, scripts/image-manager.js (usan gtag directo si se incluyen). scripts/pwa.js está obsoleto.
  */
 import { parseARSNumber } from "./utils/price.js";
 

@@ -4,6 +4,7 @@
  */
 import { viaCargoLocalities } from "./data/via-cargo-localidades.js";
 import { snaiderLocalities } from "./data/snaider-localidades.js";
+import { canonicalizeTransportName } from "../scripts/transport-canonical.js";
 
 /** Via Cargo y Transporte Snaider: listados generados con scripts/import-viacargo-xlsx.mjs e import-snaider-xlsx.mjs */
 
@@ -202,6 +203,18 @@ function matchTransporte(lista, p, l) {
   );
 }
 
+function canonicalizeTransportList(values) {
+  const unique = [];
+  const seen = new Set();
+  for (const value of values || []) {
+    const canonical = canonicalizeTransportName(value);
+    if (!canonical || seen.has(canonical)) continue;
+    seen.add(canonical);
+    unique.push(canonical);
+  }
+  return unique;
+}
+
 /**
  * Transportes para (provincia, localidad).
  * - Si la localidad está en destinos_transporte (cobertura SEDE), solo se envía por SEDE: no se mezclan otros transportes.
@@ -225,20 +238,29 @@ export function getTransportesDisponibles(provincia, localidad) {
   const via = matchTransporte(via_cargo, p, l);
 
   const opciones = [];
-  if (retiro) opciones.push(retiro.transporte);
-  if (expreso) opciones.push(expreso.transporte);
-  if (credifinMatch) opciones.push(credifinMatch.transporte);
-  if (snaider && !opciones.includes(snaider.transporte)) {
-    opciones.push(snaider.transporte);
+  if (retiro) opciones.push(canonicalizeTransportName(retiro.transporte));
+  if (expreso) opciones.push(canonicalizeTransportName(expreso.transporte));
+  if (credifinMatch) opciones.push(canonicalizeTransportName(credifinMatch.transporte));
+  const snaiderName = canonicalizeTransportName(snaider?.transporte);
+  if (snaiderName && !opciones.includes(snaiderName)) {
+    opciones.push(snaiderName);
   }
-  if (via && !opciones.includes(via.transporte)) opciones.push(via.transporte);
+  const viaName = canonicalizeTransportName(via?.transporte);
+  if (viaName && !opciones.includes(viaName)) {
+    opciones.push(viaName);
+  }
   if (opciones.length === 0) opciones.push("Correo Argentino");
 
-  const incluyeSede = opciones.includes("SEDE");
-  if (!incluyeSede && opciones.length > 0 && !opciones.includes("Correo Argentino")) {
-    opciones.push("Correo Argentino");
+  const canonicalOptions = canonicalizeTransportList(opciones);
+  const incluyeSede = canonicalOptions.includes("SEDE");
+  if (
+    !incluyeSede &&
+    canonicalOptions.length > 0 &&
+    !canonicalOptions.includes("Correo Argentino")
+  ) {
+    canonicalOptions.push("Correo Argentino");
   }
-  return opciones;
+  return canonicalOptions;
 }
 
 const STORAGE_KEY_PREFIX = "fyl_transporte_";
@@ -253,7 +275,7 @@ export function getTransporte(provincia, localidad) {
   if (opciones.length === 0) return "—";
   if (typeof localStorage !== "undefined") {
     const key = getStorageKey(provincia, localidad);
-    const guardado = localStorage.getItem(key);
+    const guardado = canonicalizeTransportName(localStorage.getItem(key));
     if (guardado && opciones.includes(guardado)) return guardado;
   }
   return opciones[0];
@@ -262,5 +284,8 @@ export function getTransporte(provincia, localidad) {
 /** Guarda la elección del cliente para (provincia, localidad). */
 export function guardarTransporteElegido(provincia, localidad, transporte) {
   if (typeof localStorage === "undefined") return;
-  localStorage.setItem(getStorageKey(provincia, localidad), transporte);
+  localStorage.setItem(
+    getStorageKey(provincia, localidad),
+    canonicalizeTransportName(transporte)
+  );
 }

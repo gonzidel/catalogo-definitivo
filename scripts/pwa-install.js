@@ -1,15 +1,11 @@
-// scripts/pwa-install.js
+// scripts/pwa-install.js — Service worker + PWA install prompt (post-pedido, UX no invasiva)
 
-// Evitar registrar SW en entorno local para desarrollo
+// --- Service worker (sin cambios de comportamiento) ---
 const __LOCAL_HOSTS = ["localhost", "127.0.0.1", "::1"];
 
 function __isLanIpv4(hostname) {
-  // 192.168.x.x
   if (hostname.startsWith("192.168.")) return true;
-  // 10.x.x.x
   if (hostname.startsWith("10.")) return true;
-
-  // 172.16.x.x -> 172.31.x.x
   if (hostname.startsWith("172.")) {
     const parts = hostname.split(".");
     if (parts.length !== 4) return false;
@@ -17,7 +13,6 @@ function __isLanIpv4(hostname) {
     if (!Number.isFinite(second)) return false;
     return second >= 16 && second <= 31;
   }
-
   return false;
 }
 
@@ -28,8 +23,7 @@ const __IS_LOCAL =
   __LOCAL_HOSTS.includes(location.hostname) ||
   (__isLanIpv4(location.hostname) && (__IS_DEV_PORT || true));
 
-// 1) Registrar service worker (solo fuera de localhost)
-const SW_VERSION = "m260406";
+const SW_VERSION = "m260407";
 let __swRefreshing = false;
 
 if ("serviceWorker" in navigator && !__IS_LOCAL) {
@@ -42,12 +36,10 @@ if ("serviceWorker" in navigator && !__IS_LOCAL) {
   navigator.serviceWorker
     .register(`sw.js?v=${SW_VERSION}`)
     .then((registration) => {
-      // Si hay un SW nuevo esperando, activarlo de inmediato.
       if (registration.waiting) {
         registration.waiting.postMessage({ type: "SKIP_WAITING" });
       }
 
-      // Cuando llega una nueva versión, forzar activación.
       registration.addEventListener("updatefound", () => {
         const newWorker = registration.installing;
         if (!newWorker) return;
@@ -61,14 +53,12 @@ if ("serviceWorker" in navigator && !__IS_LOCAL) {
         });
       });
 
-      // Cada carga: pedir al navegador que busque sw.js nuevo (crítico en móvil).
       __fylCheckSwUpdate(registration);
     })
     .catch((err) => {
       console.warn("[PWA] No se pudo registrar SW:", err);
     });
 
-  // Cuando el nuevo SW toma control, recargar una sola vez para levantar HTML/JS nuevos.
   navigator.serviceWorker.addEventListener("controllerchange", () => {
     if (__swRefreshing) return;
     __swRefreshing = true;
@@ -89,79 +79,281 @@ if ("serviceWorker" in navigator && !__IS_LOCAL) {
     });
   });
 } else if ("serviceWorker" in navigator && __IS_LOCAL) {
-  // En local, intentar desregistrar cualquier SW previo para evitar caché
   navigator.serviceWorker.getRegistrations?.().then((regs) => {
     regs.forEach((r) => r.unregister());
   });
 }
 
-let deferredPrompt;
+// --- localStorage (nuevo flujo post-pedido) ---
+const LS_DISMISSED = "fyl_pwa_prompt_dismissed_order_cycle";
+const LS_SHOWN = "fyl_pwa_prompt_shown_for_order";
+const LS_LAST_SUCCESS = "fyl_last_success_order_number";
+const LS_INSTALLED_ACK = "fyl_pwa_installed_ack";
+/** Compatibilidad con versión anterior del catálogo */
+const LEGACY_ACCEPT_KEY = "pwa-install-accepted";
 
-// Claves y pausas
-const DISMISS_KEY = "pwa-install-dismissed";
-const ACCEPT_KEY = "pwa-install-accepted";
-const VISIT_KEY = "pwa-catalog-visit-count";
-const PAUSE_MS = 48 * 60 * 60 * 1000; // 48 horas en ms
+let deferredPrompt = null;
+let __pwaBeforeInstallHooked = false;
+let __pwaModalBound = false;
+let __pwaPostOrderTimer = null;
+/** Evita programar dos veces el mismo pedido en la misma carga */
+let __pwaScheduledOrderKey = null;
+let __currentOrderKeyForModal = "";
 
-// Cada carga del catálogo cuenta como una visita (1ª = sin modal; 2ª en adelante = elegible)
-const catalogVisitCount =
-  parseInt(localStorage.getItem(VISIT_KEY) || "0", 10) + 1;
-localStorage.setItem(VISIT_KEY, String(catalogVisitCount));
+function fylPwaPromptImageUrl() {
+  const path = window.location.pathname || "";
+  const base = path.includes("/client/") ? "../" : "";
+  return `${base}assets/pwa/pwa-install-prompt.png`;
+}
 
-window.addEventListener("beforeinstallprompt", (e) => {
-  if (__IS_LOCAL) return; // no mostrar prompt en local
-  e.preventDefault();
-  deferredPrompt = e;
+/**
+ * Guarda el evento beforeinstallprompt (Chrome/Edge). Sin esto no hay instalación nativa.
+ */
+function captureDeferredInstallPrompt() {
+  if (__pwaBeforeInstallHooked) return;
+  __pwaBeforeInstallHooked = true;
+  window.addEventListener("beforeinstallprompt", (e) => {
+    if (__IS_LOCAL) return;
+    e.preventDefault();
+    deferredPrompt = e;
+  });
+}
 
-  // Si ya aceptó antes, no mostramos nunca más
-  if (localStorage.getItem(ACCEPT_KEY)) {
-    return;
+function isPwaInstalled() {
+  try {
+    const standalone =
+      window.matchMedia &&
+      window.matchMedia("(display-mode: standalone)").matches;
+    const iosStandalone =
+      typeof navigator !== "undefined" && navigator.standalone === true;
+    return !!(standalone || iosStandalone);
+  } catch (_e) {
+    return false;
   }
+}
 
-  // Primera visita: no mostrar el modal (sigue suprimido el prompt nativo)
-  if (catalogVisitCount < 2) {
-    return;
+function fylPwaUserDeclinedFurtherPrompts() {
+  try {
+    return (
+      !!localStorage.getItem(LS_INSTALLED_ACK) ||
+      !!localStorage.getItem(LEGACY_ACCEPT_KEY)
+    );
+  } catch (_e) {
+    return false;
   }
+}
 
-  // Compruebo la última vez que cerró el modal
-  const lastDismiss = parseInt(localStorage.getItem(DISMISS_KEY) || "0", 10);
-  const now = Date.now();
-
-  // Si no han pasado 48h, no muestro
-  if (now - lastDismiss < PAUSE_MS) {
-    return;
-  }
-
-  // Mostramos el modal tras 40 s
-  setTimeout(() => {
-    if (deferredPrompt && !__IS_LOCAL) {
-      document.getElementById("install-modal").classList.remove("hidden");
+/**
+ * Al cerrar con éxito un pedido distinto, limpia el dismiss del ciclo anterior y guarda el último número.
+ */
+function resetPwaPromptCycleOnNewSuccessfulOrder(orderNumber) {
+  const key = String(orderNumber || "").trim();
+  if (!key) return;
+  try {
+    const dismissed = localStorage.getItem(LS_DISMISSED);
+    if (dismissed && dismissed !== key) {
+      localStorage.removeItem(LS_DISMISSED);
     }
-  }, 40000);
-});
+    localStorage.setItem(LS_LAST_SUCCESS, key);
+  } catch (_e) {}
+}
 
-// Usuario acepta instalar
-document
-  .getElementById("install-accept")
-  .addEventListener("click", async () => {
-    document.getElementById("install-modal").classList.add("hidden");
-    localStorage.setItem(ACCEPT_KEY, "true");
-    try {
-      if (window.fylAnalytics && window.fylAnalytics.isReady()) {
-        window.fylAnalytics.event("pwa_prompt_accept", {});
-      }
-    } catch (_e) {}
+function shouldShowPwaPromptAfterOrder(orderNumber) {
+  const key = String(orderNumber || "").trim();
+  if (!key) return false;
+  if (__IS_LOCAL) return false;
+  if (isPwaInstalled()) return false;
+  if (fylPwaUserDeclinedFurtherPrompts()) return false;
+  if (!deferredPrompt) return false;
+  try {
+    if (localStorage.getItem(LS_DISMISSED) === key) return false;
+    if (localStorage.getItem(LS_SHOWN) === key) return false;
+  } catch (_e) {
+    return false;
+  }
+  return true;
+}
 
-    deferredPrompt.prompt();
-    await deferredPrompt.userChoice;
-    deferredPrompt = null;
+function markPwaPromptDismissedForCycle(orderNumber) {
+  const key = String(orderNumber || "").trim();
+  if (!key) return;
+  try {
+    localStorage.setItem(LS_DISMISSED, key);
+  } catch (_e) {}
+}
+
+function markPwaPromptShownForOrder(orderNumber) {
+  const key = String(orderNumber || "").trim();
+  if (!key) return;
+  try {
+    localStorage.setItem(LS_SHOWN, key);
+  } catch (_e) {}
+}
+
+function ensurePwaInstallModalInDom() {
+  let root = document.getElementById("fyl-pwa-install-modal");
+  if (root) return root;
+
+  root = document.createElement("div");
+  root.id = "fyl-pwa-install-modal";
+  root.className = "pwa-install-modal hidden";
+  root.setAttribute("role", "dialog");
+  root.setAttribute("aria-modal", "true");
+  root.setAttribute("aria-labelledby", "fyl-pwa-install-title");
+  root.innerHTML = `
+    <div class="pwa-install-modal__backdrop" data-pwa-install-dismiss="backdrop"></div>
+    <div class="pwa-install-modal__panel">
+      <button type="button" class="pwa-install-modal__close" data-pwa-install-dismiss="close" aria-label="Cerrar">×</button>
+      <div class="pwa-install-modal__image-wrap">
+        <img class="pwa-install-modal__image" src="" alt="" width="280" height="158" loading="lazy" decoding="async" />
+      </div>
+      <h2 id="fyl-pwa-install-title" class="pwa-install-modal__title">Instalá el catálogo</h2>
+      <p class="pwa-install-modal__text">Entrá en un toque y hacé pedidos más rápido.</p>
+      <div class="pwa-install-modal__actions">
+        <button type="button" class="pwa-install-modal__btn pwa-install-modal__btn--primary" id="fyl-pwa-install-confirm">Instalar ahora</button>
+        <button type="button" class="pwa-install-modal__btn pwa-install-modal__btn--secondary" id="fyl-pwa-install-later">Más tarde</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(root);
+
+  const img = root.querySelector(".pwa-install-modal__image");
+  if (img) {
+    img.src = fylPwaPromptImageUrl();
+    img.alt = "Catálogo FYL en el celular, un toque para abrir";
+  }
+
+  return root;
+}
+
+/** Misma UX y persistencia que «Más tarde»: overlay, × y botón secundario comparten esta ruta. */
+function dismissPwaInstallAsPostponed() {
+  closePwaInstallModal();
+  markPwaPromptDismissedForCycle(__currentOrderKeyForModal);
+  try {
+    if (window.fylAnalytics && window.fylAnalytics.isReady()) {
+      window.fylAnalytics.event("pwa_prompt_dismiss", {});
+    }
+  } catch (_e) {}
+}
+
+function bindPwaInstallModalOnce() {
+  if (__pwaModalBound) return;
+  const root = ensurePwaInstallModalInDom();
+
+  root.addEventListener("click", (ev) => {
+    const t = ev.target;
+    if (!(t instanceof Element)) return;
+    const dismiss = t.closest("[data-pwa-install-dismiss]");
+    if (dismiss) {
+      dismissPwaInstallAsPostponed();
+    }
   });
 
-// Usuario pospone para “otro momento”
-document.getElementById("install-later").addEventListener("click", () => {
-  document.getElementById("install-modal").classList.add("hidden");
-  localStorage.setItem(DISMISS_KEY, Date.now().toString());
+  const later = root.querySelector("#fyl-pwa-install-later");
+  if (later) {
+    later.addEventListener("click", () => dismissPwaInstallAsPostponed());
+  }
+
+  const confirmBtn = root.querySelector("#fyl-pwa-install-confirm");
+  if (confirmBtn) {
+    confirmBtn.addEventListener("click", () => {
+      handlePwaInstallConfirm();
+    });
+  }
+
+  __pwaModalBound = true;
+}
+
+function showPwaInstallModal() {
+  if (!deferredPrompt) return;
+  bindPwaInstallModalOnce();
+  const root = ensurePwaInstallModalInDom();
+  root.classList.remove("hidden");
+  document.body.classList.add("pwa-install-modal-open");
+  // Solo después de mostrar: si el usuario recarga antes, no queda «shown» y no bloquea reintentos del mismo pedido.
+  if (__currentOrderKeyForModal) {
+    markPwaPromptShownForOrder(__currentOrderKeyForModal);
+  }
+}
+
+function closePwaInstallModal() {
+  const root = document.getElementById("fyl-pwa-install-modal");
+  if (root) root.classList.add("hidden");
+  document.body.classList.remove("pwa-install-modal-open");
+}
+
+async function handlePwaInstallConfirm() {
+  if (!deferredPrompt) {
+    closePwaInstallModal();
+    return;
+  }
   try {
-    if (window.fylAnalytics && window.fylAnalytics.isReady()) window.fylAnalytics.event("pwa_prompt_dismiss", {});
+    if (window.fylAnalytics && window.fylAnalytics.isReady()) {
+      window.fylAnalytics.event("pwa_prompt_accept", {});
+    }
   } catch (_e) {}
+
+  try {
+    deferredPrompt.prompt();
+    const choice = await deferredPrompt.userChoice;
+    if (choice && choice.outcome === "accepted") {
+      try {
+        localStorage.setItem(LS_INSTALLED_ACK, "1");
+        localStorage.setItem(LEGACY_ACCEPT_KEY, "true");
+      } catch (_e) {}
+    }
+  } catch (_e) {
+    /* ignore */
+  }
+
+  deferredPrompt = null;
+  closePwaInstallModal();
+}
+
+/**
+ * Tras el mensaje de éxito del pedido: espera 2s y evalúa si abre el modal (una vez por pedido).
+ */
+function schedulePwaPromptAfterSuccessfulOrder(orderNumber) {
+  const key = String(orderNumber || "").trim();
+  if (!key) return;
+
+  resetPwaPromptCycleOnNewSuccessfulOrder(key);
+
+  if (__pwaScheduledOrderKey === key && __pwaPostOrderTimer != null) {
+    return;
+  }
+  __pwaScheduledOrderKey = key;
+
+  clearTimeout(__pwaPostOrderTimer);
+  __pwaPostOrderTimer = setTimeout(() => {
+    __pwaPostOrderTimer = null;
+    __pwaScheduledOrderKey = null;
+
+    if (!shouldShowPwaPromptAfterOrder(key)) return;
+
+    __currentOrderKeyForModal = key;
+    showPwaInstallModal();
+  }, 2000);
+}
+
+captureDeferredInstallPrompt();
+
+window.addEventListener("appinstalled", () => {
+  try {
+    localStorage.setItem(LS_INSTALLED_ACK, "1");
+  } catch (_e) {}
+  deferredPrompt = null;
+  closePwaInstallModal();
 });
+
+// API pública (nombres pedidos + alias corto para el dashboard)
+window.captureDeferredInstallPrompt = captureDeferredInstallPrompt;
+window.isPwaInstalled = isPwaInstalled;
+window.shouldShowPwaPromptAfterOrder = shouldShowPwaPromptAfterOrder;
+window.markPwaPromptDismissedForCycle = markPwaPromptDismissedForCycle;
+window.resetPwaPromptCycleOnNewSuccessfulOrder = resetPwaPromptCycleOnNewSuccessfulOrder;
+window.showPwaInstallModal = showPwaInstallModal;
+window.closePwaInstallModal = closePwaInstallModal;
+window.handlePwaInstallConfirm = handlePwaInstallConfirm;
+window.schedulePwaPromptAfterSuccessfulOrder = schedulePwaPromptAfterSuccessfulOrder;

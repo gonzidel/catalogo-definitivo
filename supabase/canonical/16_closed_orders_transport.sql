@@ -9,6 +9,31 @@ create table if not exists public.transports (
   updated_at timestamptz default now()
 );
 
+-- Normalización para evitar duplicados por mayúsculas/acentos/espacios.
+create or replace function public.normalize_transport_name(p_value text)
+returns text
+language sql
+immutable
+as $$
+  select regexp_replace(
+    lower(
+      trim(
+        translate(
+          coalesce(p_value, ''),
+          'áàäâãéèëêíìïîóòöôõúùüûñ',
+          'aaaaaeeeeiiiiooooouuuun'
+        )
+      )
+    ),
+    '\s+',
+    ' ',
+    'g'
+  );
+$$;
+
+create unique index if not exists transports_name_normalized_unique
+  on public.transports ((public.normalize_transport_name(name)));
+
 -- Agregar columna transport_id a customers si no existe
 do $$ 
 begin

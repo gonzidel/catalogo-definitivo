@@ -2,6 +2,7 @@ import { supabase } from "../scripts/supabase-client.js";
 import { clearProfileOnboardingSessionFlag } from "../scripts/profile-onboarding-modal.js";
 import { requireAuth } from "./auth-helper.js";
 import { getTransportesDisponibles, getTransporte, guardarTransporteElegido } from "./transportes-data.js";
+import { canonicalizeTransportName } from "../scripts/transport-canonical.js";
 
 // Validar formato de teléfono argentino
 function validatePhone(phone) {
@@ -692,14 +693,14 @@ function isChacoSpecial(province, city) {
 function getFormaPagoTextForTransport(transporte) {
   // Por ahora mantenemos el texto base; cuando tengas el texto exacto para
   // Credifin/Snaider/Via Cargo lo ajustamos en esta función.
-  if (transporte === "Correo Argentino") return "";
+  if (canonicalizeTransportName(transporte) === "Correo Argentino") return "";
   return "Acordar en el local.";
 }
 
 function syncPaymentBlocks(transporteElegido) {
   if (!profileFormaPagoBlock || !profileCorreoBlock) return;
 
-  const t = String(transporteElegido || "").trim();
+  const t = canonicalizeTransportName(transporteElegido);
   const showCorreo = t === "Correo Argentino";
 
   profileCorreoBlock.style.display = showCorreo ? "" : "none";
@@ -713,8 +714,8 @@ function syncPaymentBlocks(transporteElegido) {
 function updateProfileShippingBlock() {
   const province = (document.getElementById("province")?.value || "").trim();
   const city = (document.getElementById("city")?.value || "").trim();
-  let opciones = getTransportesDisponibles(province, city);
-  let efectivo = getTransporte(province, city);
+  let opciones = getTransportesDisponibles(province, city).map(canonicalizeTransportName);
+  let efectivo = canonicalizeTransportName(getTransporte(province, city));
 
   // Regla de Chaco: para esas localidades el transporte efectivo es solo Retiro de Local.
   if (isChacoSpecial(province, city)) {
@@ -746,7 +747,7 @@ function updateProfileShippingBlock() {
 profileShippingSelect?.addEventListener("change", () => {
   const province = (document.getElementById("province")?.value || "").trim();
   const city = (document.getElementById("city")?.value || "").trim();
-  const transporte = profileShippingSelect.value;
+  const transporte = canonicalizeTransportName(profileShippingSelect.value);
   if (province && city && transporte) guardarTransporteElegido(province, city, transporte);
   syncPaymentBlocks(transporte);
 });

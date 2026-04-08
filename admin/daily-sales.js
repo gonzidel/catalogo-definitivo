@@ -13,6 +13,7 @@ let currentAdminUser = null;
 let currentDate = getTodayBuenosAires();
 let currentFilter = 'all';
 let sales = [];
+let isRepairingEnvios = false;
 
 // Función para obtener supabase
 async function getSupabase() {
@@ -131,6 +132,7 @@ async function initDailySales() {
     // Configurar controles
     setupDateSelector();
     setupFilters();
+    setupRepairButton();
     setupEditModal();
     
     // Cargar ventas del día actual
@@ -168,6 +170,67 @@ function setupFilters() {
       displaySales();
     });
   });
+}
+
+function setupRepairButton() {
+  const repairBtn = document.getElementById("repair-envios-btn");
+  if (!repairBtn) return;
+
+  repairBtn.addEventListener("click", async () => {
+    await repairEnviosForCurrentDate();
+  });
+}
+
+async function repairEnviosForCurrentDate() {
+  if (isRepairingEnvios) return;
+  if (!supabase) {
+    supabase = await getSupabase();
+  }
+  if (!supabase) {
+    showMessage("Error: No se pudo conectar con la base de datos.", "error");
+    return;
+  }
+
+  const repairBtn = document.getElementById("repair-envios-btn");
+  const repairDate = currentDate || getTodayBuenosAires();
+  const confirmed = confirm(
+    `Se van a recalcular los envíos del día ${repairDate}.\n\n` +
+    "Esto reemplaza los registros consolidados de envíos para esa fecha en daily_sales.\n\n" +
+    "¿Deseas continuar?"
+  );
+  if (!confirmed) return;
+
+  isRepairingEnvios = true;
+  const originalText = repairBtn ? repairBtn.textContent : "";
+  if (repairBtn) {
+    repairBtn.disabled = true;
+    repairBtn.textContent = "Reparando...";
+  }
+
+  try {
+    const { data, error } = await supabase.rpc("rpc_sync_daily_sales_envios_by_date", {
+      p_sale_date: repairDate
+    });
+
+    if (error) {
+      console.error("❌ Error reparando envíos:", error);
+      showMessage(`Error al reparar envíos: ${error.message || "Error desconocido"}`, "error");
+      return;
+    }
+
+    const insertedRows = Number(data) || 0;
+    showMessage(`✅ Envíos reparados para ${repairDate}. Registros reconstruidos: ${insertedRows}.`, "success");
+    await loadSales();
+  } catch (error) {
+    console.error("❌ Error en repairEnviosForCurrentDate:", error);
+    showMessage("Error inesperado al reparar envíos del día.", "error");
+  } finally {
+    isRepairingEnvios = false;
+    if (repairBtn) {
+      repairBtn.disabled = false;
+      repairBtn.textContent = originalText || "🔧 Reparar envíos del día";
+    }
+  }
 }
 
 // Configurar modal de edición

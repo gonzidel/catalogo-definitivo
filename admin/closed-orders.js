@@ -2,6 +2,10 @@
 
 // Importar configuración de Supabase y QZ
 import { SUPABASE_URL, QZ_SIGN_SECRET } from "../scripts/config.js";
+import {
+  canonicalizeTransportName,
+  normalizeTransportKey,
+} from "../scripts/transport-canonical.js";
 
 const TIMEZONE_BUENOS_AIRES = "America/Argentina/Buenos_Aires";
 
@@ -1424,9 +1428,42 @@ async function createNewTransport(name, details) {
     return null;
   }
 
+  const rawName = String(name || "").trim();
+  const canonicalName = canonicalizeTransportName(rawName);
+  const canonicalKey = normalizeTransportKey(canonicalName);
+  if (!canonicalKey) {
+    alert("El nombre del transporte es requerido.");
+    return null;
+  }
+
+  // Verificación local rápida para evitar roundtrip cuando ya existe en memoria.
+  const duplicateInMemory = scheduledTransports.some(
+    (t) => normalizeTransportKey(t?.name) === canonicalKey
+  );
+  if (duplicateInMemory) {
+    alert(`Ya existe el transporte "${canonicalName}".`);
+    return null;
+  }
+
+  // Verificación remota para cubrir listas desactualizadas y evitar duplicados por alias/mayúsculas.
+  const { data: existingTransports, error: existingError } = await supabase
+    .from("transports")
+    .select("id, name");
+  if (existingError) {
+    console.warn("⚠️ No se pudo validar duplicados en transports:", existingError);
+  } else {
+    const duplicate = (existingTransports || []).find(
+      (t) => normalizeTransportKey(t?.name) === canonicalKey
+    );
+    if (duplicate) {
+      alert(`Ya existe el transporte "${canonicalName}" (${duplicate.name}).`);
+      return null;
+    }
+  }
+
   const { data, error } = await supabase
     .from("transports")
-    .insert({ name: name.trim(), details: details?.trim() || null })
+    .insert({ name: canonicalName, details: details?.trim() || null })
     .select()
     .single();
 

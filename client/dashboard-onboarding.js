@@ -65,7 +65,7 @@ const STEPS = [
       "<div class=\"dash-onboarding-state-text\">Reservado, pendiente de confirmación de stock.</div>" +
       "</div>" +
       "<div class=\"dash-onboarding-state-row\" role=\"listitem\">" +
-      "<span class=\"dash-onboarding-state-badge item-row__status item-row__status--st-picked\">Apartado</span>" +
+      "<span class=\"dash-onboarding-state-badge item-row__status item-row__status--st-picked\">Listo</span>" +
       "<div class=\"dash-onboarding-state-text\">Confirmado y separado para vos.</div>" +
       "</div>" +
       "<div class=\"dash-onboarding-state-row\" role=\"listitem\">" +

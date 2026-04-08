@@ -4,11 +4,11 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <!-- Cache bust: subí la versión en app-version.json y ejecutá npm run build (o deploy con predeploy). -->
-  <meta name="app-version" content="m260406">
+  <meta name="app-version" content="m260407">
   <title>Catálogo FYL</title>
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
-  <link rel="manifest" href="manifest.json?v=m260406">
-  <link rel="stylesheet" href="styles.css?v=m260406">
+  <link rel="manifest" href="manifest.json?v=m260407">
+  <link rel="stylesheet" href="styles.css?v=m260407">
   <link rel="icon" href="icons/icon-192x192.png" type="image/png">
   <meta name="theme-color" content="#CD844D">
   <style>
@@ -696,18 +696,8 @@
       </div>
       <h1 id="howto-title">Cómo comprar por mayor</h1>
       <p class="howto-hero__lead">
-        Mínimo 4 productos combinables. Armás tu pedido, lo enviás para reserva y te confirmamos stock. Sin pago online.
+        Mínimo 4 productos combinables. Armás tu pedido, lo enviás para reserva y te confirmamos stock.
       </p>
-      <div class="howto-hero__actions">
-        <a class="btn btn-primary" href="#/" data-action="go-home">Empezar a comprar</a>
-        <a class="btn btn-ghost" href="#howto-steps">Ver pasos</a>
-      </div>
-      <div class="howto-hero__chips" role="list" aria-label="Resumen">
-        <div class="chip" role="listitem">Mínimo 4</div>
-        <div class="chip" role="listitem">Hasta 7 días para armar</div>
-        <div class="chip" role="listitem">Reserva sin pago online</div>
-        <div class="chip" role="listitem">Envíos a todo el país</div>
-      </div>
     </section>
     <section class="howto-section" id="howto-steps" aria-labelledby="howto-steps-title">
       <div class="howto-section__head">
@@ -719,31 +709,34 @@
           <div class="step__num">1</div>
           <div class="step__body">
             <h3>Armá tu carrito</h3>
-            <p>Elegí modelos, talles y colores. Podés combinar lo que quieras; el mínimo son 4 productos.</p>
+            <p>Elegí modelos, talles y colores. Podés combinar lo que quieras.</p>
           </div>
         </li>
         <li class="step">
           <div class="step__num">2</div>
           <div class="step__body">
             <h3>Enviá el pedido para reserva</h3>
-            <p>Cuando llegás al mínimo, enviás el pedido. Ahí lo pasamos a reserva y revisamos stock.</p>
+            <p>Para reservar tu carrito, presioná “Hacer pedido” y así separamos tus productos. (Te avisamos si algo no queda en stock).</p>
           </div>
         </li>
         <li class="step">
           <div class="step__num">3</div>
           <div class="step__body">
             <h3>Sumá productos hasta 7 días</h3>
-            <p>Mientras tanto podés seguir agregando ítems durante 7 días. Te avisamos si algo no tiene stock para que lo reemplaces.</p>
+            <p>Podés seguir agregando productos a tu pedido durante 7 días sin costo. (Recordá que el mínimo de compra es de 4 productos).</p>
           </div>
         </li>
         <li class="step">
           <div class="step__num">4</div>
           <div class="step__body">
             <h3>Coordinamos envío y pago</h3>
-            <p>Te confirmamos el total y coordinamos envío. Pagás por transferencia o contra reembolso según acordemos.</p>
+            <p>Una vez finalizado tu pedido, coordinamos el envío y el pago.</p>
           </div>
         </li>
       </ol>
+      <div class="howto-hero__actions">
+        <a class="btn btn-primary btn-wide" href="#/" data-action="go-home">Empezar a comprar</a>
+      </div>
     </section>
     <section class="howto-section" id="howto-notes" aria-labelledby="howto-notes-title">
       <div class="howto-section__head">
@@ -753,51 +746,39 @@
       <div class="cards">
         <article class="info-card">
           <h3>Reserva y stock</h3>
-          <p>El pedido se reserva cuando lo enviás. Si algo no está, te avisamos y podés cambiarlo por otro modelo/talle/color.</p>
+          <p>El pedido se reserva al presionar “Hacer pedido”. Si algún producto no tiene stock, te avisamos para que puedas cambiarlo o quitarlo.</p>
         </article>
         <article class="info-card">
           <h3>Envíos y retiro</h3>
-          <p>Enviamos a todo el país. Si retirás en el local, también enviá el pedido y esperá nuestra confirmación para evitar faltantes.</p>
+          <p>Hacemos envíos a todo el país. También podés retirar en el local, pero esperá nuestra confirmación antes de venir.</p>
+          <p>Av. Alberdi 1099, Resistencia, Chaco.</p>
         </article>
         <article class="info-card">
           <h3>Medios de pago</h3>
-          <p>Transferencia o contra reembolso según localidad. Si pagás con tarjeta puede haber un recargo (ej. 3%); te lo indicamos al confirmar.</p>
-        </article>
-        <article class="info-card">
-          <h3>Cambios</h3>
-          <p>Consultá cambios y devoluciones con nosotros al confirmar; te pasamos las condiciones según el caso.</p>
+          <p>Transferencia o contra reembolso según localidad. Si pagás con tarjeta puede haber un recargo; te lo indicamos al confirmar.</p>
         </article>
       </div>
     </section>
     <section class="howto-section" id="howto-faq" aria-labelledby="howto-faq-title">
       <div class="howto-section__head">
         <h2 id="howto-faq-title">Preguntas frecuentes</h2>
-        <p class="muted">Respuestas cortas, sin vueltas.</p>
       </div>
       <div class="faq" role="region" aria-label="Preguntas frecuentes">
         <div class="faq-item">
-          <button class="faq-q" type="button" aria-expanded="false">¿Puedo mezclar modelos, talles y colores? <span class="faq-icon" aria-hidden="true">+</span></button>
+          <button class="faq-q" type="button" aria-expanded="false">¿Puedo combinar modelos, talles y colores? <span class="faq-icon" aria-hidden="true">+</span></button>
           <div class="faq-a" hidden>Sí. El mínimo es 4 productos y los combinás como quieras.</div>
         </div>
         <div class="faq-item">
-          <button class="faq-q" type="button" aria-expanded="false">¿Tengo que pagar desde la web? <span class="faq-icon" aria-hidden="true">+</span></button>
-          <div class="faq-a" hidden>No. Enviás el pedido, te confirmamos stock y después coordinamos pago y envío.</div>
-        </div>
-        <div class="faq-item">
-          <button class="faq-q" type="button" aria-expanded="false">¿Qué pasa si un producto no tiene stock? <span class="faq-icon" aria-hidden="true">+</span></button>
+          <button class="faq-q" type="button" aria-expanded="false">¿Qué pasa si un producto no hay en stock? <span class="faq-icon" aria-hidden="true">+</span></button>
           <div class="faq-a" hidden>Te avisamos al confirmar y podés reemplazarlo por otro disponible.</div>
         </div>
         <div class="faq-item">
           <button class="faq-q" type="button" aria-expanded="false">¿Cómo sé si mi pedido está confirmado? <span class="faq-icon" aria-hidden="true">+</span></button>
-          <div class="faq-a" hidden>Te avisamos por WhatsApp o en la sección Pedidos una vez que revisamos el stock.</div>
+          <div class="faq-a" hidden>En la sección «Mi pedido» verás <span class="howto-status-badge--listo">Listo</span> en los productos ya separados.</div>
         </div>
         <div class="faq-item">
           <button class="faq-q" type="button" aria-expanded="false">¿Hay cambios o devoluciones? <span class="faq-icon" aria-hidden="true">+</span></button>
           <div class="faq-a" hidden>Consultalo con nosotros al confirmar; te pasamos la política según el producto y el caso.</div>
-        </div>
-        <div class="faq-item">
-          <button class="faq-q" type="button" aria-expanded="false">¿Puede haber recargo por pagar con tarjeta? <span class="faq-icon" aria-hidden="true">+</span></button>
-          <div class="faq-a" hidden>En algunos casos sí (por ejemplo 3%). Te lo decimos al confirmar el pedido.</div>
         </div>
       </div>
     </section>
@@ -805,6 +786,35 @@
       <h2>¿Lista para armar tu pedido?</h2>
       <p class="muted">Entrá al catálogo, elegí tus productos y enviá el pedido cuando llegues al mínimo.</p>
       <a class="btn btn-primary btn-wide" href="#/" data-action="go-home">Ir al catálogo</a>
+    </section>
+
+    <section class="howto-section" aria-label="Redes sociales">
+      <div class="howto-section__head">
+        <h2>Nuestras redes</h2>
+        <p class="muted">Podés ver nuestros productos y cómo trabajamos en nuestras redes.</p>
+      </div>
+      <div class="about-fyl__socialActions" aria-label="Acciones de redes">
+        <a class="btn about-fyl__socialBtn about-fyl__socialBtn--ig" href="https://www.instagram.com/fylmodaok/" target="_blank" rel="noopener" aria-label="Abrir Instagram @fylmodaok">
+          <span class="about-fyl__socialIcon">
+            <img src="/assets/icons/instagram.svg" alt="Instagram" />
+          </span>
+          <span class="about-fyl__socialText">
+            <span class="about-fyl__socialLabel">Instagram</span>
+            <span class="about-fyl__socialHandle">@fylmodaok</span>
+          </span>
+          <span class="about-fyl__socialGo" aria-hidden="true">↗</span>
+        </a>
+        <a class="btn about-fyl__socialBtn about-fyl__socialBtn--fb" href="https://www.facebook.com/FyLcalzados1" target="_blank" rel="noopener" aria-label="Abrir Facebook FyL Calzados">
+          <span class="about-fyl__socialIcon">
+            <img src="/assets/icons/facebook.svg" alt="Facebook" />
+          </span>
+          <span class="about-fyl__socialText">
+            <span class="about-fyl__socialLabel">Facebook</span>
+            <span class="about-fyl__socialHandle">FyL Calzados</span>
+          </span>
+          <span class="about-fyl__socialGo" aria-hidden="true">↗</span>
+        </a>
+      </div>
     </section>
   </main>
 
@@ -824,8 +834,8 @@
 
     <section class="howto-section" aria-label="Presentación">
       <article class="info-card about-fyl__intro">
-        <p>Somos un mayorista de calzado e indumentaria enfocado en revendedoras de todo el país.</p>
-        <p>Trabajamos con stock real y operación diaria, lo que nos permite ofrecer variedad, rapidez y cumplimiento en cada pedido.</p>
+        <p>Somos una empresa familiar especializada en venta mayorista de calzado e indumentaria. Trabajamos todos los días para acompañar el crecimiento de revendedoras y negocios en todo el país.</p>
+        <p>Contamos con fábrica propia de calzado, lo que nos permite ofrecer stock constante, variedad y respuesta rápida en cada pedido.</p>
       </article>
     </section>
 
@@ -1027,45 +1037,38 @@
     </div>
   </div>
 
-  <!-- Modal de instalación PWA -->
-  <div id="install-modal" class="install-modal hidden">
-    <div class="install-modal-content">
-      <p>¿Te gustaría descargar el acceso directo a nuestro catálogo?</p>
-      <button id="install-accept">Sí, quiero</button>
-      <button id="install-later">En otro momento</button>
-    </div>
-  </div>
+  <!-- Modal PWA: se inyecta desde scripts/pwa-install.js (post-pedido en dashboard o uso futuro) -->
 
   <!-- Scripts esenciales -->
   <script src="/config.prod.js"></script>
-  <script type="module" src="scripts/boot-telemetry.js?v=m260406"></script>
-  <script type="module" src="scripts/config.js?v=m260406"></script>
-  <script type="module" src="scripts/supabase-client.js?v=m260406"></script>
-  <script type="module" src="scripts/analytics.js?v=m260406"></script>
+  <script type="module" src="scripts/boot-telemetry.js?v=m260407"></script>
+  <script type="module" src="scripts/config.js?v=m260407"></script>
+  <script type="module" src="scripts/supabase-client.js?v=m260407"></script>
+  <script type="module" src="scripts/analytics.js?v=m260407"></script>
   <script type="module">
-    import { fylAnalytics } from "./scripts/analytics.js?v=m260406";
+    import { fylAnalytics } from "./scripts/analytics.js?v=m260407";
     fylAnalytics.init({ app_area: "catalog", page_type: "home", user_role: "guest" });
   </script>
-  <script type="module" src="scripts/main-supabase.js?v=m260406"></script>
-  <script type="module" src="scripts/auth-status.js?v=m260406"></script>
-  <script type="module" src="scripts/notifications.js?v=m260406"></script>
-  <script type="module" src="scripts/catalog-onboarding.js?v=m260406"></script>
-  <script type="module" src="scripts/product-alternatives.js?v=m260406"></script>
-  <script type="module" src="scripts/cart-persistent.js?v=m260406"></script>
-  <script type="module" src="scripts/ui/toast.js?v=m260406"></script>
-  <script type="module" src="scripts/search-manager.js?v=m260406"></script>
-  <script type="module" src="scripts/whatsapp.js?v=m260406"></script>
-  <script type="module" src="scripts/scroll.js?v=m260406"></script>
-  <script src="scripts/pwa-install.js?v=m260406"></script>
-  <script src="scripts/filtros.js?v=m260406"></script>
-  <script type="module" src="scripts/quick-actions.js?v=m260406"></script>
-  <script type="module" src="scripts/mobile-nav.js?v=m260406"></script>
-  <script type="module" src="scripts/banner.js?v=m260406"></script>
-  <script type="module" src="scripts/size-filter.js?v=m260406"></script>
-  <script type="module" src="scripts/fyl-originals-banner.js?v=m260406"></script>
-  <script type="module" src="scripts/custom-banner.js?v=m260406"></script>
-  <script type="module" src="scripts/como-comprar.js?v=m260406"></script>
-  <script type="module" src="scripts/ui/bottom-sheet.js?v=m260406"></script>
+  <script type="module" src="scripts/main-supabase.js?v=m260407"></script>
+  <script type="module" src="scripts/auth-status.js?v=m260407"></script>
+  <script type="module" src="scripts/notifications.js?v=m260407"></script>
+  <script type="module" src="scripts/catalog-onboarding.js?v=m260407"></script>
+  <script type="module" src="scripts/product-alternatives.js?v=m260407"></script>
+  <script type="module" src="scripts/cart-persistent.js?v=m260407"></script>
+  <script type="module" src="scripts/ui/toast.js?v=m260407"></script>
+  <script type="module" src="scripts/search-manager.js?v=m260407"></script>
+  <script type="module" src="scripts/whatsapp.js?v=m260407"></script>
+  <script type="module" src="scripts/scroll.js?v=m260407"></script>
+  <script src="scripts/pwa-install.js?v=m260407"></script>
+  <script src="scripts/filtros.js?v=m260407"></script>
+  <script type="module" src="scripts/quick-actions.js?v=m260407"></script>
+  <script type="module" src="scripts/mobile-nav.js?v=m260407"></script>
+  <script type="module" src="scripts/banner.js?v=m260407"></script>
+  <script type="module" src="scripts/size-filter.js?v=m260407"></script>
+  <script type="module" src="scripts/fyl-originals-banner.js?v=m260407"></script>
+  <script type="module" src="scripts/custom-banner.js?v=m260407"></script>
+  <script type="module" src="scripts/como-comprar.js?v=m260407"></script>
+  <script type="module" src="scripts/ui/bottom-sheet.js?v=m260407"></script>
   
   <!-- Modal de producto con SKU -->
   <div id="product-modal" class="product-modal">

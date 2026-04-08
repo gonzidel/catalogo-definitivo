@@ -8,7 +8,7 @@ import {
   USE_OPEN_SHEET_FALLBACK as CONFIG_USE_OPEN_SHEET_FALLBACK,
   configReady,
 } from "./config.js";
-import { supabase as supabaseClient } from "./supabase-client.js?v=m260406";
+import { supabase as supabaseClient } from "./supabase-client.js?v=m260407";
 import { normalizeSize } from "./utils/size-normalizer.js";
 import { fylAnalytics } from "./analytics.js";
 import { formatARS as formatARSValue, parseARSNumber } from "./utils/price.js";

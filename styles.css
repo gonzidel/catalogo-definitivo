@@ -1615,20 +1615,199 @@ body.has-cart-bar #catalogo {
 
 #wa-menu a:hover { background: #f5f5f5; }
 
-/* Modal PWA */
-.install-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 2000; }
+/* Modal PWA (post-pedido, inyectado por scripts/pwa-install.js) */
+.pwa-install-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 4000;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 12px 12px calc(12px + env(safe-area-inset-bottom, 0px));
+  font-family: Poppins, system-ui, -apple-system, sans-serif;
+  box-sizing: border-box;
+}
 
-.install-modal.hidden { display: none; }
+@media (min-height: 520px) {
+  .pwa-install-modal {
+    align-items: center;
+    padding: 16px 16px calc(16px + env(safe-area-inset-bottom, 0px));
+  }
+}
 
-.install-modal-content { background: #fff; padding: 2rem; border-radius: 8px; text-align: center; max-width: 90%; }
+.pwa-install-modal.hidden {
+  display: none !important;
+}
 
-.install-modal-content p { margin-bottom: 1.5rem; font-size: 1rem; color: #333; }
+body.pwa-install-modal-open {
+  overflow: hidden;
+}
 
-.install-modal-content button { margin: 0 .5rem; padding: .6rem 1.2rem; border: none; border-radius: 5px; font-size: .95rem; cursor: pointer; }
+.pwa-install-modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(4px);
+}
 
-#install-accept { background: #CD844D; color: #fff; }
+.pwa-install-modal__panel {
+  position: relative;
+  width: 100%;
+  max-width: 400px;
+  max-height: min(90vh, 620px);
+  margin: 0;
+  padding: 12px 16px 18px;
+  background: #fff;
+  border-radius: 20px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  box-shadow:
+    0 -6px 28px rgba(0, 0, 0, 0.1),
+    0 1px 0 rgba(255, 255, 255, 0.8) inset;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  box-sizing: border-box;
+}
 
-#install-later { background: #777; color: #fff; }
+@media (min-width: 400px) {
+  .pwa-install-modal__panel {
+    margin: 0 auto;
+    padding: 14px 18px 20px;
+    box-shadow:
+      0 20px 50px rgba(0, 0, 0, 0.12),
+      0 1px 0 rgba(255, 255, 255, 0.85) inset;
+  }
+}
+
+.pwa-install-modal__close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.035);
+  color: #9a9693;
+  font-size: 18px;
+  font-weight: 400;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.pwa-install-modal__close:active {
+  background: rgba(0, 0, 0, 0.07);
+  color: #7a7672;
+}
+
+.pwa-install-modal__image-wrap {
+  margin: 0 auto 8px;
+  padding: 0 4px;
+  max-width: 100%;
+  min-height: 0;
+  max-height: 150px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+}
+
+.pwa-install-modal__image {
+  display: block;
+  width: auto;
+  max-width: 94%;
+  height: auto;
+  max-height: 140px;
+  object-fit: contain;
+  border-radius: 10px;
+  opacity: 0.97;
+}
+
+.pwa-install-modal__title {
+  margin: 0 0 6px;
+  padding-right: 0;
+  max-width: 100%;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: #1a1a1a;
+  line-height: 1.2;
+  text-align: left;
+  text-wrap: balance;
+}
+
+.pwa-install-modal__text {
+  margin: 0 0 26px;
+  padding-right: 0;
+  max-width: 100%;
+  font-size: 0.875rem;
+  font-weight: 400;
+  line-height: 1.5;
+  color: #6f6f6f;
+  text-align: left;
+  text-wrap: pretty;
+  hyphens: auto;
+  -webkit-hyphens: auto;
+}
+
+.pwa-install-modal__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pwa-install-modal__btn {
+  width: 100%;
+  min-height: 48px;
+  padding: 13px 16px;
+  border: none;
+  border-radius: 14px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.pwa-install-modal__btn--primary {
+  padding: 15px 18px;
+  min-height: 52px;
+  font-size: 15px;
+  background: linear-gradient(180deg, #d4925e 0%, #c47a42 100%);
+  color: #fff;
+  box-shadow:
+    0 6px 16px rgba(0, 0, 0, 0.14),
+    0 4px 12px rgba(205, 132, 77, 0.38),
+    0 1px 0 rgba(255, 255, 255, 0.22) inset;
+}
+
+.pwa-install-modal__btn--primary:active {
+  filter: brightness(0.97);
+  box-shadow:
+    0 3px 12px rgba(0, 0, 0, 0.12),
+    0 2px 8px rgba(205, 132, 77, 0.35),
+    0 1px 0 rgba(255, 255, 255, 0.18) inset;
+}
+
+.pwa-install-modal__btn--secondary {
+  background: transparent;
+  color: rgba(122, 118, 114, 0.72);
+  font-weight: 500;
+  font-size: 0.8125rem;
+  padding-top: 10px;
+  padding-bottom: 10px;
+  min-height: 44px;
+  box-shadow: none;
+}
+
+.pwa-install-modal__btn--secondary:active {
+  color: rgba(92, 88, 84, 0.85);
+  background: rgba(0, 0, 0, 0.03);
+}
 
 /* Mejoras de UX */
 .no-data, .error-message {
@@ -5274,6 +5453,24 @@ body.modal-open {
   font-size: 13px;
   line-height: 1.45;
   color: var(--howto-muted);
+}
+
+/* Misma lectura visual que el chip "Listo" en Mi pedido (dashboard). */
+.howto .howto-status-badge--listo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  margin: 0 1px;
+  border-radius: 999px;
+  white-space: nowrap;
+  vertical-align: middle;
+  line-height: 1.2;
+  background: rgba(129, 199, 132, 0.32);
+  color: #1b5e20;
+  border: 1px solid rgba(76, 175, 80, 0.35);
 }
 
 .howto-final {

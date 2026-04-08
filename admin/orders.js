@@ -294,6 +294,8 @@ let hasMoreOrders = true;
 let isLoadingMore = false;
 let allOrdersLoaded = false; // Para saber si ya se cargaron todos los pedidos
 let badgeCountsLoaded = false; // Para saber si ya se cargaron los conteos totales de badges
+/** IDs ordenados (más reciente primero) para Activos / Apartados / Espera: el filtro es por ítems, no por página SQL cruda. */
+let clientTabFilteredIdsCache = null; // { filter: string, ids: string[] } | null
 // Map para rastrear qué pedidos están en modo "ver completo" vs "solo reservados" en pestaña Activos
 // orderId -> true (ver completo) | false/undefined (solo reservados)
 let orderViewMode = new Map();
@@ -1473,15 +1475,111 @@ async function loadOrders(resetPagination = true) {
       } else {
         query = query.eq("status", currentFilter);
       }
-    } else if (filterMode === "client") {
-      query = query.not("status", "in", '("sent","devolución","devolucion")');
-    }
 
-    query = query.order("created_at", { ascending: false }).range(currentPage * pageSize, (currentPage + 1) * pageSize - 1);
-    const response = await query;
-    data = response.data;
-    error = response.error;
-    totalCount = response.count || 0;
+      query = query.order("created_at", { ascending: false }).range(currentPage * pageSize, (currentPage + 1) * pageSize - 1);
+      const response = await query;
+      data = response.data;
+      error = response.error;
+      totalCount = response.count || 0;
+    } else if (filterMode === "client") {
+      // Activos / Apartados / Espera: el criterio es por estados de order_items. Paginar por IDs filtrados
+      // (si pagináramos solo por fecha, los N más recientes podrían ser casi todos "Apartados" y la pestaña Activos quedaría casi vacía).
+      let lightRows = null;
+      let lightErr = null;
+
+      if (resetPagination || !clientTabFilteredIdsCache || clientTabFilteredIdsCache.filter !== currentFilter) {
+        const lightRes = await supabase
+          .from("orders")
+          .select("id, created_at, status, order_items(status)")
+          .not("status", "in", '("sent","devolución","devolucion")')
+          .order("created_at", { ascending: false });
+        lightRows = lightRes.data;
+        lightErr = lightRes.error;
+      }
+
+      if (seq !== ordersLoadSeq || filterAtStart !== currentFilter) {
+        if (DEBUG_ORDERS) console.log("[orders] loadOrders dropped (client tab, pre-cache)", { seq, filterAtStart, currentFilter });
+        return;
+      }
+
+      if (lightErr) {
+        error = lightErr;
+        data = [];
+        totalCount = 0;
+        clientTabFilteredIdsCache = null;
+      } else if (resetPagination || !clientTabFilteredIdsCache || clientTabFilteredIdsCache.filter !== currentFilter) {
+        const filtered = filterOrdersForTab(lightRows || [], currentFilter);
+        clientTabFilteredIdsCache = {
+          filter: currentFilter,
+          ids: filtered.map((o) => o.id),
+        };
+        totalCount = filtered.length;
+      } else {
+        totalCount = clientTabFilteredIdsCache.ids.length;
+      }
+
+      if (!error) {
+        const idList = (clientTabFilteredIdsCache && clientTabFilteredIdsCache.filter === currentFilter)
+          ? clientTabFilteredIdsCache.ids
+          : [];
+        const pageIds = idList.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
+
+        if (pageIds.length === 0) {
+          data = [];
+        } else {
+          const fullSelect = `
+            id,
+            order_number,
+            status,
+            total_amount,
+            created_at,
+            updated_at,
+            sent_at,
+            customer_id,
+            notes,
+            source,
+            order_items (
+              id,
+              product_name,
+              color,
+              size,
+              quantity,
+              price_snapshot,
+              status,
+              imagen,
+              variant_id,
+              order_item_stock_sources ( qty, warehouse_id )
+            ),
+            customers:customer_id!left (
+              id,
+              customer_number,
+              full_name,
+              phone,
+              city,
+              province,
+              dni,
+              email
+            )
+          `;
+          const { data: pageOrders, error: errPage } = await supabase
+            .from("orders")
+            .select(fullSelect)
+            .in("id", pageIds);
+          if (errPage) {
+            error = errPage;
+            data = [];
+          } else {
+            const orderById = new Map((pageOrders || []).map((o) => [o.id, o]));
+            data = pageIds.map((id) => orderById.get(id)).filter(Boolean);
+          }
+        }
+      }
+
+      if (seq !== ordersLoadSeq || filterAtStart !== currentFilter) {
+        if (DEBUG_ORDERS) console.log("[orders] loadOrders dropped (client tab, post-fetch)", { seq, filterAtStart, currentFilter });
+        return;
+      }
+    }
   }
 
   // Log temporal: respuesta de Supabase (antes del guard)
@@ -1801,35 +1899,17 @@ async function loadBadgeCountsInBackground() {
     
     // Consulta optimizada: solo traer IDs y status de items (no datos completos)
     // Esto es mucho más rápido que traer todos los datos del pedido
+    // Misma base que loadOrders (pestañas client): incluye closed para que orders2 pueda contar cerrados con ítems reservados en Activos.
     const { data: ordersForCounting } = await supabase
       .from("orders")
       .select("id, status, order_items(status)")
-      .not("status", "in", "(closed,sent,devolución)");
+      .not("status", "in", '("sent","devolución","devolucion")');
     
     if (ordersForCounting) {
-      // Contar activos: solo pedidos con al menos un ítem reservado o missing (misma lógica que pestaña Activos)
-      const realActiveCount = ordersForCounting.filter(order => {
-        if (!order.order_items || order.order_items.length === 0) return false;
-        if (hasAllItemsPicked(order) && !hasWaitingItems(order)) return false;
-        return hasReservedItems(order) || hasItemsNeedingAttention(order);
-      }).length;
-      
-      // Contar apartados
-      const realPickedCount = ordersForCounting.filter(order => {
-        if (!order.order_items || order.order_items.length === 0) return false;
-        const hasWaiting = order.order_items.some(i => i.status === 'waiting');
-        if (hasWaiting) return false;
-        const hasReserved = order.order_items.some(i => i.status === 'reserved');
-        if (hasReserved) return false;
-        const allPicked = order.order_items.every(i => i.status === 'picked' || i.status === 'waiting');
-        return allPicked;
-      }).length;
-      
-      // Contar en espera: pedidos con al menos un ítem en waiting
-      const realWaitingCount = ordersForCounting.filter(order => {
-        if (!order.order_items || order.order_items.length === 0) return false;
-        return hasWaitingItems(order);
-      }).length;
+      const list = ordersForCounting;
+      const realActiveCount = filterOrdersForTab(list, STATUS.ACTIVE).length;
+      const realPickedCount = filterOrdersForTab(list, STATUS.PICKED).length;
+      const realWaitingCount = filterOrdersForTab(list, STATUS.WAITING).length;
       
       // Actualizar badges con conteos reales
       updateBadgeWithCount('active-orders-badge', realActiveCount);
@@ -3713,6 +3793,17 @@ function renderOrderItem(item, customer = {}, offersData = { itemOffers: new Map
   }
 }
 
+/** Aplica la misma lógica que filterOrders pero para una pestaña concreta (sin mutar currentFilter de forma visible al resto del módulo). */
+function filterOrdersForTab(list, tab) {
+  const saved = currentFilter;
+  currentFilter = tab;
+  try {
+    return filterOrders(list);
+  } finally {
+    currentFilter = saved;
+  }
+}
+
 function filterOrders(list) {
   if (currentFilter === "all") {
     const excluded = new Set(FINAL_STATUSES.map((s) => s.toLowerCase()));
@@ -3725,7 +3816,10 @@ function filterOrders(list) {
   if (currentFilter === "waiting") {
     return list.filter((order) => {
       if (order.status === STATUS.CLOSED || order.status === STATUS.SENT || order.status === STATUS.DEVOLUCION) return false;
-      return hasWaitingItems(order);
+      if (!hasWaitingItems(order)) return false;
+      // Prioridad Activos: pedidos mixtos (p. ej. reservado + espera) solo en Activos, no duplicar en Espera
+      if (filterOrdersForTab([order], STATUS.ACTIVE).length === 1) return false;
+      return true;
     });
   }
 

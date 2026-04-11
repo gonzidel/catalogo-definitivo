@@ -71,6 +71,7 @@ const __dashWarehouseCache = {
   until: 0,
   promise: null,
 };
+const DASHBOARD_SCROLL_TO_BAG_ONCE_KEY = "fyl_dashboard_scroll_to_bag_once";
 
 function getCachedMapValue(cacheMap, key) {
   const entry = cacheMap.get(key);
@@ -107,6 +108,26 @@ function buildVariantInfoCacheKey(articulo, color, talle, variantId = null) {
 function clearDashboardVariantInfoCaches() {
   __dashVariantInfoCache.clear();
   __dashVariantInfoInFlight.clear();
+}
+
+function maybeAutoScrollToBagFromStickyCart() {
+  try {
+    if (sessionStorage.getItem(DASHBOARD_SCROLL_TO_BAG_ONCE_KEY) !== "1") return;
+    sessionStorage.removeItem(DASHBOARD_SCROLL_TO_BAG_ONCE_KEY);
+  } catch (_e) {
+    return;
+  }
+
+  // Solo aplicar cuando hay muchos productos en "Mi pedido" (aparece "Ver todo el pedido").
+  const hasOrderExpandToggle = !!document.querySelector("#orders-section .dash-order__list-toggle");
+  if (!hasOrderExpandToggle) return;
+
+  const bagSection = document.getElementById("section-bag");
+  if (!bagSection) return;
+
+  requestAnimationFrame(() => {
+    bagSection.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
 }
 
 async function getDashboardWarehouseIdsCached(options = {}) {
@@ -3239,9 +3260,12 @@ async function cleanupDuplicateCartItems(cartId, items) {
   return cleaned;
 }
 
-async function loadCart(userId) {
+async function loadCart(userId, options = {}) {
   const cartInfo = document.getElementById("cart-info");
   if (!cartInfo) return;
+  const retryAttempt = Number(options.retryAttempt || 0);
+  const maxEmptyRetries = Number(options.maxEmptyRetries || 2);
+  const retryDelayMs = Number(options.retryDelayMs || 450);
 
   function getCartProductsCount(cartItems = []) {
     return cartItems.reduce((sum, item) => {
@@ -3253,6 +3277,43 @@ async function loadCart(userId) {
   function formatProductsCount(count) {
     const n = Number(count) || 0;
     return `${n} ${n === 1 ? "producto" : "productos"} en el carrito`;
+  }
+
+  function hasLocalCartItems() {
+    try {
+      const raw = localStorage.getItem("fyl_cart");
+      const parsed = raw ? JSON.parse(raw) : [];
+      if (!Array.isArray(parsed) || parsed.length === 0) return false;
+      const total = parsed.reduce((sum, item) => {
+        const qty = Number(item?.cantidad ?? item?.quantity ?? item?.qty ?? 0);
+        return sum + (Number.isFinite(qty) ? qty : 0);
+      }, 0);
+      return total > 0;
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  function shouldRetryEmptyState() {
+    if (retryAttempt >= maxEmptyRetries) return false;
+    let navFromSticky = false;
+    try {
+      navFromSticky =
+        sessionStorage.getItem(DASHBOARD_SCROLL_TO_BAG_ONCE_KEY) === "1";
+    } catch (_error) {}
+    return navFromSticky || hasLocalCartItems();
+  }
+
+  async function retryLoadCartIfNeeded() {
+    if (!shouldRetryEmptyState()) return false;
+    await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+    await loadCart(userId, {
+      ...options,
+      retryAttempt: retryAttempt + 1,
+      maxEmptyRetries,
+      retryDelayMs,
+    });
+    return true;
   }
 
   try {
@@ -3268,6 +3329,7 @@ async function loadCart(userId) {
       .maybeSingle();
 
     if (cartError || !cart) {
+      if (await retryLoadCartIfNeeded()) return;
         cartInfo.innerHTML = `
           <p class="empty-cart">
             Todavía no agregaste productos
@@ -3327,6 +3389,7 @@ async function loadCart(userId) {
     await ensureVariantSkusLoaded(cartItems.map((it) => it?.variant_id).filter(Boolean));
 
     if (!cartItems || cartItems.length === 0) {
+      if (await retryLoadCartIfNeeded()) return;
         cartInfo.innerHTML = `
           <p class="empty-cart">
             Todavía no agregaste productos
@@ -4257,6 +4320,7 @@ async function loadOrders(userId, options = {}) {
       if (itemRows.length <= maxItems) return;
 
       listEl.dataset.collapsed = "true";
+      listEl.classList.remove("dash-order__list--expanded");
       itemRows.forEach((row, index) => {
         if (index >= maxItems) {
           row.classList.add("is-hidden-collapsed");
@@ -4275,12 +4339,14 @@ async function loadOrders(userId, options = {}) {
 
         if (isCollapsed) {
           listEl.dataset.collapsed = "false";
+          listEl.classList.add("dash-order__list--expanded");
           itemRows.forEach((row) => row.classList.remove("is-hidden-collapsed"));
           toggleBtn.setAttribute("aria-expanded", "true");
           toggleBtn.textContent = "Ver menos ▴";
         } else {
           const maxItems = parseInt(listEl.dataset.maxCollapsedItems || "4", 10);
           listEl.dataset.collapsed = "true";
+          listEl.classList.remove("dash-order__list--expanded");
           itemRows.forEach((row, index) => {
             if (index >= maxItems) {
               row.classList.add("is-hidden-collapsed");
@@ -5180,6 +5246,7 @@ async function loadData() {
 
         setContentVisibility(true);
         hideLoader();
+        maybeAutoScrollToBagFromStickyCart();
         if (!fylDashboardViewOnce && fylAnalytics.isReady()) {
           fylDashboardViewOnce = true;
           fylAnalytics.setPageType("dashboard");

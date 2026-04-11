@@ -60,7 +60,10 @@ let authListenerAttached = false;
 let loadCartFromSupabaseInFlight = null;
 const CART_XTAB_LOCK_PREFIX = "fyl_cart_xtab_lock";
 const CART_XTAB_TAB_ID = `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-const CART_NAV_WAIT_TIMEOUT_MS = 3500;
+const CART_NAV_WAIT_TIMEOUT_MS = 8000;
+const DASHBOARD_SCROLL_TO_BAG_ONCE_KEY = "fyl_dashboard_scroll_to_bag_once";
+const CART_LOGIN_MERGE_TTL_MS = 10 * 60 * 1000;
+const CART_LOGIN_MERGE_PREFIX = "fyl_cart_merge_guard";
 const CART_WAREHOUSE_CACHE_TTL_MS = 10 * 60 * 1000;
 const CART_IMAGE_CACHE_TTL_MS = 10 * 60 * 1000;
 const CART_VARIANT_INFO_CACHE_TTL_MS = 20 * 1000;
@@ -177,17 +180,91 @@ async function waitForCartIdle(timeoutMs = CART_NAV_WAIT_TIMEOUT_MS) {
   return true;
 }
 
+function getMergeGuardKey(userId) {
+  return `${CART_LOGIN_MERGE_PREFIX}:${String(userId || "").trim()}`;
+}
+
+function hasRecentSharedMergeGuard(userId) {
+  try {
+    const key = getMergeGuardKey(userId);
+    const raw = localStorage.getItem(key);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed.until !== "number") return false;
+    if (parsed.until <= Date.now()) {
+      localStorage.removeItem(key);
+      return false;
+    }
+    return true;
+  } catch (_e) {
+    return false;
+  }
+}
+
+function markSharedMergeGuard(userId) {
+  try {
+    const key = getMergeGuardKey(userId);
+    localStorage.setItem(
+      key,
+      JSON.stringify({
+        owner: CART_XTAB_TAB_ID,
+        until: Date.now() + CART_LOGIN_MERGE_TTL_MS,
+      })
+    );
+  } catch (_e) {}
+}
+
+async function tryAcquireWebLock(lockKey, fn) {
+  if (
+    typeof navigator === "undefined" ||
+    !navigator.locks ||
+    typeof navigator.locks.request !== "function"
+  ) {
+    return { supported: false, acquired: false };
+  }
+
+  const result = await navigator.locks.request(
+    lockKey,
+    { mode: "exclusive", ifAvailable: true },
+    async (lock) => {
+      if (!lock) return { acquired: false };
+      const value = await fn();
+      return { acquired: true, value };
+    }
+  );
+
+  return {
+    supported: true,
+    acquired: result?.acquired === true,
+    value: result?.value,
+  };
+}
+
 async function withCrossTabLock(lockName, fn, opts = {}) {
   const ttlMs = Number(opts.ttlMs || 9000);
   const waitMs = Number(opts.waitMs || 140);
   const maxWaitMs = Number(opts.maxWaitMs || 4500);
+  const lockUnavailableResult = opts.lockUnavailableResult;
   const lockKey = `${CART_XTAB_LOCK_PREFIX}:${lockName}`;
   const ownerToken = `${CART_XTAB_TAB_ID}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
   const startedAt = Date.now();
 
-  // Si localStorage no está disponible, ejecutar sin lock cross-tab.
+  while (Date.now() - startedAt < maxWaitMs) {
+    const webLockResult = await tryAcquireWebLock(lockKey, fn);
+    if (webLockResult.supported) {
+      if (webLockResult.acquired) {
+        return webLockResult.value;
+      }
+      await sleep(waitMs);
+      continue;
+    }
+    break;
+  }
+
+  // Si no hay mecanismo de lock disponible, abortar para evitar carreras.
   if (typeof window === "undefined" || !window.localStorage) {
-    return fn();
+    fylDevLog("⚠️ Lock cross-tab no disponible (sin localStorage):", lockName);
+    return lockUnavailableResult;
   }
 
   while (Date.now() - startedAt < maxWaitMs) {
@@ -208,8 +285,8 @@ async function withCrossTabLock(lockName, fn, opts = {}) {
           JSON.stringify({ owner: ownerToken, expiresAt: now + ttlMs })
         );
       } catch (_e) {
-        // Si falla escritura de lock, no bloquear el flujo.
-        return fn();
+        fylDevLog("⚠️ Falló escritura de lock cross-tab:", lockName);
+        return lockUnavailableResult;
       }
 
       // Verificar que seguimos siendo dueños del lock.
@@ -238,8 +315,8 @@ async function withCrossTabLock(lockName, fn, opts = {}) {
     await sleep(waitMs);
   }
 
-  // Si no se obtuvo lock en el tiempo máximo, ejecutar igual para no congelar UX.
-  return fn();
+  fylDevLog("⚠️ No se pudo adquirir lock cross-tab:", lockName);
+  return lockUnavailableResult;
 }
 
 async function ensureCustomerRecord(user) {
@@ -732,6 +809,9 @@ function createFloatingCartButton() {
   `;
   btn.addEventListener("click", async () => {
     if (btn.disabled) return;
+    try {
+      sessionStorage.setItem(DASHBOARD_SCROLL_TO_BAG_ONCE_KEY, "1");
+    } catch (_e) {}
     if (typeof window.goToCart === "function") await window.goToCart();
   });
   document.body.appendChild(btn);
@@ -858,81 +938,168 @@ async function syncCartWithSupabase(options = {}) {
 
       cartItems = normalizeCartItems(cartItems);
 
-      if (mergeWithRemote) {
-        const { data: remoteItems, error: remoteItemsError } = await supabase
-          .from("cart_items")
-          .select("*")
-          .eq("cart_id", cartId);
+      const { data: remoteItems, error: remoteItemsError } = await supabase
+        .from("cart_items")
+        .select("*")
+        .eq("cart_id", cartId);
 
-        if (!remoteItemsError && Array.isArray(remoteItems) && remoteItems.length > 0) {
-          const normalizedRemote = normalizeCartItems(
-            remoteItems.map((row) => ({
-              id: row.id,
-              articulo: row.product_name,
-              color: row.color,
-              talle: row.size,
-              cantidad: row.quantity,
-              precio: row.price_snapshot,
-              imagen: row.imagen,
-              descripcion: null,
-              variant_id: row.variant_id,
-            }))
-          );
-          // Merge login-safe: avoid adding local+remote qty for the same key.
-          cartItems = normalizeCartItems(
-            mergeCartItemsWithoutDoubleCount(normalizedRemote, cartItems)
-          );
-        }
-      }
-
-      if (!cartItems.length) {
-        await supabase.from("cart_items").delete().eq("cart_id", cartId);
-        saveCartToStorage();
-        updateCartCount();
-        window.dispatchEvent(new CustomEvent("cart:synced"));
+      if (remoteItemsError) {
+        console.error("❌ Error obteniendo items remotos del carrito:", remoteItemsError);
         return;
       }
 
-      await supabase.from("cart_items").delete().eq("cart_id", cartId);
+      const remoteRows = Array.isArray(remoteItems) ? remoteItems : [];
 
+      if (mergeWithRemote && remoteRows.length > 0) {
+        const normalizedRemote = normalizeCartItems(
+          remoteRows.map((row) => ({
+            id: row.id,
+            articulo: row.product_name,
+            color: row.color,
+            talle: row.size,
+            cantidad: row.quantity,
+            precio: row.price_snapshot,
+            imagen: row.imagen,
+            descripcion: null,
+            variant_id: row.variant_id,
+          }))
+        );
+        // Merge login-safe: avoid adding local+remote qty for the same key.
+        cartItems = normalizeCartItems(
+          mergeCartItemsWithoutDoubleCount(normalizedRemote, cartItems)
+        );
+      }
+
+      const remoteRowsByKey = new Map();
+      remoteRows.forEach((row) => {
+        const key = getCartItemKey({
+          articulo: row.product_name,
+          color: row.color,
+          talle: row.size,
+        });
+        if (!remoteRowsByKey.has(key)) remoteRowsByKey.set(key, []);
+        remoteRowsByKey.get(key).push(row);
+      });
+
+      const localKeys = new Set();
       const perfRowsStart =
         typeof performance !== "undefined" ? performance.now() : Date.now();
-      const rows = await Promise.all(
-        cartItems.map(async (item) => {
-          let imagen = item.imagen;
-          if (!imagen) {
+      for (const item of cartItems) {
+        const key = getCartItemKey(item);
+        localKeys.add(key);
+        const existingRows = remoteRowsByKey.get(key) || [];
+
+        const normalizedSize =
+          normalizeSize(item.talle ?? item.size ?? "") ||
+          (item.talle ?? item.size);
+        const qty = Number(item.cantidad) || 0;
+        if (qty <= 0) continue;
+        let imagen = item.imagen;
+        if (!imagen) {
+          const remoteWithImage = existingRows.find((row) => row?.imagen);
+          if (remoteWithImage?.imagen) {
+            imagen = remoteWithImage.imagen;
+          } else {
             imagen = await fetchPrimaryImage(item.articulo, item.color);
           }
-          return {
-            cart_id: cartId,
-            product_name: item.articulo,
-            color: item.color,
-            size: normalizeSize(item.talle ?? item.size ?? "") || (item.talle ?? item.size),
-            quantity: item.cantidad,
-            qty: item.cantidad,
-            price_snapshot: item.precio,
-            status: "reserved",
-            imagen: imagen || null,
-            variant_id: item.variant_id || null,
-          };
-        })
-      );
+        }
+
+        const payload = {
+          cart_id: cartId,
+          product_name: item.articulo,
+          color: item.color,
+          size: normalizedSize,
+          quantity: qty,
+          qty: qty,
+          price_snapshot: Number(item.precio) || 0,
+          status: "reserved",
+          imagen: imagen || null,
+          variant_id: item.variant_id || null,
+        };
+
+        if (payload.variant_id) {
+          const { error: upsertError } = await supabase
+            .from("cart_items")
+            .upsert(payload, {
+              onConflict: "cart_id,variant_id,size",
+            });
+          if (!upsertError) {
+            if (existingRows.length > 1) {
+              const duplicateIds = existingRows
+                .slice(1)
+                .map((row) => row.id)
+                .filter(Boolean);
+              if (duplicateIds.length > 0) {
+                const { error: dedupeError } = await supabase
+                  .from("cart_items")
+                  .delete()
+                  .in("id", duplicateIds);
+                if (dedupeError) {
+                  console.warn("⚠️ No se pudieron borrar duplicados remotos:", dedupeError);
+                }
+              }
+            }
+            continue;
+          }
+        }
+
+        if (!existingRows.length) {
+          const { error: insertError } = await supabase
+            .from("cart_items")
+            .insert(payload);
+          if (insertError) {
+            console.error("❌ Error insertando línea de carrito:", insertError);
+            continue;
+          }
+          continue;
+        }
+
+        const primary = existingRows[0];
+        const { error: updateError } = await supabase
+          .from("cart_items")
+          .update(payload)
+          .eq("id", primary.id);
+        if (updateError) {
+          console.error("❌ Error actualizando línea de carrito:", updateError);
+        }
+
+        if (existingRows.length > 1) {
+          const duplicateIds = existingRows
+            .slice(1)
+            .map((row) => row.id)
+            .filter(Boolean);
+          if (duplicateIds.length > 0) {
+            const { error: dedupeError } = await supabase
+              .from("cart_items")
+              .delete()
+              .in("id", duplicateIds);
+            if (dedupeError) {
+              console.warn("⚠️ No se pudieron borrar duplicados remotos:", dedupeError);
+            }
+          }
+        }
+      }
+
+      // Limpiar huérfanos remotos: existen en DB pero ya no están en estado local final.
+      for (const [key, rows] of remoteRowsByKey.entries()) {
+        if (localKeys.has(key)) continue;
+        const staleIds = rows.map((row) => row.id).filter(Boolean);
+        if (!staleIds.length) continue;
+        const { error: deleteError } = await supabase
+          .from("cart_items")
+          .delete()
+          .in("id", staleIds);
+        if (deleteError) {
+          console.warn("⚠️ No se pudieron eliminar líneas huérfanas:", deleteError);
+        }
+      }
+
       if (window.FYL_DEBUG_CATALOG === true || window.FYL_DEBUG_CART_PERF === true) {
         const perfRowsEnd =
           typeof performance !== "undefined" ? performance.now() : Date.now();
         console.debug("[perf][cart] sync_rows_enrichment_ms", Math.round(perfRowsEnd - perfRowsStart), {
-          items: rows.length,
+          items: cartItems.length,
         });
-      }
-
-      const { error: insertError } = await supabase
-        .from("cart_items")
-        .insert(rows)
-        .select("*");
-
-      if (insertError) {
-        console.error("❌ Error insertando items del carrito:", insertError);
-        return;
       }
 
       const reloaded = await supabase
@@ -968,7 +1135,7 @@ async function syncCartWithSupabase(options = {}) {
     } finally {
       isSyncing = false;
     }
-  });
+  }, { lockUnavailableResult: undefined });
 }
 
 async function loadCartFromSupabase() {
@@ -1186,7 +1353,53 @@ async function ensureCartItemInDatabase(productData, authUser = null, options = 
     const primary = candidateRows?.[0] ?? null;
     const duplicates = candidateRows?.slice(1) ?? [];
 
-    if (primary) {
+    let upsertApplied = false;
+    if (variantInfo?.id) {
+      const upsertPayload = {
+        cart_id: cartId,
+        variant_id: variantInfo.id,
+        product_name: articulo,
+        color,
+        size,
+        quantity: finalTotal,
+        qty: finalTotal,
+        price_snapshot: priceToUse || null,
+        status: "reserved",
+        imagen: imagen || null,
+      };
+      const { error: upsertError } = await supabase
+        .from("cart_items")
+        .upsert(upsertPayload, {
+          onConflict: "cart_id,variant_id,size",
+        });
+
+      if (!upsertError) {
+        upsertApplied = true;
+      } else {
+        // Permitir fallback en instalaciones donde el índice único aún no fue aplicado.
+        console.warn(
+          "⚠️ Upsert no disponible para cart_items (fallback update/insert):",
+          upsertError.message || upsertError
+        );
+      }
+    }
+
+    if (upsertApplied) {
+      if (candidateRows && candidateRows.length > 1) {
+        const duplicateIds = candidateRows
+          .map((dup) => dup.id)
+          .filter(Boolean);
+        if (duplicateIds.length > 1) {
+          const { error: dedupeError } = await supabase
+            .from("cart_items")
+            .delete()
+            .in("id", duplicateIds.slice(1));
+          if (dedupeError) {
+            console.warn("⚠️ No se pudieron eliminar duplicados tras upsert:", dedupeError);
+          }
+        }
+      }
+    } else if (primary) {
       const { error: updateError } = await supabase
         .from("cart_items")
         .update({
@@ -1249,7 +1462,13 @@ async function ensureCartItemInDatabase(productData, authUser = null, options = 
       }
     }
 
-    await loadCartFromSupabase();
+    // No bloquear la UX esperando una recarga completa; ya aplicamos update optimista.
+    // Si falla la recarga en background, addToCart seguirá reflejando el estado local.
+    Promise.resolve(loadCartFromSupabase()).catch((error) => {
+      if (!isExpectedAuthErrorHandled(error, "cart-persistent:ensureCartItemInDatabase:post-refresh")) {
+        console.warn("⚠️ No se pudo refrescar carrito en background:", error?.message || error);
+      }
+    });
     window.dispatchEvent(new CustomEvent("cart:synced"));
     return true;
   } catch (error) {
@@ -1258,7 +1477,7 @@ async function ensureCartItemInDatabase(productData, authUser = null, options = 
     }
     return false;
   }
-  });
+  }, { lockUnavailableResult: false });
 }
 
 async function addToCart(productData, options = {}) {
@@ -1271,14 +1490,27 @@ async function addToCart(productData, options = {}) {
     const talle = productData.talle || "Único";
     const cantidadDeseada = Number(productData.cantidad || 1) || 1;
     
-    // Obtener información de la variante
-    const variantInfo = await fetchVariantInfo(
+    // Paso 1: intentar desde caché para respuesta rápida.
+    let variantInfo = await fetchVariantInfo(
       articulo,
       color,
       talle,
       productData.variant_id || null,
-      { forceFresh: true }
+      { forceFresh: false }
     );
+
+    // Paso 2: solo forzar refresco si falta info o el stock aparente es insuficiente.
+    // Evita pegarle a Supabase en cada tap cuando hay datos recientes válidos.
+    if (!variantInfo || Number(variantInfo.available ?? 0) < cantidadDeseada) {
+      const freshVariantInfo = await fetchVariantInfo(
+        articulo,
+        color,
+        talle,
+        productData.variant_id || null,
+        { forceFresh: true }
+      );
+      if (freshVariantInfo) variantInfo = freshVariantInfo;
+    }
     
     if (!variantInfo) {
       // Intentar mostrar modal de alternativas si está disponible
@@ -1496,10 +1728,16 @@ async function goToCart() {
         if (user) {
           window.location.href = "client/dashboard.html";
         } else {
+          try {
+            sessionStorage.removeItem(DASHBOARD_SCROLL_TO_BAG_ONCE_KEY);
+          } catch (_e) {}
           window.location.href = "client/login.html";
         }
       })
       .catch(() => {
+        try {
+          sessionStorage.removeItem(DASHBOARD_SCROLL_TO_BAG_ONCE_KEY);
+        } catch (_e) {}
         window.location.href = "client/login.html";
       });
   } else {
@@ -1542,7 +1780,6 @@ function setupAuthListener() {
       fylEnsureCustomerCache = { userId: null, until: 0 };
     }
     if (event === "SIGNED_IN" && session) {
-      const mergeSessionKey = `fyl_cart_merged_for_${session.user.id}`;
       const hasLocalGuestCart = (() => {
         try {
           const raw = localStorage.getItem("fyl_cart");
@@ -1553,12 +1790,22 @@ function setupAuthListener() {
         }
       })();
 
-      const alreadyMergedInSession =
-        sessionStorage.getItem(mergeSessionKey) === "1";
+      const alreadyMergedShared = hasRecentSharedMergeGuard(session.user.id);
 
-      if (hasLocalGuestCart && !alreadyMergedInSession) {
-        sessionStorage.setItem(mergeSessionKey, "1");
-        syncCartWithSupabase({ mergeWithRemote: true });
+      if (hasLocalGuestCart && !alreadyMergedShared) {
+        Promise.resolve(
+          withCrossTabLock(
+            "login-merge",
+            async () => {
+              if (hasRecentSharedMergeGuard(session.user.id)) return;
+              markSharedMergeGuard(session.user.id);
+              await syncCartWithSupabase({ mergeWithRemote: true });
+            },
+            { lockUnavailableResult: undefined }
+          )
+        ).catch((error) => {
+          console.warn("⚠️ No se pudo ejecutar merge cross-tab de login:", error);
+        });
       } else {
         loadCartFromSupabase();
       }

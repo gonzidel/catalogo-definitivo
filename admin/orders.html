@@ -12,9 +12,11 @@
     </script>
     <style>
         .orders-container {
-            max-width: 960px;
-            margin: 0 auto;
+            width: 100%;
+            max-width: none;
+            margin: 0;
             padding: 16px;
+            box-sizing: border-box;
         }
         .orders-header {
             display: flex;
@@ -98,7 +100,20 @@
         }
         .orders-list {
             display: grid;
-            gap: 16px;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 12px;
+            align-items: start;
+        }
+        @media (max-width: 1100px) {
+            .orders-list {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+        @media (max-width: 768px) {
+            .orders-list {
+                grid-template-columns: 1fr;
+                gap: 10px;
+            }
         }
         .order-card {
             background: white;
@@ -106,6 +121,41 @@
             border-radius: 12px;
             padding: 16px;
             box-shadow: 0 6px 20px rgba(0,0,0,0.08);
+        }
+        /* Orders2: pedidos creados por cliente (dashboard) */
+        .order-card.order-card--customer {
+            border-color: rgba(23, 162, 184, 0.9);
+            box-shadow: 0 6px 20px rgba(23, 162, 184, 0.12);
+        }
+        .orders2-client-message-row {
+            margin-top: 10px;
+            display: flex;
+            justify-content: flex-start;
+        }
+        .orders2-client-message-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            min-height: 44px;
+            padding: 8px 14px;
+            border: 1px solid #CD844D;
+            border-radius: 10px;
+            background: #fff8f3;
+            color: #8b4513;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+            max-width: 100%;
+            box-sizing: border-box;
+            justify-content: center;
+        }
+        .orders2-client-message-btn:active {
+            opacity: 0.92;
+        }
+        .orders2-client-message-btn__icon {
+            font-size: 18px;
+            line-height: 1;
         }
         .order-header {
             display: flex;
@@ -306,6 +356,165 @@
         }
         .item-action-btn.neutral {
             background: #9e9e9e;
+        }
+        .item-more {
+            position: relative;
+            display: inline-flex;
+        }
+        .item-more[data-open="1"] .item-kebab-menu {
+            display: block;
+        }
+        .item-kebab-menu {
+            display: none;
+            position: absolute;
+            right: 0;
+            top: calc(100% + 6px);
+            z-index: 2000;
+            min-width: 190px;
+            background: #fff;
+            border: 1px solid rgba(0,0,0,0.12);
+            border-radius: 12px;
+            box-shadow: 0 10px 28px rgba(0,0,0,0.18);
+            padding: 6px;
+        }
+        .item-kebab-item {
+            width: 100%;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 10px;
+            border: 0;
+            border-radius: 10px;
+            background: transparent;
+            cursor: pointer;
+            text-align: left;
+            font-size: 13px;
+            color: #333;
+        }
+        .item-kebab-item:hover {
+            background: #f4f4f4;
+        }
+        .item-kebab-item.danger {
+            color: #b71c1c;
+        }
+        .item-kebab-item.danger:hover {
+            background: #fdecea;
+        }
+
+        /* Orders2: estados pendientes (selección antes de Aceptar) */
+        .order-item.pending-picked {
+            background: #e6f4ea !important;
+            border-color: rgba(52, 168, 83, 0.35) !important;
+        }
+        .order-item.pending-missing {
+            background: #fdecea !important;
+            border-color: rgba(234, 67, 53, 0.35) !important;
+        }
+        .order-item.pending-waiting {
+            background: #fff4e6 !important;
+            border-color: rgba(255, 152, 0, 0.45) !important;
+        }
+        .order-item.pending-reserved {
+            background: #eef1f4 !important;
+            border-color: rgba(120, 120, 120, 0.25) !important;
+        }
+        .orders2-split-preview {
+            margin-top: 8px;
+            display: grid;
+            gap: 6px;
+        }
+        .orders2-split-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 10px;
+            border-radius: 10px;
+            border: 1px solid rgba(0,0,0,0.08);
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .orders2-split-row.pending-picked {
+            background: #e6f4ea;
+            border-color: rgba(52, 168, 83, 0.25);
+            color: #1b5e20;
+        }
+        .orders2-split-row.pending-waiting {
+            background: #fff4e6;
+            border-color: rgba(255, 152, 0, 0.35);
+            color: #e65100;
+        }
+        .orders2-split-row.pending-missing {
+            background: #fdecea;
+            border-color: rgba(234, 67, 53, 0.25);
+            color: #b71c1c;
+        }
+
+        .order-accept-row {
+            margin-top: 10px;
+            display: none;
+        }
+        .orders2-accept-btn {
+            width: 100%;
+            background: #28a745;
+            color: white;
+            font-weight: 700;
+        }
+        .orders2-accept-btn:disabled {
+            opacity: 0.7;
+            cursor: not-allowed;
+        }
+
+        .orders2-missing-banner {
+            border: 1px solid rgba(255, 152, 0, 0.5);
+            background: #fff4e6;
+            color: #e65100;
+            font-weight: 700;
+            font-size: 12px;
+            padding: 8px 10px;
+            border-radius: 999px;
+            cursor: pointer;
+            line-height: 1;
+        }
+        .orders2-missing-banner:hover {
+            filter: brightness(0.98);
+        }
+        .orders2-missing-list {
+            display: grid;
+            gap: 10px;
+        }
+        .orders2-missing-row {
+            display: flex;
+            gap: 10px;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            border: 1px solid rgba(0,0,0,0.08);
+            border-radius: 12px;
+            background: rgba(255, 244, 230, 0.6);
+        }
+        .orders2-missing-row__title {
+            font-weight: 700;
+            font-size: 13px;
+            color: #333;
+            line-height: 1.25;
+        }
+        .orders2-missing-remove-btn {
+            background: #dc3545;
+            color: white;
+            font-weight: 700;
+            padding: 8px 12px;
+            border-radius: 10px;
+        }
+        .orders2-missing-remove-btn:disabled {
+            opacity: 0.7;
+            cursor: not-allowed;
+        }
+
+        /* Modal método de pago: reducir alto (no full screen) */
+        #payment-method-modal .order-modal-content {
+            height: auto !important;
+            max-height: 50vh !important;
+            overflow-y: auto !important;
         }
         .order-total {
             display: flex;
@@ -539,6 +748,34 @@
             border-radius: 6px;
             flex-shrink: 0;
         }
+        .order-summary-item-media {
+            position: relative;
+            width: 50px;
+            height: 50px;
+            flex-shrink: 0;
+        }
+        .order-summary-item-media .order-summary-item-image {
+            width: 50px;
+            height: 50px;
+        }
+        .order-summary-item-index {
+            position: absolute;
+            top: -6px;
+            left: -6px;
+            min-width: 18px;
+            height: 18px;
+            padding: 0 5px;
+            border-radius: 999px;
+            background: #CD844D;
+            color: #fff;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            font-weight: 800;
+            border: 2px solid #fff;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.18);
+        }
         .order-summary-item-details {
             flex: 1;
         }
@@ -641,6 +878,12 @@
                 max-width: 95% !important;
                 padding: 16px !important;
             }
+        }
+
+        /* Modal resumen (Ver Detalle): limitar alto + scroll */
+        #order-summary-modal .modal-content {
+            max-height: 75vh;
+            overflow-y: auto;
         }
 
         /* Modal para crear/editar pedido */
@@ -1479,3 +1722,4 @@
     <script type="module" src="order-creator.js"></script>
 </body>
 </html>
+

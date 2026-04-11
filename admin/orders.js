@@ -325,7 +325,12 @@ let partialAcceptState = null;
 function isOrders2Page() {
   try {
     const p = (window.location && window.location.pathname) ? window.location.pathname.toLowerCase() : "";
-    return p.endsWith("/orders2.html") || p.endsWith("orders2.html");
+    return (
+      p.endsWith("/orders2.html") ||
+      p.endsWith("orders2.html") ||
+      p.endsWith("/orders.html") ||
+      p.endsWith("orders.html")
+    );
   } catch {
     return false;
   }

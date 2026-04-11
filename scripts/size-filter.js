@@ -11,6 +11,58 @@ let sizeFilterActive = false;
 let tempCategoryForSizeFilter = null; // Para almacenar categoría seleccionada temporalmente
 let combinedSizesMap = new Map(); // Mapa de talles combinados: "37/38" -> ["37", "38"]
 
+function normalizeCategoryName(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function doesCategoryMatchProduct(selectedCategory, productCategory) {
+  const selected = normalizeCategoryName(selectedCategory);
+  const product = normalizeCategoryName(productCategory);
+
+  if (!selected || selected === "all") return true;
+  if (!product) return false;
+  if (selected === product) return true;
+
+  // Lencería y Marroquinería suelen vivir en "Otros" en products.
+  if ((selected === "lenceria" || selected === "marroquineria") && product === "otros") {
+    return true;
+  }
+
+  return false;
+}
+
+function getCardArticulo(card) {
+  return (
+    card?.dataset?.articulo?.trim() ||
+    card?.querySelector(".article-box")?.textContent?.trim() ||
+    card?.querySelector(".product-name-badge")?.textContent?.trim() ||
+    ""
+  );
+}
+
+function setSizeFilterButtonsActiveState(isActive) {
+  const buttonIds = ["size-filter-btn", "size-filter-btn-desktop"];
+  buttonIds.forEach((id) => {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    btn.style.background = isActive ? "#CD844D" : "";
+    btn.style.color = isActive ? "white" : "";
+    btn.style.borderColor = isActive ? "#CD844D" : "";
+  });
+}
+
+function getSearchDerivedCategory() {
+  const derived =
+    typeof window.__fylSearchDerivedCategory === "string"
+      ? window.__fylSearchDerivedCategory.trim()
+      : "";
+  return derived || null;
+}
+
 // Obtener categoría actual
 function getCurrentCategory() {
   // Intentar detectar desde la URL
@@ -29,6 +81,12 @@ function getCurrentCategory() {
   
   if (tabSlug && slugToCategory[tabSlug]) {
     return slugToCategory[tabSlug];
+  }
+
+  // Cuando hay búsqueda activa, priorizar la categoría inferida por resultados/tag.
+  const derivedFromSearch = getSearchDerivedCategory();
+  if (hasActiveSearch() && derivedFromSearch) {
+    return derivedFromSearch;
   }
 
   // Misma categoría que está mostrando el catálogo (Lencería/Marroquinería vía Otros+tags, etc.)
@@ -112,7 +170,7 @@ async function getVisibleProductIds() {
   const productNames = new Set();
   
   cards.forEach(card => {
-    const articulo = card.querySelector('.article-box')?.textContent?.trim();
+    const articulo = getCardArticulo(card);
     if (articulo) {
       productNames.add(articulo);
     }
@@ -170,7 +228,7 @@ async function getAvailableSizes(category = null, productIds = null) {
         const visibleNames = new Set();
         document.querySelectorAll('.card.producto').forEach((card) => {
           if (card.style.display === 'none') return;
-          const articulo = card.querySelector('.article-box')?.textContent?.trim();
+          const articulo = getCardArticulo(card);
           if (articulo) visibleNames.add(articulo);
         });
         if (visibleNames.size > 0) {
@@ -640,7 +698,7 @@ async function applySizeFilter() {
   
   for (const card of cards) {
     // Obtener el nombre del producto
-    const articulo = card.querySelector('.article-box')?.textContent?.trim();
+    const articulo = getCardArticulo(card);
     if (!articulo) {
       card.style.display = 'none';
       continue;
@@ -693,18 +751,29 @@ async function applySizeFilter() {
   
   closeSizeFilterModal();
   
-  // Actualizar botón de filtro para indicar que está activo
-  const sizeFilterBtn = document.getElementById('size-filter-btn');
-  if (sizeFilterBtn) {
-    sizeFilterBtn.style.background = '#CD844D';
-    sizeFilterBtn.style.color = 'white';
-    sizeFilterBtn.style.borderColor = '#CD844D';
+  // Actualizar botones de filtro para indicar que está activo
+  setSizeFilterButtonsActiveState(true);
+  if (typeof window !== "undefined") {
+    window.__fylActiveSizeFilters = selectedSizes.slice();
+  }
+  if (typeof window.refreshCatalogFilterBar === "function") {
+    window.refreshCatalogFilterBar();
   }
 }
 
 // Verificar si un producto tiene alguno de los talles seleccionados
 async function checkProductHasSizes(articulo, selectedSizesArray, category) {
   try {
+    const selectedNormalized = new Set(
+      (selectedSizesArray || [])
+        .map((size) => normalizeSize(size) || String(size || "").trim().toUpperCase())
+        .filter(Boolean)
+    );
+
+    if (selectedNormalized.size === 0) {
+      return false;
+    }
+
     // Obtener el producto
     const { data: products, error: productError } = await supabase
       .from('products')
@@ -720,7 +789,7 @@ async function checkProductHasSizes(articulo, selectedSizesArray, category) {
     const product = products[0];
     
     // Si hay categoría, verificar que coincida
-    if (category && category !== product.category) {
+    if (!doesCategoryMatchProduct(category, product.category)) {
       return false;
     }
     
@@ -755,7 +824,8 @@ async function checkProductHasSizes(articulo, selectedSizesArray, category) {
     
     // Verificar si algún talle del producto coincide con los seleccionados
     for (const variantSize of variantSizes) {
-      const size = variantSize.size?.trim();
+      const sizeRaw = variantSize.size?.trim();
+      const size = normalizeSize(sizeRaw) || String(sizeRaw || "").trim().toUpperCase();
       if (!size) continue;
       
       // Verificar si es un talle combinado
@@ -765,14 +835,14 @@ async function checkProductHasSizes(articulo, selectedSizesArray, category) {
         const parts = size.split('/').map(s => s.trim()).filter(Boolean);
         if (parts.length >= 2) {
           // Verificar si AL MENOS UNO de los números está seleccionado
-          const anyPartSelected = parts.some(part => selectedSizesArray.includes(part));
+          const anyPartSelected = parts.some(part => selectedNormalized.has(part));
           if (anyPartSelected) {
             return true; // El producto tiene este talle combinado y al menos uno de sus números está seleccionado
           }
         }
       } else {
         // Es un talle individual, verificar si está en selectedSizesArray
-        if (selectedSizesArray.includes(size)) {
+        if (selectedNormalized.has(size)) {
           return true; // El producto tiene este talle individual seleccionado
         }
       }
@@ -812,13 +882,19 @@ function clearSizeFilter() {
     noResultsMsg.remove();
   }
   
-  // Restaurar estilo del botón
-  const sizeFilterBtn = document.getElementById('size-filter-btn');
-  if (sizeFilterBtn) {
-    sizeFilterBtn.style.background = '';
-    sizeFilterBtn.style.color = '';
-    sizeFilterBtn.style.borderColor = '';
+  // Restaurar estilo de ambos botones (mobile + desktop)
+  setSizeFilterButtonsActiveState(false);
+  if (typeof window !== "undefined") {
+    window.__fylActiveSizeFilters = [];
   }
+  if (typeof window.refreshCatalogFilterBar === "function") {
+    window.refreshCatalogFilterBar();
+  }
+}
+
+async function reapplyActiveSizeFilter() {
+  if (!sizeFilterActive || selectedSizes.length === 0) return;
+  await applySizeFilter();
 }
 
 // Inicializar event listeners
@@ -897,9 +973,13 @@ async function applySizeFilterFromURL(talle) {
 
 // Exportar funciones globales inmediatamente
 if (typeof window !== 'undefined') {
+  window.__fylActiveSizeFilters = Array.isArray(window.__fylActiveSizeFilters)
+    ? window.__fylActiveSizeFilters
+    : [];
   window.openSizeFilterModal = openSizeFilterModal;
   window.clearSizeFilter = clearSizeFilter;
   window.applySizeFilterFromURL = applySizeFilterFromURL;
+  window.reapplyActiveSizeFilter = reapplyActiveSizeFilter;
   fylDevLog("✅ Funciones de size-filter exportadas globalmente");
 }
 

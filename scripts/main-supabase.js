@@ -114,8 +114,15 @@ let offersCardsPendientes = []; // Ofertas pendientes de renderizar
 /** Tras insertar el banner destacado inline (4.ª card en Inicio), se dispara carga al finalizar el render. */
 let fylPendingHomeCustomBanner = false;
 let isLoadingMore = false; // Flag para evitar múltiples cargas simultáneas
-const PRODUCTOS_INICIALES = 30; // Cantidad de productos en la primera carga
+const PRODUCTOS_INICIALES = 14; // Cantidad de productos en la primera carga
 const PRODUCTOS_POR_PAGINA = 14; // Cantidad de productos a cargar por página con el botón
+const CATALOGO_AUTOLOAD_SCROLL = true;
+const CATALOGO_AUTOLOAD_ROOT_MARGIN_PX = 900;
+const CATALOGO_AUTOLOAD_FALLBACK_THRESHOLD_PX = 900;
+let catalogoLoadMode = "paged"; // paged | full
+let catalogoAutoloadObserver = null;
+let catalogoAutoloadSentinel = null;
+let catalogoAutoloadFallbackEnabled = false;
 
 /** Logs verbosos del catálogo/stock. Activar: `window.FYL_DEBUG_CATALOG = true` antes de cargar, o `?debug=catalog` en la URL. */
 function fylCatalogDebugEnabled() {
@@ -143,6 +150,18 @@ function hideCatalogBootOverlay() {
   }
   document.body.classList.remove("catalog-boot-active");
   window.dispatchEvent(new CustomEvent("fyl-catalog-boot-done"));
+}
+
+/** Muestra nuevamente el overlay para transiciones pesadas (ej. volver a Inicio). */
+function showCatalogBootOverlay() {
+  const el = document.getElementById("catalog-boot-overlay");
+  if (el) {
+    el.style.display = "";
+    el.classList.remove("catalog-boot-overlay--hidden");
+    el.setAttribute("aria-busy", "true");
+    el.setAttribute("aria-hidden", "false");
+  }
+  document.body.classList.add("catalog-boot-active");
 }
 
 /** Evita que consultas Supabase queden colgadas sin tope (red lenta / Android). */
@@ -396,30 +415,27 @@ async function cargarDesdeSupabase(cat) {
   try {
     fylCatalogDbg(`🗄️ Cargando desde Supabase: ${cat}`);
 
-    // Primero, verificar qué categorías existen en la vista
-    const { data: allCategories, error: catError } = await supabase
-      .from("catalog_public_view")
-      .select("Categoria")
-      .limit(100);
-    
-    if (!catError && allCategories) {
-      const uniqueCategories = [...new Set(allCategories.map(c => c.Categoria))];
-      fylCatalogDbg(`📋 Categorías disponibles en la vista:`, uniqueCategories);
-      fylCatalogDbg(`🔍 Buscando categoría: "${cat}"`);
-      
-      // Verificar si la categoría existe (case-insensitive)
-      const categoryExists = uniqueCategories.some(c => 
-        c && c.toLowerCase() === cat.toLowerCase()
-      );
-      
-      if (
-        !categoryExists &&
-        cat !== "Novedades" &&
-        cat !== "Ofertas" &&
-        cat !== "all"
-      ) {
-        console.warn(`⚠️ La categoría "${cat}" no existe en la vista.`);
-        console.warn(`💡 Categorías disponibles: ${uniqueCategories.join(", ")}`);
+    // Validar categorías solo cuando realmente aplica (evita una query extra en Inicio/all).
+    if (cat !== "Novedades" && cat !== "Ofertas" && cat !== "all") {
+      const { data: allCategories, error: catError } = await supabase
+        .from("catalog_public_view")
+        .select("Categoria")
+        .limit(100);
+
+      if (!catError && allCategories) {
+        const uniqueCategories = [...new Set(allCategories.map((c) => c.Categoria))];
+        fylCatalogDbg(`📋 Categorías disponibles en la vista:`, uniqueCategories);
+        fylCatalogDbg(`🔍 Buscando categoría: "${cat}"`);
+
+        // Verificar si la categoría existe (case-insensitive)
+        const categoryExists = uniqueCategories.some(
+          (c) => c && c.toLowerCase() === cat.toLowerCase()
+        );
+
+        if (!categoryExists) {
+          console.warn(`⚠️ La categoría "${cat}" no existe en la vista.`);
+          console.warn(`💡 Categorías disponibles: ${uniqueCategories.join(", ")}`);
+        }
       }
     }
 
@@ -1096,13 +1112,20 @@ async function cargarCategoria(cat) {
     window.__allProductsCache = productosOrdenados;
     productosRenderizados = 0;
     offersCardsPendientes = offersCards;
+    setCatalogLoadMode("paged");
     
     // Limpiar contenedor
     cont.innerHTML = "";
     
-    // Renderizar los primeros 30 productos
-    await renderizarProductosPagina(productosPendientes, cont, offersCardsPendientes, 0, PRODUCTOS_INICIALES);
-    productosRenderizados = PRODUCTOS_INICIALES;
+    // Renderizar el primer bloque y conservar la cantidad real renderizada.
+    const firstChunkRendered = await renderizarProductosPagina(
+      productosPendientes,
+      cont,
+      offersCardsPendientes,
+      0,
+      PRODUCTOS_INICIALES
+    );
+    productosRenderizados = Number(firstChunkRendered) || 0;
     
     // Configurar eventos
     configurarEventos();
@@ -1120,30 +1143,47 @@ async function cargarCategoria(cat) {
       const hashOk = location.hash !== "#/coleccion/fyl-originals";
       const hayBusquedaActiva = !!document.getElementById("searchInput")?.value?.trim();
       const hayFiltroActivo = !!document.querySelector('#filtroMenu input[type="checkbox"]:checked');
-      const paralelos = [];
-      if (typeof window.loadAndShowFYLBanner === "function") {
-        paralelos.push(window.loadAndShowFYLBanner());
-      }
-      if (
-        hashOk &&
-        !hayBusquedaActiva &&
-        !hayFiltroActivo &&
-        fylPendingHomeCustomBanner &&
-        typeof window.loadAndShowCustomBanner === "function"
-      ) {
-        fylPendingHomeCustomBanner = false;
-        paralelos.push(window.loadAndShowCustomBanner());
+      const isBootingHome =
+        typeof window !== "undefined" && window.__FYL_BOOT_SUPPRESS_ROUTE === true;
+
+      const runHomeExtras = async () => {
+        const paralelos = [];
+        if (typeof window.loadAndShowFYLBanner === "function") {
+          paralelos.push(Promise.resolve(window.loadAndShowFYLBanner()));
+        }
+        if (
+          hashOk &&
+          !hayBusquedaActiva &&
+          !hayFiltroActivo &&
+          fylPendingHomeCustomBanner &&
+          typeof window.loadAndShowCustomBanner === "function"
+        ) {
+          fylPendingHomeCustomBanner = false;
+          paralelos.push(Promise.resolve(window.loadAndShowCustomBanner()));
+        } else {
+          fylPendingHomeCustomBanner = false;
+        }
+        if (typeof window.loadBanner === "function") {
+          paralelos.push(Promise.resolve(window.loadBanner()));
+        }
+        await Promise.allSettled(paralelos);
+        if (typeof window.showPromotionalBanner === "function") {
+          window.showPromotionalBanner();
+        }
+        syncInfoBannerVisibility();
+      };
+
+      if (isBootingHome) {
+        // En boot inicial, esperar extras de Home para que el overlay no se cierre antes de FYL Originals.
+        await runHomeExtras();
       } else {
-        fylPendingHomeCustomBanner = false;
+        // En interacciones posteriores mantener carga en background.
+        setTimeout(() => {
+          Promise.resolve(runHomeExtras()).catch((error) => {
+            console.warn("⚠️ No se pudieron cargar extras de Home:", error?.message || error);
+          });
+        }, 0);
       }
-      if (typeof window.loadBanner === "function") {
-        paralelos.push(window.loadBanner());
-      }
-      await Promise.all(paralelos);
-      if (typeof window.showPromotionalBanner === "function") {
-        window.showPromotionalBanner();
-      }
-      syncInfoBannerVisibility();
     } else {
       // Ocultar banners si no estamos en Inicio
       if (typeof window.hideFYLOriginalsBanner === "function") {
@@ -1308,7 +1348,7 @@ if (typeof window !== "undefined") window.syncInfoBannerVisibility = syncInfoBan
 // Función auxiliar para renderizar un conjunto de productos
 // options.skipBanner: si true, no insertar el banner dinámico (solo debe mostrarse en index puro)
 async function renderizarProductosPagina(productos, container, offersCards = [], startIndex = 0, count = null, options = {}) {
-  if (productos.length === 0 && offersCards.length === 0) return;
+  if (productos.length === 0 && offersCards.length === 0) return 0;
   if (startIndex === 0) fylPendingHomeCustomBanner = false;
   
   // Enriquecer productos con stock (solo los que vamos a renderizar)
@@ -1360,6 +1400,7 @@ async function renderizarProductosPagina(productos, container, offersCards = [],
 
       const productoHTML = `
         <div class="card producto"
+             data-articulo="${producto.Articulo || ""}"
              data-filtro1="${producto.Filtro1 || ""}"
              data-filtro2="${producto.Filtro2 || ""}"
              data-filtro3="${producto.Filtro3 || ""}"
@@ -1531,6 +1572,146 @@ function estaCercaDelFinal(threshold = 500) {
   return documentHeight - (scrollTop + windowHeight) < threshold;
 }
 
+function setCatalogLoadMode(mode = "paged") {
+  catalogoLoadMode = mode === "full" ? "full" : "paged";
+}
+
+function isCatalogAutoloadActive() {
+  return CATALOGO_AUTOLOAD_SCROLL && catalogoLoadMode === "paged";
+}
+
+function teardownCatalogAutoloadObserver() {
+  if (catalogoAutoloadObserver) {
+    try {
+      catalogoAutoloadObserver.disconnect();
+    } catch (_e) {}
+    catalogoAutoloadObserver = null;
+  }
+  if (catalogoAutoloadSentinel?.parentNode) {
+    try {
+      catalogoAutoloadSentinel.parentNode.removeChild(catalogoAutoloadSentinel);
+    } catch (_e) {}
+  }
+  catalogoAutoloadSentinel = null;
+  catalogoAutoloadFallbackEnabled = false;
+}
+
+function ensureCatalogAutoloadSentinel(container) {
+  if (!container) return null;
+  let sentinel = container.querySelector(".catalog-autoload-sentinel");
+  if (!sentinel) {
+    sentinel = document.createElement("div");
+    sentinel.className = "catalog-autoload-sentinel";
+    sentinel.setAttribute("aria-hidden", "true");
+    sentinel.style.cssText =
+      "width:100%;height:1px;opacity:0;pointer-events:none;grid-column:1 / -1;";
+  }
+  container.appendChild(sentinel);
+  catalogoAutoloadSentinel = sentinel;
+  return sentinel;
+}
+
+function maybeTriggerCatalogAutoloadFallback() {
+  if (!isCatalogAutoloadActive()) return;
+  if (!catalogoAutoloadFallbackEnabled) return;
+  if (isLoadingMore) return;
+  if (productosRenderizados >= productosPendientes.length) return;
+  if (estaCercaDelFinal(CATALOGO_AUTOLOAD_FALLBACK_THRESHOLD_PX)) {
+    void cargarSiguienteBloque({ reason: "scroll-fallback" });
+  }
+}
+
+function refreshCatalogAutoloadBinding() {
+  teardownCatalogAutoloadObserver();
+  const cont = document.getElementById("catalogo");
+  if (!cont || !isCatalogAutoloadActive()) return;
+  if (productosRenderizados >= productosPendientes.length) return;
+
+  const sentinel = ensureCatalogAutoloadSentinel(cont);
+  if (!sentinel) return;
+
+  if (typeof window.IntersectionObserver === "function") {
+    catalogoAutoloadObserver = new window.IntersectionObserver(
+      (entries) => {
+        const shouldLoad = entries.some((entry) => entry.isIntersecting);
+        if (!shouldLoad) return;
+        void cargarSiguienteBloque({ reason: "observer" });
+      },
+      {
+        root: null,
+        rootMargin: `0px 0px ${CATALOGO_AUTOLOAD_ROOT_MARGIN_PX}px 0px`,
+        threshold: 0,
+      }
+    );
+    catalogoAutoloadObserver.observe(sentinel);
+    return;
+  }
+
+  catalogoAutoloadFallbackEnabled = true;
+}
+
+async function maybeReapplyCatalogSizeFilter() {
+  if (typeof window.reapplyActiveSizeFilter !== "function") return;
+  try {
+    await window.reapplyActiveSizeFilter();
+  } catch (error) {
+    console.warn("⚠️ No se pudo reaplicar filtro de talles:", error?.message || error);
+  }
+}
+
+async function cargarSiguienteBloque(options = {}) {
+  if (isLoadingMore) return 0;
+  if (productosRenderizados >= productosPendientes.length) {
+    ensureLoadMoreButtonAtEnd();
+    return 0;
+  }
+
+  const chunkSize = Math.max(
+    1,
+    Number(options.chunkSize || PRODUCTOS_POR_PAGINA) || PRODUCTOS_POR_PAGINA
+  );
+  const cont = document.getElementById("catalogo");
+  if (!cont) return 0;
+
+  isLoadingMore = true;
+
+  const wrap = cont.querySelector(".load-more-wrap");
+  if (wrap && wrap.parentNode) {
+    wrap.parentNode.removeChild(wrap);
+  }
+
+  mostrarIndicadorCarga();
+
+  try {
+    const renderedCount = await renderizarProductosPagina(
+      productosPendientes,
+      cont,
+      [],
+      productosRenderizados,
+      chunkSize
+    );
+
+    if (renderedCount > 0) {
+      productosRenderizados += renderedCount;
+      configurarEventos();
+      iniciarVerificacionCargaImagenes();
+      await maybeReapplyCatalogSizeFilter();
+    }
+
+    return renderedCount;
+  } catch (error) {
+    console.error("Error cargando siguiente bloque:", error);
+    return 0;
+  } finally {
+    ocultarIndicadorCarga();
+    ensureLoadMoreButtonAtEnd();
+    isLoadingMore = false;
+    setTimeout(() => {
+      maybeTriggerCatalogAutoloadFallback();
+    }, 60);
+  }
+}
+
 // Función para asegurar que el botón "Ver más modelos" esté al final del listado (#catalogo),
 // dentro del flujo (no flotante) y visible solo si hay más productos.
 function ensureLoadMoreButtonAtEnd() {
@@ -1572,8 +1753,14 @@ function ensureLoadMoreButtonAtEnd() {
   }
 
   cont.appendChild(wrap);
-  
+
+  const boton = wrap.querySelector("#btn-ver-mas-modelos");
+  if (boton) {
+    boton.style.display = isCatalogAutoloadActive() ? "none" : "";
+  }
   wrap.style.display = hayMas ? "flex" : "none";
+
+  refreshCatalogAutoloadBinding();
 }
 
 // Función para mostrar el botón "Ver más modelos" (delega a ensureLoadMoreButtonAtEnd)
@@ -1594,73 +1781,13 @@ function obtenerBotonVerMas() {
 
 // Función para cargar más productos cuando se hace clic en el botón
 async function cargarMasProductos() {
-  if (isLoadingMore) return;
-  if (productosRenderizados >= productosPendientes.length) {
-    ocultarBotonVerMas();
-    return;
-  }
-  
-  isLoadingMore = true;
-  const cont = document.getElementById("catalogo");
-  if (!cont) {
-    isLoadingMore = false;
-    return;
-  }
-  
-  // Remover el wrapper del botón antes de cargar nuevos productos
-  // para que los nuevos productos se agreguen después de donde estaba
-  const wrap = cont.querySelector(".load-more-wrap");
-  if (wrap && wrap.parentNode) {
-    wrap.parentNode.removeChild(wrap);
-  }
-  
-  // Mostrar indicador de carga
-  mostrarIndicadorCarga();
-  
-  try {
-    const siguientePagina = productosPendientes.slice(
-      productosRenderizados,
-      productosRenderizados + PRODUCTOS_POR_PAGINA
-    );
-    
-    if (siguientePagina.length > 0) {
-      await renderizarProductosPagina(
-        productosPendientes,
-        cont,
-        [],
-        productosRenderizados,
-        PRODUCTOS_POR_PAGINA
-      );
-      
-      productosRenderizados += siguientePagina.length;
-      
-      // Configurar eventos para los nuevos productos
-      configurarEventos();
-      
-      // Reiniciar verificación de carga de imágenes para los nuevos productos
-      iniciarVerificacionCargaImagenes();
-      
-      // Ocultar indicador de carga después de que los productos se hayan renderizado
-      ocultarIndicadorCarga();
-      
-      setTimeout(() => ensureLoadMoreButtonAtEnd(), 200);
-    } else {
-      ocultarIndicadorCarga();
-      ensureLoadMoreButtonAtEnd();
-    }
-  } catch (error) {
-    console.error('Error cargando más productos:', error);
-    ocultarIndicadorCarga();
-    ensureLoadMoreButtonAtEnd();
-  } finally {
-    isLoadingMore = false;
-  }
+  await cargarSiguienteBloque({ reason: "manual-click", chunkSize: PRODUCTOS_POR_PAGINA });
 }
 
 // Función para inicializar el sistema de paginación (ya no usa scroll infinito, usa botón)
 function inicializarScrollInfinito(container) {
-  // Desactivado: ahora usamos botón "Ver más modelos" en lugar de scroll infinito
-  // Esta función se mantiene por compatibilidad pero no hace nada
+  // Compatibilidad: ahora el autoload lo maneja IntersectionObserver/fallback.
+  refreshCatalogAutoloadBinding();
   ocultarIndicadorCarga();
 }
 
@@ -1783,13 +1910,21 @@ async function filterByOffer(campaignId) {
     window.__allProductsCache = productosOrdenados;
     productosRenderizados = 0;
     offersCardsPendientes = [];
+    setCatalogLoadMode("paged");
     
     // Limpiar contenedor y mostrar mensaje
     cont.innerHTML = messageHTML;
     
-    // Renderizar los primeros 20 productos (sin banner dinámico)
-    await renderizarProductosPagina(productosPendientes, cont, [], 0, PRODUCTOS_INICIALES, { skipBanner: true });
-    productosRenderizados = PRODUCTOS_INICIALES;
+    // Renderizar primer bloque (sin banner dinámico) y usar el conteo real.
+    const firstChunkRendered = await renderizarProductosPagina(
+      productosPendientes,
+      cont,
+      [],
+      0,
+      PRODUCTOS_INICIALES,
+      { skipBanner: true }
+    );
+    productosRenderizados = Number(firstChunkRendered) || 0;
     
     // Configurar eventos
     configurarEventos();
@@ -1953,10 +2088,18 @@ async function filterBySupplierFYL(options = {}) {
     window.__allProductsCache = productosOrdenados;
     productosRenderizados = 0;
     offersCardsPendientes = [];
+    setCatalogLoadMode("paged");
     
-    // Renderizar los primeros 20 productos (sin banner dinámico)
-    await renderizarProductosPagina(productosPendientes, cont, [], 0, PRODUCTOS_INICIALES, { skipBanner: true });
-    productosRenderizados = PRODUCTOS_INICIALES;
+    // Renderizar primer bloque (sin banner dinámico) y usar el conteo real.
+    const firstChunkRendered = await renderizarProductosPagina(
+      productosPendientes,
+      cont,
+      [],
+      0,
+      PRODUCTOS_INICIALES,
+      { skipBanner: true }
+    );
+    productosRenderizados = Number(firstChunkRendered) || 0;
     
     // Configurar eventos
     configurarEventos();
@@ -2789,27 +2932,46 @@ function filterProductsByTag(allGrouped, tagValue) {
 }
 
 /** Mostrar barra de filtro arriba del grid. type: 'tag' (hash) o 'search' (buscador). */
-function renderTagFilterBar(tagValue, { type = 'tag' } = {}) {
+function renderTagFilterBar(tagValue, { type = 'tag', sizeFilters = [] } = {}) {
   const cont = document.getElementById('catalogo');
   if (!cont) return;
   let bar = document.getElementById('tag-filter-bar');
-  const label = type === 'search' ? 'Buscando' : 'Filtrado';
+  const safeSizes = (Array.isArray(sizeFilters) ? sizeFilters : [])
+    .map((s) => String(s || "").trim())
+    .filter(Boolean);
+  const hasSizeFilter = safeSizes.length > 0;
+  const label = type === 'search' ? 'Buscando' : type === 'size' ? 'Talles' : 'Filtrado';
   const safeVal = (tagValue || '').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  const safeSizesText = safeSizes.join(", ").replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  let textHtml = '';
+  if (type === 'search') {
+    textHtml = `Buscando: <strong class="tag-filter-value">${safeVal}</strong>`;
+    if (hasSizeFilter) {
+      textHtml += ` <span class="tag-filter-sep">•</span> Talles: <strong class="tag-filter-size-value">${safeSizesText}</strong>`;
+    }
+  } else if (type === 'size') {
+    textHtml = `Talles: <strong class="tag-filter-size-value">${safeSizesText}</strong>`;
+  } else {
+    textHtml = `${label}: <strong class="tag-filter-value">${safeVal}</strong>`;
+  }
   if (bar) {
     const textEl = bar.querySelector('.tag-filter-text');
     const valEl = bar.querySelector('.tag-filter-value');
-    if (textEl) textEl.innerHTML = `${label}: <strong class="tag-filter-value">${safeVal}</strong>`;
+    if (textEl) textEl.innerHTML = textHtml;
     else if (valEl) valEl.textContent = tagValue || '';
     bar.dataset.filterType = type;
+    bar.dataset.hasSizeFilter = hasSizeFilter ? 'true' : 'false';
     return;
   }
   const html = `
     <div id="tag-filter-bar" class="tag-filter-bar" data-filter-type="${type}">
-      <span class="tag-filter-text">${label}: <strong class="tag-filter-value">${safeVal}</strong></span>
-      <button type="button" class="tag-filter-clear" aria-label="Quitar filtro">✕</button>
+      <span class="tag-filter-text">${textHtml}</span>
+      <button type="button" class="tag-filter-clear" aria-label="Quitar filtros">✕</button>
     </div>
   `;
   cont.insertAdjacentHTML('afterbegin', html);
+  bar = document.getElementById('tag-filter-bar');
+  if (bar) bar.dataset.hasSizeFilter = hasSizeFilter ? 'true' : 'false';
 }
 
 /** Ocultar barra de filtro por tag. */
@@ -2826,7 +2988,13 @@ function initTagFilterClearDelegation() {
     if (!btn) return;
     const bar = document.getElementById('tag-filter-bar');
     const isSearch = bar?.dataset?.filterType === 'search';
-    if (isSearch) {
+    const isSize = bar?.dataset?.filterType === 'size';
+    const hasSizeFilter = bar?.dataset?.hasSizeFilter === 'true';
+    if (isSearch || isSize || hasSizeFilter) {
+      if (typeof window.clearAllCatalogFilters === 'function') {
+        window.clearAllCatalogFilters();
+        return;
+      }
       const input = document.getElementById('searchInput') || document.getElementById('search-bar-mobile');
       if (input) input.value = '';
       clearTagFilterBar();
@@ -2835,6 +3003,45 @@ function initTagFilterClearDelegation() {
       location.hash = '#/';
     }
   });
+}
+
+function getCurrentSearchTerm() {
+  const desktopTerm = document.getElementById('searchInput')?.value?.trim() || '';
+  const mobileTerm = document.getElementById('search-bar-mobile')?.value?.trim() || '';
+  return desktopTerm || mobileTerm;
+}
+
+function getActiveSizeFilters() {
+  const raw = window.__fylActiveSizeFilters;
+  return Array.isArray(raw) ? raw.filter(Boolean) : [];
+}
+
+function refreshCatalogFilterBar() {
+  const searchTerm = getCurrentSearchTerm();
+  const sizeFilters = getActiveSizeFilters();
+  if (searchTerm) {
+    renderTagFilterBar(searchTerm, { type: 'search', sizeFilters });
+    return;
+  }
+  if (sizeFilters.length > 0) {
+    renderTagFilterBar(sizeFilters.join(", "), { type: 'size', sizeFilters });
+    return;
+  }
+  clearTagFilterBar();
+}
+
+async function clearAllCatalogFilters() {
+  const inputDesktop = document.getElementById('searchInput');
+  const inputMobile = document.getElementById('search-bar-mobile');
+  if (inputDesktop) inputDesktop.value = '';
+  if (inputMobile) inputMobile.value = '';
+  if (typeof window.clearSizeFilter === 'function') {
+    window.clearSizeFilter();
+  }
+  clearTagFilterBar();
+  if (typeof window.buscarProductosEnTodos === 'function') {
+    await window.buscarProductosEnTodos('');
+  }
 }
 
 /** Click en .tag-chip o .pdp-tag-chip: llenar buscador y filtrar como si tipearas (sin cambiar hash). */
@@ -2880,6 +3087,7 @@ async function applyTagFilterAndRender(tagValue, { pushHash = true } = {}) {
   productosPendientes = filtrados;
   productosRenderizados = 0;
   offersCardsPendientes = [];
+  setCatalogLoadMode("paged");
   if (typeof window.hideFYLOriginalsBanner === 'function') window.hideFYLOriginalsBanner();
   if (typeof window.hideCustomBanner === 'function') window.hideCustomBanner();
   if (typeof window.hidePromotionalBanner === 'function') window.hidePromotionalBanner();
@@ -2897,8 +3105,15 @@ async function applyTagFilterAndRender(tagValue, { pushHash = true } = {}) {
     }
     return;
   }
-  await renderizarProductosPagina(productosPendientes, cont, [], 0, PRODUCTOS_INICIALES, { skipBanner: true });
-  productosRenderizados = PRODUCTOS_INICIALES;
+  const firstChunkRendered = await renderizarProductosPagina(
+    productosPendientes,
+    cont,
+    [],
+    0,
+    PRODUCTOS_INICIALES,
+    { skipBanner: true }
+  );
+  productosRenderizados = Number(firstChunkRendered) || 0;
   configurarEventos();
   mostrarBotonVerMas();
   iniciarVerificacionCargaImagenes();
@@ -4711,6 +4926,7 @@ function configurarEventos() {
       clearTimeout(catalogoScrollDebounceTimeout);
       catalogoScrollDebounceTimeout = setTimeout(() => {
         iniciarVerificacionCargaImagenes();
+        maybeTriggerCatalogAutoloadFallback();
       }, 100);
     }, { passive: true });
   }
@@ -4870,6 +5086,33 @@ async function existeNovedades() {
   }
 }
 
+async function existeOfertas() {
+  try {
+    if (!supabase) {
+      console.warn("⚠️ Cliente de Supabase no disponible para verificar ofertas");
+      return false;
+    }
+
+    const { data, error } = await supabase
+      .from("catalog_public_view")
+      .select("Oferta, Mostrar")
+      .limit(4000);
+
+    if (error) throw error;
+
+    return (data || []).some((item) => {
+      const mostrar = item?.Mostrar;
+      const oferta = item?.Oferta;
+      const mostrarOk = mostrar === "TRUE" || mostrar === true || mostrar === "true" || mostrar === 1;
+      const ofertaOk = oferta === "TRUE" || oferta === true || oferta === "true" || oferta === 1;
+      return mostrarOk && ofertaOk;
+    });
+  } catch (error) {
+    console.error("Error verificando ofertas:", error);
+    return false;
+  }
+}
+
 // Función de diagnóstico
 function ejecutarDiagnostico() {
   fylCatalogDbg("🔍 DIAGNÓSTICO RÁPIDO - CATÁLOGO FYL (SUPABASE)");
@@ -4969,85 +5212,10 @@ async function inicializarCatalogo() {
     ejecutarDiagnostico();
 
     try {
-    // Verificar que podemos consultar la vista antes de cargar
-    fylCatalogDbg("🔍 Verificando acceso a catalog_public_view...");
-    const VIEW_PROBE_MS = 60000;
-    let testData;
-    let testError;
-    try {
-      const res = await fylAwaitWithTimeout(
-        supabase
-          .from("catalog_public_view")
-          // Probe mínimo para móviles: una columna y una fila.
-          .select("Articulo")
-          .limit(1),
-        VIEW_PROBE_MS,
-        "catalog_view_sample"
-      );
-      testData = res.data;
-      testError = res.error;
-    } catch (e) {
-      const msg = String(e?.message || e);
-      testError = {
-        message:
-          msg.includes("fyl_timeout:") ? "Sin respuesta a tiempo (revisá la red)." : msg,
-        code: "TIMEOUT",
-      };
-      testData = null;
-    }
-    
-    if (testError) {
-      console.error("❌ Error accediendo a catalog_public_view:", testError);
-      console.error("Detalles:", {
-        message: testError.message,
-        details: testError.details,
-        hint: testError.hint,
-        code: testError.code
-      });
-      globalThis.markBootStage?.("catalog.view.probe", {
-        ok: false,
-        code: testError.code,
-        message: testError.message ? String(testError.message).slice(0, 200) : "",
-      });
-      const cont = document.getElementById("catalogo");
-      if (cont) {
-        cont.innerHTML = `
-          <div class="error-message" style="text-align: center; padding: 40px; color: #666; background: #f8f9fa; border-radius: 8px; margin: 20px;">
-            <h3>❌ Error de Acceso</h3>
-            <p>No se puede acceder a la vista del catálogo:</p>
-            <p style="color: #c00; font-weight: bold;">${testError.message}</p>
-            <p>Verifica los permisos RLS en Supabase.</p>
-            <button onclick="location.reload()" style="background: #CD844D; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; margin-top: 15px;">Reintentar</button>
-          </div>
-        `;
-      }
-      globalThis.markBootStage?.("catalog.aborted", { reason: "view_probe_error" });
-      hideCatalogBootOverlay();
-      return;
-    }
-    
-    globalThis.markBootStage?.("catalog.view.probe", {
-      ok: true,
-      rows: testData?.length ?? 0,
+    // La conectividad ya fue validada en inicializarSupabase(); evitamos sonda duplicada aquí.
+    globalThis.markBootStage?.("catalog.view.probe.skipped", {
+      reason: "already_validated_in_supabase_init",
     });
-
-    fylCatalogDbg(`✅ Acceso a vista OK. Total de productos en vista: ${testData?.length || 0}`);
-    if (testData && testData.length > 0) {
-      fylCatalogDbg("📋 Primeros productos en la vista:", testData.slice(0, 5).map(p => ({
-        Articulo: p.Articulo,
-        Categoria: p.Categoria,
-        Color: p.Color
-      })));
-      
-      // Verificar categorías únicas
-      const categorias = [...new Set(testData.map(p => p.Categoria).filter(Boolean))];
-      fylCatalogDbg("📂 Categorías encontradas:", categorias);
-    } else {
-      console.warn("⚠️ La vista está vacía. Verifica que:");
-      console.warn("   1. Hay productos con status='active' en la tabla products");
-      console.warn("   2. Hay variantes con active=true en product_variants");
-      console.warn("   3. Los permisos RLS permiten lectura pública");
-    }
     
     // Inicializar eventos del modal
     initGridEvents();
@@ -5263,11 +5431,32 @@ async function inicializarCatalogo() {
     // SKU manda - siempre abre modal si existe
     await inicializarModalDesdeURL();
 
-    // Ocultar botón de novedades si no hay novedades
-    const btnNovedades = document.getElementById("btn-novedades");
-    if (btnNovedades && !(await existeNovedades())) {
-      btnNovedades.style.display = "none";
-    }
+    // Resolver botones auxiliares en background para no retrasar el arranque inicial.
+    setTimeout(async () => {
+      try {
+        const btnNovedades = document.getElementById("btn-novedades");
+        if (btnNovedades && !(await existeNovedades())) {
+          btnNovedades.style.display = "none";
+        }
+
+        // Mostrar/ocultar y priorizar botón de ofertas en menú desktop.
+        const btnOfertas = document.getElementById("btn-ofertas");
+        if (btnOfertas) {
+          const hayOfertas = await existeOfertas();
+          if (!hayOfertas) {
+            btnOfertas.style.display = "none";
+          } else {
+            btnOfertas.style.display = "";
+            const menuDesktop = btnOfertas.parentElement;
+            if (menuDesktop && menuDesktop.firstElementChild !== btnOfertas) {
+              menuDesktop.insertBefore(btnOfertas, menuDesktop.firstElementChild);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("⚠️ No se pudieron actualizar botones auxiliares:", err?.message || err);
+      }
+    }, 0);
 
     if (!isCollectionFYL) {
       window.__CATALOG_READY__ = true;
@@ -5445,17 +5634,203 @@ async function mostrarAlternativasParaTalleSinStock(producto) {
   }
 }
 
+function normalizeSearchText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function tokenizeSearchText(value) {
+  return normalizeSearchText(value)
+    .split(/[^a-z0-9]+/)
+    .filter((token) => token.length >= 2);
+}
+
+function getMaxTypoDistance(tokenLength) {
+  if (tokenLength >= 8) return 2;
+  if (tokenLength >= 5) return 1;
+  return 0;
+}
+
+function levenshteinDistanceBounded(a, b, maxDistance) {
+  if (a === b) return 0;
+  if (Math.abs(a.length - b.length) > maxDistance) return maxDistance + 1;
+
+  const prev = new Array(b.length + 1);
+  const curr = new Array(b.length + 1);
+  for (let j = 0; j <= b.length; j++) prev[j] = j;
+
+  for (let i = 1; i <= a.length; i++) {
+    curr[0] = i;
+    let rowMin = curr[0];
+
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(
+        prev[j] + 1,
+        curr[j - 1] + 1,
+        prev[j - 1] + cost
+      );
+      if (curr[j] < rowMin) rowMin = curr[j];
+    }
+
+    if (rowMin > maxDistance) return maxDistance + 1;
+
+    for (let j = 0; j <= b.length; j++) {
+      prev[j] = curr[j];
+    }
+  }
+
+  return prev[b.length];
+}
+
+function hasApproximateTokenMatch(searchToken, candidateText) {
+  if (!searchToken || !candidateText) return false;
+  if (candidateText.includes(searchToken)) return true;
+
+  const maxDistance = getMaxTypoDistance(searchToken.length);
+  if (maxDistance === 0) return false;
+
+  const candidateTokens = candidateText.split(/[^a-z0-9]+/);
+  for (const token of candidateTokens) {
+    if (!token) continue;
+    if (Math.abs(token.length - searchToken.length) > maxDistance) continue;
+
+    const distance = levenshteinDistanceBounded(searchToken, token, maxDistance);
+    if (distance <= maxDistance) return true;
+  }
+
+  return false;
+}
+
+function matchesSearchWithTolerance(searchTerm, searchableText) {
+  if (!searchTerm) return true;
+  if (!searchableText) return false;
+
+  if (searchableText.includes(searchTerm)) return true;
+
+  const searchTokens = tokenizeSearchText(searchTerm);
+  if (searchTokens.length === 0) return false;
+
+  return searchTokens.every((token) =>
+    hasApproximateTokenMatch(token, searchableText)
+  );
+}
+
+function scoreTextMatch(searchTerm, searchableText) {
+  if (!searchTerm || !searchableText) return 0;
+
+  if (searchableText === searchTerm) return 100;
+  if (searchableText.startsWith(searchTerm)) return 70;
+  if (searchableText.includes(searchTerm)) return 40;
+  if (matchesSearchWithTolerance(searchTerm, searchableText)) return 25;
+
+  return 0;
+}
+
+function scoreTokenMatch(searchTerm, searchableText) {
+  if (!searchTerm || !searchableText) return 0;
+
+  const tokens = tokenizeSearchText(searchableText);
+  if (tokens.length === 0) return scoreTextMatch(searchTerm, searchableText);
+
+  if (tokens.includes(searchTerm)) return 100;
+  if (tokens.some((token) => token.startsWith(searchTerm))) return 70;
+  if (tokens.some((token) => token.includes(searchTerm))) return 40;
+  if (tokens.some((token) => hasApproximateTokenMatch(searchTerm, token))) return 25;
+
+  return 0;
+}
+
+function getSearchRelevanceScore(producto, searchTerm) {
+  const art = normalizeSearchText(producto.Articulo || "");
+  const descripcion = normalizeSearchText(producto.Descripcion || "");
+  const nombre = normalizeSearchText((producto.name || producto.Articulo) || "");
+  const filtros = [
+    normalizeSearchText(producto.Filtro1 || ""),
+    normalizeSearchText(producto.Filtro2 || ""),
+    normalizeSearchText(producto.Filtro3 || "")
+  ].join(" ");
+
+  const exactScore = Math.max(
+    scoreTokenMatch(searchTerm, art),
+    scoreTokenMatch(searchTerm, nombre)
+  );
+  const startsScore = Math.max(
+    scoreTextMatch(searchTerm, art),
+    scoreTextMatch(searchTerm, nombre)
+  );
+  const descriptionScore = scoreTextMatch(searchTerm, descripcion);
+  const tagScore = scoreTextMatch(searchTerm, filtros) > 0 ? 10 : 0;
+
+  return Math.max(exactScore, startsScore) + Math.min(descriptionScore, 40) + tagScore;
+}
+
+function normalizeCatalogCategoryName(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function mapProductToCatalogCategory(producto) {
+  const categoria = normalizeCatalogCategoryName(producto?.Categoria);
+  const filtro1 = normalizeCatalogCategoryName(producto?.Filtro1);
+
+  if (categoria === "calzado") return "Calzado";
+  if (categoria === "ropa") return "Ropa";
+  if (categoria === "lenceria") return "Lenceria";
+  if (categoria === "marroquineria") return "Marroquineria";
+
+  if (categoria === "otros") {
+    if (filtro1 === "lenceria") return "Lenceria";
+    if (filtro1 === "marroquineria") return "Marroquineria";
+  }
+
+  return null;
+}
+
+function inferSearchCategoryFromProducts(productos) {
+  if (!Array.isArray(productos) || productos.length === 0) return null;
+
+  const counts = new Map();
+  productos.forEach((producto) => {
+    const mapped = mapProductToCatalogCategory(producto);
+    if (!mapped) return;
+    counts.set(mapped, (counts.get(mapped) || 0) + 1);
+  });
+
+  if (counts.size === 0) return null;
+
+  const ranked = Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
+  if (ranked.length === 1) return ranked[0][0];
+
+  // Si una categoría domina claramente, usarla automáticamente.
+  if (ranked[0][1] >= ranked[1][1] * 2) return ranked[0][0];
+
+  return null;
+}
+
 // Función para buscar productos en todos los productos pendientes
 async function buscarProductosEnTodos(term) {
   if (!term || term.trim() === '') {
+    window.__fylSearchDerivedCategory = null;
+    setCatalogLoadMode("paged");
     // Si no hay término, restaurar vista paginada normal y mostrar banners
-    clearTagFilterBar();
     const cont = document.getElementById("catalogo");
     if (cont) {
       cont.innerHTML = "";
       productosRenderizados = 0;
-      await renderizarProductosPagina(productosPendientes, cont, offersCardsPendientes, 0, PRODUCTOS_INICIALES);
-      productosRenderizados = PRODUCTOS_INICIALES;
+      const firstChunkRendered = await renderizarProductosPagina(
+        productosPendientes,
+        cont,
+        offersCardsPendientes,
+        0,
+        PRODUCTOS_INICIALES
+      );
+      productosRenderizados = Number(firstChunkRendered) || 0;
       configurarEventos();
       mostrarBotonVerMas();
       if (categoriaActual === 'all') {
@@ -5477,32 +5852,51 @@ async function buscarProductosEnTodos(term) {
         syncInfoBannerVisibility();
       }
     }
+    refreshCatalogFilterBar();
     fylCatalogTrackViewItemList("category:" + (typeof categoriaActual !== "undefined" ? categoriaActual : "all"), productosPendientes, "category_grid");
     return;
   }
 
-  const termLower = term.trim().toLowerCase();
+  const termLower = normalizeSearchText(term.trim());
+  setCatalogLoadMode("full");
+  teardownCatalogAutoloadObserver();
   const cont = document.getElementById("catalogo");
   if (!cont || !productosPendientes || productosPendientes.length === 0) {
     return;
   }
 
-  // Filtrar productos que coincidan con el término de búsqueda
-  const productosFiltrados = productosPendientes.filter(producto => {
-    const art = (producto.Articulo || '').toLowerCase();
-    const descripcion = (producto.Descripcion || '').toLowerCase();
-    const nombre = ((producto.name || producto.Articulo) || '').toLowerCase();
+  // Filtrar y rankear productos por relevancia
+  const productosRankeados = productosPendientes.map((producto) => {
+    const art = normalizeSearchText(producto.Articulo || "");
+    const descripcion = normalizeSearchText(producto.Descripcion || "");
+    const nombre = normalizeSearchText((producto.name || producto.Articulo) || "");
     const filtros = [
-      (producto.Filtro1 || '').toLowerCase(),
-      (producto.Filtro2 || '').toLowerCase(),
-      (producto.Filtro3 || '').toLowerCase()
-    ].join(' ');
+      normalizeSearchText(producto.Filtro1 || ""),
+      normalizeSearchText(producto.Filtro2 || ""),
+      normalizeSearchText(producto.Filtro3 || "")
+    ].join(" ");
 
-    return art.includes(termLower) || 
-           descripcion.includes(termLower) || 
-           nombre.includes(termLower) ||
-           filtros.includes(termLower);
+    const isMatch = (
+      matchesSearchWithTolerance(termLower, art) ||
+      matchesSearchWithTolerance(termLower, descripcion) ||
+      matchesSearchWithTolerance(termLower, nombre) ||
+      matchesSearchWithTolerance(termLower, filtros)
+    );
+    if (!isMatch) return null;
+
+    return {
+      producto,
+      score: getSearchRelevanceScore(producto, termLower),
+    };
+  }).filter(Boolean);
+
+  productosRankeados.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return parseFecha(b.producto.FechaIngreso) - parseFecha(a.producto.FechaIngreso);
   });
+
+  const productosFiltrados = productosRankeados.map((item) => item.producto);
+  window.__fylSearchDerivedCategory = inferSearchCategoryFromProducts(productosFiltrados);
 
   // Limpiar contenedor y ocultar banners cuando hay filtro de búsqueda
   cont.innerHTML = "";
@@ -5517,7 +5911,7 @@ async function buscarProductosEnTodos(term) {
     cont.insertAdjacentHTML('beforeend', '<div class="no-results" style="text-align: center; padding: 2rem; color: #666;">No se encontraron productos</div>');
   }
   initTagFilterClearDelegation();
-  renderTagFilterBar(term, { type: 'search' });
+  refreshCatalogFilterBar();
   fylCatalogTrackViewItemList("search:" + termLower, productosFiltrados, "search_results");
 }
 
@@ -5529,6 +5923,7 @@ window.downloadImage = downloadImage;
 window.downloadImageFromUrl = downloadImageFromUrl;
 window.shareImageUrl = shareImageUrl;
 window.existeNovedades = existeNovedades;
+window.existeOfertas = existeOfertas;
 window.parseFecha = parseFecha;
 window.cloudinaryOptimized = cloudinaryOptimized;
 window.getImgThumb = getImgThumb;
@@ -5542,6 +5937,10 @@ window.enrichProductsWithStock = enrichProductsWithStock;
 window.formatPrice = formatPrice;
 window.formatARS = formatARS;
 window.buscarProductosEnTodos = buscarProductosEnTodos;
+window.refreshCatalogFilterBar = refreshCatalogFilterBar;
+window.clearAllCatalogFilters = clearAllCatalogFilters;
+window.showCatalogBootOverlay = showCatalogBootOverlay;
+window.hideCatalogBootOverlay = hideCatalogBootOverlay;
 window.renderizarProductosPagina = renderizarProductosPagina;
 window.configurarEventos = configurarEventos;
 window.mainImageFallback = mainImageFallback;

@@ -582,7 +582,9 @@
   <!-- HEADER MOBILE -->
   <header>
     <div class="header-left">
-      <img src="logo.png" alt="Logo F&L" class="header-logo"/>
+      <button type="button" id="header-logo-home" class="header-logo-btn" aria-label="Volver al inicio">
+        <img src="logo.png" alt="Logo F&L" class="header-logo"/>
+      </button>
     </div>
     <div class="search-bar-wrapper">
       <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -627,7 +629,7 @@
       <button onclick="window.cambiarCategoria('Lenceria')">Lencería</button>
       <button onclick="window.cambiarCategoria('Marroquineria')">Accesorios</button>
       <button onclick="window.cambiarCategoria('Novedades')" id="btn-novedades">Novedades ⭐</button>
-      <button onclick="window.cambiarCategoria('Ofertas')">Ofertas 🔥</button>
+      <button onclick="window.cambiarCategoria('Ofertas')" id="btn-ofertas">Ofertas 🔥</button>
     </div>
 
     <!-- Acciones Rápidas (SOLO mobile - reemplazan el menú de categorías) -->

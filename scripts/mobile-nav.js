@@ -50,6 +50,20 @@ function setupNavHandlers() {
   const navCategorias = document.getElementById("nav-categorias");
   const navPedidos = document.getElementById("nav-pedidos");
   const navPerfil = document.getElementById("nav-perfil");
+  const headerLogoHome = document.getElementById("header-logo-home");
+
+  // Logo en header: reutiliza la misma lógica de Inicio.
+  if (headerLogoHome) {
+    headerLogoHome.addEventListener("click", (e) => {
+      e.preventDefault();
+      if (navInicio) {
+        navInicio.click();
+      } else {
+        location.hash = "#/";
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+    });
+  }
 
   // Inicio (primer botón)
   if (navInicio) {
@@ -81,8 +95,18 @@ function setupNavHandlers() {
       }
       
       // Resetear filtros y mostrar todo
+      if (typeof window.clearSearch === "function") {
+        window.clearSearch({ skipCatalogReset: true });
+      }
       if (typeof window.cambiarCategoria === "function") {
-        window.cambiarCategoria("all");
+        if (typeof window.showCatalogBootOverlay === "function") {
+          window.showCatalogBootOverlay();
+        }
+        Promise.resolve(window.cambiarCategoria("all")).finally(() => {
+          if (typeof window.hideCatalogBootOverlay === "function") {
+            window.hideCatalogBootOverlay();
+          }
+        });
       } else {
         window.location.hash = "";
         // Scroll al inicio
@@ -155,8 +179,18 @@ function setupNavHandlers() {
       }
       
       // Navegar al inicio igual que el botón de inicio
+      if (typeof window.clearSearch === "function") {
+        window.clearSearch({ skipCatalogReset: true });
+      }
       if (typeof window.cambiarCategoria === "function") {
-        window.cambiarCategoria("all");
+        if (typeof window.showCatalogBootOverlay === "function") {
+          window.showCatalogBootOverlay();
+        }
+        Promise.resolve(window.cambiarCategoria("all")).finally(() => {
+          if (typeof window.hideCatalogBootOverlay === "function") {
+            window.hideCatalogBootOverlay();
+          }
+        });
       } else {
         window.location.hash = "";
         // Scroll al inicio

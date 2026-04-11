@@ -7,6 +7,39 @@ import { fylAnalytics } from "./analytics.js";
 let quickActionsData = [];
 let activeAction = null;
 
+function isOfferAction(action) {
+  if (!action) return false;
+  const type = String(action.type || "").trim().toLowerCase();
+  const value = String(action.value || "").trim().toLowerCase();
+  const label = String(action.label || "").trim().toLowerCase();
+  return type === "offer" || value === "ofertas" || label.includes("oferta");
+}
+
+async function hasActiveOffersForQuickActions() {
+  try {
+    const { data, error } = await supabase
+      .from("catalog_public_view")
+      .select("Oferta, Mostrar")
+      .limit(4000);
+
+    if (error) {
+      console.error("Error verificando ofertas para quick actions:", error);
+      return false;
+    }
+
+    return (data || []).some((item) => {
+      const mostrar = item?.Mostrar;
+      const oferta = item?.Oferta;
+      const mostrarOk = mostrar === "TRUE" || mostrar === true || mostrar === "true" || mostrar === 1;
+      const ofertaOk = oferta === "TRUE" || oferta === true || oferta === "true" || oferta === 1;
+      return mostrarOk && ofertaOk;
+    });
+  } catch (error) {
+    console.error("Error en hasActiveOffersForQuickActions:", error);
+    return false;
+  }
+}
+
 // Cargar acciones rápidas desde Supabase
 export async function loadQuickActions() {
   try {
@@ -21,7 +54,20 @@ export async function loadQuickActions() {
       console.error("Error cargando acciones rápidas:", actionsError);
     }
 
-    const configuredActions = actionsData || [];
+    const hasOffers = await hasActiveOffersForQuickActions();
+    let configuredActions = actionsData || [];
+
+    // Mostrar "Ofertas" solo cuando realmente hay ofertas activas.
+    configuredActions = configuredActions.filter((action) =>
+      hasOffers ? true : !isOfferAction(action)
+    );
+
+    // Si hay ofertas, mostrarlas primero en el listado.
+    if (hasOffers) {
+      const offerActions = configuredActions.filter(isOfferAction);
+      const nonOfferActions = configuredActions.filter((action) => !isOfferAction(action));
+      configuredActions = [...offerActions, ...nonOfferActions];
+    }
 
     // 2. Cargar dinámicamente todos los tags 1 únicos de la categoría "Otros"
     let dynamicTagActions = [];
@@ -171,8 +217,20 @@ async function handleQuickAction(action) {
   // Aplicar filtro según tipo
   if (action.type === "inicio" || action.value === "all") {
     // Mostrar todo (vista Inicio)
+    if (typeof window.clearSearch === "function") {
+      window.clearSearch({ skipCatalogReset: true });
+    }
     if (typeof window.cambiarCategoria === "function") {
-      window.cambiarCategoria("all");
+      if (typeof window.showCatalogBootOverlay === "function") {
+        window.showCatalogBootOverlay();
+      }
+      try {
+        await window.cambiarCategoria("all");
+      } finally {
+        if (typeof window.hideCatalogBootOverlay === "function") {
+          window.hideCatalogBootOverlay();
+        }
+      }
     } else {
       // Si no hay función global, recargar todos los productos
       window.location.hash = "";

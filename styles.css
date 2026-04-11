@@ -322,10 +322,19 @@ header h1 { margin: 0; font-size: 1.5rem; }
 }
 .tag-filter-text {
   color: #333;
+  line-height: 1.35;
 }
 .tag-filter-value {
   font-weight: 600;
   color: #CD844D;
+}
+.tag-filter-size-value {
+  font-weight: 600;
+  color: #8a5b36;
+}
+.tag-filter-sep {
+  margin: 0 4px;
+  color: #b07a52;
 }
 .tag-filter-clear {
   background: rgba(255, 255, 255, 0.9);
@@ -343,6 +352,16 @@ header h1 { margin: 0; font-size: 1.5rem; }
   justify-content: center;
   flex-shrink: 0;
   transition: color 0.2s, background 0.2s, border-color 0.2s;
+}
+
+@media (max-width: 480px) {
+  .tag-filter-bar {
+    padding: 10px 12px;
+    gap: 8px;
+  }
+  .tag-filter-text {
+    font-size: 13px;
+  }
 }
 .tag-filter-clear:hover {
   background: #CD844D;
@@ -4282,6 +4301,24 @@ body.modal-open {
     display: flex;
     align-items: center;
     flex-shrink: 0;
+  }
+
+  .header-logo-btn {
+    appearance: none;
+    border: none;
+    background: transparent;
+    padding: 0;
+    margin: 0;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .header-logo-btn:focus-visible {
+    outline: 2px solid #CD844D;
+    outline-offset: 2px;
+    border-radius: 6px;
   }
 
   .header-logo {

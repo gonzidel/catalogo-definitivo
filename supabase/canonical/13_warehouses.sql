@@ -255,6 +255,7 @@ declare
   v_user_id uuid;
   v_movement_id uuid;
   v_result json;
+  v_has_sizes boolean;
 begin
   -- Validar cantidad
   if p_quantity <= 0 then
@@ -286,6 +287,27 @@ begin
   
   if v_from_warehouse_id = v_to_warehouse_id then
     raise exception 'El almacén origen y destino no pueden ser el mismo';
+  end if;
+
+  -- Endurecimiento: si la variante trabaja por talles, exigir movimiento por talle.
+  select (
+    exists (
+      select 1
+      from public.variant_size_warehouse_stock
+      where variant_id = p_variant_id
+      limit 1
+    )
+    or exists (
+      select 1
+      from public.variant_sizes
+      where variant_id = p_variant_id
+        and trim(coalesce(size, '')) <> ''
+      limit 1
+    )
+  ) into v_has_sizes;
+
+  if coalesce(v_has_sizes, false) then
+    raise exception 'La variante % tiene stock por talles. Usa rpc_move_size_stock para mantener consistencia.', p_variant_id;
   end if;
   
   -- Verificar stock disponible en origen

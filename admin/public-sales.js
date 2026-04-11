@@ -3,6 +3,7 @@ import { requireAuth } from "./admin-auth.js";
 import { supabase } from "../scripts/supabase-client.js";
 import { SUPABASE_URL, QZ_SIGN_SECRET } from "../scripts/config.js";
 import { normalizeSize } from "../scripts/utils/size-normalizer.js";
+import { parseARSNumber, resolveOrderItemUnitPrice } from "../scripts/utils/price.js";
 
 const TIMEZONE_BUENOS_AIRES = "America/Argentina/Buenos_Aires";
 
@@ -17,6 +18,7 @@ const PUBLIC_SALES_CAJA = Number(window.PUBLIC_SALES_CAJA) || 1;
 
 // Ancho del ticket en caracteres (80mm ≈ 42 caracteres con fuente estándar)
 const TICKET_WIDTH = 42;
+const editOrderVariantPriceMap = new Map(); // variant_id -> price de catálogo (raw)
 
 // Función helper para configurar firma remota de QZ Tray
 async function setupQZSignature() {
@@ -265,7 +267,7 @@ function buildEscposTicket(saleDetails, customer, finalTotal) {
 
   // Items de la venta
   items.forEach(item => {
-    const price = parseFloat(item.price || item.price_snapshot || 0);
+    const price = parseARSNumber(item.price ?? item.price_snapshot ?? 0);
     const total = price * item.qty;
     const isReturn = item.is_return || false;
 
@@ -299,7 +301,7 @@ function buildEscposTicket(saleDetails, customer, finalTotal) {
 
   // Crédito aplicado (si existe) - sin tilde
   if (sale.credit_used > 0) {
-    const creditAmount = parseFloat(sale.credit_used);
+    const creditAmount = parseARSNumber(sale.credit_used);
     const creditStr = `-$${creditAmount.toLocaleString('es-AR')}`;
     ticket.push(`Credito Aplicado: ${padLeft(creditStr, TICKET_WIDTH - 20)}`);
     ticket.push("");
@@ -307,7 +309,9 @@ function buildEscposTicket(saleDetails, customer, finalTotal) {
 
   // TOTAL alineado a la derecha
   // Usar finalTotal si se proporciona (incluye todos los extras), sino usar sale.total_amount
-  const totalAmount = finalTotal !== undefined && finalTotal !== null ? parseFloat(finalTotal) : parseFloat(sale.total_amount);
+  const totalAmount = finalTotal !== undefined && finalTotal !== null
+    ? parseARSNumber(finalTotal)
+    : parseARSNumber(sale.total_amount);
   const totalStr = `${totalAmount < 0 ? '-' : ''}$${Math.abs(totalAmount).toLocaleString('es-AR')}`;
   ticket.push(padLeft(`TOTAL: ${totalStr}`, TICKET_WIDTH));
   ticket.push("");
@@ -1549,45 +1553,23 @@ async function loadManualProductVariants(productId) {
 
     // Obtener stock, precios efectivos e información de ofertas/promociones para cada variante EN PARALELO
     const variantPromises = manualCurrentVariants.map(async (variant) => {
-      // Ejecutar todas las llamadas en paralelo para esta variante
-      // Si la variante tiene un talle específico (viene de variant_sizes), usar su stock_qty
-      let stockData;
-      if (variant.size && variant.sizeSku) {
-        // Variante con talle específico: usar stock_qty de variant_sizes
-        // También obtener stock de warehouse para compatibilidad
-        const [warehouseStock, effectivePrice, offerInfo, promotionInfo] = await Promise.all([
-        getVariantStock(variant.id),
+      // Ejecutar datos de precio/promoción en paralelo; stock se resuelve por semántica de talle.
+      const [effectivePrice, offerInfo, promotionInfo] = await Promise.all([
         getEffectivePrice(variant.id),
         getOfferInfo(variant.id, manualCurrentProduct.id, variant.color),
         getPromotionInfo(variant.id)
       ]);
-        
-        // Usar stock_qty de variant_sizes como base, pero también considerar warehouse stock
-        const sizeStockQty = variant.stock_qty || 0;
-        stockData = {
-          ...warehouseStock,
-          sizeStock: sizeStockQty, // Stock específico del talle desde variant_sizes
-          total: Math.max(warehouseStock.total, sizeStockQty), // Usar el mayor entre ambos
-        };
 
-      variant.stockData = stockData;
+      if (variant.size && variant.sizeSku) {
+        variant.stockData = await getVariantSizeStockByWarehouse(variant.id, variant.size);
+      } else {
+        // Variante sin talle específico: mantener modo legacy.
+        variant.stockData = await getVariantStock(variant.id);
+      }
+
       variant.effectivePrice = effectivePrice !== null ? effectivePrice : variant.price;
       variant.offerInfo = offerInfo;
       variant.promotionInfo = promotionInfo;
-      } else {
-        // Variante sin talle específico: usar stock de warehouse (modo legacy)
-        const [warehouseStock, effectivePrice, offerInfo, promotionInfo] = await Promise.all([
-          getVariantStock(variant.id),
-          getEffectivePrice(variant.id),
-          getOfferInfo(variant.id, manualCurrentProduct.id, variant.color),
-          getPromotionInfo(variant.id)
-        ]);
-        
-        variant.stockData = warehouseStock;
-        variant.effectivePrice = effectivePrice !== null ? effectivePrice : variant.price;
-        variant.offerInfo = offerInfo;
-        variant.promotionInfo = promotionInfo;
-      }
 
       return variant;
     });
@@ -1918,15 +1900,7 @@ async function renderManualSizeButtons() {
         }
       }
       
-    // FALLBACK CRÍTICO: Si no hay stock en warehouses pero hay en variant_sizes, usar variant_sizes.stock_qty
-    // Este es el mismo patrón que usa admin/stock.js (líneas 554-560) y admin/order-creator.js
-    // variant.stock_qty viene de variant_sizes (ya se carga en líneas 1185, 3086)
-    if (generalStock === 0 && ventaPublicoStock === 0 && variant.stock_qty > 0) {
-      // Si hay stock en variant_sizes pero no en variant_size_warehouse_stock,
-      // poner todo en general como fallback (esto es lo que hace admin/stock.js)
-      generalStock = variant.stock_qty || 0;
-      totalStock = generalStock;
-    }
+    // Plan 2: no usar variant_sizes como fallback operativo por talle.
 
     const btn = document.createElement("button");
     btn.className = "size-btn";
@@ -2229,61 +2203,15 @@ if (manualLoadBtn) {
     // Validar stock antes de agregar
     let hasStockError = false;
     
-    // Obtener warehouses para consultar stock por talle
-    const { data: warehouses } = await supabase
-      .from("warehouses")
-      .select("id, code")
-      .in("code", ["general", "venta-publico"]);
-    
-    const warehouseMap = new Map();
-    let generalWarehouseId = null;
-    let ventaPublicoWarehouseId = null;
-    
-    if (warehouses && warehouses.length > 0) {
-      warehouses.forEach(w => warehouseMap.set(w.code, w.id));
-      generalWarehouseId = warehouseMap.get("general");
-      ventaPublicoWarehouseId = warehouseMap.get("venta-publico");
-    }
-    
     for (const size of Object.keys(manualSelectedSizes)) {
       const quantity = manualSelectedSizes[size];
       if (quantity <= 0) continue;
 
-      const variant = variantsByColor.find(v => v.size === size);
+      const variant = variantsByColor.find(v => normalizeSize(v.size) === normalizeSize(size));
       if (!variant) continue;
 
-      // Consultar stock específico del talle desde variant_size_warehouse_stock
-      // IMPORTANTE: Normalizar el tamaño antes de consultar para asegurar consistencia
-      let totalStock = 0;
-      if (generalWarehouseId && ventaPublicoWarehouseId) {
-        // Normalizar el tamaño antes de consultar
-        const normalizedSize = normalizeSize(size);
-        
-        // Cargar todos los registros de stock para esta variante y normalizar después
-        const { data: sizeWarehouseStocks, error: sizeError } = await supabase
-          .from("variant_size_warehouse_stock")
-          .select("size, warehouse_id, stock_qty")
-          .eq("variant_id", variant.id)
-          .in("warehouse_id", [generalWarehouseId, ventaPublicoWarehouseId]);
-        
-        if (!sizeError && sizeWarehouseStocks && sizeWarehouseStocks.length > 0) {
-          // Filtrar por tamaño normalizado después de obtener los datos
-          sizeWarehouseStocks.forEach(sws => {
-            const swsNormalizedSize = normalizeSize(sws.size);
-            if (swsNormalizedSize !== normalizedSize) return; // Saltar si no coincide después de normalizar
-            
-            totalStock += sws.stock_qty || 0;
-          });
-        }
-        
-        // Fallback: usar stock_qty de variant_sizes si no se encontró stock en variant_size_warehouse_stock
-        if (totalStock === 0) {
-          totalStock = variant.stock_qty || 0;
-        }
-      } else {
-        // Fallback: usar stock_qty de variant_sizes si no hay warehouses
-        totalStock = variant.stock_qty || 0;
-      }
+      const sizeStock = await getVariantSizeStockByWarehouse(variant.id, size);
+      const totalStock = sizeStock.total || 0;
 
       // Validar stock solo si el talle NO fue confirmado para agregar sin stock
       if (!isReturn && quantity > totalStock && !manualSelectedSizesConfirmedWithoutStock[size]) {
@@ -2299,7 +2227,7 @@ if (manualLoadBtn) {
       const quantity = manualSelectedSizes[size];
       if (quantity <= 0) return;
 
-      const variant = variantsByColor.find(v => v.size === size);
+      const variant = variantsByColor.find(v => normalizeSize(v.size) === normalizeSize(size));
       if (!variant) return;
 
       // Obtener stock disponible para este talle
@@ -2626,7 +2554,7 @@ async function processQrCodeFast(qrCode) {
   // Obtener warehouses (con cache) y stock en paralelo
   const [warehouses, stockData] = await Promise.all([
     getWarehousesCached(),
-    getVariantStock(variant.id)
+    getVariantSizeStockByWarehouse(variant.id, variant.size)
   ]);
   
   const totalStock = stockData.total;
@@ -2665,26 +2593,9 @@ async function processQrCodeFast(qrCode) {
     // Continuar: se agregará con source 0,0 (marca "confirmado sin stock")
   }
   
-  // Obtener stock del talle específico en paralelo con otras operaciones
-  // IMPORTANTE: Normalizar el tamaño antes de consultar para asegurar consistencia
-  // IMPORTANTE: También obtener stock_qty de variant_sizes para fallback
+  // Obtener stock del talle específico usando solo variant_size_warehouse_stock
   let sizeStock = { general: { stock: 0 }, ventaPublico: { stock: 0 }, total: 0 };
-  let variantSizeStockQty = 0; // Para fallback desde variant_sizes
-  
-  // Primero obtener stock_qty desde variant_sizes para el talle específico (TABLA PRINCIPAL)
-    const normalizedSize = normalizeSize(variant.size);
-  if (normalizedSize) {
-    const { data: sizeData } = await supabase
-      .from("variant_sizes")
-      .select("stock_qty")
-      .eq("variant_id", variant.id)
-      .eq("size", normalizedSize)
-      .maybeSingle();
-    
-    if (sizeData) {
-      variantSizeStockQty = sizeData.stock_qty || 0;
-    }
-  }
+  const normalizedSize = normalizeSize(variant.size);
   
   // Luego obtener stock desde variant_size_warehouse_stock (DISTRIBUCIÓN POR WAREHOUSE)
   if (warehouses.generalId && warehouses.ventaPublicoId) {
@@ -2712,14 +2623,7 @@ async function processQrCodeFast(qrCode) {
     }
   }
   
-  // FALLBACK CRÍTICO: Si no hay stock en warehouses pero hay en variant_sizes, usar variant_sizes.stock_qty
-  // Este es el mismo patrón que usa admin/stock.js (líneas 554-560) y admin/order-creator.js
-  if (sizeStock.general.stock === 0 && sizeStock.ventaPublico.stock === 0 && variantSizeStockQty > 0) {
-    // Si hay stock en variant_sizes pero no en variant_size_warehouse_stock,
-    // poner todo en general como fallback (esto es lo que hace admin/stock.js)
-    sizeStock.general.stock = variantSizeStockQty;
-    sizeStock.total = variantSizeStockQty;
-  }
+  // Plan 2: no usar variant_sizes como fallback operativo por talle.
   
   // Si hay stock (o fue confirmado sin stock), agregar automáticamente a la venta
   if (sizeStock.total > 0 || returnMode.checked || totalStock === 0) {
@@ -2853,26 +2757,9 @@ async function processVariantFoundByQrCode(variant) {
       // Establecer currentProduct para compatibilidad
       currentProduct = variant.products;
       
-      // Obtener stock del talle específico
-      // IMPORTANTE: Normalizar el tamaño antes de consultar para asegurar consistencia
-      // IMPORTANTE: También obtener stock_qty de variant_sizes para fallback
+      // Obtener stock del talle específico usando solo variant_size_warehouse_stock
       let sizeStock = { general: { stock: 0 }, ventaPublico: { stock: 0 }, total: 0 };
-      let variantSizeStockQty = 0; // Para fallback desde variant_sizes
-      
-      // Primero obtener stock_qty desde variant_sizes para el talle específico (TABLA PRINCIPAL)
-        const normalizedSize = normalizeSize(variant.size);
-      if (normalizedSize) {
-        const { data: sizeData } = await supabase
-          .from("variant_sizes")
-          .select("stock_qty")
-          .eq("variant_id", variant.id)
-          .eq("size", normalizedSize)
-          .maybeSingle();
-        
-        if (sizeData) {
-          variantSizeStockQty = sizeData.stock_qty || 0;
-        }
-      }
+      const normalizedSize = normalizeSize(variant.size);
       
       // Luego obtener stock desde variant_size_warehouse_stock (DISTRIBUCIÓN POR WAREHOUSE)
       if (warehouses.generalId && warehouses.ventaPublicoId) {
@@ -2899,14 +2786,7 @@ async function processVariantFoundByQrCode(variant) {
         }
       }
       
-      // FALLBACK CRÍTICO: Si no hay stock en warehouses pero hay en variant_sizes, usar variant_sizes.stock_qty
-      // Este es el mismo patrón que usa admin/stock.js (líneas 554-560) y admin/order-creator.js
-      if (sizeStock.general.stock === 0 && sizeStock.ventaPublico.stock === 0 && variantSizeStockQty > 0) {
-        // Si hay stock en variant_sizes pero no en variant_size_warehouse_stock,
-        // poner todo en general como fallback (esto es lo que hace admin/stock.js)
-        sizeStock.general.stock = variantSizeStockQty;
-        sizeStock.total = variantSizeStockQty;
-      }
+      // Plan 2: no usar variant_sizes como fallback operativo por talle.
       
       // Si hay stock, agregar automáticamente a la venta
       if (sizeStock.total > 0 || returnMode.checked) {
@@ -3349,7 +3229,9 @@ async function searchBySku(sku) {
 
     // Verificar stock del SKU específico
     
-    const stockData = await getVariantStock(variant.id);
+    const stockData = variant.size
+      ? await getVariantSizeStockByWarehouse(variant.id, variant.size)
+      : await getVariantStock(variant.id);
     const totalStock = stockData.total;
 
     if (totalStock === 0 && !returnMode.checked) {
@@ -3364,7 +3246,7 @@ async function searchBySku(sku) {
     if (variant.size && totalStock > 0 && !returnMode.checked) {
       // Buscar la variante correcta en currentVariants con el talle específico
       const variantWithSize = currentVariants.find(v => 
-        v.color === variant.color && v.size === variant.size
+        v.color === variant.color && normalizeSize(v.size) === normalizeSize(variant.size)
       );
 
       if (variantWithSize) {
@@ -3383,26 +3265,9 @@ async function searchBySku(sku) {
           });
         }
 
-        // Obtener stock del talle específico
-        // IMPORTANTE: Normalizar el tamaño antes de consultar para asegurar consistencia
-        // IMPORTANTE: También obtener stock_qty de variant_sizes para fallback
+        // Obtener stock del talle específico usando solo variant_size_warehouse_stock
         let sizeStock = { general: { stock: 0 }, ventaPublico: { stock: 0 }, total: 0 };
-        let variantSizeStockQty = 0; // Para fallback desde variant_sizes
-        
-        // Primero obtener stock_qty desde variant_sizes para el talle específico (TABLA PRINCIPAL)
-          const normalizedSize = normalizeSize(variant.size);
-        if (normalizedSize) {
-          const { data: sizeData } = await supabase
-            .from("variant_sizes")
-            .select("stock_qty")
-            .eq("variant_id", variant.id)
-            .eq("size", normalizedSize)
-            .maybeSingle();
-          
-          if (sizeData) {
-            variantSizeStockQty = sizeData.stock_qty || 0;
-          }
-        }
+        const normalizedSize = normalizeSize(variant.size);
         
         const warehouseIds = [generalWarehouseId, ventaPublicoWarehouseId].filter(Boolean);
         
@@ -3431,14 +3296,7 @@ async function searchBySku(sku) {
           }
         }
         
-        // FALLBACK CRÍTICO: Si no hay stock en warehouses pero hay en variant_sizes, usar variant_sizes.stock_qty
-        // Este es el mismo patrón que usa admin/stock.js (líneas 554-560) y admin/order-creator.js
-        if (sizeStock.general.stock === 0 && sizeStock.ventaPublico.stock === 0 && variantSizeStockQty > 0) {
-          // Si hay stock en variant_sizes pero no en variant_size_warehouse_stock,
-          // poner todo en general como fallback (esto es lo que hace admin/stock.js)
-          sizeStock.general.stock = variantSizeStockQty;
-          sizeStock.total = variantSizeStockQty;
-        }
+        // Plan 2: no usar variant_sizes como fallback operativo por talle.
 
         // Si hay stock, agregar automáticamente a la venta
         if (sizeStock.total > 0) {
@@ -3673,15 +3531,16 @@ async function loadProductVariants(productId) {
 
     // Obtener stock, precios efectivos e información de ofertas/promociones para cada variante EN PARALELO
     const variantPromises = currentVariants.map(async (variant) => {
-      // Ejecutar todas las llamadas en paralelo para esta variante
-      const [stockData, effectivePrice, offerInfo, promotionInfo] = await Promise.all([
-        getVariantStock(variant.id),
+      // Ejecutar datos de precio/promoción en paralelo; stock se resuelve por nivel correcto.
+      const [effectivePrice, offerInfo, promotionInfo] = await Promise.all([
         getEffectivePrice(variant.id),
         getOfferInfo(variant.id, currentProduct.id, variant.color),
         getPromotionInfo(variant.id)
       ]);
 
-      variant.stockData = stockData;
+      variant.stockData = variant.size
+        ? await getVariantSizeStockByWarehouse(variant.id, variant.size)
+        : await getVariantStock(variant.id);
       variant.effectivePrice = effectivePrice !== null ? effectivePrice : variant.price;
       variant.offerInfo = offerInfo;
       variant.promotionInfo = promotionInfo;
@@ -3793,6 +3652,45 @@ async function getVariantStock(variantId) {
       ventaPublico: { stock: 0 },
       total: 0
     };
+  }
+}
+
+async function getVariantSizeStockByWarehouse(variantId, size) {
+  const normalizedSize = normalizeSize(size);
+  if (!variantId || !normalizedSize) {
+    return { general: { stock: 0 }, ventaPublico: { stock: 0 }, total: 0 };
+  }
+
+  try {
+    const wh = await getWarehousesCached();
+    const warehouseIds = [wh?.generalId, wh?.ventaPublicoId].filter(Boolean);
+    let generalStock = 0;
+    let ventaPublicoStock = 0;
+
+    if (warehouseIds.length > 0) {
+      const { data: rows, error } = await supabase
+        .from("variant_size_warehouse_stock")
+        .select("size, warehouse_id, stock_qty")
+        .eq("variant_id", variantId)
+        .in("warehouse_id", warehouseIds);
+      if (error) throw error;
+
+      (rows || []).forEach((row) => {
+        if (normalizeSize(row.size) !== normalizedSize) return;
+        const qty = row.stock_qty || 0;
+        if (row.warehouse_id === wh.ventaPublicoId) ventaPublicoStock += qty;
+        else if (row.warehouse_id === wh.generalId) generalStock += qty;
+      });
+    }
+
+    return {
+      general: { stock: generalStock },
+      ventaPublico: { stock: ventaPublicoStock },
+      total: generalStock + ventaPublicoStock
+    };
+  } catch (error) {
+    console.error("Error obteniendo stock por talle:", error);
+    return { general: { stock: 0 }, ventaPublico: { stock: 0 }, total: 0 };
   }
 }
 
@@ -3952,14 +3850,7 @@ async function renderSizeButtons() {
       totalStock = sizeStock.total || 0;
     }
     
-    // FALLBACK CRÍTICO: Si no hay stock en warehouses pero hay en variant_sizes, usar variant_sizes.stock_qty
-    // Este es el mismo patrón que usa admin/stock.js (líneas 554-560) y admin/order-creator.js
-    if (generalStock === 0 && ventaPublicoStock === 0 && variant.stock_qty > 0) {
-      // Si hay stock en variant_sizes pero no en variant_size_warehouse_stock,
-      // poner todo en general como fallback (esto es lo que hace admin/stock.js)
-      generalStock = variant.stock_qty || 0;
-      totalStock = generalStock;
-    }
+    // Plan 2: no usar variant_sizes como fallback operativo por talle.
 
     const btn = document.createElement("button");
     btn.className = "size-btn";
@@ -4207,7 +4098,7 @@ loadToSaleBtn.addEventListener("click", async () => {
     const quantity = selectedSizes[size];
     if (quantity <= 0) return;
 
-    const variant = variantsByColor.find(v => v.size === size);
+    const variant = variantsByColor.find(v => normalizeSize(v.size) === normalizeSize(size));
     if (!variant) return;
 
     // Buscar si ya existe este producto/color con el mismo tipo (devolución o venta) en la lista
@@ -5508,26 +5399,7 @@ finalizeSaleBtn.addEventListener("click", async () => {
             });
           }
 
-          // FALLBACK CRÍTICO: Si no hay stock en warehouses, buscar en variant_sizes
-          // Este es el mismo patrón usado al renderizar botones (línea 3525-3529)
-          if (generalStock === 0 && ventaPublicoStock === 0) {
-            // Primero intentar usar stock_qty si ya está en el variant
-            if (variant.stock_qty > 0) {
-              generalStock = variant.stock_qty || 0;
-            } else {
-              // Si no está, consultar variant_sizes (caso de variants de findVariant)
-              const { data: variantSizeData } = await supabase
-                .from("variant_sizes")
-                .select("stock_qty")
-                .eq("variant_id", variant.id)
-                .eq("size", normalizedSize)
-                .single();
-              
-              if (variantSizeData && variantSizeData.stock_qty > 0) {
-                generalStock = variantSizeData.stock_qty || 0;
-              }
-            }
-          }
+          // Plan 2: sin fallback operativo desde variant_sizes en flujo por talle.
 
           // Obtener source del stock (de dónde se tomará el stock)
           const sourceVentaPublico = size.source?.ventaPublico || 0;
@@ -6024,7 +5896,7 @@ async function printDirectly(saleDetails, customer, finalTotal = null) {
           </thead>
           <tbody>
             ${items.map(item => {
-    const price = parseFloat(item.price || item.price_snapshot || 0);
+    const price = parseARSNumber(item.price ?? item.price_snapshot ?? 0);
     const total = price * item.qty;
     const productText = `${item.product_name || 'N/A'}${item.color ? ` - ${item.color}` : ''}${item.size ? ` (${item.size})` : ''}`;
     return `
@@ -6049,24 +5921,24 @@ async function printDirectly(saleDetails, customer, finalTotal = null) {
         ${sale.credit_used > 0 ? `
           <div style="display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 16px; width: 100%;">
             <strong style="font-weight: 700;">Crédito Aplicado:</strong>
-            <span style="color: #dc3545; font-weight: 700; font-size: 16px;">-$${parseFloat(sale.credit_used).toLocaleString('es-AR')}</span>
+            <span style="color: #dc3545; font-weight: 700; font-size: 16px;">-$${parseARSNumber(sale.credit_used).toLocaleString('es-AR')}</span>
           </div>
         ` : ''}
         <div style="display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 22px; font-weight: 900; border-top: 3px solid #000; padding-top: 10px; margin-top: 15px; width: 100%;">
           <strong>TOTAL:</strong>
-          <span style="${parseFloat(sale.total_amount) < 0 ? 'color: #dc3545;' : ''}">
-            ${parseFloat(sale.total_amount) < 0 ? '-' : ''}$${Math.abs(parseFloat(sale.total_amount)).toLocaleString('es-AR')}
+          <span style="${parseARSNumber(sale.total_amount) < 0 ? 'color: #dc3545;' : ''}">
+            ${parseARSNumber(sale.total_amount) < 0 ? '-' : ''}$${Math.abs(parseARSNumber(sale.total_amount)).toLocaleString('es-AR')}
           </span>
         </div>
-        ${parseFloat(sale.total_amount) < 0 ? `
+        ${parseARSNumber(sale.total_amount) < 0 ? `
           <div style="margin-top: 15px; padding: 12px; background: #fff3cd; border: 3px solid #ffc107; font-size: 15px;">
             <strong style="color: #856404; font-weight: 700;">Saldo a favor:</strong>
             <span style="color: #856404; font-size: 17px; font-weight: 800;">
-              $${Math.abs(parseFloat(sale.total_amount)).toLocaleString('es-AR')}
+              $${Math.abs(parseARSNumber(sale.total_amount)).toLocaleString('es-AR')}
             </span>
           </div>
         ` : ''}
-        ${totalCredit > 0 && parseFloat(sale.total_amount) >= 0 ? `
+        ${totalCredit > 0 && parseARSNumber(sale.total_amount) >= 0 ? `
           <div style="margin-top: 15px; padding: 12px; background: #d4edda; border: 3px solid #28a745; font-size: 15px;">
             <strong style="color: #155724; font-weight: 700;">Crédito disponible:</strong>
             <span style="color: #155724; font-size: 17px; font-weight: 800;">
@@ -6197,7 +6069,7 @@ async function showPrintModal(saleDetails, customer, creditAmount) {
           </thead>
           <tbody>
             ${items.map(item => {
-    const price = parseFloat(item.price || item.price_snapshot || 0);
+    const price = parseARSNumber(item.price ?? item.price_snapshot ?? 0);
     const total = price * item.qty;
     const productText = `${item.product_name || 'N/A'}${item.color ? ` - ${item.color}` : ''}${item.size ? ` (${item.size})` : ''}`;
     return `
@@ -6222,24 +6094,24 @@ async function showPrintModal(saleDetails, customer, creditAmount) {
         ${sale.credit_used > 0 ? `
           <div style="display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 16px; width: 100%;">
             <strong style="font-weight: 700;">Crédito Aplicado:</strong>
-            <span style="color: #dc3545; font-weight: 700; font-size: 16px;">-$${parseFloat(sale.credit_used).toLocaleString('es-AR')}</span>
+            <span style="color: #dc3545; font-weight: 700; font-size: 16px;">-$${parseARSNumber(sale.credit_used).toLocaleString('es-AR')}</span>
           </div>
         ` : ''}
         <div style="display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 22px; font-weight: 900; border-top: 3px solid #000; padding-top: 10px; margin-top: 15px; width: 100%;">
           <strong>TOTAL:</strong>
-          <span style="${parseFloat(sale.total_amount) < 0 ? 'color: #dc3545;' : ''}">
-            ${parseFloat(sale.total_amount) < 0 ? '-' : ''}$${Math.abs(parseFloat(sale.total_amount)).toLocaleString('es-AR')}
+          <span style="${parseARSNumber(sale.total_amount) < 0 ? 'color: #dc3545;' : ''}">
+            ${parseARSNumber(sale.total_amount) < 0 ? '-' : ''}$${Math.abs(parseARSNumber(sale.total_amount)).toLocaleString('es-AR')}
           </span>
         </div>
-        ${parseFloat(sale.total_amount) < 0 ? `
+        ${parseARSNumber(sale.total_amount) < 0 ? `
           <div style="margin-top: 15px; padding: 12px; background: #fff3cd; border: 3px solid #ffc107; font-size: 15px;">
             <strong style="color: #856404; font-weight: 700;">Saldo a favor:</strong>
             <span style="color: #856404; font-size: 17px; font-weight: 800;">
-              $${Math.abs(parseFloat(sale.total_amount)).toLocaleString('es-AR')}
+              $${Math.abs(parseARSNumber(sale.total_amount)).toLocaleString('es-AR')}
             </span>
           </div>
         ` : ''}
-        ${totalCredit > 0 && parseFloat(sale.total_amount) >= 0 ? `
+        ${totalCredit > 0 && parseARSNumber(sale.total_amount) >= 0 ? `
           <div style="margin-top: 15px; padding: 12px; background: #d4edda; border: 3px solid #28a745; font-size: 15px;">
             <strong style="color: #155724; font-weight: 700;">Crédito disponible:</strong>
             <span style="color: #155724; font-size: 17px; font-weight: 800;">
@@ -7241,7 +7113,13 @@ function parseLocalOrderNotes(notesRaw) {
 
 /** Suma solo líneas del pedido (productos + extras guardados como ítems). */
 function getEditOrderLinesSumOnly() {
-  return editOrderItems.reduce((sum, it) => sum + it.quantity * parseFloat(it.price_snapshot || 0), 0);
+  return editOrderItems.reduce((sum, it) => sum + it.quantity * getEditOrderUnitPrice(it), 0);
+}
+
+function getEditOrderUnitPrice(item) {
+  const variantId = item?.variant_id != null ? String(item.variant_id).trim() : "";
+  const variantPrice = variantId ? editOrderVariantPriceMap.get(variantId) : null;
+  return resolveOrderItemUnitPrice(item?.price_snapshot, variantPrice);
 }
 
 /** Misma fórmula que rpc_create_local_order sobre el subtotal de líneas. */
@@ -7311,7 +7189,7 @@ async function openOrderEditModal(localOrderId) {
     modal.classList.add("active");
     return;
   }
-  editOrderItems = (itemsData || []).map((row) => ({
+  const mappedItems = (itemsData || []).map((row) => ({
     variant_id: row.variant_id,
     product_name: row.product_name,
     color: row.color,
@@ -7319,6 +7197,31 @@ async function openOrderEditModal(localOrderId) {
     quantity: row.quantity,
     price_snapshot: row.price_snapshot,
   }));
+  editOrderItems = mappedItems;
+
+  // Cargar precios de variante para resolver snapshots legacy en edición.
+  editOrderVariantPriceMap.clear();
+  const variantIds = Array.from(
+    new Set(
+      mappedItems
+        .map((row) => (row?.variant_id != null ? String(row.variant_id).trim() : ""))
+        .filter(Boolean)
+    )
+  );
+  if (variantIds.length > 0) {
+    const { data: variantsData, error: variantsError } = await supabase
+      .from("product_variants")
+      .select("id, price")
+      .in("id", variantIds);
+    if (!variantsError) {
+      (variantsData || []).forEach((v) => {
+        const id = v?.id != null ? String(v.id).trim() : "";
+        if (id) editOrderVariantPriceMap.set(id, v?.price ?? null);
+      });
+    } else {
+      console.warn("⚠️ No se pudieron cargar precios de variantes para fallback legacy:", variantsError.message || variantsError);
+    }
+  }
 
   ordersModal.classList.remove("active");
   modal.classList.add("active");
@@ -7336,7 +7239,7 @@ function buildEditOrderPayload() {
     color: it.color || "",
     size: it.size || "",
     quantity: it.quantity,
-    price_snapshot: parseFloat(it.price_snapshot || 0),
+    price_snapshot: getEditOrderUnitPrice(it),
     imagen: it.imagen || null,
   }));
 }
@@ -7387,8 +7290,9 @@ function renderOrderEditModal() {
     tbody.innerHTML =
       editOrderItems
         .map((it, idx) => {
-          const subtotal = it.quantity * parseFloat(it.price_snapshot || 0);
-          const isReturn = !it.variant_id ? false : parseFloat(it.price_snapshot || 0) < 0;
+          const unitPrice = getEditOrderUnitPrice(it);
+          const subtotal = it.quantity * unitPrice;
+          const isReturn = !it.variant_id ? false : unitPrice < 0;
           const isExtra = !it.variant_id;
           const nameCell = isExtra
             ? `<span style="font-style: italic;">${escapeHtml(it.product_name)}</span> <span style="font-size: 11px; color: #0066cc;">(Extra)</span>`
@@ -7398,7 +7302,7 @@ function renderOrderEditModal() {
           return `<tr class="${isExtra ? "extra-item" : isReturn ? "return-item" : ""}" data-edit-idx="${idx}">
         <td>${nameCell}</td>
         <td><input type="number" min="1" value="${it.quantity}" data-edit-idx="${idx}" class="order-edit-qty" style="width: 50px; padding: 4px; text-align: center;" /></td>
-        <td>${isReturn ? "-" : ""}$${Math.abs(parseFloat(it.price_snapshot || 0)).toLocaleString("es-AR")}</td>
+        <td>${isReturn ? "-" : ""}$${Math.abs(unitPrice).toLocaleString("es-AR")}</td>
         <td>${subtotal < 0 ? "-" : ""}$${Math.abs(subtotal).toLocaleString("es-AR")}</td>
         <td><button type="button" class="btn btn-secondary order-edit-remove" data-edit-idx="${idx}" style="padding: 4px 8px; font-size: 11px;">Quitar</button></td>
       </tr>`;
@@ -7540,11 +7444,23 @@ document.getElementById("order-edit-finalize-btn")?.addEventListener("click", as
   const btn = document.getElementById("order-edit-finalize-btn");
   btn.disabled = true;
   try {
+    // IMPORTANTE: persistir edición ANTES de finalizar/imprimir para que
+    // los productos agregados en el modal descuenten stock correctamente.
+    const { data: updateData, error: updateError } = await supabase.rpc("rpc_update_local_order", {
+      p_local_order_id: editOrderId,
+      p_items: buildEditOrderPayload(),
+    });
+    if (updateError) throw updateError;
+    if (updateData?.total_amount != null) {
+      editOrder.total_amount = updateData.total_amount;
+      renderOrderEditModal();
+    }
+
     const pItems = buildEditOrderPayload();
     const saleItems = [];
     for (const it of pItems) {
       if (it.variant_id) {
-        const rawPrice = parseFloat(it.price_snapshot || 0);
+        const rawPrice = parseARSNumber(it.price_snapshot || 0);
         const isReturn = rawPrice < 0;
         const line = {
           variant_id: it.variant_id,
@@ -7568,7 +7484,7 @@ document.getElementById("order-edit-finalize-btn")?.addEventListener("click", as
         saleItems.push({
           product_name: it.product_name,
           qty: it.quantity,
-          price: it.price_snapshot,
+          price: parseARSNumber(it.price_snapshot || 0),
           is_return: false,
           is_special_extra: true,
         });
@@ -7586,7 +7502,7 @@ document.getElementById("order-edit-finalize-btn")?.addEventListener("click", as
     }
     const pctFin = Number(notesFin.extras_percentage) || 0;
     if (pctFin > 0) {
-      let basePct = pItems.reduce((s, it) => s + it.quantity * parseFloat(it.price_snapshot || 0), 0);
+      let basePct = pItems.reduce((s, it) => s + it.quantity * parseARSNumber(it.price_snapshot || 0), 0);
       basePct += Number(notesFin.shipping) || 0;
       basePct -= Number(notesFin.discount) || 0;
       basePct += Number(notesFin.extras_amount) || 0;
@@ -8245,7 +8161,7 @@ document.getElementById("order-edit-manual-add-btn")?.addEventListener("click", 
     if (quantity <= 0) continue;
     const variant = variantsByColor.find((v) => normalizeSize(v.size) === normalizeSize(size));
     if (!variant) continue;
-    const unitPrice = Math.abs(parseFloat(variant.price || 0));
+    const unitPrice = Math.abs(parseARSNumber(variant.price || 0));
     editOrderItems.push({
       variant_id: variant.id,
       product_name: editManualProduct.name,
@@ -8354,7 +8270,7 @@ function renderLocalOrderCard(order) {
       </div>
       <div class="local-order-total">
         <span>Total:</span>
-        <span style="color: #CD844D;">$${(order.total_amount || 0).toLocaleString('es-AR')}</span>
+        <span style="color: #CD844D;">$${parseARSNumber(order.total_amount || 0).toLocaleString('es-AR')}</span>
         <div class="local-order-date">${dateStr}</div>
       </div>
       <div class="local-order-actions">
@@ -8468,7 +8384,7 @@ async function loadLocalOrderToSale(localOrderId) {
           if (variantData) {
             // Agregar item a saleItems usando la estructura existente
             const quantity = item.quantity || 1;
-            const price = parseFloat(item.price_snapshot || variantData.price || 0);
+            const price = resolveOrderItemUnitPrice(item.price_snapshot, variantData.price);
             const itemTotalValue = price * quantity;
 
             saleItems.push({
@@ -8495,7 +8411,7 @@ async function loadLocalOrderToSale(localOrderId) {
         } else {
           // Sin variant_id = extra especial (cargado desde pedido). Marcar como extra y manejar precio unitario/total.
           const quantity = item.quantity || 1;
-          const priceSnapshot = parseFloat(item.price_snapshot || 0);
+          const priceSnapshot = parseARSNumber(item.price_snapshot || 0);
           // BD puede tener price_snapshot como total (pedidos antiguos) o unitario; con qty=1 son iguales.
           const unitPrice = quantity === 1 ? priceSnapshot : priceSnapshot / quantity;
           const itemTotalValue = quantity === 1 ? priceSnapshot : priceSnapshot;
@@ -8591,7 +8507,7 @@ async function saveLocalOrder() {
           color: item.color || '',
           size: size.size || '',
           quantity: size.quantity || 1,
-          price_snapshot: item.price || item.basePrice || 0,
+          price_snapshot: parseARSNumber(item.price ?? item.basePrice ?? 0),
           imagen: imagen,
         };
 
@@ -8803,7 +8719,7 @@ async function loadSalesHistory(append = false) {
       return;
     }
 
-    // Agregar ventas a la lista (con botón X para anular si no está anulada)
+    // Agregar ventas a la lista (con botón Imprimir y botón X para anular si no está anulada)
     const salesHtml = sales.map(sale => {
       const isExpanded = expandedSaleId === sale.id;
       const isVoided = !!sale.voided_at || __voidedSaleIds.has(sale.id);
@@ -8814,12 +8730,15 @@ async function loadSalesHistory(append = false) {
             <div style="font-size: 12px; color: #666;">
               ${new Date(sale.created_at).toLocaleString('es-AR')} | 
               ${sale.customer_name || 'Sin cliente'} | 
-              <span style="${parseFloat(sale.total_amount) < 0 ? 'color: #dc3545; font-weight: 700;' : ''}">
-                ${parseFloat(sale.total_amount) < 0 ? '-' : ''}$${Math.abs(parseFloat(sale.total_amount)).toLocaleString('es-AR')}
+              <span style="${parseARSNumber(sale.total_amount) < 0 ? 'color: #dc3545; font-weight: 700;' : ''}">
+                ${parseARSNumber(sale.total_amount) < 0 ? '-' : ''}$${Math.abs(parseARSNumber(sale.total_amount)).toLocaleString('es-AR')}
               </span>
             </div>
           </div>
-          ${!isVoided ? `<button type="button" class="history-sale-void-btn" onclick="event.stopPropagation(); voidSale('${sale.id}')" title="Anular venta">×</button>` : ''}
+          <div style="display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0;">
+            <button type="button" class="history-sale-print-btn" onclick="event.stopPropagation(); reprintHistorySale('${sale.id}')" title="Reimprimir ticket">Imprimir</button>
+            ${!isVoided ? `<button type="button" class="history-sale-void-btn" onclick="event.stopPropagation(); voidSale('${sale.id}')" title="Anular venta">×</button>` : ''}
+          </div>
         </div>
       `;
     }).join("");
@@ -8839,6 +8758,40 @@ async function loadSalesHistory(append = false) {
 
 // Anular venta y restablecer stock en venta al público
 const __voidSaleInFlight = new Set();
+const __reprintSaleInFlight = new Set();
+
+window.reprintHistorySale = async function (saleId) {
+  if (__reprintSaleInFlight.has(saleId)) return;
+  try {
+    __reprintSaleInFlight.add(saleId);
+
+    const { data: saleDetails, error: detailsError } = await supabase
+      .rpc("rpc_get_public_sale_details", { p_sale_id: saleId });
+    if (detailsError) throw detailsError;
+    if (!saleDetails?.sale) throw new Error("No se encontraron detalles de la venta");
+
+    const sale = saleDetails.sale;
+    let customer = null;
+
+    if (sale.customer_id) {
+      const { data: customerData, error: customerError } = await supabase
+        .from("customers")
+        .select("id, first_name, last_name, customer_number, qr_code")
+        .eq("id", sale.customer_id)
+        .maybeSingle();
+      if (customerError) throw customerError;
+      customer = customerData || null;
+    }
+
+    await printDirectly(saleDetails, customer, null);
+  } catch (error) {
+    console.error("Error reimprimiendo ticket:", error);
+    showMessage("Error al reimprimir ticket: " + (error?.message || "Error desconocido"), "error");
+  } finally {
+    __reprintSaleInFlight.delete(saleId);
+  }
+};
+
 window.voidSale = async function (saleId) {
   if (__voidSaleInFlight.has(saleId)) return;
   if (!confirm('¿Anular esta venta? El stock se reestablecerá en venta al público.')) {
@@ -8965,7 +8918,7 @@ window.showSaleDetails = async function (saleId, inModal = false) {
                 <td style="padding: 12px; color: #666;">${escapeHtml(item.color || '-')}</td>
                 <td style="padding: 12px; color: #666;">${escapeHtml(item.size || '-')}</td>
                 <td style="padding: 12px; text-align: center; font-weight: 600;">${item.qty}</td>
-                <td style="padding: 12px; text-align: right; color: #666;">$${parseFloat(item.price).toLocaleString('es-AR')}</td>
+                <td style="padding: 12px; text-align: right; color: #666;">$${parseARSNumber(item.price).toLocaleString('es-AR')}</td>
                 <td style="padding: 12px; text-align: right; font-weight: 700; ${item.is_return ? 'color: #dc3545;' : 'color: #333;'}">
                   ${item.is_return ? '-' : ''}$${itemTotal.toLocaleString('es-AR')}
                 </td>
@@ -8977,14 +8930,14 @@ window.showSaleDetails = async function (saleId, inModal = false) {
               <tr style="background: #f8f9fa; border-top: 2px solid #ddd; font-weight: 700;">
                 <td colspan="5" style="padding: 12px;">Total</td>
                 <td style="padding: 12px; text-align: center;">${sale.item_count}</td>
-                <td style="padding: 12px; text-align: right; ${parseFloat(sale.total_amount) < 0 ? 'color: #dc3545;' : 'color: #333;'}">
-                  ${parseFloat(sale.total_amount) < 0 ? '-' : ''}$${Math.abs(parseFloat(sale.total_amount)).toLocaleString('es-AR')}
+                <td style="padding: 12px; text-align: right; ${parseARSNumber(sale.total_amount) < 0 ? 'color: #dc3545;' : 'color: #333;'}">
+                  ${parseARSNumber(sale.total_amount) < 0 ? '-' : ''}$${Math.abs(parseARSNumber(sale.total_amount)).toLocaleString('es-AR')}
                 </td>
               </tr>
             ${sale.credit_used > 0 ? `
               <tr style="background: #fff9e6;">
                 <td colspan="6" style="padding: 8px; color: #856404;">Crédito usado</td>
-                <td style="padding: 8px; text-align: right; color: #856404; font-weight: 600;">$${parseFloat(sale.credit_used).toLocaleString('es-AR')}</td>
+                <td style="padding: 8px; text-align: right; color: #856404; font-weight: 600;">$${parseARSNumber(sale.credit_used).toLocaleString('es-AR')}</td>
               </tr>
             ` : ''}
           </tfoot>
@@ -9003,7 +8956,7 @@ window.showSaleDetails = async function (saleId, inModal = false) {
         <div style="padding: 8px; border-bottom: 1px solid #f0f0f0;">
           ${item.is_return ? '<span style="color: #ff69b4;">[DEVOLUCIÓN]</span> ' : ''}
           ${escapeHtml(item.product_name)} - ${escapeHtml(item.color)} - Talle ${escapeHtml(item.size)} - 
-          Cantidad: ${item.qty} - $${parseFloat(item.price).toLocaleString('es-AR')}
+          Cantidad: ${item.qty} - $${parseARSNumber(item.price).toLocaleString('es-AR')}
         </div>
       `).join("");
 
@@ -9011,9 +8964,9 @@ window.showSaleDetails = async function (saleId, inModal = false) {
         Venta: ${sale.sale_number}
         Fecha: ${new Date(sale.created_at).toLocaleString('es-AR')}
         Cliente: ${sale.customer_name || 'Sin cliente'}
-        Total: $${parseFloat(sale.total_amount).toLocaleString('es-AR')}
+        Total: $${parseARSNumber(sale.total_amount).toLocaleString('es-AR')}
         Items: ${sale.item_count}
-        ${sale.credit_used > 0 ? `Crédito usado: $${parseFloat(sale.credit_used).toLocaleString('es-AR')}` : ''}
+        ${sale.credit_used > 0 ? `Crédito usado: $${parseARSNumber(sale.credit_used).toLocaleString('es-AR')}` : ''}
         
         Productos:
         ${itemsHtml}

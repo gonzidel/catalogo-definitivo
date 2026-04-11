@@ -27,6 +27,39 @@ function fylDevLog(...args) {
   }
 }
 
+function isExpectedAuthError(error) {
+  if (!error) return false;
+  const name = String(error.name || "");
+  const message = String(error.message || "");
+  const status = Number(error.status || error.statusCode || 0);
+  const url = String(error.url || error.request?.url || error.config?.url || "");
+
+  if (name === "AuthSessionMissingError") return true;
+  if (status === 401 && url.includes("/auth/v1/user")) return true;
+  if (url.includes("/auth/v1/user") && /401|jwt|session missing/i.test(message)) return true;
+  return false;
+}
+
+function isExpectedAuthErrorHandled(error, context) {
+  try {
+    if (
+      typeof window !== "undefined" &&
+      typeof window.__FYL_handleExpectedAuthError === "function"
+    ) {
+      return window.__FYL_handleExpectedAuthError(error, context);
+    }
+  } catch (_e) {}
+
+  if (!isExpectedAuthError(error)) return false;
+  if (
+    typeof window !== "undefined" &&
+    (window.FYL_DEBUG_CATALOG === true || window.localStorage?.getItem("fyl_debug_auth") === "1")
+  ) {
+    console.info("[FYL auth] error esperado suprimido", context || "", error);
+  }
+  return true;
+}
+
 /** Evita múltiples `syncCartWithSupabase` cuando `showAuthenticatedUser` se llama seguido. */
 let fylCartSyncDebounceTimer = null;
 function scheduleDebouncedCartSyncAfterAuth() {
@@ -424,7 +457,7 @@ async function updateClientAreaLink() {
     } = await Promise.race([sessionPromise, timeoutPromise]);
 
     if (error) {
-      if (shouldLog) {
+      if (shouldLog && !isExpectedAuthErrorHandled(error, "auth-status:updateClientAreaLink:getSession:error")) {
         console.error("❌ Error obteniendo sesión:", error);
       }
       showDefaultLink();
@@ -476,7 +509,9 @@ async function updateClientAreaLink() {
         console.warn("⚠️ Verificación de sesión tardó demasiado, mostrando Área de Clientes");
       }
     } else {
-      console.error("❌ Error verificando autenticación:", error);
+      if (!isExpectedAuthErrorHandled(error, "auth-status:updateClientAreaLink:catch")) {
+        console.error("❌ Error verificando autenticación:", error);
+      }
     }
     showDefaultLink();
   }
@@ -601,14 +636,14 @@ async function handleClientAreaClick(event) {
     const { data: { session }, error: sessionError } = await supabase.auth.getSession();
     
     if (!sessionError && session) {
-      fylDevLog("✅ Usuario ya autenticado, redirigiendo a dashboard");
-      // Usuario ya está autenticado, redirigir directamente
-      console.log("[FYL DEBUG AUTH] auth-status.js window.location.href = client/dashboard.html");
-      window.location.href = "client/dashboard.html";
+      fylDevLog("✅ Usuario autenticado, mostrando menú de cuenta");
+      toggleUserDropdown();
       return;
     }
   } catch (error) {
-    console.error("❌ Error verificando sesión:", error);
+    if (!isExpectedAuthErrorHandled(error, "auth-status:handleClientAreaClick:getSession")) {
+      console.error("❌ Error verificando sesión:", error);
+    }
     // Si hay error, continuar con el modal de login
   }
 
@@ -639,7 +674,9 @@ window.redirectToClientArea = async function () {
       return false;
     }
   } catch (error) {
-    console.error("❌ Error verificando sesión:", error);
+    if (!isExpectedAuthErrorHandled(error, "auth-status:redirectToClientArea:getSession")) {
+      console.error("❌ Error verificando sesión:", error);
+    }
     // Si hay error, continuar con el modal de login
   }
 
@@ -663,7 +700,7 @@ function createUserDropdown(user, customer) {
     border-radius: 8px;
     box-shadow: 0 4px 12px rgba(0,0,0,0.15);
     z-index: 1000;
-    min-width: 200px;
+    min-width: 170px;
     display: none;
   `;
 
@@ -680,18 +717,12 @@ function createUserDropdown(user, customer) {
       <div style="font-size: 12px; color: #666;">${userEmail}</div>
     </div>
     <div style="padding: 8px 0;">
-      <a href="client/dashboard.html" style="display: block; padding: 8px 12px; color: #333; text-decoration: none; transition: background 0.2s;">
-        🏠 Mi Dashboard
-      </a>
       <a href="client/profile.html" style="display: block; padding: 8px 12px; color: #333; text-decoration: none; transition: background 0.2s;">
-        👤 Mi Perfil
-      </a>
-      <a href="client/cart.html" style="display: block; padding: 8px 12px; color: #333; text-decoration: none; transition: background 0.2s;">
-        🛒 Mi Carrito
+        👤 Perfil
       </a>
       <hr style="margin: 8px 0; border: none; border-top: 1px solid #eee;">
       <button onclick="logoutUser()" style="display: block; width: 100%; padding: 8px 12px; background: none; border: none; color: #dc3545; text-align: left; cursor: pointer; transition: background 0.2s;">
-        🚪 Cerrar Sesión
+        🚪 Cerrar sesión
       </button>
     </div>
   `;
@@ -961,7 +992,9 @@ window.debugSession = async function () {
     } = await supabase.auth.getSession();
 
     if (error) {
-      console.error("❌ Error obteniendo sesión:", error);
+      if (!isExpectedAuthErrorHandled(error, "auth-status:debugSession:getSession:error")) {
+        console.error("❌ Error obteniendo sesión:", error);
+      }
       return { success: false, error: error.message };
     }
 
@@ -984,7 +1017,9 @@ window.debugSession = async function () {
       user: session.user,
     };
   } catch (error) {
-    console.error("❌ Error en debug de sesión:", error);
+    if (!isExpectedAuthErrorHandled(error, "auth-status:debugSession:catch")) {
+      console.error("❌ Error en debug de sesión:", error);
+    }
     return { success: false, error: error.message };
   }
 };
@@ -1015,16 +1050,6 @@ window.updateClientAreaLink = updateClientAreaLink;
 window.forceUpdateAuth = forceUpdateAuth;
 window.initializeAuth = initializeAuth;
 window.clearAllListeners = clearAllListeners;
-
-// Override inmediato de la función problemática
-fylDevLog("🔧 Override inmediato de redirectToClientArea...");
-window.redirectToClientArea = function () {
-  fylDevLog("🔄 redirectToClientArea interceptado - mostrando modal de login");
-
-  // Mostrar modal de login (paso 1: email)
-  showLoginModalStep1();
-  return false;
-};
 
 // El script se inicializa automáticamente cuando el DOM está listo
 // No necesitamos ejecutarlo manualmente aquí para evitar duplicados

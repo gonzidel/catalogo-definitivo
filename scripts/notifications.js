@@ -12,6 +12,7 @@ const TYPE_LABELS = {
   ORDER_MISSING_ITEMS: "Faltantes",
   ORDER_ALL_RESERVED: "Reservado",
   ORDER_PACKAGED_TODAY: "Envío",
+  ORDER_DEADLINE_REMINDER: "Pedido",
 };
 
 const MARK_READ_ON_CLICK_TYPES = new Set(["ORDER_MISSING_ITEMS"]);
@@ -131,6 +132,32 @@ function isPanelOpen() {
   return !!panel?.classList?.contains("is-open");
 }
 
+function getSyntheticNotifications() {
+  try {
+    const fn = window.__fylGetSyntheticNotifications;
+    if (typeof fn !== "function") return [];
+    const raw = fn();
+    return Array.isArray(raw) ? raw : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function mergeAndSortNotifications(dbList, syntheticList) {
+  const merged = [...(Array.isArray(syntheticList) ? syntheticList : []), ...(Array.isArray(dbList) ? dbList : [])];
+  merged.sort((a, b) => {
+    const ta = new Date(a?.created_at || 0).getTime();
+    const tb = new Date(b?.created_at || 0).getTime();
+    if (tb !== ta) return tb - ta;
+    return String(b?.id ?? "").localeCompare(String(a?.id ?? ""));
+  });
+  return merged;
+}
+
+function isSyntheticNotificationId(id) {
+  return safeText(id).startsWith("synthetic-");
+}
+
 function renderNotifications(list) {
   const wrap = document.getElementById(LIST_ID);
   const empty = document.getElementById(EMPTY_ID);
@@ -142,7 +169,10 @@ function renderNotifications(list) {
 
   for (const n of arr) {
     const type = safeText(n.type) || "INFO";
-    const msg = safeText(n.message);
+    const msg =
+      type === "ORDER_DEADLINE_REMINDER" && n.message
+        ? String(n.message).trim()
+        : safeText(n.message);
     const when = formatWhenAr(n.created_at);
     const unread = !n.read;
     const chipKind = chipKindFromType(type);
@@ -165,7 +195,10 @@ function renderNotifications(list) {
 }
 
 async function markReadByIds(supabase, ids) {
-  const list = Array.isArray(ids) ? ids.filter(Boolean) : [];
+  const list = (Array.isArray(ids) ? ids : []).filter((id) => {
+    const n = Number(id);
+    return Number.isFinite(n) && n > 0;
+  });
   if (!list.length) return;
   await supabase
     .from("customer_notifications")
@@ -199,16 +232,21 @@ async function loadNotifications(supabase, customerId) {
 
   if (error) {
     console.warn("[notifications] error load:", error);
-    renderNotifications([]);
-    setBadgeVisible(false);
-    return [];
+    const synthOnly = mergeAndSortNotifications([], getSyntheticNotifications());
+    renderNotifications(synthOnly);
+    const showBadge = synthOnly.some((n) => !n.read);
+    setBadgeVisible(showBadge);
+    return synthOnly;
   }
 
-  const list = data || [];
-  const hasUnread = list.some((n) => !n.read);
+  const merged = mergeAndSortNotifications(data || [], getSyntheticNotifications());
+  const hasUnread = merged.some((n) => {
+    if (isSyntheticNotificationId(n.id)) return !n.read;
+    return !n.read;
+  });
   setBadgeVisible(hasUnread);
-  renderNotifications(list);
-  return list;
+  renderNotifications(merged);
+  return merged;
 }
 
 async function setupRealtime(supabase, customerId, onChange) {
@@ -253,6 +291,14 @@ async function initNotifications() {
     cached = await loadNotifications(supabase, customerId);
   });
 
+  window.addEventListener("fyl-synthetic-notifications-changed", async () => {
+    cached = await loadNotifications(supabase, customerId);
+  });
+
+  setTimeout(() => {
+    loadNotifications(supabase, customerId);
+  }, 0);
+
   btn.addEventListener("click", async (e) => {
     e.preventDefault();
     if (isPanelOpen()) {
@@ -277,13 +323,35 @@ async function initNotifications() {
     const id = item.dataset.notificationId;
     const type = safeText(item.dataset.notificationType);
     const url = safeText(item.dataset.notificationUrl);
+    const synthetic = id && isSyntheticNotificationId(id);
 
-    if (id && MARK_READ_ON_CLICK_TYPES.has(type)) {
+    if (id && !synthetic && MARK_READ_ON_CLICK_TYPES.has(type)) {
       await markReadByIds(supabase, [Number(id)]);
       cached = await loadNotifications(supabase, customerId);
     }
 
     closePanel();
+
+    if (synthetic) {
+      const hashMatch = url.match(/#(.+)$/);
+      const hash = hashMatch ? hashMatch[1].trim() : "";
+      const onDashboard = /dashboard\.html/i.test(window.location.pathname || "");
+      if (onDashboard && hash) {
+        const el = document.getElementById(hash);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "start" });
+          try {
+            history.replaceState(null, "", `#${hash}`);
+          } catch (_) {
+            /* ignore */
+          }
+        }
+        return;
+      }
+      if (url) window.location.href = url;
+      return;
+    }
+
     if (url) window.location.href = url;
   });
 

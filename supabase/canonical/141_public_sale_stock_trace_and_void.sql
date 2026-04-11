@@ -72,8 +72,9 @@ DECLARE
   v_size_stock_general int;
   v_size_stock_venta_publico int;
   v_normalized_size text;
-  v_fallback_stock_qty int;
+  v_has_size_model boolean;
   v_return_rows int;
+  v_size_row record;
   v_line_idx int := 0;
   v_persist_vp int;
   v_persist_g int;
@@ -178,6 +179,14 @@ BEGIN
           AND v_qty > 0
         )
       );
+
+      IF v_variant_id IS NOT NULL THEN
+        PERFORM 1
+        FROM public.product_variants pv
+        WHERE pv.id = v_variant_id
+        FOR UPDATE;
+      END IF;
+
       IF NOT v_is_return THEN
         -- Si el item viene de un pedido local, el stock ya fue descontado
         IF NOT v_from_local_order THEN
@@ -185,31 +194,34 @@ BEGIN
           -- Si hay tamaño específico, usar variant_size_warehouse_stock
           IF v_size IS NOT NULL AND v_size != '' AND v_general_warehouse_id IS NOT NULL AND v_venta_publico_warehouse_id IS NOT NULL THEN
             -- Validar y descontar stock por talle desde variant_size_warehouse_stock
-            -- Usar tamaño normalizado para la búsqueda
-            SELECT 
-              COALESCE(SUM(CASE WHEN warehouse_id = v_general_warehouse_id THEN stock_qty ELSE 0 END), 0),
-              COALESCE(SUM(CASE WHEN warehouse_id = v_venta_publico_warehouse_id THEN stock_qty ELSE 0 END), 0)
-            INTO v_size_stock_general, v_size_stock_venta_publico
-            FROM public.variant_size_warehouse_stock
-            WHERE variant_id = v_variant_id
-              AND size = v_normalized_size
-              AND warehouse_id IN (v_general_warehouse_id, v_venta_publico_warehouse_id);
+            -- Usar tamaño normalizado para la búsqueda con lock explícito de filas objetivo
+            INSERT INTO public.variant_size_warehouse_stock (variant_id, size, warehouse_id, stock_qty)
+            VALUES (v_variant_id, v_normalized_size, v_general_warehouse_id, 0)
+            ON CONFLICT (variant_id, size, warehouse_id) DO NOTHING;
+            INSERT INTO public.variant_size_warehouse_stock (variant_id, size, warehouse_id, stock_qty)
+            VALUES (v_variant_id, v_normalized_size, v_venta_publico_warehouse_id, 0)
+            ON CONFLICT (variant_id, size, warehouse_id) DO NOTHING;
 
-            -- FALLBACK: Si no hay stock en warehouses, consultar variant_sizes.stock_qty
-            IF v_size_stock_general = 0 AND v_size_stock_venta_publico = 0 THEN
-              -- Consultar stock_qty desde variant_sizes usando tamaño normalizado
-              SELECT COALESCE(stock_qty, 0) INTO v_fallback_stock_qty
-              FROM public.variant_sizes
+            v_size_stock_general := 0;
+            v_size_stock_venta_publico := 0;
+            FOR v_size_row IN
+              SELECT warehouse_id, stock_qty
+              FROM public.variant_size_warehouse_stock
               WHERE variant_id = v_variant_id
-                AND size = v_normalized_size;
-              
-              -- Si hay stock en variant_sizes, usar como fallback en general
-              IF v_fallback_stock_qty > 0 THEN
-                v_size_stock_general := v_fallback_stock_qty;
-              ELSE
-                -- Solo lanzar error si tampoco hay stock en variant_sizes
-                RAISE EXCEPTION 'No hay stock disponible para la variante % talle %', v_variant_id, v_size;
+                AND size = v_normalized_size
+                AND warehouse_id IN (v_general_warehouse_id, v_venta_publico_warehouse_id)
+              ORDER BY warehouse_id
+              FOR UPDATE
+            LOOP
+              IF v_size_row.warehouse_id = v_general_warehouse_id THEN
+                v_size_stock_general := COALESCE(v_size_row.stock_qty, 0);
+              ELSIF v_size_row.warehouse_id = v_venta_publico_warehouse_id THEN
+                v_size_stock_venta_publico := COALESCE(v_size_row.stock_qty, 0);
               END IF;
+            END LOOP;
+
+            IF v_size_stock_general = 0 AND v_size_stock_venta_publico = 0 THEN
+              RAISE EXCEPTION 'No hay stock disponible para la variante % talle %', v_variant_id, v_size;
             END IF;
 
             IF v_qty > (v_size_stock_general + v_size_stock_venta_publico) THEN
@@ -275,32 +287,43 @@ BEGIN
             END IF;
             
             IF v_qty_general > 0 THEN
-              -- Fallback desde variant_sizes: solo variant_size_warehouse_stock; el trigger
-              -- sync_variant_sizes_stock_from_warehouse recalcula variant_sizes como SUM por talle.
-              IF v_fallback_stock_qty > 0 AND v_size_stock_general = v_fallback_stock_qty THEN
-                INSERT INTO public.variant_size_warehouse_stock (variant_id, size, warehouse_id, stock_qty)
-                VALUES (v_variant_id, v_normalized_size, v_general_warehouse_id, GREATEST(v_fallback_stock_qty - v_qty_general, 0))
-                ON CONFLICT (variant_id, size, warehouse_id) 
-                DO UPDATE SET 
-                  stock_qty = GREATEST(v_fallback_stock_qty - v_qty_general, 0),
-                  updated_at = now();
-              ELSE
-                -- Stock normal desde variant_size_warehouse_stock, solo actualizar
-                -- Asegurar que existe el registro antes de actualizar
-                INSERT INTO public.variant_size_warehouse_stock (variant_id, size, warehouse_id, stock_qty)
-                VALUES (v_variant_id, v_normalized_size, v_general_warehouse_id, 0)
-                ON CONFLICT (variant_id, size, warehouse_id) DO NOTHING;
-                
-                UPDATE public.variant_size_warehouse_stock
-                SET stock_qty = stock_qty - v_qty_general,
-                    updated_at = now()
-                WHERE variant_id = v_variant_id
-                  AND size = v_normalized_size
-                  AND warehouse_id = v_general_warehouse_id;
-              END IF;
+              -- Stock normal desde variant_size_warehouse_stock, solo actualizar
+              -- Asegurar que existe el registro antes de actualizar
+              INSERT INTO public.variant_size_warehouse_stock (variant_id, size, warehouse_id, stock_qty)
+              VALUES (v_variant_id, v_normalized_size, v_general_warehouse_id, 0)
+              ON CONFLICT (variant_id, size, warehouse_id) DO NOTHING;
+              
+              UPDATE public.variant_size_warehouse_stock
+              SET stock_qty = stock_qty - v_qty_general,
+                  updated_at = now()
+              WHERE variant_id = v_variant_id
+                AND size = v_normalized_size
+                AND warehouse_id = v_general_warehouse_id;
             END IF;
           ELSE
-            -- Sin tamaño específico, usar variant_warehouse_stock (comportamiento legacy)
+            -- Sin tamaño específico, usar variant_warehouse_stock solo si la variante no usa talles
+            SELECT (
+              EXISTS (
+                SELECT 1
+                FROM public.variant_size_warehouse_stock
+                WHERE variant_id = v_variant_id
+                LIMIT 1
+              )
+              OR EXISTS (
+                SELECT 1
+                FROM public.variant_sizes
+                WHERE variant_id = v_variant_id
+                  AND TRIM(COALESCE(size, '')) <> ''
+                LIMIT 1
+              )
+            )
+            INTO v_has_size_model;
+
+            IF COALESCE(v_has_size_model, false) THEN
+              RAISE EXCEPTION 'La variante % usa talles. Debes enviar size para vender.', v_variant_id;
+            END IF;
+
+            -- Comportamiento legacy sin talle
             SELECT json_agg(
               json_build_object(
                 'warehouse_code', warehouse_code,
@@ -411,27 +434,53 @@ BEGIN
             v_normalized_size := SPLIT_PART(v_normalized_size, '.', 1);
           END IF;
 
+          INSERT INTO public.variant_size_warehouse_stock (variant_id, warehouse_id, size, stock_qty)
+          VALUES (
+            v_variant_id,
+            v_venta_publico_warehouse_id,
+            v_normalized_size,
+            0
+          )
+          ON CONFLICT (variant_id, warehouse_id, size) DO NOTHING;
+
+          PERFORM 1
+          FROM public.variant_size_warehouse_stock
+          WHERE variant_id = v_variant_id
+            AND size = v_normalized_size
+            AND warehouse_id = v_venta_publico_warehouse_id
+          FOR UPDATE;
+
           UPDATE public.variant_size_warehouse_stock
           SET stock_qty = stock_qty + v_qty,
               updated_at = now()
           WHERE variant_id = v_variant_id
             AND size = v_normalized_size
             AND warehouse_id = v_venta_publico_warehouse_id;
-          GET DIAGNOSTICS v_return_rows = ROW_COUNT;
-
-          IF v_return_rows = 0 THEN
-            INSERT INTO public.variant_size_warehouse_stock (variant_id, warehouse_id, size, stock_qty)
-            VALUES (
-              v_variant_id,
-              v_venta_publico_warehouse_id,
-              v_normalized_size,
-              v_qty
-            );
-          END IF;
 
           RAISE NOTICE 'Devolución procesada: variant_id=%, size=%, qty=%, warehouse=venta-publico', 
             v_variant_id, v_normalized_size, v_qty;
         ELSE
+          SELECT (
+            EXISTS (
+              SELECT 1
+              FROM public.variant_size_warehouse_stock
+              WHERE variant_id = v_variant_id
+              LIMIT 1
+            )
+            OR EXISTS (
+              SELECT 1
+              FROM public.variant_sizes
+              WHERE variant_id = v_variant_id
+                AND TRIM(COALESCE(size, '')) <> ''
+              LIMIT 1
+            )
+          )
+          INTO v_has_size_model;
+
+          IF COALESCE(v_has_size_model, false) THEN
+            RAISE EXCEPTION 'La variante % usa talles. Debes enviar size para devolución.', v_variant_id;
+          END IF;
+
           -- Devolución sin tamaño específico (legacy): UPDATE solo venta-publico, INSERT si no existe
           UPDATE public.variant_warehouse_stock
           SET stock_qty = stock_qty + v_qty,
@@ -462,7 +511,23 @@ BEGIN
       IF v_is_return THEN
         v_persist_vp := v_qty;
         v_persist_g := 0;
-      ELSIF v_from_local_order OR v_skip_stock_deduction THEN
+      ELSIF v_from_local_order THEN
+        -- Aunque el stock ya fue descontado antes (pedido local),
+        -- necesitamos persistir la fuente para que rpc_void_public_sale
+        -- pueda devolver correctamente al anular.
+        v_persist_vp := 0;
+        v_persist_g := 0;
+        IF v_item->'source' IS NOT NULL THEN
+          v_persist_vp := GREATEST(0, COALESCE((v_item->'source'->>'venta_publico')::int, 0));
+          v_persist_g := GREATEST(0, COALESCE((v_item->'source'->>'general')::int, 0));
+        END IF;
+        -- Fallback defensivo: si no viene source o viene inconsistente, asumir venta-publico.
+        IF (v_persist_vp + v_persist_g) <> v_qty THEN
+          v_persist_vp := v_qty;
+          v_persist_g := 0;
+        END IF;
+      ELSIF v_skip_stock_deduction THEN
+        -- Venta confirmada sin stock: no hubo descuento real, tampoco debe haber reposición en void.
         v_persist_vp := 0;
         v_persist_g := 0;
       ELSE
@@ -705,6 +770,7 @@ DECLARE
   v_wh_g uuid;
   v_pv_size text;
   v_norm text;
+  v_has_size_model boolean;
 BEGIN
   SELECT id INTO v_wh_vp FROM public.warehouses WHERE code = 'venta-publico' LIMIT 1;
   SELECT id INTO v_wh_g FROM public.warehouses WHERE code = 'general' LIMIT 1;
@@ -738,6 +804,27 @@ BEGIN
     END IF;
 
     IF v_psi.qty_venta_publico IS NULL AND v_psi.qty_general IS NULL THEN
+      SELECT (
+        EXISTS (
+          SELECT 1
+          FROM public.variant_size_warehouse_stock
+          WHERE variant_id = v_psi.variant_id
+          LIMIT 1
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM public.variant_sizes
+          WHERE variant_id = v_psi.variant_id
+            AND TRIM(COALESCE(size, '')) <> ''
+          LIMIT 1
+        )
+      )
+      INTO v_has_size_model;
+
+      IF COALESCE(v_has_size_model, false) THEN
+        RAISE EXCEPTION 'La variante % usa talles. No se puede anular línea legacy sin size.', v_psi.variant_id;
+      END IF;
+
       IF v_psi.is_return THEN
         UPDATE public.variant_warehouse_stock
         SET stock_qty = greatest(0, stock_qty - v_psi.qty), updated_at = now()
@@ -772,6 +859,27 @@ BEGIN
     END IF;
 
     IF v_norm IS NULL OR v_norm = '' THEN
+      SELECT (
+        EXISTS (
+          SELECT 1
+          FROM public.variant_size_warehouse_stock
+          WHERE variant_id = v_psi.variant_id
+          LIMIT 1
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM public.variant_sizes
+          WHERE variant_id = v_psi.variant_id
+            AND TRIM(COALESCE(size, '')) <> ''
+          LIMIT 1
+        )
+      )
+      INTO v_has_size_model;
+
+      IF COALESCE(v_has_size_model, false) THEN
+        RAISE EXCEPTION 'La variante % usa talles. No se puede anular línea sin size.', v_psi.variant_id;
+      END IF;
+
       IF v_psi.is_return THEN
         UPDATE public.variant_warehouse_stock
         SET stock_qty = greatest(0, stock_qty - v_psi.qty), updated_at = now()

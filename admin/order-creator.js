@@ -1309,9 +1309,7 @@ async function searchProducts(query) {
               }
             }
             
-            // Crear un item por cada talle
-            // IMPORTANTE: Aplicar fallback a variant_sizes.stock_qty si no hay stock en warehouses
-            // Esto sigue el mismo patrón que admin/stock.js (líneas 554-560)
+            // Crear un item por cada talle usando solo stock canónico por warehouse
             return sizes.map(sizeData => {
               const normalizedSize = sizeData.size;
               if (!normalizedSize) return null; // Saltar tamaños vacíos
@@ -1319,14 +1317,6 @@ async function searchProducts(query) {
               const sizeStock = sizeStockMap.get(normalizedSize) || new Map();
               let stockGeneral = sizeStock.get(warehouses.general) || 0;
               let stockVenta = sizeStock.get(warehouses.ventaPublico) || 0;
-              
-              // FALLBACK CRÍTICO: Si no hay stock en warehouses pero hay en variant_sizes, usar variant_sizes.stock_qty
-              // Este es el mismo patrón que usa admin/stock.js (líneas 554-560)
-              if (stockGeneral === 0 && stockVenta === 0 && sizeData.stock_qty > 0) {
-                // Si hay stock en variant_sizes pero no en variant_size_warehouse_stock,
-                // poner todo en general como fallback (esto es lo que hace admin/stock.js)
-                stockGeneral = sizeData.stock_qty || 0;
-              }
               
               const totalStock = stockGeneral + stockVenta;
               
@@ -1490,7 +1480,6 @@ async function processQrCodeForOrder(qrCode) {
     // Obtener stock del talle específico
     const normalizedSize = normalizeSize(variant.size);
     let sizeStock = { general: { stock: 0 }, ventaPublico: { stock: 0 }, total: 0 };
-    let variantSizeStockQty = sizeData.stock_qty || 0;
     
     // Obtener stock desde variant_size_warehouse_stock
     if (normalizedSize && warehouses.general && warehouses.ventaPublico) {
@@ -1515,11 +1504,7 @@ async function processQrCodeForOrder(qrCode) {
       }
     }
     
-    // FALLBACK: Si no hay stock en warehouses pero hay en variant_sizes, usar variant_sizes.stock_qty
-    if (sizeStock.general.stock === 0 && sizeStock.ventaPublico.stock === 0 && variantSizeStockQty > 0) {
-      sizeStock.general.stock = variantSizeStockQty;
-      sizeStock.total = variantSizeStockQty;
-    }
+    // Sin fallback: decisiones operativas solo con variant_size_warehouse_stock
     
     // Por QR el producto se asume físico (se escaneó), no pedir confirmación si no hay stock; agregar directo.
     // La carga manual sigue usando el modal de confirmación en la grilla de talles.
@@ -2237,20 +2222,6 @@ async function addProductToOrder(product) {
               stockVenta = s.stock_qty || 0;
             }
           });
-        }
-        
-        // FALLBACK: Si no hay stock en warehouses, consultar variant_sizes
-        if (stockGeneral === 0 && stockVenta === 0) {
-          const { data: variantSize } = await supabase
-            .from("variant_sizes")
-            .select("stock_qty")
-            .eq("variant_id", product.variant_id)
-            .eq("size", normalizedSize)
-            .maybeSingle();
-          
-          if (variantSize && variantSize.stock_qty > 0) {
-            stockGeneral = variantSize.stock_qty;
-          }
         }
         
         const stockTotal = stockGeneral + stockVenta;
@@ -3064,55 +3035,6 @@ async function updateStockBatch(itemsWithVariants) {
     console.log("🔵 updateStockBatch: currentStocks es null o vacío");
   }
   
-  // Consulta 2: Obtener stocks de fallback desde variant_sizes (para aplicar fallback si no hay stock en warehouses)
-  console.log("🔵 updateStockBatch: ANTES de consultar fallback - Variant IDs:", variantIds);
-  console.log("🔵 updateStockBatch: Consultando stocks de fallback desde variant_sizes...");
-  
-  let variantSizes = null;
-  let variantSizesError = null;
-  
-  try {
-    console.log("🔵 updateStockBatch: Ejecutando consulta a variant_sizes...");
-    const result = await supabase
-      .from("variant_sizes")
-      .select("variant_id, size, stock_qty")
-      .in("variant_id", variantIds);
-    
-    variantSizes = result.data;
-    variantSizesError = result.error;
-    console.log("🔵 updateStockBatch: Consulta a variant_sizes completada");
-  } catch (error) {
-    console.error("❌ updateStockBatch: Excepción al consultar variant_sizes:", error);
-    variantSizesError = error;
-  }
-  
-  if (variantSizesError) {
-    console.error("❌ updateStockBatch: Error obteniendo variant_sizes (fallback):", variantSizesError);
-    console.error("❌ updateStockBatch: Detalles del error:", JSON.stringify(variantSizesError, null, 2));
-  } else {
-    console.log("🔵 updateStockBatch: Variant sizes obtenidos:", variantSizes?.length || 0);
-    if (variantSizes && variantSizes.length > 0) {
-      console.log("🔵 updateStockBatch: Primer variant_size ejemplo:", JSON.stringify(variantSizes[0], null, 2));
-    } else {
-      console.warn("⚠️ updateStockBatch: variantSizes está vacío o null");
-    }
-  }
-  
-  // Crear mapa de stock de fallback (variant_sizes)
-  const fallbackStockMap = new Map(
-    (variantSizes || []).map(vs => [
-      `${vs.variant_id}|${normalizeSize(vs.size)}`,
-      vs.stock_qty || 0
-    ])
-  );
-  
-  console.log("🔵 updateStockBatch: Fallback stock map creado con", fallbackStockMap.size, "entradas");
-  if (fallbackStockMap.size > 0) {
-    const firstFallbackKey = Array.from(fallbackStockMap.keys())[0];
-    const firstFallbackValue = fallbackStockMap.get(firstFallbackKey);
-    console.log("🔵 updateStockBatch: Primer fallback ejemplo:", firstFallbackKey, "->", firstFallbackValue);
-  }
-  
   // Crear mapa de stock actual desde variant_size_warehouse_stock
   const stockMap = new Map(
     (currentStocks || []).map(s => [
@@ -3121,44 +3043,11 @@ async function updateStockBatch(itemsWithVariants) {
     ])
   );
   
-  // Aplicar fallback: si un variant+size no tiene stock en ningún warehouse, usar variant_sizes.stock_qty
-  // Esto asegura que si el stock está solo en variant_sizes, se use como stock inicial
-  if (fallbackStockMap.size > 0) {
-    itemsToUpdate.forEach(item => {
-      const normalizedSize = normalizeSize(item.size);
-      if (!normalizedSize) return;
-      
-      const fallbackKey = `${item.variant_id}|${normalizedSize}`;
-      const fallbackStock = fallbackStockMap.get(fallbackKey) || 0;
-      
-      if (fallbackStock > 0) {
-        // Verificar si hay stock en algún warehouse para este variant+size
-        let hasStockInWarehouse = false;
-        for (const wid of warehouseIds) {
-          const key = `${item.variant_id}|${normalizedSize}|${wid}`;
-          if (stockMap.has(key) && stockMap.get(key) > 0) {
-            hasStockInWarehouse = true;
-            break;
-          }
-        }
-        
-        // Si no hay stock en ningún warehouse pero hay en variant_sizes, inicializar en general
-        if (!hasStockInWarehouse && warehouses.general) {
-          const generalKey = `${item.variant_id}|${normalizedSize}|${warehouses.general}`;
-          if (!stockMap.has(generalKey)) {
-            console.log(`🔵 updateStockBatch: Aplicando fallback para ${item.variant_id} talle ${normalizedSize}: ${fallbackStock} unidades desde variant_sizes`);
-            stockMap.set(generalKey, fallbackStock);
-          }
-        }
-      }
-    });
-  }
-  
-  console.log("🔵 updateStockBatch: Stock map creado con", stockMap.size, "entradas (incluye fallback)");
+  console.log("🔵 updateStockBatch: Stock map creado con", stockMap.size, "entradas");
   
   // Preparar actualizaciones
   const stockChanges = [];
-  const variantSizesUpdates = []; // Para actualizar variant_sizes cuando se usa fallback
+  // variant_sizes se actualiza automáticamente via trigger 84
   
   itemsToUpdate.forEach((item, index) => {
     const normalizedSize = normalizeSize(item.size);
@@ -3168,16 +3057,21 @@ async function updateStockBatch(itemsWithVariants) {
     }
     
     // Obtener cantidades de cada almacén (si están definidas)
-    const qtyFromGeneral = item.qty_from_general || 0;
-    const qtyFromVenta = item.qty_from_venta || 0;
+    let qtyFromGeneral = Number(item.qty_from_general) || 0;
+    let qtyFromVenta = Number(item.qty_from_venta) || 0;
     const quantity = item.quantity || 0;
     
     console.log(`🔵 updateStockBatch: Item ${index} - Variant: ${item.variant_id}, Size: ${normalizedSize}, Qty: ${quantity}, From General: ${qtyFromGeneral}, From Venta: ${qtyFromVenta}`);
     
     // Validar consistencia: si tiene qty_from_general o qty_from_venta, deben sumar quantity
-    const hasSpecificQuantities = qtyFromGeneral > 0 || qtyFromVenta > 0;
+    let hasSpecificQuantities = qtyFromGeneral > 0 || qtyFromVenta > 0;
     if (hasSpecificQuantities && (qtyFromGeneral + qtyFromVenta) !== quantity) {
-      console.warn(`⚠️ Inconsistencia en cantidades para item ${item.variant_id} talle ${normalizedSize}: qty_from_general=${qtyFromGeneral}, qty_from_venta=${qtyFromVenta}, quantity=${quantity}`);
+      console.warn(`⚠️ Inconsistencia en cantidades para item ${item.variant_id} talle ${normalizedSize}: qty_from_general=${qtyFromGeneral}, qty_from_venta=${qtyFromVenta}, quantity=${quantity}. Se recalculará automáticamente por cantidad total.`);
+      // Si los "source qty" están desfasados (ej. suman más que quantity), no confiar en esos valores.
+      // Forzamos recálculo por cantidad para evitar sobre-descontar stock.
+      hasSpecificQuantities = false;
+      qtyFromGeneral = 0;
+      qtyFromVenta = 0;
     }
     
     // Si tiene cantidades específicas por almacén, usarlas
@@ -3188,32 +3082,7 @@ async function updateStockBatch(itemsWithVariants) {
         let currentQty = stockMap.get(key) || 0;
         
         console.log(`🔵 updateStockBatch: Stock inicial para ${item.variant_id} talle ${normalizedSize} en general: ${currentQty}`);
-        console.log(`🔵 updateStockBatch: Fallback map tiene ${fallbackStockMap.size} entradas`);
-        
-        // FALLBACK: Si no hay stock en warehouse pero hay en variant_sizes, usarlo
-        if (currentQty === 0) {
-          const fallbackKey = `${item.variant_id}|${normalizedSize}`;
-          console.log(`🔵 updateStockBatch: Buscando fallback con key: "${fallbackKey}"`);
-          console.log(`🔵 updateStockBatch: Fallback map tiene ${fallbackStockMap.size} entradas`);
-          const fallbackStock = fallbackStockMap.get(fallbackKey) || 0;
-          console.log(`🔵 updateStockBatch: Fallback stock encontrado: ${fallbackStock}`);
-          
-          if (fallbackStock > 0) {
-            console.log(`🔵 updateStockBatch: ✅ Usando fallback para ${item.variant_id} talle ${normalizedSize}: ${fallbackStock} unidades desde variant_sizes`);
-            currentQty = fallbackStock;
-            // Actualizar el mapa para que refleje el stock real
-            stockMap.set(key, currentQty);
-            // Marcar que este item usa fallback para actualizar variant_sizes también
-            item._usesFallback = true;
-            item._fallbackStock = fallbackStock;
-          } else {
-            console.warn(`⚠️ updateStockBatch: No hay fallback disponible para ${item.variant_id} talle ${normalizedSize}`);
-            // Debug: mostrar todas las keys del fallback map para diagnosticar
-            if (fallbackStockMap.size > 0) {
-              console.log(`🔵 updateStockBatch: Keys disponibles en fallback map:`, Array.from(fallbackStockMap.keys()).slice(0, 5));
-            }
-          }
-        }
+        // Sin fallback desde variant_sizes: si no hay stock por warehouse, queda en 0 y se aplican validaciones aguas arriba.
         
         const newQty = Math.max(0, currentQty - qtyFromGeneral);
         console.log(`🔵 updateStockBatch: Descontando ${qtyFromGeneral} de general. Stock actual: ${currentQty}, Nuevo stock: ${newQty}`);
@@ -3230,17 +3099,9 @@ async function updateStockBatch(itemsWithVariants) {
           warehouse_id: warehouses.general,
           stock_qty: newQty
         });
+        stockMap.set(key, newQty);
         
-        // Si se usó fallback, también actualizar variant_sizes.stock_qty
-        if (item._usesFallback && item._fallbackStock !== undefined) {
-          const newVariantSizeStock = Math.max(0, item._fallbackStock - qtyFromGeneral);
-          variantSizesUpdates.push({
-            variant_id: item.variant_id,
-            size: normalizedSize,
-            stock_qty: newVariantSizeStock
-          });
-          console.log(`🔵 updateStockBatch: También actualizando variant_sizes para ${item.variant_id} talle ${normalizedSize}: ${item._fallbackStock} → ${newVariantSizeStock}`);
-        }
+        // variant_sizes se actualiza automáticamente via trigger 84
       }
       
       // Descontar del almacén venta-publico si corresponde
@@ -3255,6 +3116,7 @@ async function updateStockBatch(itemsWithVariants) {
           warehouse_id: warehouses.ventaPublico,
           stock_qty: newQty
         });
+        stockMap.set(key, newQty);
       }
     } else {
       // FALLBACK: Si no tiene cantidades específicas, usar lógica de prioridad
@@ -3275,6 +3137,7 @@ async function updateStockBatch(itemsWithVariants) {
             warehouse_id: warehouses.ventaPublico,
             stock_qty: newQty
           });
+          stockMap.set(key, newQty);
           remainingQty -= qtyToDeduct;
         }
       }
@@ -3293,6 +3156,7 @@ async function updateStockBatch(itemsWithVariants) {
             warehouse_id: warehouses.general,
             stock_qty: newQty
           });
+          stockMap.set(key, newQty);
           remainingQty -= qtyToDeduct;
         }
       }
@@ -3328,27 +3192,8 @@ async function updateStockBatch(itemsWithVariants) {
         }
       }
       
-      // Actualizar variant_sizes si se usó fallback
-      if (variantSizesUpdates.length > 0) {
-        console.log(`🔵 updateStockBatch: Actualizando ${variantSizesUpdates.length} registros en variant_sizes (fallback usado)`);
-        const { data: variantSizesData, error: variantSizesUpdateError } = await supabase
-          .from("variant_sizes")
-          .upsert(variantSizesUpdates, {
-            onConflict: 'variant_id,size'
-          });
-        
-        if (variantSizesUpdateError) {
-          console.error("❌ updateStockBatch: Error actualizando variant_sizes:", variantSizesUpdateError);
-          console.error("❌ updateStockBatch: Detalles del error:", JSON.stringify(variantSizesUpdateError, null, 2));
-        } else {
-          console.log("✅ updateStockBatch: variant_sizes actualizado correctamente para", variantSizesUpdates.length, "registros");
-          if (variantSizesData) {
-            console.log("✅ updateStockBatch: Datos retornados de variant_sizes:", variantSizesData.length || 0, "registros");
-          }
-        }
-      } else {
-        console.log("🔵 updateStockBatch: No se usó fallback, no es necesario actualizar variant_sizes");
-      }
+      // variant_sizes se actualiza automáticamente via trigger 84
+      // al escribir en variant_size_warehouse_stock.
     } catch (error) {
       console.error("❌ updateStockBatch: Excepción al actualizar stock:", error);
       throw error;

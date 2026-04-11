@@ -25,7 +25,7 @@ declare
   v_stock_gen int;
   v_size_stock_vp int;
   v_size_stock_gen int;
-  v_fallback_stock_qty int;
+  v_has_size_model boolean;
   v_total_amount numeric(12,2) := 0;
   v_qty_to_deduct int;
   v_deduct_vp int;
@@ -39,6 +39,7 @@ declare
   v_discount numeric := 0;
   v_extras_amount numeric := 0;
   v_extras_percentage numeric := 0;
+  v_size_row record;
 begin
   -- Validar que el pedido existe y conservar notas (extras % / monto fijo viven aquí, no en líneas)
   select lo.id, lo.notes into v_order_id, v_notes_text
@@ -89,6 +90,27 @@ begin
           stock_qty = public.variant_size_warehouse_stock.stock_qty + v_diff,
           updated_at = now();
       else
+        select (
+          exists (
+            select 1
+            from public.variant_size_warehouse_stock
+            where variant_id = v_current.variant_id
+            limit 1
+          )
+          or exists (
+            select 1
+            from public.variant_sizes
+            where variant_id = v_current.variant_id
+              and trim(coalesce(size, '')) <> ''
+            limit 1
+          )
+        )
+        into v_has_size_model;
+
+        if coalesce(v_has_size_model, false) then
+          raise exception 'La variante % usa talles. No se puede devolver stock sin size.', v_current.variant_id;
+        end if;
+
         insert into public.variant_warehouse_stock (variant_id, warehouse_id, stock_qty, updated_at)
         values (v_current.variant_id, v_warehouse_venta_publico_id, v_diff, now())
         on conflict (variant_id, warehouse_id)
@@ -113,6 +135,11 @@ begin
     v_variant_id := (v_item->>'variant_id')::uuid;
     v_size := v_item->>'size';
     v_new_qty := (v_item->>'quantity')::int;
+
+    perform 1
+    from public.product_variants pv
+    where pv.id = v_variant_id
+    for update;
 
     v_old_qty := 0;
     for v_cur_item in
@@ -143,33 +170,36 @@ begin
     end if;
 
     if coalesce(v_size, '') <> '' then
-      -- Stock por talle (variant_size_warehouse_stock) + fallback a variant_sizes
+      -- Stock por talle (variant_size_warehouse_stock) sin fallback derivado
       v_normalized_size := trim(v_size);
       if v_normalized_size ~ '^\d+(\.\d+)?$' then
         v_normalized_size := split_part(v_normalized_size, '.', 1);
       end if;
 
-      select
-        coalesce(sum(case when warehouse_id = v_warehouse_venta_publico_id then stock_qty else 0 end), 0),
-        coalesce(sum(case when warehouse_id = v_warehouse_general_id then stock_qty else 0 end), 0)
-      into v_size_stock_vp, v_size_stock_gen
-      from public.variant_size_warehouse_stock
-      where variant_id = v_variant_id
-        and size = v_normalized_size
-        and warehouse_id in (v_warehouse_venta_publico_id, v_warehouse_general_id);
+      insert into public.variant_size_warehouse_stock (variant_id, size, warehouse_id, stock_qty, updated_at)
+      values (v_variant_id, v_normalized_size, v_warehouse_venta_publico_id, 0, now())
+      on conflict (variant_id, size, warehouse_id) do nothing;
+      insert into public.variant_size_warehouse_stock (variant_id, size, warehouse_id, stock_qty, updated_at)
+      values (v_variant_id, v_normalized_size, v_warehouse_general_id, 0, now())
+      on conflict (variant_id, size, warehouse_id) do nothing;
 
-      -- Fallback: si no hay stock por warehouse, usar variant_sizes.stock_qty como "general"
-      v_fallback_stock_qty := 0;
-      if coalesce(v_size_stock_vp, 0) = 0 and coalesce(v_size_stock_gen, 0) = 0 then
-        select coalesce(stock_qty, 0) into v_fallback_stock_qty
-        from public.variant_sizes
+      v_size_stock_vp := 0;
+      v_size_stock_gen := 0;
+      for v_size_row in
+        select warehouse_id, stock_qty
+        from public.variant_size_warehouse_stock
         where variant_id = v_variant_id
           and size = v_normalized_size
-        limit 1;
-        if coalesce(v_fallback_stock_qty, 0) > 0 then
-          v_size_stock_gen := v_fallback_stock_qty;
+          and warehouse_id in (v_warehouse_venta_publico_id, v_warehouse_general_id)
+        order by warehouse_id
+        for update
+      loop
+        if v_size_row.warehouse_id = v_warehouse_venta_publico_id then
+          v_size_stock_vp := coalesce(v_size_row.stock_qty, 0);
+        elsif v_size_row.warehouse_id = v_warehouse_general_id then
+          v_size_stock_gen := coalesce(v_size_row.stock_qty, 0);
         end if;
-      end if;
+      end loop;
 
       if (coalesce(v_size_stock_vp, 0) + coalesce(v_size_stock_gen, 0)) < v_qty_to_deduct then
         raise exception 'Stock insuficiente para % talle % (Cantidad a agregar: %, Disponible: venta-publico %, general %)',
@@ -179,16 +209,7 @@ begin
       v_deduct_vp := least(v_qty_to_deduct, coalesce(v_size_stock_vp, 0));
       v_deduct_gen := v_qty_to_deduct - v_deduct_vp;
 
-      -- Asegurar registros y aplicar descuento
-      insert into public.variant_size_warehouse_stock (variant_id, size, warehouse_id, stock_qty, updated_at)
-      values (v_variant_id, v_normalized_size, v_warehouse_venta_publico_id, 0, now())
-      on conflict (variant_id, size, warehouse_id) do nothing;
-      insert into public.variant_size_warehouse_stock (variant_id, size, warehouse_id, stock_qty, updated_at)
-      values (v_variant_id, v_normalized_size, v_warehouse_general_id, coalesce(v_fallback_stock_qty, 0), now())
-      on conflict (variant_id, size, warehouse_id)
-      do update set
-        stock_qty = greatest(public.variant_size_warehouse_stock.stock_qty, excluded.stock_qty),
-        updated_at = now();
+      -- Registros ya lockeados; aplicar descuento en write phase.
 
       if v_deduct_vp > 0 then
         update public.variant_size_warehouse_stock
@@ -206,16 +227,31 @@ begin
           and size = v_normalized_size
           and warehouse_id = v_warehouse_general_id;
 
-        if coalesce(v_fallback_stock_qty, 0) > 0 then
-          update public.variant_sizes
-          set stock_qty = greatest(stock_qty - v_deduct_gen, 0),
-              updated_at = now()
-          where variant_id = v_variant_id
-            and size = v_normalized_size;
-        end if;
+        -- variant_sizes se actualiza automáticamente via trigger 84
       end if;
     else
       -- Sin talle: stock legacy (variant_warehouse_stock)
+      select (
+        exists (
+          select 1
+          from public.variant_size_warehouse_stock
+          where variant_id = v_variant_id
+          limit 1
+        )
+        or exists (
+          select 1
+          from public.variant_sizes
+          where variant_id = v_variant_id
+            and trim(coalesce(size, '')) <> ''
+          limit 1
+        )
+      )
+      into v_has_size_model;
+
+      if coalesce(v_has_size_model, false) then
+        raise exception 'La variante % usa talles. Debes enviar size para descontar stock.', v_variant_id;
+      end if;
+
       select coalesce(stock_qty, 0) into v_stock_vp
       from public.variant_warehouse_stock
       where variant_id = v_variant_id and warehouse_id = v_warehouse_venta_publico_id

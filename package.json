@@ -11,6 +11,7 @@
     "deploy:firebase": "npm run build && npm run bundle:supabase && firebase deploy --only hosting",
     "deploy:ps": "powershell -ExecutionPolicy Bypass -File deploy.ps1",
     "test": "node test/check-config.js",
+    "test:critical-rpcs": "node test/check-critical-rpc-whitelist.mjs",
     "test:secrets": "node test/scan-secrets.js",
     "test:staged-secrets": "node test/scan-staged-secrets.js",
     "prepare": "husky install",

@@ -103,6 +103,23 @@ html.client-area body.dashboard-has-bottom-nav .bottom-nav {
 .dash-account-row__btn:hover {
   background: rgba(0, 0, 0, 0.08);
 }
+.client-area .dash-header-notifications,
+.dash-header-notifications {
+  position: relative;
+}
+.client-area .dash-header-notifications .notification-badge,
+.dash-header-notifications .notification-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 8px;
+  height: 8px;
+  background: #ff4444;
+  border-radius: 50%;
+  border: 2px solid var(--card, #fff);
+  box-sizing: content-box;
+  pointer-events: none;
+}
 .client-area #toggle-history-btn,
 #toggle-history-btn {
   position: relative;
@@ -164,7 +181,7 @@ html.client-area body.dashboard-has-bottom-nav .bottom-nav {
 .dash-account-sheet__backdrop {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.4);
+  background: transparent;
   opacity: 0;
   transition: opacity 0.2s;
 }
@@ -174,19 +191,24 @@ html.client-area body.dashboard-has-bottom-nav .bottom-nav {
 .client-area .dash-account-sheet__panel,
 .dash-account-sheet__panel {
   position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  max-height: 85vh;
+  right: 12px;
+  top: 72px;
+  left: auto;
+  bottom: auto;
+  width: min(190px, calc(100vw - 24px));
+  max-height: none;
   background: var(--card, #fff);
-  border-radius: 20px 20px 0 0;
-  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.15);
-  transform: translateY(100%);
-  transition: transform 0.25s ease-out;
-  overflow: auto;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 14px;
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.16);
+  transform: translateY(-6px) scale(0.98);
+  opacity: 0;
+  transition: transform 0.2s ease-out, opacity 0.2s ease-out;
+  overflow: hidden;
 }
 .dash-account-sheet.is-open .dash-account-sheet__panel {
-  transform: translateY(0);
+  transform: translateY(0) scale(1);
+  opacity: 1;
 }
 .client-area .dash-account-sheet__header,
 .dash-account-sheet__header {
@@ -226,6 +248,10 @@ html.client-area body.dashboard-has-bottom-nav .bottom-nav {
 .dash-account-sheet__body {
   padding: 16px;
 }
+.client-area .dash-account-sheet__body--menu,
+.dash-account-sheet__body--menu {
+  padding: 8px;
+}
 .client-area .dash-account-sheet__name,
 .dash-account-sheet__name {
   font-size: 16px;
@@ -246,6 +272,16 @@ html.client-area body.dashboard-has-bottom-nav .bottom-nav {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+.client-area .dash-account-sheet__body--menu .dash-account-sheet__nav,
+.dash-account-sheet__body--menu .dash-account-sheet__nav {
+  gap: 6px;
+}
+.client-area .dash-account-sheet__body--menu .btn,
+.dash-account-sheet__body--menu .btn {
+  border-radius: 10px;
+  padding: 9px 10px;
+  font-size: 13px;
 }
 
 /* Legacy: user-avatar cuando se usa en topbar (ya tiene .dash-avatar-mini) */

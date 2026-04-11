@@ -382,14 +382,8 @@ async function enrichVariantsWithStock(variants) {
         ? (sizeWarehouseStockMap.get(`${variant.id}_${sizeNormalized}_${ventaPublicoWarehouseId}`) || 0)
         : 0;
       
-      // Fallback: si no hay stock en variant_size_warehouse_stock pero sí hay en variant_sizes,
-      // usar el stock de variant_sizes como stock del depósito (general)
       let finalStockDeposito = stockDeposito;
       let finalStockLocal = stockLocal;
-      if (stockDeposito === 0 && stockLocal === 0 && sizeData.stock_qty > 0) {
-        finalStockDeposito = sizeData.stock_qty || 0;
-        console.log(`⚠️ Variante ${variant.id} talle ${sizeNormalized}: Usando stock de variant_sizes como fallback para depósito (${finalStockDeposito})`);
-      }
 
       // Stock Total = suma de depósito + local
       const stockTotal = finalStockDeposito + finalStockLocal;

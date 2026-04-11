@@ -306,7 +306,7 @@ async function searchProducts(term) {
 // Obtener stock por almacén para una variante (por talle individual)
 async function getVariantStock(variantId) {
   try {
-    // 1. Obtener talles desde variant_sizes para esta variante (con stock_qty como fallback)
+    // 1. Obtener talles desde variant_sizes para esta variante
     const { data: sizesData, error: sizesError } = await supabase
       .from("variant_sizes")
       .select("size, stock_qty")
@@ -315,7 +315,7 @@ async function getVariantStock(variantId) {
 
     if (sizesError) throw sizesError;
 
-    // Crear mapa de talles con su stock_qty de fallback
+    // Crear mapa de talles
     const sizesMap = new Map();
     (sizesData || []).forEach(s => {
       const normalizedSize = normalizeSize(s.size);
@@ -395,13 +395,7 @@ async function getVariantStock(variantId) {
       });
     }
 
-    // 4. Aplicar fallback: si no hay stock en warehouses pero hay stock_qty en variant_sizes, usar ese para general
-    sizesMap.forEach((sizeInfo, normalizedSize) => {
-      const sizeStock = stockBySize.get(normalizedSize);
-      if (sizeStock && sizeStock.general === 0 && sizeStock.ventaPublico === 0 && sizeInfo.stockQty > 0) {
-        sizeStock.general = sizeInfo.stockQty;
-      }
-    });
+    // 4. Plan 2: sin fallback operativo desde variant_sizes.
 
     // 5. Retornar estructura con talles
     return {

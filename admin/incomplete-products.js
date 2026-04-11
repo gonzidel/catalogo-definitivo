@@ -548,24 +548,11 @@ window.saveStockAndRedirect = async function(productId) {
   try {
     // 1. Guardar stock por talle en variant_sizes (solo si hay talles)
     if (sizeStockMap.size > 0) {
-      const sizeUpdates = [];
       const sizeWarehouseUpdates = [];
       
       sizeStockMap.forEach((stockData, key) => {
-        const totalStock = stockData.stock_general + stockData.stock_venta_publico;
-        
-        // Actualizar variant_sizes con el stock total del talle
-        // Normalizar el size para asegurar consistencia
         const sizeNormalized = String(stockData.size || "").trim();
-        sizeUpdates.push({
-          variant_id: stockData.variantId,
-          size: sizeNormalized,
-          stock_qty: totalStock, // Stock total del talle (general + venta público)
-        });
         
-        // Guardar stock por talle y warehouse en variant_size_warehouse_stock
-        // Incluir incluso si es 0 para mantener consistencia
-        // Normalizar el size para asegurar consistencia con las claves de búsqueda (usar la misma variable)
         sizeWarehouseUpdates.push({
           variant_id: stockData.variantId,
           size: sizeNormalized,
@@ -581,19 +568,8 @@ window.saveStockAndRedirect = async function(productId) {
         });
       });
 
-      // Upsert en variant_sizes
-      if (sizeUpdates.length > 0) {
-        const { error: sizesError } = await supabase
-          .from("variant_sizes")
-          .upsert(sizeUpdates, {
-            onConflict: "variant_id,size",
-          });
-
-        if (sizesError) {
-          console.error("Error actualizando variant_sizes:", sizesError);
-          throw new Error(`Error actualizando talles: ${sizesError.message}`);
-        }
-      }
+      // variant_sizes se actualiza automáticamente via trigger 84
+      // al escribir en variant_size_warehouse_stock.
 
       // Upsert en variant_size_warehouse_stock (stock por talle y warehouse)
       if (sizeWarehouseUpdates.length > 0) {
@@ -609,41 +585,8 @@ window.saveStockAndRedirect = async function(productId) {
         }
       }
 
-      // 2. Calcular totales por warehouse para cada variante (para variant_warehouse_stock)
-      const warehouseStockUpdates = new Map(); // key: `${variantId}_${warehouseId}`
-      
-      sizeStockMap.forEach((stockData) => {
-        const variantId = stockData.variantId;
-        
-        // Stock general total
-        const generalKey = `${variantId}_${generalWarehouseId}`;
-        if (!warehouseStockUpdates.has(generalKey)) {
-          warehouseStockUpdates.set(generalKey, { variant_id: variantId, warehouse_id: generalWarehouseId, stock_qty: 0 });
-        }
-        warehouseStockUpdates.get(generalKey).stock_qty += stockData.stock_general;
-        
-        // Stock venta público total
-        const ventaPublicoKey = `${variantId}_${ventaPublicoWarehouseId}`;
-        if (!warehouseStockUpdates.has(ventaPublicoKey)) {
-          warehouseStockUpdates.set(ventaPublicoKey, { variant_id: variantId, warehouse_id: ventaPublicoWarehouseId, stock_qty: 0 });
-        }
-        warehouseStockUpdates.get(ventaPublicoKey).stock_qty += stockData.stock_venta_publico;
-      });
-
-      // 3. Guardar totales en variant_warehouse_stock
-      const warehouseUpdates = Array.from(warehouseStockUpdates.values());
-      if (warehouseUpdates.length > 0) {
-        const { error: warehouseError } = await supabase
-          .from("variant_warehouse_stock")
-          .upsert(warehouseUpdates, {
-            onConflict: "variant_id,warehouse_id",
-          });
-
-        if (warehouseError) {
-          console.error("Error actualizando variant_warehouse_stock:", warehouseError);
-          throw new Error(`Error actualizando stock por almacén: ${warehouseError.message}`);
-        }
-      }
+      // variant_warehouse_stock se actualiza automáticamente via trigger 145
+      // al escribir en variant_size_warehouse_stock.
     }
 
     // 4. Si hay variantes sin talles, guardar directamente en variant_warehouse_stock

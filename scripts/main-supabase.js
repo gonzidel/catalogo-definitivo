@@ -114,7 +114,7 @@ let offersCardsPendientes = []; // Ofertas pendientes de renderizar
 /** Tras insertar el banner destacado inline (4.ª card en Inicio), se dispara carga al finalizar el render. */
 let fylPendingHomeCustomBanner = false;
 let isLoadingMore = false; // Flag para evitar múltiples cargas simultáneas
-const PRODUCTOS_INICIALES = 20; // Cantidad de productos en la primera carga
+const PRODUCTOS_INICIALES = 30; // Cantidad de productos en la primera carga
 const PRODUCTOS_POR_PAGINA = 14; // Cantidad de productos a cargar por página con el botón
 
 /** Logs verbosos del catálogo/stock. Activar: `window.FYL_DEBUG_CATALOG = true` antes de cargar, o `?debug=catalog` en la URL. */
@@ -1100,7 +1100,7 @@ async function cargarCategoria(cat) {
     // Limpiar contenedor
     cont.innerHTML = "";
     
-    // Renderizar los primeros 20 productos
+    // Renderizar los primeros 30 productos
     await renderizarProductosPagina(productosPendientes, cont, offersCardsPendientes, 0, PRODUCTOS_INICIALES);
     productosRenderizados = PRODUCTOS_INICIALES;
     
@@ -1551,10 +1551,27 @@ function ensureLoadMoreButtonAtEnd() {
     boton.textContent = "Ver más modelos";
     boton.addEventListener("click", cargarMasProductos);
     wrap.appendChild(boton);
-    cont.appendChild(wrap);
-  } else {
-    cont.appendChild(wrap);
   }
+
+  let contactInfo = wrap.querySelector(".catalog-inline-contact");
+  if (!contactInfo) {
+    contactInfo = document.createElement("div");
+    contactInfo.className = "catalog-inline-contact";
+    contactInfo.innerHTML = `
+      <p class="catalog-inline-contact__title">FYL Moda · Mayorista en indumentaria y calzado</p>
+      <p class="catalog-inline-contact__address">Av. Alberdi 1099 · Resistencia, Chaco</p>
+      <p class="catalog-inline-contact__links">
+        <a href="https://www.instagram.com/fylmodaok/" target="_blank" rel="noopener">Instagram</a>
+        <span aria-hidden="true">·</span>
+        <a href="https://www.facebook.com/FyLcalzados1" target="_blank" rel="noopener">Facebook</a>
+        <span aria-hidden="true">·</span>
+        <a href="https://wa.me/5493624118637" target="_blank" rel="noopener">WhatsApp</a>
+      </p>
+    `;
+    wrap.appendChild(contactInfo);
+  }
+
+  cont.appendChild(wrap);
   
   wrap.style.display = hayMas ? "flex" : "none";
 }
@@ -2214,10 +2231,26 @@ async function enrichProductsWithStock(productos = [], { mergeSkuIndex = false }
           console.debug(`🔍 [DEBUG] No se encontraron talles en variant_sizes para producto ${producto.Articulo}, color ${detalle.color}, variantId ${variantId}, pero catalog_public_view muestra talles: ${detalle.talles.join(', ')}. Esto puede indicar una inconsistencia de datos o un problema de RLS.`);
         }
 
-        // Para cada talle del producto, obtener stock específico
-        // IMPORTANTE: Los talles vienen de catalog_public_view.Numeracion (ya filtrados por stock_qty > 0 en la vista)
-        // pero debemos normalizarlos de nuevo para asegurar consistencia al buscar en variantSizesBySize
-        const variantDetails = (detalle.talles || []).map((talle) => {
+        // Para cada talle del producto, obtener stock específico.
+        // IMPORTANTE: catalog_public_view.Numeracion puede ocultar talles en 0,
+        // por eso unimos con los talles de variant_sizes para renderizar también los agotados.
+        const tallesDesdeVista = (detalle.talles || [])
+          .map((t) => normalizeSize(t) || t)
+          .filter(Boolean);
+        const tallesDesdeVariantSizes = Array.from(variantSizesBySize.keys()).filter(Boolean);
+        const tallesUnicosSet = new Set([...tallesDesdeVista, ...tallesDesdeVariantSizes]);
+        const tallesParaRender = Array.from(tallesUnicosSet).sort((a, b) => {
+          const na = parseInt(a, 10);
+          const nb = parseInt(b, 10);
+          const aNum = !Number.isNaN(na);
+          const bNum = !Number.isNaN(nb);
+          if (aNum && bNum) return na - nb;
+          if (aNum) return -1;
+          if (bNum) return 1;
+          return String(a).localeCompare(String(b), 'es', { sensitivity: 'base' });
+        });
+
+        const variantDetails = tallesParaRender.map((talle) => {
           const normalizedSize = normalizeSize(talle);
           if (!normalizedSize) {
             // Si no se puede normalizar, retornar con available: null (disponibilidad por confirmar)
@@ -4561,53 +4594,47 @@ let indicadorCargaActivo = false;
 let checkLoadingInterval = null;
 // Si se ocultó por tiempo máximo, no volver a mostrar hasta la siguiente carga de categoría
 let bottomIndicatorGaveUp = false;
+let catalogoGlobalScrollInicializado = false;
+let catalogoScrollDebounceTimeout = null;
+
+function onMainImageLoadStateChange() {
+  // Dejar que el navegador procese el estado de la imagen antes de re-evaluar
+  setTimeout(() => {
+    const hayCargando = detectarImagenesCargando();
+    if (!hayCargando && indicadorCargaActivo) {
+      ocultarIndicadorCargaInferior();
+      indicadorCargaActivo = false;
+    }
+  }, 100);
+}
 
 // Función para iniciar la verificación de carga de imágenes
 function iniciarVerificacionCargaImagenes() {
   bottomIndicatorGaveUp = false;
-  // Limpiar intervalo anterior si existe
-  if (checkLoadingInterval) {
-    clearInterval(checkLoadingInterval);
-  }
   
-  // Verificar cada 200ms si hay imágenes cargándose
-  checkLoadingInterval = setInterval(() => {
-    if (bottomIndicatorGaveUp) return;
-    const hayCargando = detectarImagenesCargando();
-    
-    if (hayCargando && !indicadorCargaActivo) {
-      mostrarIndicadorCargaInferior();
-      indicadorCargaActivo = true;
-    } else if (!hayCargando && indicadorCargaActivo) {
-      ocultarIndicadorCargaInferior();
-      indicadorCargaActivo = false;
-    }
-  }, 200);
+  // Mantener un único intervalo global durante la sesión
+  if (!checkLoadingInterval) {
+    // Verificar cada 200ms si hay imágenes cargándose
+    checkLoadingInterval = setInterval(() => {
+      if (bottomIndicatorGaveUp) return;
+      const hayCargando = detectarImagenesCargando();
+      
+      if (hayCargando && !indicadorCargaActivo) {
+        mostrarIndicadorCargaInferior();
+        indicadorCargaActivo = true;
+      } else if (!hayCargando && indicadorCargaActivo) {
+        ocultarIndicadorCargaInferior();
+        indicadorCargaActivo = false;
+      }
+    }, 200);
+  }
   
   // También verificar cuando las imágenes terminan de cargar
   document.querySelectorAll(".main-image[loading='lazy']").forEach((img) => {
     if (!img.hasAttribute('data-load-listener')) {
       img.setAttribute('data-load-listener', 'true');
-      img.addEventListener('load', () => {
-        // Verificar nuevamente después de que una imagen carga
-        setTimeout(() => {
-          const hayCargando = detectarImagenesCargando();
-          if (!hayCargando && indicadorCargaActivo) {
-            ocultarIndicadorCargaInferior();
-            indicadorCargaActivo = false;
-          }
-        }, 100);
-      });
-      img.addEventListener('error', () => {
-        // También ocultar si hay error
-        setTimeout(() => {
-          const hayCargando = detectarImagenesCargando();
-          if (!hayCargando && indicadorCargaActivo) {
-            ocultarIndicadorCargaInferior();
-            indicadorCargaActivo = false;
-          }
-        }, 100);
-      });
+      img.addEventListener('load', onMainImageLoadStateChange);
+      img.addEventListener('error', onMainImageLoadStateChange);
     }
   });
 }
@@ -4615,6 +4642,8 @@ function iniciarVerificacionCargaImagenes() {
 function configurarEventos() {
   // Galería de imágenes
   document.querySelectorAll(".card .gallery .miniatura").forEach((img) => {
+    if (img.dataset.fylMiniaturaBound === "1") return;
+    img.dataset.fylMiniaturaBound = "1";
     img.addEventListener("click", function () {
       const main = this.closest(".card").querySelector(".main-image");
       if (main) main.src = this.getAttribute("data-full");
@@ -4623,6 +4652,8 @@ function configurarEventos() {
 
   // Botones de color
   document.querySelectorAll(".card .color-btn").forEach((btn) => {
+    if (btn.dataset.fylColorBtnBound === "1") return;
+    btn.dataset.fylColorBtnBound = "1";
     btn.addEventListener("click", function () {
       const card = this.closest(".card.producto");
       if (!card) return;
@@ -4653,6 +4684,8 @@ function configurarEventos() {
 
   // Botón "Agregar al carrito" - Abre Bottom Sheet
   document.querySelectorAll(".card .add-to-cart-btn").forEach((btn) => {
+    if (btn.dataset.fylAddToCartBound === "1") return;
+    btn.dataset.fylAddToCartBound = "1";
     btn.addEventListener("click", function () {
       const card = this.closest(".card");
       const articulo = card.querySelector(".article-box")?.textContent;
@@ -4672,13 +4705,15 @@ function configurarEventos() {
   iniciarVerificacionCargaImagenes();
   
   // También verificar al hacer scroll
-  let scrollTimeout;
-  window.addEventListener('scroll', () => {
-    clearTimeout(scrollTimeout);
-    scrollTimeout = setTimeout(() => {
-      iniciarVerificacionCargaImagenes();
-    }, 100);
-  }, { passive: true });
+  if (!catalogoGlobalScrollInicializado) {
+    catalogoGlobalScrollInicializado = true;
+    window.addEventListener('scroll', () => {
+      clearTimeout(catalogoScrollDebounceTimeout);
+      catalogoScrollDebounceTimeout = setTimeout(() => {
+        iniciarVerificacionCargaImagenes();
+      }, 100);
+    }, { passive: true });
+  }
 }
 
 // Función para cambiar categoría

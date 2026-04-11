@@ -1,6 +1,7 @@
 // Importar dinámicamente para asegurar que se cargue después
 // Importar configuración de Supabase y QZ
 import { SUPABASE_URL, QZ_SIGN_SECRET } from "../scripts/config.js";
+import { parseARSNumber, resolveOrderItemUnitPrice } from "../scripts/utils/price.js";
 
 let supabase = null;
 
@@ -60,6 +61,13 @@ let searchTerm = "";
 let scheduledTransports = [];
 let warehouses = { general: null, ventaPublico: null };
 let processingDevolucion = new Set(); // Rastrear pedidos en proceso de devolución
+const sentOrdersVariantPriceMap = new Map(); // variant_id -> price de catálogo (raw)
+
+function getSentOrderUnitPrice(item) {
+  const variantId = item?.variant_id != null ? String(item.variant_id).trim() : "";
+  const variantPrice = variantId ? sentOrdersVariantPriceMap.get(variantId) : null;
+  return resolveOrderItemUnitPrice(item?.price_snapshot, variantPrice);
+}
 
 async function initSentOrders() {
   try {
@@ -224,6 +232,31 @@ async function loadSentOrders() {
         </div>
       `;
       return;
+    }
+
+    // Cargar precio de catálogo por variante para corregir snapshots legacy corruptos.
+    sentOrdersVariantPriceMap.clear();
+    const variantIds = Array.from(
+      new Set(
+        (orders || [])
+          .flatMap((o) => o?.order_items || [])
+          .map((it) => (it?.variant_id != null ? String(it.variant_id).trim() : ""))
+          .filter(Boolean)
+      )
+    );
+    if (variantIds.length > 0) {
+      const { data: variantsData, error: variantsError } = await supabase
+        .from("product_variants")
+        .select("id, price")
+        .in("id", variantIds);
+      if (!variantsError) {
+        (variantsData || []).forEach((v) => {
+          const id = v?.id != null ? String(v.id).trim() : "";
+          if (id) sentOrdersVariantPriceMap.set(id, v?.price ?? null);
+        });
+      } else {
+        console.warn("⚠️ No se pudieron cargar precios de variantes para fallback legacy:", variantsError.message || variantsError);
+      }
     }
 
     // Obtener customer_ids únicos
@@ -495,7 +528,7 @@ function openCustomerModal(customer) {
         const validItems = orderItems.filter(item => item.status !== 'missing');
         const subtotal = validItems.reduce((sum, item) => {
           const quantity = Number(item.quantity || 0);
-          const price = Number(item.price_snapshot || 0);
+          const price = getSentOrderUnitPrice(item);
           return sum + (quantity * price);
         }, 0);
 
@@ -517,14 +550,15 @@ function openCustomerModal(customer) {
         }
 
         // Usar total_amount del pedido (que incluye extras) o calcularlo
-        const total = order.total_amount ? Number(order.total_amount) : (subtotal + extrasTotal);
+        const hasStoredTotal = order.total_amount != null && String(order.total_amount).trim() !== "";
+        const total = hasStoredTotal ? parseARSNumber(order.total_amount) : (subtotal + extrasTotal);
 
         // Generar HTML de items del pedido
         const itemsHtml = orderItems.length > 0
           ? orderItems.map(item => {
             const itemImage = item.imagen || "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%23f2f2f2'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='.3em' fill='%23999' font-size='12'%3ESin imagen%3C/text%3E%3C/svg%3E";
             const itemQuantity = Number(item.quantity || 0);
-            const itemPrice = Number(item.price_snapshot || 0);
+            const itemPrice = getSentOrderUnitPrice(item);
             const itemSubtotal = itemQuantity * itemPrice;
             const isMissing = item.status === 'missing';
             const itemClass = isMissing ? 'order-item-detail missing' : 'order-item-detail';
@@ -1209,10 +1243,11 @@ function prepareShippingLabelFromOrder(order, customer) {
   );
 
   // Obtener monto total
-  const total = typeof order.total_amount === "number"
-    ? order.total_amount
+  const hasStoredTotal = order.total_amount != null && String(order.total_amount).trim() !== "";
+  const total = hasStoredTotal
+    ? parseARSNumber(order.total_amount)
     : (order.order_items || []).reduce(
-      (sum, item) => sum + (item.quantity || 0) * ((item.price_snapshot || 0)),
+      (sum, item) => sum + (item.quantity || 0) * getSentOrderUnitPrice(item),
       0
     );
 
@@ -1738,7 +1773,7 @@ async function deleteOrderItem(itemId, orderId) {
     }
 
     const qty = Number(item.quantity || 0) || 0;
-    const price = Number(item.price_snapshot || 0) || 0;
+    const price = getSentOrderUnitPrice(item);
     const itemTotal = qty * price;
 
     // Devolver stock al stock general si el item tiene variant_id
@@ -2285,7 +2320,7 @@ async function buildEscposTicketOrder(order) {
   // Items del pedido (solo los que no están faltantes)
   const validItems = items.filter(item => item.status !== 'missing');
   validItems.forEach(item => {
-    const price = parseFloat(item.price_snapshot || 0);
+    const price = getSentOrderUnitPrice(item);
     const qty = parseInt(item.quantity || 0);
     const total = price * qty;
 
@@ -2318,7 +2353,7 @@ async function buildEscposTicketOrder(order) {
 
   // Subtotal productos
   const productsSubtotal = validItems.reduce((sum, item) => {
-    const price = parseFloat(item.price_snapshot || 0);
+    const price = getSentOrderUnitPrice(item);
     const qty = parseInt(item.quantity || 0);
     return sum + (price * qty);
   }, 0);
@@ -2349,7 +2384,7 @@ async function buildEscposTicketOrder(order) {
   }
 
   // TOTAL alineado a la derecha
-  const totalAmount = parseFloat(order.total_amount || 0);
+  const totalAmount = parseARSNumber(order.total_amount || 0);
   const totalStr = `$${totalAmount.toLocaleString('es-AR')}`;
   ticket.push(padLeft(`TOTAL: ${totalStr}`, TICKET_WIDTH));
   ticket.push("");

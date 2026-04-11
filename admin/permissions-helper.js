@@ -74,6 +74,7 @@ export async function getUserPermissions() {
         products: { can_view: true, can_edit: true, can_delete: true },
         'fyl-products': { can_view: true, can_edit: true, can_delete: true },
         stock: { can_view: true, can_edit: true, can_delete: true },
+        'stock-audit': { can_view: true, can_edit: false, can_delete: false },
         orders: { can_view: true, can_edit: true, can_delete: true },
         'daily-sales': { can_view: true, can_edit: true, can_delete: true },
         statistics: { can_view: true, can_edit: true, can_delete: true },

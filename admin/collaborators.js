@@ -37,6 +37,7 @@ const PERMISSIONS = [
   { key: 'products', label: 'Productos', description: 'Crear y editar productos y variantes' },
   { key: 'fyl-products', label: 'Productos FYL', description: 'Gestionar stock y visibilidad de productos propios' },
   { key: 'stock', label: 'Stock', description: 'Control de inventario y precios' },
+  { key: 'stock-audit', label: 'Auditoría de Stock', description: 'Observabilidad e inconsistencias de stock (solo lectura)' },
   { key: 'orders', label: 'Pedidos', description: 'Gestionar pedidos pendientes' },
   { key: 'daily-sales', label: 'Ventas Diarias', description: 'Registrar y consultar ventas diarias' },
   { key: 'statistics', label: 'Estadísticas', description: 'KPIs, gráficos y rankings de ventas' },

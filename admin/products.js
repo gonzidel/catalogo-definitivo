@@ -1215,8 +1215,55 @@ function hasSizesDefined(row) {
  * @param {Array<HTMLTableRowElement>} rows - Filas de variantes
  * @returns {Promise<boolean>} - true si todas las variantes tienen stock > 0
  */
+let generalWarehouseIdCache = undefined;
+
+async function getGeneralWarehouseIdForProducts() {
+  if (generalWarehouseIdCache !== undefined) return generalWarehouseIdCache;
+  const { data, error } = await supabase
+    .from("warehouses")
+    .select("id")
+    .eq("code", "general")
+    .maybeSingle();
+  if (error) {
+    console.warn("⚠️ No se pudo obtener el depósito general:", error.message || error);
+    generalWarehouseIdCache = null;
+    return null;
+  }
+  generalWarehouseIdCache = data?.id || null;
+  return generalWarehouseIdCache;
+}
+
+async function getGeneralStockByVariantIds(variantIds) {
+  const normalizedVariantIds = [...new Set((variantIds || []).filter(Boolean))];
+  const stockByVariant = new Map();
+  normalizedVariantIds.forEach((id) => stockByVariant.set(id, 0));
+  if (normalizedVariantIds.length === 0) return stockByVariant;
+
+  const generalWarehouseId = await getGeneralWarehouseIdForProducts();
+  if (!generalWarehouseId) return stockByVariant;
+
+  const { data, error } = await supabase
+    .from("variant_size_warehouse_stock")
+    .select("variant_id, stock_qty")
+    .in("variant_id", normalizedVariantIds)
+    .eq("warehouse_id", generalWarehouseId);
+  if (error) {
+    console.warn("⚠️ Error obteniendo stock general por variante:", error);
+    return stockByVariant;
+  }
+
+  (data || []).forEach((row) => {
+    const current = stockByVariant.get(row.variant_id) || 0;
+    stockByVariant.set(row.variant_id, current + (row.stock_qty || 0));
+  });
+
+  return stockByVariant;
+}
+
 async function checkProductHasStock(rows) {
   if (rows.length === 0) return false;
+  const variantIds = [...new Set(rows.map((row) => row.dataset.variantId).filter(Boolean))];
+  const stockByVariant = await getGeneralStockByVariantIds(variantIds);
   
   for (const row of rows) {
     const variantId = row.dataset.variantId;
@@ -1236,25 +1283,8 @@ async function checkProductHasStock(rows) {
         }
       }
     } else {
-      // Verificar stock en la base de datos
-      const { data: sizes, error } = await supabase
-        .from("variant_sizes")
-        .select("stock_qty")
-        .eq("variant_id", variantId);
-      
-      if (error) {
-        console.warn("Error verificando stock:", error);
-        continue;
-      }
-      
-      if (!sizes || sizes.length === 0) {
-        return false;
-      }
-      
-      const totalStock = sizes.reduce((sum, s) => sum + (s.stock_qty || 0), 0);
-      if (totalStock <= 0) {
-        return false;
-      }
+      const totalStock = stockByVariant.get(variantId) || 0;
+      if (totalStock <= 0) return false;
     }
   }
   
@@ -1294,27 +1324,8 @@ async function calculateProductStatus(productId) {
   const variantIds = variants.map(v => v.id);
   console.log(`🔧 Producto tiene ${variantIds.length} variantes:`, variantIds);
 
-  // 2. Verificar stock para todas las variantes
-  const { data: sizesData, error: sizesError } = await supabase
-    .from("variant_sizes")
-    .select("variant_id, stock_qty")
-    .in("variant_id", variantIds);
-
-  if (sizesError) {
-    console.error("❌ Error obteniendo stock:", sizesError);
-    return "draft";
-  }
-
-  // Agrupar stock por variante
-  const stockByVariant = new Map();
-  variantIds.forEach(vid => stockByVariant.set(vid, 0));
-  
-  if (sizesData && sizesData.length > 0) {
-    sizesData.forEach(size => {
-      const current = stockByVariant.get(size.variant_id) || 0;
-      stockByVariant.set(size.variant_id, current + (size.stock_qty || 0));
-    });
-  }
+  // 2. Verificar stock por variante usando depósito general por talle (VSW canónico en products)
+  const stockByVariant = await getGeneralStockByVariantIds(variantIds);
 
   // Verificar si alguna variante tiene stock > 0
   const hasAnyStock = Array.from(stockByVariant.values()).some(stock => stock > 0);
@@ -1429,7 +1440,7 @@ async function checkProductHasImages(rows) {
 }
 
 /**
- * Guarda los talles y stock de una variante en variant_sizes
+ * Guarda los talles y el stock editable (depósito general por talle) de una variante.
  * @param {string} variantId - ID de la variante
  * @param {HTMLTableRowElement} row - Fila de la tabla
  * @returns {Promise<boolean>} - true si se guardó correctamente
@@ -1532,7 +1543,7 @@ async function saveVariantSizes(variantId, row) {
     return false;
   }
 
-  // Upsert en variant_sizes
+  // Preparar payload para RPC que persiste stock canónico en depósito general por talle.
   const payload = sizes.map((s, index) => {
     const payloadItem = {
       variant_id: variantId,
@@ -2769,7 +2780,7 @@ function addVariantRow(prefill = {}) {
           <button type="button" class="sizes-save" style="padding:4px 8px;font-size:11px;white-space:nowrap" title="Guardar estos talles">💾</button>
         </div>
         <div class="sizes-list" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;"></div>
-        <small style="color:#666;font-size:10px;line-height:1.2;display:block;margin-top:2px">Tip: ingresá talles separados por coma y tocá Generar. El stock se guardará automáticamente al guardar el producto.</small>
+        <small style="color:#666;font-size:10px;line-height:1.2;display:block;margin-top:2px">Tip: ingresá talles separados por coma y tocá Generar. El stock de estos talles corresponde al depósito general y se guardará al guardar el producto.</small>
       </div>
     </td>
     <td><input class="v-skuBase" placeholder="ZAP343-NEG" value="${
@@ -5162,13 +5173,23 @@ async function loadProductById(id) {
   }
   const vIds = variants.map((v) => v.id);
   
-  // Cargar talles desde variant_sizes (nuevo modelo: una variante = un color)
+  // Cargar talles desde variant_sizes SOLO como metadatos (size/sku).
+  // El stock editable en products siempre corresponde al depósito "general".
   let variantSizesMap = new Map(); // Map<variant_id, Array<{size, stock_qty, sku}>>
+  let generalWarehouseId = null;
+  let generalSizeStockMap = new Map(); // key: `${variant_id}::${size}` -> stock_qty
   if (vIds.length > 0) {
-    console.log(`🔧 Buscando talles para ${vIds.length} variantes:`, vIds);
+    const { data: generalWarehouse } = await supabase
+      .from("warehouses")
+      .select("id")
+      .eq("code", "general")
+      .maybeSingle();
+    generalWarehouseId = generalWarehouse?.id || null;
+
+    console.log(`🔧 Buscando talles (metadatos) para ${vIds.length} variantes:`, vIds);
     const { data: sizesData, error: sizesError } = await supabase
       .from("variant_sizes")
-      .select("variant_id, size, stock_qty, sku, id")
+      .select("variant_id, size, sku, id")
       .in("variant_id", vIds)
       // NO ordenar por size para mantener el orden de inserción (usar id como orden natural)
       .order("id", { ascending: true });
@@ -5176,7 +5197,7 @@ async function loadProductById(id) {
     if (sizesError) {
       console.error("❌ Error cargando talles desde variant_sizes:", sizesError);
     } else if (sizesData && sizesData.length > 0) {
-      console.log(`✅ Cargando ${sizesData.length} talles desde variant_sizes:`, sizesData);
+      console.log(`✅ Cargando ${sizesData.length} talles (metadatos) desde variant_sizes:`, sizesData);
       sizesData.forEach(row => {
         if (!variantSizesMap.has(row.variant_id)) {
           variantSizesMap.set(row.variant_id, []);
@@ -5196,7 +5217,7 @@ async function loadProductById(id) {
         
         const sizeData = {
           size: size,
-          stock_qty: row.stock_qty || 0,
+          stock_qty: 0,
           sku: row.sku || null,
         };
         
@@ -5211,27 +5232,56 @@ async function loadProductById(id) {
     } else {
       console.log(`ℹ️ No se encontraron talles en variant_sizes para las variantes (esto es normal si aún no se han definido talles):`, vIds);
     }
+
+    // Cargar stock por talle desde la fuente canónica para products: depósito "general".
+    if (generalWarehouseId) {
+      const { data: sizeWarehouseRows, error: sizeWarehouseError } = await supabase
+        .from("variant_size_warehouse_stock")
+        .select("variant_id, size, stock_qty")
+        .in("variant_id", vIds)
+        .eq("warehouse_id", generalWarehouseId);
+      if (sizeWarehouseError) {
+        console.error("❌ Error cargando stock por talle desde variant_size_warehouse_stock (general):", sizeWarehouseError);
+      } else {
+        (sizeWarehouseRows || []).forEach((row) => {
+          const sizeKey = String(row.size || "").trim();
+          if (!sizeKey) return;
+          generalSizeStockMap.set(`${row.variant_id}::${sizeKey}`, Number(row.stock_qty) || 0);
+        });
+      }
+    } else {
+      console.warn("⚠️ No se encontró warehouse 'general'. Los talles se cargarán con stock 0 en products.");
+    }
+
+    // Inyectar stock general sobre los talles (variant_sizes se usa solo como metadato).
+    variantSizesMap.forEach((sizes, variantId) => {
+      sizes.forEach((s) => {
+        s.stock_qty = generalSizeStockMap.get(`${variantId}::${String(s.size || "").trim()}`) || 0;
+      });
+    });
   } else {
     // No mostrar warning si es un producto nuevo sin variantes aún - esto es normal
     console.log(`ℹ️ Producto sin variantes aún (esto es normal para productos nuevos o sin variantes definidas)`);
   }
   
-  // Cargar stock desde variant_warehouse_stock (mantener compatibilidad)
+  // Cargar stock total de la variante en depósito general (compatibilidad)
   let stockMap = new Map();
   if (vIds.length > 0) {
-    // Obtener el ID del almacén "general"
-    const { data: warehouse } = await supabase
-      .from("warehouses")
-      .select("id")
-      .eq("code", "general")
-      .single();
-    
-    if (warehouse) {
+    if (!generalWarehouseId) {
+      const { data: warehouse } = await supabase
+        .from("warehouses")
+        .select("id")
+        .eq("code", "general")
+        .maybeSingle();
+      generalWarehouseId = warehouse?.id || null;
+    }
+
+    if (generalWarehouseId) {
       const { data: stockData } = await supabase
         .from("variant_warehouse_stock")
         .select("variant_id, stock_qty")
         .in("variant_id", vIds)
-        .eq("warehouse_id", warehouse.id);
+        .eq("warehouse_id", generalWarehouseId);
       
       if (stockData) {
         stockData.forEach(row => {
@@ -5803,16 +5853,22 @@ async function saveProduct(shouldReset = true) {
         : `✅ Talles guardados correctamente para variante ${finalVariantId} (incluyendo talles con stock 0)`;
       console.log(message);
       
-      // Verificar que los talles se guardaron correctamente consultando la BD
-      const { data: verifySizes } = await supabase
-        .from("variant_sizes")
-        .select("size, stock_qty, sku")
-        .eq("variant_id", finalVariantId);
-      
-      if (verifySizes && verifySizes.length > 0) {
-        console.log(`✅ Verificación: ${verifySizes.length} talles encontrados en BD para variante ${finalVariantId}:`, verifySizes);
+      // Verificar stock canónico por talle en depósito general.
+      const generalWarehouseId = await getGeneralWarehouseIdForProducts();
+      let verifySizes = [];
+      if (generalWarehouseId) {
+        const { data: verifyRows } = await supabase
+          .from("variant_size_warehouse_stock")
+          .select("size, stock_qty")
+          .eq("variant_id", finalVariantId)
+          .eq("warehouse_id", generalWarehouseId);
+        verifySizes = verifyRows || [];
+      }
+
+      if (verifySizes.length > 0) {
+        console.log(`✅ Verificación: ${verifySizes.length} talles encontrados en VSW(general) para variante ${finalVariantId}:`, verifySizes);
       } else {
-        console.warn(`⚠️ Verificación: No se encontraron talles en BD para variante ${finalVariantId} después de guardar`);
+        console.warn(`⚠️ Verificación: No se encontraron talles en VSW(general) para variante ${finalVariantId} después de guardar`);
       }
     }
   }

@@ -1,5 +1,10 @@
+-- LEGACY PARCIAL (Plan 3): este archivo conserva su alcance de expiración/notificaciones,
+-- pero las RPC críticas se consideran históricas si colisionan:
+-- - rpc_checkout_cart -> canonical:124
+-- - rpc_close_order -> canonical:83
+-- Versiones canónicas reafirmadas en 149_consolidate_critical_rpcs.sql.
 -- 123_order_expiry_and_notifications.sql
--- Vencimiento real (7d closing_soon, 14d expired), outbox idempotente, tracking stock sources.
+-- Vencimiento: expires_at +5d (closing_soon), dismantle_at +7d (expired), outbox idempotente, tracking stock sources.
 -- Stock al expirar se devuelve solo a warehouse GENERAL; solo se devuelve para ítems con order_item_stock_sources.
 
 -- =============================================================================
@@ -70,8 +75,8 @@ CREATE TABLE IF NOT EXISTS public.order_item_stock_sources (
 -- =============================================================================
 UPDATE public.orders
 SET
-  expires_at = coalesce(expires_at, created_at + interval '7 days'),
-  dismantle_at = coalesce(dismantle_at, created_at + interval '14 days')
+  expires_at = coalesce(expires_at, created_at + interval '5 days'),
+  dismantle_at = coalesce(dismantle_at, created_at + interval '7 days')
 WHERE status IN ('active','closing_soon')
   AND (expires_at IS NULL OR dismantle_at IS NULL);
 
@@ -132,8 +137,8 @@ BEGIN
       VALUES (
         auth.uid(),
         'active',
-        now() + interval '7 days',
-        now() + interval '14 days'
+        now() + interval '5 days',
+        now() + interval '7 days'
       )
       RETURNING id INTO v_order_id;
     EXCEPTION
@@ -154,8 +159,8 @@ BEGIN
     IF v_expires_at IS NULL OR v_dismantle_at IS NULL THEN
       UPDATE public.orders
       SET
-        expires_at = coalesce(expires_at, created_at + interval '7 days'),
-        dismantle_at = coalesce(dismantle_at, created_at + interval '14 days')
+        expires_at = coalesce(expires_at, created_at + interval '5 days'),
+        dismantle_at = coalesce(dismantle_at, created_at + interval '7 days')
       WHERE id = v_order_id;
     END IF;
   END IF;
@@ -396,12 +401,14 @@ SET search_path = public, pg_catalog
 AS $$
 DECLARE
   v_general_warehouse_id uuid;
+  v_venta_warehouse_id uuid;
+  v_legacy_fallback_count int := 0;
 BEGIN
   -- D.1 Backfill fechas
   UPDATE public.orders
   SET
-    expires_at = coalesce(expires_at, created_at + interval '7 days'),
-    dismantle_at = coalesce(dismantle_at, created_at + interval '14 days')
+    expires_at = coalesce(expires_at, created_at + interval '5 days'),
+    dismantle_at = coalesce(dismantle_at, created_at + interval '7 days')
   WHERE status IN ('active','closing_soon')
     AND (expires_at IS NULL OR dismantle_at IS NULL);
 
@@ -412,42 +419,255 @@ BEGIN
     AND now() >= expires_at
     AND now() < dismantle_at;
 
-  -- D.3 Expirar / desarmar (solo devolver stock para ítems con order_item_stock_sources; devolución solo a GENERAL)
+  -- D.3 Expirar / desarmar (devolver por source respetando talle + depósito; fallback legacy sin source)
   SELECT id INTO v_general_warehouse_id FROM public.warehouses WHERE code = 'general' LIMIT 1;
+  SELECT id INTO v_venta_warehouse_id FROM public.warehouses WHERE code = 'venta-publico' LIMIT 1;
 
-  IF v_general_warehouse_id IS NOT NULL THEN
-    -- Sumar stock a GENERAL por variant_id desde items_to_return (items_to_expire JOIN sources)
-    INSERT INTO public.variant_warehouse_stock (variant_id, warehouse_id, stock_qty, updated_at)
-    SELECT agg.variant_id, v_general_warehouse_id, agg.sum_qty, now()
+  -- Lock de filas objetivo para evitar carreras con cancelaciones/manuales concurrentes.
+  PERFORM 1
+  FROM public.order_items oi
+  JOIN public.orders o ON o.id = oi.order_id
+  WHERE o.status IN ('active','closing_soon')
+    AND now() >= o.dismantle_at
+    AND oi.status IN ('reserved','picked','waiting','missing')
+  FOR UPDATE OF oi;
+
+  -- Fuentes con talle -> variant_size_warehouse_stock
+  INSERT INTO public.variant_size_warehouse_stock (variant_id, warehouse_id, size, stock_qty, updated_at)
+  SELECT x.variant_id, x.warehouse_id, x.size_normalized, SUM(x.qty)::int, now()
+  FROM (
+    SELECT
+      oi.variant_id,
+      s.warehouse_id,
+      CASE
+        WHEN trim(coalesce(oi.size::text, '')) ~ '^\d+(\.\d+)?$' THEN split_part(trim(coalesce(oi.size::text, '')), '.', 1)
+        ELSE trim(coalesce(oi.size::text, ''))
+      END AS size_normalized,
+      greatest(coalesce(s.qty, 0), 0)::int AS qty
+    FROM public.order_items oi
+    JOIN public.orders o ON o.id = oi.order_id
+    JOIN public.order_item_stock_sources s ON s.order_item_id = oi.id
+    WHERE o.status IN ('active','closing_soon')
+      AND now() >= o.dismantle_at
+      AND oi.status IN ('reserved','picked','waiting','missing')
+      AND oi.variant_id IS NOT NULL
+      AND greatest(coalesce(s.qty, 0), 0) > 0
+  ) x
+  WHERE x.size_normalized <> ''
+  GROUP BY x.variant_id, x.warehouse_id, x.size_normalized
+  ON CONFLICT (variant_id, warehouse_id, size) DO UPDATE
+  SET stock_qty = public.variant_size_warehouse_stock.stock_qty + excluded.stock_qty,
+      updated_at = now();
+
+  -- Fuentes sin talle -> variant_warehouse_stock (solo variantes sin modelo de talles)
+  INSERT INTO public.variant_warehouse_stock (variant_id, warehouse_id, stock_qty, updated_at)
+  SELECT x.variant_id, x.warehouse_id, SUM(x.qty)::int, now()
+  FROM (
+    SELECT
+      oi.variant_id,
+      s.warehouse_id,
+      CASE
+        WHEN trim(coalesce(oi.size::text, '')) ~ '^\d+(\.\d+)?$' THEN split_part(trim(coalesce(oi.size::text, '')), '.', 1)
+        ELSE trim(coalesce(oi.size::text, ''))
+      END AS size_normalized,
+      (
+        exists (
+          select 1
+          from public.variant_size_warehouse_stock vsws
+          where vsws.variant_id = oi.variant_id
+          limit 1
+        )
+        or exists (
+          select 1
+          from public.variant_sizes vs
+          where vs.variant_id = oi.variant_id
+            and trim(coalesce(vs.size, '')) <> ''
+          limit 1
+        )
+      ) AS has_size_model,
+      greatest(coalesce(s.qty, 0), 0)::int AS qty
+    FROM public.order_items oi
+    JOIN public.orders o ON o.id = oi.order_id
+    JOIN public.order_item_stock_sources s ON s.order_item_id = oi.id
+    WHERE o.status IN ('active','closing_soon')
+      AND now() >= o.dismantle_at
+      AND oi.status IN ('reserved','picked','waiting','missing')
+      AND oi.variant_id IS NOT NULL
+      AND greatest(coalesce(s.qty, 0), 0) > 0
+  ) x
+  WHERE x.size_normalized = ''
+    AND x.has_size_model = false
+  GROUP BY x.variant_id, x.warehouse_id
+  ON CONFLICT (variant_id, warehouse_id) DO UPDATE
+  SET stock_qty = public.variant_warehouse_stock.stock_qty + excluded.stock_qty,
+      updated_at = now();
+
+  -- Fallback legacy sin sources: waiting vuelve a venta-publico; reserved vuelve a general.
+  INSERT INTO public.variant_size_warehouse_stock (variant_id, warehouse_id, size, stock_qty, updated_at)
+  SELECT x.variant_id, x.warehouse_id, x.size_normalized, SUM(x.qty)::int, now()
+  FROM (
+    SELECT
+      oi.variant_id,
+      CASE
+        WHEN oi.status = 'waiting' THEN v_venta_warehouse_id
+        ELSE v_general_warehouse_id
+      END AS warehouse_id,
+      CASE
+        WHEN trim(coalesce(oi.size::text, '')) ~ '^\d+(\.\d+)?$' THEN split_part(trim(coalesce(oi.size::text, '')), '.', 1)
+        ELSE trim(coalesce(oi.size::text, ''))
+      END AS size_normalized,
+      greatest(coalesce(oi.quantity, 0), 0)::int AS qty
+    FROM public.order_items oi
+    JOIN public.orders o ON o.id = oi.order_id
+    WHERE o.status IN ('active','closing_soon')
+      AND now() >= o.dismantle_at
+      AND oi.status IN ('reserved','waiting')
+      AND oi.variant_id IS NOT NULL
+      AND greatest(coalesce(oi.quantity, 0), 0) > 0
+      AND NOT EXISTS (
+        SELECT 1
+        FROM public.order_item_stock_sources s
+        WHERE s.order_item_id = oi.id
+          AND greatest(coalesce(s.qty, 0), 0) > 0
+      )
+  ) x
+  WHERE x.warehouse_id IS NOT NULL
+    AND x.size_normalized <> ''
+  GROUP BY x.variant_id, x.warehouse_id, x.size_normalized
+  ON CONFLICT (variant_id, warehouse_id, size) DO UPDATE
+  SET stock_qty = public.variant_size_warehouse_stock.stock_qty + excluded.stock_qty,
+      updated_at = now();
+
+  INSERT INTO public.variant_warehouse_stock (variant_id, warehouse_id, stock_qty, updated_at)
+  SELECT x.variant_id, x.warehouse_id, SUM(x.qty)::int, now()
+  FROM (
+    SELECT
+      oi.variant_id,
+      CASE
+        WHEN oi.status = 'waiting' THEN v_venta_warehouse_id
+        ELSE v_general_warehouse_id
+      END AS warehouse_id,
+      CASE
+        WHEN trim(coalesce(oi.size::text, '')) ~ '^\d+(\.\d+)?$' THEN split_part(trim(coalesce(oi.size::text, '')), '.', 1)
+        ELSE trim(coalesce(oi.size::text, ''))
+      END AS size_normalized,
+      (
+        exists (
+          select 1
+          from public.variant_size_warehouse_stock vsws
+          where vsws.variant_id = oi.variant_id
+          limit 1
+        )
+        or exists (
+          select 1
+          from public.variant_sizes vs
+          where vs.variant_id = oi.variant_id
+            and trim(coalesce(vs.size, '')) <> ''
+          limit 1
+        )
+      ) AS has_size_model,
+      greatest(coalesce(oi.quantity, 0), 0)::int AS qty
+    FROM public.order_items oi
+    JOIN public.orders o ON o.id = oi.order_id
+    WHERE o.status IN ('active','closing_soon')
+      AND now() >= o.dismantle_at
+      AND oi.status IN ('reserved','waiting')
+      AND oi.variant_id IS NOT NULL
+      AND greatest(coalesce(oi.quantity, 0), 0) > 0
+      AND NOT EXISTS (
+        SELECT 1
+        FROM public.order_item_stock_sources s
+        WHERE s.order_item_id = oi.id
+          AND greatest(coalesce(s.qty, 0), 0) > 0
+      )
+  ) x
+  WHERE x.warehouse_id IS NOT NULL
+    AND x.size_normalized = ''
+    AND x.has_size_model = false
+  GROUP BY x.variant_id, x.warehouse_id
+  ON CONFLICT (variant_id, warehouse_id) DO UPDATE
+  SET stock_qty = public.variant_warehouse_stock.stock_qty + excluded.stock_qty,
+      updated_at = now();
+
+  -- Reserved qty: revertir lo descontado en checkout para todo lo que se devuelve (sources + fallback).
+  UPDATE public.product_variants pv
+  SET reserved_qty = pv.reserved_qty + agg.sum_qty
+  FROM (
+    SELECT z.variant_id, SUM(z.qty)::int AS sum_qty
     FROM (
-      SELECT oi.variant_id, SUM(s.qty)::int AS sum_qty
+      SELECT oi.variant_id, greatest(coalesce(s.qty, 0), 0)::int AS qty
       FROM public.order_items oi
-      JOIN public.order_item_stock_sources s ON s.order_item_id = oi.id
       JOIN public.orders o ON o.id = oi.order_id
+      JOIN public.order_item_stock_sources s ON s.order_item_id = oi.id
       WHERE o.status IN ('active','closing_soon')
         AND now() >= o.dismantle_at
         AND oi.status IN ('reserved','picked','waiting','missing')
-      GROUP BY oi.variant_id
-    ) agg
-    ON CONFLICT (variant_id, warehouse_id) DO UPDATE
-    SET stock_qty = public.variant_warehouse_stock.stock_qty + excluded.stock_qty,
-        updated_at = now();
+        AND oi.variant_id IS NOT NULL
+        AND greatest(coalesce(s.qty, 0), 0) > 0
 
-    -- Revertir reserved_qty (incrementar lo que el checkout decrementó)
-    UPDATE public.product_variants pv
-    SET reserved_qty = pv.reserved_qty + agg.sum_qty
-    FROM (
-      SELECT oi.variant_id, SUM(s.qty)::int AS sum_qty
+      UNION ALL
+
+      SELECT oi.variant_id, greatest(coalesce(oi.quantity, 0), 0)::int AS qty
       FROM public.order_items oi
-      JOIN public.order_item_stock_sources s ON s.order_item_id = oi.id
       JOIN public.orders o ON o.id = oi.order_id
       WHERE o.status IN ('active','closing_soon')
         AND now() >= o.dismantle_at
-        AND oi.status IN ('reserved','picked','waiting','missing')
-      GROUP BY oi.variant_id
-    ) agg
-    WHERE pv.id = agg.variant_id;
+        AND oi.status IN ('reserved','waiting')
+        AND oi.variant_id IS NOT NULL
+        AND greatest(coalesce(oi.quantity, 0), 0) > 0
+        AND NOT EXISTS (
+          SELECT 1
+          FROM public.order_item_stock_sources s
+          WHERE s.order_item_id = oi.id
+            AND greatest(coalesce(s.qty, 0), 0) > 0
+        )
+    ) z
+    GROUP BY z.variant_id
+  ) agg
+  WHERE pv.id = agg.variant_id;
+
+  -- Señal de auditoría para deuda legacy (ítems vencidos reservados/waiting sin sources).
+  SELECT count(*)::int
+  INTO v_legacy_fallback_count
+  FROM public.order_items oi
+  JOIN public.orders o ON o.id = oi.order_id
+  WHERE o.status IN ('active','closing_soon')
+    AND now() >= o.dismantle_at
+    AND oi.status IN ('reserved','waiting')
+    AND oi.variant_id IS NOT NULL
+    AND greatest(coalesce(oi.quantity, 0), 0) > 0
+    AND NOT EXISTS (
+      SELECT 1
+      FROM public.order_item_stock_sources s
+      WHERE s.order_item_id = oi.id
+        AND greatest(coalesce(s.qty, 0), 0) > 0
+    );
+
+  IF coalesce(v_legacy_fallback_count, 0) > 0 THEN
+    RAISE WARNING 'rpc_orders_daily_maintenance: fallback legacy sin sources aplicado en % item(s).', v_legacy_fallback_count;
   END IF;
+
+  -- Consumir fuentes para garantizar idempotencia (no doble devolución).
+  UPDATE public.order_item_stock_sources s
+  SET qty = 0
+  FROM public.order_items oi
+  JOIN public.orders o ON o.id = oi.order_id
+  WHERE s.order_item_id = oi.id
+    AND o.status IN ('active','closing_soon')
+    AND now() >= o.dismantle_at
+    AND oi.status IN ('reserved','picked','waiting','missing')
+    AND greatest(coalesce(s.qty, 0), 0) > 0;
+
+  DELETE FROM public.order_item_stock_sources s
+  WHERE coalesce(s.qty, 0) <= 0
+    AND EXISTS (
+      SELECT 1
+      FROM public.order_items oi
+      JOIN public.orders o ON o.id = oi.order_id
+      WHERE oi.id = s.order_item_id
+        AND o.status IN ('active','closing_soon')
+        AND now() >= o.dismantle_at
+    );
 
   -- Marcar TODOS los items_to_expire como expired (tengan o no sources)
   UPDATE public.order_items oi
@@ -584,24 +804,43 @@ SELECT public.rpc_orders_daily_maintenance();
 SELECT id, status, expires_at, dismantle_at FROM public.orders WHERE id = '<order_id>';
 -- Esperado: status = 'closing_soon'
 
--- 2) expired: order con dismantle_at en el pasado e ítems con sources
+-- 2) expired: devolver por source (talle + depósito), no solo a general
 UPDATE public.orders SET status = 'active', dismantle_at = now() - interval '1 hour', expires_at = now() - interval '8 days'
 WHERE id = '<order_id>';
--- (Asegurar que los order_items tengan filas en order_item_stock_sources vía checkout)
-SELECT stock_qty FROM public.variant_warehouse_stock WHERE variant_id = '<variant_id>' AND warehouse_id = (SELECT id FROM public.warehouses WHERE code = 'general');
+-- (Asegurar order_items con sources: uno de general y otro de venta-publico; y con size si aplica)
+SELECT s.order_item_id, s.warehouse_id, s.qty
+FROM public.order_item_stock_sources s
+JOIN public.order_items oi ON oi.id = s.order_item_id
+WHERE oi.order_id = '<order_id>'
+ORDER BY s.order_item_id, s.warehouse_id;
 SELECT public.rpc_orders_daily_maintenance();
 SELECT id, status, expired_at FROM public.orders WHERE id = '<order_id>';
 SELECT status FROM public.order_items WHERE order_id = '<order_id>';
-SELECT stock_qty FROM public.variant_warehouse_stock WHERE variant_id = '<variant_id>' AND warehouse_id = (SELECT id FROM public.warehouses WHERE code = 'general');
--- Esperado: order/items expired; stock general aumentado
+SELECT * FROM public.order_item_stock_sources
+WHERE order_item_id IN (SELECT id FROM public.order_items WHERE order_id = '<order_id>');
+-- Esperado:
+--  - order/items en expired
+--  - sources consumidas (0 filas remanentes para esos items)
+--  - stock devuelto por el mismo warehouse_id de cada source y mismo size (si aplica)
 
--- 3) Idempotencia: correr maintenance 2 veces
+-- 3) Idempotencia fuerte: correr maintenance 2 veces y validar delta cero
+-- Snapshot previo:
+SELECT variant_id, warehouse_id, size, stock_qty
+FROM public.variant_size_warehouse_stock
+WHERE variant_id = '<variant_id>'
+ORDER BY warehouse_id, size;
 SELECT public.rpc_orders_daily_maintenance();
 SELECT public.rpc_orders_daily_maintenance();
 SELECT count(*) FROM public.order_notifications WHERE order_id = '<order_id>' AND type = 'DAY_7';
--- Esperado: 1 fila (no duplicar)
+-- Esperado:
+--  - sin nuevos cambios de stock en segunda corrida
+--  - notificaciones sin duplicados (ON CONFLICT)
 
--- 4) close_order rechaza pedido vencido
+-- 4) Legacy fallback sin sources (reserved/waiting)
+-- Preparar item vencido sin filas en order_item_stock_sources y status reserved o waiting.
+-- Esperado: devuelve a general (reserved) o venta-publico (waiting) respetando size si existe.
+
+-- 5) close_order rechaza pedido vencido
 SELECT public.rpc_close_order('<order_id_expired>');
 -- Esperado: ERROR "Pedido vencido"
 */

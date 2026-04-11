@@ -1,3 +1,6 @@
+-- LEGACY (Plan 3): este archivo queda como versión histórica.
+-- La versión canónica efectiva de rpc_checkout_cart es canonical:124
+-- y se reafirma en 149_consolidate_critical_rpcs.sql.
 -- 82_rpc_checkout_cart_deduct_by_size.sql
 -- Checkout del cliente: si el ítem tiene size, descontar de variant_size_warehouse_stock
 -- (primero general, luego venta público). Si no tiene size, descontar de variant_warehouse_stock.
@@ -61,8 +64,8 @@ BEGIN
       VALUES (
         auth.uid(),
         'active',
-        now() + interval '7 days',
-        now() + interval '14 days'
+        now() + interval '5 days',
+        now() + interval '7 days'
       )
       RETURNING id INTO v_order_id;
     EXCEPTION
@@ -83,8 +86,8 @@ BEGIN
     IF v_expires_at IS NULL OR v_dismantle_at IS NULL THEN
       UPDATE public.orders
       SET
-        expires_at = coalesce(expires_at, created_at + interval '7 days'),
-        dismantle_at = coalesce(dismantle_at, created_at + interval '14 days')
+        expires_at = coalesce(expires_at, created_at + interval '5 days'),
+        dismantle_at = coalesce(dismantle_at, created_at + interval '7 days')
       WHERE id = v_order_id;
     END IF;
   END IF;

@@ -59,6 +59,88 @@ function abbreviateColorLabel(raw) {
 const __variantSkuCache = new Map(); // variant_id -> sku (string)
 /** Precio de catálogo por variante (para corregir price_snapshot corrupto en pedidos) */
 const __variantPriceCache = new Map(); // variant_id string -> raw price from DB
+const DASH_WAREHOUSE_CACHE_TTL_MS = 10 * 60 * 1000;
+const DASH_IMAGE_CACHE_TTL_MS = 10 * 60 * 1000;
+const DASH_VARIANT_INFO_CACHE_TTL_MS = 20 * 1000;
+const __dashImageCache = new Map(); // key -> { value, until }
+const __dashImageInFlight = new Map(); // key -> Promise<string>
+const __dashVariantInfoCache = new Map(); // key -> { value, until }
+const __dashVariantInfoInFlight = new Map(); // key -> Promise<object|null>
+const __dashWarehouseCache = {
+  value: null,
+  until: 0,
+  promise: null,
+};
+
+function getCachedMapValue(cacheMap, key) {
+  const entry = cacheMap.get(key);
+  if (!entry) return undefined;
+  if (entry.until <= Date.now()) {
+    cacheMap.delete(key);
+    return undefined;
+  }
+  return entry.value;
+}
+
+function setCachedMapValue(cacheMap, key, value, ttlMs) {
+  cacheMap.set(key, {
+    value,
+    until: Date.now() + Math.max(1000, Number(ttlMs) || 1000),
+  });
+  return value;
+}
+
+function buildCatalogImageCacheKey(articulo, color) {
+  const a = String(articulo || "").trim();
+  const c = String(color || "").trim();
+  return `${a}__${c}`;
+}
+
+function buildVariantInfoCacheKey(articulo, color, talle, variantId = null) {
+  const vid = variantId != null && variantId !== "" ? String(variantId).trim() : "";
+  const a = String(articulo || "").trim();
+  const c = String(color || "Único").trim();
+  const s = normalizeSize(talle) || String(talle || "").trim();
+  return vid ? `vid:${vid}__sz:${s}` : `row:${a}__${c}__${s}`;
+}
+
+function clearDashboardVariantInfoCaches() {
+  __dashVariantInfoCache.clear();
+  __dashVariantInfoInFlight.clear();
+}
+
+async function getDashboardWarehouseIdsCached(options = {}) {
+  const forceFresh = options.forceFresh === true;
+  const now = Date.now();
+  if (!forceFresh && __dashWarehouseCache.value && __dashWarehouseCache.until > now) {
+    return __dashWarehouseCache.value;
+  }
+  if (!forceFresh && __dashWarehouseCache.promise) {
+    return __dashWarehouseCache.promise;
+  }
+
+  const requestPromise = (async () => {
+    const { data: whs } = await supabase
+      .from("warehouses")
+      .select("id, code")
+      .in("code", ["general", "venta-publico"]);
+    const whMap = new Map((whs || []).map((w) => [w.code, w.id]));
+    const resolved = {
+      generalId: whMap.get("general") || null,
+      ventaId: whMap.get("venta-publico") || null,
+    };
+    __dashWarehouseCache.value = resolved;
+    __dashWarehouseCache.until = Date.now() + DASH_WAREHOUSE_CACHE_TTL_MS;
+    return resolved;
+  })();
+
+  __dashWarehouseCache.promise = requestPromise;
+  try {
+    return await requestPromise;
+  } finally {
+    __dashWarehouseCache.promise = null;
+  }
+}
 
 function orderItemUnitForDisplay(item) {
   const vid =
@@ -164,6 +246,9 @@ let currentUserId = null;
 let currentCartId = null;
 let currentCartItems = [];
 let ordersRealtimeSubscription = null;
+let ordersRealtimeSetupPromise = null;
+let ordersRealtimeActiveUserId = null;
+let ordersRealtimeRetryTimeoutId = null;
 let isSubmittingCurrentCart = false;
 const closeOrderInFlight = new Set();
 let pendingCheckoutOrderFeedback = null;
@@ -171,6 +256,188 @@ const pendingCloseOrderFeedbackById = new Map();
 
 const DASH_FX_DURATION_MS = 220;
 const ORDER_COMPLETE_ANIMATION_TOTAL_MS = 1120;
+
+/** Días hasta desarme del pedido (alineado a dismantle_at en checkout / mantenimiento). */
+const ORDER_DISMANTLE_DAYS = 7;
+const MIN_UNITS_TO_FINALIZE = 4;
+const ORDERS_REALTIME_DEBOUNCE_MS = 320;
+const ORDERS_REALTIME_RETRY_MS = 2000;
+const ORDERS_MAINTENANCE_MIN_INTERVAL_MS = 60 * 1000;
+
+let lastOrderDeadlineReminderContext = null;
+let lastOrdersMaintenanceAtMs = 0;
+let ordersRefreshTimerId = null;
+let ordersRefreshInFlight = null;
+let ordersRefreshPending = false;
+let ordersRefreshPendingIncludeClosed = false;
+let knownOrderIdsByCurrentUser = new Set();
+
+function clearOrdersRealtimeRetryTimer() {
+  if (!ordersRealtimeRetryTimeoutId) return;
+  clearTimeout(ordersRealtimeRetryTimeoutId);
+  ordersRealtimeRetryTimeoutId = null;
+}
+
+function scheduleOrdersRealtimeReconnect(userId, reason) {
+  if (!userId) return;
+  clearOrdersRealtimeRetryTimer();
+  ordersRealtimeRetryTimeoutId = setTimeout(() => {
+    ordersRealtimeRetryTimeoutId = null;
+    if (!currentUserId || currentUserId !== userId) return;
+    fylDevLog(`🔁 Reintentando suscripción realtime (${reason || "unknown"})`);
+    setupOrdersRealtimeSubscription(userId);
+  }, ORDERS_REALTIME_RETRY_MS);
+}
+
+function replaceKnownOrderIds(ordersRows = []) {
+  const next = new Set();
+  for (const row of ordersRows || []) {
+    const oid = row?.id;
+    if (oid) next.add(oid);
+  }
+  knownOrderIdsByCurrentUser = next;
+}
+
+function rememberKnownOrderId(orderId) {
+  if (!orderId) return;
+  knownOrderIdsByCurrentUser.add(orderId);
+}
+
+function forgetKnownOrderId(orderId) {
+  if (!orderId) return;
+  knownOrderIdsByCurrentUser.delete(orderId);
+}
+
+function shouldRunOrdersMaintenance(forceRun = false) {
+  const now = Date.now();
+  if (forceRun || now - lastOrdersMaintenanceAtMs >= ORDERS_MAINTENANCE_MIN_INTERVAL_MS) {
+    lastOrdersMaintenanceAtMs = now;
+    return true;
+  }
+  return false;
+}
+
+async function runScheduledOrdersRefresh() {
+  if (ordersRefreshInFlight || !ordersRefreshPending || !currentUserId) return;
+
+  const userId = currentUserId;
+  const includeClosedOrders = ordersRefreshPendingIncludeClosed;
+  ordersRefreshPending = false;
+  ordersRefreshPendingIncludeClosed = false;
+
+  ordersRefreshInFlight = (async () => {
+    try {
+      await loadOrders(userId, { source: "realtime" });
+      if (includeClosedOrders) {
+        const modal = document.getElementById("previous-orders-modal");
+        if (modal && modal.classList.contains("active")) {
+          await loadClosedOrders(userId);
+        }
+      }
+    } finally {
+      ordersRefreshInFlight = null;
+      if (ordersRefreshPending && currentUserId) {
+        scheduleOrdersRefresh({
+          userId: currentUserId,
+          immediate: true,
+          includeClosedOrders: ordersRefreshPendingIncludeClosed,
+          reason: "flush-pending",
+        });
+      }
+    }
+  })();
+
+  return ordersRefreshInFlight;
+}
+
+function scheduleOrdersRefresh({
+  userId = currentUserId,
+  immediate = false,
+  includeClosedOrders = false,
+  reason = "unknown",
+} = {}) {
+  if (!userId || !currentUserId || userId !== currentUserId) return;
+
+  ordersRefreshPending = true;
+  if (includeClosedOrders) ordersRefreshPendingIncludeClosed = true;
+
+  if (ordersRefreshTimerId) {
+    clearTimeout(ordersRefreshTimerId);
+    ordersRefreshTimerId = null;
+  }
+
+  const delay = immediate ? 0 : ORDERS_REALTIME_DEBOUNCE_MS;
+  ordersRefreshTimerId = setTimeout(() => {
+    ordersRefreshTimerId = null;
+    runScheduledOrdersRefresh();
+  }, delay);
+
+  fylDevLog(`🔄 Refresh pedidos programado (${reason})`);
+}
+
+function orderDaysRemaining(createdAtIso, dismantleAtIso) {
+  const oneDayMs = 1000 * 60 * 60 * 24;
+  const now = Date.now();
+  if (dismantleAtIso) {
+    const t = new Date(dismantleAtIso).getTime();
+    if (!Number.isNaN(t)) {
+      return Math.max(0, Math.ceil((t - now) / oneDayMs));
+    }
+  }
+  const created = new Date(createdAtIso).getTime();
+  const daysElapsed = Math.floor((now - created) / oneDayMs);
+  return Math.max(0, ORDER_DISMANTLE_DAYS - daysElapsed);
+}
+
+function buildSyntheticDeadlineNotificationsList(ctx) {
+  if (!ctx || ctx.daysRemaining == null) return [];
+  const dr = ctx.daysRemaining;
+  if (dr !== 1 && dr !== 2) return [];
+  const tier = dr === 2 ? 5 : 6;
+  const hasMin = !!ctx.hasMinimum;
+  const x = ctx.missingForFinalize;
+  let message = "";
+  if (tier === 5) {
+    message = hasMin
+      ? "Faltan 2 días para que se cierre tu pedido. Finalizalo cuando quieras para que lo preparemos y enviemos."
+      : `Faltan 2 días para que se cierre tu pedido.<br>Te faltan ${x} productos para alcanzar el mínimo y poder enviarlo.`;
+  } else {
+    message = hasMin
+      ? "Tu pedido se cierra mañana.<br>Finalizalo hoy para asegurarte el envío."
+      : `Tu pedido se cierra mañana.<br>Te faltan ${x} productos para alcanzar el mínimo.<br>Si no lo completás, el pedido se desarmará.`;
+  }
+  const sortTs = ctx.dismantleAtIso || ctx.createdAtIso || new Date().toISOString();
+  return [
+    {
+      id: `synthetic-order-deadline-${ctx.orderId}-${tier}`,
+      type: "ORDER_DEADLINE_REMINDER",
+      message,
+      read: false,
+      created_at: sortTs,
+      payload: { action_url: "dashboard.html#section-active-order" },
+    },
+  ];
+}
+
+function syncOrderDeadlineSyntheticNotifications() {
+  try {
+    window.__fylGetSyntheticNotifications = () =>
+      buildSyntheticDeadlineNotificationsList(lastOrderDeadlineReminderContext);
+    window.dispatchEvent(new CustomEvent("fyl-synthetic-notifications-changed"));
+  } catch (_) {
+    /* ignore */
+  }
+}
+
+function clearOrderDeadlineSyntheticNotifications() {
+  lastOrderDeadlineReminderContext = null;
+  try {
+    window.__fylGetSyntheticNotifications = () => [];
+    window.dispatchEvent(new CustomEvent("fyl-synthetic-notifications-changed"));
+  } catch (_) {
+    /* ignore */
+  }
+}
 
 fylDevLog("dashboard-instant.js cargado");
 
@@ -622,6 +889,16 @@ async function getOffersAndPromotionsForItems(items) {
 
 async function resolveItemImage(item) {
   if (item.imagen) return item.imagen;
+  const imageKey = buildCatalogImageCacheKey(
+    item.product_name || item.articulo || "",
+    item.color || ""
+  );
+  const cached = getCachedMapValue(__dashImageCache, imageKey);
+  if (cached !== undefined) return cached;
+  const inFlight = __dashImageInFlight.get(imageKey);
+  if (inFlight) return inFlight;
+
+  const requestPromise = (async () => {
   try {
     const { data, error } = await supabase
       .from("catalog_public_view")
@@ -633,23 +910,54 @@ async function resolveItemImage(item) {
 
     if (error) {
       console.warn("âš ï¸ No se pudo obtener imagen desde catÃ¡logo:", error.message);
-      return FALLBACK_IMAGE;
+      return setCachedMapValue(
+        __dashImageCache,
+        imageKey,
+        FALLBACK_IMAGE,
+        DASH_IMAGE_CACHE_TTL_MS
+      );
     }
     if (data) {
-      return (
+      return setCachedMapValue(
+        __dashImageCache,
+        imageKey,
         data["Imagen Principal"] ||
         data["Imagen 1"] ||
         data["Imagen 2"] ||
-        FALLBACK_IMAGE
+        FALLBACK_IMAGE,
+        DASH_IMAGE_CACHE_TTL_MS
       );
     }
   } catch (error) {
     console.warn("âš ï¸ Error resolviendo imagen:", error.message);
   }
-  return FALLBACK_IMAGE;
+  return setCachedMapValue(
+    __dashImageCache,
+    imageKey,
+    FALLBACK_IMAGE,
+    DASH_IMAGE_CACHE_TTL_MS
+  );
+  })();
+
+  __dashImageInFlight.set(imageKey, requestPromise);
+  try {
+    return await requestPromise;
+  } finally {
+    __dashImageInFlight.delete(imageKey);
+  }
 }
 
-async function fetchVariantInfo(articulo, color, talle, variantId = null) {
+async function fetchVariantInfo(articulo, color, talle, variantId = null, options = {}) {
+  const forceFresh = options.forceFresh === true;
+  const cacheKey = buildVariantInfoCacheKey(articulo, color, talle, variantId);
+  if (!forceFresh) {
+    const cached = getCachedMapValue(__dashVariantInfoCache, cacheKey);
+    if (cached !== undefined) return cached;
+    const inFlight = __dashVariantInfoInFlight.get(cacheKey);
+    if (inFlight) return inFlight;
+  }
+
+  const requestPromise = (async () => {
   try {
     const normalizedArticulo = (articulo || "").trim();
     const normalizedColor = (color || "Único").trim();
@@ -693,10 +1001,9 @@ async function fetchVariantInfo(articulo, color, talle, variantId = null) {
     }
     if (!vid) return null;
 
-    const { data: whs } = await supabase.from("warehouses").select("id, code").in("code", ["general", "venta-publico"]);
-    const whMap = new Map((whs || []).map((w) => [w.code, w.id]));
-    const generalId = whMap.get("general");
-    const ventaId = whMap.get("venta-publico");
+    const { generalId, ventaId } = await getDashboardWarehouseIdsCached({
+      forceFresh,
+    });
 
     let stockTotal = 0;
     if (generalId && ventaId && normalizedSizeForStock) {
@@ -721,7 +1028,10 @@ async function fetchVariantInfo(articulo, color, talle, variantId = null) {
     }
 
     const available = Math.max(0, stockTotal - reserved);
-    return {
+    return setCachedMapValue(
+      __dashVariantInfoCache,
+      cacheKey,
+      {
       id: vid,
       stock: stockTotal,
       reserved,
@@ -729,10 +1039,29 @@ async function fetchVariantInfo(articulo, color, talle, variantId = null) {
       price,
       color: normalizedColor,
       size: normalizedSizeForStock || talle?.trim(),
-    };
+      },
+      DASH_VARIANT_INFO_CACHE_TTL_MS
+    );
   } catch (error) {
     console.warn("âš ï¸ Error obteniendo informaciÃ³n de la variante:", error.message);
-    return null;
+    return setCachedMapValue(
+      __dashVariantInfoCache,
+      cacheKey,
+      null,
+      DASH_VARIANT_INFO_CACHE_TTL_MS
+    );
+  }
+  })();
+
+  if (!forceFresh) {
+    __dashVariantInfoInFlight.set(cacheKey, requestPromise);
+  }
+  try {
+    return await requestPromise;
+  } finally {
+    if (!forceFresh) {
+      __dashVariantInfoInFlight.delete(cacheKey);
+    }
   }
 }
 
@@ -768,7 +1097,7 @@ async function removeItemFromSupabase(itemId) {
     if (typeof window.removeCartItem === "function") {
       const ok = await window.removeCartItem(itemId);
       if (ok) {
-        window.dispatchEvent(new CustomEvent("cart:synced"));
+        // removeCartItem ya sincroniza y emite cart:synced.
         return true;
       }
     }
@@ -794,7 +1123,7 @@ async function removeItemFromSupabase(itemId) {
       try {
         const ok = await window.removeCartItem(itemId);
         if (ok) {
-          window.dispatchEvent(new CustomEvent("cart:synced"));
+          // removeCartItem ya sincroniza y emite cart:synced.
           return true;
         }
       } catch (_) {}
@@ -823,9 +1152,7 @@ function attachRemoveHandlers(userId) {
       const confirmed = await confirmRemoveCartItemInApp();
       if (!confirmed) return;
       const success = await removeItemFromSupabase(itemId);
-      if (success) {
-        await loadCart(userId);
-      } else {
+      if (!success) {
         await loadCart(userId);
         alert("No se pudo eliminar el producto. Intenta nuevamente.");
       }
@@ -2351,6 +2678,8 @@ function setupAccountSheetControls() {
   const sheet = document.getElementById("dash-account-sheet");
   const backdrop = document.getElementById("account-sheet-backdrop");
   const closeBtn = document.getElementById("account-sheet-close");
+  const logoutBtn = document.getElementById("logout-btn");
+  const profileLink = sheet?.querySelector('a[href="profile.html"]');
 
   if (!trigger || !sheet) {
     setTimeout(() => setupAccountSheetControls(), 100);
@@ -2395,6 +2724,26 @@ function setupAccountSheetControls() {
   }
   if (closeBtn) {
     closeBtn.addEventListener("click", () => closeAccountSheet());
+  }
+
+  if (profileLink) {
+    profileLink.addEventListener("click", () => closeAccountSheet());
+  }
+
+  if (logoutBtn) {
+    logoutBtn.addEventListener("click", async (e) => {
+      e.preventDefault();
+      try {
+        closeAccountSheet();
+        if (supabase?.auth?.signOut) {
+          await supabase.auth.signOut();
+        }
+      } catch (error) {
+        console.warn("No se pudo cerrar sesión en dashboard:", error?.message || error);
+      } finally {
+        window.location.href = "../index.html#/";
+      }
+    });
   }
 
   document.addEventListener("keydown", (e) => {
@@ -2722,7 +3071,8 @@ async function updateCartItemQuantity(itemId, desiredQuantity) {
       item.product_name,
       item.color,
       item.size,
-      item.variant_id
+      item.variant_id,
+      { forceFresh: true }
     );
 
     if (!variantInfo) {
@@ -2906,6 +3256,8 @@ async function loadCart(userId) {
   }
 
   try {
+    const perfStart =
+      typeof performance !== "undefined" ? performance.now() : Date.now();
     const { data: cart, error: cartError } = await supabase
       .from("carts")
       .select("id, created_at")
@@ -3067,6 +3419,13 @@ async function loadCart(userId) {
 
     // Obtener ofertas y promociones para los items del carrito
     const offersData = await getOffersAndPromotionsForItems(enrichedItems);
+    if (window.FYL_DEBUG_CATALOG === true || window.FYL_DEBUG_DASHBOARD_PERF === true) {
+      const perfEnd =
+        typeof performance !== "undefined" ? performance.now() : Date.now();
+      console.debug("[perf][dashboard] loadCart_ms", Math.round(perfEnd - perfStart), {
+        items: enrichedItems.length,
+      });
+    }
     
     const totalUnits = getCartProductsCount(enrichedItems);
 
@@ -3251,7 +3610,7 @@ async function loadCart(userId) {
   }
 }
 
-async function loadOrders(userId) {
+async function loadOrders(userId, options = {}) {
   const ordersSection = document.getElementById("orders-section");
   if (!ordersSection) return;
 
@@ -3311,11 +3670,14 @@ async function loadOrders(userId) {
   }
 
   try {
-    // Ejecutar mantenimiento de vencimientos (14 dÃ­as: expira pedido y devuelve stock a GENERAL)
-    try {
-      await supabase.rpc("rpc_orders_daily_maintenance");
-    } catch (e) {
-      console.warn("rpc_orders_daily_maintenance:", e?.message || e);
+    // Evitar ejecutar mantenimiento en ráfagas realtime.
+    const shouldRunMaintenance = shouldRunOrdersMaintenance(options?.forceMaintenance === true);
+    if (shouldRunMaintenance) {
+      try {
+        await supabase.rpc("rpc_orders_daily_maintenance");
+      } catch (e) {
+        console.warn("rpc_orders_daily_maintenance:", e?.message || e);
+      }
     }
 
     // Mi pedido: debe seguir visible tras "Finalizar pedido" del cliente (status closed).
@@ -3334,6 +3696,7 @@ async function loadOrders(userId) {
       if (x === "closing_soon") return 1;
       return 2;
     };
+    replaceKnownOrderIds(ordersRaw || []);
     const orders = (ordersRaw || [])
       .slice()
       .sort((a, b) => {
@@ -3350,18 +3713,23 @@ async function loadOrders(userId) {
           <p style="color:#721c24; margin:0;">Error cargando pedidos activos.</p>
         </div>
         `;
+      clearOrderDeadlineSyntheticNotifications();
       return;
     }
 
     if (!orders || orders.length === 0) {
+        replaceKnownOrderIds([]);
         ordersSection.innerHTML = `
         <div class="order-item" style="border:1px solid #e0e0e0; padding:16px; border-radius:8px; background:#fafafa;">
           <div class="section-title dash-title" style="margin-bottom:12px;">📦 Mi pedido</div>
           <p style="margin:0;">Todavía no tienes pedidos. Envía tu carrito para crear uno nuevo.</p>
         </div>
       `;
+      clearOrderDeadlineSyntheticNotifications();
       return;
     }
+
+    lastOrderDeadlineReminderContext = null;
 
     // Precargar SKUs para que "Ver producto" vaya al PDP real (index#/pdp/<sku>)
     const allVariantIds = [];
@@ -3646,17 +4014,9 @@ async function loadOrders(userId) {
 
         const itemsHtmlAll = missingCardsHtml + groupedHtml;
 
-        const created = new Date(order.created_at).getTime();
-        const now = Date.now();
-        const oneDayMs = 1000 * 60 * 60 * 24;
-        const daysElapsed = Math.floor((now - created) / oneDayMs);
-        const dismantleAt = order.dismantle_at ? new Date(order.dismantle_at).getTime() : null;
-        const daysRemaining = dismantleAt != null
-          ? Math.max(0, Math.ceil((dismantleAt - now) / oneDayMs))
-          : Math.max(0, 14 - daysElapsed);
+        const daysRemaining = orderDaysRemaining(order.created_at, order.dismantle_at);
 
         const totalUnits = visibleItems.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
-        const MIN_UNITS_TO_FINALIZE = 4;
         const allPickedForOrder = visibleItems.length > 0 && visibleItems.every((item) => (item.status || "").toLowerCase() === "picked");
         const hasReservedInOrder = visibleItems.some((item) => {
           const s = (item.status || "").toLowerCase();
@@ -3680,10 +4040,23 @@ async function loadOrders(userId) {
           finalizeTitle = "Para finalizar el pedido debe esperar a que el vendedor confirme el stock de la reserva.";
         }
 
+        if (isActive || isClosingSoon) {
+          lastOrderDeadlineReminderContext = {
+            orderId: order.id,
+            createdAtIso: order.created_at,
+            dismantleAtIso: order.dismantle_at,
+            daysRemaining,
+            hasMinimum: totalUnits >= MIN_UNITS_TO_FINALIZE,
+            missingForFinalize,
+          };
+        } else {
+          lastOrderDeadlineReminderContext = null;
+        }
+
         const closedStateChip = isClosed
           ? `<span class="dash-order-header-chip dash-order-header-chip--preparing">Preparando pedido</span>`
           : "";
-        const daysChip = `<span class="dash-order-header-chip dash-order-header-chip--days" title="Quedan ${daysRemaining} días para cerrar el pedido (14 días desde la creación)">${daysRemaining} días</span>`;
+        const daysChip = `<span class="dash-order-header-chip dash-order-header-chip--days" title="Quedan ${daysRemaining} días para cerrar el pedido (plazo total ${ORDER_DISMANTLE_DAYS} días desde la creación)">${daysRemaining} días</span>`;
 
         return `
           <div class="dash-order order-item" data-order-id="${order.id}" data-order-closed="${isClosed ? "true" : "false"}">
@@ -3746,6 +4119,8 @@ async function loadOrders(userId) {
         ${ordersHtmlFinal}
               </div>
         `;
+
+    syncOrderDeadlineSyntheticNotifications();
 
     document.querySelectorAll(".close-order-btn").forEach((btn) => {
       btn.onclick = async () => {
@@ -4223,6 +4598,7 @@ async function loadOrders(userId) {
         <p style="color:#721c24; margin:0;">Error cargando pedidos activos.</p>
           </div>
         `;
+    clearOrderDeadlineSyntheticNotifications();
   }
 }
 
@@ -4768,7 +5144,7 @@ async function loadData() {
         setupCartActions();
 
         await loadCart(user.id);
-        await loadOrders(user.id);
+        await loadOrders(user.id, { forceMaintenance: true, source: "initial-load" });
         
         // Asegurar que los controles del historial estÃ©n configurados
         // Esto es necesario incluso si no hay pedidos para que el botÃ³n funcione
@@ -4792,12 +5168,15 @@ async function loadData() {
         }
 
         if (!cartSyncedListenerRegistered) {
-          window.addEventListener("cart:synced", () => loadCart(user.id));
+          window.addEventListener("cart:synced", () => {
+            clearDashboardVariantInfoCaches();
+            loadCart(user.id);
+          });
           cartSyncedListenerRegistered = true;
         }
 
         // Configurar suscripciÃ³n en tiempo real para pedidos
-        setupOrdersRealtimeSubscription(user.id);
+        await setupOrdersRealtimeSubscription(user.id);
 
         setContentVisibility(true);
         hideLoader();
@@ -4835,103 +5214,120 @@ function initDashboard() {
 // FunciÃ³n para configurar suscripciÃ³n en tiempo real para pedidos
 async function setupOrdersRealtimeSubscription(userId) {
   if (!supabase || !userId) return;
-  
-  // Cancelar suscripciÃ³n anterior si existe
-  if (ordersRealtimeSubscription) {
-    try {
-      await supabase.removeChannel(ordersRealtimeSubscription);
-      ordersRealtimeSubscription = null;
-    } catch (error) {
-      console.warn("âš ï¸ Error eliminando suscripciÃ³n anterior:", error);
+
+  if (ordersRealtimeSetupPromise) {
+    await ordersRealtimeSetupPromise;
+    if (
+      ordersRealtimeSubscription &&
+      ordersRealtimeActiveUserId === userId &&
+      currentUserId === userId
+    ) {
+      return;
     }
   }
-  
-  // Suscribirse a cambios en orders del cliente
-  // Nota: Supabase Realtime solo permite filtros simples, asÃ­ que nos suscribimos a todos los cambios
-  // y luego verificamos si el pedido pertenece al usuario en el callback
-  ordersRealtimeSubscription = supabase
-    .channel(`orders-updates-${userId}`)
-    .on(
-      "postgres_changes",
-      {
-        event: "*", // INSERT, UPDATE, DELETE
-        schema: "public",
-        table: "orders",
-      },
-      async (payload) => {
-        // Solo procesar si el pedido pertenece al usuario actual
-        if (payload.new && payload.new.customer_id === userId) {
+
+  const setupPromise = (async () => {
+    clearOrdersRealtimeRetryTimer();
+
+    // Cancelar suscripciÃ³n anterior si existe.
+    if (ordersRealtimeSubscription) {
+      try {
+        await supabase.removeChannel(ordersRealtimeSubscription);
+      } catch (error) {
+        console.warn("âš ï¸ Error eliminando suscripciÃ³n anterior:", error);
+      } finally {
+        ordersRealtimeSubscription = null;
+        ordersRealtimeActiveUserId = null;
+      }
+    }
+
+    // SuscripciÃ³n a cambios de orders del cliente.
+    ordersRealtimeSubscription = supabase
+      .channel(`orders-updates-${userId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*", // INSERT, UPDATE, DELETE
+          schema: "public",
+          table: "orders",
+        },
+        async (payload) => {
+          if (!currentUserId || currentUserId !== userId) return;
+          const matchesNew = payload.new && payload.new.customer_id === userId;
+          const matchesOld = payload.old && payload.old.customer_id === userId;
+          if (!matchesNew && !matchesOld) return;
+
+          if (matchesNew) rememberKnownOrderId(payload.new?.id);
+          if (payload.eventType === "DELETE" && matchesOld) forgetKnownOrderId(payload.old?.id);
+
           fylDevLog("ðŸ”„ Cambio en pedidos detectado:", payload.eventType);
-          if (currentUserId) {
-            await loadOrders(currentUserId);
-            // Si el modal estÃ¡ abierto, recargar pedidos anteriores tambiÃ©n
-            const modal = document.getElementById("previous-orders-modal");
-            if (modal && modal.classList.contains("active")) {
-              await loadClosedOrders(currentUserId);
-            }
-          }
-        } else if (payload.old && payload.old.customer_id === userId) {
-          // Para DELETE, payload.old contiene los datos antiguos
-          fylDevLog("ðŸ”„ EliminaciÃ³n de pedido detectada:", payload.eventType);
-          if (currentUserId) {
-            await loadOrders(currentUserId);
-            // Si el modal estÃ¡ abierto, recargar pedidos anteriores tambiÃ©n
-            const modal = document.getElementById("previous-orders-modal");
-            if (modal && modal.classList.contains("active")) {
-              await loadClosedOrders(currentUserId);
-            }
-          }
+          scheduleOrdersRefresh({
+            userId,
+            includeClosedOrders: true,
+            reason: `orders-${payload.eventType || "event"}`,
+          });
         }
-      }
-    )
-    .on(
-      "postgres_changes",
-      {
-        event: "*", // INSERT, UPDATE, DELETE
-        schema: "public",
-        table: "order_items",
-      },
-      async (payload) => {
-        // Verificar si el item pertenece a un pedido del usuario
-        // Necesitamos obtener el order_id y verificar si pertenece al usuario
-        const orderId = payload.new?.order_id || payload.old?.order_id;
-        if (orderId) {
-          // Verificar rÃ¡pidamente si el pedido pertenece al usuario
-          const { data: order } = await supabase
-            .from("orders")
-            .select("customer_id")
-            .eq("id", orderId)
-            .maybeSingle();
-          
-          if (order && order.customer_id === userId) {
-            fylDevLog("ðŸ”„ Cambio en items de pedido detectado:", payload.eventType);
-            if (currentUserId) {
-              await loadOrders(currentUserId);
-              // Si el modal estÃ¡ abierto, recargar pedidos anteriores tambiÃ©n
-              const modal = document.getElementById("previous-orders-modal");
-              if (modal && modal.classList.contains("active")) {
-                await loadClosedOrders(currentUserId);
-              }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*", // INSERT, UPDATE, DELETE
+          schema: "public",
+          table: "order_items",
+        },
+        async (payload) => {
+          if (!currentUserId || currentUserId !== userId) return;
+
+          const orderId = payload.new?.order_id || payload.old?.order_id;
+          if (!orderId) return;
+
+          let belongsToCurrentUser = knownOrderIdsByCurrentUser.has(orderId);
+          if (!belongsToCurrentUser) {
+            // Fallback conservador: solo consultar si no estÃ¡ en cachÃ©.
+            const { data: order } = await supabase
+              .from("orders")
+              .select("id, customer_id")
+              .eq("id", orderId)
+              .maybeSingle();
+            if (order?.customer_id === userId) {
+              belongsToCurrentUser = true;
+              rememberKnownOrderId(order.id);
             }
           }
+
+          if (!belongsToCurrentUser) return;
+          fylDevLog("ðŸ”„ Cambio en items de pedido detectado:", payload.eventType);
+          scheduleOrdersRefresh({
+            userId,
+            includeClosedOrders: true,
+            reason: `order-items-${payload.eventType || "event"}`,
+          });
         }
-      }
-    )
-    .subscribe((status) => {
-      if (status === "SUBSCRIBED") {
-        fylDevLog("âœ… SuscripciÃ³n en tiempo real de pedidos activa");
-      } else if (status === "CHANNEL_ERROR") {
-        console.error("âŒ Error en suscripciÃ³n en tiempo real de pedidos");
-      } else if (status === "TIMED_OUT") {
-        console.warn("âš ï¸ SuscripciÃ³n en tiempo real expirÃ³, reintentando...");
-        // Reintentar despuÃ©s de un delay
-        setTimeout(() => {
-          if (currentUserId) {
-            setupOrdersRealtimeSubscription(currentUserId);
-          }
-        }, 2000);
-      }
-    });
+      )
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          ordersRealtimeActiveUserId = userId;
+          clearOrdersRealtimeRetryTimer();
+          fylDevLog("âœ… SuscripciÃ³n en tiempo real de pedidos activa");
+          return;
+        }
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          console.warn(
+            `âš ï¸ SuscripciÃ³n realtime con estado ${status}. Reintentando...`
+          );
+          scheduleOrdersRealtimeReconnect(userId, status);
+        }
+      });
+  })();
+
+  ordersRealtimeSetupPromise = setupPromise;
+  try {
+    await setupPromise;
+  } finally {
+    if (ordersRealtimeSetupPromise === setupPromise) {
+      ordersRealtimeSetupPromise = null;
+    }
+  }
 }
 
 // FunciÃ³n para mostrar alternativas cuando un producto estÃ¡ marcado como faltante
@@ -5078,8 +5474,15 @@ async function mostrarAlternativasParaProductoFaltante({ articulo, color, talle,
 
 // Limpiar suscripciÃ³n cuando se cierra la pÃ¡gina
 window.addEventListener("beforeunload", () => {
+  if (ordersRefreshTimerId) {
+    clearTimeout(ordersRefreshTimerId);
+    ordersRefreshTimerId = null;
+  }
+  clearOrdersRealtimeRetryTimer();
   if (ordersRealtimeSubscription && supabase) {
     supabase.removeChannel(ordersRealtimeSubscription);
+    ordersRealtimeSubscription = null;
+    ordersRealtimeActiveUserId = null;
   }
 });
 

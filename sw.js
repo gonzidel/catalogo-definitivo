@@ -21,6 +21,31 @@ const urlsToCache = [
   "https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap",
 ];
 
+/** Orígenes de terceros que no deben pasar por la lógica de caché del SW (pixel, analytics).
+ * Si fallan en red, un respondWith mal resuelto rompe la consola con "Failed to convert value to 'Response'".
+ */
+function shouldBypassServiceWorker(requestUrl) {
+  try {
+    const u = new URL(requestUrl);
+    if (u.origin === self.location.origin) return false;
+    const h = u.hostname;
+    return (
+      h === "connect.facebook.net" ||
+      h.endsWith(".facebook.net") ||
+      h === "www.facebook.com" ||
+      h === "facebook.com" ||
+      h === "www.google-analytics.com" ||
+      h === "google-analytics.com" ||
+      h === "www.googletagmanager.com" ||
+      h === "googletagmanager.com" ||
+      h === "www.googleadservices.com" ||
+      h.endsWith(".doubleclick.net")
+    );
+  } catch (_) {
+    return false;
+  }
+}
+
 /** Rutas que no deben servirse desde cache (deploy parcial / JS crítico). */
 function mustFetchFromNetwork(pathname) {
   if (pathname === "/config.prod.js") return true;
@@ -107,6 +132,10 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
+  if (shouldBypassServiceWorker(requestUrl)) {
+    return;
+  }
+
   let pathname = "";
   try {
     pathname = new URL(requestUrl).pathname;
@@ -145,7 +174,9 @@ self.addEventListener("fetch", (event) => {
           }
           return response;
         })
-        .catch(() => caches.match(event.request))
+        .catch(() =>
+          caches.match(event.request).then((r) => r || Response.error())
+        )
     );
     return;
   }
@@ -166,7 +197,12 @@ self.addEventListener("fetch", (event) => {
           }
           return response;
         })
-        .catch(() => caches.match(event.request).then((r) => r || caches.match("/index.html")))
+        .catch(() =>
+          caches
+            .match(event.request)
+            .then((r) => r || caches.match("/index.html"))
+            .then((r) => r || Response.error())
+        )
     );
     return;
   }
@@ -188,36 +224,50 @@ self.addEventListener("fetch", (event) => {
           return fetch(event.request);
         }
 
-        return fetch(event.request).then((response) => {
-          if (!response || response.status !== 200 || response.type !== "basic") {
-            return response;
-          }
-
-          if (
-            requestUrl.startsWith("chrome-extension://") ||
-            requestUrl.startsWith("moz-extension://") ||
-            requestUrl.startsWith("safari-extension://") ||
-            requestUrl.startsWith("ms-browser-extension://")
-          ) {
-            return response;
-          }
-
-          const responseToCache = response.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            try {
-              cache.put(event.request, responseToCache);
-            } catch (error) {
-              console.warn("No se pudo cachear la petición:", error);
+        return fetch(event.request)
+          .then((response) => {
+            if (!response || response.status !== 200 || response.type !== "basic") {
+              return response;
             }
-          });
 
-          return response;
-        });
+            if (
+              requestUrl.startsWith("chrome-extension://") ||
+              requestUrl.startsWith("moz-extension://") ||
+              requestUrl.startsWith("safari-extension://") ||
+              requestUrl.startsWith("ms-browser-extension://")
+            ) {
+              return response;
+            }
+
+            const responseToCache = response.clone();
+            caches.open(CACHE_NAME).then((cache) => {
+              try {
+                cache.put(event.request, responseToCache);
+              } catch (error) {
+                console.warn("No se pudo cachear la petición:", error);
+              }
+            });
+
+            return response;
+          })
+          .catch(() => {
+            if (event.request.destination === "document") {
+              return caches
+                .match("/index.html")
+                .then((r) => r || caches.match("/"))
+                .then((r) => r || Response.error());
+            }
+            return Response.error();
+          });
       })
       .catch(() => {
         if (event.request.destination === "document") {
-          return caches.match("/index.html") || caches.match("/");
+          return caches
+            .match("/index.html")
+            .then((r) => r || caches.match("/"))
+            .then((r) => r || Response.error());
         }
+        return Response.error();
       })
   );
 });

@@ -13,6 +13,39 @@ function fylDevLog(...args) {
   }
 }
 
+function isExpectedAuthError(error) {
+  if (!error) return false;
+  const name = String(error.name || "");
+  const message = String(error.message || "");
+  const status = Number(error.status || error.statusCode || 0);
+  const url = String(error.url || error.request?.url || error.config?.url || "");
+
+  if (name === "AuthSessionMissingError") return true;
+  if (status === 401 && url.includes("/auth/v1/user")) return true;
+  if (url.includes("/auth/v1/user") && /401|jwt|session missing/i.test(message)) return true;
+  return false;
+}
+
+function isExpectedAuthErrorHandled(error, context) {
+  try {
+    if (
+      typeof window !== "undefined" &&
+      typeof window.__FYL_handleExpectedAuthError === "function"
+    ) {
+      return window.__FYL_handleExpectedAuthError(error, context);
+    }
+  } catch (_e) {}
+
+  if (!isExpectedAuthError(error)) return false;
+  if (
+    typeof window !== "undefined" &&
+    (window.FYL_DEBUG_CATALOG === true || window.localStorage?.getItem("fyl_debug_auth") === "1")
+  ) {
+    console.info("[FYL auth] error esperado suprimido", context || "", error);
+  }
+  return true;
+}
+
 /** Evita llamadas repetidas a rpc_link_or_create_customer en el mismo usuario (mismo refresh). */
 let fylEnsureCustomerCache = { userId: null, until: 0 };
 const FYL_ENSURE_CUSTOMER_TTL_MS = 120_000;
@@ -22,13 +55,126 @@ let cartCount = 0;
 let isInitialized = false;
 let isDedupingSupabase = false;
 let isSyncing = false;
+let pendingCartMutations = 0;
 let authListenerAttached = false;
 let loadCartFromSupabaseInFlight = null;
 const CART_XTAB_LOCK_PREFIX = "fyl_cart_xtab_lock";
 const CART_XTAB_TAB_ID = `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+const CART_NAV_WAIT_TIMEOUT_MS = 3500;
+const CART_WAREHOUSE_CACHE_TTL_MS = 10 * 60 * 1000;
+const CART_IMAGE_CACHE_TTL_MS = 10 * 60 * 1000;
+const CART_VARIANT_INFO_CACHE_TTL_MS = 20 * 1000;
+const __cartPrimaryImageCache = new Map(); // key -> { value, until }
+const __cartPrimaryImageInFlight = new Map(); // key -> Promise<string|null>
+const __cartVariantInfoCache = new Map(); // key -> { value, until }
+const __cartVariantInfoInFlight = new Map(); // key -> Promise<object|null>
+const __cartWarehousesCache = {
+  value: null,
+  until: 0,
+  promise: null,
+};
+
+function getCachedMapValue(cacheMap, key) {
+  const entry = cacheMap.get(key);
+  if (!entry) return undefined;
+  if (entry.until <= Date.now()) {
+    cacheMap.delete(key);
+    return undefined;
+  }
+  return entry.value;
+}
+
+function setCachedMapValue(cacheMap, key, value, ttlMs) {
+  cacheMap.set(key, {
+    value,
+    until: Date.now() + Math.max(1000, Number(ttlMs) || 1000),
+  });
+  return value;
+}
+
+function buildPrimaryImageCacheKey(articulo, color) {
+  return `${String(articulo || "").trim()}__${String(color || "").trim()}`;
+}
+
+function buildVariantInfoCacheKey(articulo, color, talle, variantId = null) {
+  const vid = variantId != null && variantId !== "" ? String(variantId).trim() : "";
+  const a = String(articulo || "").trim();
+  const c = String(color || "Único").trim();
+  const s = normalizeSize(talle) || String(talle || "").trim();
+  return vid ? `vid:${vid}__sz:${s}` : `row:${a}__${c}__${s}`;
+}
+
+function clearCartVariantInfoCaches() {
+  __cartVariantInfoCache.clear();
+  __cartVariantInfoInFlight.clear();
+}
+
+async function getCartWarehouseIdsCached(options = {}) {
+  const forceFresh = options.forceFresh === true;
+  const now = Date.now();
+  if (!forceFresh && __cartWarehousesCache.value && __cartWarehousesCache.until > now) {
+    return __cartWarehousesCache.value;
+  }
+  if (!forceFresh && __cartWarehousesCache.promise) {
+    return __cartWarehousesCache.promise;
+  }
+
+  const requestPromise = (async () => {
+    const { data: whs } = await supabase
+      .from("warehouses")
+      .select("id, code")
+      .in("code", ["general", "venta-publico"]);
+    const whMap = new Map((whs || []).map((w) => [w.code, w.id]));
+    const resolved = {
+      generalId: whMap.get("general") || null,
+      ventaId: whMap.get("venta-publico") || null,
+    };
+    __cartWarehousesCache.value = resolved;
+    __cartWarehousesCache.until = Date.now() + CART_WAREHOUSE_CACHE_TTL_MS;
+    return resolved;
+  })();
+
+  __cartWarehousesCache.promise = requestPromise;
+  try {
+    return await requestPromise;
+  } finally {
+    __cartWarehousesCache.promise = null;
+  }
+}
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function refreshStickyCartBusyState() {
+  if (typeof window.updateFloatingCartCta === "function") {
+    window.updateFloatingCartCta();
+  }
+}
+
+function markCartMutationStart() {
+  pendingCartMutations += 1;
+  refreshStickyCartBusyState();
+}
+
+function markCartMutationEnd() {
+  pendingCartMutations = Math.max(0, pendingCartMutations - 1);
+  refreshStickyCartBusyState();
+}
+
+function isCartBusy() {
+  return pendingCartMutations > 0 || isSyncing;
+}
+
+async function waitForCartIdle(timeoutMs = CART_NAV_WAIT_TIMEOUT_MS) {
+  const started = Date.now();
+  while (isCartBusy()) {
+    if (Date.now() - started >= timeoutMs) {
+      return false;
+    }
+    await sleep(50);
+  }
+  return true;
 }
 
 async function withCrossTabLock(lockName, fn, opts = {}) {
@@ -190,6 +336,13 @@ async function getOrCreateOpenCart(user) {
 }
 
 async function fetchPrimaryImage(articulo, color) {
+  const cacheKey = buildPrimaryImageCacheKey(articulo, color);
+  const cached = getCachedMapValue(__cartPrimaryImageCache, cacheKey);
+  if (cached !== undefined) return cached;
+  const inFlight = __cartPrimaryImageInFlight.get(cacheKey);
+  if (inFlight) return inFlight;
+
+  const requestPromise = (async () => {
   try {
     const { data, error } = await supabase
       .from("catalog_public_view")
@@ -201,25 +354,56 @@ async function fetchPrimaryImage(articulo, color) {
 
     if (error) {
       console.warn("⚠️ No se pudo resolver imagen de catálogo:", error.message);
-      return null;
+      return setCachedMapValue(
+        __cartPrimaryImageCache,
+        cacheKey,
+        null,
+        CART_IMAGE_CACHE_TTL_MS
+      );
     }
 
     if (data) {
-      return (
+      return setCachedMapValue(
+        __cartPrimaryImageCache,
+        cacheKey,
         data["Imagen Principal"] ||
         data["Imagen 1"] ||
         data["Imagen 2"] ||
-        null
+        null,
+        CART_IMAGE_CACHE_TTL_MS
       );
     }
   } catch (err) {
     console.warn("⚠️ Error obteniendo imagen de catálogo:", err.message);
   }
-  return null;
+  return setCachedMapValue(
+    __cartPrimaryImageCache,
+    cacheKey,
+    null,
+    CART_IMAGE_CACHE_TTL_MS
+  );
+  })();
+
+  __cartPrimaryImageInFlight.set(cacheKey, requestPromise);
+  try {
+    return await requestPromise;
+  } finally {
+    __cartPrimaryImageInFlight.delete(cacheKey);
+  }
 }
 
 /** Obtener stock real desde variant_sizes y variant_size_warehouse_stock (NO desde product_variants) */
-async function fetchVariantInfo(articulo, color, talle, variantId = null) {
+async function fetchVariantInfo(articulo, color, talle, variantId = null, options = {}) {
+  const forceFresh = options.forceFresh === true;
+  const cacheKey = buildVariantInfoCacheKey(articulo, color, talle, variantId);
+  if (!forceFresh) {
+    const cached = getCachedMapValue(__cartVariantInfoCache, cacheKey);
+    if (cached !== undefined) return cached;
+    const inFlight = __cartVariantInfoInFlight.get(cacheKey);
+    if (inFlight) return inFlight;
+  }
+
+  const requestPromise = (async () => {
   try {
     const normalizedArticulo = articulo?.trim();
     const normalizedColor = (color || "Único")?.trim();
@@ -275,10 +459,9 @@ async function fetchVariantInfo(articulo, color, talle, variantId = null) {
     let sizeStockQty = sizeRow ? (sizeRow.stock_qty || 0) : 0;
 
     // Fallback/enriquecimiento desde variant_size_warehouse_stock (general + venta-publico)
-    const { data: whs } = await supabase.from("warehouses").select("id, code").in("code", ["general", "venta-publico"]);
-    const whMap = new Map((whs || []).map((w) => [w.code, w.id]));
-    const generalId = whMap.get("general");
-    const ventaId = whMap.get("venta-publico");
+    const { generalId, ventaId } = await getCartWarehouseIdsCached({
+      forceFresh,
+    });
 
     let stockTotal = 0;
     if (generalId && ventaId) {
@@ -294,7 +477,10 @@ async function fetchVariantInfo(articulo, color, talle, variantId = null) {
     if (stockTotal === 0 && sizeStockQty > 0) stockTotal = sizeStockQty;
     const available = Math.max(0, stockTotal - reserved);
 
-    return {
+    return setCachedMapValue(
+      __cartVariantInfoCache,
+      cacheKey,
+      {
       id: vid,
       stock: stockTotal,
       reserved,
@@ -302,10 +488,29 @@ async function fetchVariantInfo(articulo, color, talle, variantId = null) {
       price,
       color: normalizedColor,
       size: normalizedSize,
-    };
+      },
+      CART_VARIANT_INFO_CACHE_TTL_MS
+    );
   } catch (error) {
     console.error("❌ Error obteniendo información de variante:", error);
-    return null;
+    return setCachedMapValue(
+      __cartVariantInfoCache,
+      cacheKey,
+      null,
+      CART_VARIANT_INFO_CACHE_TTL_MS
+    );
+  }
+  })();
+
+  if (!forceFresh) {
+    __cartVariantInfoInFlight.set(cacheKey, requestPromise);
+  }
+  try {
+    return await requestPromise;
+  } finally {
+    if (!forceFresh) {
+      __cartVariantInfoInFlight.delete(cacheKey);
+    }
   }
 }
 
@@ -525,8 +730,9 @@ function createFloatingCartButton() {
       <svg class="sticky-cart__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
     </span>
   `;
-  btn.addEventListener("click", () => {
-    if (typeof window.goToCart === "function") window.goToCart();
+  btn.addEventListener("click", async () => {
+    if (btn.disabled) return;
+    if (typeof window.goToCart === "function") await window.goToCart();
   });
   document.body.appendChild(btn);
 }
@@ -582,6 +788,10 @@ function updateFloatingCartCta() {
   const totalEl = btn.querySelector(".sticky-cart__total");
   if (labelEl) labelEl.textContent = count === 1 ? "1 par en carrito" : `${count} pares en carrito`;
   if (totalEl) totalEl.textContent = formatted;
+  const busy = isCartBusy();
+  btn.disabled = busy;
+  btn.setAttribute("aria-busy", busy ? "true" : "false");
+  btn.classList.toggle("is-busy", busy);
   btn.classList.toggle("is-visible", count > 0);
   document.body.classList.toggle("has-cart-bar", count > 0);
   repositionStickyCartInModal();
@@ -685,6 +895,8 @@ async function syncCartWithSupabase(options = {}) {
 
       await supabase.from("cart_items").delete().eq("cart_id", cartId);
 
+      const perfRowsStart =
+        typeof performance !== "undefined" ? performance.now() : Date.now();
       const rows = await Promise.all(
         cartItems.map(async (item) => {
           let imagen = item.imagen;
@@ -705,6 +917,13 @@ async function syncCartWithSupabase(options = {}) {
           };
         })
       );
+      if (window.FYL_DEBUG_CATALOG === true || window.FYL_DEBUG_CART_PERF === true) {
+        const perfRowsEnd =
+          typeof performance !== "undefined" ? performance.now() : Date.now();
+        console.debug("[perf][cart] sync_rows_enrichment_ms", Math.round(perfRowsEnd - perfRowsStart), {
+          items: rows.length,
+        });
+      }
 
       const { error: insertError } = await supabase
         .from("cart_items")
@@ -743,7 +962,9 @@ async function syncCartWithSupabase(options = {}) {
 
       window.dispatchEvent(new CustomEvent("cart:synced"));
     } catch (error) {
-      console.error("❌ Error sincronizando carrito:", error);
+      if (!isExpectedAuthErrorHandled(error, "cart-persistent:syncCartWithSupabase")) {
+        console.error("❌ Error sincronizando carrito:", error);
+      }
     } finally {
       isSyncing = false;
     }
@@ -807,7 +1028,9 @@ async function loadCartFromSupabase() {
         }
       }
     } catch (error) {
-      console.error("❌ Error cargando carrito desde Supabase:", error);
+      if (!isExpectedAuthErrorHandled(error, "cart-persistent:loadCartFromSupabase")) {
+        console.error("❌ Error cargando carrito desde Supabase:", error);
+      }
     } finally {
       loadCartFromSupabaseInFlight = null;
     }
@@ -855,7 +1078,8 @@ async function ensureCartItemInDatabase(productData, authUser = null, options = 
         articulo,
         color,
         size,
-        productData.variant_id
+        productData.variant_id,
+        { forceFresh: true }
       );
     }
 
@@ -1029,13 +1253,16 @@ async function ensureCartItemInDatabase(productData, authUser = null, options = 
     window.dispatchEvent(new CustomEvent("cart:synced"));
     return true;
   } catch (error) {
-    console.error("❌ Error asegurando item en Supabase:", error);
+    if (!isExpectedAuthErrorHandled(error, "cart-persistent:ensureCartItemInDatabase")) {
+      console.error("❌ Error asegurando item en Supabase:", error);
+    }
     return false;
   }
   });
 }
 
 async function addToCart(productData, options = {}) {
+  markCartMutationStart();
   try {
     // VALIDACIÓN DE STOCK ANTES DE AGREGAR AL CARRITO
     // Verificar stock REAL disponible (sin contar lo que está en el carrito)
@@ -1049,7 +1276,8 @@ async function addToCart(productData, options = {}) {
       articulo,
       color,
       talle,
-      productData.variant_id || null
+      productData.variant_id || null,
+      { forceFresh: true }
     );
     
     if (!variantInfo) {
@@ -1206,9 +1434,13 @@ async function addToCart(productData, options = {}) {
     // Retornar true para indicar que se agregó exitosamente
     return true;
   } catch (error) {
-    console.error("❌ Error agregando al carrito:", error);
+    if (!isExpectedAuthErrorHandled(error, "cart-persistent:addToCart")) {
+      console.error("❌ Error agregando al carrito:", error);
+    }
     // Retornar false para indicar que no se pudo agregar
     return false;
+  } finally {
+    markCartMutationEnd();
   }
 }
 
@@ -1234,7 +1466,12 @@ function removeFromCart(itemId) {
   }
 }
 
-function goToCart() {
+async function goToCart() {
+  const readyForNavigation = await waitForCartIdle();
+  if (!readyForNavigation) {
+    console.warn("⚠️ Tiempo de espera agotado antes de abrir el carrito; continuando con el último estado disponible.");
+  }
+
   try {
     if (fylAnalytics.isReady()) {
       const raw = localStorage.getItem("fyl_cart");
@@ -1394,10 +1631,20 @@ function initPersistentCart() {
     }
   };
 
-  setTimeout(() => {
-    loadCartFromSupabase();
-  }, 1000);
-  window.addEventListener("focus", loadCartFromSupabase);
+  if (window.__DASHBOARD__ !== true) {
+    setTimeout(() => {
+      loadCartFromSupabase();
+    }, 1000);
+  }
+  window.addEventListener("cart:synced", () => {
+    clearCartVariantInfoCaches();
+  });
+  if (window.__DASHBOARD__ !== true) {
+    window.addEventListener("focus", () => {
+      clearCartVariantInfoCaches();
+      loadCartFromSupabase();
+    });
+  }
 
   window.addEventListener("resize", () => {
     setBottomNavHeightVar();

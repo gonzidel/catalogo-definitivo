@@ -972,6 +972,15 @@ document.getElementById("parse-inv").addEventListener("click", async () => {
     try {
       msg.textContent = "⏳ Importando inventario…";
       msg.className = "message";
+      
+      const { data: generalWh, error: whErr } = await supabase
+        .from("warehouses")
+        .select("id")
+        .eq("code", "general")
+        .single();
+      if (whErr || !generalWh) throw new Error("No se encontró el almacén general");
+      const generalWarehouseId = generalWh.id;
+      
       let updated = 0, notFound = 0;
       const total = rows.length;
       
@@ -1008,36 +1017,18 @@ document.getElementById("parse-inv").addEventListener("click", async () => {
           .eq("id", variantId);
         if (updateError) throw updateError;
         
-        // Si hay size, actualizar stock en variant_sizes
+        // Si hay size, actualizar stock en variant_size_warehouse_stock (depósito general)
+        // variant_sizes se actualiza automáticamente via trigger 84
         if (size) {
-          // Buscar o crear registro en variant_sizes
-          const { data: existingSize, error: sizeCheckError } = await supabase
-            .from("variant_sizes")
-            .select("id")
-            .eq("variant_id", variantId)
-            .eq("size", size)
-            .maybeSingle();
-          
-          if (sizeCheckError) throw sizeCheckError;
-          
-          if (existingSize) {
-            // Actualizar stock existente
-            const { error: updateSizeError } = await supabase
-              .from("variant_sizes")
-              .update({ stock_qty: stock })
-              .eq("id", existingSize.id);
-            if (updateSizeError) throw updateSizeError;
-          } else {
-            // Crear nuevo registro en variant_sizes
-            const { error: insertSizeError } = await supabase
-              .from("variant_sizes")
-              .insert({
-                variant_id: variantId,
-                size: size,
-                stock_qty: stock,
-              });
-            if (insertSizeError) throw insertSizeError;
-          }
+          const { error: sizeWhError } = await supabase
+            .from("variant_size_warehouse_stock")
+            .upsert({
+              variant_id: variantId,
+              size: size,
+              warehouse_id: generalWarehouseId,
+              stock_qty: stock,
+            }, { onConflict: "variant_id,size,warehouse_id" });
+          if (sizeWhError) throw sizeWhError;
         }
         
         updated++;

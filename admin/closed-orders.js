@@ -6,6 +6,7 @@ import {
   canonicalizeTransportName,
   normalizeTransportKey,
 } from "../scripts/transport-canonical.js";
+import { parseARSNumber, resolveOrderItemUnitPrice } from "../scripts/utils/price.js";
 
 const TIMEZONE_BUENOS_AIRES = "America/Argentina/Buenos_Aires";
 
@@ -17,6 +18,7 @@ let searchDebounce = null;
 let currentAdminUser = null;
 let realtimeSubscription = null;
 let isRealtimeSubscribed = false;
+const closedOrdersVariantPriceMap = new Map(); // variant_id -> price de catálogo (raw)
 
 // Función para obtener supabase
 async function getSupabase() {
@@ -80,8 +82,14 @@ async function verifyAdminAuth() {
 
 // Función para formatear moneda
 function formatCurrency(value) {
-  const amount = Number(value) || 0;
+  const amount = parseARSNumber(value);
   return `$${amount.toLocaleString("es-AR")}`;
+}
+
+function getClosedOrderUnitPrice(item) {
+  const variantId = item?.variant_id != null ? String(item.variant_id).trim() : "";
+  const variantPrice = variantId ? closedOrdersVariantPriceMap.get(variantId) : null;
+  return resolveOrderItemUnitPrice(item?.price_snapshot, variantPrice);
 }
 
 // ============================================================================
@@ -650,10 +658,11 @@ function prepareShippingLabelFromOrder(order) {
   );
 
   // Obtener monto total
-  const total = typeof order.total_amount === "number"
-    ? order.total_amount
+  const hasStoredTotal = order.total_amount != null && String(order.total_amount).trim() !== "";
+  const total = hasStoredTotal
+    ? parseARSNumber(order.total_amount)
     : (order.order_items || []).reduce(
-      (sum, item) => sum + (item.quantity || 0) * ((item.price_snapshot || 0)),
+      (sum, item) => sum + (item.quantity || 0) * getClosedOrderUnitPrice(item),
       0
     );
 
@@ -849,7 +858,7 @@ async function getOffersAndPromotionsForOrder(order) {
 
     for (const item of itemsInPromo) {
       const qty = item.quantity || 0;
-      const price = item.price_snapshot || 0;
+      const price = getClosedOrderUnitPrice(item);
       totalQuantity += qty;
       totalPrice += qty * price;
     }
@@ -1052,6 +1061,31 @@ async function loadClosedOrders() {
     return;
   }
 
+  // Cargar precio de catálogo por variante para corregir snapshots legacy corruptos.
+  closedOrdersVariantPriceMap.clear();
+  const variantIds = Array.from(
+    new Set(
+      (data || [])
+        .flatMap((o) => o?.order_items || [])
+        .map((it) => (it?.variant_id != null ? String(it.variant_id).trim() : ""))
+        .filter(Boolean)
+    )
+  );
+  if (variantIds.length > 0) {
+    const { data: variantsData, error: variantsError } = await supabase
+      .from("product_variants")
+      .select("id, price")
+      .in("id", variantIds);
+    if (!variantsError) {
+      (variantsData || []).forEach((v) => {
+        const id = v?.id != null ? String(v.id).trim() : "";
+        if (id) closedOrdersVariantPriceMap.set(id, v?.price ?? null);
+      });
+    } else {
+      console.warn("⚠️ No se pudieron cargar precios de variantes para fallback legacy:", variantsError.message || variantsError);
+    }
+  }
+
   orders = data || [];
   displayOrders();
 }
@@ -1068,10 +1102,11 @@ async function renderOrderCard(order) {
   const customerEmail = customer.email || "Sin email";
   const offersData = await getOffersAndPromotionsForOrder(order);
 
-  const total = typeof order.total_amount === "number"
-    ? order.total_amount
+  const hasStoredTotal = order.total_amount != null && String(order.total_amount).trim() !== "";
+  const total = hasStoredTotal
+    ? parseARSNumber(order.total_amount)
     : (order.order_items || []).reduce(
-      (sum, item) => sum + (item.quantity || 0) * ((item.price_snapshot || 0)),
+      (sum, item) => sum + (item.quantity || 0) * getClosedOrderUnitPrice(item),
       0
     );
 
@@ -1735,13 +1770,13 @@ async function showOrderDetail(orderId) {
   }
 
   const productsSubtotal = activeItems.reduce((sum, item) => {
-    return sum + ((item.price_snapshot || 0) * (item.quantity || 0));
+    return sum + (getClosedOrderUnitPrice(item) * (item.quantity || 0));
   }, 0);
 
   const itemsHtml = activeItems.map((item) => {
     const promoText = offersData.itemPromos?.get(item.id);
     const offerInfo = offersData.itemOffers?.get(item.id);
-    let displayPrice = item.price_snapshot || 0;
+    let displayPrice = getClosedOrderUnitPrice(item);
     let originalPrice = null;
 
     if (promoText) {
@@ -1781,8 +1816,9 @@ async function showOrderDetail(orderId) {
     `;
   }).join('');
 
-  const total = typeof order.total_amount === "number"
-    ? order.total_amount
+  const hasStoredDetailTotal = order.total_amount != null && String(order.total_amount).trim() !== "";
+  const total = hasStoredDetailTotal
+    ? parseARSNumber(order.total_amount)
     : productsSubtotal + shippingAmount - discountAmount + extrasAmount + (productsSubtotal * extrasPercentage / 100) - offersData.totalDiscount;
 
   const detailHtml = `
@@ -1958,7 +1994,7 @@ async function buildEscposTicketOrder(order) {
 
   // Items del pedido
   items.forEach(item => {
-    const price = parseFloat(item.price_snapshot || 0);
+    const price = getClosedOrderUnitPrice(item);
     const qty = parseInt(item.quantity || 0);
     const total = price * qty;
 
@@ -1991,7 +2027,7 @@ async function buildEscposTicketOrder(order) {
 
   // Subtotal productos
   const productsSubtotal = items.reduce((sum, item) => {
-    const price = parseFloat(item.price_snapshot || 0);
+    const price = getClosedOrderUnitPrice(item);
     const qty = parseInt(item.quantity || 0);
     return sum + (price * qty);
   }, 0);
@@ -2028,7 +2064,7 @@ async function buildEscposTicketOrder(order) {
   }
 
   // TOTAL alineado a la derecha
-  const totalAmount = parseFloat(order.total_amount || 0);
+  const totalAmount = parseARSNumber(order.total_amount || 0);
   const totalStr = `$${totalAmount.toLocaleString('es-AR')}`;
   ticket.push(padLeft(`TOTAL: ${totalStr}`, TICKET_WIDTH));
   ticket.push("");
@@ -2866,9 +2902,7 @@ function downloadExtractExcel(orders, startDate, endDate) {
 
       // Formatear monto como número para Excel (usar punto para decimales)
       // Excel reconocerá esto como número y aplicará formato local automáticamente
-      const monto = typeof order.total_amount === "number" 
-        ? order.total_amount.toFixed(2)
-        : "0.00";
+      const monto = parseARSNumber(order.total_amount || 0).toFixed(2);
 
       return {
         "Fecha de envío": fechaEnvio,
@@ -3059,7 +3093,7 @@ async function generateShippingListPDF(orders, transportName, date, transportId 
     // Calcular totales
     const totalProductos = orders.reduce((sum, order) => sum + (order.items_count || 0), 0);
     const totalPaquetes = orders.reduce((sum, order) => sum + (order.packages_count || 1), 0);
-    const totalMonto = orders.reduce((sum, order) => sum + (order.total_amount || 0), 0);
+    const totalMonto = orders.reduce((sum, order) => sum + parseARSNumber(order.total_amount || 0), 0);
     // Formatear total sin espacios para evitar división en dos líneas
     const totalMontoFormatted = new Intl.NumberFormat("es-AR", {
       style: "currency",
@@ -3591,7 +3625,7 @@ function setupPrintListsModal() {
           // Calcular totales
           const totalProductos = orders.reduce((sum, order) => sum + (order.items_count || 0), 0);
           const totalPaquetes = orders.reduce((sum, order) => sum + (order.packages_count || 1), 0);
-          const totalMonto = orders.reduce((sum, order) => sum + (order.total_amount || 0), 0);
+          const totalMonto = orders.reduce((sum, order) => sum + parseARSNumber(order.total_amount || 0), 0);
           // Formatear total sin espacios para evitar división en dos líneas
           const totalMontoFormatted = new Intl.NumberFormat("es-AR", {
             style: "currency",

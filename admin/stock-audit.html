@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex" />
+  <title>Auditoría de Stock | Admin</title>
+  <link rel="stylesheet" href="../styles.css" />
+  <style>
+    .container { max-width: 1600px; margin: 24px auto; padding: 0 12px; }
+    .topbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+    .topbar .spacer { flex: 1 1 auto; }
+    .topbar a { padding: 6px 10px; border: 1px solid #ddd; border-radius: 6px; text-decoration: none; color: inherit; }
+    .subtitle { color: #666; margin: 6px 0 16px; }
+
+    .filters { position: sticky; top: 0; z-index: 30; background: #fff; border: 1px solid #eee; border-radius: 10px; padding: 10px; display: grid; grid-template-columns: repeat(4, minmax(180px, 1fr)); gap: 8px; }
+    .filters input, .filters select { width: 100%; }
+    .filters .full { grid-column: 1 / -1; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .filters .full label { display: inline-flex; align-items: center; gap: 6px; }
+    .anomaly-help {
+      grid-column: 1 / -1;
+      border: 1px solid #e5e7eb;
+      border-left: 3px solid #cbd5e1;
+      background: #f8fafc;
+      border-radius: 8px;
+      padding: 8px 10px;
+      margin-top: 2px;
+    }
+    .anomaly-help-title {
+      margin: 0 0 6px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #334155;
+    }
+    .anomaly-help-list {
+      margin: 0;
+      padding-left: 16px;
+      color: #475569;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .anomaly-help-list li { margin: 2px 0; }
+
+    .section { margin-top: 14px; background: #fff; border: 1px solid #eee; border-radius: 10px; padding: 12px; }
+    .section-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+    .section h2 { margin: 0; font-size: 18px; }
+    .muted { color: #6b7280; font-size: 12px; }
+    .advanced-only { display: block; }
+    .hidden { display: none !important; }
+
+    .mode-switch { display: inline-flex; border: 1px solid #ddd; border-radius: 8px; overflow: hidden; }
+    .mode-switch button {
+      border: 0;
+      background: #fff;
+      padding: 6px 10px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .mode-switch button.active { background: #111827; color: #fff; }
+
+    .ops-panel {
+      margin-top: 12px;
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      background: #fff;
+      padding: 12px;
+    }
+    .ops-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(160px, 1fr));
+      gap: 8px;
+    }
+    .ops-card {
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 10px;
+      background: #fafafa;
+    }
+    .ops-card .label { font-size: 12px; color: #6b7280; }
+    .ops-card .value { font-size: 22px; font-weight: 800; margin-top: 4px; line-height: 1.1; }
+    .ops-card .hint { font-size: 11px; color: #6b7280; margin-top: 4px; }
+    .ops-ok { border-color: #10b981; background: #ecfdf5; }
+    .ops-warn { border-color: #f59e0b; background: #fffbeb; }
+    .ops-bad { border-color: #ef4444; background: #fef2f2; }
+    .ops-actions {
+      margin-top: 10px;
+      border-top: 1px dashed #e5e7eb;
+      padding-top: 10px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .ops-callout {
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 10px;
+      background: #fff;
+    }
+    .ops-callout h3 { margin: 0 0 4px; font-size: 13px; }
+    .ops-callout p { margin: 0; font-size: 12px; color: #475569; line-height: 1.4; }
+
+    .kpis { display: grid; grid-template-columns: repeat(4, minmax(160px, 1fr)); gap: 8px; }
+    .kpi { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; }
+    .kpi .label { color: #6b7280; font-size: 12px; }
+    .kpi .value { font-size: 22px; font-weight: 700; margin-top: 4px; }
+
+    .table-wrap { overflow: auto; border: 1px solid #eee; border-radius: 8px; }
+    table { width: 100%; border-collapse: collapse; min-width: 980px; }
+    th, td { padding: 8px; border-bottom: 1px solid #f1f1f1; text-align: left; font-size: 13px; white-space: nowrap; }
+    th { position: sticky; top: 0; background: #fafafa; z-index: 1; }
+    .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .delta-pos { color: #166534; font-weight: 600; }
+    .delta-neg { color: #b91c1c; font-weight: 600; }
+
+    .badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; border: 1px solid transparent; font-size: 11px; font-weight: 700; }
+    .sev-critical { background: #FEE2E2; color: #B91C1C; border-color: #B91C1C; }
+    .sev-warning { background: #FEF3C7; color: #92400E; border-color: #92400E; }
+    .sev-review { background: #E0F2FE; color: #0C4A6E; border-color: #0C4A6E; }
+    .trace-exact { background: #DCFCE7; color: #166534; border-color: #166534; }
+    .trace-partial { background: #FEF9C3; color: #854D0E; border-color: #854D0E; }
+    .trace-legacy { background: #E5E7EB; color: #374151; border-color: #374151; }
+    .trace-insufficient { background: #F3E8FF; color: #6B21A8; border-color: #6B21A8; }
+
+    .actions { display: flex; gap: 8px; }
+    .btn-small { padding: 6px 10px; border: 1px solid #ddd; border-radius: 6px; background: #fff; cursor: pointer; }
+    .btn-small:hover { background: #f7f7f7; }
+    .status-line { margin-top: 8px; font-size: 12px; color: #6b7280; }
+    .error-box { color: #b91c1c; font-size: 12px; margin-top: 6px; }
+    .footer-note { margin-top: 14px; color: #666; font-size: 12px; }
+    .link-cell { color: #0c4a6e; text-decoration: underline; text-underline-offset: 2px; }
+    .health-banner {
+      margin: 12px 0;
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      padding: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .health-banner-ok { background: #ecfdf5; border-color: #34d399; }
+    .health-banner-warn { background: #fef3c7; border-color: #f59e0b; }
+    .health-banner-critical { background: #fee2e2; border-color: #ef4444; }
+    .health-main { font-size: 14px; font-weight: 700; }
+    .health-meta { font-size: 12px; color: #475569; }
+    @media (max-width: 980px) {
+      .filters { grid-template-columns: repeat(2, minmax(140px, 1fr)); position: static; }
+      .kpis { grid-template-columns: repeat(2, minmax(140px, 1fr)); }
+      .ops-grid { grid-template-columns: repeat(2, minmax(140px, 1fr)); }
+      .ops-actions { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Auditoría de Stock (Solo lectura)</h1>
+    <p class="subtitle">Observabilidad y detección de inconsistencias. No edita inventario ni ejecuta acciones operativas.</p>
+
+    <div class="topbar">
+      <a href="./index.html">← Volver al panel</a>
+      <span class="spacer"></span>
+      <div class="mode-switch" role="tablist" aria-label="Modo de visualización">
+        <button id="btn-mode-ops" class="active" type="button">Modo operativo</button>
+        <button id="btn-mode-advanced" type="button">Modo avanzado</button>
+      </div>
+      <a href="./stock.html">Stock</a>
+      <a href="./move-stock.html">Mover Stock</a>
+      <a href="./orders.html">Pedidos</a>
+      <a href="./public-sales.html">Venta al público</a>
+    </div>
+
+    <section class="health-banner health-banner-ok" id="health-banner">
+      <div>
+        <div class="health-main" id="health-main">Cargando salud de stock...</div>
+        <div class="health-meta" id="health-meta"></div>
+      </div>
+      <div class="actions">
+        <button id="btn-reconcile-stock" class="btn-small hidden">Reconciliar stock</button>
+      </div>
+    </section>
+
+    <section class="ops-panel" id="ops-panel">
+      <div class="section-header" style="margin-bottom:8px;">
+        <h2>Estado para lanzamiento</h2>
+        <span class="muted" id="ops-updated-at">Sin datos</span>
+      </div>
+      <div class="ops-grid">
+        <div class="ops-card" id="ops-go-card">
+          <div class="label">Gate lanzamiento</div>
+          <div class="value" id="ops-go-value">-</div>
+          <div class="hint" id="ops-go-hint">Esperando métricas</div>
+        </div>
+        <div class="ops-card" id="ops-structural-card">
+          <div class="label">Inconsistencias estructurales</div>
+          <div class="value" id="ops-structural-value">0</div>
+          <div class="hint">diffs talle + depósito + huérfanos</div>
+        </div>
+        <div class="ops-card" id="ops-critical-card">
+          <div class="label">Señales críticas</div>
+          <div class="value" id="ops-critical-value">0</div>
+          <div class="hint">eventos con riesgo inmediato</div>
+        </div>
+        <div class="ops-card" id="ops-trigger-card">
+          <div class="label">Triggers sincronización</div>
+          <div class="value" id="ops-trigger-value">-</div>
+          <div class="hint">84 y 145</div>
+        </div>
+      </div>
+      <div class="ops-actions">
+        <div class="ops-callout">
+          <h3>Qué significa este estado</h3>
+          <p id="ops-summary-text">Esperando carga inicial.</p>
+        </div>
+        <div class="ops-callout">
+          <h3>Siguiente acción recomendada</h3>
+          <p id="ops-next-action">Ejecuta una carga para ver recomendaciones.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="filters" id="filters">
+      <select id="f-anomaly-type">
+        <option value="">Tipo anomalía: todas</option>
+        <option value="variant_sizes_vs_sum_size_warehouse">variant_sizes vs suma por talle</option>
+        <option value="variant_warehouse_vs_sum_size_rows">variant_warehouse vs suma por depósito</option>
+        <option value="orphan_size_row_missing_variant_sizes">filas huérfanas de talle</option>
+      </select>
+      <input id="f-search" type="text" placeholder="Buscar producto, SKU o referencia..." />
+      <select id="f-warehouse">
+        <option value="">Depósito: todos</option>
+        <option value="general">general</option>
+        <option value="venta-publico">venta-publico</option>
+        <option value="mixed">mixed</option>
+      </select>
+      <select id="f-severity">
+        <option value="">Severity: todas</option>
+        <option value="critical">critical</option>
+        <option value="warning">warning</option>
+        <option value="review">review</option>
+      </select>
+      <select id="f-trace-status">
+        <option value="">Trace status: todos</option>
+        <option value="exact">exact</option>
+        <option value="partial">partial</option>
+        <option value="legacy">legacy</option>
+        <option value="insufficient">insufficient</option>
+      </select>
+      <input id="f-reference" type="text" placeholder="Referencia (order/sale/id)..." />
+      <input id="f-date-from" type="date" />
+      <input id="f-date-to" type="date" />
+      <div class="full">
+        <label><input id="f-delta-only" type="checkbox" checked /> Solo delta != 0</label>
+        <label><input id="f-legacy-only" type="checkbox" /> Solo legacy/fallback</label>
+        <div class="actions">
+          <button id="btn-apply-filters" class="btn-small">Aplicar filtros</button>
+          <button id="btn-reset-filters" class="btn-small">Reset</button>
+        </div>
+      </div>
+      <div class="anomaly-help" aria-live="polite">
+        <p class="anomaly-help-title">Referencia de anomalías</p>
+        <ul class="anomaly-help-list">
+          <li><strong>variant_sizes vs suma por talle</strong>: el stock total del talle no coincide</li>
+          <li><strong>variant_warehouse_stock vs suma por depósito</strong>: el stock del depósito no coincide</li>
+          <li><strong>filas huérfanas de talle</strong>: hay stock cargado sin su talle correspondiente</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="section advanced-only" id="sec-summary">
+      <div class="section-header">
+        <h2>Resumen ejecutivo</h2>
+        <button class="btn-small" id="btn-reload-summary">Recargar bloque</button>
+      </div>
+      <div class="kpis">
+        <div class="kpi"><div class="label">Critical</div><div class="value" id="kpi-critical">0</div></div>
+        <div class="kpi"><div class="label">Warning</div><div class="value" id="kpi-warning">0</div></div>
+        <div class="kpi"><div class="label">Review</div><div class="value" id="kpi-review">0</div></div>
+        <div class="kpi"><div class="label">Variantes afectadas</div><div class="value" id="kpi-variants">0</div></div>
+      </div>
+      <div class="status-line" id="summary-status"></div>
+      <div class="error-box" id="summary-error"></div>
+    </section>
+
+    <section class="section advanced-only" id="sec-anomalies">
+      <div class="section-header">
+        <h2>Inconsistencias estructurales</h2>
+        <div class="actions">
+          <button class="btn-small" id="btn-export-anomalies">Exportar CSV</button>
+          <button class="btn-small" id="btn-reload-anomalies">Recargar bloque</button>
+          <button class="btn-small" id="btn-more-anomalies">Ver más</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Severity</th><th>Tipo</th><th>Producto</th><th>Variante</th><th>Talle</th><th>Depósito</th>
+              <th class="num">Esperado</th><th class="num">Actual</th><th class="num">Delta</th>
+            </tr>
+          </thead>
+          <tbody id="anomalies-body"></tbody>
+        </table>
+      </div>
+      <div class="status-line" id="anomalies-status"></div>
+      <div class="error-box" id="anomalies-error"></div>
+    </section>
+
+    <section class="section advanced-only" id="sec-snapshot">
+      <div class="section-header">
+        <h2>Snapshot auditable</h2>
+        <div class="actions">
+          <button class="btn-small" id="btn-export-snapshot">Exportar CSV</button>
+          <button class="btn-small" id="btn-reload-snapshot">Recargar bloque</button>
+          <button class="btn-small" id="btn-more-snapshot">Ver más</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Producto</th><th>Variante</th><th>Talle</th><th>Depósito</th>
+              <th class="num">Stock talla/deposito</th><th class="num">variant_sizes</th><th class="num">variant_warehouse</th>
+              <th class="num">Delta vs row</th><th class="num">Delta vs suma wh</th>
+            </tr>
+          </thead>
+          <tbody id="snapshot-body"></tbody>
+        </table>
+      </div>
+      <div class="status-line" id="snapshot-status"></div>
+      <div class="error-box" id="snapshot-error"></div>
+    </section>
+
+    <section class="section advanced-only" id="sec-signals">
+      <div class="section-header">
+        <h2>Señales de trazabilidad</h2>
+        <div class="actions">
+          <button class="btn-small" id="btn-export-signals">Exportar CSV</button>
+          <button class="btn-small" id="btn-reload-signals">Recargar bloque</button>
+          <button class="btn-small" id="btn-more-signals">Ver más</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Severity</th><th>Trace</th><th>Origen</th><th>Referencia</th><th>Estado</th><th>Fecha</th>
+              <th>Variante</th><th>Talle</th><th>Depósito</th><th class="num">Qty</th><th>Reason</th>
+            </tr>
+          </thead>
+          <tbody id="signals-body"></tbody>
+        </table>
+      </div>
+      <div class="status-line" id="signals-status"></div>
+      <div class="error-box" id="signals-error"></div>
+    </section>
+
+    <section class="section advanced-only" id="sec-timeline">
+      <div class="section-header">
+        <h2>Timeline por variante</h2>
+        <div class="muted" id="timeline-status">Haz click en una variante para ver su historia de movimientos.</div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Fecha</th><th>Origen</th><th>Trace</th><th>Referencia</th><th>Depósito</th><th>Talle</th><th class="num">Qty</th><th>Reason</th>
+            </tr>
+          </thead>
+          <tbody id="timeline-body">
+            <tr><td colspan="8" class="muted">Sin variante seleccionada.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="error-box" id="timeline-error"></div>
+    </section>
+
+    <p class="footer-note" id="footer-note">
+      Cobertura V1: `reserved_qty` es señal heurística (review). Existen ramas legacy/fallback con trazabilidad parcial.
+    </p>
+  </div>
+
+  <script type="module" src="../scripts/config.js"></script>
+  <script type="module" src="../scripts/supabase-client.js"></script>
+  <script type="module" src="./stock-audit.js"></script>
+</body>
+</html>

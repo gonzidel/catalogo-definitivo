@@ -150,14 +150,10 @@ begin
     where variant_id = p_variant_id and size = v_size;
   end loop;
 
+  -- variant_warehouse_stock se actualiza automáticamente via trigger 145
   select coalesce(sum(stock_qty), 0)::int into v_new_total
   from public.variant_size_warehouse_stock
   where variant_id = p_variant_id and warehouse_id = v_general_id;
-
-  insert into public.variant_warehouse_stock (variant_id, warehouse_id, stock_qty, updated_at)
-  values (p_variant_id, v_general_id, v_new_total, now())
-  on conflict (variant_id, warehouse_id)
-  do update set stock_qty = excluded.stock_qty, updated_at = now();
 
   if v_old_total is distinct from v_new_total or v_any_detail_change then
     perform public.log_stock_change(

@@ -1,6 +1,10 @@
 -- 81_get_total_stock_include_size_warehouse.sql
--- Incluir en get_total_stock el stock por talle (variant_size_warehouse_stock)
--- para que catálogo y checkout vean el total real (general + venta público por variante y por talle).
+-- Stock total de una variante.
+-- Con triggers 84+145, variant_warehouse_stock ya es la suma derivada de
+-- variant_size_warehouse_stock. Usar solo variant_warehouse_stock para evitar
+-- doble conteo (antes se sumaban ambas tablas, lo que duplicaba el valor).
+-- Para variantes sin talles, variant_warehouse_stock es la fuente directa.
+-- Para variantes con talles, trigger 145 mantiene variant_warehouse_stock = SUM(vsws).
 
 create or replace function public.get_total_stock(p_variant_id uuid)
 returns int
@@ -8,20 +12,13 @@ language plpgsql
 stable
 as $$
 declare
-  total_warehouse int;
-  total_size_warehouse int;
+  v_total int;
 begin
-  -- Stock por variante (sin talle) en variant_warehouse_stock
-  select coalesce(sum(stock_qty), 0) into total_warehouse
+  select coalesce(sum(stock_qty), 0) into v_total
   from public.variant_warehouse_stock
   where variant_id = p_variant_id;
 
-  -- Stock por talle en variant_size_warehouse_stock
-  select coalesce(sum(stock_qty), 0) into total_size_warehouse
-  from public.variant_size_warehouse_stock
-  where variant_id = p_variant_id;
-
-  return coalesce(total_warehouse, 0) + coalesce(total_size_warehouse, 0);
+  return v_total;
 end $$;
 
 select pg_notify('pgrst', 'reload schema');

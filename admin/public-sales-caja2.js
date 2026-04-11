@@ -1193,26 +1193,20 @@ async function loadManualProductVariants(productId) {
 
     // Obtener stock, precios efectivos e información de ofertas para cada variante EN PARALELO
     const variantPromises = manualCurrentVariants.map(async (variant) => {
-      const [warehouseStock, effectivePrice, offerInfo, promotionInfo] = await Promise.all([
-        getVariantStock(variant.id),
+      const [effectivePrice, offerInfo, promotionInfo] = await Promise.all([
         getEffectivePrice(variant.id),
         getOfferInfo(variant.id, manualCurrentProduct.id, variant.color),
         getPromotionInfo(variant.id)
       ]);
 
-      let stockData;
       if (variant.size != null && variant.size !== "" && (variant.stock_qty != null || variant.sizeSku)) {
-        const sizeStockQty = variant.stock_qty || 0;
-        stockData = {
-          ...warehouseStock,
-          sizeStock: sizeStockQty,
-          total: Math.max(warehouseStock.total, sizeStockQty),
-        };
+        variant.stockData = await getVariantSizeStockByWarehouse(variant.id, variant.size, {
+          fallbackStockQty: variant.stock_qty || 0
+        });
       } else {
-        stockData = warehouseStock;
+        variant.stockData = await getVariantStock(variant.id);
       }
 
-      variant.stockData = stockData;
       variant.effectivePrice = effectivePrice !== null ? effectivePrice : variant.price;
       variant.offerInfo = offerInfo;
       variant.promotionInfo = promotionInfo;
@@ -1462,10 +1456,12 @@ if (manualLoadBtn) {
       const quantity = manualSelectedSizes[size];
       if (quantity <= 0) continue;
 
-      const variant = variantsByColor.find(v => v.size === size);
+      const variant = variantsByColor.find(v => normalizeSize(v.size) === normalizeSize(size));
       if (!variant) continue;
 
-      const stock = variant.stockData || { total: 0, general: { stock: 0 }, ventaPublico: { stock: 0 } };
+      const stock = await getVariantSizeStockByWarehouse(variant.id, size, {
+        fallbackStockQty: variant.stock_qty || 0
+      });
       const totalStock = stock.total || 0;
 
       if (!isReturn && quantity > totalStock) {
@@ -1481,7 +1477,7 @@ if (manualLoadBtn) {
       const quantity = manualSelectedSizes[size];
       if (quantity <= 0) return;
 
-      const variant = variantsByColor.find(v => v.size === size);
+      const variant = variantsByColor.find(v => normalizeSize(v.size) === normalizeSize(size));
       if (!variant) return;
 
       // Obtener fuente del stock para este talle
@@ -1646,7 +1642,9 @@ async function searchBySku(sku) {
     }
 
     // Verificar stock del SKU específico
-    const stockData = await getVariantStock(variant.id);
+    const stockData = variant.size
+      ? await getVariantSizeStockByWarehouse(variant.id, variant.size, { fallbackStockQty: variant.stock_qty || 0 })
+      : await getVariantStock(variant.id);
     const totalStock = stockData.total;
 
     if (totalStock === 0 && !returnMode.checked) {
@@ -1721,15 +1719,16 @@ async function loadProductVariants(productId) {
 
     // Obtener stock, precios efectivos e información de ofertas/promociones para cada variante EN PARALELO
     const variantPromises = currentVariants.map(async (variant) => {
-      // Ejecutar todas las llamadas en paralelo para esta variante
-      const [stockData, effectivePrice, offerInfo, promotionInfo] = await Promise.all([
-        getVariantStock(variant.id),
+      // Ejecutar datos de precio/promoción en paralelo; stock se resuelve por nivel correcto.
+      const [effectivePrice, offerInfo, promotionInfo] = await Promise.all([
         getEffectivePrice(variant.id),
         getOfferInfo(variant.id, currentProduct.id, variant.color),
         getPromotionInfo(variant.id)
       ]);
 
-      variant.stockData = stockData;
+      variant.stockData = variant.size
+        ? await getVariantSizeStockByWarehouse(variant.id, variant.size, { fallbackStockQty: variant.stock_qty || 0 })
+        : await getVariantStock(variant.id);
       variant.effectivePrice = effectivePrice !== null ? effectivePrice : variant.price;
       variant.offerInfo = offerInfo;
       variant.promotionInfo = promotionInfo;
@@ -1751,6 +1750,72 @@ async function loadProductVariants(productId) {
   } catch (error) {
     console.error("Error cargando variantes:", error);
     showMessage("Error al cargar variantes: " + error.message, "error");
+  }
+}
+
+let warehousesCache = null;
+
+async function getWarehousesCached() {
+  if (warehousesCache) return warehousesCache;
+
+  const { data: warehouses } = await supabase
+    .from("warehouses")
+    .select("id, code")
+    .in("code", ["general", "venta-publico"]);
+
+  if (warehouses?.length) {
+    const warehouseMap = {};
+    warehouses.forEach((w) => {
+      if (w.code === "general") warehouseMap.generalId = w.id;
+      if (w.code === "venta-publico") warehouseMap.ventaPublicoId = w.id;
+    });
+    warehousesCache = warehouseMap;
+  }
+
+  return warehousesCache || { generalId: null, ventaPublicoId: null };
+}
+
+async function getVariantSizeStockByWarehouse(variantId, size, options = {}) {
+  const fallbackStockQty = Number(options?.fallbackStockQty || 0);
+  const normalizedSize = normalizeSize(size);
+  if (!variantId || !normalizedSize) {
+    return { general: { stock: 0 }, ventaPublico: { stock: 0 }, total: 0 };
+  }
+
+  try {
+    const wh = await getWarehousesCached();
+    const warehouseIds = [wh?.generalId, wh?.ventaPublicoId].filter(Boolean);
+    let generalStock = 0;
+    let ventaPublicoStock = 0;
+
+    if (warehouseIds.length > 0) {
+      const { data: rows, error } = await supabase
+        .from("variant_size_warehouse_stock")
+        .select("size, warehouse_id, stock_qty")
+        .eq("variant_id", variantId)
+        .in("warehouse_id", warehouseIds);
+      if (error) throw error;
+
+      (rows || []).forEach((row) => {
+        if (normalizeSize(row.size) !== normalizedSize) return;
+        const qty = row.stock_qty || 0;
+        if (row.warehouse_id === wh.ventaPublicoId) ventaPublicoStock += qty;
+        else if (row.warehouse_id === wh.generalId) generalStock += qty;
+      });
+    }
+
+    if (generalStock === 0 && ventaPublicoStock === 0 && fallbackStockQty > 0) {
+      generalStock = fallbackStockQty;
+    }
+
+    return {
+      general: { stock: generalStock },
+      ventaPublico: { stock: ventaPublicoStock },
+      total: generalStock + ventaPublicoStock
+    };
+  } catch (error) {
+    console.error("Error obteniendo stock por talle:", error);
+    return { general: { stock: 0 }, ventaPublico: { stock: 0 }, total: 0 };
   }
 }
 

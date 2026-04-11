@@ -1,3 +1,6 @@
+-- LEGACY (Plan 3): este archivo queda como versión histórica.
+-- La versión canónica efectiva de rpc_void_public_sale es canonical:141
+-- y se reafirma en 149_consolidate_critical_rpcs.sql.
 -- 79_void_public_sale.sql — Anular venta y restablecer stock en venta al público (idempotente)
 
 -- 1) Columna voided_at en public_sales

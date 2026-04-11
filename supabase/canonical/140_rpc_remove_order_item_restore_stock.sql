@@ -26,7 +26,6 @@ declare
   v_found boolean;
   v_has_sources boolean;
   v_order_deleted boolean := false;
-  v_vs_qty int;
   v_match_id uuid;
 begin
   v_uid := auth.uid();
@@ -64,6 +63,10 @@ begin
 
   if v_item.variant_id is not null then
     select pv.product_id into v_product_id from public.product_variants pv where pv.id = v_item.variant_id;
+    perform 1
+    from public.product_variants pv
+    where pv.id = v_item.variant_id
+    for update;
   end if;
 
   select exists (
@@ -123,7 +126,11 @@ begin
       if not v_found then
         v_after := v_src.qty;
         insert into public.variant_size_warehouse_stock (variant_id, size, warehouse_id, stock_qty, updated_at)
-        values (v_item.variant_id, v_size_norm, v_src.warehouse_id, v_after, now());
+        values (v_item.variant_id, v_size_norm, v_src.warehouse_id, v_after, now())
+        on conflict (variant_id, size, warehouse_id)
+        do update set
+          stock_qty = public.variant_size_warehouse_stock.stock_qty + excluded.stock_qty,
+          updated_at = now();
         if v_product_id is not null then
           perform public.log_stock_change(
             v_product_id,
@@ -195,17 +202,14 @@ begin
         );
       end if;
     else
-      select coalesce(vsz.stock_qty, 0) into v_vs_qty
-      from public.variant_sizes vsz
-      where vsz.variant_id = v_item.variant_id
-        and vsz.size = v_size_norm
-      limit 1;
-      v_before := coalesce(v_vs_qty, 0);
-      v_after := v_before + v_qty;
+      v_before := 0;
+      v_after := v_qty;
       insert into public.variant_size_warehouse_stock (variant_id, size, warehouse_id, stock_qty, updated_at)
-      values (v_item.variant_id, v_size_norm, v_general_id, v_after, now())
+      values (v_item.variant_id, v_size_norm, v_general_id, v_qty, now())
       on conflict (variant_id, size, warehouse_id)
-      do update set stock_qty = excluded.stock_qty, updated_at = now();
+      do update set
+        stock_qty = public.variant_size_warehouse_stock.stock_qty + excluded.stock_qty,
+        updated_at = now();
       if v_product_id is not null then
         perform public.log_stock_change(
           v_product_id,

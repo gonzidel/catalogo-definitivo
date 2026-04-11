@@ -1,9 +1,12 @@
+-- LEGACY (Plan 3): este archivo queda como versión histórica.
+-- La versión canónica efectiva de rpc_checkout_cart es canonical:124
+-- y se reafirma en 149_consolidate_critical_rpcs.sql.
 -- 86_rpc_checkout_cart_ensure_deduct_by_size.sql
 -- Asegura que al pasar la bolsa a "Mi pedido" se descuente el stock por talle.
 -- Si en tu proyecto quedó activa la versión de 122/123, solo descontaba de variant_warehouse_stock
 -- y no de variant_size_warehouse_stock, por eso el stock no bajaba.
--- Esta migración reaplica la lógica de 82: ítems con size descontan de variant_size_warehouse_stock
--- (general primero, luego venta público). Si no hay fila para ese talle, hace fallback a variant_warehouse_stock.
+-- Esta migración reaplica la lógica de 82: ítems con size descuentan de variant_size_warehouse_stock
+-- (general primero, luego venta público). Plan 2: sin fallback operativo a variant_warehouse_stock para talles.
 
 CREATE OR REPLACE FUNCTION public.rpc_checkout_cart()
 RETURNS json
@@ -64,8 +67,8 @@ BEGIN
       VALUES (
         auth.uid(),
         'active',
-        now() + interval '7 days',
-        now() + interval '14 days'
+        now() + interval '5 days',
+        now() + interval '7 days'
       )
       RETURNING id INTO v_order_id;
     EXCEPTION
@@ -86,8 +89,8 @@ BEGIN
     IF v_expires_at IS NULL OR v_dismantle_at IS NULL THEN
       UPDATE public.orders
       SET
-        expires_at = coalesce(expires_at, created_at + interval '7 days'),
-        dismantle_at = coalesce(dismantle_at, created_at + interval '14 days')
+        expires_at = coalesce(expires_at, created_at + interval '5 days'),
+        dismantle_at = coalesce(dismantle_at, created_at + interval '7 days')
       WHERE id = v_order_id;
     END IF;
   END IF;
@@ -127,7 +130,7 @@ BEGIN
     v_remaining_qty := 0;
     v_size_normalized := trim(coalesce(r.size, ''));
 
-    -- Intentar descontar por talle (variant_size_warehouse_stock) si hay size y hay stock ahí
+    -- Descontar por talle (variant_size_warehouse_stock) si hay size
     v_use_size_table := false;
     IF v_size_normalized != '' AND v_general_id IS NOT NULL AND v_venta_id IS NOT NULL THEN
       SELECT
@@ -138,37 +141,47 @@ BEGIN
       WHERE variant_id = r.variant_id AND trim(size) = v_size_normalized
         AND warehouse_id IN (v_general_id, v_venta_id);
 
-      IF (coalesce(v_size_stock_general, 0) + coalesce(v_size_stock_venta, 0)) >= v_qty THEN
-        v_use_size_table := true;
-        v_general_stock := coalesce(v_size_stock_general, 0);
-        IF v_general_stock >= v_qty THEN
-          v_qty_from_general := v_qty;
-          v_remaining_qty := 0;
-        ELSIF v_general_stock > 0 THEN
-          v_qty_from_general := v_general_stock;
-          v_remaining_qty := v_qty - v_general_stock;
-        ELSE
-          v_remaining_qty := v_qty;
-        END IF;
-        IF v_remaining_qty > 0 THEN
-          v_qty_from_venta := v_remaining_qty;
-        END IF;
+      IF (coalesce(v_size_stock_general, 0) + coalesce(v_size_stock_venta, 0)) < v_qty THEN
+        RAISE EXCEPTION
+          USING MESSAGE = format(
+            'Stock por talle insuficiente para %s (color %s talle %s). Disponible por talle: %s, solicitado: %s.',
+            coalesce(r.product_name,'producto'),
+            coalesce(r.color,'-'),
+            v_size_normalized,
+            coalesce(v_size_stock_general, 0) + coalesce(v_size_stock_venta, 0),
+            v_qty
+          );
+      END IF;
 
-        IF v_qty_from_general > 0 THEN
-          UPDATE public.variant_size_warehouse_stock
-          SET stock_qty = stock_qty - v_qty_from_general, updated_at = now()
-          WHERE variant_id = r.variant_id AND trim(size) = v_size_normalized AND warehouse_id = v_general_id;
-        END IF;
-        IF v_qty_from_venta > 0 THEN
-          UPDATE public.variant_size_warehouse_stock
-          SET stock_qty = stock_qty - v_qty_from_venta, updated_at = now()
-          WHERE variant_id = r.variant_id AND trim(size) = v_size_normalized AND warehouse_id = v_venta_id;
-        END IF;
+      v_use_size_table := true;
+      v_general_stock := coalesce(v_size_stock_general, 0);
+      IF v_general_stock >= v_qty THEN
+        v_qty_from_general := v_qty;
+        v_remaining_qty := 0;
+      ELSIF v_general_stock > 0 THEN
+        v_qty_from_general := v_general_stock;
+        v_remaining_qty := v_qty - v_general_stock;
+      ELSE
+        v_remaining_qty := v_qty;
+      END IF;
+      IF v_remaining_qty > 0 THEN
+        v_qty_from_venta := v_remaining_qty;
+      END IF;
+
+      IF v_qty_from_general > 0 THEN
+        UPDATE public.variant_size_warehouse_stock
+        SET stock_qty = stock_qty - v_qty_from_general, updated_at = now()
+        WHERE variant_id = r.variant_id AND trim(size) = v_size_normalized AND warehouse_id = v_general_id;
+      END IF;
+      IF v_qty_from_venta > 0 THEN
+        UPDATE public.variant_size_warehouse_stock
+        SET stock_qty = stock_qty - v_qty_from_venta, updated_at = now()
+        WHERE variant_id = r.variant_id AND trim(size) = v_size_normalized AND warehouse_id = v_venta_id;
       END IF;
     END IF;
 
-    -- Si no se usó la tabla por talle, descontar de variant_warehouse_stock (general luego venta público)
-    IF NOT v_use_size_table THEN
+    -- Solo sin talle: descontar de variant_warehouse_stock (legacy compatible)
+    IF NOT v_use_size_table AND v_size_normalized = '' THEN
       v_remaining_qty := v_qty;
       v_qty_from_general := 0;
       v_qty_from_venta := 0;
@@ -241,6 +254,6 @@ END;
 $$;
 
 COMMENT ON FUNCTION public.rpc_checkout_cart() IS
-  'Checkout: descuenta stock por talle (variant_size_warehouse_stock) o por variante (variant_warehouse_stock). Aplicar 86 después de 122/123 si el stock no se descontaba.';
+  'Checkout: descuenta stock por talle desde variant_size_warehouse_stock; sin talle usa variant_warehouse_stock por compatibilidad legacy.';
 
 SELECT pg_notify('pgrst', 'reload schema');

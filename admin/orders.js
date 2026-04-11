@@ -2734,8 +2734,9 @@ async function getItemWarehouse(item) {
       }
     }
     
-    // Si no se encontró stock por talle o no hay tamaño, consultar variant_warehouse_stock como fallback
-    if (generalQty === 0 && ventaQty === 0) {
+    // Solo sin talle: consultar variant_warehouse_stock por compatibilidad legacy.
+    // Si hay talle, no mezclar con tabla derivada de variante.
+    if (!normalizedSize && generalQty === 0 && ventaQty === 0) {
       const { data: stockData, error } = await supabase
         .from("variant_warehouse_stock")
         .select("warehouse_id, stock_qty")
@@ -5957,19 +5958,6 @@ async function cancelOrder(orderId) {
       let currentQty = 0;
       if (matchingStock) {
         currentQty = matchingStock.stock_qty || 0;
-      } else {
-        // Si no existe en variant_size_warehouse_stock, verificar variant_sizes como fallback
-        const { data: variantSizeData } = await supabase
-          .from("variant_sizes")
-          .select("stock_qty")
-          .eq("variant_id", item.variant_id)
-          .eq("size", normalizedItemSize)
-          .maybeSingle();
-        
-        if (variantSizeData) {
-          currentQty = variantSizeData.stock_qty || 0;
-          console.log(`🔵 Usando fallback desde variant_sizes: ${currentQty} unidades`);
-        }
       }
       
       const newQty = currentQty + qty;
@@ -5992,36 +5980,8 @@ async function cancelOrder(orderId) {
       } else {
         console.log(`✅ Stock devuelto correctamente: ${qty} unidades agregadas al almacén 'general' para variant ${item.variant_id}, talle ${normalizedItemSize}`);
         
-        // Si se usó fallback (no había stock en variant_size_warehouse_stock), también actualizar variant_sizes
-        if (!matchingStock) {
-          const { data: variantSizeData } = await supabase
-            .from("variant_sizes")
-            .select("stock_qty")
-            .eq("variant_id", item.variant_id)
-            .eq("size", normalizedItemSize)
-            .maybeSingle();
-          
-          if (variantSizeData) {
-            const variantSizeCurrentQty = variantSizeData.stock_qty || 0;
-            const variantSizeNewQty = variantSizeCurrentQty + qty;
-            
-            const { error: variantSizeUpdateError } = await supabase
-              .from("variant_sizes")
-              .upsert({
-                variant_id: item.variant_id,
-                size: normalizedItemSize,
-                stock_qty: variantSizeNewQty
-              }, {
-                onConflict: 'variant_id,size'
-              });
-            
-            if (variantSizeUpdateError) {
-              console.warn(`⚠️ Error actualizando variant_sizes:`, variantSizeUpdateError);
-            } else {
-              console.log(`✅ variant_sizes actualizado: ${variantSizeCurrentQty} → ${variantSizeNewQty}`);
-            }
-          }
-        }
+        // variant_sizes se actualiza automáticamente via trigger 84
+        // al escribir en variant_size_warehouse_stock.
       }
       
       // También liberar la reserva en product_variants (por compatibilidad)

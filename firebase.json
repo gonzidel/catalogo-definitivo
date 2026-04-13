@@ -33,7 +33,11 @@
       "scripts/verify-*.ps1",
       "scripts/fetch-*.js",
       "verify-*.ps1",
-      "qz-private-*.pem"
+      "qz-private-*.pem",
+      "debug-*.html",
+      "diagnostico-*.html",
+      "test-*.html",
+      "verificar-*.html"
     ],
     "rewrites": [
       {

@@ -266,6 +266,7 @@ const HISTORY_NOTIFICATION_KEY = "fyl_dashboard_history_notification";
 let currentUserId = null;
 let currentCartId = null;
 let currentCartItems = [];
+const currentOrderUiStateById = new Map();
 let ordersRealtimeSubscription = null;
 let ordersRealtimeSetupPromise = null;
 let ordersRealtimeActiveUserId = null;
@@ -286,6 +287,7 @@ const ORDERS_REALTIME_RETRY_MS = 2000;
 const ORDERS_MAINTENANCE_MIN_INTERVAL_MS = 60 * 1000;
 
 let lastOrderDeadlineReminderContext = null;
+let lastOrderExpiredPendingDisassemblyContext = null;
 let lastOrdersMaintenanceAtMs = 0;
 let ordersRefreshTimerId = null;
 let ordersRefreshInFlight = null;
@@ -410,6 +412,87 @@ function orderDaysRemaining(createdAtIso, dismantleAtIso) {
   return Math.max(0, ORDER_DISMANTLE_DAYS - daysElapsed);
 }
 
+function getOrderNonCancelledItems(order) {
+  const items = Array.isArray(order?.order_items) ? order.order_items : [];
+  return items.filter((item) => String(item?.status || "").toLowerCase().trim() !== "cancelled");
+}
+
+function isOrderStillVisibleInMyOrder(order) {
+  const status = String(order?.status || "").toLowerCase().trim();
+  return status === "active" || status === "closing_soon" || status === "closed";
+}
+
+function hasOrderPassedCustomerEditWindow(order) {
+  const nowMs = Date.now();
+  const dismantleAtMs = order?.dismantle_at ? new Date(order.dismantle_at).getTime() : NaN;
+  if (Number.isFinite(dismantleAtMs)) {
+    return nowMs >= dismantleAtMs;
+  }
+  const createdAtMs = order?.created_at ? new Date(order.created_at).getTime() : NaN;
+  if (!Number.isFinite(createdAtMs)) return false;
+  const daysElapsed = (nowMs - createdAtMs) / (1000 * 60 * 60 * 24);
+  return daysElapsed >= ORDER_DISMANTLE_DAYS;
+}
+
+function isOrderCompletelyDisassembledByAdmin(order) {
+  const operationalStatuses = new Set(["reserved", "picked", "waiting", "missing"]);
+  const nonCancelledItems = getOrderNonCancelledItems(order);
+  if (nonCancelledItems.length === 0) return true;
+  const hasOperationalItems = nonCancelledItems.some((item) =>
+    operationalStatuses.has(String(item?.status || "").toLowerCase().trim())
+  );
+  return !hasOperationalItems;
+}
+
+function isOrderExpiredPendingAdminDisassembly(order) {
+  if (!order) return false;
+  if (!hasOrderPassedCustomerEditWindow(order)) return false;
+  if (!isOrderStillVisibleInMyOrder(order)) return false;
+  const nonCancelledItems = getOrderNonCancelledItems(order);
+  if (nonCancelledItems.length === 0) return false;
+  if (isOrderCompletelyDisassembledByAdmin(order)) return false;
+  return true;
+}
+
+function deriveOrderUiState(order) {
+  const isExpiredPendingDisassembly = isOrderExpiredPendingAdminDisassembly(order);
+  return {
+    isExpiredPendingDisassembly,
+    isReadOnly: isExpiredPendingDisassembly,
+    canEdit: !isExpiredPendingDisassembly,
+    canContactWhatsApp: isExpiredPendingDisassembly,
+  };
+}
+
+function getOrderUiState(orderId) {
+  if (!orderId) return null;
+  return currentOrderUiStateById.get(orderId) || null;
+}
+
+function resolveOrderIdFromElement(triggerEl, fallbackOrderId = "") {
+  if (fallbackOrderId) return fallbackOrderId;
+  const card = triggerEl?.closest?.(".dash-order");
+  return card?.dataset?.orderId || "";
+}
+
+function showReadOnlyOrderBlockedMessage() {
+  const message =
+    "Este pedido está vencido y en proceso de desarme. Escribinos por WhatsApp para ayudarte.";
+  if (typeof window.showToast === "function") {
+    window.showToast(message, "info");
+    return;
+  }
+  alert(message);
+}
+
+function guardReadOnlyOrderAction({ triggerEl = null, orderId = "" } = {}) {
+  const resolvedOrderId = resolveOrderIdFromElement(triggerEl, orderId);
+  const uiState = getOrderUiState(resolvedOrderId);
+  if (!uiState?.isReadOnly) return false;
+  showReadOnlyOrderBlockedMessage();
+  return true;
+}
+
 function buildSyntheticDeadlineNotificationsList(ctx) {
   if (!ctx || ctx.daysRemaining == null) return [];
   const dr = ctx.daysRemaining;
@@ -440,10 +523,30 @@ function buildSyntheticDeadlineNotificationsList(ctx) {
   ];
 }
 
+function buildSyntheticExpiredPendingDisassemblyNotificationsList(ctx) {
+  if (!ctx?.orderId) return [];
+  const sortTs = ctx.dismantleAtIso || ctx.createdAtIso || new Date().toISOString();
+  return [
+    {
+      id: `synthetic-order-expired-pending-disassembly-${ctx.orderId}`,
+      type: "ORDER_EXPIRED_PENDING_DISASSEMBLY",
+      message:
+        "Tu pedido alcanzó el plazo de 7 días. Ya no se puede editar desde la web y está pendiente de desarme por administración.",
+      read: false,
+      created_at: sortTs,
+      payload: { action_url: "dashboard.html#section-active-order" },
+    },
+  ];
+}
+
 function syncOrderDeadlineSyntheticNotifications() {
   try {
-    window.__fylGetSyntheticNotifications = () =>
-      buildSyntheticDeadlineNotificationsList(lastOrderDeadlineReminderContext);
+    window.__fylGetSyntheticNotifications = () => [
+      ...buildSyntheticExpiredPendingDisassemblyNotificationsList(
+        lastOrderExpiredPendingDisassemblyContext
+      ),
+      ...buildSyntheticDeadlineNotificationsList(lastOrderDeadlineReminderContext),
+    ];
     window.dispatchEvent(new CustomEvent("fyl-synthetic-notifications-changed"));
   } catch (_) {
     /* ignore */
@@ -452,6 +555,7 @@ function syncOrderDeadlineSyntheticNotifications() {
 
 function clearOrderDeadlineSyntheticNotifications() {
   lastOrderDeadlineReminderContext = null;
+  lastOrderExpiredPendingDisassemblyContext = null;
   try {
     window.__fylGetSyntheticNotifications = () => [];
     window.dispatchEvent(new CustomEvent("fyl-synthetic-notifications-changed"));
@@ -3676,6 +3780,7 @@ async function loadCart(userId, options = {}) {
 async function loadOrders(userId, options = {}) {
   const ordersSection = document.getElementById("orders-section");
   if (!ordersSection) return;
+  currentOrderUiStateById.clear();
 
   function getOrderStatusSummary(orderItems = []) {
     const normStatus = (s) => String(s || "").toLowerCase().trim();
@@ -3776,12 +3881,14 @@ async function loadOrders(userId, options = {}) {
           <p style="color:#721c24; margin:0;">Error cargando pedidos activos.</p>
         </div>
         `;
+      currentOrderUiStateById.clear();
       clearOrderDeadlineSyntheticNotifications();
       return;
     }
 
     if (!orders || orders.length === 0) {
         replaceKnownOrderIds([]);
+        currentOrderUiStateById.clear();
         ordersSection.innerHTML = `
         <div class="order-item" style="border:1px solid #e0e0e0; padding:16px; border-radius:8px; background:#fafafa;">
           <div class="section-title dash-title" style="margin-bottom:12px;">📦 Mi pedido</div>
@@ -3793,6 +3900,7 @@ async function loadOrders(userId, options = {}) {
     }
 
     lastOrderDeadlineReminderContext = null;
+    lastOrderExpiredPendingDisassemblyContext = null;
 
     // Precargar SKUs para que "Ver producto" vaya al PDP real (index#/pdp/<sku>)
     const allVariantIds = [];
@@ -3818,6 +3926,8 @@ async function loadOrders(userId, options = {}) {
         const isActive = orderStatus === "active";
         const isClosingSoon = orderStatus === "closing_soon";
         const isClosed = orderStatus === "closed";
+        const uiState = deriveOrderUiState(order);
+        currentOrderUiStateById.set(order.id, uiState);
         
         // Calcular total excluyendo items faltantes (con precios normalizados)
         const validItems = items.filter(item => item.status !== 'missing');
@@ -3841,7 +3951,7 @@ async function loadOrders(userId, options = {}) {
           statusLabel = "Activo";
           statusStyle = "background:#e6f4ea; color:#1b5e20;";
         }
-        const visibleItems = items.filter((item) => item.status !== "cancelled");
+        const visibleItems = getOrderNonCancelledItems(order);
         const normStatus = (s) => (String(s || "").toLowerCase().trim());
         /** Espera (waiting) es solo interno; el cliente ve todo como reserva. */
         const clientVisibleStatus = (s) => {
@@ -3997,13 +4107,17 @@ async function loadOrders(userId, options = {}) {
                   <div class="item-row__col-toggle">${multiSize ? `<button type="button" class="item-row__sizes-toggle" aria-expanded="false">▾</button>` : ""}</div>
                   <div class="item-row__col-status">${statusPicked}</div>
                   <span class="item-row__price-total">${formatOrderPrice(lineTotal)}</span>
-                  <div class="item-row__menu-wrap">
-                    <button type="button" class="item-row__kebab" aria-label="Opciones" aria-haspopup="true" aria-expanded="false">⋯</button>
-                    <div class="item-row__popover" role="menu" aria-hidden="true">
-                      <button type="button" class="item-row__menuitem item-row__menuitem--danger" data-action="remove-order-item" data-order-item-ids="${orderItemIds.replace(/"/g, "&quot;")}">Quitar del pedido</button>
-                      <a href="${buildCatalogHrefFromVariantOrName(base.variant_id, productName)}" class="item-row__menuitem" data-action="view-product">Ver producto</a>
-                    </div>
-                  </div>
+                  ${
+                    uiState.canEdit
+                      ? `<div class="item-row__menu-wrap">
+                          <button type="button" class="item-row__kebab" aria-label="Opciones" aria-haspopup="true" aria-expanded="false">⋯</button>
+                          <div class="item-row__popover" role="menu" aria-hidden="true">
+                            <button type="button" class="item-row__menuitem item-row__menuitem--danger" data-action="remove-order-item" data-order-item-ids="${orderItemIds.replace(/"/g, "&quot;")}">Quitar del pedido</button>
+                            <a href="${buildCatalogHrefFromVariantOrName(base.variant_id, productName)}" class="item-row__menuitem" data-action="view-product">Ver producto</a>
+                          </div>
+                        </div>`
+                      : `<span class="item-row__kebab item-row__kebab--static" aria-hidden="true">⋯</span>`
+                  }
                 </div>
                 ${multiSize ? `<div class="item-row__sizes-line" hidden>${sizesLineHtml}</div>` : ""}
               </div>
@@ -4061,14 +4175,18 @@ async function loadOrders(userId, options = {}) {
                   <div class="item-row__col-toggle"></div>
                   <div class="item-row__col-status">${statusHtml}</div>
                   <span class="item-row__price-total">${formatOrderPrice(lineTotal)}</span>
-                  <div class="item-row__menu-wrap">
-                    <button type="button" class="item-row__kebab" aria-label="Opciones" aria-haspopup="true" aria-expanded="false">⋯</button>
-                    <div class="item-row__popover" role="menu" aria-hidden="true">
-                      <button type="button" class="item-row__menuitem item-row__menuitem--danger" data-action="remove-order-item" data-order-item-ids="${(m.id || "").replace(/"/g, "&quot;")}">Quitar del pedido</button>
-                      <a href="../index.html?similares=1&articulo=${encodeURIComponent(productName)}&talle=${encodeURIComponent(size)}" class="item-row__menuitem" data-action="view-similares">Ver similares</a>
-                      <a href="${buildCatalogHrefFromVariantOrName(m.variant_id, productName)}" class="item-row__menuitem" data-action="view-product">Ver producto</a>
-                    </div>
-                  </div>
+                  ${
+                    uiState.canEdit
+                      ? `<div class="item-row__menu-wrap">
+                          <button type="button" class="item-row__kebab" aria-label="Opciones" aria-haspopup="true" aria-expanded="false">⋯</button>
+                          <div class="item-row__popover" role="menu" aria-hidden="true">
+                            <button type="button" class="item-row__menuitem item-row__menuitem--danger" data-action="remove-order-item" data-order-item-ids="${(m.id || "").replace(/"/g, "&quot;")}">Quitar del pedido</button>
+                            <a href="../index.html?similares=1&articulo=${encodeURIComponent(productName)}&talle=${encodeURIComponent(size)}" class="item-row__menuitem" data-action="view-similares">Ver similares</a>
+                            <a href="${buildCatalogHrefFromVariantOrName(m.variant_id, productName)}" class="item-row__menuitem" data-action="view-product">Ver producto</a>
+                          </div>
+                        </div>`
+                      : `<span class="item-row__kebab item-row__kebab--static" aria-hidden="true">⋯</span>`
+                  }
                 </div>
               </div>
             `;
@@ -4103,7 +4221,7 @@ async function loadOrders(userId, options = {}) {
           finalizeTitle = "Para finalizar el pedido debe esperar a que el vendedor confirme el stock de la reserva.";
         }
 
-        if (isActive || isClosingSoon) {
+        if ((isActive || isClosingSoon) && !uiState.isReadOnly) {
           lastOrderDeadlineReminderContext = {
             orderId: order.id,
             createdAtIso: order.created_at,
@@ -4115,62 +4233,86 @@ async function loadOrders(userId, options = {}) {
         } else {
           lastOrderDeadlineReminderContext = null;
         }
+        if (uiState.isExpiredPendingDisassembly) {
+          lastOrderExpiredPendingDisassemblyContext = {
+            orderId: order.id,
+            createdAtIso: order.created_at,
+            dismantleAtIso: order.dismantle_at,
+          };
+        }
 
         const closedStateChip = isClosed
           ? `<span class="dash-order-header-chip dash-order-header-chip--preparing">Preparando pedido</span>`
           : "";
         const daysChip = `<span class="dash-order-header-chip dash-order-header-chip--days" title="Quedan ${daysRemaining} días para cerrar el pedido (plazo total ${ORDER_DISMANTLE_DAYS} días desde la creación)">${daysRemaining} días</span>`;
+        const orderCardClass = uiState.isReadOnly
+          ? "dash-order order-item dash-order--readonly-expired"
+          : "dash-order order-item";
+        const readonlyCriticalOverlayHtml = uiState.isExpiredPendingDisassembly
+          ? `<div class="dash-order-readonly-critical" role="status" aria-live="polite">
+               <div class="dash-order-readonly-critical__panel">
+                 <h3 class="dash-order-readonly-critical__title">Tu pedido alcanzó el plazo de 7 días</h3>
+                 <p class="dash-order-readonly-critical__text">Ya no podés modificarlo desde la web, pero todavía no fue desarmado.</p>
+                 <p class="dash-order-readonly-critical__emphasis">Si querés que lo preparemos o tenés dudas, escribinos por WhatsApp y te ayudamos.</p>
+                 <a href="${WHATSAPP_ENVIOS_HREF}" target="_blank" rel="noopener noreferrer" class="btn btn-primary dash-order-readonly-critical__cta">Escribir por WhatsApp</a>
+               </div>
+             </div>`
+          : "";
+        const actionCtaHtml = uiState.isReadOnly
+          ? `<div class="dash-order__cta" aria-hidden="true"></div>`
+          : (isActive || isClosingSoon
+              ? `<div class="dash-order__cta"><div class="dash-order-finalize-wrap"><button type="button" class="btn btn-finalize-order close-order-btn ${finalizeBtnClass}" data-order-id="${order.id}" data-order-items-count="${totalUnits}" data-all-picked="${allPickedForOrder ? "true" : "false"}" data-has-reserved="${hasReservedInOrder ? "true" : "false"}" data-has-missing-items="${hasMissingItems ? "true" : "false"}" data-finalize-title="${(finalizeTitle || "").replace(/"/g, "&quot;")}" ${canFinalize ? "" : (totalUnits < MIN_UNITS_TO_FINALIZE ? "disabled" : "")} ${finalizeTitle ? `title="${finalizeTitle.replace(/"/g, "&quot;")}"` : ""}>${finalizeBtnText}</button><div class="dash-order-finalize-tooltip" id="finalize-tooltip-${order.id}" role="tooltip" aria-hidden="true"></div></div></div>`
+              : `<div class="dash-order__cta"><button type="button" class="dash-order-modify-link" data-order-id="${order.id}">Modificar pedido</button></div>`);
 
         return `
-          <div class="dash-order order-item" data-order-id="${order.id}" data-order-closed="${isClosed ? "true" : "false"}">
-            <div class="dash-order__head--compact dash-order__head--summary">
-              <div class="dash-order__head-left">
-                <div class="dash-order__title">📦 Mi pedido</div>
-              </div>
-              <div class="dash-order__head-right">
-                ${daysChip}
-                ${
-                  isActive || isClosingSoon
-                    ? `<div class="dash-order-header-menu-wrap">
-                         <button type="button" class="dash-order-header-kebab" aria-label="Opciones del pedido" aria-haspopup="true" aria-expanded="false"><svg class="dash-order-header-kebab__icon" width="14" height="4" viewBox="0 0 14 4" aria-hidden="true" focusable="false"><circle cx="2" cy="2" r="1.2"/><circle cx="7" cy="2" r="1.2"/><circle cx="12" cy="2" r="1.2"/></svg></button>
-                         <div class="dash-order-header-popover" role="menu" aria-hidden="true">
-                           <button type="button" class="dash-order-header-menuitem" data-cancel-entire-order="${order.id}">Cancelar pedido</button>
-                         </div>
-                       </div>`
-                    : `<span class="dash-order-header-kebab" aria-hidden="true"><svg class="dash-order-header-kebab__icon" width="14" height="4" viewBox="0 0 14 4" aria-hidden="true" focusable="false"><circle cx="2" cy="2" r="1.2"/><circle cx="7" cy="2" r="1.2"/><circle cx="12" cy="2" r="1.2"/></svg></span>`
-                }
-              </div>
-              <div class="dash-order__status-row">
-                <div class="dash-order__status-left">
-                  <span class="dash-order-header-chip dash-order-header-chip--state">${getOrderStatusSummary(visibleItems)}</span>
+          <div class="${orderCardClass}" data-order-id="${order.id}" data-order-closed="${isClosed ? "true" : "false"}" data-order-readonly="${uiState.isReadOnly ? "true" : "false"}" data-order-expired-pending-disassembly="${uiState.isExpiredPendingDisassembly ? "true" : "false"}">
+            <div class="dash-order__readonly-content">
+              <div class="dash-order__head--compact dash-order__head--summary">
+                <div class="dash-order__head-left">
+                  <div class="dash-order__title">📦 Mi pedido</div>
                 </div>
-                <div class="dash-order__status-right">
-                  ${closedStateChip}
+                <div class="dash-order__head-right">
+                  ${daysChip}
+                  ${
+                    (isActive || isClosingSoon) && uiState.canEdit
+                      ? `<div class="dash-order-header-menu-wrap">
+                           <button type="button" class="dash-order-header-kebab" aria-label="Opciones del pedido" aria-haspopup="true" aria-expanded="false"><svg class="dash-order-header-kebab__icon" width="14" height="4" viewBox="0 0 14 4" aria-hidden="true" focusable="false"><circle cx="2" cy="2" r="1.2"/><circle cx="7" cy="2" r="1.2"/><circle cx="12" cy="2" r="1.2"/></svg></button>
+                           <div class="dash-order-header-popover" role="menu" aria-hidden="true">
+                             <button type="button" class="dash-order-header-menuitem" data-cancel-entire-order="${order.id}">Cancelar pedido</button>
+                           </div>
+                         </div>`
+                      : `<span class="dash-order-header-kebab" aria-hidden="true"><svg class="dash-order-header-kebab__icon" width="14" height="4" viewBox="0 0 14 4" aria-hidden="true" focusable="false"><circle cx="2" cy="2" r="1.2"/><circle cx="7" cy="2" r="1.2"/><circle cx="12" cy="2" r="1.2"/></svg></span>`
+                  }
+                </div>
+                <div class="dash-order__status-row">
+                  <div class="dash-order__status-left">
+                    <span class="dash-order-header-chip dash-order-header-chip--state">${getOrderStatusSummary(visibleItems)}</span>
+                  </div>
+                  <div class="dash-order__status-right">
+                    ${closedStateChip}
+                  </div>
                 </div>
               </div>
-            </div>
-            <div class="dash-divider"></div>
-            <div class="dash-order__head--compact">
-              <div>
-                <div class="dash-order__number">Pedido #${orderDisplayNumber}</div>
-                <div class="dash-order__total-line">Total: ${formatOrderPrice(total)}</div>
+              <div class="dash-divider"></div>
+              <div class="dash-order__head--compact">
+                <div>
+                  <div class="dash-order__number">Pedido #${orderDisplayNumber}</div>
+                  <div class="dash-order__total-line">Total: ${formatOrderPrice(total)}</div>
+                </div>
+                ${actionCtaHtml}
               </div>
-              ${
-                isActive || isClosingSoon
-                  ? `<div class="dash-order__cta"><div class="dash-order-finalize-wrap"><button type="button" class="btn btn-finalize-order close-order-btn ${finalizeBtnClass}" data-order-id="${order.id}" data-order-items-count="${totalUnits}" data-all-picked="${allPickedForOrder ? "true" : "false"}" data-has-reserved="${hasReservedInOrder ? "true" : "false"}" data-has-missing-items="${hasMissingItems ? "true" : "false"}" data-finalize-title="${(finalizeTitle || "").replace(/"/g, "&quot;")}" ${canFinalize ? "" : (totalUnits < MIN_UNITS_TO_FINALIZE ? "disabled" : "")} ${finalizeTitle ? `title="${finalizeTitle.replace(/"/g, "&quot;")}"` : ""}>${finalizeBtnText}</button><div class="dash-order-finalize-tooltip" id="finalize-tooltip-${order.id}" role="tooltip" aria-hidden="true"></div></div></div>`
-                  : `<div class="dash-order__cta"><button type="button" class="dash-order-modify-link" data-order-id="${order.id}">Modificar pedido</button></div>`
-              }
+              <div class="dash-divider"></div>
+              <div class="dash-order__sub">Productos del pedido (${totalUnits})</div>
+              <div class="dash-order__list cart-items-list dash-order__list--collapsible" style="margin-top:8px;" data-max-collapsed-items="4">
+                ${itemsHtmlAll || "<p>No hay productos asociados al pedido.</p>"}
+              </div>
+              ${(groupedItems.length + missingItems.length) > 4
+                ? `<button type="button" class="dash-order__list-toggle" data-order-id="${order.id}" aria-expanded="false">
+                    Ver todo el pedido ▾
+                  </button>`
+                : ""}
             </div>
-            <div class="dash-divider"></div>
-            <div class="dash-order__sub">Productos del pedido (${totalUnits})</div>
-            <div class="dash-order__list cart-items-list dash-order__list--collapsible" style="margin-top:8px;" data-max-collapsed-items="4">
-              ${itemsHtmlAll || "<p>No hay productos asociados al pedido.</p>"}
-            </div>
-            ${(groupedItems.length + missingItems.length) > 4
-              ? `<button type="button" class="dash-order__list-toggle" data-order-id="${order.id}" aria-expanded="false">
-                  Ver todo el pedido ▾
-                </button>`
-              : ""}
+            ${readonlyCriticalOverlayHtml}
           </div>
         `;
       }));
@@ -4194,6 +4336,7 @@ async function loadOrders(userId, options = {}) {
         const hasMissingItems = btn.dataset.hasMissingItems === "true";
         const finalizeTitle = (btn.dataset.finalizeTitle || "").replace(/&quot;/g, '"');
         if (!orderId) return;
+        if (guardReadOnlyOrderAction({ triggerEl: btn, orderId })) return;
         if (closeOrderInFlight.has(orderId) || btn.classList.contains("is-loading")) return;
 
         if (hasMissingItems) {
@@ -4278,6 +4421,7 @@ async function loadOrders(userId, options = {}) {
       btn.onclick = async () => {
         const orderId = btn.dataset.orderId;
         if (!orderId || !currentUserId) return;
+        if (guardReadOnlyOrderAction({ triggerEl: btn, orderId })) return;
         btn.disabled = true;
         try {
           const { error } = await supabase.rpc("rpc_reopen_order", { p_order_id: orderId });
@@ -4390,6 +4534,10 @@ async function loadOrders(userId, options = {}) {
     // Menú ⋯ en ítems del pedido: abrir/cerrar popover
     ordersSection.querySelectorAll(".item-row__kebab").forEach((kebabBtn) => {
       kebabBtn.onclick = (e) => {
+        if (guardReadOnlyOrderAction({ triggerEl: kebabBtn })) {
+          e.preventDefault();
+          return;
+        }
         e.stopPropagation();
         const wrap = kebabBtn.closest(".item-row__menu-wrap");
         const popover = wrap?.querySelector(".item-row__popover");
@@ -4422,6 +4570,7 @@ async function loadOrders(userId, options = {}) {
     ordersSection.querySelectorAll(".item-row__menuitem[data-action='remove-order-item']").forEach((btn) => {
       btn.onclick = async (e) => {
         e.preventDefault();
+        if (guardReadOnlyOrderAction({ triggerEl: btn })) return;
         const orderCard = btn.closest(".dash-order");
         const isOrderClosed = orderCard?.dataset.orderClosed === "true";
         if (isOrderClosed) {
@@ -4540,6 +4689,10 @@ async function loadOrders(userId, options = {}) {
     // Menú ⋯ del encabezado de la tarjeta (Pedido abierto | 12 días): abrir/cerrar y opción Cancelar pedido
     ordersSection.querySelectorAll(".dash-order-header-menu-wrap .dash-order-header-kebab").forEach((kebabBtn) => {
       kebabBtn.onclick = (e) => {
+        if (guardReadOnlyOrderAction({ triggerEl: kebabBtn })) {
+          e.preventDefault();
+          return;
+        }
         e.stopPropagation();
         const wrap = kebabBtn.closest(".dash-order-header-menu-wrap");
         const popover = wrap?.querySelector(".dash-order-header-popover");
@@ -4574,6 +4727,7 @@ async function loadOrders(userId, options = {}) {
       btn.onclick = async () => {
         const orderId = btn.dataset.cancelEntireOrder;
         if (!orderId) return;
+        if (guardReadOnlyOrderAction({ triggerEl: btn, orderId })) return;
         const popover = btn.closest(".dash-order-header-popover");
         if (popover) {
           popover.classList.remove("is-open");
@@ -4589,6 +4743,7 @@ async function loadOrders(userId, options = {}) {
       btn.onclick = async () => {
         const orderId = btn.dataset.modifyOrder;
         if (!orderId) return;
+        if (guardReadOnlyOrderAction({ triggerEl: btn, orderId })) return;
         const popover = btn.closest(".dash-order-header-popover");
         if (popover) {
           popover.classList.remove("is-open");
@@ -4659,6 +4814,7 @@ async function loadOrders(userId, options = {}) {
     setupHistoryControls();
   } catch (error) {
     console.warn("âš ï¸ Error cargando pedidos:", error.message);
+    currentOrderUiStateById.clear();
         ordersSection.innerHTML = `
       <div class="order-item" style="border:1px solid #f5c6cb; background:#f8d7da; padding:16px; border-radius:8px;">
         <p style="color:#721c24; margin:0;">Error cargando pedidos activos.</p>
@@ -5560,6 +5716,10 @@ document.addEventListener("DOMContentLoaded", initDashboard);
 }
 
 async function cancelEntireOrder(orderId) {
+  if (getOrderUiState(orderId)?.isReadOnly) {
+    showReadOnlyOrderBlockedMessage();
+    return;
+  }
   try {
     const confirmed = await showDashboardConfirmModal({
       title: "¿Seguro que querés cancelar todo el pedido?",

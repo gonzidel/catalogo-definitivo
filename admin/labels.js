@@ -914,19 +914,12 @@ async function setupQZSignature() {
       }
 
       try {
-        // Obtener secreto compartido (desde config module o window fallback)
-        // CAMINO 2: Fallback temporal hardcodeado para prueba rápida
-        let secret = (typeof QZ_SIGN_SECRET !== 'undefined' ? QZ_SIGN_SECRET : "") ||
-          (typeof window !== 'undefined' ? window.QZ_SIGN_SECRET : "") ||
-          "a8cc79b81b8552702d7deccbef31c1eea7a30043b032d136a8eb4671614b5b75";
-
-        console.log("QZ Debug: origin =", typeof location !== 'undefined' ? location.origin : "server");
-        console.log("QZ Debug: secret len =", secret.length);
-
-        console.log("📡 Enviando request de firma a Edge Function (Shared Secret)...");
-        console.log("📤 toSign a enviar (len=" + toSign.length + "):", toSign.substring(0, 50) + "...");
-        console.log("🌐 URL de firma:", `${SUPABASE_URL}/functions/v1/qz-sign`);
-        console.log("🔑 Secret length:", secret.length);
+        // Obtener secreto desde config (requiere QZ_SIGN_SECRET en config.local.js)
+        const secret = (typeof QZ_SIGN_SECRET !== 'undefined' ? QZ_SIGN_SECRET : "") ||
+          (typeof window !== 'undefined' ? window.QZ_SIGN_SECRET : "");
+        if (!secret) {
+          throw new Error("QZ_SIGN_SECRET no configurado. Agrega QZ_SIGN_SECRET en scripts/config.local.js");
+        }
 
         // IMPORTANTE: Enviar toSign como text/plain (no JSON) para evitar alteraciones
         // QZ Tray requiere que el string llegue exactamente igual, sin JSON.stringify
@@ -945,12 +938,9 @@ async function setupQZSignature() {
           throw new Error(`Error de red al obtener firma: ${fetchError.message}`);
         }
 
-        console.log("📥 Respuesta recibida. Status:", res.status, res.statusText);
-
         if (!res.ok) {
           const errorText = await res.text();
-          console.error("❌ Error HTTP:", res.status, errorText);
-          console.error("📋 Headers de respuesta:", Object.fromEntries(res.headers.entries()));
+          console.error("❌ Error HTTP firma QZ:", res.status);
           
           let errorMessage = `Error en firma: ${res.status} - ${errorText}`;
           if (res.status === 404) {
@@ -971,8 +961,7 @@ async function setupQZSignature() {
           throw new Error("La firma recibida está vacía");
         }
 
-        console.log("✅ Firma generada correctamente. Longitud:", signature.length);
-        console.log("📋 Primeros 50 caracteres de la firma:", signature.substring(0, 50));
+        console.log("✅ Firma QZ generada correctamente.");
         return signature;
       } catch (error) {
         console.error("❌ Error generando firma QZ:", error);

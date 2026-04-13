@@ -856,10 +856,12 @@ async function setupQZSignature() {
         throw new Error("toSign inválido o vacío");
       }
 
-      // Obtener secret y URL desde config (con fallback)
-      const secret = QZ_SIGN_SECRET || 
-        (typeof window !== 'undefined' ? window.QZ_SIGN_SECRET : "") ||
-        "a8cc79b81b8552702d7deccbef31c1eea7a30043b032d136a8eb4671614b5b75";
+      // Obtener secret y URL desde config (requiere QZ_SIGN_SECRET en config.local.js)
+      const secret = QZ_SIGN_SECRET ||
+        (typeof window !== 'undefined' ? window.QZ_SIGN_SECRET : "");
+      if (!secret) {
+        throw new Error("QZ_SIGN_SECRET no configurado. Agrega QZ_SIGN_SECRET en scripts/config.local.js");
+      }
 
       const supabaseUrl = SUPABASE_URL || 
         (typeof window !== 'undefined' ? window.SUPABASE_URL : "");

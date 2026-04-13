@@ -1,11 +1,20 @@
 // bulk-optimize.js
+// Requiere un archivo .env con CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET
+// Copia .env.example como .env y completa los valores
+require("dotenv").config();
 const cloudinary = require("cloudinary").v2;
 
-// 1) Configura tus credenciales aquí:
+// Credenciales desde variables de entorno (nunca hardcodeadas)
+const { CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET } = process.env;
+if (!CLOUDINARY_CLOUD_NAME || !CLOUDINARY_API_KEY || !CLOUDINARY_API_SECRET) {
+  console.error("❌ Faltan variables de entorno de Cloudinary. Crea un archivo .env basado en .env.example");
+  process.exit(1);
+}
+
 cloudinary.config({
-  cloud_name: "dnuedzuzm",
-  api_key: "534995522718558",
-  api_secret: "MlwnbgzHwA48yNvA1Rtcqb9eeHk",
+  cloud_name: CLOUDINARY_CLOUD_NAME,
+  api_key: CLOUDINARY_API_KEY,
+  api_secret: CLOUDINARY_API_SECRET,
 });
 
 async function optimizeAll() {

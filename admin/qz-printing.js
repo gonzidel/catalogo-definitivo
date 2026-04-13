@@ -68,16 +68,12 @@ export async function setupQZSignature() {
       }
 
       try {
-        // Obtener secreto compartido (desde config module o window fallback)
-        let secret = (typeof QZ_SIGN_SECRET !== 'undefined' ? QZ_SIGN_SECRET : "") ||
-          (typeof window !== 'undefined' ? window.QZ_SIGN_SECRET : "") ||
-          "a8cc79b81b8552702d7deccbef31c1eea7a30043b032d136a8eb4671614b5b75";
-
-        console.log("QZ Debug: origin =", typeof location !== 'undefined' ? location.origin : "server");
-        console.log("QZ Debug: secret len =", secret.length);
-
-        console.log("📡 Enviando request de firma a Edge Function (Shared Secret)...");
-        console.log("📤 toSign a enviar (len=" + toSign.length + "):", toSign.substring(0, 50) + "...");
+        // Obtener secreto compartido (requiere QZ_SIGN_SECRET en config.local.js)
+        const secret = (typeof QZ_SIGN_SECRET !== 'undefined' ? QZ_SIGN_SECRET : "") ||
+          (typeof window !== 'undefined' ? window.QZ_SIGN_SECRET : "");
+        if (!secret) {
+          throw new Error("QZ_SIGN_SECRET no configurado. Agrega QZ_SIGN_SECRET en scripts/config.local.js");
+        }
 
         // IMPORTANTE: Enviar toSign como text/plain (no JSON) para evitar alteraciones
         // QZ Tray requiere que el string llegue exactamente igual, sin JSON.stringify
@@ -90,18 +86,16 @@ export async function setupQZSignature() {
           body: toSign // Enviar directamente, sin JSON.stringify
         });
 
-        console.log("📥 Respuesta recibida. Status:", res.status);
-
         if (!res.ok) {
           const errorText = await res.text();
-          console.error("❌ Error HTTP:", res.status, errorText);
+          console.error("❌ Error HTTP firma QZ:", res.status, errorText);
           throw new Error(`Error en firma: ${res.status} - ${errorText}`);
         }
 
         // IMPORTANTE: Leer como texto plano y trim, NO como JSON
         const signature = (await res.text()).trim();
 
-        console.log("✅ Firma generada correctamente. Longitud:", signature.length);
+        console.log("✅ Firma QZ generada correctamente.");
         return signature;
       } catch (error) {
         console.error("❌ Error generando firma QZ:", error);

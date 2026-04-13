@@ -66,10 +66,12 @@ async function setupQZSignature() {
         throw new Error("toSign inválido o vacío");
       }
 
-      // Obtener secret desde config (con fallback)
-      const secret = QZ_SIGN_SECRET || 
-        (typeof window !== 'undefined' ? window.QZ_SIGN_SECRET : "") ||
-        "a8cc79b81b8552702d7deccbef31c1eea7a30043b032d136a8eb4671614b5b75";
+      // Obtener secret desde config (requiere QZ_SIGN_SECRET en config.local.js)
+      const secret = QZ_SIGN_SECRET ||
+        (typeof window !== 'undefined' ? window.QZ_SIGN_SECRET : "");
+      if (!secret) {
+        throw new Error("QZ_SIGN_SECRET no configurado. Agrega QZ_SIGN_SECRET en scripts/config.local.js");
+      }
 
       console.log("📡 Enviando request de firma a Edge Function...");
       console.log("📤 toSign a enviar (len=" + toSign.length + "):", toSign.substring(0, 50) + "...");

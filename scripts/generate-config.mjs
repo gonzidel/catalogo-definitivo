@@ -30,6 +30,7 @@ loadEnvLocalFile();
 // Limpiar las variables de entorno: remover comillas y espacios
 let url = process.env.SUPABASE_URL;
 let anon = process.env.SUPABASE_ANON_KEY;
+let qzSecret = process.env.QZ_SIGN_SECRET || "";
 
 // Remover comillas dobles o simples del inicio y final si existen
 if (url) {
@@ -37,6 +38,9 @@ if (url) {
 }
 if (anon) {
   anon = anon.trim().replace(/^["']|["']$/g, '');
+}
+if (qzSecret) {
+  qzSecret = qzSecret.trim().replace(/^["']|["']$/g, '');
 }
 
 // Validación mejorada de variables de entorno
@@ -73,6 +77,10 @@ if (anon.length < 100) {
   console.warn("⚠️  ADVERTENCIA: SUPABASE_ANON_KEY parece muy corta.");
   console.warn("   Verifica que sea la clave 'anon public' correcta de Supabase.");
 }
+if (!qzSecret) {
+  console.warn("⚠️  ADVERTENCIA: QZ_SIGN_SECRET no está configurado.");
+  console.warn("   La impresión con QZ Tray fallará en producción hasta definir QZ_SIGN_SECRET.");
+}
 
 try {
   // SOLUCIÓN CORRECTA: Generar config.prod.js que expone las variables en window
@@ -83,6 +91,7 @@ try {
 // Este archivo expone las credenciales de Supabase en window para uso en producción
 window.SUPABASE_URL = ${JSON.stringify(url)};
 window.SUPABASE_ANON_KEY = ${JSON.stringify(anon)};
+window.QZ_SIGN_SECRET = ${JSON.stringify(qzSecret)};
 window.USE_SUPABASE = true;
 window.USE_OPEN_SHEET_FALLBACK = false;
 window.__FYL_CONFIG_PROD_LOADED__ = true;
@@ -97,6 +106,7 @@ window.__FYL_CONFIG_PROD_AT__ = ${JSON.stringify(new Date().toISOString())};
 // ⚠️ NO EDITAR MANUALMENTE - Este archivo se genera desde variables de entorno
 export const SUPABASE_URL = ${JSON.stringify(url)};
 export const SUPABASE_ANON_KEY = ${JSON.stringify(anon)};
+export const QZ_SIGN_SECRET = ${JSON.stringify(qzSecret)};
 export const USE_SUPABASE = true;
 export const USE_OPEN_SHEET_FALLBACK = false;
 `;

@@ -102,7 +102,7 @@ const FINAL_STATUSES = ["sent", "devolución", "devolucion"];
 const TAB_FILTER_MODE = {
   active: "client", // Activos se define por order_items (reserved/missing, no todos picked), no por orders.status; la BD no usa status='active'
   closed: "sql",
-  cancelled: "items", // Pedidos con al menos un order_item cancelado (no orders.status)
+  cancelled: "client", // Cancelaciones incluye items cancelados + pedidos vencidos pendientes de desarme
   all: "sql",
   picked: "client",
   waiting: "client",
@@ -226,6 +226,34 @@ function hasOnlyWaitingItems(order) {
   if (!order.order_items || order.order_items.length === 0) return false;
   const norm = (s) => String(s ?? "").trim().toLowerCase();
   return order.order_items.every(item => norm(item.status) === "waiting");
+}
+
+function hasOrderPassedCustomerEditWindow(order) {
+  if (!order) return false;
+  const nowMs = Date.now();
+  const dismantleAtMs = order?.dismantle_at ? new Date(order.dismantle_at).getTime() : NaN;
+  if (Number.isFinite(dismantleAtMs)) {
+    return nowMs >= dismantleAtMs;
+  }
+  const createdAtMs = order.created_at ? new Date(order.created_at).getTime() : NaN;
+  if (!Number.isFinite(createdAtMs)) return false;
+  const daysElapsed = (nowMs - createdAtMs) / (1000 * 60 * 60 * 24);
+  return daysElapsed >= 7;
+}
+
+function hasOperationalItems(order) {
+  if (!order || !Array.isArray(order.order_items) || order.order_items.length === 0) return false;
+  const OPERATIONAL_ITEM_STATUSES = new Set(["reserved", "picked", "waiting", "missing"]);
+  return order.order_items.some((item) => OPERATIONAL_ITEM_STATUSES.has(String(item?.status || "").trim().toLowerCase()));
+}
+
+function isExpiredPendingAdminDisassembly(order) {
+  if (!order) return false;
+  const status = String(order.status || "").trim().toLowerCase();
+  if (status === "sent" || status === "cancelled" || status === "devolución" || status === "devolucion") {
+    return false;
+  }
+  return hasOrderPassedCustomerEditWindow(order) && hasOperationalItems(order);
 }
 
 let currentFilter = "active";
@@ -1397,6 +1425,8 @@ async function loadOrders(resetPagination = true) {
         status,
         total_amount,
         created_at,
+        expires_at,
+        dismantle_at,
         updated_at,
         sent_at,
         customer_id,
@@ -1458,7 +1488,7 @@ async function loadOrders(resetPagination = true) {
         const { data: pageOrders, error: errPage } = await supabase
           .from("orders")
           .select(`
-            id, order_number, status, total_amount, created_at, updated_at, sent_at, customer_id, notes, source,
+            id, order_number, status, total_amount, created_at, expires_at, dismantle_at, updated_at, sent_at, customer_id, notes, source,
             order_items ( id, product_name, color, size, quantity, price_snapshot, status, imagen, variant_id, order_item_stock_sources ( qty, warehouse_id ) ),
             customers:customer_id!left ( id, customer_number, full_name, phone, city, province, dni, email )
           `)
@@ -1495,7 +1525,7 @@ async function loadOrders(resetPagination = true) {
       if (resetPagination || !clientTabFilteredIdsCache || clientTabFilteredIdsCache.filter !== currentFilter) {
         const lightRes = await supabase
           .from("orders")
-          .select("id, created_at, status, order_items(status)")
+          .select("id, created_at, expires_at, dismantle_at, status, order_items(status)")
           .not("status", "in", '("sent","devolución","devolucion")')
           .order("created_at", { ascending: false });
         lightRows = lightRes.data;
@@ -1763,6 +1793,8 @@ async function searchOrdersInDatabase(searchTerm) {
           status,
           total_amount,
           created_at,
+          expires_at,
+          dismantle_at,
           updated_at,
           sent_at,
           customer_id,
@@ -1907,7 +1939,7 @@ async function loadBadgeCountsInBackground() {
     // Misma base que loadOrders (pestañas client): incluye closed para que orders2 pueda contar cerrados con ítems reservados en Activos.
     const { data: ordersForCounting } = await supabase
       .from("orders")
-      .select("id, status, order_items(status)")
+      .select("id, status, created_at, dismantle_at, order_items(status)")
       .not("status", "in", '("sent","devolución","devolucion")');
     
     if (ordersForCounting) {
@@ -1915,13 +1947,15 @@ async function loadBadgeCountsInBackground() {
       const realActiveCount = filterOrdersForTab(list, STATUS.ACTIVE).length;
       const realPickedCount = filterOrdersForTab(list, STATUS.PICKED).length;
       const realWaitingCount = filterOrdersForTab(list, STATUS.WAITING).length;
+      const realCancelledCount = filterOrdersForTab(list, STATUS.CANCELLED).length;
       
       // Actualizar badges con conteos reales
       updateBadgeWithCount('active-orders-badge', realActiveCount);
       updateBadgeWithCount('picked-orders-badge', realPickedCount);
       updateBadgeWithCount('waiting-orders-badge', realWaitingCount);
+      updateBadgeWithCount('cancelled-orders-badge', realCancelledCount);
       
-      console.log(`✅ Badges actualizados: Activos=${realActiveCount}, Apartados=${realPickedCount}, Espera=${realWaitingCount}`);
+      console.log(`✅ Badges actualizados: Activos=${realActiveCount}, Apartados=${realPickedCount}, Espera=${realWaitingCount}, Cancelados=${realCancelledCount}`);
     }
     
     // Contar cerrados (consulta simple y rápida)
@@ -1932,19 +1966,11 @@ async function loadBadgeCountsInBackground() {
     
     updateBadgeWithCount('closed-orders-badge', closedCount || 0);
     
-    // Contar cancelados (pedidos con items cancelados)
-    const { data: allOrders } = await supabase
-      .from("orders")
-      .select("id, order_items!inner(status)")
-      .eq("order_items.status", "cancelled");
-    
-    const cancelledCount = allOrders ? new Set(allOrders.map(o => o.id)).size : 0;
-    updateBadgeWithCount('cancelled-orders-badge', cancelledCount);
-    
     // Marcar que los conteos totales ya se cargaron
     badgeCountsLoaded = true;
     
-    console.log(`✅ Conteos exactos cargados: Cerrados=${closedCount}, Cancelados=${cancelledCount}`);
+    const cancelledBadgeValue = document.getElementById('cancelled-orders-badge')?.textContent || "0";
+    console.log(`✅ Conteos exactos cargados: Cerrados=${closedCount}, Cancelados=${cancelledBadgeValue}`);
     
   } catch (error) {
     console.error("❌ Error cargando conteos de badges en background:", error);
@@ -2104,7 +2130,7 @@ async function fetchOrderById(orderId) {
   const { data: order, error: err1 } = await supabase
     .from("orders")
     .select(`
-      id, order_number, status, total_amount, created_at, updated_at, sent_at, customer_id, notes, source,
+      id, order_number, status, total_amount, created_at, expires_at, dismantle_at, updated_at, sent_at, customer_id, notes, source,
       order_items (
         id, product_name, color, size, quantity, price_snapshot, status, imagen, variant_id,
         order_item_stock_sources ( qty, warehouse_id )
@@ -2787,6 +2813,7 @@ async function getItemWarehouse(item) {
 }
 
 async function renderOrderCard(order) {
+  const isExpiredPendingDisassemblyOrder = isExpiredPendingAdminDisassembly(order);
   // Determinar el estado del pedido basado en los items
   let displayStatus = order.status;
   let statusLabel = ORDER_STATUS_LABELS[displayStatus] || displayStatus || "Desconocido";
@@ -2818,6 +2845,13 @@ async function renderOrderCard(order) {
     displayStatus = "sent";
     statusLabel = "Enviado";
     statusClass = "status-sent";
+  }
+
+  // En Cancelaciones, el estado intermedio se presenta como cancelado para evitar ambigüedad visual.
+  if (currentFilter === STATUS.CANCELLED && isExpiredPendingDisassemblyOrder) {
+    displayStatus = STATUS.CANCELLED;
+    statusLabel = "Cancelado por vencimiento";
+    statusClass = ORDER_STATUS_CLASSES.cancelled;
   }
   
   // Normalizar customer (objeto o array; nunca null para evitar fallos en render)
@@ -2914,8 +2948,24 @@ async function renderOrderCard(order) {
   }
   
   // Separar items cancelados de los demás para mostrarlos primero con advertencia
-  const allItems = order.order_items || [];
-  const cancelledItems = allItems.filter(item => item.status === 'cancelled');
+  const rawItems = Array.isArray(order.order_items) ? order.order_items : [];
+  const forcedCancelledView = currentFilter === STATUS.CANCELLED && isExpiredPendingDisassemblyOrder;
+  const allItems =
+    forcedCancelledView
+      ? rawItems.map((item) => {
+          const status = String(item?.status || "").toLowerCase().trim();
+          if (status === "cancelled") return item;
+          return {
+            ...item,
+            __forcedCancelled: true,
+            __originalStatus: item?.status || "",
+            status: "cancelled",
+          };
+        })
+      : rawItems;
+  const cancelledItems = forcedCancelledView
+    ? allItems
+    : allItems.filter(item => item.status === 'cancelled');
   const missingItemsAll = allItems.filter((i) => String(i?.status || "").trim().toLowerCase() === "missing");
   
   // Determinar qué items mostrar según el filtro y el modo de visualización
@@ -2945,6 +2995,8 @@ async function renderOrderCard(order) {
         return false;
       });
     }
+  } else if (forcedCancelledView) {
+    activeItems = [];
   } else {
     // En otros filtros, mostrar todos excepto cancelados
     activeItems = allItems.filter(item => item.status !== 'cancelled');
@@ -2959,7 +3011,11 @@ async function renderOrderCard(order) {
   const cancelledWarning = (currentFilter !== 'waiting' && cancelledItems.length > 0) ? `
     <div class="cancelled-warning">
       <span>⚠️</span>
-      <span>${cancelledItems.length} producto(s) cancelado(s) por el cliente ${formatCustomerDisplayName(customer)}${customerNumber ? ` (Nº ${customerNumber})` : ''}</span>
+      <span>${
+        forcedCancelledView
+          ? `${cancelledItems.length} producto(s) marcados como cancelados por vencimiento del pedido.`
+          : `${cancelledItems.length} producto(s) cancelado(s) por el cliente ${formatCustomerDisplayName(customer)}${customerNumber ? ` (Nº ${customerNumber})` : ''}`
+      }</span>
     </div>
   ` : '';
 
@@ -3148,7 +3204,9 @@ async function renderOrderCard(order) {
   let actionButtons = "";
   let sendToLocalButton = "";
   
-  if (order.status === "closed") {
+  if (isExpiredPendingDisassemblyOrder) {
+    actionButtons = "";
+  } else if (order.status === "closed") {
     // Para pedidos cerrados, mostrar botón "TERMINADO" y "Editar"
     actionButtons = `
       <button class="btn" style="background: #17a2b8; color: white;" data-edit-order="${order.id}">✏️ Editar Pedido</button>
@@ -3187,6 +3245,22 @@ async function renderOrderCard(order) {
         `;
       }
     }
+  }
+
+  // En Cancelaciones, ofrecer desarme completo reutilizando el flujo existente de cancelación total.
+  if (currentFilter === "cancelled") {
+    if (isExpiredPendingDisassemblyOrder) {
+      actionButtons += `
+        <button class="btn" style="background: #17a2b8; color: white;" data-enable-order="${order.id}">
+          ⏱️ Habilitar 24hs
+        </button>
+      `;
+    }
+    actionButtons += `
+      <button class="btn" style="background: #dc3545; color: white;" data-dismantle-order="${order.id}">
+        🧩 Desarmar pedido
+      </button>
+    `;
   }
 
   // Obtener número de pedido o usar ID como fallback
@@ -3236,7 +3310,12 @@ async function renderOrderCard(order) {
     }
   } else if (currentFilter === 'cancelled') {
     // En Cancelaciones: solo se ven los productos cancelados; el resto se muestra al pulsar "Ver productos"
-    itemsDisplay = 'block';
+    if (forcedCancelledView) {
+      shouldStartCollapsed = true;
+      itemsDisplay = 'none';
+    } else {
+      itemsDisplay = 'block';
+    }
     toggleLabel = 'Ver productos';
   } else {
     // En otros filtros, mostrar expandido
@@ -3481,6 +3560,9 @@ function showOrderSummaryModal(order) {
 }
 
 function renderOrderItemActionButtonsHtml(item) {
+  if (item?.__forcedCancelled) {
+    return `<div class="item-actions"></div>`;
+  }
   const isCancelled = item.status === "cancelled";
   const isMissing = item.status === "missing";
   const isWaiting = item.status === "waiting";
@@ -3632,12 +3714,15 @@ function renderOrderItemGroup(items, customer = {}, offersData = { itemOffers: n
 
   const isMobile = window.innerWidth <= 768;
   const anyCancelled = items.some((i) => i.status === "cancelled");
+  const anyForcedCancelled = items.some((i) => i?.__forcedCancelled);
   const cancelledInfo = anyCancelled
-    ? `
+    ? (anyForcedCancelled
+      ? ""
+      : `
     <div style="margin-top: 8px; padding: 8px; background: #fff3e0; border-radius: 6px; font-size: 12px; color: #e65100;">
       <strong>Cancelado por:</strong> ${customer.full_name || "Cliente sin nombre"}${customer.customer_number ? ` (Nº ${customer.customer_number})` : ""}${customer.phone ? ` • Tel: ${customer.phone}` : ""}${customer.email ? ` • Email: ${customer.email}` : ""}
     </div>
-  `
+  `)
     : "";
 
   if (isMobile) {
@@ -3740,12 +3825,16 @@ function renderOrderItem(item, customer = {}, offersData = { itemOffers: new Map
     offerPromoBadge = `<div style="margin-top: 4px; display: inline-block; padding: 4px 8px; background: #e74c3c; color: white; border-radius: 4px; font-size: 11px; font-weight: 600;">🔥 Oferta</div>`;
   }
 
-  // Si está cancelado, mostrar información del cliente que lo canceló
-  const cancelledInfo = isCancelled ? `
+  // Si está cancelado, mostrar información contextual.
+  const cancelledInfo = isCancelled
+    ? item?.__forcedCancelled
+      ? ""
+      : `
     <div style="margin-top: 8px; padding: 8px; background: #fff3e0; border-radius: 6px; font-size: 12px; color: #e65100;">
       <strong>Cancelado por:</strong> ${customer.full_name || 'Cliente sin nombre'}${customer.customer_number ? ` (Nº ${customer.customer_number})` : ''}${customer.phone ? ` • Tel: ${customer.phone}` : ''}${customer.email ? ` • Email: ${customer.email}` : ''}
     </div>
-  ` : '';
+  `
+    : '';
 
   const actionButtons = renderOrderItemActionButtonsHtml(item);
 
@@ -3844,6 +3933,7 @@ function filterOrders(list) {
       if (!orders2AllowClosedWithReserved && (statusNorm === STATUS.CLOSED || statusNorm === STATUS.SENT || statusNorm === STATUS.DEVOLUCION || statusNorm === STATUS.DEVOLUCION_ALT)) {
         excludedBy = "order.status=" + (order.status ?? "null");
       }
+      else if (isExpiredPendingAdminDisassembly(order)) excludedBy = "pedido vencido pendiente de desarme (va en Cancelaciones)";
       else if (!hasReservedItems(order) && !hasItemsNeedingAttention(order)) excludedBy = "sin ítems reservados ni missing";
       else if (hasAllItemsPicked(order) && !hasWaitingItems(order)) excludedBy = "hasAllItemsPicked=true (sin espera)";
       if (DEBUG_ACTIVE_FILTER && debugLogCount < MAX_DEBUG_LOGS) {
@@ -3901,10 +3991,11 @@ function filterOrders(list) {
   }
 
   if (currentFilter === STATUS.CANCELLED) {
-    // Mostrar pedidos que tienen al menos un item cancelado
+    // Mostrar pedidos con al menos un item cancelado
+    // + pedidos vencidos pendientes de desarme (bloqueados para cliente).
     return list.filter((order) => {
       const hasCancelledItems = (order.order_items || []).some(item => item.status === 'cancelled');
-      return hasCancelledItems;
+      return hasCancelledItems || isExpiredPendingAdminDisassembly(order);
     });
   }
   
@@ -4464,6 +4555,83 @@ function attachOrderEventHandlers() {
     btn.addEventListener("click", async () => {
       const orderId = btn.dataset.sendToLocal;
       await sendOrderToLocal(orderId);
+    });
+  });
+
+  document.querySelectorAll("[data-enable-order]").forEach((btn) => {
+    if (btn.dataset.enableBound === "1") return;
+    btn.dataset.enableBound = "1";
+    btn.addEventListener("click", async () => {
+      const orderId = btn.dataset.enableOrder;
+      if (!orderId || btn.disabled || btn.dataset.processing === "1") return;
+
+      const confirmed = confirm(
+        "¿Deseas habilitar este pedido por 24 horas? El cliente podrá volver a operarlo temporalmente."
+      );
+      if (!confirmed) return;
+
+      if (!supabase) {
+        supabase = await getSupabase();
+      }
+      if (!supabase) {
+        alert("No se pudo habilitar el pedido. Recargá la página e intentá de nuevo.");
+        return;
+      }
+
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      btn.dataset.processing = "1";
+      btn.textContent = "Habilitando...";
+      try {
+        const newDismantleAtIso = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+        const { error } = await supabase
+          .from("orders")
+          .update({
+            dismantle_at: newDismantleAtIso,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", orderId);
+
+        if (error) {
+          alert(error.message || "No se pudo habilitar el pedido por 24 horas.");
+          return;
+        }
+
+        await loadOrders(true);
+        updateActiveOrdersBadge();
+        updatePickedOrdersBadge();
+        updateClosedOrdersBadge();
+        updateCancelledOrdersBadge();
+        if (historyVisible) await loadClosedOrders();
+        if (typeof loadBadgeCountsInBackground === "function") loadBadgeCountsInBackground();
+
+        alert("✅ Pedido habilitado por 24 horas.");
+      } finally {
+        btn.dataset.processing = "0";
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+    });
+  });
+
+  document.querySelectorAll("[data-dismantle-order]").forEach((btn) => {
+    if (btn.dataset.dismantleBound === "1") return;
+    btn.dataset.dismantleBound = "1";
+    btn.addEventListener("click", async () => {
+      const orderId = btn.dataset.dismantleOrder;
+      if (!orderId || btn.disabled || btn.dataset.processing === "1") return;
+
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      btn.dataset.processing = "1";
+      btn.textContent = "Desarmando...";
+      try {
+        await cancelOrder(orderId);
+      } finally {
+        btn.dataset.processing = "0";
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
     });
   });
 

@@ -108,6 +108,41 @@ function normalizeUniqueSortedSizes(rawSizes) {
   return unique;
 }
 
+let generalWarehouseIdCache = null;
+
+async function getGeneralWarehouseId() {
+  if (generalWarehouseIdCache) return generalWarehouseIdCache;
+  const { data, error } = await supabase
+    .from("warehouses")
+    .select("id")
+    .eq("code", "general")
+    .maybeSingle();
+  if (error) {
+    console.warn("⚠️ Error obteniendo warehouse general:", error);
+    return null;
+  }
+  generalWarehouseIdCache = data?.id || null;
+  return generalWarehouseIdCache;
+}
+
+async function getGeneralSizeStockByVariantIds(variantIds) {
+  if (!Array.isArray(variantIds) || variantIds.length === 0) return [];
+  const generalWarehouseId = await getGeneralWarehouseId();
+  if (!generalWarehouseId) return [];
+
+  const { data, error } = await supabase
+    .from("variant_size_warehouse_stock")
+    .select("variant_id, size, stock_qty")
+    .in("variant_id", variantIds)
+    .eq("warehouse_id", generalWarehouseId);
+
+  if (error) {
+    console.warn("⚠️ Error obteniendo stock por talle en general:", error);
+    return [];
+  }
+  return data || [];
+}
+
 // Funciones para mostrar/ocultar indicador de carga
 function showLoadingIndicator(tabName) {
   const indicator = document.getElementById(`loading-${tabName}`);
@@ -238,25 +273,35 @@ async function getProductColorData(productId, color) {
   
   const variantIds = variants.map(v => v.id);
   
-  // Obtener talles desde variant_sizes con stock >= 1
-  const { data: variantSizes, error: sizesError } = await supabase
-    .from("variant_sizes")
-    .select("variant_id, size, stock_qty")
-    .in("variant_id", variantIds)
-    .gte("stock_qty", 1);
-  
-  if (sizesError) {
-    console.warn(`⚠️ Error obteniendo talles para producto ${productId} color ${color}:`, sizesError);
-    return null;
+  // Fuente canónica: stock por talle en depósito general.
+  // Fallback: variant_sizes (solo lectura) si no se pudo resolver el depósito general.
+  let variantSizes = await getGeneralSizeStockByVariantIds(variantIds);
+  if (!variantSizes.length) {
+    const { data: variantSizesFallback, error: sizesError } = await supabase
+      .from("variant_sizes")
+      .select("variant_id, size, stock_qty")
+      .in("variant_id", variantIds);
+    if (sizesError) {
+      console.warn(`⚠️ Error obteniendo talles para producto ${productId} color ${color}:`, sizesError);
+      return null;
+    }
+    variantSizes = variantSizesFallback || [];
   }
   
   if (!variantSizes || variantSizes.length === 0) {
-    // No hay talles disponibles con stock, pero esto es esperado para algunos productos
+    // No hay talles definidos para estas variantes.
     return null;
   }
   
-  // Filtrar solo variantes que tienen talles con stock
-  const variantIdsWithStock = [...new Set(variantSizes.map(vs => vs.variant_id))];
+  const variantSizesWithStock = variantSizes.filter(vs => Number(vs.stock_qty || 0) > 0);
+
+  // Mantener comportamiento original: solo publicar colores con al menos un talle con stock.
+  if (variantSizesWithStock.length === 0) {
+    return null;
+  }
+
+  // Variantes que tienen al menos un talle con stock (gating de publicación).
+  const variantIdsWithStock = [...new Set(variantSizesWithStock.map(vs => vs.variant_id))];
   const availableVariants = variants.filter(v => variantIdsWithStock.includes(v.id));
   
   if (availableVariants.length === 0) {
@@ -1034,18 +1079,24 @@ async function getProductColorDataLowStock(productId, color) {
   
   const variantIds = variants.map(v => v.id);
   
-  // Obtener talles desde variant_sizes con stock <= 10
-  const { data: variantSizes, error: sizesError } = await supabase
-    .from("variant_sizes")
-    .select("variant_id, size, stock_qty")
-    .in("variant_id", variantIds)
-    .lte("stock_qty", 10)
-    .gte("stock_qty", 1);
-  
-  if (sizesError) {
-    console.warn(`⚠️ Error obteniendo talles para producto ${productId} color ${color}:`, sizesError);
-    return null;
+  // Fuente canónica: depósito general por talle.
+  // Fallback: variant_sizes (lectura) para compatibilidad.
+  let variantSizes = await getGeneralSizeStockByVariantIds(variantIds);
+  if (!variantSizes.length) {
+    const { data: variantSizesFallback, error: sizesError } = await supabase
+      .from("variant_sizes")
+      .select("variant_id, size, stock_qty")
+      .in("variant_id", variantIds);
+    if (sizesError) {
+      console.warn(`⚠️ Error obteniendo talles para producto ${productId} color ${color}:`, sizesError);
+      return null;
+    }
+    variantSizes = variantSizesFallback || [];
   }
+  variantSizes = variantSizes.filter(vs => {
+    const stock = Number(vs.stock_qty || 0);
+    return stock >= 1 && stock <= 10;
+  });
   
   if (!variantSizes || variantSizes.length === 0) {
     return null;
@@ -1110,6 +1161,30 @@ async function getProductColorDataLowStock(productId, color) {
 // Variable para cancelar búsquedas anteriores
 let currentSearchAbortController = null;
 
+function normalizeSearchText(value) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function matchesProductSearch(item, normalizedQuery) {
+  if (!normalizedQuery) return true;
+  const productName = normalizeSearchText(item?.productName);
+  const category = normalizeSearchText(item?.category);
+  const color = normalizeSearchText(item?.color);
+  return (
+    productName.includes(normalizedQuery) ||
+    category.includes(normalizedQuery) ||
+    color.includes(normalizedQuery)
+  );
+}
+
+function isSafeServerSearchQuery(value) {
+  return /^[\p{L}\p{N}\s\-_]+$/u.test(String(value ?? "").trim());
+}
+
 // Búsqueda directa en la base de datos sin cargar todos los productos
 async function searchAllProductsDirect(searchQuery, categoryValue) {
   const state = paginationState.all;
@@ -1140,8 +1215,11 @@ async function searchAllProductsDirect(searchQuery, categoryValue) {
     // Aplicar filtro de búsqueda de texto si existe
     if (searchQuery && searchQuery.trim()) {
       const searchLower = searchQuery.trim();
-      // Buscar en nombre y categoría (case-insensitive)
-      query = query.or(`name.ilike.%${searchLower}%,category.ilike.%${searchLower}%`);
+      // Evitar errores del parser PostgREST con caracteres especiales.
+      // Si la query no es segura, filtramos localmente después de agrupar.
+      if (isSafeServerSearchQuery(searchLower)) {
+        query = query.or(`name.ilike.%${searchLower}%,category.ilike.%${searchLower}%`);
+      }
     }
     
     const { data: products, error } = await query;
@@ -1173,12 +1251,8 @@ async function searchAllProductsDirect(searchQuery, categoryValue) {
     // Filtrar resultados por búsqueda de texto (por color también) en el batch inicial
     let filtered = initialGrouped;
     if (searchQuery && searchQuery.trim()) {
-      const searchLower = searchQuery.toLowerCase().trim();
-      filtered = initialGrouped.filter(item =>
-        item.productName.toLowerCase().includes(searchLower) ||
-        item.category.toLowerCase().includes(searchLower) ||
-        item.color.toLowerCase().includes(searchLower)
-      );
+      const searchLower = normalizeSearchText(searchQuery);
+      filtered = initialGrouped.filter(item => matchesProductSearch(item, searchLower));
     }
     
     // Guardar productos en el estado para que estén disponibles cuando se seleccionen
@@ -1199,12 +1273,8 @@ async function searchAllProductsDirect(searchQuery, categoryValue) {
         // Filtrar el resto también
         let remainingFiltered = remainingGrouped;
         if (searchQuery && searchQuery.trim()) {
-          const searchLower = searchQuery.toLowerCase().trim();
-          remainingFiltered = remainingGrouped.filter(item =>
-            item.productName.toLowerCase().includes(searchLower) ||
-            item.category.toLowerCase().includes(searchLower) ||
-            item.color.toLowerCase().includes(searchLower)
-          );
+          const searchLower = normalizeSearchText(searchQuery);
+          remainingFiltered = remainingGrouped.filter(item => matchesProductSearch(item, searchLower));
         }
         // Combinar y guardar todos los resultados en el estado
         const allGrouped = [...initialGrouped, ...remainingGrouped];
@@ -1607,6 +1677,7 @@ function renderLowStockProducts(filtered = null) {
 // Renderizar tabla de publicación
 async function renderPublicationTable(filtered = null) {
   const items = filtered || selectedForPublication;
+  const publicationQuery = normalizeSearchText(searchPublication?.value || "");
   
   if (items.length === 0) {
     if (publicationTableBody) publicationTableBody.innerHTML = '<tr><td colspan="7" class="empty-state">No hay productos seleccionados para publicar</td></tr>';
@@ -1690,8 +1761,15 @@ async function renderPublicationTable(filtered = null) {
     validItems.push(...loadedItems.filter(Boolean));
   }
   
+  const itemsToRender = publicationQuery
+    ? validItems.filter(item => matchesProductSearch(item, publicationQuery))
+    : validItems;
+
   if (publicationTableBody) {
-    publicationTableBody.innerHTML = validItems.map(item => {
+    if (itemsToRender.length === 0) {
+      publicationTableBody.innerHTML = '<tr><td colspan="7" class="empty-state">No hay resultados para esa búsqueda en la tabla de publicación</td></tr>';
+    } else {
+      publicationTableBody.innerHTML = itemsToRender.map(item => {
       const imageUrlsText = item.imageUrls.join(" | ");
       const productIdEscaped = String(item.productId).replace(/'/g, "&#39;");
       const colorEscaped = String(item.color).replace(/'/g, "&#39;");
@@ -1739,7 +1817,8 @@ async function renderPublicationTable(filtered = null) {
           </td>
         </tr>
       `;
-    }).join('');
+      }).join('');
+    }
   }
   
   if (selectedCount) selectedCount.textContent = validItems.length;
@@ -2209,12 +2288,8 @@ function searchProducts(query, products, categoryFilter = "") {
   
   // Filtrar por texto de búsqueda si hay
   if (query && query.trim()) {
-    const lowerQuery = query.toLowerCase();
-    filtered = filtered.filter(item =>
-      item.productName.toLowerCase().includes(lowerQuery) ||
-      item.category.toLowerCase().includes(lowerQuery) ||
-      item.color.toLowerCase().includes(lowerQuery)
-    );
+    const lowerQuery = normalizeSearchText(query);
+    filtered = filtered.filter(item => matchesProductSearch(item, lowerQuery));
   }
   
   return filtered;

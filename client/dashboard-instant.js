@@ -493,6 +493,28 @@ function guardReadOnlyOrderAction({ triggerEl = null, orderId = "" } = {}) {
   return true;
 }
 
+function hasExpiredPendingDisassemblyOrderInView() {
+  for (const state of currentOrderUiStateById.values()) {
+    if (state?.isExpiredPendingDisassembly) return true;
+  }
+  const domCard = document.querySelector(
+    ".dash-order[data-order-expired-pending-disassembly='true']"
+  );
+  return !!domCard;
+}
+
+async function showOrderExpiredCartSubmitBlockedModal() {
+  const bodyHtml = `
+    <p class="dash-app-message-modal__text">Tu pedido alcanzó el plazo de 7 días y ya no podés hacer un nuevo pedido desde la web.</p>
+    <p class="dash-app-message-modal__text">Si querés que lo preparemos o tenés dudas, escribinos por <a href="${WHATSAPP_ENVIOS_HREF}" target="_blank" rel="noopener noreferrer">WhatsApp</a> y te ayudamos.</p>
+  `;
+  await showDashboardMessageModal({
+    title: "Pedido cerrado por vencimiento",
+    bodyHtml,
+    confirmLabel: "Entendido",
+  });
+}
+
 function buildSyntheticDeadlineNotificationsList(ctx) {
   if (!ctx || ctx.daysRemaining == null) return [];
   const dr = ctx.daysRemaining;
@@ -2476,6 +2498,11 @@ async function submitCurrentCart() {
   isSubmittingCurrentCart = true;
   let releaseSubmitBtnLoading = () => {};
   try {
+    if (hasExpiredPendingDisassemblyOrderInView()) {
+      await showOrderExpiredCartSubmitBlockedModal();
+      return;
+    }
+
     // Verificar si hay productos agotados antes de enviar
     const hasOutOfStockItems = currentCartItems && currentCartItems.some(item => item.isOutOfStock);
     if (hasOutOfStockItems) {

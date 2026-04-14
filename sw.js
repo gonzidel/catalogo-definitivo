@@ -1,7 +1,7 @@
 // La versión se inyecta desde scripts/pwa-install.js al registrar: sw.js?v=<version>.
 // Así, para cada deploy solo cambiás el valor en pwa-install.js.
 const SW_VERSION =
-  new URL(self.location.href).searchParams.get("v") || "m260407";
+  new URL(self.location.href).searchParams.get("v") || "m260418";
 // index: network-first (abajo). Scripts críticos de boot: siempre red (sin cache-first).
 const CACHE_NAME = `fyl-catalog-${SW_VERSION}`;
 
@@ -56,6 +56,7 @@ function mustFetchFromNetwork(pathname) {
     "/scripts/main-supabase.js",
     "/scripts/boot-telemetry.js",
     "/scripts/vendor/supabase-js.bundle.js",
+    "/scripts/vendor/supabase-js.bundle.min.js",
   ]);
   return critical.has(pathname);
 }

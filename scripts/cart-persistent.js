@@ -77,6 +77,26 @@ const __cartWarehousesCache = {
   promise: null,
 };
 
+function hasLikelySupabaseSession() {
+  try {
+    if (typeof window === "undefined" || !window.localStorage) return false;
+    const raw = window.localStorage.getItem("sb-dtfznewwvsadkorxwzft-auth-token");
+    if (!raw) return false;
+    const parsed = JSON.parse(raw);
+    if (!parsed) return false;
+    if (typeof parsed.access_token === "string" && parsed.access_token.length > 20) return true;
+    if (
+      typeof parsed.currentSession?.access_token === "string" &&
+      parsed.currentSession.access_token.length > 20
+    ) {
+      return true;
+    }
+    return false;
+  } catch (_e) {
+    return false;
+  }
+}
+
 function getCachedMapValue(cacheMap, key) {
   const entry = cacheMap.get(key);
   if (!entry) return undefined;
@@ -924,6 +944,7 @@ async function syncCartWithSupabase(options = {}) {
       // Solo loguear ocasionalmente para evitar spam
       // console.log("🔄 Sincronizando carrito con Supabase...");
       if (!supabase) return;
+      if (!hasLikelySupabaseSession()) return;
 
       const {
         data: { user },
@@ -1139,6 +1160,7 @@ async function syncCartWithSupabase(options = {}) {
 }
 
 async function loadCartFromSupabase() {
+  if (!hasLikelySupabaseSession()) return;
   if (loadCartFromSupabaseInFlight) {
     return loadCartFromSupabaseInFlight;
   }
@@ -1880,7 +1902,9 @@ function initPersistentCart() {
 
   if (window.__DASHBOARD__ !== true) {
     setTimeout(() => {
-      loadCartFromSupabase();
+      if (hasLikelySupabaseSession()) {
+        loadCartFromSupabase();
+      }
     }, 1000);
   }
   window.addEventListener("cart:synced", () => {
@@ -1889,7 +1913,9 @@ function initPersistentCart() {
   if (window.__DASHBOARD__ !== true) {
     window.addEventListener("focus", () => {
       clearCartVariantInfoCaches();
-      loadCartFromSupabase();
+      if (hasLikelySupabaseSession()) {
+        loadCartFromSupabase();
+      }
     });
   }
 

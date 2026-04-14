@@ -6,6 +6,26 @@
 
 import { fylDevLog } from "./config.js";
 
+function hasLikelySupabaseSession() {
+  try {
+    if (typeof window === "undefined" || !window.localStorage) return false;
+    const raw = window.localStorage.getItem("sb-dtfznewwvsadkorxwzft-auth-token");
+    if (!raw) return false;
+    const parsed = JSON.parse(raw);
+    if (!parsed) return false;
+    if (typeof parsed.access_token === "string" && parsed.access_token.length > 20) return true;
+    if (
+      typeof parsed.currentSession?.access_token === "string" &&
+      parsed.currentSession.access_token.length > 20
+    ) {
+      return true;
+    }
+    return false;
+  } catch (_e) {
+    return false;
+  }
+}
+
 // Función para esperar autenticación completa
 // Reducimos la espera por defecto para que el fallback de no autenticado
 // no demore tanto en páginas cliente.
@@ -25,6 +45,12 @@ async function waitForAuth(maxWaitTime = 1800) {
             return;
           }
           setTimeout(checkAuth, 100);
+          return;
+        }
+
+        // Si no hay token local de sesión, salir rápido para no demorar fallback de invitado.
+        if (!hasLikelySupabaseSession() && attempts >= 2) {
+          resolve({ user: null, error: "Sin sesión local" });
           return;
         }
 

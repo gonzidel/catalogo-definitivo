@@ -8,7 +8,7 @@ import {
   USE_OPEN_SHEET_FALLBACK as CONFIG_USE_OPEN_SHEET_FALLBACK,
   configReady,
 } from "./config.js";
-import { supabase as supabaseClient } from "./supabase-client.js?v=m260407";
+import { supabase as supabaseClient } from "./supabase-client.js?v=m260418";
 import { normalizeSize } from "./utils/size-normalizer.js";
 import { fylAnalytics } from "./analytics.js";
 import { formatARS as formatARSValue, parseARSNumber } from "./utils/price.js";
@@ -355,43 +355,7 @@ async function inicializarSupabase() {
     }
     fylCatalogDbg("✅ Cliente de Supabase disponible (usando instancia única de supabase-client.js)");
 
-    // Red móvil real + CPU lenta: 22s generaba falsos timeout con internet “bien”.
-    const PROBE_MS = 60000;
-    let testError;
-    try {
-      const res = await fylAwaitWithTimeout(
-        supabase
-          .from("catalog_public_view")
-          // Evitar count exact (caro en vistas grandes): solo validar que responde.
-          .select("Articulo", { head: true })
-          .limit(1),
-        PROBE_MS,
-        "init_head_probe"
-      );
-      testError = res.error;
-    } catch (e) {
-      const msg = String(e?.message || e);
-      testError = {
-        message:
-          msg.includes("fyl_timeout:") ? "Sin respuesta a tiempo (revisá la red)." : msg,
-        code: "TIMEOUT",
-      };
-    }
-
-    if (testError) {
-      console.error("❌ Error verificando conexión a Supabase:", testError);
-      console.error("Detalles:", {
-        message: testError.message,
-        details: testError.details,
-        hint: testError.hint,
-      });
-      return setFail(
-        "view_probe_failed",
-        testError.message ? String(testError.message).slice(0, 180) : "Error al consultar el catálogo."
-      );
-    }
-
-    fylCatalogDbg("✅ Supabase inicializado y verificado correctamente");
+    // [PERF] Sonda HEAD eliminada: la conectividad se valida en cargarDesdeSupabase().
     if (typeof globalThis !== "undefined") {
       delete globalThis.__FYL_SUPABASE_INIT_FAIL__;
     }
@@ -415,36 +379,19 @@ async function cargarDesdeSupabase(cat) {
   try {
     fylCatalogDbg(`🗄️ Cargando desde Supabase: ${cat}`);
 
-    // Validar categorías solo cuando realmente aplica (evita una query extra en Inicio/all).
-    if (cat !== "Novedades" && cat !== "Ofertas" && cat !== "all") {
-      const { data: allCategories, error: catError } = await supabase
-        .from("catalog_public_view")
-        .select("Categoria")
-        .limit(100);
-
-      if (!catError && allCategories) {
-        const uniqueCategories = [...new Set(allCategories.map((c) => c.Categoria))];
-        fylCatalogDbg(`📋 Categorías disponibles en la vista:`, uniqueCategories);
-        fylCatalogDbg(`🔍 Buscando categoría: "${cat}"`);
-
-        // Verificar si la categoría existe (case-insensitive)
-        const categoryExists = uniqueCategories.some(
-          (c) => c && c.toLowerCase() === cat.toLowerCase()
-        );
-
-        if (!categoryExists) {
-          console.warn(`⚠️ La categoría "${cat}" no existe en la vista.`);
-          console.warn(`💡 Categorías disponibles: ${uniqueCategories.join(", ")}`);
-        }
-      }
-    }
+    // [PERF] Query de validacion de categorias eliminada (era solo diagnostico).
 
     let query = supabase.from("catalog_public_view").select("*");
 
     if (cat === "Novedades" || cat === "Ofertas" || cat === "all") {
       // Para categorías especiales o 'all', cargar todas las categorías
       fylCatalogDbg(`📦 Cargando todas las categorías para: ${cat}`);
-      const { data, error } = await query;
+      // [PERF] Para "all", limitar payload inicial para acelerar primer render.
+      // Novedades/Ofertas necesitan todos los datos para filtrar en JS.
+      const fetchQuery = cat === "all"
+        ? query.limit(100)
+        : query;
+      const { data, error } = await fetchQuery;
       if (error) {
         console.error("❌ Error en consulta:", error);
         throw error;
@@ -1137,7 +1084,7 @@ async function cargarCategoria(cat) {
     
     // Reiniciar verificación de carga de imágenes
     iniciarVerificacionCargaImagenes();
-    
+
     if (cat === "all") {
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
       const hashOk = location.hash !== "#/coleccion/fyl-originals";
@@ -1146,9 +1093,9 @@ async function cargarCategoria(cat) {
       const isBootingHome =
         typeof window !== "undefined" && window.__FYL_BOOT_SUPPRESS_ROUTE === true;
 
-      const runHomeExtras = async () => {
+      const runHomeExtras = async ({ includeFylBanner = true } = {}) => {
         const paralelos = [];
-        if (typeof window.loadAndShowFYLBanner === "function") {
+        if (includeFylBanner && typeof window.loadAndShowFYLBanner === "function") {
           paralelos.push(Promise.resolve(window.loadAndShowFYLBanner()));
         }
         if (
@@ -1173,16 +1120,36 @@ async function cargarCategoria(cat) {
         syncInfoBannerVisibility();
       };
 
-      if (isBootingHome) {
-        // En boot inicial, esperar extras de Home para que el overlay no se cierre antes de FYL Originals.
-        await runHomeExtras();
-      } else {
-        // En interacciones posteriores mantener carga en background.
-        setTimeout(() => {
-          Promise.resolve(runHomeExtras()).catch((error) => {
+      const scheduleHomeExtrasPostBoot = (task, timeoutMs = 1200) => {
+        const run = () => {
+          Promise.resolve(task()).catch((error) => {
             console.warn("⚠️ No se pudieron cargar extras de Home:", error?.message || error);
           });
-        }, 0);
+        };
+        if (typeof window !== "undefined" && typeof window.requestIdleCallback === "function") {
+          window.requestIdleCallback(run, { timeout: timeoutMs });
+          return;
+        }
+        setTimeout(run, timeoutMs);
+      };
+
+      if (isBootingHome) {
+        // En primer arranque esperamos solo FYL Originals (con tope) para que no aparezca “tarde”.
+        if (typeof window.loadAndShowFYLBanner === "function") {
+          try {
+            await Promise.race([
+              Promise.resolve(window.loadAndShowFYLBanner()),
+              new Promise((resolve) => setTimeout(resolve, 1700)),
+            ]);
+          } catch (error) {
+            console.warn("⚠️ No se pudo cargar FYL Originals en boot:", error?.message || error);
+          }
+        }
+        // El resto de extras se mantiene en background para no alargar demasiado el boot.
+        scheduleHomeExtrasPostBoot(() => runHomeExtras({ includeFylBanner: false }), 900);
+      } else {
+        // En interacciones posteriores mantener todo en background.
+        scheduleHomeExtrasPostBoot(() => runHomeExtras(), 500);
       }
     } else {
       // Ocultar banners si no estamos en Inicio
@@ -1391,8 +1358,11 @@ async function renderizarProductosPagina(productos, container, offersCards = [],
       
       // Obtener SKU por defecto para la card
       const skuDefecto = obtenerSKUDefecto(producto);
-      const mainImageUrls = getMainImageFallbackUrls(producto, 800);
-      const mainSrc = mainImageUrls[0] || cloudinaryOptimized(producto.VariantePrincipal, 800);
+      const cardImageWidth =
+        typeof window !== "undefined" && window.innerWidth <= 430 ? 480 : 800;
+      const mainImageUrls = getMainImageFallbackUrls(producto, cardImageWidth);
+      const mainSrc =
+        mainImageUrls[0] || cloudinaryOptimized(producto.VariantePrincipal, cardImageWidth);
       const fallbackUrls = mainImageUrls.slice(1);
       const fallbackUrlsAttr = fallbackUrls.length
         ? JSON.stringify(fallbackUrls).replace(/"/g, "&quot;")
@@ -1504,7 +1474,7 @@ async function renderizarProductosPagina(productos, container, offersCards = [],
       }
     });
   }
-  
+
   return productosARenderizar.length;
 }
 
@@ -2216,66 +2186,56 @@ async function enrichProductsWithStock(productos = [], { mergeSkuIndex = false }
       );
     });
 
-    // Obtener warehouses "general" y "venta-publico" una sola vez
+    // [PERF] Warehouses + variant_sizes en paralelo (antes eran secuenciales)
     let generalWarehouseId = null;
     let ventaPublicoWarehouseId = null;
-    
-    try {
-      const { data: warehouses, error: warehousesError } = await supabase
+    const variantSizesMap = new Map();
+
+    if (allVariantIds.length > 0) {
+      const warehousePromise = supabase
         .from("warehouses")
         .select("id, code")
-        .in("code", ["general", "venta-publico"]);
+        .in("code", ["general", "venta-publico"])
+        .then(({ data: warehouses, error: warehousesError }) => {
+          if (warehousesError) {
+            console.warn("\u26a0\ufe0f Error obteniendo warehouses:", warehousesError);
+          } else if (warehouses && warehouses.length > 0) {
+            const warehouseMap = new Map();
+            warehouses.forEach(w => warehouseMap.set(w.code, w.id));
+            generalWarehouseId = warehouseMap.get("general");
+            ventaPublicoWarehouseId = warehouseMap.get("venta-publico");
+            fylCatalogDbg(`\ud83d\udce6 Warehouses obtenidos: general=${generalWarehouseId}, venta-publico=${ventaPublicoWarehouseId}`);
+          } else {
+            console.warn("\u26a0\ufe0f No se encontraron warehouses 'general' o 'venta-publico'.");
+          }
+        })
+        .catch(e => { console.warn("\u26a0\ufe0f Excepci\u00f3n obteniendo warehouses:", e); });
 
-      if (warehousesError) {
-        console.warn("⚠️ Error obteniendo warehouses:", warehousesError);
-      } else if (warehouses && warehouses.length > 0) {
-        const warehouseMap = new Map();
-        warehouses.forEach(w => warehouseMap.set(w.code, w.id));
-        generalWarehouseId = warehouseMap.get("general");
-        ventaPublicoWarehouseId = warehouseMap.get("venta-publico");
-        fylCatalogDbg(`📦 Warehouses obtenidos: general=${generalWarehouseId}, venta-publico=${ventaPublicoWarehouseId}`);
-      } else {
-        console.warn("⚠️ No se encontraron warehouses 'general' o 'venta-publico'. Continuando sin stock por warehouse.");
-      }
-    } catch (e) {
-      console.warn("⚠️ Excepción obteniendo warehouses:", e);
-    }
-
-    // Obtener talles desde variant_sizes para todas las variantes (TABLA PRINCIPAL)
-    // IMPORTANTE: También obtener stock_qty para fallback
-    // IMPORTANTE: Obtener TODOS los talles (no filtrar aquí) para que podamos hacer el fallback correctamente
-    // catalog_public_view ya filtra por stock > 0 en Numeracion, así que solo procesaremos talles que vienen de allí
-    const variantSizesMap = new Map(); // key: variant_id -> Array<{size, stock_qty}>
-    if (allVariantIds.length > 0) {
-      try {
-        const { data: sizesData, error: sizesError } = await supabase
-          .from("variant_sizes")
-          .select("variant_id, size, stock_qty")
-          .in("variant_id", allVariantIds);
-        // NO filtrar por stock_qty aquí - necesitamos todos los talles para el fallback
-
-        if (!sizesError && sizesData) {
-          sizesData.forEach(sizeRow => {
-            const normalizedSize = normalizeSize(sizeRow.size);
-            if (!normalizedSize) return; // Saltar tamaños vacíos
-
-            if (!variantSizesMap.has(sizeRow.variant_id)) {
-              variantSizesMap.set(sizeRow.variant_id, []);
-            }
-            variantSizesMap.get(sizeRow.variant_id).push({
-              size: normalizedSize,
-              stock_qty: sizeRow.stock_qty || 0
+      const sizesPromise = supabase
+        .from("variant_sizes")
+        .select("variant_id, size, stock_qty")
+        .in("variant_id", allVariantIds)
+        .then(({ data: sizesData, error: sizesError }) => {
+          if (!sizesError && sizesData) {
+            sizesData.forEach(sizeRow => {
+              const normalizedSize = normalizeSize(sizeRow.size);
+              if (!normalizedSize) return;
+              if (!variantSizesMap.has(sizeRow.variant_id)) {
+                variantSizesMap.set(sizeRow.variant_id, []);
+              }
+              variantSizesMap.get(sizeRow.variant_id).push({
+                size: normalizedSize,
+                stock_qty: sizeRow.stock_qty || 0
+              });
             });
-          });
-          fylCatalogDbg(`📊 Se obtuvieron ${sizesData.length} registros de variant_sizes para ${allVariantIds.length} variantes. Variantes con talles: ${variantSizesMap.size}`);
-        } else if (sizesError) {
-          console.error("❌ Error obteniendo talles desde variant_sizes:", sizesError);
-        } else {
-          console.warn(`⚠️ No se obtuvieron datos de variant_sizes para ${allVariantIds.length} variantes. Esto puede indicar que no hay talles registrados.`);
-        }
-      } catch (e) {
-        console.warn("⚠️ Error obteniendo talles desde variant_sizes:", e);
-      }
+            fylCatalogDbg(`\ud83d\udcca Se obtuvieron ${sizesData.length} registros de variant_sizes para ${allVariantIds.length} variantes. Variantes con talles: ${variantSizesMap.size}`);
+          } else if (sizesError) {
+            console.error("\u274c Error obteniendo talles desde variant_sizes:", sizesError);
+          }
+        })
+        .catch(e => { console.warn("\u26a0\ufe0f Error obteniendo talles desde variant_sizes:", e); });
+
+      await Promise.all([warehousePromise, sizesPromise]);
     }
 
     // Obtener stock por talle desde variant_size_warehouse_stock (DISTRIBUCIÓN POR WAREHOUSE)

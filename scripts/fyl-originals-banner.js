@@ -193,6 +193,7 @@ function renderFYLProductCard(producto, index) {
 
   const nombreProducto = producto.Articulo || producto.Descripcion || 'Producto';
   
+  const eagerImage = index < 2;
   return `
     <div class="fyl-originals-card" 
          data-articulo="${producto.Articulo}"
@@ -201,7 +202,8 @@ function renderFYLProductCard(producto, index) {
       <img class="fyl-originals-card-image" 
            src="${cloudinaryOptimized(imagen, 400)}" 
            alt="${producto.Descripcion || producto.Articulo}"
-           loading="lazy"
+           loading="${eagerImage ? 'eager' : 'lazy'}"
+           fetchpriority="${eagerImage ? 'high' : 'auto'}"
            data-sku="${skuDefecto || ''}">
       ${colorDots}
       <div class="fyl-originals-card-content">
@@ -210,6 +212,22 @@ function renderFYLProductCard(producto, index) {
       </div>
     </div>
   `;
+}
+
+function waitForFirstFYLImage(maxMs = 900) {
+  const firstImg = document.querySelector("#fyl-originals-scroll .fyl-originals-card-image");
+  if (!firstImg) return Promise.resolve();
+  if (firstImg.complete && firstImg.naturalWidth > 0) return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = () => {
+      firstImg.removeEventListener("load", done);
+      firstImg.removeEventListener("error", done);
+      resolve();
+    };
+    firstImg.addEventListener("load", done, { once: true });
+    firstImg.addEventListener("error", done, { once: true });
+    setTimeout(done, maxMs);
+  });
 }
 
 // Función helper para obtener SKU defecto (reutilizar de main-supabase.js si está disponible)
@@ -458,6 +476,7 @@ export async function loadAndShowFYLBanner() {
   }
   
   renderFYLOriginalsBanner(products);
+  await waitForFirstFYLImage();
 }
 
 // Exportar funciones globalmente

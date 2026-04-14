@@ -182,41 +182,10 @@ const configReady = (async () => {
           `${logPrefix} config.prod.js: sin marca de carga (normal en local si no generaste config.prod.js en la raíz)`
         );
       } else {
+        // [PERF] Probe fetch eliminado: solo loguear warning sin hacer roundtrip de red.
         console.warn(
-          `${logPrefix} config.prod.js: NO se detectó marca tras el <script src>. Posible 404→HTML (rewrite Firebase), error de red o JS inválido.`
+          `${logPrefix} config.prod.js: marca no detectada. Si el cat\u00e1logo funciona, ignorar este aviso.`
         );
-        const probe = await probeConfigProdJsResponse();
-        fylConfigDiagnostics.configProdFetchProbe = probe;
-        if (probe) {
-          if (probe.errorMessage) {
-            console.error(
-              `${logPrefix} probe GET /config.prod.js falló:`,
-              probe.errorName,
-              probe.errorMessage
-            );
-          } else if (probe.looksLikeHtml) {
-            console.error(
-              `${logPrefix} CRÍTICO: /config.prod.js devolvió HTML (p. ej. index.html). Firebase rewrite: el archivo no está en el deploy o la ruta es incorrecta.`,
-              { status: probe.status, contentType: probe.contentType, bodyLength: probe.bodyLength }
-            );
-          } else if (!probe.ok) {
-            console.error(
-              `${logPrefix} /config.prod.js respuesta HTTP no OK:`,
-              probe.status,
-              probe.contentType
-            );
-          } else if (!probe.looksLikeJs) {
-            console.warn(
-              `${logPrefix} /config.prod.js OK pero el cuerpo no parece el JS esperado (revisar deploy).`,
-              { status: probe.status, contentType: probe.contentType, bodyLength: probe.bodyLength }
-            );
-          } else {
-            console.warn(
-              `${logPrefix} GET parece JS válido pero la marca no está en window: orden de scripts o caché agresiva.`,
-              { status: probe.status }
-            );
-          }
-        }
       }
     }
 

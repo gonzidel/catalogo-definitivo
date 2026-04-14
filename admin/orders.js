@@ -365,6 +365,12 @@ function isOrders2Page() {
 }
 
 const ADMIN_CLIENT_SUMMARY_KEY = "admin_client_summary";
+const ADMIN_ENABLE_24H_USES_KEY = "admin_enable_24h_uses";
+const CUSTOMER_NOTIFICATION_ORDER_DISMANTLED_TIMEOUT = "ORDER_DISMANTLED_TIMEOUT";
+const CUSTOMER_NOTIFICATION_ORDER_DEVOLUCION = "ORDER_MARKED_DEVOLUCION";
+const customerIncidentPointsByCustomerId = new Map();
+const transportNameById = new Map();
+let transportNamesLoaded = false;
 
 /** Fusiona claves en orders.notes (JSON). Si notes no es JSON objeto, devuelve null (no pisar). */
 function applyOrderNotesPatch(rawNotes, patch) {
@@ -395,6 +401,124 @@ function getAdminClientSummaryFromOrder(order) {
   } catch {
     return "";
   }
+}
+
+function getEnable24hUsesFromOrder(order) {
+  if (!order?.notes) return 0;
+  try {
+    const o = JSON.parse(order.notes);
+    if (typeof o !== "object" || !o) return 0;
+    const n = Number(o[ADMIN_ENABLE_24H_USES_KEY] || 0);
+    if (!Number.isFinite(n) || n < 0) return 0;
+    return Math.floor(n);
+  } catch {
+    return 0;
+  }
+}
+
+function clampIncidentPoints(value) {
+  const n = Number(value || 0);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.min(3, Math.floor(n));
+}
+
+async function refreshCustomerIncidentPoints(orderList) {
+  const customerIds = Array.from(
+    new Set(
+      (Array.isArray(orderList) ? orderList : [])
+        .map((order) => String(order?.customer_id || order?.customers?.id || "").trim())
+        .filter(Boolean)
+    )
+  );
+  customerIncidentPointsByCustomerId.clear();
+  if (customerIds.length === 0) return;
+
+  if (!supabase) supabase = await getSupabase();
+  if (!supabase) return;
+
+  const baseMap = new Map();
+  customerIds.forEach((id) => baseMap.set(id, { blue: 0, red: 0 }));
+
+  const { data, error } = await supabase
+    .from("customer_notifications")
+    .select("customer_id, type")
+    .in("customer_id", customerIds)
+    .in("type", [
+      CUSTOMER_NOTIFICATION_ORDER_DISMANTLED_TIMEOUT,
+      CUSTOMER_NOTIFICATION_ORDER_DEVOLUCION,
+    ]);
+
+  if (error || !Array.isArray(data)) {
+    for (const [id, counts] of baseMap.entries()) {
+      customerIncidentPointsByCustomerId.set(id, counts);
+    }
+    return;
+  }
+
+  for (const row of data) {
+    const id = String(row?.customer_id || "").trim();
+    if (!id || !baseMap.has(id)) continue;
+    const current = baseMap.get(id);
+    const type = String(row?.type || "").trim();
+    if (type === CUSTOMER_NOTIFICATION_ORDER_DISMANTLED_TIMEOUT) current.blue += 1;
+    if (type === CUSTOMER_NOTIFICATION_ORDER_DEVOLUCION) current.red += 1;
+  }
+
+  for (const [id, counts] of baseMap.entries()) {
+    customerIncidentPointsByCustomerId.set(id, {
+      blue: clampIncidentPoints(counts.blue),
+      red: clampIncidentPoints(counts.red),
+    });
+  }
+}
+
+function buildCustomerIncidentPointsHtml(customerId) {
+  const key = String(customerId || "").trim();
+  if (!key) return "";
+  const counters = customerIncidentPointsByCustomerId.get(key) || { blue: 0, red: 0 };
+  const blue = clampIncidentPoints(counters.blue);
+  const red = clampIncidentPoints(counters.red);
+  if (blue === 0 && red === 0) return "";
+
+  const dot = (color, title) =>
+    `<span title="${title}" style="display:inline-block;width:8px;height:8px;border-radius:999px;background:${color};"></span>`;
+  const blueDots = Array.from({ length: blue }, () => dot("#17a2ff", "Incidencia por desarme de pedido")).join("");
+  const redDots = Array.from({ length: red }, () => dot("#dc3545", "Incidencia por devolución")).join("");
+  return `
+    <span style="display:inline-flex;align-items:center;gap:4px;margin-left:8px;vertical-align:middle;">
+      ${blueDots}${redDots}
+    </span>
+  `;
+}
+
+async function loadTransportNames() {
+  if (transportNamesLoaded) return;
+  if (!supabase) supabase = await getSupabase();
+  if (!supabase) return;
+
+  try {
+    const { data, error } = await supabase.from("transports").select("id, name");
+    if (!error && Array.isArray(data)) {
+      transportNameById.clear();
+      data.forEach((t) => {
+        const id = String(t?.id || "").trim();
+        const name = String(t?.name || "").trim();
+        if (id && name) transportNameById.set(id, name);
+      });
+    }
+  } catch (_) {
+    /* ignore */
+  } finally {
+    transportNamesLoaded = true;
+  }
+}
+
+function getOrderTransportLabel(order, customer) {
+  const orderTransportId = String(order?.transport_id || "").trim();
+  const customerTransportId = String(customer?.transport_id || "").trim();
+  const transportId = orderTransportId || customerTransportId;
+  if (!transportId) return "Sin transporte asignado";
+  return transportNameById.get(transportId) || "Transporte asignado";
 }
 
 /** Contribuciones por ítem (picked/waiting/missing/reserved) según BD o selección pendiente orders2. */
@@ -1427,6 +1551,7 @@ async function loadOrders(resetPagination = true) {
         created_at,
         expires_at,
         dismantle_at,
+        transport_id,
         updated_at,
         sent_at,
         customer_id,
@@ -1452,7 +1577,8 @@ async function loadOrders(resetPagination = true) {
           city,
           province,
           dni,
-          email
+          email,
+          transport_id
         )
       `,
       { count: 'exact' }
@@ -1488,9 +1614,9 @@ async function loadOrders(resetPagination = true) {
         const { data: pageOrders, error: errPage } = await supabase
           .from("orders")
           .select(`
-            id, order_number, status, total_amount, created_at, expires_at, dismantle_at, updated_at, sent_at, customer_id, notes, source,
+            id, order_number, status, total_amount, created_at, expires_at, dismantle_at, transport_id, updated_at, sent_at, customer_id, notes, source,
             order_items ( id, product_name, color, size, quantity, price_snapshot, status, imagen, variant_id, order_item_stock_sources ( qty, warehouse_id ) ),
-            customers:customer_id!left ( id, customer_number, full_name, phone, city, province, dni, email )
+            customers:customer_id!left ( id, customer_number, full_name, phone, city, province, dni, email, transport_id )
           `)
           .in("id", pageIds)
           .order("created_at", { ascending: false });
@@ -1568,6 +1694,9 @@ async function loadOrders(resetPagination = true) {
             status,
             total_amount,
             created_at,
+            expires_at,
+            dismantle_at,
+            transport_id,
             updated_at,
             sent_at,
             customer_id,
@@ -1593,7 +1722,8 @@ async function loadOrders(resetPagination = true) {
               city,
               province,
               dni,
-              email
+              email,
+              transport_id
             )
           `;
           const { data: pageOrders, error: errPage } = await supabase
@@ -1644,6 +1774,10 @@ async function loadOrders(resetPagination = true) {
       }
       return { ...order, customers: customer };
     });
+  }
+
+  if (data && !error) {
+    await refreshCustomerIncidentPoints(data);
   }
 
   if (error) {
@@ -1795,6 +1929,7 @@ async function searchOrdersInDatabase(searchTerm) {
           created_at,
           expires_at,
           dismantle_at,
+          transport_id,
           updated_at,
           sent_at,
           customer_id,
@@ -1828,7 +1963,7 @@ async function searchOrdersInDatabase(searchTerm) {
       if (allCustomerIds.length > 0) {
         const { data: customersFullData, error: customersFullError } = await supabase
           .from("customers")
-          .select("id, customer_number, full_name, phone, city, province, dni, email")
+          .select("id, customer_number, full_name, phone, city, province, dni, email, transport_id")
           .in("id", allCustomerIds);
         
         if (!customersFullError && customersFullData) {
@@ -1852,6 +1987,7 @@ async function searchOrdersInDatabase(searchTerm) {
       console.error("❌ Error buscando pedidos:", error);
       orders = [];
     } else {
+      await refreshCustomerIncidentPoints(data || []);
       orders = data || [];
       // Resetear paginación cuando hay búsqueda
       currentPage = 0;
@@ -1912,6 +2048,7 @@ window.updateClosedOrdersBadge = updateClosedOrdersBadge;
 window.updateCancelledOrdersBadge = updateCancelledOrdersBadge;
 window.updateWaitingOrdersBadge = updateWaitingOrdersBadge;
 window.loadOrders = loadOrders;
+window.refreshOneOrder = refreshOneOrder;
 
 // Función auxiliar para actualizar un badge con conteo
 function updateBadgeWithCount(badgeId, count) {
@@ -2130,7 +2267,7 @@ async function fetchOrderById(orderId) {
   const { data: order, error: err1 } = await supabase
     .from("orders")
     .select(`
-      id, order_number, status, total_amount, created_at, expires_at, dismantle_at, updated_at, sent_at, customer_id, notes, source,
+      id, order_number, status, total_amount, created_at, expires_at, dismantle_at, transport_id, updated_at, sent_at, customer_id, notes, source,
       order_items (
         id, product_name, color, size, quantity, price_snapshot, status, imagen, variant_id,
         order_item_stock_sources ( qty, warehouse_id )
@@ -2147,7 +2284,7 @@ async function fetchOrderById(orderId) {
   if (order.customer_id) {
     const { data: cust, error: err2 } = await supabase
       .from("customers")
-      .select("id, customer_number, full_name, name, email, phone, dni, city, province")
+      .select("id, customer_number, full_name, name, email, phone, dni, city, province, transport_id")
       .eq("id", order.customer_id)
       .single();
     if (!err2 && cust) {
@@ -2856,6 +2993,7 @@ async function renderOrderCard(order) {
   
   // Normalizar customer (objeto o array; nunca null para evitar fallos en render)
   const customer = Array.isArray(order?.customers) ? (order.customers[0] ?? {}) : (order?.customers && typeof order.customers === 'object' ? order.customers : {});
+  const isCustomerOrder = String(order?.source || "").trim().toLowerCase() === "customer";
 
   const customerEmail = (customer?.email || '').trim() || '—';
   const customerPhone = (customer?.phone || '').trim() || '—';
@@ -2865,6 +3003,25 @@ async function renderOrderCard(order) {
   const customerNumber = (customer?.customer_number || '').trim() || '';
   const customerCity = (customer?.city || '').trim() || '';
   const customerProvince = (customer?.province || '').trim() || '';
+  const customerIncidentPointsHtml = buildCustomerIncidentPointsHtml(customer?.id || order?.customer_id || "");
+  const showDetailButton = displayStatus === "picked";
+  const showTransportUnderDetail = showDetailButton && isCustomerOrder;
+  if (showTransportUnderDetail) {
+    await loadTransportNames();
+  }
+  const detailTransportLabel = showTransportUnderDetail ? getOrderTransportLabel(order, customer) : "";
+  const detailActionHtml = showDetailButton ? `
+    <div style="display:flex; flex-direction:column; align-items:flex-end; gap:6px;">
+      <button class="btn" style="background: #17a2b8; color: white; padding: 6px 12px; font-size: 13px;" data-view-summary="${order.id}">
+        📄 Ver Detalle
+      </button>
+      ${showTransportUnderDetail ? `
+        <div style="font-size:12px; color:#4b5563; text-align:right; max-width:210px;">
+          🚚 ${detailTransportLabel}
+        </div>
+      ` : ""}
+    </div>
+  ` : "";
   
   // Obtener ofertas y promociones (con timeout para no bloquear el renderizado)
   // Si tarda más de 2 segundos, usar datos vacíos para mostrar el pedido rápidamente
@@ -3250,8 +3407,10 @@ async function renderOrderCard(order) {
   // En Cancelaciones, ofrecer desarme completo reutilizando el flujo existente de cancelación total.
   if (currentFilter === "cancelled") {
     if (isExpiredPendingDisassemblyOrder) {
+      const enable24hUses = getEnable24hUsesFromOrder(order);
+      const enableBtnColor = enable24hUses <= 0 ? "#17a2b8" : (enable24hUses === 1 ? "#f39c12" : "#dc3545");
       actionButtons += `
-        <button class="btn" style="background: #17a2b8; color: white;" data-enable-order="${order.id}">
+        <button class="btn" style="background: ${enableBtnColor}; color: white;" data-enable-order="${order.id}">
           ⏱️ Habilitar 24hs
         </button>
       `;
@@ -3328,7 +3487,6 @@ async function renderOrderCard(order) {
     return '';
   }
   
-  const isCustomerOrder = String(order?.source || "").trim().toLowerCase() === "customer";
   const orderCardExtraClass = (isOrders2Page() && isCustomerOrder) ? " order-card--customer" : "";
   const pendingSummaryCount = orders2PendingByOrder.get(order.id)?.size ?? 0;
   const showClientSummaryBtn =
@@ -3356,13 +3514,9 @@ async function renderOrderCard(order) {
         <div class="customer-name" style="display: flex; justify-content: space-between; align-items: center;">
           <div>
             ${customerNumber ? `<span style="color: #CD844D; font-weight: 600; margin-right: 8px;">#${customerNumber}</span>` : ""}
-            ${formatCustomerDisplayName(customer)}
+            <span>${formatCustomerDisplayName(customer)}</span>${customerIncidentPointsHtml}
           </div>
-          ${displayStatus === "picked" ? `
-            <button class="btn" style="background: #17a2b8; color: white; padding: 6px 12px; font-size: 13px;" data-view-summary="${order.id}">
-              📄 Ver Detalle
-            </button>
-          ` : ''}
+          ${detailActionHtml}
         </div>
         <div class="customer-details">
           ${customerDni ? `<span>🆔 DNI: ${customerDni}</span>` : ""}
@@ -3934,6 +4088,12 @@ function filterOrders(list) {
         excludedBy = "order.status=" + (order.status ?? "null");
       }
       else if (isExpiredPendingAdminDisassembly(order)) excludedBy = "pedido vencido pendiente de desarme (va en Cancelaciones)";
+      else if (statusNorm === STATUS.ACTIVE) {
+        if (!hasOperationalItems(order)) excludedBy = "active sin ítems operacionales";
+        else if (hasOnlyWaitingItems(order)) excludedBy = "active con solo waiting (va en Espera)";
+        else if (hasAllItemsPicked(order) && !hasWaitingItems(order)) excludedBy = "active con items apartados (va en Apartados)";
+        else return true;
+      }
       else if (!hasReservedItems(order) && !hasItemsNeedingAttention(order)) excludedBy = "sin ítems reservados ni missing";
       else if (hasAllItemsPicked(order) && !hasWaitingItems(order)) excludedBy = "hasAllItemsPicked=true (sin espera)";
       if (DEBUG_ACTIVE_FILTER && debugLogCount < MAX_DEBUG_LOGS) {
@@ -4583,11 +4743,31 @@ function attachOrderEventHandlers() {
       btn.dataset.processing = "1";
       btn.textContent = "Habilitando...";
       try {
+        const { data: currentOrderNotesRow, error: notesError } = await supabase
+          .from("orders")
+          .select("notes")
+          .eq("id", orderId)
+          .maybeSingle();
+        if (notesError) {
+          alert(notesError.message || "No se pudo leer el estado de habilitaciones del pedido.");
+          return;
+        }
+
+        const currentUses = getEnable24hUsesFromOrder({ notes: currentOrderNotesRow?.notes || "" });
+        const nextNotes = applyOrderNotesPatch(currentOrderNotesRow?.notes || "", {
+          [ADMIN_ENABLE_24H_USES_KEY]: currentUses + 1,
+        });
+        if (nextNotes === null) {
+          alert("No se pudo registrar la habilitación porque notes del pedido no es JSON válido.");
+          return;
+        }
+
         const newDismantleAtIso = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
         const { error } = await supabase
           .from("orders")
           .update({
             dismantle_at: newDismantleAtIso,
+            notes: nextNotes,
             updated_at: new Date().toISOString(),
           })
           .eq("id", orderId);
@@ -5803,6 +5983,7 @@ async function loadClosedOrders() {
         status,
         total_amount,
         created_at,
+        transport_id,
         updated_at,
         customer_id,
         order_items (
@@ -5834,7 +6015,7 @@ async function loadClosedOrders() {
     // Obtener información de customers (ahora incluye email y customer_number)
     const { data: customersData, error: customersError } = await supabase
       .from("customers")
-      .select("id, customer_number, full_name, phone, city, province, dni, email")
+      .select("id, customer_number, full_name, phone, city, province, dni, email, transport_id")
       .in("id", customerIds);
     
     if (customersError) {
@@ -6055,6 +6236,9 @@ async function cancelOrder(orderId) {
       id,
       order_number,
       status,
+      customer_id,
+      created_at,
+      dismantle_at,
       order_items (
         id,
         variant_id,
@@ -6070,6 +6254,8 @@ async function cancelOrder(orderId) {
     alert("No se encontró el pedido.");
     return;
   }
+
+  const shouldNotifyDismantledByTimeout = isExpiredPendingAdminDisassembly(order);
 
   // Verificar que el pedido pueda cancelarse (solo active, picked o waiting)
   if (order.status === 'closed' || order.status === 'sent') {
@@ -6200,6 +6386,23 @@ async function cancelOrder(orderId) {
     console.error("❌ Error eliminando el pedido:", deleteOrderError);
     alert("Error al eliminar el pedido.");
     return;
+  }
+
+  if (shouldNotifyDismantledByTimeout && order.customer_id) {
+    const notifyResult = await emitCustomerNotification({
+      customerId: order.customer_id,
+      orderId: null,
+      type: CUSTOMER_NOTIFICATION_ORDER_DISMANTLED_TIMEOUT,
+      message:
+        "Tu pedido llegó al tiempo límite y nuestro equipo lo desarmó para liberar stock. Si querés, podés armar uno nuevo cuando quieras.",
+      payload: {
+        action_url: "/index.html",
+        order_number: order.order_number || null,
+      },
+    });
+    if (!notifyResult?.ok) {
+      console.warn("⚠️ No se pudo guardar notificación de desarme para cliente:", notifyResult?.error || notifyResult);
+    }
   }
   
   console.log(`✅ Pedido ${order.order_number || orderId} cancelado correctamente`);

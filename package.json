@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "bundle:supabase": "npx --yes esbuild scripts/supabase-vendor-entry.js --bundle --format=esm --platform=browser --outfile=scripts/vendor/supabase-js.bundle.js",
+    "bundle:supabase": "npx --yes esbuild scripts/supabase-vendor-entry.js --bundle --format=esm --platform=browser --minify --outfile=scripts/vendor/supabase-js.bundle.min.js",
     "build": "node scripts/generate-config.mjs && node scripts/cache-bust-html.mjs --mode prod",
     "dev:prep": "node scripts/cache-bust-html.mjs --mode dev",
     "deploy": "node deploy.js",

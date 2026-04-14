@@ -14,9 +14,31 @@ const TYPE_LABELS = {
   ORDER_PACKAGED_TODAY: "Envío",
   ORDER_DEADLINE_REMINDER: "Pedido",
   ORDER_EXPIRED_PENDING_DISASSEMBLY: "Pedido",
+  ORDER_DISMANTLED_TIMEOUT: "Pedido",
+  ORDER_MARKED_DEVOLUCION: "Pedido",
 };
 
 const MARK_READ_ON_CLICK_TYPES = new Set(["ORDER_MISSING_ITEMS"]);
+
+function hasLikelySupabaseSession() {
+  try {
+    if (typeof window === "undefined" || !window.localStorage) return false;
+    const raw = window.localStorage.getItem("sb-dtfznewwvsadkorxwzft-auth-token");
+    if (!raw) return false;
+    const parsed = JSON.parse(raw);
+    if (!parsed) return false;
+    if (typeof parsed.access_token === "string" && parsed.access_token.length > 20) return true;
+    if (
+      typeof parsed.currentSession?.access_token === "string" &&
+      parsed.currentSession.access_token.length > 20
+    ) {
+      return true;
+    }
+    return false;
+  } catch (_e) {
+    return false;
+  }
+}
 
 function safeText(v) {
   return String(v ?? "").trim();
@@ -276,6 +298,10 @@ async function initNotifications() {
   const closeBtn = document.getElementById(CLOSE_ID);
   const backdrop = document.getElementById(BACKDROP_ID);
   if (!btn) return;
+  if (!hasLikelySupabaseSession()) {
+    setBadgeVisible(false);
+    return;
+  }
 
   const supabase = await waitForSupabase();
   if (!supabase) return;

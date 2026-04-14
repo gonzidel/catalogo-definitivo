@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="app-version" content="m260407">
+    <meta name="app-version" content="m260418">
     <title>Dashboard - Catálogo FYL</title>
     <script>document.documentElement.classList.add("client-area");</script>
     <script>window.__DASHBOARD__ = true;</script>
@@ -47,8 +47,8 @@
     </noscript>
     <!-- End Meta Pixel Code -->
 
-    <link rel="stylesheet" href="../styles.css?v=m260407">
-    <link rel="stylesheet" href="./dashboard.css?v=m260407">
+    <link rel="stylesheet" href="../styles.css?v=m260418">
+    <link rel="stylesheet" href="./dashboard.css?v=m260418">
     <style>
         /* Misma familia visual que index2: fondo claro, cards blancas, sombras suaves, #CD844D */
         .dashboard-container {
@@ -503,6 +503,15 @@
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+
+        body.dashboard-loading .dashboard-container,
+        body.dashboard-loading .bottom-nav {
+            visibility: hidden;
+        }
+
+        body.dashboard-loading {
+            overflow: hidden;
+        }
     </style>
     <!-- Microsoft Clarity -->
     <script type="text/javascript">
@@ -513,9 +522,9 @@
         })(window, document, "clarity", "script", "w7h6cytm9j");
     </script>
 </head>
-<body class="dashboard-has-bottom-nav">
+<body class="dashboard-has-bottom-nav dashboard-loading">
     <!-- Loader -->
-    <div id="loader" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.9); display: flex; justify-content: center; align-items: center; z-index: 9999;">
+    <div id="loader" aria-busy="true" style="position: fixed; inset: 0; width: 100%; height: 100%; background: #fff; display: flex; justify-content: center; align-items: center; z-index: 99999;">
         <div style="text-align: center;">
             <div class="spinner" style="width: 40px; height: 40px; border: 4px solid #f3f3f3; border-top: 4px solid #CD844D; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 20px;"></div>
             <p style="color: #666; font-size: 16px;">Cargando tu área personal...</p>
@@ -678,22 +687,47 @@
         </a>
     </nav>
 
-    <script src="../scripts/pwa-install.js?v=m260407"></script>
-    <script type="module" src="../scripts/supabase-client.js?v=m260407"></script>
+    <script type="module" src="../scripts/supabase-client.js?v=m260418"></script>
     <script type="module">
-      import { fylAnalytics } from "../scripts/analytics.js?v=m260407";
-      import { attachClientAnalyticsAuthListener } from "../scripts/analytics-auth-hook.js?v=m260407";
+      import { fylAnalytics } from "../scripts/analytics.js?v=m260418";
+      import { attachClientAnalyticsAuthListener } from "../scripts/analytics-auth-hook.js?v=m260418";
       fylAnalytics.init({ app_area: "client", page_type: "dashboard", user_role: "guest" });
       attachClientAnalyticsAuthListener();
     </script>
-    <script type="module" src="../scripts/auth-wait.js?v=m260407"></script>
-    <script type="module" src="auth-helper.js?v=m260407"></script>
-    <script type="module" src="../scripts/passkeys.js?v=m260407"></script>
-    <script type="module" src="../scripts/cart-persistent.js?v=m260407"></script>
-    <script type="module" src="../scripts/product-alternatives.js?v=m260407"></script>
-    <script type="module" src="../scripts/notifications.js?v=m260407"></script>
-    <script type="module" src="dashboard-instant.js?v=m260407"></script>
-    <script type="module" src="dashboard-onboarding.js?v=m260407"></script>
-    <script type="module" src="dashboard.js?v=m260407"></script>
+    <script type="module" src="../scripts/auth-wait.js?v=m260418"></script>
+    <script type="module" src="auth-helper.js?v=m260418"></script>
+    <script type="module" src="../scripts/passkeys.js?v=m260418"></script>
+    <script type="module" src="../scripts/cart-persistent.js?v=m260418"></script>
+    <script type="module" src="dashboard-instant.js?v=m260418"></script>
+    <script type="module" src="dashboard.js?v=m260418"></script>
+    <script type="module">
+      let __fylDashboardDeferredLoaded = false;
+      function __fylScheduleDashboardPostBoot(fn, timeoutMs) {
+        const waitMs = typeof timeoutMs === "number" ? timeoutMs : 1200;
+        if (typeof window.requestIdleCallback === "function") {
+          window.requestIdleCallback(fn, { timeout: waitMs });
+          return;
+        }
+        setTimeout(fn, waitMs);
+      }
+      function __fylLoadDashboardDeferred() {
+        if (__fylDashboardDeferredLoaded) return;
+        __fylDashboardDeferredLoaded = true;
+        __fylScheduleDashboardPostBoot(() => {
+          import("../scripts/product-alternatives.js?v=m260418");
+        }, 400);
+        __fylScheduleDashboardPostBoot(() => {
+          import("../scripts/notifications.js?v=m260418");
+          import("./dashboard-onboarding.js?v=m260418");
+        }, 1100);
+        __fylScheduleDashboardPostBoot(() => {
+          const s = document.createElement("script");
+          s.src = "../scripts/pwa-install.js?v=m260418";
+          document.body.appendChild(s);
+        }, 1700);
+      }
+      window.addEventListener("fyl-dashboard-boot-done", __fylLoadDashboardDeferred, { once: true });
+      setTimeout(__fylLoadDashboardDeferred, 9000);
+    </script>
 </body>
 </html>

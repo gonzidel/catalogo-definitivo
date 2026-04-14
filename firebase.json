@@ -223,6 +223,15 @@
         ]
       },
       {
+        "source": "scripts/vendor/supabase-js.bundle.min.js",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, no-store, must-revalidate"
+          }
+        ]
+      },
+      {
         "source": "scripts/config.local.js",
         "headers": [
           {

@@ -12,6 +12,41 @@ import { fylAnalytics } from "../scripts/analytics.js";
 import { canonicalizeTransportName } from "../scripts/transport-canonical.js";
 
 let fylDashboardViewOnce = false;
+if (typeof window !== "undefined") {
+  window.__FYL_DASHBOARD_INSTANT_ACTIVE__ = true;
+}
+
+const __dashBootStartTs =
+  typeof performance !== "undefined" ? performance.now() : Date.now();
+const __dashPerfMarks = {};
+
+function shouldLogDashboardPerf() {
+  if (typeof window === "undefined") return false;
+  if (window.FYL_DEBUG_DASHBOARD_PERF === true) return true;
+  const search = String(window.location?.search || "");
+  return /(?:^|[?&])debug=dashboardperf(?:&|$)/.test(search);
+}
+
+function markDashboardPerf(stage, data = {}) {
+  const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+  const ms = Math.max(0, Math.round(now - __dashBootStartTs));
+  __dashPerfMarks[stage] = ms;
+  if (shouldLogDashboardPerf()) {
+    console.debug("[perf][dashboard]", stage, `${ms}ms`, data);
+  }
+}
+
+function flushDashboardPerfSummary(tag = "boot_complete") {
+  if (typeof window === "undefined") return;
+  const summary = {
+    tag,
+    ...__dashPerfMarks,
+  };
+  window.__FYL_DASHBOARD_PERF = summary;
+  if (shouldLogDashboardPerf()) {
+    console.info("[perf][dashboard] summary", summary);
+  }
+}
 
 function fylDashboardCartLinesForGa(items) {
   return (items || []).map((it) => ({
@@ -285,10 +320,13 @@ const MIN_UNITS_TO_FINALIZE = 4;
 const ORDERS_REALTIME_DEBOUNCE_MS = 320;
 const ORDERS_REALTIME_RETRY_MS = 2000;
 const ORDERS_MAINTENANCE_MIN_INTERVAL_MS = 60 * 1000;
+const DASH_ENABLE_ORDERS_MAINTENANCE =
+  typeof window !== "undefined" && window.FYL_ENABLE_ORDERS_MAINTENANCE === true;
 
 let lastOrderDeadlineReminderContext = null;
 let lastOrderExpiredPendingDisassemblyContext = null;
 let lastOrdersMaintenanceAtMs = 0;
+let ordersMaintenanceRpcAvailable = true;
 let ordersRefreshTimerId = null;
 let ordersRefreshInFlight = null;
 let ordersRefreshPending = false;
@@ -586,6 +624,64 @@ function clearOrderDeadlineSyntheticNotifications() {
   }
 }
 
+const ORDER_DISMANTLED_TIMEOUT_NOTIFICATION_TYPE = "ORDER_DISMANTLED_TIMEOUT";
+const DISMANTLED_TIMEOUT_MODAL_SEEN_IDS_KEY = "fyl_dashboard_dismantled_seen_ids_v1";
+
+function getSeenDismantledTimeoutNotificationIds() {
+  try {
+    const raw = window.localStorage.getItem(DISMANTLED_TIMEOUT_MODAL_SEEN_IDS_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed.map((id) => String(id || "").trim()).filter(Boolean));
+  } catch {
+    return new Set();
+  }
+}
+
+function persistSeenDismantledTimeoutNotificationIds(idsSet) {
+  try {
+    const arr = Array.from(idsSet || []).map((id) => String(id || "").trim()).filter(Boolean);
+    window.localStorage.setItem(DISMANTLED_TIMEOUT_MODAL_SEEN_IDS_KEY, JSON.stringify(arr));
+  } catch (_) {
+    /* ignore */
+  }
+}
+
+async function maybeShowDismantledTimeoutNoticeModal(userId) {
+  if (!userId || !supabase) return;
+  const seenIds = getSeenDismantledTimeoutNotificationIds();
+
+  const { data, error } = await supabase
+    .from("customer_notifications")
+    .select("id, type, message, created_at")
+    .eq("customer_id", userId)
+    .eq("type", ORDER_DISMANTLED_TIMEOUT_NOTIFICATION_TYPE)
+    .order("created_at", { ascending: false })
+    .limit(20);
+
+  if (error || !Array.isArray(data) || data.length === 0) return;
+
+  const unseen = data.find((row) => !seenIds.has(String(row?.id || "").trim()));
+  if (!unseen) return;
+
+  const bodyHtml = `
+    <p class="dash-app-message-modal__text">Tu pedido fue desarmado porque alcanzó el tiempo límite de edición.</p>
+    <p class="dash-app-message-modal__text">Si querés, podés volver a armar uno nuevo ahora mismo.</p>
+    <div style="margin-top:12px;">
+      <a href="/index.html" class="btn btn-primary" style="display:inline-flex;align-items:center;justify-content:center;text-decoration:none;">Ir al catálogo</a>
+    </div>
+  `;
+  await showDashboardMessageModal({
+    title: "Pedido desarmado por vencimiento",
+    bodyHtml,
+    confirmLabel: "Entendido",
+  });
+
+  seenIds.add(String(unseen.id || "").trim());
+  persistSeenDismantledTimeoutNotificationIds(seenIds);
+}
+
 fylDevLog("dashboard-instant.js cargado");
 
 function prefersReducedMotion() {
@@ -761,6 +857,9 @@ function applyPendingOrderFeedback(ordersSection) {
 
 function hideLoader() {
   const loader = document.getElementById("loader");
+  if (document.body) {
+    document.body.classList.remove("dashboard-loading");
+  }
   if (loader) {
     loader.style.display = "none";
     loader.style.visibility = "hidden";
@@ -878,19 +977,30 @@ async function getOffersAndPromotionsForItems(items) {
   if (!items || items.length === 0) {
     return { itemOffers: new Map(), itemPromos: new Map(), totalDiscount: 0 };
   }
-  
+
+  const normalizeText = (value) =>
+    String(value || "")
+      .trim()
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
+
   const variantIds = [];
   const itemVariantMap = new Map();
-  
-  // Obtener variant_ids de los items
+  const itemMetaByKey = new Map();
+  const productNames = new Set();
+
   for (const item of items) {
-    const variantId = await findVariantIdForItem(
-      item.product_name || item.articulo,
-      item.color,
-      item.size || item.talle,
-      item.variant_id
-    );
-    
+    const itemKey = item.id || `${item.product_name}-${item.color}-${item.size}`;
+    const productName = String(item.product_name || item.articulo || "").trim();
+    const color = String(item.color || "").trim();
+    const size = String(item.size || item.talle || "").trim();
+    const variantId =
+      item.variant_id != null && item.variant_id !== "" ? String(item.variant_id).trim() : "";
+
+    if (productName) productNames.add(productName);
+    itemMetaByKey.set(itemKey, { item, productName, color, size, variantId });
+
     if (variantId) {
       variantIds.push(variantId);
       if (!itemVariantMap.has(variantId)) {
@@ -899,138 +1009,184 @@ async function getOffersAndPromotionsForItems(items) {
       itemVariantMap.get(variantId).push(item);
     }
   }
-  
-  if (variantIds.length === 0) {
-    return { itemOffers: new Map(), itemPromos: new Map(), totalDiscount: 0 };
+
+  const productIdByName = new Map();
+  const productNamesList = Array.from(productNames);
+  if (productNamesList.length > 0) {
+    const { data: productsData, error: productsError } = await supabase
+      .from("products")
+      .select("id,name")
+      .in("name", productNamesList)
+      .eq("status", "active");
+    if (productsError) {
+      console.warn("⚠️ Error cargando productos para ofertas/promos:", productsError.message || productsError);
+    } else {
+      (productsData || []).forEach((row) => {
+        const name = String(row?.name || "").trim();
+        if (name) productIdByName.set(name, row.id);
+      });
+    }
   }
-  
-  // Obtener promociones activas
-  const { data: promotionsData, error: promotionsError } = await supabase
-    .rpc('get_active_promotions_for_variants', {
-      p_variant_ids: variantIds
-    });
-  
-  const promotions = promotionsError ? [] : (promotionsData || []);
-  
+
+  const productIds = Array.from(new Set(Array.from(productIdByName.values()).filter(Boolean)));
+  if (productIds.length > 0) {
+    const { data: variantsData, error: variantsError } = await supabase
+      .from("product_variants")
+      .select("id,product_id,color,size")
+      .in("product_id", productIds)
+      .eq("active", true);
+    if (!variantsError && variantsData) {
+      const variantByKey = new Map();
+      variantsData.forEach((row) => {
+        const key = `${row.product_id}|${normalizeText(row.color)}|${normalizeSize(row.size) || normalizeText(row.size)}`;
+        if (!variantByKey.has(key)) variantByKey.set(key, String(row.id));
+      });
+      itemMetaByKey.forEach((meta) => {
+        if (meta.variantId) return;
+        const productId = productIdByName.get(meta.productName);
+        if (!productId) return;
+        const vKey = `${productId}|${normalizeText(meta.color)}|${normalizeSize(meta.size) || normalizeText(meta.size)}`;
+        const foundVariantId = variantByKey.get(vKey);
+        if (!foundVariantId) return;
+        meta.variantId = foundVariantId;
+        variantIds.push(foundVariantId);
+        if (!itemVariantMap.has(foundVariantId)) {
+          itemVariantMap.set(foundVariantId, []);
+        }
+        itemVariantMap.get(foundVariantId).push(meta.item);
+      });
+    }
+  }
+
+  const uniqueVariantIds = Array.from(new Set(variantIds.filter(Boolean)));
+  const promotions =
+    uniqueVariantIds.length > 0
+      ? (await supabase
+          .rpc("get_active_promotions_for_variants", {
+            p_variant_ids: uniqueVariantIds,
+          })
+          .then(({ data, error }) => {
+            if (error) return [];
+            return data || [];
+          })
+          .catch(() => []))
+      : [];
+
   const itemOffersMap = new Map();
   const itemPromosMap = new Map();
-  
+
   // Procesar promociones (tienen prioridad)
   for (const promo of promotions) {
     const variantIdsInPromo = promo.variant_ids || [];
-    const promoText = promo.promo_type === '2x1' 
-      ? '2x1' 
-      : promo.promo_type === '2xMonto' && promo.fixed_amount
+    const promoText = promo.promo_type === "2x1"
+      ? "2x1"
+      : promo.promo_type === "2xMonto" && promo.fixed_amount
       ? `2x$${promo.fixed_amount}`
       : null;
-    
+
     if (promoText) {
       for (const variantId of variantIdsInPromo) {
-        const itemsInPromo = itemVariantMap.get(variantId) || [];
+        const itemsInPromo = itemVariantMap.get(String(variantId)) || [];
         for (const item of itemsInPromo) {
           itemPromosMap.set(item.id || `${item.product_name}-${item.color}-${item.size}`, promoText);
         }
       }
     }
   }
-  
-  // Procesar ofertas (solo para items que no estÃ¡n en promociones)
-  for (const item of items) {
-    const itemKey = item.id || `${item.product_name}-${item.color}-${item.size}`;
-    if (itemPromosMap.has(itemKey)) continue;
-    
-    if (!item.product_name && !item.articulo) continue;
-    const productName = item.product_name || item.articulo;
-    if (!productName || !item.color) continue;
-    
-    const { data: productData } = await supabase
-      .from('products')
-      .select('id')
-      .eq('name', productName)
-      .eq('status', 'active')
-      .limit(1)
-      .maybeSingle();
-    
-    if (!productData) continue;
-    
-    const today = new Date().toISOString().split('T')[0];
-    const { data: offerData } = await supabase
-      .from('color_price_offers')
-      .select('*')
-      .eq('product_id', productData.id)
-      .eq('color', item.color)
-      .eq('status', 'active')
-      .lte('start_date', today)
-      .gte('end_date', today)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    
-    if (offerData) {
-      const originalPrice = item.price_snapshot || item.variantInfo?.price || 0;
-      const offerPrice = offerData.offer_price;
-      itemOffersMap.set(itemKey, {
-        offerPrice: offerPrice,
-        originalPrice: originalPrice,
-        promoText: 'ðŸ”¥ Oferta'
+
+  const latestOfferByProductColor = new Map();
+  if (productIds.length > 0) {
+    const today = new Date().toISOString().split("T")[0];
+    const { data: offersData, error: offersError } = await supabase
+      .from("color_price_offers")
+      .select("product_id,color,offer_price,created_at")
+      .in("product_id", productIds)
+      .eq("status", "active")
+      .lte("start_date", today)
+      .gte("end_date", today);
+    if (!offersError && offersData) {
+      offersData.forEach((offer) => {
+        const oKey = `${offer.product_id}|${normalizeText(offer.color)}`;
+        const prev = latestOfferByProductColor.get(oKey);
+        if (!prev) {
+          latestOfferByProductColor.set(oKey, offer);
+          return;
+        }
+        const prevTs = new Date(prev.created_at || 0).getTime();
+        const currTs = new Date(offer.created_at || 0).getTime();
+        if (currTs >= prevTs) latestOfferByProductColor.set(oKey, offer);
       });
     }
   }
-  
+
+  itemMetaByKey.forEach((meta, itemKey) => {
+    if (itemPromosMap.has(itemKey)) return;
+    const productId = productIdByName.get(meta.productName);
+    if (!productId || !meta.color) return;
+    const offer = latestOfferByProductColor.get(`${productId}|${normalizeText(meta.color)}`);
+    if (!offer) return;
+    const originalPrice = meta.item.price_snapshot || meta.item.variantInfo?.price || 0;
+    itemOffersMap.set(itemKey, {
+      offerPrice: offer.offer_price,
+      originalPrice: originalPrice,
+      promoText: "Oferta",
+    });
+  });
+
   // Calcular descuentos totales
   let totalDiscount = 0;
-  
+
   // Descuentos de promociones
   for (const promo of promotions) {
     const variantIdsInPromo = promo.variant_ids || [];
     const itemsInPromo = [];
-    
+
     for (const variantId of variantIdsInPromo) {
-      itemsInPromo.push(...(itemVariantMap.get(variantId) || []));
+      itemsInPromo.push(...(itemVariantMap.get(String(variantId)) || []));
     }
-    
+
     if (itemsInPromo.length === 0) continue;
-    
+
     let totalQuantity = 0;
     let totalPrice = 0;
-    
+
     for (const item of itemsInPromo) {
       const qty = Number(item.quantity || item.qty || 0);
       const price = parseARSNumber(item.price_snapshot ?? item.variantInfo?.price ?? 0);
       totalQuantity += qty;
       totalPrice += qty * price;
     }
-    
+
     if (totalQuantity > 0) {
       const groups = Math.floor(totalQuantity / 2);
       let discount = 0;
-      
-      if (promo.promo_type === '2x1') {
+
+      if (promo.promo_type === "2x1") {
         const averagePrice = totalPrice / totalQuantity;
         discount = groups * averagePrice;
-      } else if (promo.promo_type === '2xMonto' && promo.fixed_amount) {
+      } else if (promo.promo_type === "2xMonto" && promo.fixed_amount) {
         const promoPrice = groups * promo.fixed_amount;
         discount = totalPrice - promoPrice;
       }
-      
+
       totalDiscount += discount;
     }
   }
-  
+
   // Descuentos de ofertas
   for (const [itemKey, offerInfo] of itemOffersMap.entries()) {
-    const item = items.find(i => (i.id || `${i.product_name}-${i.color}-${i.size}`) === itemKey);
+    const item = itemMetaByKey.get(itemKey)?.item;
     if (item) {
       const qty = Number(item.quantity || item.qty || 0);
       const discount = (offerInfo.originalPrice - offerInfo.offerPrice) * qty;
       totalDiscount += discount;
     }
   }
-  
+
   return {
     itemOffers: itemOffersMap,
     itemPromos: itemPromosMap,
-    totalDiscount: totalDiscount
+    totalDiscount: totalDiscount,
   };
 }
 
@@ -3501,21 +3657,6 @@ async function loadCart(userId, options = {}) {
       return;
     }
 
-    // Tras intentar deduplicar, siempre releer: evita UI desincronizada si hubo borrado parcial.
-    const { data: cartItemsFresh, error: refreshErr } = await supabase
-      .from("cart_items")
-      .select(CART_ITEM_COLS)
-      .eq("cart_id", cart.id);
-
-    if (refreshErr) {
-      cartInfo.innerHTML = `
-          <h3>Carrito Actual</h3>
-          <p style="color: #dc3545;">Error cargando carrito</p>
-        `;
-      return;
-    }
-    cartItems = cartItemsFresh || [];
-
     // Precargar SKUs para que "Ver producto" en carrito vaya al PDP real
     await ensureVariantSkusLoaded(cartItems.map((it) => it?.variant_id).filter(Boolean));
 
@@ -3867,20 +4008,27 @@ async function loadOrders(userId, options = {}) {
   try {
     // Evitar ejecutar mantenimiento en ráfagas realtime.
     const shouldRunMaintenance = shouldRunOrdersMaintenance(options?.forceMaintenance === true);
-    if (shouldRunMaintenance) {
+    if (DASH_ENABLE_ORDERS_MAINTENANCE && shouldRunMaintenance && ordersMaintenanceRpcAvailable) {
       try {
         await supabase.rpc("rpc_orders_daily_maintenance");
       } catch (e) {
-        console.warn("rpc_orders_daily_maintenance:", e?.message || e);
+        const msg = String(e?.message || e || "");
+        const code = String(e?.code || "");
+        if (code === "PGRST202" || /rpc_orders_daily_maintenance/i.test(msg)) {
+          ordersMaintenanceRpcAvailable = false;
+          fylDevLog(
+            "ℹ️ rpc_orders_daily_maintenance no disponible en este entorno; se omite en siguientes cargas."
+          );
+        } else {
+          console.warn("rpc_orders_daily_maintenance:", msg);
+        }
       }
     }
 
-    // Mi pedido: debe seguir visible tras "Finalizar pedido" del cliente (status closed).
-    const { data: ordersRaw, error } = await supabase
+    // Mi pedido: traer primero solo metadata para evitar payload grande de items históricos.
+    const { data: ordersMetaRaw, error } = await supabase
       .from("orders")
-      .select(
-        "id, order_number, status, total_amount, created_at, updated_at, expires_at, dismantle_at, order_items(id, product_name, color, size, quantity, price_snapshot, imagen, status, variant_id)"
-      )
+      .select("id, order_number, status, total_amount, created_at, updated_at, expires_at, dismantle_at")
       .eq("customer_id", userId)
       .in("status", ["active", "closing_soon", "closed"])
       .order("created_at", { ascending: false });
@@ -3891,19 +4039,20 @@ async function loadOrders(userId, options = {}) {
       if (x === "closing_soon") return 1;
       return 2;
     };
-    replaceKnownOrderIds(ordersRaw || []);
-    const orders = (ordersRaw || [])
+    replaceKnownOrderIds(ordersMetaRaw || []);
+    const ordersMeta = (ordersMetaRaw || [])
       .slice()
       .sort((a, b) => {
         const ra = statusRank(a.status);
         const rb = statusRank(b.status);
         if (ra !== rb) return ra - rb;
         return new Date(b.created_at) - new Date(a.created_at);
-      })
-      .slice(0, 1);
+      });
 
-      if (error) {
-        ordersSection.innerHTML = `
+    const selectedOrder = ordersMeta[0] || null;
+
+    if (error) {
+      ordersSection.innerHTML = `
         <div class="order-item" style="border:1px solid #f5c6cb; background:#f8d7da; padding:16px; border-radius:8px;">
           <p style="color:#721c24; margin:0;">Error cargando pedidos activos.</p>
         </div>
@@ -3913,10 +4062,10 @@ async function loadOrders(userId, options = {}) {
       return;
     }
 
-    if (!orders || orders.length === 0) {
-        replaceKnownOrderIds([]);
-        currentOrderUiStateById.clear();
-        ordersSection.innerHTML = `
+    if (!selectedOrder) {
+      replaceKnownOrderIds([]);
+      currentOrderUiStateById.clear();
+      ordersSection.innerHTML = `
         <div class="order-item" style="border:1px solid #e0e0e0; padding:16px; border-radius:8px; background:#fafafa;">
           <div class="section-title dash-title" style="margin-bottom:12px;">📦 Mi pedido</div>
           <p style="margin:0;">Todavía no tienes pedidos. Envía tu carrito para crear uno nuevo.</p>
@@ -3928,6 +4077,20 @@ async function loadOrders(userId, options = {}) {
 
     lastOrderDeadlineReminderContext = null;
     lastOrderExpiredPendingDisassemblyContext = null;
+
+    const { data: selectedItemsRaw, error: selectedItemsError } = await supabase
+      .from("order_items")
+      .select("id, order_id, product_name, color, size, quantity, price_snapshot, imagen, status, variant_id")
+      .eq("order_id", selectedOrder.id);
+    if (selectedItemsError) {
+      console.warn("⚠️ Error cargando items del pedido activo:", selectedItemsError.message || selectedItemsError);
+    }
+    const orders = [
+      {
+        ...selectedOrder,
+        order_items: Array.isArray(selectedItemsRaw) ? selectedItemsRaw : [],
+      },
+    ];
 
     // Precargar SKUs para que "Ver producto" vaya al PDP real (index#/pdp/<sku>)
     const allVariantIds = [];
@@ -5349,16 +5512,19 @@ function getFirstNameForGreeting(displayName) {
 
 async function loadData() {
   try {
+    markDashboardPerf("load_data_start");
     setContentVisibility(false);
 
     await withAuth(
       async (user) => {
         currentUserId = user.id;
+        markDashboardPerf("auth_ready_ms", { userId: user.id });
         const userName = document.getElementById("user-name");
         const userEmail = document.getElementById("user-email");
         const userAvatar = document.getElementById("user-avatar");
 
         const customerProfile = await fetchCustomerProfileRow();
+        markDashboardPerf("profile_ready_ms");
 
         if (userName) {
           const displayName =
@@ -5391,13 +5557,39 @@ async function loadData() {
         }
 
         setupCartActions();
-
-        await loadCart(user.id);
-        await loadOrders(user.id, { forceMaintenance: true, source: "initial-load" });
-        
-        // Asegurar que los controles del historial estÃ©n configurados
-        // Esto es necesario incluso si no hay pedidos para que el botÃ³n funcione
         setupHistoryControls();
+        setContentVisibility(true);
+        markDashboardPerf("dashboard_shell_visible_ms");
+
+        const cartPromise = Promise.resolve(loadCart(user.id))
+          .then(() => {
+            markDashboardPerf("cart_ready_ms");
+          })
+          .catch((error) => {
+            console.warn("⚠️ Error cargando carrito inicial:", error?.message || error);
+          });
+        const ordersPromise = Promise.resolve(
+          loadOrders(user.id, { forceMaintenance: true, source: "initial-load" })
+        )
+          .then(() => {
+            markDashboardPerf("orders_ready_ms");
+          })
+          .catch((error) => {
+            console.warn("⚠️ Error cargando pedidos iniciales:", error?.message || error);
+          });
+        const initialDataReadyPromise = Promise.allSettled([cartPromise, ordersPromise]);
+        const visualBarrierPromise = Promise.race([
+          initialDataReadyPromise,
+          new Promise((resolve) => setTimeout(resolve, 3200)),
+        ]);
+        await visualBarrierPromise;
+        hideLoader();
+        markDashboardPerf("dashboard_interactive_ms");
+        window.dispatchEvent(new CustomEvent("fyl-dashboard-boot-done"));
+        maybeAutoScrollToBagFromStickyCart();
+        await initialDataReadyPromise;
+        markDashboardPerf("dashboard_data_ready_ms");
+        await maybeShowDismantledTimeoutNoticeModal(user.id);
 
         // Deep-link: si viene ?view=history desde admin, abrir historial automáticamente.
         try {
@@ -5424,12 +5616,13 @@ async function loadData() {
           cartSyncedListenerRegistered = true;
         }
 
-        // Configurar suscripciÃ³n en tiempo real para pedidos
-        await setupOrdersRealtimeSubscription(user.id);
-
-        setContentVisibility(true);
-        hideLoader();
-        maybeAutoScrollToBagFromStickyCart();
+        flushDashboardPerfSummary("authenticated");
+        // Realtime post-boot: no bloquear primer render útil del dashboard.
+        setTimeout(() => {
+          Promise.resolve(setupOrdersRealtimeSubscription(user.id)).catch((error) => {
+            console.warn("⚠️ Error configurando realtime de pedidos:", error?.message || error);
+          });
+        }, 0);
         if (!fylDashboardViewOnce && fylAnalytics.isReady()) {
           fylDashboardViewOnce = true;
           fylAnalytics.setPageType("dashboard");
@@ -5443,6 +5636,9 @@ async function loadData() {
         showNoSession();
         setContentVisibility(true);
         hideLoader();
+        markDashboardPerf("dashboard_interactive_ms");
+        flushDashboardPerfSummary("guest");
+        window.dispatchEvent(new CustomEvent("fyl-dashboard-boot-done"));
       }
     );
   } catch (error) {
@@ -5450,12 +5646,18 @@ async function loadData() {
     showError("Error de conexión");
     setContentVisibility(true);
     hideLoader();
+    markDashboardPerf("dashboard_interactive_ms");
+    flushDashboardPerfSummary("error");
+    window.dispatchEvent(new CustomEvent("fyl-dashboard-boot-done"));
   }
 }
 
 function initDashboard() {
   // Mantener el layout moderno definido en dashboard.html.
   // El template legacy de showContent() no debe sobrescribir el DOM.
+  if (document.body) {
+    document.body.classList.add("dashboard-loading");
+  }
   setContentVisibility(false);
   setupAccountSheetControls();
   loadData();

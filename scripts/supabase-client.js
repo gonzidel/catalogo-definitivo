@@ -92,7 +92,7 @@ const SUPABASE_LOCAL_IMPORT_MS = 35000;
 const SUPABASE_CDN_IMPORT_MS = 28000;
 
 const SUPABASE_LOCAL_BUNDLE = new URL(
-  "./vendor/supabase-js.bundle.js",
+  "./vendor/supabase-js.bundle.min.js",
   import.meta.url
 ).href;
 

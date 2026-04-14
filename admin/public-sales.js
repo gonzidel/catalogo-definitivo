@@ -1,7 +1,7 @@
 ﻿// admin/public-sales.js
 import { requireAuth } from "./admin-auth.js";
 import { supabase } from "../scripts/supabase-client.js";
-import { SUPABASE_URL, QZ_SIGN_SECRET } from "../scripts/config.js";
+import { SUPABASE_URL, QZ_SIGN_SECRET, fylDevLog } from "../scripts/config.js";
 import { normalizeSize } from "../scripts/utils/size-normalizer.js";
 import { parseARSNumber, resolveOrderItemUnitPrice } from "../scripts/utils/price.js";
 
@@ -11,6 +11,43 @@ await requireAuth();
 
 // Caja actual: 1 = finalizar venta aquí; 2 o 3 = enviar a Caja 1 (definido en HTML antes del script)
 const PUBLIC_SALES_CAJA = Number(window.PUBLIC_SALES_CAJA) || 1;
+
+/** Escapa `%`, `_` y `\` para usar el término dentro de un patrón ILIKE con `%…%`. */
+function escapeForIlikeContains(raw) {
+  return String(raw ?? "")
+    .trim()
+    .replace(/\\/g, "\\\\")
+    .replace(/%/g, "\\%")
+    .replace(/_/g, "\\_");
+}
+
+/** Unidades ya reservadas en la lista de venta para variant_id + talle (por depósito). */
+function getReservedInSaleForVariantSize(variantId, size) {
+  const ns = normalizeSize(size);
+  let ventaPublico = 0;
+  let general = 0;
+  (saleItems || []).forEach((item) => {
+    if (!item?.sizes) return;
+    item.sizes.forEach((s) => {
+      if (s.variantId !== variantId) return;
+      if (normalizeSize(s.size) !== ns) return;
+      const src = s.source || {};
+      ventaPublico += Number(src.ventaPublico || 0) || 0;
+      general += Number(src.general || 0) || 0;
+    });
+  });
+  return { ventaPublico, general, total: ventaPublico + general };
+}
+
+/** Decrementa `source` en orden LIFO coherente con el reparto (general encima de venta-público). */
+function decrementStockSourceLifo(source) {
+  if (!source) return;
+  if ((source.general || 0) > 0) {
+    source.general--;
+  } else if ((source.ventaPublico || 0) > 0) {
+    source.ventaPublico--;
+  }
+}
 
 // ============================================================================
 // QZ TRAY - Funciones helper para impresión térmica ESC/POS
@@ -663,15 +700,9 @@ function toggleReservasPanel(forceOpen = null) {
 async function fetchLocalReservations() {
   if (!supabase) return { items: [], ventaPublicoId: null };
 
-  // A) Resolver IDs de warehouses (general / venta-publico)
-  const { data: whData, error: whErr } = await supabase
-    .from("warehouses")
-    .select("id, code")
-    .in("code", ["general", "venta-publico"]);
-
-  if (whErr) throw whErr;
-  const generalId = (whData || []).find((w) => w.code === "general")?.id;
-  const ventaId = (whData || []).find((w) => w.code === "venta-publico")?.id;
+  const wh = await getWarehousesCached();
+  const generalId = wh?.generalId ?? null;
+  const ventaId = wh?.ventaPublicoId ?? null;
 
   if (!generalId || !ventaId) return { items: [], ventaPublicoId: null };
 
@@ -888,6 +919,15 @@ returnMode.addEventListener("change", async (e) => {
   await calculateTotals();
 });
 
+// Atajo de teclado para alternar modo devolución (F2)
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "F2") return;
+  if (!returnMode) return;
+  e.preventDefault();
+  returnMode.checked = !returnMode.checked;
+  returnMode.dispatchEvent(new Event("change"));
+});
+
 // Buscar por SKU
 let skuSearchTimeout = null;
 skuSearch.addEventListener("input", async (e) => {
@@ -1020,10 +1060,11 @@ function sortProductsByRelevance(products, term) {
 // Cargar sugerencias de productos y renderizar en el dropdown
 async function loadProductSuggestions(term) {
   try {
+    const safeTerm = escapeForIlikeContains(term);
     const { data: products, error } = await supabase
       .from("products")
       .select("id, name, category")
-      .ilike("name", `%${term}%`)
+      .ilike("name", `%${safeTerm}%`)
       .in("status", ["active", "pending_stock", "draft"]) // Incluir productos activos, con stock pendiente y en borrador
       .limit(50);
 
@@ -1425,21 +1466,22 @@ async function searchManualProduct() {
   }
 
   try {
-    // Buscar el producto
-    const { data: products, error: productsError } = await supabase
+    const safeName = escapeForIlikeContains(productName);
+    const { data: productRows, error: productsError } = await supabase
       .from("products")
       .select("id, name")
-      .ilike("name", productName)
-      .in("status", ["active", "pending_stock", "draft"]) // Incluir productos activos, con stock pendiente y en borrador
-      .limit(1)
-      .single();
+      .ilike("name", `%${safeName}%`)
+      .in("status", ["active", "pending_stock", "draft"])
+      .limit(25);
 
-    if (productsError || !products) {
+    if (productsError) throw productsError;
+    const ranked = sortProductsByRelevance(productRows || [], productName);
+    const products = ranked[0];
+    if (!products) {
       showMessage("No se encontró el producto", "error");
       return;
     }
 
-    // Cargar variantes del producto
     await loadManualProductVariants(products.id);
   } catch (error) {
     console.error("Error buscando producto manual:", error);
@@ -1491,7 +1533,7 @@ async function loadManualProductVariants(productId) {
     const variantIds = variants.map(v => v.id);
     const { data: sizesData, error: sizesError } = await supabase
       .from("variant_sizes")
-      .select("variant_id, size, stock_qty, sku")
+      .select("variant_id, size, stock_qty, sku, qr_code")
       .in("variant_id", variantIds)
       .order("size");
 
@@ -1550,34 +1592,151 @@ async function loadManualProductVariants(productId) {
       manualProductInfo.style.display = "flex";
     }
 
-    // Renderizar colores inmediatamente con precios base
-    await renderManualColorButtons();
+    // No pintar colores/talles aquí: evita doble render (2.ª pasada vacía innerHTML de talles → parpadeo).
+    // Se llama a renderManualColorButtons() una sola vez tras enriquecer precios/stock.
 
-    // Obtener stock, precios efectivos e información de ofertas/promociones para cada variante EN PARALELO
-    const variantPromises = manualCurrentVariants.map(async (variant) => {
-      // Ejecutar datos de precio/promoción en paralelo; stock se resuelve por semántica de talle.
-      const [effectivePrice, offerInfo, promotionInfo] = await Promise.all([
-        getEffectivePrice(variant.id),
-        getOfferInfo(variant.id, manualCurrentProduct.id, variant.color),
-        getPromotionInfo(variant.id)
-      ]);
+    const allVariantIds = [
+      ...new Set(manualCurrentVariants.map((v) => v.id).filter(Boolean)),
+    ];
+    const colorsForOffers = [
+      ...new Set(manualCurrentVariants.map((v) => v.color).filter(Boolean)),
+    ];
+    const nowStr = new Date().toISOString().split("T")[0];
+    const whM = await getWarehousesCached();
+    const gWhId = whM?.generalId ?? null;
+    const vWhId = whM?.ventaPublicoId ?? null;
 
-      if (variant.size && variant.sizeSku) {
-        variant.stockData = await getVariantSizeStockByWarehouse(variant.id, variant.size);
-      } else {
-        // Variante sin talle específico: mantener modo legacy.
-        variant.stockData = await getVariantStock(variant.id);
-      }
+    const [promotions, priceResults, offersRes, swsRes] = await Promise.all([
+      getActivePromotionsForVariants(allVariantIds),
+      Promise.all(
+        allVariantIds.map(async (vid) => {
+          const p = await getEffectivePrice(vid);
+          return [vid, p];
+        })
+      ),
+      colorsForOffers.length
+        ? supabase
+            .from("color_price_offers")
+            .select(
+              "offer_price, offer_title, start_date, end_date, status, color, product_id"
+            )
+            .eq("product_id", manualCurrentProduct.id)
+            .in("color", colorsForOffers)
+            .eq("status", "active")
+            .lte("start_date", nowStr)
+            .gte("end_date", nowStr)
+        : Promise.resolve({ data: [], error: null }),
+      gWhId && vWhId && allVariantIds.length
+        ? supabase
+            .from("variant_size_warehouse_stock")
+            .select("variant_id, size, warehouse_id, stock_qty")
+            .in("variant_id", allVariantIds)
+            .in("warehouse_id", [gWhId, vWhId])
+        : Promise.resolve({ data: [], error: null }),
+    ]);
 
-      variant.effectivePrice = effectivePrice !== null ? effectivePrice : variant.price;
-      variant.offerInfo = offerInfo;
-      variant.promotionInfo = promotionInfo;
-
-      return variant;
+    const effectivePriceMap = new Map(priceResults);
+    const variantPromoMap = new Map();
+    (promotions || []).forEach((promo) => {
+      (promo.variant_ids || []).forEach((vid) => {
+        if (!variantPromoMap.has(vid)) variantPromoMap.set(vid, []);
+        variantPromoMap.get(vid).push(promo);
+      });
     });
 
-    // Esperar a que todas las variantes se procesen en paralelo
-    await Promise.all(variantPromises);
+    function promotionInfoFromVariantId(vid) {
+      const plist = variantPromoMap.get(vid) || [];
+      if (!plist.length) return null;
+      const promo = plist[0];
+      if (promo.promo_type === "2x1") {
+        return {
+          type: "promotion",
+          name: "2x1",
+          description: "Llevá 2 y pagá 1",
+          promoType: "2x1",
+          fixedAmount: null,
+        };
+      }
+      if (promo.promo_type === "2xMonto" && promo.fixed_amount) {
+        return {
+          type: "promotion",
+          name: "2xMonto",
+          description: `2x $${promo.fixed_amount.toLocaleString("es-AR")}`,
+          promoType: "2xMonto",
+          fixedAmount: promo.fixed_amount,
+        };
+      }
+      return null;
+    }
+
+    const offerRows = offersRes?.data || [];
+    function offerInfoFromColor(color, variantRow) {
+      const offer = offerRows.find((o) => o.color === color);
+      if (!offer) return null;
+      const basePrice = variantRow.price;
+      const offerPrice = offer.offer_price;
+      const discount = basePrice - offerPrice;
+      const discountPercent = basePrice
+        ? Math.round((discount / basePrice) * 100)
+        : 0;
+      return {
+        type: "offer",
+        title: offer.offer_title || "Oferta",
+        discountPercent,
+        offerPrice,
+        basePrice,
+      };
+    }
+
+    const swsAll = swsRes?.data || [];
+    manualCurrentVariants.forEach((variant) => {
+      const ep = effectivePriceMap.get(variant.id);
+      variant.effectivePrice =
+        ep !== null && ep !== undefined ? ep : variant.price;
+      variant.offerInfo = offerInfoFromColor(variant.color, variant);
+      variant.promotionInfo = promotionInfoFromVariantId(variant.id);
+
+      if (variant.size && variant.sizeSku && gWhId && vWhId) {
+        const ns = normalizeSize(variant.size);
+        let gen = 0;
+        let vp = 0;
+        swsAll.forEach((row) => {
+          if (row.variant_id !== variant.id) return;
+          if (normalizeSize(row.size) !== ns) return;
+          const qty = row.stock_qty || 0;
+          if (row.warehouse_id === vWhId) vp += qty;
+          else if (row.warehouse_id === gWhId) gen += qty;
+        });
+        variant.stockData = {
+          general: { stock: gen },
+          ventaPublico: { stock: vp },
+          total: gen + vp,
+        };
+      } else if (!variant.size || !variant.sizeSku) {
+        variant.stockData = null;
+      }
+    });
+
+    const legacyIds = [
+      ...new Set(
+        manualCurrentVariants
+          .filter((v) => !v.size || !v.sizeSku)
+          .map((v) => v.id)
+          .filter(Boolean)
+      ),
+    ];
+    if (legacyIds.length) {
+      await Promise.all(
+        legacyIds.map(async (vid) => {
+          const sd = await getVariantStock(vid);
+          manualCurrentVariants
+            .filter((v) => v.id === vid && (!v.size || !v.sizeSku))
+            .forEach((v) => {
+              v.stockData = sd;
+            });
+        })
+      );
+    }
 
     // Actualizar precio e información de oferta con datos reales después de cargar
     const updatedFirstVariant = manualCurrentVariants[0];
@@ -1713,12 +1872,11 @@ function updateManualSizeButton(size, generalStock, ventaPublicoStock, totalStoc
         if (manualSelectedSizes[size] > 0) {
           manualSelectedSizes[size]--;
           if (manualSelectedSizesSource[size]) {
-            if (manualSelectedSizesSource[size].general > 0) {
-              manualSelectedSizesSource[size].general--;
-            } else if (manualSelectedSizesSource[size].ventaPublico > 0) {
-              manualSelectedSizesSource[size].ventaPublico--;
-            }
-            if (manualSelectedSizesSource[size].ventaPublico === 0 && manualSelectedSizesSource[size].general === 0) {
+            decrementStockSourceLifo(manualSelectedSizesSource[size]);
+            if (
+              manualSelectedSizesSource[size].ventaPublico === 0 &&
+              manualSelectedSizesSource[size].general === 0
+            ) {
               delete manualSelectedSizesSource[size];
             }
           }
@@ -1729,36 +1887,24 @@ function updateManualSizeButton(size, generalStock, ventaPublicoStock, totalStoc
           // Obtener stock actualizado para este talle (comparar talles normalizados para evitar fallos por formato)
           const variant = manualCurrentVariants.find(v => v.color === manualSelectedColor && normalizeSize(v.size) === normalizeSize(size));
           if (variant) {
-            const { data: warehouses } = await supabase
-              .from("warehouses")
-              .select("id, code")
-              .in("code", ["general", "venta-publico"]);
-            const warehouseMap = new Map();
-            let generalWarehouseId = null;
-            let ventaPublicoWarehouseId = null;
-            if (warehouses && warehouses.length > 0) {
-              warehouses.forEach(w => warehouseMap.set(w.code, w.id));
-              generalWarehouseId = warehouseMap.get("general");
-              ventaPublicoWarehouseId = warehouseMap.get("venta-publico");
-            }
+            const whU = await getWarehousesCached();
+            const generalWarehouseId = whU?.generalId ?? null;
+            const ventaPublicoWarehouseId = whU?.ventaPublicoId ?? null;
             let genStock = 0;
             let ventaStock = 0;
             if (generalWarehouseId && ventaPublicoWarehouseId) {
-              // Normalizar el tamaño antes de consultar
               const normalizedSize = normalizeSize(size);
-              
-              // Cargar todos los registros de stock para esta variante y normalizar después
+
               const { data: sizeWarehouseStocks } = await supabase
                 .from("variant_size_warehouse_stock")
                 .select("size, warehouse_id, stock_qty")
                 .eq("variant_id", variant.id)
                 .in("warehouse_id", [generalWarehouseId, ventaPublicoWarehouseId]);
               if (sizeWarehouseStocks) {
-                // Filtrar por tamaño normalizado después de obtener los datos
                 sizeWarehouseStocks.forEach(sws => {
                   const swsNormalizedSize = normalizeSize(sws.size);
-                  if (swsNormalizedSize !== normalizedSize) return; // Saltar si no coincide después de normalizar
-                  
+                  if (swsNormalizedSize !== normalizedSize) return;
+
                   if (sws.warehouse_id === generalWarehouseId) {
                     genStock = sws.stock_qty || 0;
                   } else if (sws.warehouse_id === ventaPublicoWarehouseId) {
@@ -1799,21 +1945,9 @@ async function renderManualSizeButtons() {
   if (currentVersion !== renderManualSizeButtonsVersion) return;
   manualSizeButtons.innerHTML = "";
 
-  // Obtener warehouses una sola vez
-  const { data: warehouses } = await supabase
-    .from("warehouses")
-    .select("id, code")
-    .in("code", ["general", "venta-publico"]);
-  
-  const warehouseMap = new Map();
-  let generalWarehouseId = null;
-  let ventaPublicoWarehouseId = null;
-  
-  if (warehouses && warehouses.length > 0) {
-    warehouses.forEach(w => warehouseMap.set(w.code, w.id));
-    generalWarehouseId = warehouseMap.get("general");
-    ventaPublicoWarehouseId = warehouseMap.get("venta-publico");
-  }
+  const whManual = await getWarehousesCached();
+  let generalWarehouseId = whManual?.generalId ?? null;
+  let ventaPublicoWarehouseId = whManual?.ventaPublicoId ?? null;
 
   // Normalizar todos los tamaños antes de consultar usando la función global normalizeSize
   const normalizedSizes = sizes.map(s => normalizeSize(s)).filter(Boolean);
@@ -1901,7 +2035,12 @@ async function renderManualSizeButtons() {
         }
         }
       }
-      
+
+    const reservedInSale = getReservedInSaleForVariantSize(variant.id, size);
+    generalStock = Math.max(0, generalStock - reservedInSale.general);
+    ventaPublicoStock = Math.max(0, ventaPublicoStock - reservedInSale.ventaPublico);
+    totalStock = generalStock + ventaPublicoStock;
+
     // Plan 2: no usar variant_sizes como fallback operativo por talle.
 
     const btn = document.createElement("button");
@@ -1955,14 +2094,12 @@ async function renderManualSizeButtons() {
         e.stopPropagation();
         if (manualSelectedSizes[size] > 0) {
           manualSelectedSizes[size]--;
-          // Decrementar de la fuente correspondiente (primero general, luego venta-publico)
           if (manualSelectedSizesSource[size]) {
-            if (manualSelectedSizesSource[size].general > 0) {
-              manualSelectedSizesSource[size].general--;
-            } else if (manualSelectedSizesSource[size].ventaPublico > 0) {
-              manualSelectedSizesSource[size].ventaPublico--;
-            }
-            if (manualSelectedSizesSource[size].ventaPublico === 0 && manualSelectedSizesSource[size].general === 0) {
+            decrementStockSourceLifo(manualSelectedSizesSource[size]);
+            if (
+              manualSelectedSizesSource[size].ventaPublico === 0 &&
+              manualSelectedSizesSource[size].general === 0
+            ) {
               delete manualSelectedSizesSource[size];
             }
           }
@@ -2133,20 +2270,13 @@ async function renderManualSizeButtons() {
           manualSelectedSizesSource[size] = { ventaPublico: 0, general: 0 };
 
           // Obtener stock para actualizar el botón
-          const variant = manualCurrentVariants.find(v => v.color === manualSelectedColor && v.size === size);
+          const variant = manualCurrentVariants.find(
+            (v) => v.color === manualSelectedColor && normalizeSize(v.size) === normalizeSize(size)
+          );
           if (variant) {
-            const { data: warehouses } = await supabase
-              .from("warehouses")
-              .select("id, code")
-              .in("code", ["general", "venta-publico"]);
-            const warehouseMap = new Map();
-            let generalWarehouseId = null;
-            let ventaPublicoWarehouseId = null;
-            if (warehouses && warehouses.length > 0) {
-              warehouses.forEach(w => warehouseMap.set(w.code, w.id));
-              generalWarehouseId = warehouseMap.get("general");
-              ventaPublicoWarehouseId = warehouseMap.get("venta-publico");
-            }
+            const whM2 = await getWarehousesCached();
+            const generalWarehouseId = whM2?.generalId ?? null;
+            const ventaPublicoWarehouseId = whM2?.ventaPublicoId ?? null;
             let genStock = 0;
             let ventaStock = 0;
             if (generalWarehouseId && ventaPublicoWarehouseId) {
@@ -2550,83 +2680,27 @@ async function processQrCodeFast(qrCode) {
   
   const variant = {
     ...sizeData.product_variants,
-    size: sizeData.size,
+    size: normalizeSize(sizeData.size) || sizeData.size,
   };
-  
-  // Obtener warehouses (con cache) y stock en paralelo
-  const [warehouses, stockData] = await Promise.all([
-    getWarehousesCached(),
-    getVariantSizeStockByWarehouse(variant.id, variant.size)
+
+  const [stockData, effPrice] = await Promise.all([
+    getVariantSizeStockByWarehouse(variant.id, variant.size),
+    getEffectivePrice(variant.id),
   ]);
-  
+
   const totalStock = stockData.total;
-  
-  if (totalStock === 0 && !returnMode.checked) {
-    // Sin stock: permitir confirmar y agregar igual (útil para mal conteo o venta excepcional).
-    const modal = document.getElementById("no-stock-confirm-modal");
-    const confirmYes = document.getElementById("no-stock-confirm-yes");
-    const confirmNo = document.getElementById("no-stock-confirm-no");
+  const sizeStock = {
+    general: { stock: stockData.general?.stock || 0 },
+    ventaPublico: { stock: stockData.ventaPublico?.stock || 0 },
+    total: stockData.total,
+  };
+  const effectivePrice =
+    effPrice !== null && effPrice !== undefined ? effPrice : variant.price;
+  const basePrice = variant.price;
 
-    if (!modal || !confirmYes || !confirmNo) {
-      showMessage(`⚠️ No hay stock disponible para el código QR ${qrCode}`, "error");
-      return;
-    }
+  // En flujo SKU/QR no mostrar modal ni aviso de confirmación cuando no hay stock.
+  // Se continúa y se agrega con source 0,0.
 
-    modal.classList.add("active");
-
-    const userConfirmed = await new Promise((resolve) => {
-      const handleYes = () => {
-        modal.classList.remove("active");
-        confirmYes.removeEventListener("click", handleYes);
-        confirmNo.removeEventListener("click", handleNo);
-        resolve(true);
-      };
-      const handleNo = () => {
-        modal.classList.remove("active");
-        confirmYes.removeEventListener("click", handleYes);
-        confirmNo.removeEventListener("click", handleNo);
-        resolve(false);
-      };
-      confirmYes.addEventListener("click", handleYes);
-      confirmNo.addEventListener("click", handleNo);
-    });
-
-    if (!userConfirmed) return;
-    // Continuar: se agregará con source 0,0 (marca "confirmado sin stock")
-  }
-  
-  // Obtener stock del talle específico usando solo variant_size_warehouse_stock
-  let sizeStock = { general: { stock: 0 }, ventaPublico: { stock: 0 }, total: 0 };
-  const normalizedSize = normalizeSize(variant.size);
-  
-  // Luego obtener stock desde variant_size_warehouse_stock (DISTRIBUCIÓN POR WAREHOUSE)
-  if (warehouses.generalId && warehouses.ventaPublicoId) {
-    // Cargar todos los registros de stock para esta variante y normalizar después
-    // Esto evita problemas de comparación si el tamaño está almacenado de diferentes formas
-    const { data: sizeWarehouseStocks } = await supabase
-      .from("variant_size_warehouse_stock")
-      .select("size, warehouse_id, stock_qty")
-      .eq("variant_id", variant.id)
-      .in("warehouse_id", [warehouses.generalId, warehouses.ventaPublicoId]);
-    
-    if (sizeWarehouseStocks) {
-      // Filtrar por tamaño normalizado después de obtener los datos
-      sizeWarehouseStocks.forEach(sws => {
-        const swsNormalizedSize = normalizeSize(sws.size);
-        if (swsNormalizedSize !== normalizedSize) return; // Saltar si no coincide después de normalizar
-        
-        if (sws.warehouse_id === warehouses.generalId) {
-          sizeStock.general.stock += sws.stock_qty || 0;
-        } else if (sws.warehouse_id === warehouses.ventaPublicoId) {
-          sizeStock.ventaPublico.stock += sws.stock_qty || 0;
-        }
-      });
-      sizeStock.total = sizeStock.general.stock + sizeStock.ventaPublico.stock;
-    }
-  }
-  
-  // Plan 2: no usar variant_sizes como fallback operativo por talle.
-  
   // Si hay stock (o fue confirmado sin stock), agregar automáticamente a la venta
   if (sizeStock.total > 0 || returnMode.checked || totalStock === 0) {
     const isReturn = returnMode.checked;
@@ -2651,15 +2725,14 @@ async function processQrCodeFast(qrCode) {
       }
       source = { ventaPublico: ventaPublicoQty, general: generalQty };
     }
-    
-    // Usar precio directamente de la variante (sin cargar todas las variantes)
-    const effectivePrice = variant.price; // Precio base, se puede mejorar después con ofertas
-    const basePrice = variant.price;
+
     const itemTotalValue = isReturn ? -(effectivePrice * quantity) : (effectivePrice * quantity);
-    
+
     if (existingIndex >= 0) {
       // Agregar talle a item existente
-      const existingSize = saleItems[existingIndex].sizes.find(s => s.size === variant.size);
+      const existingSize = saleItems[existingIndex].sizes.find(
+        (s) => normalizeSize(s.size) === normalizeSize(variant.size)
+      );
       if (existingSize) {
         existingSize.quantity += quantity;
         existingSize.source = {
@@ -2907,45 +2980,11 @@ async function searchBySku(sku) {
       return;
     }
     
-    // Si el input es numérico, buscar directamente por qr_code (más rápido y confiable)
+    // Código QR numérico: una sola pasada (processQrCodeFast valida y muestra error si no existe)
     if (/^\d+$/.test(sku)) {
-      console.log("Buscando por código QR numérico:", sku);
-      
-      const { data: sizeData, error: sizeError } = await supabase
-        .from("variant_sizes")
-        .select(`
-          variant_id,
-          size,
-          sku,
-          qr_code,
-          product_variants!inner (
-            id,
-            sku,
-            color,
-            price,
-            active,
-            products!inner (
-              id,
-              name,
-              category,
-              status
-            )
-          )
-        `)
-        .eq("qr_code", sku)
-        .eq("product_variants.active", true)
-        .in("product_variants.products.status", ["active", "pending_stock", "draft"])
-        .maybeSingle();
-      
-      if (sizeData && sizeData.product_variants) {
-        console.log("✅ Producto encontrado por código QR:", sizeData);
-        // Usar el sistema de cola optimizado para procesamiento rápido
-        addToQrQueue(sku);
-        return;
-      } else {
-        showMessage(`No se encontró el producto con el código QR "${sku}"`, "error");
-        return;
-      }
+      fylDevLog("Buscando por código QR numérico:", sku);
+      addToQrQueue(sku);
+      return;
     }
     
     // Si no es numérico, buscar por SKU (comportamiento original)
@@ -2989,26 +3028,9 @@ async function searchBySku(sku) {
     }
     
     const skuVariants = generateSkuVariants(sku);
-    console.log("SKU original:", sku);
-    console.log("Variantes de SKU a probar:", skuVariants);
-    console.log("SKU length:", sku.length);
-    console.log("SKU charCodes:", Array.from(sku).map(c => c.charCodeAt(0)));
-    
-    // Primero intentar buscar por SKU base en product_variants
-    let variant = null;
-    let error = null;
-    let errorBase = null;
-    let sizeError = null;
-    
-    // Intentar búsqueda exacta en variant_sizes probando todas las variantes
-    let sizeData = null;
-    let sizeErrorQuery = null;
-    
-    for (const skuVariant of skuVariants) {
-      console.log(`Intentando buscar con variante: "${skuVariant}"`);
-      const { data: sizeDataResult, error: sizeErrorResult } = await supabase
-        .from("variant_sizes")
-        .select(`
+    fylDevLog("SKU original:", sku, "Variantes:", skuVariants);
+
+    const variantSizesSelect = `
           variant_id,
           size,
           sku,
@@ -3026,66 +3048,68 @@ async function searchBySku(sku) {
               status
             )
           )
-        `)
-        .eq("sku", skuVariant)
+        `;
+
+    let variant = null;
+    let error = null;
+    let errorBase = null;
+    let sizeError = null;
+
+    const skuList = [...new Set(skuVariants)].filter(Boolean);
+    let sizeData = null;
+
+    if (skuList.length > 0) {
+      const { data: sizeRows, error: sizeBatchErr } = await supabase
+        .from("variant_sizes")
+        .select(variantSizesSelect)
+        .in("sku", skuList)
         .eq("product_variants.active", true)
-        .in("product_variants.products.status", ["active", "pending_stock", "draft"])
-        .maybeSingle();
-      
-      if (sizeDataResult && sizeDataResult.product_variants) {
-        console.log(`✅ Encontrado con variante: "${skuVariant}"`);
-        sizeData = sizeDataResult;
-        sizeErrorQuery = sizeErrorResult;
-        break; // Salir del loop si encontramos el producto
-      } else {
-        console.log(`❌ No encontrado con variante: "${skuVariant}"`);
-        if (!sizeErrorQuery && sizeErrorResult) {
-          sizeErrorQuery = sizeErrorResult;
-        }
+        .in("product_variants.products.status", ["active", "pending_stock", "draft"]);
+
+      sizeError = sizeBatchErr;
+      if (sizeBatchErr && sizeBatchErr.code !== "PGRST116") {
+        throw sizeBatchErr;
+      }
+      if (sizeRows && sizeRows.length > 0) {
+        const orderIdx = new Map(skuList.map((s, i) => [s, i]));
+        sizeRows.sort(
+          (a, b) => (orderIdx.get(a.sku) ?? 999) - (orderIdx.get(b.sku) ?? 999)
+        );
+        sizeData = sizeRows[0];
       }
     }
-    
-    sizeError = sizeErrorQuery;
-    console.log("Búsqueda en variant_sizes:", { sizeData: sizeData ? "encontrado" : "no encontrado", error: sizeError });
+
+    fylDevLog("Búsqueda en variant_sizes (batch):", sizeData ? "encontrado" : "no encontrado", sizeError);
 
     if (sizeData && sizeData.product_variants) {
-      // IMPORTANTE: Normalizar el tamaño antes de usarlo
       const normalizedSize = normalizeSize(sizeData.size);
       variant = {
         ...sizeData.product_variants,
-        size: normalizedSize, // Usar tamaño normalizado
+        size: normalizedSize,
       };
-      console.log("✅ Variante encontrada en variant_sizes:", variant);
+      fylDevLog("Variante encontrada en variant_sizes:", variant);
     } else {
-      // Si no se encuentra en variant_sizes, buscar por SKU base en product_variants
-      // Extraer el SKU base (sin el tamaño) de todas las variantes
       const baseSkuVariants = new Set();
-      skuVariants.forEach(variant => {
-        // Remover el último segmento que debería ser el tamaño (formato: XX-YY o XX/YY)
-        const parts = variant.split(/[-']/);
+      skuVariants.forEach((vSku) => {
+        const parts = vSku.split(/[-']/);
         if (parts.length > 1) {
           const lastPart = parts[parts.length - 1];
-          // Si el último segmento parece un tamaño (dos números separados por - o /)
           if (/^\d+[-\/]\d+$/.test(lastPart)) {
-            // Es un tamaño, removerlo
-            baseSkuVariants.add(parts.slice(0, -1).join('-'));
+            baseSkuVariants.add(parts.slice(0, -1).join("-"));
           } else {
-            // No es un tamaño, usar toda la variante
-            baseSkuVariants.add(variant.replace(/[']/g, '-'));
+            baseSkuVariants.add(vSku.replace(/[']/g, "-"));
           }
         } else {
-          baseSkuVariants.add(variant.replace(/[']/g, '-'));
+          baseSkuVariants.add(vSku.replace(/[']/g, "-"));
         }
       });
-      
-      console.log("Buscando SKU base en product_variants con variantes:", Array.from(baseSkuVariants));
-      
+
+      const baseSkuList = [...baseSkuVariants].filter(Boolean);
+      fylDevLog("Buscando SKU base en product_variants (batch):", baseSkuList);
+
       let variantByBase = null;
-      errorBase = null;
-      
-      for (const baseSku of baseSkuVariants) {
-        console.log(`Intentando buscar SKU base: "${baseSku}"`);
-        const { data: variantResult, error: errorResult } = await supabase
+      if (baseSkuList.length > 0) {
+        const { data: variantRows, error: batchBaseErr } = await supabase
           .from("product_variants")
           .select(`
             id,
@@ -3100,43 +3124,41 @@ async function searchBySku(sku) {
               status
             )
           `)
-          .eq("sku", baseSku)
+          .in("sku", baseSkuList)
           .eq("active", true)
-          .in("products.status", ["active", "pending_stock", "draft"])
-          .maybeSingle();
+          .in("products.status", ["active", "pending_stock", "draft"]);
 
-        if (variantResult) {
-          console.log(`✅ SKU base encontrado: "${baseSku}"`);
-          variantByBase = variantResult;
-          errorBase = errorResult;
-          break;
-        } else {
-          if (!errorBase && errorResult) {
-            errorBase = errorResult;
-          }
+        errorBase = batchBaseErr;
+        if (batchBaseErr && batchBaseErr.code !== "PGRST116") {
+          throw batchBaseErr;
+        }
+        if (variantRows && variantRows.length > 0) {
+          const orderIdx = new Map(baseSkuList.map((s, i) => [s, i]));
+          variantRows.sort(
+            (a, b) => (orderIdx.get(a.sku) ?? 999) - (orderIdx.get(b.sku) ?? 999)
+          );
+          variantByBase = variantRows[0];
         }
       }
 
-      console.log("Búsqueda en product_variants:", { variantByBase: variantByBase ? "encontrado" : "no encontrado", error: errorBase });
+      fylDevLog("Búsqueda en product_variants:", variantByBase ? "encontrado" : "no encontrado", errorBase);
 
       if (variantByBase) {
         variant = variantByBase;
-        console.log("✅ Variante encontrada en product_variants:", variant);
+        fylDevLog("Variante encontrada en product_variants:", variant);
       } else {
-        // Si hay error pero no es "no encontrado", lanzarlo
-        if (sizeError && sizeError.code !== 'PGRST116') {
+        if (sizeError && sizeError.code !== "PGRST116") {
           error = sizeError;
-        } else if (errorBase && errorBase.code !== 'PGRST116') {
+        } else if (errorBase && errorBase.code !== "PGRST116") {
           error = errorBase;
         } else {
-          // Si ambos son "no encontrado", no hay error, simplemente no se encontró
           error = null;
         }
       }
     }
 
     if (error) {
-      if (error.code === 'PGRST116') {
+      if (error.code === "PGRST116") {
         showMessage("No se encontró el producto con ese SKU", "error");
       } else {
         throw error;
@@ -3145,71 +3167,43 @@ async function searchBySku(sku) {
     }
 
     if (!variant) {
-      console.log("SKU buscado:", sku);
-      console.log("Error base:", errorBase);
-      console.log("Error size:", sizeError);
-      
-      // Intentar búsqueda alternativa más flexible (case-insensitive) con todas las variantes
-      console.log("Intentando búsqueda alternativa (case-insensitive) con todas las variantes...");
+      fylDevLog("SKU buscado:", sku, "sizeError:", sizeError, "errorBase:", errorBase);
+
+      fylDevLog("Búsqueda alternativa (ilike) en paralelo…");
+      const altRows = await Promise.all(
+        skuVariants.map(async (skuVariant, idx) => {
+          const skuClean = skuVariant.trim().replace(/\s+/g, "");
+          const { data: sizeDataResult, error: sizeErrorResult } = await supabase
+            .from("variant_sizes")
+            .select(variantSizesSelect)
+            .ilike("sku", skuClean)
+            .eq("product_variants.active", true)
+            .in("product_variants.products.status", ["active", "pending_stock", "draft"])
+            .maybeSingle();
+          return { idx, sizeDataResult, sizeErrorResult };
+        })
+      );
+      altRows.sort((a, b) => a.idx - b.idx);
+
       let sizeDataAlt = null;
-      let sizeErrorAlt = null;
-      
-      for (const skuVariant of skuVariants) {
-        const skuClean = skuVariant.trim().replace(/\s+/g, '');
-        console.log(`Intentando búsqueda alternativa con variante: "${skuClean}"`);
-        
-        const { data: sizeDataResult, error: sizeErrorResult } = await supabase
-          .from("variant_sizes")
-          .select(`
-            variant_id,
-            size,
-            sku,
-            qr_code,
-            product_variants!inner (
-              id,
-              sku,
-              color,
-              price,
-              active,
-              products!inner (
-                id,
-                name,
-                category,
-                status
-              )
-            )
-          `)
-          .ilike("sku", skuClean)
-          .eq("product_variants.active", true)
-          .in("product_variants.products.status", ["active", "pending_stock", "draft"])
-          .maybeSingle();
-        
-        if (sizeDataResult && sizeDataResult.product_variants) {
-          console.log(`✅ Encontrado con búsqueda alternativa y variante: "${skuClean}"`);
-          sizeDataAlt = sizeDataResult;
-          sizeErrorAlt = sizeErrorResult;
-          break; // Salir del loop si encontramos el producto
-        } else {
-          if (!sizeErrorAlt && sizeErrorResult) {
-            sizeErrorAlt = sizeErrorResult;
-          }
+      for (const row of altRows) {
+        if (row.sizeDataResult && row.sizeDataResult.product_variants) {
+          sizeDataAlt = row.sizeDataResult;
+          break;
         }
       }
-      
+
       if (sizeDataAlt && sizeDataAlt.product_variants) {
-        console.log("✅ Variante encontrada con búsqueda alternativa:", sizeDataAlt);
-        // IMPORTANTE: Normalizar el tamaño antes de usarlo
+        fylDevLog("Variante encontrada con búsqueda alternativa:", sizeDataAlt);
         const normalizedSize = normalizeSize(sizeDataAlt.size);
         variant = {
           ...sizeDataAlt.product_variants,
-          size: normalizedSize, // Usar tamaño normalizado
+          size: normalizedSize,
         };
       } else {
-        // Intentar buscar SKUs similares para debugging
-        // Usar la primera variante para obtener el prefijo
         const firstVariant = skuVariants[0] || sku;
-        const skuPrefix = firstVariant.split(/[-']/)[0]; // Tomar la primera parte antes del primer separador
-        console.log("Buscando SKUs similares con prefijo:", skuPrefix);
+        const skuPrefix = firstVariant.split(/[-']/)[0];
+        fylDevLog("Buscando SKUs similares con prefijo:", skuPrefix);
         
         const { data: similarSkus } = await supabase
           .from("variant_sizes")
@@ -3220,7 +3214,7 @@ async function searchBySku(sku) {
           .limit(10);
         
         if (similarSkus && similarSkus.length > 0) {
-          console.log("SKUs similares encontrados:", similarSkus.map(s => s.sku));
+          fylDevLog("SKUs similares encontrados:", similarSkus.map(s => s.sku));
           showMessage(`No se encontró el producto con el SKU "${sku}".\n\nSKUs similares encontrados:\n${similarSkus.slice(0, 5).map(s => `- ${s.sku}`).join('\n')}\n\nVerifica que el SKU sea correcto.`, "error");
         } else {
           showMessage(`No se encontró el producto con el SKU "${sku}". Verifica que:\n- El SKU sea correcto\n- El producto esté activo\n- La variante tenga el checkbox 'Activa' marcado`, "error");
@@ -3252,53 +3246,12 @@ async function searchBySku(sku) {
       );
 
       if (variantWithSize) {
-        // Obtener stock del talle específico desde variant_size_warehouse_stock
-        const { data: warehouses } = await supabase
-          .from("warehouses")
-          .select("id, code")
-          .in("code", ["general", "venta-publico"]);
-
-        let generalWarehouseId = null;
-        let ventaPublicoWarehouseId = null;
-        if (warehouses) {
-          warehouses.forEach(w => {
-            if (w.code === "general") generalWarehouseId = w.id;
-            if (w.code === "venta-publico") ventaPublicoWarehouseId = w.id;
-          });
-        }
-
-        // Obtener stock del talle específico usando solo variant_size_warehouse_stock
-        let sizeStock = { general: { stock: 0 }, ventaPublico: { stock: 0 }, total: 0 };
-        const normalizedSize = normalizeSize(variant.size);
-        
-        const warehouseIds = [generalWarehouseId, ventaPublicoWarehouseId].filter(Boolean);
-        
-        // Luego obtener stock desde variant_size_warehouse_stock (DISTRIBUCIÓN POR WAREHOUSE)
-        if (warehouseIds.length > 0) {
-          // Cargar todos los registros de stock para esta variante y normalizar después
-          const { data: sizeWarehouseStocks } = await supabase
-            .from("variant_size_warehouse_stock")
-            .select("size, warehouse_id, stock_qty")
-            .eq("variant_id", variant.id)
-            .in("warehouse_id", warehouseIds);
-
-          if (sizeWarehouseStocks) {
-            // Filtrar por tamaño normalizado después de obtener los datos
-            sizeWarehouseStocks.forEach(sws => {
-              const swsNormalizedSize = normalizeSize(sws.size);
-              if (swsNormalizedSize !== normalizedSize) return; // Saltar si no coincide después de normalizar
-              
-              if (sws.warehouse_id === generalWarehouseId) {
-                sizeStock.general.stock += sws.stock_qty || 0;
-              } else if (sws.warehouse_id === ventaPublicoWarehouseId) {
-                sizeStock.ventaPublico.stock += sws.stock_qty || 0;
-              }
-            });
-            sizeStock.total = sizeStock.general.stock + sizeStock.ventaPublico.stock;
-          }
-        }
-        
-        // Plan 2: no usar variant_sizes como fallback operativo por talle.
+        // Reutilizar stock ya consultado arriba (getVariantSizeStockByWarehouse)
+        const sizeStock = {
+          general: { stock: stockData.general?.stock || 0 },
+          ventaPublico: { stock: stockData.ventaPublico?.stock || 0 },
+          total: stockData.total,
+        };
 
         // Si hay stock, agregar automáticamente a la venta
         if (sizeStock.total > 0) {
@@ -3333,7 +3286,9 @@ async function searchBySku(sku) {
 
           if (existingIndex >= 0) {
             // Agregar talle a item existente
-            const existingSize = saleItems[existingIndex].sizes.find(s => s.size === variant.size);
+            const existingSize = saleItems[existingIndex].sizes.find(
+              (s) => normalizeSize(s.size) === normalizeSize(variant.size)
+            );
             if (existingSize) {
               existingSize.quantity += quantity;
               existingSize.source = {
@@ -3588,19 +3543,11 @@ async function getVariantStock(variantId) {
 
 
     // AHORA TAMBIÉN CONSULTAR variant_size_warehouse_stock para obtener stock por talle
-    const { data: warehouses } = await supabase
-      .from("warehouses")
-      .select("id, code")
-      .in("code", ["general", "venta-publico"]);
+    const whCached = await getWarehousesCached();
+    const generalWarehouseId = whCached?.generalId ?? null;
+    const ventaPublicoWarehouseId = whCached?.ventaPublicoId ?? null;
 
-
-    if (warehouses && warehouses.length > 0) {
-      const warehouseMap = new Map();
-      warehouses.forEach(w => warehouseMap.set(w.code, w.id));
-      const generalWarehouseId = warehouseMap.get("general");
-      const ventaPublicoWarehouseId = warehouseMap.get("venta-publico");
-
-
+    if (generalWarehouseId && ventaPublicoWarehouseId) {
       // Consultar stock por talle desde variant_size_warehouse_stock
       // IMPORTANTE: Cargar todos los registros y normalizar después para evitar problemas de comparación
       const { data: sizeWarehouseStocks, error: sizeError } = await supabase
@@ -3764,21 +3711,9 @@ async function renderSizeButtons() {
   if (currentVersion !== renderSizeButtonsVersion) return;
   sizeButtons.innerHTML = "";
 
-  // Obtener warehouses una sola vez
-  const { data: warehouses } = await supabase
-    .from("warehouses")
-    .select("id, code")
-    .in("code", ["general", "venta-publico"]);
-  
-  const warehouseMap = new Map();
-  let generalWarehouseId = null;
-  let ventaPublicoWarehouseId = null;
-  
-  if (warehouses && warehouses.length > 0) {
-    warehouses.forEach(w => warehouseMap.set(w.code, w.id));
-    generalWarehouseId = warehouseMap.get("general");
-    ventaPublicoWarehouseId = warehouseMap.get("venta-publico");
-  }
+  const whSku = await getWarehousesCached();
+  let generalWarehouseId = whSku?.generalId ?? null;
+  let ventaPublicoWarehouseId = whSku?.ventaPublicoId ?? null;
 
   // Obtener todos los stocks por talle de una vez
   // IMPORTANTE: Normalizar todos los tamaños antes de consultar para asegurar consistencia
@@ -3851,7 +3786,12 @@ async function renderSizeButtons() {
       ventaPublicoStock = sizeStock.ventaPublico || 0;
       totalStock = sizeStock.total || 0;
     }
-    
+
+    const reservedSku = getReservedInSaleForVariantSize(variant.id, size);
+    generalStock = Math.max(0, generalStock - reservedSku.general);
+    ventaPublicoStock = Math.max(0, ventaPublicoStock - reservedSku.ventaPublico);
+    totalStock = generalStock + ventaPublicoStock;
+
     // Plan 2: no usar variant_sizes como fallback operativo por talle.
 
     const btn = document.createElement("button");
@@ -3898,14 +3838,12 @@ async function renderSizeButtons() {
         e.stopPropagation();
         if (selectedSizes[size] > 0) {
           selectedSizes[size]--;
-          // Decrementar de la fuente correspondiente (primero general, luego venta-publico)
           if (selectedSizesSource[size]) {
-            if (selectedSizesSource[size].general > 0) {
-              selectedSizesSource[size].general--;
-            } else if (selectedSizesSource[size].ventaPublico > 0) {
-              selectedSizesSource[size].ventaPublico--;
-            }
-            if (selectedSizesSource[size].ventaPublico === 0 && selectedSizesSource[size].general === 0) {
+            decrementStockSourceLifo(selectedSizesSource[size]);
+            if (
+              selectedSizesSource[size].ventaPublico === 0 &&
+              selectedSizesSource[size].general === 0
+            ) {
               delete selectedSizesSource[size];
             }
           }
@@ -4498,6 +4436,10 @@ window.decreaseSaleItemQuantity = async function (itemIndex, sizeIndex) {
   const sizeEntry = item.sizes[sizeIndex];
   const sign = item.isReturn ? -1 : 1;
 
+  if (!item.isReturn && sizeEntry.source) {
+    decrementStockSourceLifo(sizeEntry.source);
+  }
+
   sizeEntry.quantity = Math.max(0, (sizeEntry.quantity || 0) - 1);
   if (sizeEntry.quantity === 0) {
     item.sizes.splice(sizeIndex, 1);
@@ -4733,17 +4675,21 @@ async function calculateTotals() {
     });
   });
 
-  // Obtener precios efectivos con ofertas
+  const uniqueVariantIdsForPrices = [...new Set(variantIds)];
   const effectivePrices = new Map();
-  for (const variantId of variantIds) {
-    const price = await getEffectivePrice(variantId);
-    if (price !== null) {
+  const priceEntries = await Promise.all(
+    uniqueVariantIdsForPrices.map(async (variantId) => {
+      const price = await getEffectivePrice(variantId);
+      return [variantId, price];
+    })
+  );
+  priceEntries.forEach(([variantId, price]) => {
+    if (price !== null && price !== undefined) {
       effectivePrices.set(variantId, price);
     }
-  }
+  });
 
-  // Obtener promociones activas
-  const promotions = await getActivePromotionsForVariants(variantIds);
+  const promotions = await getActivePromotionsForVariants(uniqueVariantIdsForPrices);
 
   // Crear mapa de variant_id -> promociones
   const variantPromos = new Map();
@@ -5301,18 +5247,9 @@ finalizeSaleBtn.addEventListener("click", async () => {
     // Preparar items para RPC
     const items = [];
 
-    // Obtener warehouses IDs una sola vez para validación de stock
-    const { data: warehouses } = await supabase
-      .from("warehouses")
-      .select("id, code")
-      .in("code", ["general", "venta-publico"]);
-
-    const warehouseMap = new Map();
-    if (warehouses && warehouses.length > 0) {
-      warehouses.forEach(w => warehouseMap.set(w.code, w.id));
-    }
-    const generalWarehouseId = warehouseMap.get("general");
-    const ventaPublicoWarehouseId = warehouseMap.get("venta-publico");
+    const whFin = await getWarehousesCached();
+    const generalWarehouseId = whFin?.generalId ?? null;
+    const ventaPublicoWarehouseId = whFin?.ventaPublicoId ?? null;
 
     // Función auxiliar para buscar variant
     async function findVariant(productId, color, sizeValue) {
@@ -5637,6 +5574,8 @@ finalizeSaleBtn.addEventListener("click", async () => {
       updateChangeAmount();
       paymentMethod = "contado";
       if (paymentMethodIndicator) paymentMethodIndicator.classList.remove("active");
+      if (returnMode) returnMode.checked = false;
+      if (returnModeIndicator) returnModeIndicator.style.display = "none";
       if (extraNumericInput) extraNumericInput.value = "";
       if (extraPercentageInput) extraPercentageInput.value = "";
       loadAsCredit = false;
@@ -5758,6 +5697,8 @@ finalizeSaleBtn.addEventListener("click", async () => {
     if (paymentMethodIndicator) {
       paymentMethodIndicator.classList.remove('active');
     }
+    if (returnMode) returnMode.checked = false;
+    if (returnModeIndicator) returnModeIndicator.style.display = "none";
     if (extraNumericInput) extraNumericInput.value = "";
     if (extraPercentageInput) extraPercentageInput.value = "";
     loadAsCredit = false; // Resetear estado de cargar como crédito
@@ -7574,19 +7515,9 @@ async function fetchEditOrderManualSizeStockMap(variantIds, normalizedSizes) {
   const sizeStockMap = new Map();
   if (!variantIds.length || !normalizedSizes.length) return sizeStockMap;
 
-  const { data: warehouses } = await supabase
-    .from("warehouses")
-    .select("id, code")
-    .in("code", ["general", "venta-publico"]);
-
-  const warehouseMap = new Map();
-  let generalWarehouseId = null;
-  let ventaPublicoWarehouseId = null;
-  if (warehouses?.length) {
-    warehouses.forEach((w) => warehouseMap.set(w.code, w.id));
-    generalWarehouseId = warehouseMap.get("general");
-    ventaPublicoWarehouseId = warehouseMap.get("venta-publico");
-  }
+  const whE = await getWarehousesCached();
+  const generalWarehouseId = whE?.generalId ?? null;
+  const ventaPublicoWarehouseId = whE?.ventaPublicoId ?? null;
   if (!generalWarehouseId || !ventaPublicoWarehouseId) return sizeStockMap;
 
   const { data: sizeWarehouseStocks, error: sizeError } = await supabase
@@ -7675,11 +7606,7 @@ function updateEditManualSizeButton(size, generalStock, ventaPublicoStock, total
         if (editManualSelectedSizes[size] > 0) {
           editManualSelectedSizes[size]--;
           if (editManualSelectedSizesSource[size]) {
-            if (editManualSelectedSizesSource[size].general > 0) {
-              editManualSelectedSizesSource[size].general--;
-            } else if (editManualSelectedSizesSource[size].ventaPublico > 0) {
-              editManualSelectedSizesSource[size].ventaPublico--;
-            }
+            decrementStockSourceLifo(editManualSelectedSizesSource[size]);
             if (
               editManualSelectedSizesSource[size].ventaPublico === 0 &&
               editManualSelectedSizesSource[size].general === 0
@@ -7695,18 +7622,9 @@ function updateEditManualSizeButton(size, generalStock, ventaPublicoStock, total
             (v) => v.color === editManualSelectedColor && normalizeSize(v.size) === normalizeSize(size)
           );
           if (variant) {
-            const { data: warehouses } = await supabase
-              .from("warehouses")
-              .select("id, code")
-              .in("code", ["general", "venta-publico"]);
-            const warehouseMap = new Map();
-            let generalWarehouseId = null;
-            let ventaPublicoWarehouseId = null;
-            if (warehouses && warehouses.length > 0) {
-              warehouses.forEach((w) => warehouseMap.set(w.code, w.id));
-              generalWarehouseId = warehouseMap.get("general");
-              ventaPublicoWarehouseId = warehouseMap.get("venta-publico");
-            }
+            const whEd = await getWarehousesCached();
+            const generalWarehouseId = whEd?.generalId ?? null;
+            const ventaPublicoWarehouseId = whEd?.ventaPublicoId ?? null;
             let genStock = 0;
             let ventaStock = 0;
             if (generalWarehouseId && ventaPublicoWarehouseId) {
@@ -7761,22 +7679,6 @@ async function paintOrderEditManualSizesForColor(color) {
   const variantIds = byColor.map((v) => v.id).filter(Boolean);
   const normalizedSizes = sizes.map((s) => normalizeSize(s)).filter(Boolean);
   const sizeStockMap = await fetchEditOrderManualSizeStockMap(variantIds, normalizedSizes);
-
-  if (currentVersion !== editManualSizeRenderVersion) return;
-
-  const { data: warehouses } = await supabase
-    .from("warehouses")
-    .select("id, code")
-    .in("code", ["general", "venta-publico"]);
-
-  const warehouseMap = new Map();
-  let generalWarehouseId = null;
-  let ventaPublicoWarehouseId = null;
-  if (warehouses && warehouses.length > 0) {
-    warehouses.forEach((w) => warehouseMap.set(w.code, w.id));
-    generalWarehouseId = warehouseMap.get("general");
-    ventaPublicoWarehouseId = warehouseMap.get("venta-publico");
-  }
 
   if (currentVersion !== editManualSizeRenderVersion) return;
 
@@ -7868,11 +7770,7 @@ async function paintOrderEditManualSizesForColor(color) {
         if (editManualSelectedSizes[size] > 0) {
           editManualSelectedSizes[size]--;
           if (editManualSelectedSizesSource[size]) {
-            if (editManualSelectedSizesSource[size].general > 0) {
-              editManualSelectedSizesSource[size].general--;
-            } else if (editManualSelectedSizesSource[size].ventaPublico > 0) {
-              editManualSelectedSizesSource[size].ventaPublico--;
-            }
+            decrementStockSourceLifo(editManualSelectedSizesSource[size]);
             if (
               editManualSelectedSizesSource[size].ventaPublico === 0 &&
               editManualSelectedSizesSource[size].general === 0
@@ -9031,12 +8929,16 @@ function showMessage(message, type = "success", duration = 5000) {
   }, displayDuration);
 }
 
-// Función helper para escapar HTML
+// Función helper para escapar HTML (sin crear nodos DOM)
 function escapeHtml(text) {
   if (text === null || text === undefined) return "";
-  const div = document.createElement("div");
-  div.textContent = text;
-  return div.innerHTML;
+  return String(text).replace(/[&<>"']/g, (ch) => {
+    if (ch === "&") return "&amp;";
+    if (ch === "<") return "&lt;";
+    if (ch === ">") return "&gt;";
+    if (ch === '"') return "&quot;";
+    return "&#39;";
+  });
 }
 
 // Foco automático en el input de SKU al cargar la página (para lectoras de código)

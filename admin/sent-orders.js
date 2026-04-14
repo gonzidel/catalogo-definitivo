@@ -62,6 +62,27 @@ let scheduledTransports = [];
 let warehouses = { general: null, ventaPublico: null };
 let processingDevolucion = new Set(); // Rastrear pedidos en proceso de devolución
 const sentOrdersVariantPriceMap = new Map(); // variant_id -> price de catálogo (raw)
+const CUSTOMER_NOTIFICATION_ORDER_DEVOLUCION = "ORDER_MARKED_DEVOLUCION";
+
+async function emitCustomerNotification({ customerId, orderId, type, message, payload }) {
+  if (!customerId || !type || !message) return;
+  if (!supabase) supabase = await getSupabase();
+  if (!supabase) return;
+
+  try {
+    await supabase.from("customer_notifications").insert({
+      customer_id: customerId,
+      order_id: orderId || null,
+      type: String(type),
+      message: String(message),
+      payload: payload && typeof payload === "object" ? payload : {},
+      read: false,
+      read_at: null,
+    });
+  } catch (_) {
+    /* ignore */
+  }
+}
 
 function getSentOrderUnitPrice(item) {
   const variantId = item?.variant_id != null ? String(item.variant_id).trim() : "";
@@ -2006,7 +2027,7 @@ async function markOrderAsDevolucion(orderId) {
     // Verificar primero si el pedido ya está en devolución (verificación rápida en cliente)
     const { data: currentOrder, error: checkError } = await supabase
       .from("orders")
-      .select("status")
+      .select("status, customer_id, order_number")
       .eq("id", orderId)
       .maybeSingle();
 
@@ -2098,6 +2119,20 @@ async function markOrderAsDevolucion(orderId) {
       }
     } else {
       console.log(`✅ Verificación final: Estado correcto (${finalCheck?.status})`);
+    }
+
+    if (currentOrder?.customer_id) {
+      await emitCustomerNotification({
+        customerId: currentOrder.customer_id,
+        orderId,
+        type: CUSTOMER_NOTIFICATION_ORDER_DEVOLUCION,
+        message:
+          "Tu pedido fue marcado como devolución. Si necesitás ayuda para generar uno nuevo, escribinos por WhatsApp.",
+        payload: {
+          action_url: "/client/dashboard.html?view=history",
+          order_number: currentOrder.order_number || null,
+        },
+      });
     }
 
     // Recargar la lista de pedidos enviados

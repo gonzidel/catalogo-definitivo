@@ -2174,7 +2174,7 @@ function addSpecialExtra() {
     variant_id: null,
     qty_from_general: 0,
     qty_from_venta: 0,
-    status: 'reserved',
+    status: 'picked',
     is_special_extra: true
   };
   
@@ -2808,10 +2808,12 @@ async function saveOrder() {
       extras_percentage: extrasPercentage
     };
     
+    let updatedOrderId = null;
     if (editingOrderId) {
       // Editar pedido existente - agregar los nuevos items y actualizar valores extra
       console.log("🔵 saveOrder: Editando pedido existente...");
       await addItemsToExistingOrder(editingOrderId, orderItems, total, extraValues);
+      updatedOrderId = editingOrderId;
       console.log("✅ saveOrder: Pedido editado correctamente");
     } else {
       // Crear nuevo pedido
@@ -2821,6 +2823,7 @@ async function saveOrder() {
       if (!orderResult || orderResult.error) {
         throw new Error(orderResult?.error || "Error desconocido al crear el pedido");
       }
+      updatedOrderId = orderResult?.order?.id || null;
       
       console.log("✅ saveOrder: Pedido creado correctamente:", orderResult);
     }
@@ -2841,6 +2844,13 @@ async function saveOrder() {
         console.log("✅ saveOrder: Lista de pedidos enviados recargada");
       } catch (reloadError) {
         console.error("❌ saveOrder: Error recargando pedidos enviados:", reloadError);
+      }
+    } else if (updatedOrderId && typeof window.refreshOneOrder === 'function') {
+      try {
+        await window.refreshOneOrder(updatedOrderId);
+        console.log("✅ saveOrder: Pedido actualizado sin recarga completa:", updatedOrderId);
+      } catch (reloadError) {
+        console.error("❌ saveOrder: Error refrescando pedido puntual:", reloadError);
       }
     } else if (typeof window.loadOrders === 'function') {
       try {
@@ -3439,10 +3449,10 @@ async function addItemsToExistingOrder(orderId, items, newTotal = null, extraVal
   }
   
   // Actualizar total del pedido, notes y estado
-  // Admin: al agregar productos manualmente, mantener/volver a "active" para que siga el flujo normal
+  // Admin: mantener "active" (constraint BD). Los items en "picked" hacen que el pedido aparezca en Apartados.
   const updateData = { 
     total_amount: finalTotal,
-    status: "active" // Volver a estado activo cuando se agregan nuevos items
+    status: "active"
   };
   if (notes !== null) {
     updateData.notes = notes;

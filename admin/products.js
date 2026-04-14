@@ -98,6 +98,7 @@ function debounce(fn, wait = 300) {
 
 let currentProductId = null;
 let originalVariantIds = new Set();
+let removedVariantIds = new Set();
 
 // Helpers: slug & SKU base
 let COLORS = [];
@@ -2810,7 +2811,13 @@ function addVariantRow(prefill = {}) {
     <input class="v-sku" type="hidden" value="${prefill.sku ?? ""}" />
   `;
   if (prefill.id) tr.dataset.variantId = prefill.id;
-  tr.querySelector(".rm").addEventListener("click", () => tr.remove());
+  tr.querySelector(".rm").addEventListener("click", () => {
+    const removedVariantId = tr.dataset.variantId;
+    if (removedVariantId) {
+      removedVariantIds.add(removedVariantId);
+    }
+    tr.remove();
+  });
   
   // Cargar talles guardados en el dropdown
   const sizesPresetsSelect = tr.querySelector(".sizes-presets");
@@ -5395,6 +5402,7 @@ async function loadProductById(id) {
   // Variants
   variantsTable.innerHTML = "";
   originalVariantIds = new Set(vIds);
+  removedVariantIds = new Set();
   variants.forEach((v) => {
     // Pasar el costo del producto a cada variante (aunque se guarda en products, se muestra en la tabla)
     // Si tiene talles desde variant_sizes, cargarlos en la UI
@@ -5459,6 +5467,7 @@ pNew.addEventListener("click", async () => {
   
   currentProductId = null;
   originalVariantIds = new Set();
+  removedVariantIds = new Set();
   form.reset();
   
   // Restaurar categoría después de resetear
@@ -5740,6 +5749,7 @@ async function saveProduct(shouldReset = true) {
 
   // Iterar filas y procesar cada variante (color)
   const savedVariantIds = [];
+  let archivedVariantsCount = 0;
   
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
@@ -5894,8 +5904,11 @@ async function saveProduct(shouldReset = true) {
 
   // Eliminar variantes que ya no están en la tabla
   const keptIdsSet = new Set(savedVariantIds);
-  const toDelete = Array.from(originalVariantIds).filter(
-    (id) => !keptIdsSet.has(id)
+  const toDelete = Array.from(
+    new Set([
+      ...Array.from(originalVariantIds).filter((id) => !keptIdsSet.has(id)),
+      ...Array.from(removedVariantIds).filter((id) => !keptIdsSet.has(id)),
+    ])
   );
   
   if (toDelete.length > 0) {
@@ -5909,7 +5922,34 @@ async function saveProduct(shouldReset = true) {
     
     if (deleteErr) {
       console.error("❌ Error eliminando variantes:", deleteErr);
-      // No bloquear el guardado por esto, solo loguear
+      const isFkRestrict =
+        deleteErr.code === "23503" ||
+        String(deleteErr.message || "").toLowerCase().includes("foreign key");
+      if (isFkRestrict) {
+        // Si hay historial, no borrar físico: archivar para preservar memoria comercial.
+        const { data: archivedRows, error: archiveErr } = await supabase
+          .from("product_variants")
+          .update({ active: false })
+          .in("id", toDelete)
+          .select("id");
+        if (archiveErr) {
+          statusEl.textContent =
+            "No se pudieron eliminar variantes con historial y tampoco archivar automáticamente.";
+          statusEl.style.color = "#c00";
+          if (saveBtn) saveBtn.disabled = false;
+          if (preSaveBtn) preSaveBtn.disabled = false;
+          isSaving = false;
+          return;
+        }
+        archivedVariantsCount += archivedRows?.length || toDelete.length;
+      } else {
+        statusEl.textContent = `Error eliminando variantes: ${deleteErr.message || "error desconocido"}`;
+        statusEl.style.color = "#c00";
+        if (saveBtn) saveBtn.disabled = false;
+        if (preSaveBtn) preSaveBtn.disabled = false;
+        isSaving = false;
+        return;
+      }
     } else {
       console.log(`✅ ${toDelete.length} variantes eliminadas`);
     }
@@ -5968,6 +6008,7 @@ async function saveProduct(shouldReset = true) {
   currentProductId = prodId;
   // Actualizar originalVariantIds con los IDs de las variantes que se acaban de guardar
   originalVariantIds = new Set(savedVariantIds);
+  removedVariantIds = new Set();
 
   // Verificar que las variantes se guardaron correctamente
   console.log("🔧 Verificando variantes guardadas...");
@@ -6019,7 +6060,13 @@ async function saveProduct(shouldReset = true) {
     console.warn("⚠️ Error calculando estado del producto:", e);
   }
 
-  statusEl.textContent = "Producto y variantes guardados";
+  const deletionNotes = [];
+  if (archivedVariantsCount > 0) {
+    deletionNotes.push(`${archivedVariantsCount} variante(s) archivada(s) por historial`);
+  }
+  statusEl.textContent = deletionNotes.length
+    ? `Producto guardado. ${deletionNotes.join(". ")}.`
+    : "Producto y variantes guardados";
   statusEl.style.color = "#090";
   
   // Solo resetear si shouldReset es true
@@ -6030,6 +6077,7 @@ async function saveProduct(shouldReset = true) {
     
     currentProductId = null;
     originalVariantIds = new Set();
+    removedVariantIds = new Set();
     form.reset();
     
     // Restaurar categoría después de resetear
@@ -6079,9 +6127,15 @@ async function saveProduct(shouldReset = true) {
   isSaving = false;
   
   // Mostrar mensaje temporal
-  const message = shouldReset 
-    ? "Producto y variantes guardados" 
+  const baseMessage = shouldReset
+    ? "Producto y variantes guardados"
     : "✅ Producto pre-guardado. Podés continuar agregando imágenes.";
+  const messageNotes = [];
+  if (archivedVariantsCount > 0) {
+    messageNotes.push(`${archivedVariantsCount} archivada(s) por historial`);
+  }
+  const message =
+    messageNotes.length > 0 ? `${baseMessage} (${messageNotes.join(" | ")})` : baseMessage;
   statusEl.textContent = message;
   setTimeout(() => {
     if (statusEl.textContent === message) {
@@ -6105,230 +6159,57 @@ form.addEventListener("submit", async (e) => {
   await saveProduct(true); // true = limpiar formulario
 });
 
-// Eliminar producto y sus variables completamente
+// Archivar producto y desactivar variantes (mantener historial)
 pDelete?.addEventListener("click", async () => {
   if (!currentProductId) {
-    statusEl.textContent = "Primero carga un producto para poder eliminarlo.";
+    statusEl.textContent = "Primero carga un producto para poder archivarlo.";
     statusEl.style.color = "#c00";
     return;
   }
   const name = (document.getElementById("name").value || "").trim();
-  const handle = (document.getElementById("handle").value || "").trim();
   const ok = confirm(
-    `¿Eliminar completamente el producto "${name}"?\n\nEsto eliminará:\n- El producto\n- Todas sus variantes\n- Todas las imágenes de las variantes\n- Los tags asociados\n\n⚠️ Esta acción NO se puede deshacer.`
+    `¿Archivar el producto "${name}"?\n\nEsto hará:\n- Producto: status = archived\n- Variantes: active = false\n\n✅ Conserva el historial (ventas/pedidos) y evita errores por referencias.`
   );
   if (!ok) return;
-  
-  statusEl.textContent = "Eliminando producto y variables...";
+
+  statusEl.textContent = "Archivando producto...";
   statusEl.style.color = "inherit";
-  
+
   try {
-    // 1. Obtener todas las variantes del producto
-    const { data: variants, error: variantsError } = await supabase
+    const { error: variantsArchiveError } = await supabase
       .from("product_variants")
-      .select("id")
+      .update({ active: false })
       .eq("product_id", currentProductId);
-    
-    if (variantsError) {
-      throw new Error(`Error obteniendo variantes: ${variantsError.message}`);
+
+    if (variantsArchiveError) {
+      throw new Error(`Error desactivando variantes: ${variantsArchiveError.message}`);
     }
-    
-    const variantIds = variants?.map(v => v.id) || [];
-    
-    // 2. Eliminar imágenes de las variantes
-    if (variantIds.length > 0) {
-      const { error: imagesError } = await supabase
-        .from("variant_images")
-        .delete()
-        .in("variant_id", variantIds);
-      
-      if (imagesError) {
-        throw new Error(`Error eliminando imágenes: ${imagesError.message}`);
-      }
-      console.log(`✅ ${variantIds.length} variante(s) - imágenes eliminadas`);
-    }
-    
-    // 3. Eliminar order_items relacionados (antes de eliminar variantes)
-    if (variantIds.length > 0) {
-      const { error: orderItemsError } = await supabase
-        .from("order_items")
-        .delete()
-        .in("variant_id", variantIds);
-      
-      if (orderItemsError) {
-        console.warn("⚠️ Advertencia al eliminar order_items:", orderItemsError.message);
-        // No lanzamos error aquí porque puede que no haya order_items
-      } else {
-        console.log("✅ Order items relacionados eliminados");
-      }
-    }
-    
-    // 4. Eliminar local_order_items relacionados (si existen)
-    if (variantIds.length > 0) {
-      const { error: localOrderItemsError } = await supabase
-        .from("local_order_items")
-        .delete()
-        .in("variant_id", variantIds);
-      
-      if (localOrderItemsError) {
-        // Ignorar si la tabla no existe o no hay registros
-        if (localOrderItemsError.code !== 'PGRST116' && localOrderItemsError.code !== '42P01') {
-          console.warn("⚠️ Advertencia al eliminar local_order_items:", localOrderItemsError.message);
-        }
-      } else {
-        console.log("✅ Local order items relacionados eliminados");
-      }
-    }
-    
-    // 4.5. Eliminar public_sale_items relacionados (si existen)
-    if (variantIds.length > 0) {
-      const { error: publicSaleItemsError } = await supabase
-        .from("public_sale_items")
-        .delete()
-        .in("variant_id", variantIds);
-      
-      if (publicSaleItemsError) {
-        // Ignorar si la tabla no existe o no hay registros
-        if (publicSaleItemsError.code !== 'PGRST116' && publicSaleItemsError.code !== '42P01') {
-          console.warn("⚠️ Advertencia al eliminar public_sale_items:", publicSaleItemsError.message);
-        }
-      } else {
-        console.log("✅ Public sale items relacionados eliminados");
-      }
-    }
-    
-    // 5. Eliminar variantes (esto también eliminará cart_items relacionados por cascade)
-    if (variantIds.length > 0) {
-      const { error: variantsDeleteError } = await supabase
-        .from("product_variants")
-        .delete()
-        .eq("product_id", currentProductId);
-      
-      if (variantsDeleteError) {
-        throw new Error(`Error eliminando variantes: ${variantsDeleteError.message}`);
-      }
-      console.log(`✅ ${variantIds.length} variante(s) eliminada(s)`);
-    }
-    
-    // 6. Eliminar tags del producto
-    const { error: tagsError } = await supabase
-      .from("product_tags")
-      .delete()
-      .eq("product_id", currentProductId);
-    
-    if (tagsError) {
-      console.warn("⚠️ Advertencia al eliminar tags:", tagsError.message);
-      // No lanzamos error aquí porque puede que no haya tags
-    } else {
-      console.log("✅ Tags del producto eliminados");
-    }
-    
-    // 6.5. Eliminar product_tag_details relacionados
-    const { error: tagDetailsError } = await supabase
-      .from("product_tag_details")
-      .delete()
-      .eq("product_id", currentProductId);
-    
-    if (tagDetailsError) {
-      // Ignorar si la tabla no existe o no hay registros
-      if (tagDetailsError.code !== 'PGRST116' && tagDetailsError.code !== '42P01') {
-        console.warn("⚠️ Advertencia al eliminar product_tag_details:", tagDetailsError.message);
-      }
-    } else {
-      console.log("✅ Product tag details eliminados");
-    }
-    
-    // 6.6. Eliminar ofertas de precio por color relacionadas
-    const { error: colorOffersError } = await supabase
-      .from("color_price_offers")
-      .delete()
-      .eq("product_id", currentProductId);
-    
-    if (colorOffersError) {
-      // Ignorar si la tabla no existe o no hay registros
-      if (colorOffersError.code !== 'PGRST116' && colorOffersError.code !== '42P01') {
-        console.warn("⚠️ Advertencia al eliminar color_price_offers:", colorOffersError.message);
-      }
-    } else {
-      console.log("✅ Color price offers eliminados");
-    }
-    
-    // 6.7. Eliminar items de promociones relacionados
-    const { error: promotionItemsError } = await supabase
-      .from("promotion_items")
-      .delete()
-      .eq("product_id", currentProductId);
-    
-    if (promotionItemsError) {
-      // Ignorar si la tabla no existe o no hay registros
-      if (promotionItemsError.code !== 'PGRST116' && promotionItemsError.code !== '42P01') {
-        console.warn("⚠️ Advertencia al eliminar promotion_items:", promotionItemsError.message);
-      }
-    } else {
-      console.log("✅ Promotion items eliminados");
-    }
-    
-    // 7. Finalmente, eliminar el producto
-    const { error: productError } = await supabase
+
+    const { error: productArchiveError } = await supabase
       .from("products")
-      .delete()
+      .update({ status: "archived" })
       .eq("id", currentProductId);
-    
-    if (productError) {
-      // Mostrar error detallado
-      console.error("❌ Error completo al eliminar producto:", productError);
-      throw new Error(`Error eliminando producto: ${productError.message} (Código: ${productError.code || 'N/A'})`);
+
+    if (productArchiveError) {
+      throw new Error(`Error archivando producto: ${productArchiveError.message}`);
     }
-    
-    // 8. Verificar que el producto fue eliminado correctamente
-    const { data: productStillExists, error: checkError } = await supabase
-      .from("products")
-      .select("id")
-      .eq("id", currentProductId)
-      .maybeSingle();
-    
-    if (checkError && checkError.code !== 'PGRST116') {
-      console.warn("⚠️ Advertencia al verificar eliminación:", checkError.message);
-    }
-    
-    if (productStillExists) {
-      throw new Error(`El producto aún existe después de intentar eliminarlo. Esto puede deberse a restricciones de RLS o permisos.`);
-    }
-    
-    statusEl.textContent = "✅ Producto y todas sus variables eliminados correctamente.";
+
+    statusEl.textContent = "✅ Producto archivado y variantes desactivadas.";
     statusEl.style.color = "#090";
-    
+
     // Limpiar formulario
     currentProductId = null;
     originalVariantIds = new Set();
+    removedVariantIds = new Set();
     form.reset();
     variantsTable.innerHTML = "";
     selectedDetailsIds = [];
     selectedHighlightsIds = [];
     await renderDetailsList();
     ensureDefaultVariant();
-    
   } catch (error) {
-    console.error("❌ Error eliminando producto:", error);
-    console.error("❌ Detalles del error:", {
-      message: error.message,
-      code: error.code,
-      details: error.details,
-      hint: error.hint
-    });
-    
-    // Verificar si el producto aún existe
-    const { data: productExists, error: checkError } = await supabase
-      .from("products")
-      .select("id, name, handle")
-      .eq("id", currentProductId)
-      .maybeSingle();
-    
-    if (productExists) {
-      statusEl.textContent = `❌ Error: ${error.message}\n\nEl producto "${productExists.name || productExists.handle}" aún existe. Revisa la consola para más detalles.`;
-    } else {
-      statusEl.textContent = `⚠️ Advertencia: ${error.message}\n\nEl producto puede haber sido eliminado parcialmente. Revisa la consola.`;
-    }
+    console.error("❌ Error archivando producto:", error);
+    statusEl.textContent = `❌ Error al archivar: ${error.message}`;
     statusEl.style.color = "#c00";
   }
 });

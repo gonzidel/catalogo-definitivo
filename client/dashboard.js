@@ -198,6 +198,10 @@ async function initDashboard() {
 
   // NO llamar showBasicDashboard() — dashboard-instant.js es el único que controla el DOM.
   // NO cargar cart/orders desde aquí (loadCartItems usa cart_id = userId, incorrecto).
+  if (window.__FYL_DASHBOARD_INSTANT_ACTIVE__ === true) {
+    fylDevLog("ℹ️ dashboard.js omite checkAuthAndProfile: lo resuelve dashboard-instant.");
+    return;
+  }
 
   setTimeout(async () => {
     try {

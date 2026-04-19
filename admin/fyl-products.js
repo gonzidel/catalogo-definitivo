@@ -768,146 +768,167 @@ async function saveModalChanges() {
     alert("No tienes permiso para editar el stock.");
     return;
   }
-  
+
   if (!currentEditingProduct) return;
-  
+
   modalSaveBtn.disabled = true;
   modalSaveBtn.textContent = "Guardando...";
-  
+
   try {
-    const updates = [];
+    // Etapa 2: stock por talle → rpc_set_variant_size_stock_batch (164)
+    //          stock sin talle → rpc_set_variant_warehouse_stock_batch (165)
+    // variantUpdates sigue en Promise.all (precio/activo no son stock).
+    const rpcSizeItems = [];
+    const rpcNoSizeItems = [];
     const variantUpdates = [];
-    
+
     // Recopilar todos los cambios
     modalVariantsTbody.querySelectorAll("tr").forEach(row => {
       const variantId = row.querySelector("input[data-field='stock_general']")?.getAttribute("data-variant-id");
       const size = row.querySelector("input[data-field='stock_general']")?.getAttribute("data-size") || null;
       const uniqueId = row.querySelector("input[data-field='stock_general']")?.getAttribute("data-unique-id");
       if (!variantId) return;
-      
+
       const price = parseFloat(row.querySelector("input[data-field='price']")?.value || 0);
       const stockGeneral = parseInt(row.querySelector("input[data-field='stock_general']")?.value || 0);
       const stockVentaPublico = parseInt(row.querySelector("input[data-field='stock_venta_publico']")?.value || 0);
       const active = row.querySelector("input[data-field='active']")?.checked || false;
-      
+
       const originalVariant = currentEditingProduct.variants.find(v => {
         const vUniqueId = v.size ? `${v.id}-${v.size}` : v.id;
         return vUniqueId === uniqueId;
       });
       if (!originalVariant) return;
-      
-      // Actualizar precio (solo una vez por variante, no por talle)
+
+      // Precio: solo una vez por variante (sin talle), sin cambios.
       if (price !== (originalVariant.price || 0) && !size) {
-        // Solo actualizar precio si es la primera fila de la variante (sin talle) o si no hay talles
         variantUpdates.push(
-          supabase
-            .from("product_variants")
-            .update({ price })
-            .eq("id", variantId)
+          supabase.from("product_variants").update({ price }).eq("id", variantId)
         );
       }
-      
-      // Actualizar stock: usar variant_size_warehouse_stock si hay talle, sino variant_warehouse_stock
+
+      // Stock: acumular en el array RPC correspondiente.
+      // La RPC skipea internamente si before === after, por lo que siempre mandamos
+      // ambos warehouses sin necesidad del delta-check previo.
       if (size) {
-        // Stock por talle usando variant_size_warehouse_stock
-        if (stockGeneral !== originalVariant.stock_general) {
-          updates.push(
-            supabase
-              .from("variant_size_warehouse_stock")
-              .upsert(
-                { 
-                  variant_id: variantId,
-                  size: size,
-                  warehouse_id: warehouseIds.general, 
-                  stock_qty: stockGeneral 
-                },
-                { onConflict: "variant_id,size,warehouse_id" }
-              )
-          );
-        }
-        
-        if (stockVentaPublico !== originalVariant.stock_venta_publico) {
-          updates.push(
-            supabase
-              .from("variant_size_warehouse_stock")
-              .upsert(
-                { 
-                  variant_id: variantId,
-                  size: size,
-                  warehouse_id: warehouseIds.ventaPublico, 
-                  stock_qty: stockVentaPublico 
-                },
-                { onConflict: "variant_id,size,warehouse_id" }
-              )
-          );
-        }
+        // Con talle → rpc_set_variant_size_stock_batch
+        rpcSizeItems.push(
+          { variant_id: variantId, size, warehouse_id: warehouseIds.general,      stock_qty: stockGeneral },
+          { variant_id: variantId, size, warehouse_id: warehouseIds.ventaPublico, stock_qty: stockVentaPublico }
+        );
       } else {
-        // Stock general de variante (sin talles) usando variant_warehouse_stock
-        if (stockGeneral !== originalVariant.stock_general) {
-          updates.push(
-            supabase
-              .from("variant_warehouse_stock")
-              .upsert(
-                { 
-                  variant_id: variantId, 
-                  warehouse_id: warehouseIds.general, 
-                  stock_qty: stockGeneral 
-                },
-                { onConflict: "variant_id,warehouse_id" }
-              )
-          );
-        }
-        
-        if (stockVentaPublico !== originalVariant.stock_venta_publico) {
-          updates.push(
-            supabase
-              .from("variant_warehouse_stock")
-              .upsert(
-                { 
-                  variant_id: variantId, 
-                  warehouse_id: warehouseIds.ventaPublico, 
-                  stock_qty: stockVentaPublico 
-                },
-                { onConflict: "variant_id,warehouse_id" }
-              )
-          );
-        }
+        // Sin talle → rpc_set_variant_warehouse_stock_batch
+        rpcNoSizeItems.push(
+          { variant_id: variantId, warehouse_id: warehouseIds.general,      stock_qty: stockGeneral },
+          { variant_id: variantId, warehouse_id: warehouseIds.ventaPublico, stock_qty: stockVentaPublico }
+        );
       }
-      
-      // Actualizar estado activo (solo una vez por variante)
+
+      // Activo: solo una vez por variante, sin cambios.
       if (active !== originalVariant.active && !size) {
         variantUpdates.push(
-          supabase
-            .from("product_variants")
-            .update({ active })
-            .eq("id", variantId)
+          supabase.from("product_variants").update({ active }).eq("id", variantId)
         );
       }
     });
-    
-    // Ejecutar todas las actualizaciones
-    const allUpdates = [...updates, ...variantUpdates];
-    if (allUpdates.length === 0) {
+
+    // Guardia early-exit: nada cambió en ningún array.
+    if (rpcSizeItems.length === 0 && rpcNoSizeItems.length === 0 && variantUpdates.length === 0) {
       closeEditModal();
       modalSaveBtn.disabled = false;
       modalSaveBtn.textContent = "Guardar Cambios";
       return;
     }
-    
-    const results = await Promise.all(allUpdates);
-    const errors = results.filter(r => r.error).map(r => r.error);
-    
-    if (errors.length > 0) {
-      showError(`Error al guardar: ${errors.map(e => e.message).join(", ")}`);
-      modalSaveBtn.disabled = false;
-      modalSaveBtn.textContent = "Guardar Cambios";
-      return;
+
+    // Ejecutar RPC con talle (si hay ítems).
+    if (rpcSizeItems.length > 0) {
+      const { data: rpcData, error: rpcErr } = await supabase.rpc(
+        "rpc_set_variant_size_stock_batch",
+        { p_items: rpcSizeItems, p_source: "bulk_edit" }
+      );
+      if (rpcErr) {
+        throw new Error(`Error guardando stock por talle: ${rpcErr.message}`);
+      }
+      if (!rpcData?.ok) {
+        throw new Error("Error guardando stock por talle (respuesta inesperada del servidor).");
+      }
+      console.log(`✅ rpc_set_variant_size_stock_batch (modal): ${rpcData.changed_items} cambio(s), ${rpcData.skipped_unchanged} sin cambio.`);
     }
-    
-    // Recargar productos
+
+    // Ejecutar RPC sin talle (si hay ítems).
+    if (rpcNoSizeItems.length > 0) {
+      const { data: rpcData, error: rpcErr } = await supabase.rpc(
+        "rpc_set_variant_warehouse_stock_batch",
+        { p_items: rpcNoSizeItems, p_source: "bulk_edit" }
+      );
+      if (rpcErr) {
+        throw new Error(`Error guardando stock sin talle: ${rpcErr.message}`);
+      }
+      if (!rpcData?.ok) {
+        throw new Error("Error guardando stock sin talle (respuesta inesperada del servidor).");
+      }
+      console.log(`✅ rpc_set_variant_warehouse_stock_batch (modal): ${rpcData.changed_items} cambio(s), ${rpcData.skipped_unchanged} sin cambio.`);
+    }
+
+    // Ejecutar updates de precio/activo en product_variants.
+    if (variantUpdates.length > 0) {
+      const results = await Promise.all(variantUpdates);
+      const errors = results.filter(r => r.error).map(r => r.error);
+      if (errors.length > 0) {
+        throw new Error(`Error actualizando variantes: ${errors.map(e => e.message).join(", ")}`);
+      }
+    }
+
+    // Recargar productos y cerrar modal.
     await loadProducts();
     closeEditModal();
-    
+
+    // --- Código original (Etapa 1) — desactivado. Conservado como referencia.
+    // Se elimina en el ciclo de limpieza post-validación de la Etapa 2.
+    /*
+    const updates = [];
+
+    modalVariantsTbody.querySelectorAll("tr").forEach(row => {
+      // ... (mismo loop, con upserts directos a variant_size_warehouse_stock y variant_warehouse_stock)
+      if (size) {
+        if (stockGeneral !== originalVariant.stock_general) {
+          updates.push(supabase.from("variant_size_warehouse_stock").upsert(
+            { variant_id: variantId, size, warehouse_id: warehouseIds.general, stock_qty: stockGeneral },
+            { onConflict: "variant_id,size,warehouse_id" }
+          ));
+        }
+        if (stockVentaPublico !== originalVariant.stock_venta_publico) {
+          updates.push(supabase.from("variant_size_warehouse_stock").upsert(
+            { variant_id: variantId, size, warehouse_id: warehouseIds.ventaPublico, stock_qty: stockVentaPublico },
+            { onConflict: "variant_id,size,warehouse_id" }
+          ));
+        }
+      } else {
+        if (stockGeneral !== originalVariant.stock_general) {
+          updates.push(supabase.from("variant_warehouse_stock").upsert(
+            { variant_id: variantId, warehouse_id: warehouseIds.general, stock_qty: stockGeneral },
+            { onConflict: "variant_id,warehouse_id" }
+          ));
+        }
+        if (stockVentaPublico !== originalVariant.stock_venta_publico) {
+          updates.push(supabase.from("variant_warehouse_stock").upsert(
+            { variant_id: variantId, warehouse_id: warehouseIds.ventaPublico, stock_qty: stockVentaPublico },
+            { onConflict: "variant_id,warehouse_id" }
+          ));
+        }
+      }
+    });
+
+    const allUpdates = [...updates, ...variantUpdates];
+    if (allUpdates.length === 0) { closeEditModal(); ... return; }
+    const results = await Promise.all(allUpdates);
+    const errors = results.filter(r => r.error).map(r => r.error);
+    if (errors.length > 0) { showError(...); return; }
+    await loadProducts();
+    closeEditModal();
+    */
+    // --- fin código original ---
+
   } catch (error) {
     console.error("Error guardando cambios:", error);
     showError(`Error: ${error.message}`);
@@ -942,46 +963,83 @@ async function saveMobileStockChange(input) {
   const size = input.getAttribute("data-size") || null;
   const isGeneral = input.classList.contains("mobile-stock-general");
   const stockValue = parseInt(input.value || 0);
-  
+
   const warehouseId = isGeneral ? warehouseIds.general : warehouseIds.ventaPublico;
-  
+
   if (size) {
-    // Stock por talle usando variant_size_warehouse_stock
+    // Etapa 2: con talle → rpc_set_variant_size_stock_batch (array de 1 ítem).
+    const { data: rpcData, error: rpcError } = await supabase.rpc(
+      "rpc_set_variant_size_stock_batch",
+      {
+        p_items: [{ variant_id: variantId, size, warehouse_id: warehouseId, stock_qty: stockValue }],
+        p_source: "manual_edit",
+      }
+    );
+
+    if (rpcError) {
+      console.error("❌ rpc_set_variant_size_stock_batch (mobile) error:", rpcError);
+      alert(`Error al guardar: ${rpcError.message}`);
+      loadProducts();
+    } else if (!rpcData?.ok) {
+      console.error("❌ rpc_set_variant_size_stock_batch (mobile) ok=false:", rpcData);
+      alert("Error al guardar stock (respuesta inesperada del servidor).");
+      loadProducts();
+    } else {
+      console.log(`✅ rpc_set_variant_size_stock_batch (mobile): ${rpcData.changed_items} cambio(s).`);
+    }
+
+    // --- Código original (Etapa 1) — desactivado. Conservado como referencia.
+    /*
     const { error } = await supabase
       .from("variant_size_warehouse_stock")
       .upsert(
-        { 
-          variant_id: variantId,
-          size: size,
-          warehouse_id: warehouseId, 
-          stock_qty: stockValue 
-        },
+        { variant_id: variantId, size: size, warehouse_id: warehouseId, stock_qty: stockValue },
         { onConflict: "variant_id,size,warehouse_id" }
       );
-    
     if (error) {
       console.error("Error guardando stock por talle:", error);
       alert(`Error al guardar: ${error.message}`);
       loadProducts();
     }
+    */
+    // --- fin código original ---
   } else {
-    // Stock general de variante usando variant_warehouse_stock
+    // Etapa 2: sin talle → rpc_set_variant_warehouse_stock_batch (array de 1 ítem).
+    const { data: rpcData, error: rpcError } = await supabase.rpc(
+      "rpc_set_variant_warehouse_stock_batch",
+      {
+        p_items: [{ variant_id: variantId, warehouse_id: warehouseId, stock_qty: stockValue }],
+        p_source: "manual_edit",
+      }
+    );
+
+    if (rpcError) {
+      console.error("❌ rpc_set_variant_warehouse_stock_batch (mobile) error:", rpcError);
+      alert(`Error al guardar: ${rpcError.message}`);
+      loadProducts();
+    } else if (!rpcData?.ok) {
+      console.error("❌ rpc_set_variant_warehouse_stock_batch (mobile) ok=false:", rpcData);
+      alert("Error al guardar stock (respuesta inesperada del servidor).");
+      loadProducts();
+    } else {
+      console.log(`✅ rpc_set_variant_warehouse_stock_batch (mobile): ${rpcData.changed_items} cambio(s).`);
+    }
+
+    // --- Código original (Etapa 1) — desactivado. Conservado como referencia.
+    /*
     const { error } = await supabase
       .from("variant_warehouse_stock")
       .upsert(
-        { 
-          variant_id: variantId, 
-          warehouse_id: warehouseId, 
-          stock_qty: stockValue 
-        },
+        { variant_id: variantId, warehouse_id: warehouseId, stock_qty: stockValue },
         { onConflict: "variant_id,warehouse_id" }
       );
-    
     if (error) {
       console.error("Error guardando stock:", error);
       alert(`Error al guardar: ${error.message}`);
       loadProducts();
     }
+    */
+    // --- fin código original ---
   }
 }
 

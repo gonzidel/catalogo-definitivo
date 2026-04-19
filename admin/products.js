@@ -79,6 +79,7 @@ const pLoad = document.getElementById("p-load");
 const pNew = document.getElementById("p-new");
 const productsDatalist = document.getElementById("products-datalist");
 const pDelete = document.getElementById("p-delete");
+const pDeleteHard = document.getElementById("p-delete-hard");
 
 // Autocompletar para buscador de productos
 let lastProductSuggestions = [];
@@ -99,6 +100,12 @@ function debounce(fn, wait = 300) {
 let currentProductId = null;
 let originalVariantIds = new Set();
 let removedVariantIds = new Set();
+
+function updateDeleteHardButtonVisibility(statusValue) {
+  if (!pDeleteHard) return;
+  const s = String(statusValue || "").trim();
+  pDeleteHard.style.display = s === "archived" ? "block" : "none";
+}
 
 // Helpers: slug & SKU base
 let COLORS = [];
@@ -5196,10 +5203,11 @@ async function loadProductById(id) {
     console.log(`🔧 Buscando talles (metadatos) para ${vIds.length} variantes:`, vIds);
     const { data: sizesData, error: sizesError } = await supabase
       .from("variant_sizes")
-      .select("variant_id, size, sku, id")
+      .select("variant_id, size, sku, id, created_at")
       .in("variant_id", vIds)
-      // NO ordenar por size para mantener el orden de inserción (usar id como orden natural)
-      .order("id", { ascending: true });
+      // Mantener orden de creación real del talle en la variante.
+      // "id" es UUID y no garantiza orden; created_at sí refleja inserción.
+      .order("created_at", { ascending: true });
     
     if (sizesError) {
       console.error("❌ Error cargando talles desde variant_sizes:", sizesError);
@@ -5374,6 +5382,7 @@ async function loadProductById(id) {
   const validStatuses = ["active", "draft", "pending_stock", "missing_tags", "archived"];
   const statusToShow = (prod.status && validStatuses.includes(prod.status)) ? prod.status : "active";
   document.getElementById("status").value = statusToShow;
+  updateDeleteHardButtonVisibility(statusToShow);
   document.getElementById("supplier").value = prod.supplier_id || "";
   updateEditButtonVisibility();
   
@@ -6207,9 +6216,65 @@ pDelete?.addEventListener("click", async () => {
     selectedHighlightsIds = [];
     await renderDetailsList();
     ensureDefaultVariant();
+    updateDeleteHardButtonVisibility(document.getElementById("status").value);
   } catch (error) {
     console.error("❌ Error archivando producto:", error);
     statusEl.textContent = `❌ Error al archivar: ${error.message}`;
+    statusEl.style.color = "#c00";
+  }
+});
+
+// Eliminar definitivamente producto y variantes (solo si está archivado)
+pDeleteHard?.addEventListener("click", async () => {
+  if (!currentProductId) {
+    statusEl.textContent = "Primero carga un producto para poder eliminarlo.";
+    statusEl.style.color = "#c00";
+    return;
+  }
+
+  const statusValue = document.getElementById("status")?.value;
+  if (String(statusValue || "").trim() !== "archived") {
+    statusEl.textContent = "Solo podés eliminar definitivamente productos que estén archivados.";
+    statusEl.style.color = "#c00";
+    return;
+  }
+
+  const name = (document.getElementById("name").value || "").trim();
+  const ok = confirm(
+    `¿Eliminar definitivamente el producto "${name}"?\n\nEsto hará:\n- Borrar producto y variantes físicamente\n- Mantener historial de pedidos/ventas (se conserva usando snapshots)\n\nSi algo sale mal, revisá si hay constraints pendientes en la base.`
+  );
+  if (!ok) return;
+
+  statusEl.textContent = "Eliminando producto...";
+  statusEl.style.color = "inherit";
+
+  try {
+    const { error: deleteErr } = await supabase
+      .from("products")
+      .delete()
+      .eq("id", currentProductId);
+
+    if (deleteErr) {
+      throw new Error(deleteErr.message || "Error eliminando producto");
+    }
+
+    statusEl.textContent = "✅ Producto eliminado definitivamente.";
+    statusEl.style.color = "#090";
+
+    // Limpieza UI
+    currentProductId = null;
+    originalVariantIds = new Set();
+    removedVariantIds = new Set();
+    form.reset();
+    variantsTable.innerHTML = "";
+    selectedDetailsIds = [];
+    selectedHighlightsIds = [];
+    await renderDetailsList();
+    ensureDefaultVariant();
+    updateDeleteHardButtonVisibility(document.getElementById("status").value);
+  } catch (error) {
+    console.error("❌ Error eliminando producto:", error);
+    statusEl.textContent = `❌ Error al eliminar: ${error.message || "desconocido"}`;
     statusEl.style.color = "#c00";
   }
 });

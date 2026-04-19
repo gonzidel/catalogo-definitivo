@@ -21,6 +21,10 @@ function setPedidosBadge(count) {
 // Obtener página actual
 function getCurrentPage() {
   const path = window.location.pathname;
+  const hash = window.location.hash || "";
+  if (hash.startsWith("#/como-comprar") || hash.startsWith("#/quienes-somos")) {
+    return "buscar";
+  }
   if (path.includes("dashboard")) return "pedidos";
   if (path.includes("profile")) return "perfil";
   if (path.includes("admin")) return "admin";
@@ -153,7 +157,7 @@ function setupNavHandlers() {
         searchBar.focus();
       }
       
-      updateActiveNav();
+      document.querySelectorAll(".bottom-nav-item").forEach((item) => item.classList.remove("active"));
       navBuscar.classList.add("active");
     });
   }

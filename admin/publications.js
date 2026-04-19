@@ -1,7 +1,7 @@
 // admin/publications.js
 import { requireAuth } from "./admin-auth.js";
 import { supabase } from "../scripts/supabase-client.js";
-import { normalizeSize } from "../scripts/utils/size-normalizer.js";
+import { normalizeSize, compareCatalogSizes } from "../scripts/utils/size-normalizer.js";
 
 await requireAuth();
 
@@ -83,27 +83,13 @@ function cloudinaryOptimized(url, width) {
   return u.replace("/upload/", `/upload/f_auto,q_auto,c_scale,w_${width}/`);
 }
 
-function isNumericSize(value) {
-  return /^-?\d+(\.\d+)?$/.test(String(value ?? "").trim());
-}
-
 function normalizeUniqueSortedSizes(rawSizes) {
   const normalized = (rawSizes || [])
     .map(size => normalizeSize(size))
     .filter(Boolean);
 
   const unique = [...new Set(normalized)];
-  unique.sort((a, b) => {
-    const aIsNumeric = isNumericSize(a);
-    const bIsNumeric = isNumericSize(b);
-
-    if (aIsNumeric && bIsNumeric) {
-      return Number(a) - Number(b);
-    }
-    if (aIsNumeric && !bIsNumeric) return -1;
-    if (!aIsNumeric && bIsNumeric) return 1;
-    return String(a).localeCompare(String(b), "es", { numeric: true, sensitivity: "base" });
-  });
+  unique.sort(compareCatalogSizes);
 
   return unique;
 }
@@ -141,6 +127,56 @@ async function getGeneralSizeStockByVariantIds(variantIds) {
     return [];
   }
   return data || [];
+}
+
+async function getPublicationVariantSizes(variantIds) {
+  if (!Array.isArray(variantIds) || variantIds.length === 0) return [];
+
+  const stockRows = await getGeneralSizeStockByVariantIds(variantIds);
+  const { data: sizeMetaRows, error: sizeMetaError } = await supabase
+    .from("variant_sizes")
+    .select("variant_id, size")
+    .in("variant_id", variantIds);
+
+  if (sizeMetaError) {
+    console.warn("⚠️ Error obteniendo metadatos de talles en publications:", sizeMetaError);
+    return [];
+  }
+
+  const stockByKey = new Map();
+  (stockRows || []).forEach((row) => {
+    const size = normalizeSize(row.size);
+    if (!size) return;
+    stockByKey.set(`${row.variant_id}::${size}`, Number(row.stock_qty) || 0);
+  });
+
+  const mergedByKey = new Map();
+  (sizeMetaRows || []).forEach((row) => {
+    const size = normalizeSize(row.size);
+    if (!size) return;
+    const key = `${row.variant_id}::${size}`;
+    mergedByKey.set(key, {
+      variant_id: row.variant_id,
+      size,
+      stock_qty: stockByKey.get(key) || 0,
+    });
+  });
+
+  // Compatibilidad: conservar filas de stock que aún no tengan metadato en variant_sizes.
+  (stockRows || []).forEach((row) => {
+    const size = normalizeSize(row.size);
+    if (!size) return;
+    const key = `${row.variant_id}::${size}`;
+    if (!mergedByKey.has(key)) {
+      mergedByKey.set(key, {
+        variant_id: row.variant_id,
+        size,
+        stock_qty: Number(row.stock_qty) || 0,
+      });
+    }
+  });
+
+  return [...mergedByKey.values()];
 }
 
 // Funciones para mostrar/ocultar indicador de carga
@@ -254,7 +290,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Obtener datos de producto+color (variantes, talles, imágenes)
 async function getProductColorData(productId, color) {
-  // Obtener variantes del color específico (sin size ni stock_qty, esos están en variant_sizes)
+  // Obtener variantes del color específico (size/stock se resuelven aparte).
   const { data: variants, error } = await supabase
     .from("product_variants")
     .select("id, sku, price, last_published_at")
@@ -273,20 +309,10 @@ async function getProductColorData(productId, color) {
   
   const variantIds = variants.map(v => v.id);
   
-  // Fuente canónica: stock por talle en depósito general.
-  // Fallback: variant_sizes (solo lectura) si no se pudo resolver el depósito general.
-  let variantSizes = await getGeneralSizeStockByVariantIds(variantIds);
-  if (!variantSizes.length) {
-    const { data: variantSizesFallback, error: sizesError } = await supabase
-      .from("variant_sizes")
-      .select("variant_id, size, stock_qty")
-      .in("variant_id", variantIds);
-    if (sizesError) {
-      console.warn(`⚠️ Error obteniendo talles para producto ${productId} color ${color}:`, sizesError);
-      return null;
-    }
-    variantSizes = variantSizesFallback || [];
-  }
+  // Misma lógica que products/stock:
+  // - variant_sizes: metadato de talles
+  // - variant_size_warehouse_stock (general): stock operativo
+  const variantSizes = await getPublicationVariantSizes(variantIds);
   
   if (!variantSizes || variantSizes.length === 0) {
     // No hay talles definidos para estas variantes.
@@ -308,8 +334,8 @@ async function getProductColorData(productId, color) {
     return null;
   }
   
-  // Obtener talles únicos ordenados
-  const sizes = normalizeUniqueSortedSizes(variantSizes.map(vs => vs.size));
+  // Mostrar solo talles que realmente tengan stock > 0.
+  const sizes = normalizeUniqueSortedSizes(variantSizesWithStock.map(vs => vs.size));
   
   // Obtener imágenes de las variantes (url, public_id para optimización)
   const { data: images } = await supabase
@@ -338,7 +364,7 @@ async function getProductColorData(productId, color) {
   return {
     variants: availableVariants.map(v => ({
       ...v,
-      sizes: variantSizes
+      sizes: variantSizesWithStock
         .filter(vs => vs.variant_id === v.id)
         .map(vs => ({ size: normalizeSize(vs.size), stock: vs.stock_qty }))
     })),
@@ -476,7 +502,7 @@ async function groupProductsByColor(products, batchSize = 10) {
   
   if (grouped.length === 0 && products.length > 0) {
     console.warn(`⚠️ ADVERTENCIA: Se encontraron ${products.length} productos pero ninguno tiene variantes con stock >= 1`);
-    console.warn(`   Esto puede indicar que los productos no tienen variant_sizes o todos tienen stock = 0`);
+    console.warn(`   Esto puede indicar que no hay stock > 0 en variant_size_warehouse_stock (general).`);
   }
   
   return grouped;
@@ -657,16 +683,26 @@ async function loadRecommendedProducts(reset = false) {
       });
     }
     
-    // 2. Productos reingresados (variant_sizes con updated_at reciente en últimos 7 días)
+    // 2. Productos reingresados (stock por talle en depósito general con updated_at reciente)
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
     
-    // Obtener variant_sizes actualizados recientemente con stock > 0
-    const { data: recentVariantSizes, error: error2 } = await supabase
-      .from("variant_sizes")
-      .select("variant_id, updated_at")
-      .gte("updated_at", sevenDaysAgo.toISOString())
-      .gt("stock_qty", 0);
+    const generalWarehouseId = await getGeneralWarehouseId();
+    let recentVariantSizes = [];
+    let error2 = null;
+    if (generalWarehouseId) {
+      // Obtener talles con stock > 0 actualizados recientemente en depósito general
+      const { data, error } = await supabase
+        .from("variant_size_warehouse_stock")
+        .select("variant_id, updated_at")
+        .eq("warehouse_id", generalWarehouseId)
+        .gte("updated_at", sevenDaysAgo.toISOString())
+        .gt("stock_qty", 0);
+      recentVariantSizes = data || [];
+      error2 = error;
+    } else {
+      console.warn("⚠️ No se encontró warehouse 'general'. No se calcularán reingresados por stock.");
+    }
     
     if (!error2 && recentVariantSizes && recentVariantSizes.length > 0) {
       const recentVariantIds = [...new Set(recentVariantSizes.map(vs => vs.variant_id))];
@@ -841,15 +877,27 @@ async function loadLowStockProducts(reset = false) {
     
     // Si es reset, cargar todos los productos y agruparlos
     if (reset || state.allLoaded.length === 0) {
-      // Obtener variant_sizes con stock <= 10
+      // Obtener talles con stock <= 10 (depósito general)
+      const generalWarehouseId = await getGeneralWarehouseId();
+      if (!generalWarehouseId) {
+        console.warn("⚠️ No se encontró warehouse 'general'. No se pueden calcular productos de poco stock.");
+        state.allLoaded = [];
+        lowStockProducts = [];
+        state.hasMore = false;
+        hideLoadingIndicator('low-stock');
+        renderLowStockProducts();
+        return;
+      }
+
       const { data: lowStockVariantSizes, error: error1 } = await supabase
-        .from("variant_sizes")
+        .from("variant_size_warehouse_stock")
         .select("variant_id, stock_qty")
+        .eq("warehouse_id", generalWarehouseId)
         .lte("stock_qty", 10)
         .gt("stock_qty", 0);
       
       if (error1) {
-        console.error("❌ Error obteniendo variant_sizes con poco stock:", error1);
+        console.error("❌ Error obteniendo stock por talle (general) con poco stock:", error1);
         throw error1;
       }
       
@@ -1057,7 +1105,7 @@ async function groupProductsByColorLowStock(products, batchSize = 10) {
   console.log(`📊 Resumen de agrupación (poco stock): ${grouped.length} productos-colores agrupados, ${productsWithoutVariants} productos sin variantes, ${colorsWithoutLowStock} colores sin stock bajo`);
   
   if (grouped.length === 0 && products.length > 0) {
-    console.warn(`⚠️ ADVERTENCIA: Se encontraron ${products.length} productos con poco stock pero ninguno tiene variant_sizes con stock <= 10`);
+    console.warn(`⚠️ ADVERTENCIA: Se encontraron ${products.length} productos con poco stock pero ninguno tiene stock por talle entre 1 y 10 en depósito general`);
   }
   
   return grouped;
@@ -1065,7 +1113,7 @@ async function groupProductsByColorLowStock(products, batchSize = 10) {
 
 // Obtener datos de producto+color pero solo con stock <= 10
 async function getProductColorDataLowStock(productId, color) {
-  // Obtener variantes del color específico (sin size ni stock_qty, esos están en variant_sizes)
+  // Obtener variantes del color específico (size/stock se resuelven aparte).
   const { data: variants, error } = await supabase
     .from("product_variants")
     .select("id, sku, price, last_published_at")
@@ -1079,20 +1127,7 @@ async function getProductColorDataLowStock(productId, color) {
   
   const variantIds = variants.map(v => v.id);
   
-  // Fuente canónica: depósito general por talle.
-  // Fallback: variant_sizes (lectura) para compatibilidad.
-  let variantSizes = await getGeneralSizeStockByVariantIds(variantIds);
-  if (!variantSizes.length) {
-    const { data: variantSizesFallback, error: sizesError } = await supabase
-      .from("variant_sizes")
-      .select("variant_id, size, stock_qty")
-      .in("variant_id", variantIds);
-    if (sizesError) {
-      console.warn(`⚠️ Error obteniendo talles para producto ${productId} color ${color}:`, sizesError);
-      return null;
-    }
-    variantSizes = variantSizesFallback || [];
-  }
+  let variantSizes = await getPublicationVariantSizes(variantIds);
   variantSizes = variantSizes.filter(vs => {
     const stock = Number(vs.stock_qty || 0);
     return stock >= 1 && stock <= 10;
@@ -1160,6 +1195,7 @@ async function getProductColorDataLowStock(productId, color) {
 
 // Variable para cancelar búsquedas anteriores
 let currentSearchAbortController = null;
+let searchAllRequestSeq = 0;
 
 function normalizeSearchText(value) {
   return String(value ?? "")
@@ -1194,18 +1230,24 @@ async function searchAllProductsDirect(searchQuery, categoryValue) {
     currentSearchAbortController.abort();
   }
   currentSearchAbortController = new AbortController();
-  
-  if (state.loading) return;
+
+  const reqSeq = ++searchAllRequestSeq;
+  const isLatest = () => reqSeq === searchAllRequestSeq;
   
   try {
     state.loading = true;
-    showLoadingIndicator('all');
+    if (isLatest()) showLoadingIndicator('all');
     
     // Construir consulta base - TODOS los productos sin importar estado
     let query = supabase
       .from("products")
       .select("id, name, category, description, created_at, last_published_at, publication_status, status")
       .order("created_at", { ascending: false });
+
+    // Cancelar request HTTP si el usuario cambia la búsqueda mientras está en vuelo
+    if (typeof query.abortSignal === "function") {
+      query = query.abortSignal(currentSearchAbortController.signal);
+    }
     
     // Aplicar filtro de categoría si existe
     if (categoryValue && categoryValue.trim()) {
@@ -1225,6 +1267,8 @@ async function searchAllProductsDirect(searchQuery, categoryValue) {
     const { data: products, error } = await query;
     
     if (error) {
+      // Si fue abort, no hacer nada (viene otra búsqueda)
+      if (!isLatest()) return;
       console.error("❌ Error en búsqueda directa:", error);
       showMessage(`Error buscando productos: ${error.message}`, "err");
       state.loading = false;
@@ -1232,12 +1276,13 @@ async function searchAllProductsDirect(searchQuery, categoryValue) {
       renderAllProducts([]);
       return;
     }
+    if (!isLatest()) return;
     
     console.log(`🔍 Productos encontrados en búsqueda directa: ${(products || []).length}`);
     
     if ((products || []).length === 0) {
       state.loading = false;
-      hideLoadingIndicator('all');
+      if (isLatest()) hideLoadingIndicator('all');
       renderAllProducts([]);
       return;
     }
@@ -1247,6 +1292,7 @@ async function searchAllProductsDirect(searchQuery, categoryValue) {
     console.log(`🔄 Agrupando primeros ${initialBatch.length} productos por color (carga rápida)...`);
     
     const initialGrouped = await groupProductsByColor(initialBatch, 4);
+    if (!isLatest()) return;
     
     // Filtrar resultados por búsqueda de texto (por color también) en el batch inicial
     let filtered = initialGrouped;
@@ -1261,15 +1307,18 @@ async function searchAllProductsDirect(searchQuery, categoryValue) {
     
     // Mostrar primeros resultados inmediatamente
     state.loading = false;
-    hideLoadingIndicator('all');
-    renderAllProducts(filtered);
+    if (isLatest()) {
+      hideLoadingIndicator('all');
+      renderAllProducts(filtered);
+    }
     
     // Continuar procesando el resto en segundo plano si hay más productos
     if ((products || []).length > INITIAL_BATCH_SIZE) {
       console.log(`🔄 Continuando con el resto de productos en segundo plano...`);
-      showLoadingIndicator('all');
+      if (isLatest()) showLoadingIndicator('all');
       const remainingProducts = (products || []).slice(INITIAL_BATCH_SIZE);
       groupProductsByColor(remainingProducts, 5).then(remainingGrouped => {
+        if (!isLatest()) return;
         // Filtrar el resto también
         let remainingFiltered = remainingGrouped;
         if (searchQuery && searchQuery.trim()) {
@@ -1281,20 +1330,30 @@ async function searchAllProductsDirect(searchQuery, categoryValue) {
         const allFiltered = [...filtered, ...remainingFiltered];
         state.allLoaded = allGrouped; // Guardar todos los productos agrupados (sin filtrar)
         allProducts = allFiltered; // Guardar productos filtrados para mostrar
-        renderAllProducts(allFiltered);
-        hideLoadingIndicator('all');
+        if (isLatest()) {
+          renderAllProducts(allFiltered);
+          hideLoadingIndicator('all');
+        }
       }).catch(err => {
+        if (!isLatest()) return;
         console.error("Error procesando productos restantes:", err);
         hideLoadingIndicator('all');
       });
     }
     
   } catch (error) {
+    if (!isLatest()) return;
     console.error("❌ Error en búsqueda directa:", error);
     showMessage(`Error buscando productos: ${error.message}`, "err");
     state.loading = false;
     hideLoadingIndicator('all');
     renderAllProducts([]);
+  } finally {
+    // Solo el request más reciente debe “apagar” el loading
+    if (isLatest()) {
+      state.loading = false;
+      hideLoadingIndicator('all');
+    }
   }
 }
 

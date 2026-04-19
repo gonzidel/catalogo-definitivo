@@ -34,6 +34,12 @@ begin
     raise exception 'Pedido no encontrado';
   end if;
 
+  if v_order_record.status = 'stock_pending' then
+    raise exception
+      'rpc_send_order_to_local: la orden % está en stock_pending; resolver stock antes de enviarla.',
+      p_order_id;
+  end if;
+
   -- Reutilizar pedido local existente (mismo pedido web), p. ej. reintento de red o doble clic
   select lo.id, lo.order_number, lo.customer_id
   into v_local_order_id, v_order_number, v_local_customer_id

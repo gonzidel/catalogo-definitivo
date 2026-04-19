@@ -8,7 +8,7 @@ import {
   USE_OPEN_SHEET_FALLBACK as CONFIG_USE_OPEN_SHEET_FALLBACK,
   configReady,
 } from "./config.js";
-import { supabase as supabaseClient } from "./supabase-client.js?v=m260418";
+import { supabase as supabaseClient } from "./supabase-client.js?v=m260420";
 import { normalizeSize } from "./utils/size-normalizer.js";
 import { fylAnalytics } from "./analytics.js";
 import { formatARS as formatARSValue, parseARSNumber } from "./utils/price.js";
@@ -869,6 +869,25 @@ function agruparProductos(rows) {
   return Object.values(grupos);
 }
 
+function renderCatalogSkeletonCards(count = 8) {
+  const cont = document.getElementById("catalogo");
+  if (!cont) return;
+  const safeCount = Math.max(4, Number(count) || 8);
+  cont.innerHTML = "";
+  const skeletons = Array.from({ length: safeCount }, () => `
+    <article class="card card-skeleton" aria-hidden="true">
+      <div class="card-skeleton__image"></div>
+      <div class="card-skeleton__line card-skeleton__line--title"></div>
+      <div class="card-skeleton__line card-skeleton__line--meta"></div>
+      <div class="card-skeleton__chips">
+        <span class="card-skeleton__chip"></span>
+        <span class="card-skeleton__chip"></span>
+      </div>
+    </article>
+  `).join("");
+  cont.insertAdjacentHTML("beforeend", skeletons);
+}
+
 // Función principal de carga de categoría
 async function cargarCategoria(cat) {
   fylCatalogDbg("🔄 Cargando categoría:", cat);
@@ -889,7 +908,7 @@ async function cargarCategoria(cat) {
   indicadorCargaActivo = false;
 
   if (loader) loader.classList.add("show");
-  if (cont) cont.innerHTML = "";
+  renderCatalogSkeletonCards();
   
   // Ocultar banner dinámico si no estamos en inicio (solo se muestra en index puro)
   if (cat !== "all" && typeof window.hideCustomBanner === 'function') {
@@ -1088,7 +1107,7 @@ async function cargarCategoria(cat) {
     if (cat === "all") {
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
       const hashOk = location.hash !== "#/coleccion/fyl-originals";
-      const hayBusquedaActiva = !!document.getElementById("searchInput")?.value?.trim();
+      const hayBusquedaActiva = !!getCurrentSearchTerm();
       const hayFiltroActivo = !!document.querySelector('#filtroMenu input[type="checkbox"]:checked');
       const isBootingHome =
         typeof window !== "undefined" && window.__FYL_BOOT_SUPPRESS_ROUTE === true;
@@ -2369,13 +2388,10 @@ async function enrichProductsWithStock(productos = [], { mergeSkuIndex = false }
             };
           }
 
-          // Verificar si este talle existe en variant_sizes para esta variante
-          // IMPORTANTE: Si el talle viene de catalog_public_view.Numeracion, significa que tiene stock > 0 según la vista
-          const sizeStockQty = variantSizesBySize.get(normalizedSize) || 0;
-          
           // Obtener stock por talle desde variant_size_warehouse_stock
           let stockGeneral = 0;
           let stockVentaPublico = 0;
+          const sizeStockQty = variantSizesBySize.get(normalizedSize) || 0;
 
           if (isActive && generalWarehouseId && ventaPublicoWarehouseId) {
             const generalKey = `${variantId}_${normalizedSize}_${generalWarehouseId}`;
@@ -2385,14 +2401,6 @@ async function enrichProductsWithStock(productos = [], { mergeSkuIndex = false }
             stockVentaPublico = sizeStockMap.get(ventaPublicoKey) || 0;
           }
 
-          // FALLBACK CRÍTICO: Si no hay stock en warehouses pero hay en variant_sizes, usar variant_sizes.stock_qty
-          // Este es el mismo patrón que usa admin/stock.js (líneas 554-560) y admin/order-creator.js
-          if (stockGeneral === 0 && stockVentaPublico === 0 && sizeStockQty > 0) {
-            // Si hay stock en variant_sizes pero no en variant_size_warehouse_stock,
-            // poner todo en general como fallback (esto es lo que hace admin/stock.js)
-            stockGeneral = sizeStockQty;
-          }
-          
           const stockTotal = stockGeneral + stockVentaPublico;
           const hasTalleInVariantSizes = variantSizesBySize.has(normalizedSize);
           
@@ -2689,14 +2697,6 @@ async function buscarPorSKUEnSupabase(sku) {
       }
     }
     
-    // FALLBACK CRÍTICO: Si no hay stock en warehouses pero hay en variant_sizes, usar variant_sizes.stock_qty
-    // Este es el mismo patrón que usa admin/stock.js (líneas 554-560) y admin/order-creator.js
-    if (stockGeneral === 0 && stockVentaPublico === 0 && sizeStockQty > 0) {
-      // Si hay stock en variant_sizes pero no en variant_size_warehouse_stock,
-      // poner todo en general como fallback (esto es lo que hace admin/stock.js)
-      stockGeneral = sizeStockQty;
-    }
-    
     const stockTotal = stockGeneral + stockVentaPublico;
     const reserved = Number(variant.reserved_qty || 0);
     const available = Math.max(0, stockTotal - reserved);
@@ -2817,12 +2817,45 @@ function updateURL({tab, sku}, {mode = 'replace'} = {}) {
   // Si sku === undefined, no hacer nada (preservar existente)
   
   // Aplicar cambio según modo
-  const state = { tab: url.searchParams.get('tab'), sku: url.searchParams.get('sku') };
+  const prevState = history.state && typeof history.state === "object" ? history.state : {};
+  const state = {
+    ...prevState,
+    tab: url.searchParams.get('tab'),
+    sku: url.searchParams.get('sku')
+  };
   if (mode === 'push') {
     history.pushState(state, '', url);
   } else {
     history.replaceState(state, '', url);
   }
+}
+
+function runWithViewTransition(callback) {
+  if (typeof document === "undefined" || typeof document.startViewTransition !== "function") {
+    return Promise.resolve(callback());
+  }
+  const transition = document.startViewTransition(() => callback());
+  return transition.finished.catch(() => {});
+}
+
+function persistCurrentScrollInHistory() {
+  const currentState = history.state && typeof history.state === "object" ? history.state : {};
+  history.replaceState(
+    {
+      ...currentState,
+      fyScrollY: window.scrollY || 0,
+    },
+    "",
+    window.location.href
+  );
+}
+
+function restoreScrollFromHistoryState() {
+  const y = Number(history.state?.fyScrollY);
+  if (!Number.isFinite(y) || y < 0) return;
+  requestAnimationFrame(() => {
+    window.scrollTo({ top: y, behavior: "auto" });
+  });
 }
 
 // PDP historial (botón Atrás del celular)
@@ -2839,6 +2872,7 @@ function parsePdpFromUrl() {
 }
 
 function pushPdpState(sku) {
+  persistCurrentScrollInHistory();
   const newUrl = buildPdpUrl(sku);
   if (history.state?.pdp) {
     history.replaceState({ pdp: true, sku }, '', newUrl);
@@ -3020,8 +3054,11 @@ function initTagToSearch() {
       window.__tagSearchFromPdp = true;
       cerrarModal(true);
     }
-    const input = document.getElementById('searchInput') || document.getElementById('search-bar-mobile');
-    if (input) input.value = tag;
+    const inputDesktop = document.getElementById('searchInput');
+    const inputMobile = document.getElementById('search-bar-mobile');
+    const input = inputDesktop || inputMobile;
+    if (inputDesktop) inputDesktop.value = tag;
+    if (inputMobile) inputMobile.value = tag;
     if (typeof window.buscarProductosEnTodos === 'function') {
       window.buscarProductosEnTodos(tag);
     } else if (input) {
@@ -3052,8 +3089,15 @@ async function applyTagFilterAndRender(tagValue, { pushHash = true } = {}) {
   if (typeof window.hideCustomBanner === 'function') window.hideCustomBanner();
   if (typeof window.hidePromotionalBanner === 'function') window.hidePromotionalBanner();
   document.querySelectorAll('#filtroMenu input[type="checkbox"]').forEach((cb) => { cb.checked = false; });
-  const searchInput = document.getElementById('searchInput');
-  if (searchInput) searchInput.value = '';
+  if (typeof window.clearSearch === "function") {
+    await window.clearSearch({ skipCatalogReset: true });
+  } else {
+    const searchInput = document.getElementById('searchInput');
+    const searchBarMobile = document.getElementById('search-bar-mobile');
+    if (searchInput) searchInput.value = '';
+    if (searchBarMobile) searchBarMobile.value = '';
+    window.__fylSearchDerivedCategory = null;
+  }
   cont.innerHTML = '';
   initTagFilterClearDelegation();
   renderTagFilterBar(tagValue);
@@ -3086,6 +3130,7 @@ async function applyTagFilterAndRender(tagValue, { pushHash = true } = {}) {
 // Tags clickeables: navegar a #/tag/<value> para que onNavChange dispare el render
 window.setQuickFilter = function(level, value) {
   if (!value) return;
+  persistCurrentScrollInHistory();
   window.__quickFilter = { level, value };
   try { location.hash = '#/tag/' + encodeURIComponent(value); } catch (_) {}
 };
@@ -4603,6 +4648,17 @@ function initEscClose() {
 
 // Handler popstate + hashchange: back nativo cierra PDP sin salir de la web
 async function resetHomeState() {
+  if (typeof window.clearSearch === "function") {
+    await window.clearSearch({ skipCatalogReset: true });
+  } else {
+    const inputDesktop = document.getElementById("searchInput");
+    const inputMobile = document.getElementById("search-bar-mobile");
+    if (inputDesktop) inputDesktop.value = "";
+    if (inputMobile) inputMobile.value = "";
+    window.__fylSearchDerivedCategory = null;
+    refreshCatalogFilterBar();
+  }
+
   // Estado actual de filtros
   const hasTagBar = !!document.getElementById('tag-filter-bar');
   const hasQuickFilter = !!window.__quickFilter;
@@ -4624,6 +4680,7 @@ async function resetHomeState() {
 
   // Forzar URL limpia para que no se "reaplique" categoría al volver a buscar/filtar
   updateURL({ tab: '', sku: '' }, { mode: 'replace' });
+  restoreScrollFromHistoryState();
 }
 
 async function onNavChange() {
@@ -4895,6 +4952,23 @@ function configurarEventos() {
 // Función para cambiar categoría
 async function cambiarCategoria(cat) {
   fylCatalogDbg("🔄 Cambiando a categoría:", cat);
+  persistCurrentScrollInHistory();
+
+  if (typeof window.clearSearch === "function") {
+    await window.clearSearch({ skipCatalogReset: true });
+  } else {
+    const inputDesktop = document.getElementById("searchInput");
+    const inputMobile = document.getElementById("search-bar-mobile");
+    if (inputDesktop) inputDesktop.value = "";
+    if (inputMobile) inputMobile.value = "";
+    window.__fylSearchDerivedCategory = null;
+    refreshCatalogFilterBar();
+  }
+
+  // Inicio (all): la barra móvil usa .quick-action-btn, no .menu; limpiar selección visual.
+  if (cat === "all") {
+    document.querySelectorAll(".quick-action-btn").forEach((btn) => btn.classList.remove("active"));
+  }
 
   // Actualizar botón activo
   document.querySelectorAll(".menu button").forEach((btn) => {
@@ -4916,7 +4990,7 @@ async function cambiarCategoria(cat) {
   });
 
   // SIEMPRE actualizar el grid a la nueva categoría (aunque el modal esté abierto)
-  await cargarCategoria(cat);
+  await runWithViewTransition(() => cargarCategoria(cat));
   
   // Actualizar URL con slug, preservando sku existente
   // NO cerrar modal si está abierto (productoActualEnModal ya se mantiene)
@@ -5487,15 +5561,21 @@ document.addEventListener("DOMContentLoaded", () => {
   // Limpiar búsqueda
   const clearBtn = document.getElementById("clear-search");
   if (clearBtn) {
-    clearBtn.addEventListener("click", () => {
-      const input = document.getElementById("searchInput");
-      if (input) input.value = "";
-      document
-        .querySelectorAll(".card")
-        .forEach((c) => (c.style.display = "block"));
+    clearBtn.addEventListener("click", async () => {
+      if (typeof window.clearSearch === "function") {
+        await window.clearSearch();
+        return;
+      }
+      const inputDesktop = document.getElementById("searchInput");
+      const inputMobile = document.getElementById("search-bar-mobile");
+      if (inputDesktop) inputDesktop.value = "";
+      if (inputMobile) inputMobile.value = "";
+      document.querySelectorAll(".card").forEach((c) => (c.style.display = "block"));
     });
   }
 });
+
+window.fylRunViewTransition = runWithViewTransition;
 
 // Función para mostrar alternativas cuando un talle está sin stock
 async function mostrarAlternativasParaTalleSinStock(producto) {

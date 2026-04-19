@@ -982,6 +982,23 @@ document.getElementById("parse-inv").addEventListener("click", async () => {
       const generalWarehouseId = generalWh.id;
       
       let updated = 0, notFound = 0;
+      const STOCK_BATCH_SIZE = 200;
+      const stockBatchItems = [];
+      const flushStockBatch = async () => {
+        if (stockBatchItems.length === 0) return;
+        const payload = stockBatchItems.splice(0, stockBatchItems.length);
+        const { data: rpcData, error: rpcError } = await supabase.rpc(
+          "rpc_set_variant_size_stock_batch",
+          {
+            p_items: payload,
+            p_source: "import_inventory",
+          }
+        );
+        if (rpcError) throw rpcError;
+        if (!rpcData?.ok) {
+          throw new Error("Error actualizando stock por talle (respuesta inesperada del servidor).");
+        }
+      };
       const total = rows.length;
       
       for (let i = 0; i < rows.length; i++) {
@@ -1018,22 +1035,26 @@ document.getElementById("parse-inv").addEventListener("click", async () => {
         if (updateError) throw updateError;
         
         // Si hay size, actualizar stock en variant_size_warehouse_stock (depósito general)
-        // variant_sizes se actualiza automáticamente via trigger 84
+        // mediante RPC batch (Etapa 2).
+        // variant_sizes se actualiza automáticamente via trigger 84.
         if (size) {
-          const { error: sizeWhError } = await supabase
-            .from("variant_size_warehouse_stock")
-            .upsert({
-              variant_id: variantId,
-              size: size,
-              warehouse_id: generalWarehouseId,
-              stock_qty: stock,
-            }, { onConflict: "variant_id,size,warehouse_id" });
-          if (sizeWhError) throw sizeWhError;
+          stockBatchItems.push({
+            variant_id: variantId,
+            size: size,
+            warehouse_id: generalWarehouseId,
+            stock_qty: stock,
+          });
+
+          if (stockBatchItems.length >= STOCK_BATCH_SIZE) {
+            await flushStockBatch();
+          }
         }
         
         updated++;
       }
       
+      await flushStockBatch();
+
       hideProgress("progress-container-inv");
       msg.textContent = `✅ Inventario importado. Actualizados: ${updated}. No encontrados: ${notFound}.`;
       msg.className = "message ok";

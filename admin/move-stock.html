@@ -266,6 +266,100 @@
       font-size: 13px;
       color: #666;
     }
+    .reader-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: #fff;
+      padding: 8px 12px;
+      border-radius: 8px;
+      border: 2px solid #ddd;
+      font-size: 14px;
+      color: #333;
+      font-weight: 600;
+      user-select: none;
+    }
+    .reader-toggle input {
+      width: 18px;
+      height: 18px;
+      cursor: pointer;
+      accent-color: #CD844D;
+    }
+    .search-section.reader-active {
+      position: sticky;
+      top: 8px;
+      z-index: 30;
+    }
+    .reader-hint {
+      margin-top: 12px;
+      padding: 10px 12px;
+      background: #fff8f0;
+      border: 1px solid #f0d0b8;
+      border-radius: 8px;
+      color: #7a4b2a;
+      font-size: 13px;
+      line-height: 1.4;
+    }
+    .qr-pending-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .qr-line {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px;
+      border: 1px solid #e5e5e5;
+      border-radius: 8px;
+      background: #fafafa;
+      flex-wrap: wrap;
+    }
+    .qr-line-meta {
+      flex: 1;
+      min-width: 200px;
+    }
+    .qr-line-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: #333;
+      margin-bottom: 6px;
+    }
+    .qr-line-tags {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      font-size: 13px;
+      color: #666;
+    }
+    .qr-line-tag {
+      padding: 4px 8px;
+      background: #f0f0f0;
+      border-radius: 4px;
+    }
+    .qr-line-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .btn-ghost {
+      background: #f0f0f0;
+      color: #333;
+      border: 1px solid #ddd;
+    }
+    .btn-ghost:hover:not(:disabled) {
+      background: #e5e5e5;
+    }
+    .btn-danger-ghost {
+      background: #fff5f5;
+      color: #c00;
+      border: 1px solid #fcc;
+    }
+    .btn-danger-ghost:hover:not(:disabled) {
+      background: #ffe0e0;
+    }
   </style>
 </head>
 <body>
@@ -275,7 +369,7 @@
       <h1>Mover Stock</h1>
     </div>
 
-    <div class="search-section" style="position: relative;">
+    <div id="search-section" class="search-section" style="position: relative;">
       <div style="display: flex; gap: 12px; align-items: center; margin-bottom: 12px; flex-wrap: wrap;">
         <div style="display: flex; align-items: center; gap: 8px; background: white; padding: 8px 12px; border-radius: 8px; border: 2px solid #ddd;">
           <label style="font-weight: 600; color: #333; margin: 0;">Modo:</label>
@@ -283,6 +377,10 @@
             📦 Mover a Venta Público
           </button>
         </div>
+        <label class="reader-toggle" for="qr-reader-mode">
+          <input type="checkbox" id="qr-reader-mode" />
+          Modo lector QR
+        </label>
       </div>
       <input 
         type="text" 
@@ -292,6 +390,9 @@
         autocomplete="off"
         list="products-datalist"
       />
+      <div id="qr-reader-hint" class="reader-hint" style="display: none;">
+        Lector activo: el foco queda en el campo de abajo. Cada QR suma <strong>1</strong> unidad de ese producto, color y talle. Podés ajustar cantidades y usar <strong>Mover todo</strong>.
+      </div>
       <datalist id="products-datalist"></datalist>
       <div id="suggestions-dropdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: white; border: 1px solid #ddd; border-radius: 8px; margin-top: 4px; max-height: 300px; overflow-y: auto; z-index: 1000; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
         <div id="suggestions-list"></div>
@@ -304,6 +405,9 @@
       <div id="results-header" style="display: none; margin-bottom: 16px; padding-bottom: 16px; border-bottom: 2px solid #e5e5e5;">
         <button id="move-all-btn" class="btn btn-primary" style="padding: 12px 24px; font-size: 16px;">
           📦 Mover Todo
+        </button>
+        <button type="button" id="clear-qr-list-btn" class="btn btn-ghost" style="display: none; margin-left: 8px; padding: 12px 16px; font-size: 14px;">
+          Vaciar lista
         </button>
         <span id="move-all-status" style="margin-left: 12px; color: #666; font-size: 14px;"></span>
       </div>

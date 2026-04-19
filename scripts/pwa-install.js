@@ -23,7 +23,7 @@ const __IS_LOCAL =
   __LOCAL_HOSTS.includes(location.hostname) ||
   (__isLanIpv4(location.hostname) && (__IS_DEV_PORT || true));
 
-const SW_VERSION = "m260418";
+const SW_VERSION = "m260420";
 let __swRefreshing = false;
 
 if ("serviceWorker" in navigator && !__IS_LOCAL) {

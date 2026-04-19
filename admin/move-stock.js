@@ -11,10 +11,564 @@ const messageContainer = document.getElementById("message-container");
 const suggestionsDropdown = document.getElementById("suggestions-dropdown");
 const suggestionsList = document.getElementById("suggestions-list");
 const productsDatalist = document.getElementById("products-datalist");
+const searchSection = document.getElementById("search-section");
+const qrReaderModeEl = document.getElementById("qr-reader-mode");
+const qrReaderHint = document.getElementById("qr-reader-hint");
+const clearQrListBtn = document.getElementById("clear-qr-list-btn");
 
 let searchTimeout = null;
 let suggestionsTimeout = null;
 let currentMode = "to_public"; // "to_public" o "to_general"
+
+/** Modo lector QR (lector externo tipo teclado), misma resolución que public-sales */
+let isQrReaderMode = false;
+const pendingMoves = new Map(); // key variantId::normalizedSize -> línea acumulada
+let qrInputTimeout = null;
+let qrProcessingQueue = [];
+let isProcessingQr = false;
+
+const SEARCH_PLACEHOLDER_MANUAL =
+  "Buscar producto por nombre, SKU, color o talle...";
+const SEARCH_PLACEHOLDER_READER =
+  "Escaneá el código QR (producto + color + talle)...";
+
+function generateOperationId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  const nowHex = Date.now().toString(16).padStart(12, "0");
+  const randHex = Math.random().toString(16).slice(2).padEnd(20, "0").slice(0, 20);
+  return `${nowHex.slice(0, 8)}-${nowHex.slice(8, 12)}-4${randHex.slice(0, 3)}-a${randHex.slice(3, 6)}-${randHex.slice(6, 18)}`;
+}
+
+async function rpcMoveSizeStockWithIdempotency(basePayload, action, operationId = generateOperationId()) {
+  const requestMeta = {
+    source: "admin/move-stock.js",
+    action,
+  };
+
+  const { data, error } = await supabase.rpc("rpc_move_size_stock", {
+    ...basePayload,
+    p_operation_id: operationId,
+    p_request: requestMeta,
+  });
+
+  if (error) {
+    const errMsg = String(error?.message || "");
+    if (errMsg.includes("conflict_in_progress")) {
+      console.warn("⏳ rpc_move_size_stock conflict_in_progress", {
+        operationId,
+        action,
+        variantId: basePayload?.p_variant_id || null,
+        size: basePayload?.p_size || null,
+      });
+    } else if (errMsg.includes("operation_id_conflict")) {
+      console.error("🚫 rpc_move_size_stock operation_id_conflict", {
+        operationId,
+        action,
+        variantId: basePayload?.p_variant_id || null,
+        size: basePayload?.p_size || null,
+      });
+    }
+    throw error;
+  }
+
+  if (data?.idempotent_replay === true) {
+    console.info("♻️ rpc_move_size_stock replay", {
+      operationId,
+      action,
+      movementId: data?.movement_id || null,
+    });
+  } else {
+    console.info("✅ rpc_move_size_stock operación normal", {
+      operationId,
+      action,
+      movementId: data?.movement_id || null,
+    });
+  }
+
+  return { data, operationId };
+}
+
+function pendingLineKey(variantId, normalizedSize) {
+  return `${String(variantId)}::${String(normalizedSize)}`;
+}
+
+function setReaderModeUi(on) {
+  if (searchSection) {
+    searchSection.classList.toggle("reader-active", on);
+  }
+  if (qrReaderHint) {
+    qrReaderHint.style.display = on ? "block" : "none";
+  }
+  searchInput.placeholder = on ? SEARCH_PLACEHOLDER_READER : SEARCH_PLACEHOLDER_MANUAL;
+  if (clearQrListBtn) {
+    clearQrListBtn.style.display =
+      on && pendingMoves.size > 0 ? "inline-block" : "none";
+  }
+}
+
+function updateQrResultsHeader() {
+  const resultsHeader = document.getElementById("results-header");
+  if (!resultsHeader || !isQrReaderMode) return;
+  if (pendingMoves.size > 0) {
+    resultsHeader.style.display = "block";
+    if (clearQrListBtn) clearQrListBtn.style.display = "inline-block";
+  } else {
+    resultsHeader.style.display = "none";
+    if (clearQrListBtn) clearQrListBtn.style.display = "none";
+  }
+}
+
+function getSourceStockFromRow(sizeRow) {
+  if (!sizeRow) return 0;
+  return currentMode === "to_public" ? sizeRow.general : sizeRow.ventaPublico;
+}
+
+async function refreshPendingMovesStock() {
+  const entries = [...pendingMoves.values()];
+  for (const line of entries) {
+    const stockData = await getVariantStock(line.variantId);
+    const sizeRow = (stockData.sizes || []).find(
+      (s) => normalizeSize(s.size) === normalizeSize(line.size)
+    );
+    line.sourceStock = getSourceStockFromRow(sizeRow);
+  }
+}
+
+function renderQrPendingList() {
+  if (!isQrReaderMode) return;
+
+  updateQrResultsHeader();
+
+  if (pendingMoves.size === 0) {
+    resultsContainer.innerHTML = `
+      <div class="no-results">
+        <p>Escaneá códigos QR para armar la lista de traspaso (cada código = producto + color + talle).</p>
+      </div>
+    `;
+    return;
+  }
+
+  const lines = [...pendingMoves.values()].sort((a, b) =>
+    (a.productName + a.color + a.size).localeCompare(
+      b.productName + b.color + b.size,
+      "es"
+    )
+  );
+
+  const sourceLabel =
+    currentMode === "to_public" ? "Stock origen (General)" : "Stock origen (Venta Público)";
+  const moveOneLabel =
+    currentMode === "to_public" ? "Mover línea" : "Devolver línea";
+
+  let totalUnits = 0;
+  let html = `<div class="qr-pending-list">`;
+  for (const line of lines) {
+    totalUnits += line.quantity;
+    const maxStock = Math.max(0, line.sourceStock || 0);
+    const atOrOver = maxStock > 0 && line.quantity > maxStock;
+    const maxInputAttr = maxStock > 0 ? `max="${maxStock}"` : "";
+    const warn = atOrOver
+      ? `<span style="color:#856404;font-size:12px;">Supera stock disponible (${maxStock})</span>`
+      : maxStock === 0
+        ? `<span style="color:#856404;font-size:12px;">Sin stock en origen para este modo — no se puede mover.</span>`
+        : "";
+    const incDisabled =
+      maxStock > 0 ? line.quantity >= maxStock : false;
+    const lineMoveDisabled = maxStock <= 0 || line.quantity > maxStock;
+    html += `
+      <div class="qr-line" data-variant-id="${escapeHtml(String(line.variantId))}" data-size="${escapeHtml(String(line.size))}">
+        <div class="qr-line-meta">
+          <div class="qr-line-title">${escapeHtml(line.productName)}</div>
+          <div class="qr-line-tags">
+            <span class="qr-line-tag"><strong>Color:</strong> ${escapeHtml(line.color || "—")}</span>
+            <span class="qr-line-tag"><strong>Talle:</strong> ${escapeHtml(String(line.size))}</span>
+            <span class="qr-line-tag"><strong>SKU:</strong> ${escapeHtml(line.sku || "—")}</span>
+            <span class="qr-line-tag">${escapeHtml(sourceLabel)}: <strong>${maxStock}</strong></span>
+          </div>
+          ${warn ? `<div style="margin-top:6px;">${warn}</div>` : ""}
+        </div>
+        <div class="qr-line-actions">
+          <div class="quantity-controls">
+            <button type="button" class="quantity-btn decrease qr-qty-dec" data-variant-id="${escapeHtml(String(line.variantId))}" data-size="${escapeHtml(String(line.size))}" ${line.quantity <= 1 ? "disabled" : ""}>−</button>
+            <input type="number" class="quantity-input qr-qty-input" min="1" ${maxInputAttr} value="${line.quantity}"
+              data-variant-id="${escapeHtml(String(line.variantId))}" data-size="${escapeHtml(String(line.size))}" />
+            <button type="button" class="quantity-btn increase qr-qty-inc" data-variant-id="${escapeHtml(String(line.variantId))}" data-size="${escapeHtml(String(line.size))}" ${incDisabled ? "disabled" : ""}>+</button>
+          </div>
+          <button type="button" class="move-btn qr-line-move" data-variant-id="${escapeHtml(String(line.variantId))}" data-size="${escapeHtml(String(line.size))}" ${lineMoveDisabled ? "disabled" : ""}>
+            ${escapeHtml(moveOneLabel)}
+          </button>
+          <button type="button" class="btn btn-danger-ghost qr-line-remove" style="padding:8px 12px;font-size:13px;" data-variant-id="${escapeHtml(String(line.variantId))}" data-size="${escapeHtml(String(line.size))}">
+            Quitar
+          </button>
+        </div>
+      </div>
+    `;
+  }
+  html += `</div>
+    <div style="margin-top:16px;padding:12px;background:#f8f9fa;border-radius:8px;font-size:14px;color:#333;">
+      <strong>Total unidades en lista:</strong> ${totalUnits}
+    </div>`;
+
+  resultsContainer.innerHTML = html;
+
+  resultsContainer.querySelectorAll(".qr-qty-dec").forEach((btn) => {
+    btn.addEventListener("click", onQrQtyButton);
+  });
+  resultsContainer.querySelectorAll(".qr-qty-inc").forEach((btn) => {
+    btn.addEventListener("click", onQrQtyButton);
+  });
+  resultsContainer.querySelectorAll(".qr-qty-input").forEach((input) => {
+    input.addEventListener("change", onQrQtyInput);
+  });
+  resultsContainer.querySelectorAll(".qr-line-move").forEach((btn) => {
+    btn.addEventListener("click", handleMoveQrLineClick);
+  });
+  resultsContainer.querySelectorAll(".qr-line-remove").forEach((btn) => {
+    btn.addEventListener("click", onQrLineRemove);
+  });
+}
+
+function onQrQtyButton(e) {
+  const btn = e.currentTarget;
+  const variantId = btn.getAttribute("data-variant-id");
+  const size = btn.getAttribute("data-size");
+  const key = pendingLineKey(variantId, size);
+  const line = pendingMoves.get(key);
+  if (!line) return;
+
+  const action = btn.classList.contains("qr-qty-inc") ? "increase" : "decrease";
+  const maxStock = Math.max(0, line.sourceStock || 0);
+  let q = line.quantity;
+  if (action === "increase") {
+    if (maxStock > 0) {
+      q = Math.min(q + 1, maxStock);
+    } else {
+      q = q + 1;
+    }
+  } else {
+    q = Math.max(1, q - 1);
+  }
+  line.quantity = q;
+  renderQrPendingList();
+}
+
+function onQrQtyInput(e) {
+  const input = e.currentTarget;
+  const variantId = input.getAttribute("data-variant-id");
+  const size = input.getAttribute("data-size");
+  const key = pendingLineKey(variantId, size);
+  const line = pendingMoves.get(key);
+  if (!line) return;
+
+  let q = parseInt(input.value, 10);
+  if (!q || q < 1 || isNaN(q)) q = 1;
+  const maxStock = Math.max(0, line.sourceStock || 0);
+  if (maxStock > 0 && q > maxStock) q = maxStock;
+  line.quantity = q;
+  renderQrPendingList();
+}
+
+function onQrLineRemove(e) {
+  const btn = e.currentTarget;
+  const variantId = btn.getAttribute("data-variant-id");
+  const size = btn.getAttribute("data-size");
+  const key = pendingLineKey(variantId, size);
+  pendingMoves.delete(key);
+  renderQrPendingList();
+  setReaderModeUi(true);
+}
+
+function addToQrQueue(qrCode) {
+  searchInput.value = "";
+  qrProcessingQueue.push(qrCode);
+  if (!isProcessingQr) {
+    processQrQueue();
+  }
+}
+
+async function processQrQueue() {
+  if (qrProcessingQueue.length === 0) {
+    isProcessingQr = false;
+    return;
+  }
+  isProcessingQr = true;
+  const qrCode = qrProcessingQueue.shift();
+  try {
+    await processQrCodeForMoveStock(qrCode);
+  } catch (err) {
+    console.error("Error procesando QR:", err);
+    showMessage(
+      `Error al procesar código QR ${qrCode}: ${err.message || "Error desconocido"}`,
+      "error"
+    );
+  }
+  setTimeout(() => processQrQueue(), 0);
+}
+
+async function processQrCodeForMoveStock(qrCode) {
+  const { data: sizeData, error: sizeError } = await supabase
+    .from("variant_sizes")
+    .select(`
+      variant_id,
+      size,
+      sku,
+      qr_code,
+      product_variants!inner (
+        id,
+        sku,
+        color,
+        active,
+        products!inner (
+          id,
+          name,
+          category,
+          status
+        )
+      )
+    `)
+    .eq("qr_code", qrCode)
+    .eq("product_variants.active", true)
+    .in("product_variants.products.status", ["active", "pending_stock", "draft"])
+    .maybeSingle();
+
+  if (sizeError) throw sizeError;
+  if (!sizeData || !sizeData.product_variants) {
+    showMessage(`No se encontró el producto con el código QR "${qrCode}"`, "error");
+    return;
+  }
+
+  const pv = sizeData.product_variants;
+  const product = pv.products;
+  const variantId = pv.id;
+  const normalizedSize = normalizeSize(sizeData.size) || sizeData.size;
+  const stockData = await getVariantStock(variantId);
+  const sizeRow = (stockData.sizes || []).find(
+    (s) => normalizeSize(s.size) === normalizeSize(normalizedSize)
+  );
+  const sourceStock = getSourceStockFromRow(sizeRow);
+
+  const key = pendingLineKey(variantId, normalizedSize);
+  const sku = pv.sku || sizeData.sku || "";
+
+  if (pendingMoves.has(key)) {
+    const line = pendingMoves.get(key);
+    line.quantity += 1;
+    line.sourceStock = sourceStock;
+    line.sku = sku;
+    line.productName = product.name;
+    line.color = pv.color || "";
+  } else {
+    pendingMoves.set(key, {
+      key,
+      variantId,
+      size: normalizedSize,
+      productName: product.name,
+      color: pv.color || "",
+      sku,
+      quantity: 1,
+      sourceStock,
+    });
+  }
+
+  renderQrPendingList();
+  setReaderModeUi(true);
+  searchInput.focus();
+}
+
+async function handleMoveQrLineClick(e) {
+  const btn = e.currentTarget;
+  const variantId = btn.getAttribute("data-variant-id");
+  const size = btn.getAttribute("data-size");
+  const key = pendingLineKey(variantId, size);
+  const line = pendingMoves.get(key);
+  if (!line) return;
+
+  const row = btn.closest(".qr-line");
+  const qtyInput = row?.querySelector(".qr-qty-input");
+  const quantity = qtyInput
+    ? parseInt(qtyInput.value, 10)
+    : line.quantity;
+
+  if (!quantity || quantity <= 0 || isNaN(quantity)) {
+    showMessage("Cantidad inválida", "error");
+    return;
+  }
+
+  const maxStock = Math.max(0, line.sourceStock || 0);
+  if (quantity > maxStock) {
+    showMessage(
+      `No podés mover más de ${maxStock} unidades (stock disponible en origen)`,
+      "error"
+    );
+    return;
+  }
+
+  btn.disabled = true;
+  const prevText = btn.textContent;
+  btn.textContent = "Moviendo...";
+
+  try {
+    const fromWarehouse =
+      currentMode === "to_public" ? "general" : "venta-publico";
+    const toWarehouse =
+      currentMode === "to_public" ? "venta-publico" : "general";
+    const actionText =
+      currentMode === "to_public"
+        ? "movieron a Venta al Público"
+        : "devolvieron a General";
+    const normalizedSize = normalizeSize(size);
+
+    const operationId = generateOperationId();
+    const { data } = await rpcMoveSizeStockWithIdempotency(
+      {
+        p_variant_id: variantId,
+        p_size: normalizedSize,
+        p_from_warehouse_code: fromWarehouse,
+        p_to_warehouse_code: toWarehouse,
+        p_quantity: quantity,
+        p_notes:
+          currentMode === "to_public"
+            ? `Movido desde panel admin (lector QR)`
+            : `Devuelto a General desde panel admin (lector QR)`,
+      },
+      "move_stock_qr_line",
+      operationId
+    );
+
+    showMessage(
+      `✅ Se ${actionText} ${quantity} u. del talle ${normalizedSize}`,
+      "success"
+    );
+
+    pendingMoves.delete(key);
+    await refreshPendingMovesStock();
+    renderQrPendingList();
+    setReaderModeUi(true);
+  } catch (err) {
+    console.error(err);
+    showMessage("Error al mover stock: " + (err.message || "Error desconocido"), "error");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = prevText;
+  }
+}
+
+async function handleMoveQrPendingAll() {
+  const moveAllBtn = document.getElementById("move-all-btn");
+  const moveAllStatus = document.getElementById("move-all-status");
+
+  if (pendingMoves.size === 0) {
+    showMessage("La lista de escaneo está vacía.", "error");
+    return;
+  }
+
+  await refreshPendingMovesStock();
+
+  const movesToProcess = [];
+  for (const line of pendingMoves.values()) {
+    const quantity = line.quantity;
+    if (!quantity || quantity <= 0) continue;
+    const maxStock = Math.max(0, line.sourceStock || 0);
+    if (quantity > maxStock) {
+      showMessage(
+        `Revisá la línea "${line.productName}" talle ${line.size}: pedís ${quantity} y hay ${maxStock} en origen.`,
+        "error"
+      );
+      renderQrPendingList();
+      return;
+    }
+    movesToProcess.push({ ...line, quantity });
+  }
+
+  if (movesToProcess.length === 0) {
+    showMessage("No hay líneas con cantidad válida para mover", "error");
+    return;
+  }
+
+  if (moveAllBtn) moveAllBtn.disabled = true;
+  if (moveAllBtn) moveAllBtn.textContent = "Moviendo...";
+  if (moveAllStatus) {
+    moveAllStatus.textContent = `Procesando ${movesToProcess.length} línea(s)...`;
+  }
+
+  let successCount = 0;
+  let errorCount = 0;
+
+  try {
+    const batchSize = 5;
+    const fromWarehouse =
+      currentMode === "to_public" ? "general" : "venta-publico";
+    const toWarehouse =
+      currentMode === "to_public" ? "venta-publico" : "general";
+
+    for (let i = 0; i < movesToProcess.length; i += batchSize) {
+      const batch = movesToProcess.slice(i, i + batchSize);
+      const results = await Promise.allSettled(
+        batch.map(async ({ variantId, size, quantity }) => {
+          const normalizedSize = normalizeSize(size);
+          const operationId = generateOperationId();
+          await rpcMoveSizeStockWithIdempotency(
+            {
+              p_variant_id: variantId,
+              p_size: normalizedSize,
+              p_from_warehouse_code: fromWarehouse,
+              p_to_warehouse_code: toWarehouse,
+              p_quantity: quantity,
+              p_notes:
+                currentMode === "to_public"
+                  ? `Movido desde panel admin (lector QR, mover todo)`
+                  : `Devuelto a General desde panel admin (lector QR, mover todo)`,
+            },
+            "move_stock_qr_bulk_item",
+            operationId
+          );
+          return { variantId, size: normalizedSize };
+        })
+      );
+
+      results.forEach((result, index) => {
+        const item = batch[index];
+        if (result.status === "fulfilled") {
+          successCount++;
+          const k = pendingLineKey(item.variantId, item.size);
+          pendingMoves.delete(k);
+        } else {
+          errorCount++;
+          console.error(
+            `Error moviendo variante ${item.variantId}, talle ${item.size}:`,
+            result.reason
+          );
+        }
+      });
+
+      if (moveAllStatus) {
+        moveAllStatus.textContent = `Procesando... ${Math.min(i + batchSize, movesToProcess.length)}/${movesToProcess.length}`;
+      }
+    }
+
+    if (successCount > 0) {
+      showMessage(
+        `✅ Se movieron ${successCount} línea(s)${errorCount > 0 ? ` (${errorCount} error(es))` : ""}`,
+        errorCount > 0 ? "error" : "success"
+      );
+    } else {
+      showMessage("No se pudo mover ninguna línea", "error");
+    }
+
+    await refreshPendingMovesStock();
+    renderQrPendingList();
+    setReaderModeUi(true);
+  } catch (err) {
+    console.error(err);
+    showMessage("Error al mover stock: " + (err.message || "Error desconocido"), "error");
+  } finally {
+    if (moveAllBtn) moveAllBtn.disabled = false;
+    updateMoveAllButtonText();
+    if (moveAllStatus) moveAllStatus.textContent = "";
+  }
+}
 
 // Buscar productos
 async function searchProducts(term) {
@@ -654,18 +1208,21 @@ async function handleMoveStock(event) {
     
     const normalizedSize = normalizeSize(size);
     
-    const { data, error } = await supabase.rpc("rpc_move_size_stock", {
-      p_variant_id: variantId,
-      p_size: normalizedSize,
-      p_from_warehouse_code: fromWarehouse,
-      p_to_warehouse_code: toWarehouse,
-      p_quantity: quantity,
-      p_notes: currentMode === "to_public" 
-        ? `Movido desde panel de admin` 
-        : `Devuelto a General desde panel de admin`
-    });
-
-    if (error) throw error;
+    const operationId = generateOperationId();
+    const { data } = await rpcMoveSizeStockWithIdempotency(
+      {
+        p_variant_id: variantId,
+        p_size: normalizedSize,
+        p_from_warehouse_code: fromWarehouse,
+        p_to_warehouse_code: toWarehouse,
+        p_quantity: quantity,
+        p_notes: currentMode === "to_public"
+          ? `Movido desde panel de admin`
+          : `Devuelto a General desde panel de admin`,
+      },
+      "move_stock_single",
+      operationId
+    );
 
     showMessage(
       `✅ Se ${actionText} ${quantity} unidades del talle ${normalizedSize} exitosamente`,
@@ -792,15 +1349,32 @@ async function loadSuggestions(term) {
 
 // Event listener para búsqueda y autocompletado
 searchInput.addEventListener("input", (e) => {
+  if (isQrReaderMode) {
+    clearTimeout(qrInputTimeout);
+    clearTimeout(searchTimeout);
+    clearTimeout(suggestionsTimeout);
+    suggestionsDropdown.style.display = "none";
+    const raw = e.target.value.trim();
+    if (raw.length === 0) return;
+    qrInputTimeout = setTimeout(() => {
+      const current = searchInput.value.trim();
+      if (!current) return;
+      if (/^\d+$/.test(current)) {
+        addToQrQueue(current);
+      }
+    }, 150);
+    return;
+  }
+
   clearTimeout(searchTimeout);
   clearTimeout(suggestionsTimeout);
   const term = e.target.value.trim();
-  
+
   // Mostrar sugerencias mientras escribe
   suggestionsTimeout = setTimeout(() => {
     loadSuggestions(term);
   }, 200);
-  
+
   // Búsqueda completa después de un delay más largo
   if (term.length >= 2) {
     searchTimeout = setTimeout(() => {
@@ -815,6 +1389,18 @@ searchInput.addEventListener("input", (e) => {
   }
 });
 
+searchInput.addEventListener("keydown", (e) => {
+  if (!isQrReaderMode) return;
+  if (e.key === "Enter") {
+    e.preventDefault();
+    clearTimeout(qrInputTimeout);
+    const v = searchInput.value.trim();
+    if (/^\d+$/.test(v)) {
+      addToQrQueue(v);
+    }
+  }
+});
+
 // Ocultar sugerencias al hacer clic fuera
 document.addEventListener("click", (e) => {
   if (!searchInput.contains(e.target) && !suggestionsDropdown.contains(e.target)) {
@@ -824,6 +1410,11 @@ document.addEventListener("click", (e) => {
 
 // Manejar movimiento de todas las variantes (por talle individual)
 async function handleMoveAll() {
+  if (isQrReaderMode) {
+    await handleMoveQrPendingAll();
+    return;
+  }
+
   console.log("🔄 handleMoveAll llamado");
   const moveAllBtn = document.getElementById("move-all-btn");
   const moveAllStatus = document.getElementById("move-all-status");
@@ -887,18 +1478,22 @@ async function handleMoveAll() {
       const results = await Promise.allSettled(
         batch.map(async ({ variantId, size, quantity }) => {
           const normalizedSize = normalizeSize(size);
-          const { data, error } = await supabase.rpc("rpc_move_size_stock", {
-            p_variant_id: variantId,
-            p_size: normalizedSize,
-            p_from_warehouse_code: fromWarehouse,
-            p_to_warehouse_code: toWarehouse,
-            p_quantity: quantity,
-            p_notes: currentMode === "to_public" 
-              ? `Movido desde panel de admin (mover todo)` 
-              : `Devuelto a General desde panel de admin (mover todo)`
-          });
-          
-          if (error) throw error;
+          const operationId = generateOperationId();
+          const { data } = await rpcMoveSizeStockWithIdempotency(
+            {
+              p_variant_id: variantId,
+              p_size: normalizedSize,
+              p_from_warehouse_code: fromWarehouse,
+              p_to_warehouse_code: toWarehouse,
+              p_quantity: quantity,
+              p_notes: currentMode === "to_public"
+                ? `Movido desde panel de admin (mover todo)`
+                : `Devuelto a General desde panel de admin (mover todo)`,
+            },
+            "move_stock_bulk_item",
+            operationId
+          );
+
           return { variantId, size: normalizedSize, quantity, data };
         })
       );
@@ -987,7 +1582,17 @@ function toggleMode() {
   }
   
   updateMoveAllButtonText();
-  
+
+  if (isQrReaderMode) {
+    refreshPendingMovesStock()
+      .then(() => {
+        renderQrPendingList();
+        setReaderModeUi(true);
+      })
+      .catch((err) => console.error(err));
+    return;
+  }
+
   // Si hay resultados, re-renderizarlos con el nuevo modo
   const currentSearch = searchInput.value.trim();
   if (currentSearch.length >= 2) {
@@ -1015,6 +1620,45 @@ document.addEventListener("click", (e) => {
 
 // Inicializar texto del botón de modo
 updateMoveAllButtonText();
+
+if (qrReaderModeEl) {
+  qrReaderModeEl.addEventListener("change", (e) => {
+    isQrReaderMode = e.target.checked;
+    setReaderModeUi(isQrReaderMode);
+    if (isQrReaderMode) {
+      suggestionsDropdown.style.display = "none";
+      clearTimeout(searchTimeout);
+      clearTimeout(suggestionsTimeout);
+      clearTimeout(qrInputTimeout);
+      renderQrPendingList();
+      searchInput.focus();
+    } else {
+      const term = searchInput.value.trim();
+      if (term.length >= 2) {
+        searchProducts(term);
+      } else {
+        resultsContainer.innerHTML = `
+          <div class="no-results">
+            <p>Ingresa un término de búsqueda para comenzar</p>
+          </div>
+        `;
+        const resultsHeader = document.getElementById("results-header");
+        if (resultsHeader) resultsHeader.style.display = "none";
+      }
+    }
+  });
+}
+
+if (clearQrListBtn) {
+  clearQrListBtn.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    pendingMoves.clear();
+    renderQrPendingList();
+    setReaderModeUi(true);
+    searchInput.focus();
+  });
+}
 
 // Búsqueda inicial si hay texto en el input
 if (searchInput.value.trim().length >= 2) {

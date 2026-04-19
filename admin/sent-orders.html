@@ -56,6 +56,50 @@
             border-color: #CD844D;
         }
 
+        .search-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        .search-btn {
+            background: #CD844D;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            padding: 10px 14px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        .search-btn:hover {
+            background: #b8723f;
+        }
+
+        .search-suggestions {
+            margin-top: 8px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            background: #fff;
+            max-height: 220px;
+            overflow-y: auto;
+            display: none;
+        }
+
+        .search-suggestion-item {
+            padding: 10px 12px;
+            border-bottom: 1px solid #f1f1f1;
+            cursor: pointer;
+        }
+
+        .search-suggestion-item:last-child {
+            border-bottom: none;
+        }
+
+        .search-suggestion-item:hover {
+            background: #f8f9fa;
+        }
+
         .customers-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
@@ -652,11 +696,16 @@
         <div class="search-container">
             <input type="text" id="search-input" class="search-input" placeholder="Buscar por nombre de cliente..."
                 autocomplete="off" />
+            <div class="search-actions">
+                <button id="search-btn" class="search-btn" type="button">Buscar</button>
+            </div>
+            <div id="search-suggestions" class="search-suggestions"></div>
         </div>
 
         <div id="customers-content">
-            <div class="loading">
-                <p>Cargando pedidos enviados...</p>
+            <div class="empty-state">
+                <h2>Buscá un cliente</h2>
+                <p>Escribí un nombre y presioná Enter, Buscar o seleccioná una sugerencia.</p>
             </div>
         </div>
     </div>

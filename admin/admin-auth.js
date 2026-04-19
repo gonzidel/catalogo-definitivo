@@ -482,6 +482,58 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Login con Google OAuth - usando event delegation para mayor robustez
   console.log("🔍 Configurando botón de Google OAuth...");
+
+  function getOAuthRedirectCandidates() {
+    const origin = window.location.origin;
+    const currentPath = window.location.pathname || "/admin/index.html";
+    const normalizedCurrentPath = currentPath.endsWith("/")
+      ? `${currentPath}index.html`
+      : currentPath;
+
+    const candidates = [
+      `${origin}${normalizedCurrentPath}`,
+      `${origin}/admin/`,
+      origin,
+    ];
+
+    return [...new Set(candidates)];
+  }
+
+  async function signInWithGoogleOAuthWithFallback() {
+    const redirectCandidates = getOAuthRedirectCandidates();
+    let lastError = null;
+
+    for (const redirectUrl of redirectCandidates) {
+      console.log("📍 Intentando OAuth con redirectTo:", redirectUrl);
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: redirectUrl,
+          queryParams: {
+            prompt: "select_account",
+            access_type: "offline",
+          },
+        },
+      });
+
+      if (!error) {
+        return { data, redirectUrl };
+      }
+
+      lastError = error;
+      const msg = String(error.message || "").toLowerCase();
+      const isRedirectError =
+        msg.includes("redirect") ||
+        msg.includes("redirect_to") ||
+        msg.includes("not allowed");
+
+      if (!isRedirectError) {
+        throw error;
+      }
+    }
+
+    throw lastError || new Error("No se pudo iniciar OAuth con ninguna URL de redirección");
+  }
   
   // Función para manejar el click del botón de Google
   async function handleGoogleLogin(e) {
@@ -506,33 +558,21 @@ document.addEventListener("DOMContentLoaded", () => {
 
     try {
       console.log("🔐 Iniciando login con Google OAuth...");
-      const redirectUrl = `${window.location.origin}/admin/index.html`;
-      console.log("📍 URL de redirección:", redirectUrl);
-
-      const { data, error } = await supabase.auth.signInWithOAuth({
-        provider: "google",
-        options: {
-          redirectTo: redirectUrl,
-          queryParams: {
-            prompt: "select_account",
-            access_type: "offline",
-          },
-        },
-      });
-
-      if (error) {
-        console.error("❌ Error en OAuth:", error);
-        elements.loginErr.textContent = `Error: ${error.message}`;
-        elements.loginErr.style.color = "#e74c3c";
-        btn.disabled = false;
-        btn.innerHTML = originalHTML;
-      } else {
-        console.log("✅ Redirigiendo a Google...");
-        // La redirección se hará automáticamente
-      }
+      await signInWithGoogleOAuthWithFallback();
+      console.log("✅ Redirigiendo a Google...");
+      // La redirección se hará automáticamente
     } catch (e) {
       console.error("❌ Error en login con Google:", e);
-      elements.loginErr.textContent = `Error: ${e.message || String(e)}`;
+      const message = e?.message || String(e);
+      if (/redirect|redirect_to|not allowed/i.test(message)) {
+        elements.loginErr.innerHTML = `
+          Error de redirección OAuth.<br/>
+          Verificá en Supabase Auth > URL Configuration que exista:<br/>
+          <code>${window.location.origin}/admin/index.html</code> o <code>${window.location.origin}/admin/</code>
+        `;
+      } else {
+        elements.loginErr.textContent = `Error: ${message}`;
+      }
       elements.loginErr.style.color = "#e74c3c";
       btn.disabled = false;
       btn.innerHTML = originalHTML;
@@ -543,30 +583,6 @@ document.addEventListener("DOMContentLoaded", () => {
   // Esto funciona incluso si el botón se carga después
   document.addEventListener("click", handleGoogleLogin);
   console.log("✅ Event listener configurado con event delegation");
-  
-  // También intentar configurar directamente el botón si ya existe
-  const googleLoginBtn = document.getElementById("google-login-btn");
-  if (googleLoginBtn) {
-    console.log("✅ Botón encontrado, configurando listener directo también");
-    googleLoginBtn.addEventListener("click", handleGoogleLogin);
-  } else {
-    console.log("⚠️ Botón no encontrado aún, usando solo event delegation");
-    // Intentar varias veces con delay para encontrar el botón
-    let attempts = 0;
-    const maxAttempts = 30;
-    const checkInterval = setInterval(() => {
-      attempts++;
-      const btn = document.getElementById("google-login-btn");
-      if (btn) {
-        console.log(`✅ Botón encontrado en intento ${attempts}, agregando listener directo`);
-        btn.addEventListener("click", handleGoogleLogin);
-        clearInterval(checkInterval);
-      } else if (attempts >= maxAttempts) {
-        console.log("⚠️ Botón no encontrado después de múltiples intentos, usando solo event delegation");
-        clearInterval(checkInterval);
-      }
-    }, 200);
-  }
 
   // Cerrar sesión (bloque logueado)
   const { logoutBtn } = getDOMElements();

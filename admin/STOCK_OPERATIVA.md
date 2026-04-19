@@ -6,7 +6,7 @@ Documento breve para alinear criterios entre pantallas. No reemplaza migraciones
 
 | Pantalla | Uso |
 |----------|-----|
-| **Productos** (`products.html`) | Alta/edición de artículo y **talles con cantidades**. Escribe `variant_sizes` y el **total por variante** en `variant_warehouse_stock` solo para el almacén **general**. |
+| **Productos** (`products.html`) | Alta/edición de artículo y **talles con cantidades**. Guarda vía `rpc_save_product_variant_initial_stock` (fuente canónica: `variant_size_warehouse_stock` en depósito `general`). |
 | **Stock** (`stock.html`) | Operación diaria: stock por **talle × depósito** (`general` / `venta-publico`), carga incremental, historial. |
 | **Mover stock** (`move-stock.html`) | Traslado entre depósitos vía **RPC** `rpc_move_size_stock` (con registro en `stock_movements`). |
 
@@ -17,9 +17,14 @@ Documento breve para alinear criterios entre pantallas. No reemplaza migraciones
 
 ## Coherencia
 
-- Existe un trigger en base que, al cambiar **`variant_size_warehouse_stock`**, actualiza **`variant_sizes`** (suma por talle entre depósitos). **Productos** no escribe `variant_size_warehouse_stock`; por eso pueden aparecer diferencias hasta que **Stock** u otro flujo escriba esa capa.
-- Si el guardado del **total general** falla en Productos, el guardado de talles **ya puede haberse aplicado**: revisar en **Stock** o reintentar guardar el producto.
+- La fuente de verdad operativa es **`variant_size_warehouse_stock`**.
+- Trigger **84** sincroniza `variant_sizes.stock_qty` desde `variant_size_warehouse_stock`.
+- Trigger **145** sincroniza `variant_warehouse_stock.stock_qty` desde `variant_size_warehouse_stock`.
+- `variant_sizes` y `variant_warehouse_stock` deben tratarse como capas derivadas de lectura/compatibilidad.
+- Si hay diferencias entre capas, ejecutar `rpc_reconcile_stock` desde Auditoría.
 
 ## Auditoría
 
-- Consultas **solo lectura** sugeridas: `scripts/stock-consistency-checks-readonly.sql` (ejecutar en SQL Editor de Supabase u otro cliente).
+- Vista operativa: `stock-audit.html` (release gate + anomalías + timeline).
+- Consultas **solo lectura**: `scripts/stock-consistency-checks-readonly.sql`.
+- Criterio de lanzamiento: `vw_stock_audit_release_gate.go_live_ready = true`.

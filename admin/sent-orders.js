@@ -58,6 +58,9 @@ async function getSupabase() {
 let currentAdminUser = null;
 let allCustomersData = [];
 let searchTerm = "";
+let selectedCustomerId = null;
+let autocompleteCustomers = [];
+let autocompleteRequestToken = 0;
 let scheduledTransports = [];
 let warehouses = { general: null, ventaPublico: null };
 let processingDevolucion = new Set(); // Rastrear pedidos en proceso de devolución
@@ -131,7 +134,7 @@ async function initSentOrders() {
     setupPaymentMethodModalForLabel();
     await loadWarehouses();
     await loadScheduledTransports();
-    await loadSentOrders();
+    renderSearchEmptyState();
     setupPrintLabelsButtons();
     setupPrintTicketButtons();
     setupDeleteItemButtons();
@@ -184,7 +187,18 @@ async function verifyAdminAuth() {
   }
 }
 
-async function loadSentOrders() {
+function renderSearchEmptyState() {
+  const customersContent = document.getElementById("customers-content");
+  if (!customersContent) return;
+  customersContent.innerHTML = `
+    <div class="empty-state">
+      <h2>Buscá un cliente</h2>
+      <p>Escribí un nombre y presioná Enter, Buscar o seleccioná una sugerencia.</p>
+    </div>
+  `;
+}
+
+async function loadSentOrders(customerIds = []) {
   const customersContent = document.getElementById("customers-content");
   if (!customersContent) return;
 
@@ -202,47 +216,77 @@ async function loadSentOrders() {
     return;
   }
 
-  try {
-    // Obtener todos los pedidos enviados con sus items
-    const { data: orders, error: ordersError } = await supabase
-      .from("orders")
-      .select(
-        `
-        id,
-        order_number,
-        customer_id,
-        updated_at,
-        sent_at,
-        total_amount,
-        notes,
-        transport_id,
-        status,
-        payment_method,
-        order_items (
-          id,
-          product_name,
-          color,
-          size,
-          quantity,
-          price_snapshot,
-          imagen,
-          status,
-          variant_id
-        )
-        `
-      )
-      .in("status", ["sent", "devolución"])
-      .order("sent_at", { ascending: false });
+  if (!Array.isArray(customerIds) || customerIds.length === 0) {
+    renderSearchEmptyState();
+    return;
+  }
 
-    if (ordersError) {
-      console.error("❌ Error cargando pedidos enviados:", ordersError);
-      customersContent.innerHTML = `
-        <div class="empty-state">
-          <h2>Error</h2>
-          <p>No se pudieron cargar los pedidos enviados.</p>
-        </div>
-      `;
-      return;
+  try {
+    // Obtener todos los pedidos enviados con sus items en lotes para evitar
+    // cortes por límite implícito de filas en una sola consulta.
+    const PAGE_SIZE = 500;
+    const orders = [];
+    const CUSTOMER_BATCH_SIZE = 100;
+
+    for (let i = 0; i < customerIds.length; i += CUSTOMER_BATCH_SIZE) {
+      const idsBatch = customerIds.slice(i, i + CUSTOMER_BATCH_SIZE);
+      let from = 0;
+      let keepFetching = true;
+
+      while (keepFetching) {
+        const to = from + PAGE_SIZE - 1;
+        const { data: pageOrders, error: ordersError } = await supabase
+          .from("orders")
+          .select(
+            `
+            id,
+            order_number,
+            customer_id,
+            updated_at,
+            sent_at,
+            total_amount,
+            notes,
+            transport_id,
+            status,
+            payment_method,
+            order_items (
+              id,
+              product_name,
+              color,
+              size,
+              quantity,
+              price_snapshot,
+              imagen,
+              status,
+              variant_id
+            )
+            `
+          )
+          .in("status", ["sent", "devolución"])
+          .in("customer_id", idsBatch)
+          .order("sent_at", { ascending: false })
+          .range(from, to);
+
+        if (ordersError) {
+          console.error("❌ Error cargando pedidos enviados:", ordersError);
+          customersContent.innerHTML = `
+            <div class="empty-state">
+              <h2>Error</h2>
+              <p>No se pudieron cargar los pedidos enviados.</p>
+            </div>
+          `;
+          return;
+        }
+
+        const currentPage = pageOrders || [];
+        orders.push(...currentPage);
+
+        if (currentPage.length < PAGE_SIZE) {
+          keepFetching = false;
+        } else {
+          from += PAGE_SIZE;
+        }
+      }
     }
 
     if (!orders || orders.length === 0) {
@@ -280,14 +324,14 @@ async function loadSentOrders() {
       }
     }
 
-    // Obtener customer_ids únicos
-    const customerIds = [...new Set(orders.map(order => order.customer_id).filter(Boolean))];
+    // Obtener customer_ids únicos para cargar datos de clientes
+    const uniqueCustomerIds = [...new Set(orders.map(order => order.customer_id).filter(Boolean))];
 
     // Obtener información de customers (incluyendo transport_id)
     const { data: customersData, error: customersError } = await supabase
       .from("customers")
       .select("id, customer_number, full_name, phone, city, province, dni, email, address, transport_id")
-      .in("id", customerIds);
+      .in("id", uniqueCustomerIds);
 
     if (customersError) {
       console.error("❌ Error obteniendo datos de customers:", customersError);
@@ -355,38 +399,79 @@ async function loadSentOrders() {
   }
 }
 
+async function resolveCustomerIdsForSearch(rawTerm) {
+  const term = (rawTerm || "").trim();
+  if (!term) return [];
+
+  if (selectedCustomerId) {
+    return [selectedCustomerId];
+  }
+
+  const safeTerm = term.replace(/[%_]/g, "").slice(0, 80);
+  const { data: matchedCustomers, error: customerSearchError } = await supabase
+    .from("customers")
+    .select("id")
+    .or(`full_name.ilike.%${safeTerm}%,customer_number.ilike.%${safeTerm}%`)
+    .limit(200);
+
+  if (customerSearchError) {
+    throw customerSearchError;
+  }
+
+  return (matchedCustomers || []).map((c) => c.id).filter(Boolean);
+}
+
+async function runSentOrdersSearch() {
+  const searchInput = document.getElementById("search-input");
+  const customersContent = document.getElementById("customers-content");
+  searchTerm = (searchInput?.value || "").trim();
+
+  if (!searchTerm) {
+    selectedCustomerId = null;
+    allCustomersData = [];
+    renderSearchEmptyState();
+    return;
+  }
+
+  if (customersContent) {
+    customersContent.innerHTML = `
+      <div class="loading">
+        <p>Buscando pedidos enviados...</p>
+      </div>
+    `;
+  }
+
+  try {
+    const customerIds = await resolveCustomerIdsForSearch(searchTerm);
+    await loadSentOrders(customerIds);
+  } catch (error) {
+    console.error("❌ Error buscando clientes:", error);
+    if (customersContent) {
+      customersContent.innerHTML = `
+        <div class="empty-state">
+          <h2>Error</h2>
+          <p>No se pudo buscar el cliente ingresado.</p>
+        </div>
+      `;
+    }
+  }
+}
+
 function renderCustomers(customers) {
   const customersContent = document.getElementById("customers-content");
   if (!customersContent) return;
 
-  // Filtrar por término de búsqueda
-  const filteredCustomers = searchTerm
-    ? customers.filter(customer => {
-      const searchLower = searchTerm.toLowerCase();
-      const name = (customer.full_name || "").toLowerCase();
-      const parts = name.split(/\s+/);
-      let combined = name;
-      if (parts.length > 1) {
-        const last = parts[parts.length - 1];
-        const first = parts.slice(0, -1).join(' ');
-        combined = `${last}, ${first}`.toLowerCase();
-      }
-      const customerNumber = (customer.customer_number || "").toLowerCase();
-      return name.includes(searchLower) || combined.includes(searchLower) || customerNumber.includes(searchLower);
-    })
-    : customers;
-
-  if (filteredCustomers.length === 0) {
+  if (customers.length === 0) {
     customersContent.innerHTML = `
       <div class="empty-state">
-        <h2>No se encontraron clientes</h2>
-        <p>${searchTerm ? "Intenta con otro término de búsqueda." : "No hay pedidos enviados."}</p>
+        <h2>Sin resultados</h2>
+        <p>No se encontraron pedidos enviados para la búsqueda ingresada.</p>
       </div>
     `;
     return;
   }
 
-  const customersHtml = filteredCustomers
+  const customersHtml = customers
     .map(customer => {
       const location = [customer.city, customer.province].filter(Boolean).join(" - ") || "Sin ubicación";
       const ordersCount = customer.orders.length;
@@ -420,11 +505,96 @@ function renderCustomers(customers) {
 
 function setupSearch() {
   const searchInput = document.getElementById("search-input");
-  if (!searchInput) return;
+  const searchBtn = document.getElementById("search-btn");
+  const suggestionsBox = document.getElementById("search-suggestions");
+  if (!searchInput || !searchBtn || !suggestionsBox) return;
 
-  searchInput.addEventListener("input", (e) => {
-    searchTerm = e.target.value.trim();
-    renderCustomers(allCustomersData);
+  const hideSuggestions = () => {
+    suggestionsBox.style.display = "none";
+    suggestionsBox.innerHTML = "";
+  };
+
+  const renderSuggestions = (customers) => {
+    autocompleteCustomers = customers || [];
+    if (!autocompleteCustomers.length) {
+      hideSuggestions();
+      return;
+    }
+    suggestionsBox.innerHTML = autocompleteCustomers
+      .map((customer) => {
+        const customerName = customer.full_name || "Cliente sin nombre";
+        const customerNumber = customer.customer_number ? `#${customer.customer_number}` : "Sin número";
+        return `
+          <div class="search-suggestion-item" data-customer-id="${customer.id}">
+            ${customerName} (${customerNumber})
+          </div>
+        `;
+      })
+      .join("");
+    suggestionsBox.style.display = "block";
+  };
+
+  const searchCustomersAutocomplete = async (rawTerm) => {
+    const term = (rawTerm || "").trim();
+    if (term.length < 2) {
+      renderSuggestions([]);
+      return;
+    }
+    const token = ++autocompleteRequestToken;
+    const safeTerm = term.replace(/[%_]/g, "").slice(0, 80);
+
+    const { data, error } = await supabase
+      .from("customers")
+      .select("id, customer_number, full_name")
+      .or(`full_name.ilike.%${safeTerm}%,customer_number.ilike.%${safeTerm}%`)
+      .order("full_name", { ascending: true })
+      .limit(12);
+
+    if (token !== autocompleteRequestToken) return;
+    if (error) {
+      console.error("❌ Error buscando sugerencias de clientes:", error);
+      renderSuggestions([]);
+      return;
+    }
+
+    renderSuggestions(data || []);
+  };
+
+  searchInput.addEventListener("input", async (e) => {
+    const value = e.target.value.trim();
+    searchTerm = value;
+    selectedCustomerId = null;
+    await searchCustomersAutocomplete(value);
+  });
+
+  searchInput.addEventListener("keydown", async (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      await runSentOrdersSearch();
+    }
+  });
+
+  searchBtn.addEventListener("click", async () => {
+    await runSentOrdersSearch();
+  });
+
+  suggestionsBox.addEventListener("click", async (e) => {
+    const item = e.target.closest("[data-customer-id]");
+    if (!item) return;
+    const customerId = item.getAttribute("data-customer-id");
+    const customer = autocompleteCustomers.find((c) => c.id === customerId);
+    if (!customer) return;
+
+    selectedCustomerId = customer.id;
+    searchInput.value = customer.full_name || "";
+    searchTerm = searchInput.value.trim();
+    hideSuggestions();
+    await runSentOrdersSearch();
+  });
+
+  document.addEventListener("click", (e) => {
+    if (e.target === searchInput || suggestionsBox.contains(e.target)) return;
+    hideSuggestions();
   });
 }
 
@@ -754,7 +924,7 @@ function handleModifyOrder(orderId) {
 // Exponer globalmente para que order-creator.js pueda llamarla
 window.loadSentOrders = async function () {
   console.log("🔄 Recargando pedidos enviados...");
-  await loadSentOrders();
+  await runSentOrdersSearch();
 
   // Si hay un modal abierto, cerrarlo y reabrirlo para mostrar los cambios
   const modal = document.getElementById("customer-modal");
@@ -1783,156 +1953,29 @@ async function deleteOrderItem(itemId, orderId) {
   }
 
   try {
-    // Obtener el item completo de la base de datos
-    const { data: item, error: itemError } = await supabase
-      .from("order_items")
-      .select("id, order_id, status, quantity, price_snapshot, variant_id, size")
-      .eq("id", itemId)
-      .maybeSingle();
+    const { data: rpcResult, error: rpcError } = await supabase.rpc(
+      "rpc_remove_order_item_restore_stock",
+      { p_order_item_id: itemId }
+    );
 
-    if (itemError || !item) {
-      alert("No se encontró el producto.");
+    if (rpcError) {
+      console.error("❌ Error eliminando item via RPC:", rpcError);
+      alert(
+        "No se pudo eliminar el producto de forma segura: "
+          + (rpcError.message || "Error desconocido")
+      );
       return;
     }
 
-    const qty = Number(item.quantity || 0) || 0;
-    const price = getSentOrderUnitPrice(item);
-    const itemTotal = qty * price;
-
-    // Devolver stock al stock general si el item tiene variant_id
-    if (item.variant_id) {
-      const itemSize = (item.size || "").trim();
-      console.log(`🔄 Intentando devolver stock para variant_id: ${item.variant_id}, size: ${itemSize || 'sin talle'}, cantidad: ${qty}`);
-
-      // Asegurar que los almacenes estén cargados
-      if (!warehouses.general) {
-        await loadWarehouses();
-      }
-
-      if (!warehouses.general) {
-        console.error("❌ No se pudo cargar el almacén 'general'");
-        alert("Error: No se pudo encontrar el almacén 'general'. El producto fue eliminado pero el stock no se actualizó.");
-      } else {
-        try {
-          console.log(`✅ Usando almacén 'general': ${warehouses.general}`);
-
-          // Si el item tiene size, usar variant_size_warehouse_stock
-          if (itemSize) {
-            // Obtener el stock actual del talle específico en el almacén general
-            const { data: sizeStockRow, error: sizeStockError } = await supabase
-              .from("variant_size_warehouse_stock")
-              .select("stock_qty")
-              .eq("variant_id", item.variant_id)
-              .eq("size", itemSize)
-              .eq("warehouse_id", warehouses.general)
-              .maybeSingle();
-
-            // Si no existe el registro, currentStock será 0
-            const currentStock = sizeStockError && sizeStockError.code === 'PGRST116'
-              ? 0
-              : Number(sizeStockRow?.stock_qty || 0);
-
-            const newStock = currentStock + qty;
-
-            console.log(`📦 Stock actual (talle ${itemSize}): ${currentStock}, Cantidad a devolver: ${qty}, Nuevo stock: ${newStock}`);
-
-            // Actualizar o insertar el stock en variant_size_warehouse_stock
-            const { data: upsertData, error: updateError } = await supabase
-              .from("variant_size_warehouse_stock")
-              .upsert({
-                variant_id: item.variant_id,
-                size: itemSize,
-                warehouse_id: warehouses.general,
-                stock_qty: newStock
-              }, {
-                onConflict: 'variant_id,size,warehouse_id'
-              })
-              .select();
-
-            if (updateError) {
-              console.error("❌ Error actualizando stock en variant_size_warehouse_stock:", updateError);
-              alert(`Error al devolver el stock: ${updateError.message || 'Error desconocido'}. El producto fue eliminado pero el stock no se actualizó.`);
-            } else {
-              console.log(`✅ Stock devuelto exitosamente: ${qty} unidades agregadas al almacén 'general' para la variante ${item.variant_id}, talle ${itemSize}`);
-            }
-          } else {
-            // Si no tiene size, usar variant_warehouse_stock (compatibilidad con items antiguos)
-            const { data: stockRow, error: stockError } = await supabase
-              .from("variant_warehouse_stock")
-              .select("stock_qty")
-              .eq("variant_id", item.variant_id)
-              .eq("warehouse_id", warehouses.general)
-              .maybeSingle();
-
-            // Si no existe el registro, currentStock será 0
-            const currentStock = stockError && stockError.code === 'PGRST116'
-              ? 0
-              : Number(stockRow?.stock_qty || 0);
-
-            const newStock = currentStock + qty;
-
-            console.log(`📦 Stock actual (sin talle): ${currentStock}, Cantidad a devolver: ${qty}, Nuevo stock: ${newStock}`);
-
-            // Actualizar o insertar el stock en variant_warehouse_stock
-            const { data: upsertData, error: updateError } = await supabase
-              .from("variant_warehouse_stock")
-              .upsert({
-                variant_id: item.variant_id,
-                warehouse_id: warehouses.general,
-                stock_qty: newStock
-              }, {
-                onConflict: 'variant_id,warehouse_id'
-              })
-              .select();
-
-            if (updateError) {
-              console.error("❌ Error actualizando stock en variant_warehouse_stock:", updateError);
-              alert(`Error al devolver el stock: ${updateError.message || 'Error desconocido'}. El producto fue eliminado pero el stock no se actualizó.`);
-            } else {
-              console.log(`✅ Stock devuelto exitosamente: ${qty} unidades agregadas al almacén 'general' para la variante ${item.variant_id} (sin talle específico)`);
-            }
-          }
-        } catch (e) {
-          console.error("❌ Error devolviendo stock:", e);
-          console.error("❌ Stack trace:", e.stack);
-          alert("Advertencia: El producto se eliminó pero no se pudo devolver el stock. Por favor, verifica manualmente el stock del producto.");
-        }
-      }
-    } else {
-      console.warn("⚠️ El item no tiene variant_id, no se puede devolver el stock");
-    }
-
-    // Eliminar el item
-    const { error: delErr } = await supabase
-      .from("order_items")
-      .delete()
-      .eq("id", itemId);
-
-    if (delErr) {
-      alert("No se pudo eliminar el producto: " + (delErr.message || "Error desconocido"));
-      return;
-    }
-
-    // Actualizar total del pedido
-    if (item.order_id && itemTotal > 0) {
-      const { data: orderRow, error: orderError } = await supabase
+    const resolvedOrderId = rpcResult?.order_id || orderId;
+    if (resolvedOrderId) {
+      await supabase
         .from("orders")
-        .select("total_amount")
-        .eq("id", item.order_id)
-        .maybeSingle();
-
-      if (!orderError && orderRow) {
-        const newTotal = Math.max(0, Number(orderRow.total_amount || 0) - itemTotal);
-        await supabase
-          .from("orders")
-          .update({
-            total_amount: newTotal,
-            sent_at: new Date().toISOString(), // Actualizar sent_at cuando se modifica
-            updated_at: new Date().toISOString()
-          })
-          .eq("id", item.order_id);
-        console.log(`✅ Total del pedido actualizado: $${newTotal}`);
-      }
+        .update({
+          sent_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", resolvedOrderId);
     }
 
     // Recargar la lista de pedidos enviados
@@ -1954,7 +1997,7 @@ async function deleteOrderItem(itemId, orderId) {
       }
     }
 
-    console.log("✅ Producto eliminado correctamente");
+    console.log("✅ Producto eliminado correctamente vía RPC");
   } catch (error) {
     console.error("❌ Error eliminando producto:", error);
     alert("Error al eliminar el producto: " + (error.message || "Error desconocido"));
@@ -1992,7 +2035,7 @@ function setupDeleteItemButtons() {
 
       // Confirmar antes de eliminar
       const productName = deleteBtn.closest('.order-item-detail')?.querySelector('.order-item-detail-name')?.textContent?.trim() || 'este producto';
-      if (!confirm(`¿Estás seguro de que deseas eliminar ${productName} de este pedido?\n\nEl stock volverá al stock general.`)) {
+      if (!confirm(`¿Estás seguro de que deseas eliminar ${productName} de este pedido?\n\nEl stock se restaurará según la trazabilidad registrada del pedido.`)) {
         return;
       }
 

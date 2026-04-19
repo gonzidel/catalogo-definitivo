@@ -17,10 +17,13 @@ SELECT
   vs.stock_qty - COALESCE(sws.sum_qty, 0) AS delta
 FROM public.variant_sizes vs
 LEFT JOIN (
-  SELECT variant_id, size, SUM(stock_qty)::int AS sum_qty
+  SELECT
+    variant_id,
+    TRIM(COALESCE(size::text, '')) AS size_norm,
+    SUM(stock_qty)::int AS sum_qty
   FROM public.variant_size_warehouse_stock
-  GROUP BY variant_id, size
-) sws ON sws.variant_id = vs.variant_id AND sws.size = vs.size
+  GROUP BY variant_id, TRIM(COALESCE(size::text, ''))
+) sws ON sws.variant_id = vs.variant_id AND sws.size_norm = TRIM(COALESCE(vs.size::text, ''))
 WHERE vs.stock_qty IS DISTINCT FROM COALESCE(sws.sum_qty, 0)
 ORDER BY delta DESC;
 
@@ -52,7 +55,8 @@ SELECT sws.variant_id, sws.size, sws.warehouse_id, sws.stock_qty
 FROM public.variant_size_warehouse_stock sws
 WHERE NOT EXISTS (
   SELECT 1 FROM public.variant_sizes vs
-  WHERE vs.variant_id = sws.variant_id AND vs.size = sws.size
+  WHERE vs.variant_id = sws.variant_id
+    AND TRIM(COALESCE(vs.size::text, '')) = TRIM(COALESCE(sws.size::text, ''))
 );
 
 -- ---------------------------------------------------------------------------

@@ -5,106 +5,135 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="robots" content="noindex" />
   <title>Stock | Admin</title>
+  <link rel="modulepreload" href="./permissions-helper.js" />
   <link rel="stylesheet" href="../styles.css" />
   <style>
-    /* Estilos para el sistema de tarjetas de stock */
-    .toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0}
-    .toolbar .spacer{flex:1 1 auto}
-    .pill{display:inline-block;padding:2px 8px;border:1px solid #ddd;border-radius:999px;background:#fff}
+    :root{
+      --stock-bg:#f6f6f3;
+      --surface:#fff;
+      --line:#e7e6e1;
+      --line-strong:#d3d0c5;
+      --ink:#222;
+      --muted:#686868;
+      --primary:#14532d;
+      --primary-strong:#0f3f1e;
+      --warning:#b45309;
+      --warning-bg:#fff8db;
+      --danger:#b42318;
+    }
+    body{background:var(--stock-bg);color:var(--ink)}
+    .stock-page{max-width:1180px;margin:14px auto 32px;padding:0 12px}
+    .stock-topbar{display:flex;flex-direction:column;gap:10px;margin-bottom:12px}
+    .stock-title-wrap{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
+    .stock-title-group h1{margin:0;font-size:28px;line-height:1.15}
+    .stock-back-link{font-size:13px;color:#5e5e5e;text-decoration:none}
+    .stock-back-link:hover{text-decoration:underline}
+    .stock-build-version{display:inline-block;margin-left:6px;font-size:10px;color:#7a7a7a}
+    .stock-nav{display:flex;gap:8px;flex-wrap:wrap}
+    .stock-nav-link{padding:8px 11px;border:1px solid var(--line-strong);border-radius:10px;background:#fdfdfc;color:#2d2d2d;text-decoration:none;font-size:13px;font-weight:600}
+    .stock-nav-link.active{background:#151515;color:#fff;border-color:#151515}
+    .stock-nav-link:hover{background:#f2f2f0}
+    .card-surface{background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:0 2px 12px rgba(0,0,0,.05)}
+    .incomplete-alert{display:none;margin-bottom:14px;padding:14px;border:1px solid #f1cc7a;border-radius:12px;background:var(--warning-bg)}
+    .incomplete-alert-content{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+    .incomplete-alert-main{display:flex;align-items:flex-start;gap:10px;min-width:0}
+    .incomplete-alert-icon{font-size:20px;line-height:1}
+    .incomplete-alert-title{font-weight:700;color:#8a4b0f;display:block;margin-bottom:2px}
+    .incomplete-alert-text{color:#8a4b0f;font-size:13px}
+    .incomplete-alert-cta{padding:10px 14px;border-radius:10px;background:#f4bf3f;color:#683d00;text-decoration:none;font-weight:700;white-space:nowrap}
+    .stock-controls{padding:12px;margin-bottom:14px}
+    .controls-grid{display:grid;gap:10px}
+    .controls-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+    .controls-row .spacer{flex:1 1 auto}
+    .search-input{width:100%;min-width:220px;flex:1;padding:11px 12px;border:1px solid var(--line-strong);border-radius:10px;font-size:14px;background:#fff}
+    .pill{display:inline-flex;align-items:center;gap:6px;padding:7px 10px;border:1px solid var(--line-strong);border-radius:999px;background:#fff;font-size:12px;color:#222;min-height:38px}
+    select.pill{appearance:auto;padding-right:28px}
+    button, .btn{min-height:38px;border-radius:10px;border:1px solid var(--line-strong);background:#fff;padding:8px 12px;font-size:12px;font-weight:600;cursor:pointer}
+    button:hover,.btn:hover{background:#f5f4f1}
+    .btn-primary{background:var(--primary);color:#fff;border-color:var(--primary)}
+    .btn-primary:hover{background:var(--primary-strong);border-color:var(--primary-strong)}
+    .btn-alert{border-color:#efc66f;background:#fff6e1;color:#8a4b0f}
+    .btn-danger{border-color:#e6c6c6;background:#fff;color:var(--danger)}
     .counter{font-variant-numeric:tabular-nums}
-    .mini-btn{font-size:12px;line-height:1;padding:3px 6px;margin-left:6px;border:1px solid #ddd;border-radius:4px;background:#f8f8f8;cursor:pointer}
-    .mini-btn:hover{background:#f1f1f1}
-    .stock-history-btn{font-size:14px;padding:2px 6px;border:1px solid #ddd;border-radius:4px;background:#f8f8f8;cursor:pointer;line-height:1;transition:background 0.2s}
-    .stock-history-btn:hover{background:#e8e8e8;border-color:#bbb}
-    
+    .status-message{font-size:12px;color:var(--muted);max-width:100%;overflow-wrap:anywhere}
+    .toolbar-divider{height:1px;background:var(--line);margin:2px 0}
+
     /* Contenedor de productos */
-    #products-container{display:grid;grid-template-columns:1fr;gap:16px;margin-top:16px;max-width:100%}
-    
+    #products-container{display:grid;grid-template-columns:1fr;gap:12px;margin-top:12px}
+
     /* Tarjeta de producto */
-    .product-card{border:1px solid #ddd;border-radius:8px;background:#fff;padding:12px;transition:box-shadow 0.2s;cursor:pointer;width:100%;box-sizing:border-box}
-    .product-card:hover{box-shadow:0 2px 8px rgba(0,0,0,0.1)}
-    .product-card.expanded{box-shadow:0 4px 12px rgba(0,0,0,0.15)}
-    .product-card-header{display:flex;gap:10px;margin-bottom:10px}
-    .product-card-image{width:80px;height:80px;object-fit:cover;border-radius:6px;border:1px solid #eee;flex-shrink:0}
-    .product-card-image.placeholder{background:#f5f5f5;display:flex;align-items:center;justify-content:center;color:#999;font-size:12px}
+    .product-card{border:1px solid var(--line);border-radius:12px;background:#fff;padding:12px;transition:box-shadow .2s,border-color .2s;width:100%;box-sizing:border-box}
+    .product-card:hover{box-shadow:0 4px 14px rgba(0,0,0,.07)}
+    .product-card.expanded{border-color:#c8d5c4;box-shadow:0 6px 20px rgba(0,0,0,.08)}
+    .product-card-header{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;cursor:pointer}
     .product-card-info{flex:1;min-width:0}
-    .product-card-title{font-weight:600;font-size:15px;margin:0 0 3px 0;word-wrap:break-word}
-    .product-card-meta{font-size:12px;color:#666;margin:3px 0}
-    .product-card-body{margin-top:10px}
-    .product-card-section{margin-bottom:10px}
-    .product-card-section-title{font-size:11px;font-weight:600;color:#666;margin-bottom:4px;text-transform:uppercase}
-    .product-colors{display:flex;flex-wrap:wrap;gap:6px}
-    .color-chip{display:inline-block;padding:4px 10px;border-radius:16px;background:#f4f4f4;border:1px solid #e5e5e5;font-size:12px}
-    .product-sizes{display:flex;flex-wrap:wrap;gap:6px}
-    .size-chip{display:inline-block;padding:4px 10px;border-radius:16px;background:#e8f4f8;border:1px solid #b3d9e6;font-size:12px}
-    .stock-table{margin-top:8px;width:100%;font-size:13px;border-collapse:collapse}
-    .stock-table th,.stock-table td{padding:6px;border:1px solid #eee;text-align:left}
-    .stock-table th{background:#f9f9f9;font-weight:600;font-size:12px}
-    .stock-table .stock-total{font-weight:600;background:#f0f0f0}
-    .product-card-footer{display:flex;justify-content:space-between;align-items:center;margin-top:10px;padding-top:10px;border-top:1px solid #eee}
-    .product-price{font-size:16px;font-weight:600;color:#2c3e50}
-    .product-status{display:flex;align-items:center;gap:6px}
-    .supplier-section{display:flex;align-items:center;gap:8px;margin-top:8px}
-    .supplier-name{font-size:13px;color:#666}
-    .btn-edit-supplier{font-size:11px;padding:4px 8px}
-    
+    .product-card-title{display:flex;align-items:center;gap:8px;font-weight:700;font-size:15px;margin:0 0 4px 0;word-break:break-word;line-height:1.25}
+    .product-card-meta{font-size:12px;color:var(--muted);margin:2px 0;display:flex;flex-wrap:wrap;gap:10px}
+    .product-card-price{text-align:right}
+    .product-price{font-size:22px;font-weight:700;color:#1f2937;line-height:1}
+    .product-card-section{margin-top:10px}
+    .stock-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+    .stock-metric{padding:8px;border:1px solid var(--line);border-radius:10px;background:#fbfbf8}
+    .stock-metric-label{font-size:10px;color:#747474;letter-spacing:.04em;text-transform:uppercase}
+    .stock-metric-value{font-size:20px;font-weight:700;color:#1f2937;line-height:1.1;margin-top:3px}
+    .stock-history-btn{font-size:12px;padding:3px 6px;border:1px solid var(--line-strong);border-radius:6px;background:#f8f8f8;cursor:pointer;line-height:1}
+    .stock-history-btn:hover{background:#ececeb}
+    .low-stock{border-left:4px solid #e97a7a}
+
     /* Variantes (colores) expandidas */
-    .variants-container{display:none;margin-top:12px;padding-top:12px;border-top:1px solid #eee}
+    .variants-container{display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
     .variants-container.expanded{display:block}
-    .variant-card{border:1px solid #ddd;border-radius:6px;padding:10px;margin-bottom:10px;background:#fafafa;width:100%;box-sizing:border-box}
-    .variant-card-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;cursor:pointer;padding:6px 8px;border-radius:4px;transition:background 0.2s}
-    .variant-card-header:hover{background:#f0f0f0}
-    .variant-color{font-weight:600;font-size:13px}
+    .variant-card{border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:10px;background:#fafaf8;width:100%;box-sizing:border-box}
+    .variant-card-header{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px;cursor:pointer;padding:8px;border-radius:8px;transition:background .2s}
+    .variant-card-header:hover{background:#f0f1ed}
+    .variant-card-title{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+    .variant-color{font-weight:700;font-size:13px}
+    .variant-summary{font-size:11px;color:#5f5f5f}
     .variant-toggle{font-size:11px;color:#666;user-select:none}
-    
+    .edit-variant-btn{font-size:11px;padding:5px 8px;border:1px solid #6d7fca;background:#eef2ff;color:#2e3a86;border-radius:7px;cursor:pointer}
+    .edit-variant-btn:hover{background:#e4e9ff}
+    .mini-btn{font-size:11px;line-height:1;padding:5px 7px;margin-left:6px;border:1px solid #d0d0d0;border-radius:6px;background:#f8f8f8;cursor:pointer}
+
     /* Tabla de talles expandida */
     .sizes-detail{display:none;margin-top:8px;overflow-x:auto}
     .sizes-detail.expanded{display:block}
-    .sizes-table{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px;min-width:100%;table-layout:fixed}
-    .sizes-table th:nth-child(1){width:60px}
-    .sizes-table th:nth-child(2){width:140px;font-size:10px}
+    .mobile-sizes-grid-wrap{display:none}
+    .mobile-sizes-grid{width:100%;table-layout:fixed;border-collapse:collapse;font-size:12px;background:#fff;border:1px solid #ddd8ca;border-radius:10px;overflow:hidden}
+    .mobile-sizes-grid th,.mobile-sizes-grid td{padding:8px 6px;border:1px solid #e5e2d8;text-align:center;white-space:normal;overflow-wrap:anywhere}
+    .mobile-sizes-grid thead th{background:#f2f1ec;font-size:10px;text-transform:uppercase;color:#5e5e5e}
+    .mobile-sizes-grid .mobile-sizes-row-label{background:#faf9f5;font-weight:700;text-align:left;position:sticky;left:0;z-index:2}
+    .sizes-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px;table-layout:fixed}
+    .sizes-table th:nth-child(1){width:64px}
+    .sizes-table th:nth-child(2){width:128px;font-size:10px}
     .sizes-table td:nth-child(2){font-size:10px;overflow:hidden;text-overflow:ellipsis}
-    .sizes-table th:nth-child(3){width:90px}
-    .sizes-table th:nth-child(4){width:95px}
-    .sizes-table th:nth-child(5){width:90px}
-    .sizes-table th:nth-child(6){width:85px}
-    .sizes-table th:nth-child(7){width:85px}
-    .sizes-table th:nth-child(8){width:85px}
-    .sizes-table th:nth-child(9){width:70px}
-    .sizes-table th:nth-child(10){width:auto;min-width:80px}
-    
-    /* Botón imprimir */
-    .print-label-btn{font-size:10px;padding:3px 6px;background:#155724;color:#fff;border:1px solid #0f3f1e;border-radius:3px;cursor:pointer;white-space:nowrap}
-    .print-label-btn:hover{background:#0f3f1e}
-    .print-label-btn:disabled{opacity:0.5;cursor:not-allowed;background:#6c757d;border-color:#6c757d}
-    
-    /* Input readonly */
-    .sizes-table input[type="number"]:read-only{background:#f5f5f5;color:#666;cursor:not-allowed;border-color:#e0e0e0}
-    
-    /* Columna carga */
+    .sizes-table th:nth-child(3){width:88px}
+    .sizes-table th:nth-child(4){width:96px}
+    .sizes-table th:nth-child(5){width:94px}
+    .sizes-table th:nth-child(6){width:82px}
+    .sizes-table th:nth-child(7){width:82px}
+    .sizes-table th:nth-child(8){width:86px}
+    .sizes-table th:nth-child(9){width:72px}
+    .sizes-table th:nth-child(10){width:auto;min-width:84px}
+    .sizes-table th,.sizes-table td{padding:6px;border:1px solid #ddd8ca;text-align:center;white-space:nowrap}
+    .sizes-table th{background:#f2f1ec;font-weight:700;position:sticky;top:0;z-index:5;font-size:10px;text-transform:uppercase;color:#5e5e5e}
+    .sizes-table input[type="number"]{width:68px;padding:4px;border:1px solid #d6d3c8;border-radius:6px;text-align:center;font-size:12px}
+    .sizes-table input[type="number"]:read-only{background:#f7f7f5;color:#666;cursor:not-allowed;border-color:#e0ddd3}
+    .sizes-table input[type="checkbox"]{cursor:pointer;transform:scale(.95)}
+    .sizes-table button{font-size:10px;padding:4px 6px;border:1px solid #d0d0d0;border-radius:6px;background:#f8f8f8;cursor:pointer}
+    .sizes-table button:hover{background:#ececeb}
+    .sizes-table button:disabled{opacity:.5;cursor:not-allowed}
     .carga-input{width:55px!important;padding:3px!important;font-size:11px!important}
-    .carga-btn{font-size:10px;padding:3px 5px;margin-left:2px;background:#28a745;color:#fff;border:1px solid #28a745;border-radius:3px;cursor:pointer;white-space:nowrap}
-    .carga-btn:hover{background:#218838;border-color:#1e7e34}
-    .carga-btn:disabled{opacity:0.5;cursor:not-allowed;background:#6c757d;border-color:#6c757d}
-    
-    /* Botón editar variante */
-    .edit-variant-btn{font-size:10px;padding:2px 6px;margin-left:8px;border:1px solid #007bff;background:#007bff;color:#fff;border-radius:3px;cursor:pointer;white-space:nowrap}
-    .edit-variant-btn:hover{background:#0056b3;border-color:#004085}
-    .sizes-table th,.sizes-table td{padding:6px 8px;border:1px solid #ddd;text-align:center;white-space:nowrap;font-size:12px}
-    .sizes-table th{background:#f0f0f0;font-weight:600;position:sticky;top:0;z-index:5;font-size:11px;text-transform:uppercase}
-    .sizes-table input[type="number"]{width:70px;padding:4px;border:1px solid #ddd;border-radius:4px;text-align:center;font-size:12px}
-    .sizes-table input[type="checkbox"]{cursor:pointer;transform:scale(0.9)}
-    .sizes-table button{font-size:10px;padding:3px 6px;border:1px solid #ddd;border-radius:3px;background:#f8f8f8;cursor:pointer;white-space:nowrap}
-    .sizes-table button:hover{background:#e8e8e8}
-    .sizes-table button:disabled{opacity:0.5;cursor:not-allowed}
-    .btn-save-row{font-size:10px;padding:3px 6px;margin-left:4px}
-    
+    .carga-btn{font-size:10px;padding:4px 6px;margin-left:2px;background:#1f8f4a;color:#fff;border:1px solid #1f8f4a;border-radius:6px;cursor:pointer}
+    .carga-btn:hover{background:#166637;border-color:#166637}
+    .carga-btn:disabled,.print-label-btn:disabled{opacity:.5;cursor:not-allowed;background:#6c757d;border-color:#6c757d}
+    .print-label-btn{font-size:10px;padding:4px 6px;background:#155724;color:#fff;border:1px solid #0f3f1e;border-radius:6px;cursor:pointer}
+    .print-label-btn:hover{background:#0f3f1e}
+
     /* Estados */
-    .low-stock{border-left:4px solid #ff6b6b}
     .dirty-card{outline:2px solid #ffd24d}
     .dirty-row{background-color:#fff9e6}
-    
-    /* Tabla principal de stock */
+
+    /* Tabla principal de stock (respaldo) */
     #tbl{width:100%;border-collapse:collapse;margin-top:16px;background:#fff}
     #tbl thead{background:#f9f9f9;position:sticky;top:0;z-index:10}
     #tbl th,#tbl td{padding:8px;border:1px solid #eee;text-align:left}
@@ -114,13 +143,19 @@
     #tbl tbody tr.dirty-row{background:#fff9e6}
     #tbl input[type="number"]{width:80px;padding:4px;border:1px solid #ddd;border-radius:4px}
     #tbl input[type="checkbox"]{cursor:pointer}
-    #tbl .cell-center{text-align:center}
     #tbl button{padding:4px 8px;border:1px solid #ddd;border-radius:4px;background:#f8f8f8;cursor:pointer;font-size:12px}
-    #tbl button:hover{background:#e8e8e8}
-    
+
+    .no-results-state{display:none;text-align:center;padding:36px 12px;color:#666;border:1px dashed var(--line-strong);border-radius:12px;background:#fff}
+
     /* Modal bajo stock */
     .overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;z-index:1000}
     .overlay.show{display:flex}
+    .stock-loading-overlay{position:fixed;inset:0;background:rgba(246,246,243,.94);display:flex;align-items:center;justify-content:center;z-index:1300;padding:20px}
+    .stock-loading-overlay.hidden{display:none}
+    .stock-loading-card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px 18px;display:flex;align-items:center;gap:10px;box-shadow:0 8px 24px rgba(0,0,0,.08)}
+    .stock-loading-spinner{width:18px;height:18px;border:2px solid #d7d7d7;border-top-color:#111;border-radius:50%;animation:stockSpin .8s linear infinite}
+    .stock-loading-text{font-size:13px;color:#303030;font-weight:600}
+    @keyframes stockSpin{to{transform:rotate(360deg)}}
     .modal{background:#fff;max-width:720px;width:92vw;border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.2);padding:16px;max-height:90vh;overflow:auto}
     .modal header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
     .modal h3{margin:0}
@@ -143,73 +178,243 @@
     .supplier-modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
     .supplier-modal-body{display:flex;flex-direction:column;gap:12px}
     .supplier-modal-footer{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+
+    /* Wizard mobile de edicion de stock */
+    .mobile-stock-wizard-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:flex-end;justify-content:center;z-index:1100}
+    .mobile-stock-wizard-overlay.show{display:flex}
+    .mobile-stock-wizard{width:100%;max-width:430px;background:#fff;border-radius:16px 16px 0 0;min-height:auto;max-height:92vh;overflow:auto;padding:14px 14px 10px}
+    .mobile-stock-wizard-header{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}
+    .mobile-stock-wizard-title-row{display:flex;align-items:baseline;flex-wrap:wrap;gap:6px}
+    .mobile-stock-wizard-title{margin:0;font-size:18px;line-height:1.2}
+    .mobile-stock-product-name{margin:0;font-size:18px;line-height:1.2;color:#b42318;font-weight:700}
+    .mobile-stock-wizard-subtitle{margin:0;font-size:12px;color:#666}
+    .mobile-stock-close{border:1px solid #ddd;background:#fafafa;border-radius:8px;padding:6px 10px;font-size:12px}
+    .mobile-stock-step{display:none}
+    .mobile-stock-step.active{display:block}
+    .mobile-stock-step-size,
+    .mobile-stock-step-summary{padding-bottom:88px}
+    .mobile-stock-choice-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+    .mobile-stock-choice-btn{width:100%;min-height:106px;text-align:center;padding:10px;border-radius:12px;border:1px solid #d8d8d8;background:#fff;font-size:13px;font-weight:700;display:flex;flex-direction:column;justify-content:center;align-items:center;line-height:1.15}
+    .mobile-stock-choice-btn small{display:block;font-size:11px;font-weight:600;color:#666;margin-top:5px}
+    .mobile-stock-choice-btn.active{border-color:#1f2937;box-shadow:0 0 0 2px rgba(31,41,55,.1)}
+    .mobile-stock-choice-btn.mode-modify-btn{border-color:#f3cfab;background:#fff0df;color:#8b4a0c}
+    .mobile-stock-choice-btn.mode-modify-btn small{color:#8b4a0c}
+    .mobile-stock-choice-btn.mode-modify-btn.active{border-color:#e2a569;background:#ffe7c7;box-shadow:0 0 0 2px rgba(180,83,9,.16)}
+    .mobile-stock-choice-btn.mode-modify-btn.active small{color:#8b4a0c}
+    .mobile-stock-choice-btn.mode-add-btn{border-color:#bfd7ff;background:#e8f1ff;color:#1d4ed8}
+    .mobile-stock-choice-btn.mode-add-btn small{color:#1e429f}
+    .mobile-stock-choice-btn.mode-add-btn.active{border-color:#7fb0ff;background:#dceafe;box-shadow:0 0 0 2px rgba(29,78,216,.16)}
+    .mobile-stock-choice-btn.mode-add-btn.active small{color:#1e429f}
+    .mobile-stock-mode-tag{display:inline-flex;align-items:center;padding:5px 10px;border-radius:999px;font-size:11px;font-weight:700;margin-bottom:10px}
+    .mobile-stock-mode-tag.mode-modify{background:#fff0df;color:#b45309;border:1px solid #f3cfab}
+    .mobile-stock-mode-tag.mode-add{background:#e8f1ff;color:#1d4ed8;border:1px solid #bfd7ff}
+    .mobile-stock-size-box{border:1px solid #e7e6e1;border-radius:12px;padding:12px;background:#fafaf8}
+    .mobile-stock-size-value{font-size:30px;font-weight:700;line-height:1;margin-bottom:4px}
+    .mobile-stock-size-meta{font-size:12px;color:#666}
+    .mobile-stock-step-count{font-size:12px;color:#666;margin-bottom:10px}
+    .mobile-stock-size-jump{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 6px}
+    .mobile-stock-size-jump-btn{min-height:36px;min-width:36px;padding:6px 10px;border:1px solid #d6d6d6;border-radius:8px;background:#fff;font-size:12px;font-weight:700;line-height:1}
+    .mobile-stock-size-jump-btn.active{border-color:#111;background:#111;color:#fff}
+    .mobile-stock-size-jump-btn.has-value{border-color:#14532d;color:#14532d}
+    .mobile-stock-size-jump-btn.active.has-value{background:#14532d;border-color:#14532d;color:#fff}
+    .mobile-stock-qty-controls{display:flex;align-items:center;justify-content:center;gap:10px;margin:14px 0}
+    .mobile-stock-qty-btn{width:72px;height:52px;border-radius:12px;font-size:26px;line-height:1;border:1px solid #d4d4d4;background:#fff}
+    .mobile-stock-qty-input{width:120px;text-align:center;font-size:22px;font-weight:700;border:1px solid #d4d4d4;border-radius:10px;padding:8px 10px}
+    .mobile-stock-nav{display:flex;gap:8px;align-items:center;justify-content:space-between;margin-top:12px;position:sticky;bottom:calc(var(--mobile-keyboard-offset, 0px) + 6px);background:#fff;padding-top:8px;padding-bottom:calc(env(safe-area-inset-bottom, 0px) + 2px);z-index:2}
+    .mobile-stock-nav button{
+      min-height:44px;
+      padding:8px 13px;
+      font-size:14px;
+      font-weight:700;
+    }
+    .mobile-stock-summary-list{display:grid;gap:8px}
+    .mobile-stock-summary-item{display:flex;justify-content:space-between;gap:8px;border:1px solid #ecebe7;border-radius:10px;padding:8px 10px;background:#fff}
+    .mobile-stock-summary-item strong{font-size:13px}
+    .mobile-stock-summary-item span{font-size:13px;color:#374151}
+    .mobile-stock-note{font-size:12px;color:#555;margin-top:8px}
+
+    @media (max-width:767px){
+      #incomplete-alert{display:none!important}
+      .stock-nav{display:none}
+      .stock-page{margin:10px auto 20px;padding:0 8px}
+      .stock-topbar{gap:8px;margin-bottom:8px}
+      .stock-title-group h1{font-size:24px;line-height:1.1}
+      .stock-back-link{font-size:12px}
+      .stock-nav-link{display:none}
+
+      .stock-controls{padding:9px;margin-bottom:10px}
+      .controls-grid{gap:8px}
+      .controls-row{gap:6px}
+      .toolbar-divider{margin:0}
+
+      .search-input{min-width:0;padding:8px 10px;font-size:12px;border-radius:9px}
+      button,.btn{min-height:34px;padding:6px 10px;font-size:11px;border-radius:9px}
+      .pill{min-height:34px;padding:6px 9px;font-size:11px;border-radius:999px}
+      select.pill{padding-right:22px}
+      .status-message{font-size:11px}
+
+      #f-color,
+      #f-size,
+      #f-active,
+      #f-supplier,
+      #f-low-wrap{display:none}
+      #low-alert,
+      #old-products{display:none}
+
+      #products-container{gap:8px;margin-top:8px}
+      .product-card{padding:9px;border-radius:10px}
+      .product-card-header{gap:8px}
+      .product-card-title{font-size:13px;margin:0 0 2px 0}
+      .product-card-meta{font-size:11px;gap:6px}
+      .product-card-section{margin-top:7px}
+      .product-card-price{text-align:right;min-width:76px}
+      .product-price{font-size:18px}
+      .stock-history-btn{font-size:10px;padding:2px 5px}
+      .stock-metrics{gap:6px}
+      .stock-metric{padding:6px;border-radius:8px}
+      .stock-metric-label{font-size:9px}
+      .stock-metric-value{font-size:15px;margin-top:2px}
+
+      #reload{min-width:82px}
+      .controls-row .spacer{display:none}
+      #discard-all{order:3;flex:0 0 30%}
+      #save-all{order:4;flex:0 0 68%;margin-left:auto}
+      #msg{order:5;flex:1 1 100%}
+
+      .variant-card-header{align-items:flex-start;flex-wrap:wrap}
+      .variant-card-title{min-width:0;flex:1}
+      .variant-summary{white-space:normal;overflow-wrap:anywhere}
+      .variant-toggle{margin-left:auto}
+      .sizes-detail{overflow-x:hidden}
+      .sizes-table{display:none}
+      .mobile-sizes-grid-wrap{display:block;width:100%;overflow:hidden}
+      .mobile-sizes-grid{min-width:0;width:100%}
+      .mobile-sizes-grid th,.mobile-sizes-grid td{min-width:0}
+      .mobile-sizes-grid th:first-child,.mobile-sizes-grid td:first-child{width:34%}
+    }
+
+    @media (min-width:768px){
+      .stock-page{padding:0 18px}
+      .stock-topbar{flex-direction:row;align-items:flex-end;justify-content:space-between}
+      .stock-title-group h1{font-size:32px}
+      .stock-controls{padding:14px}
+      .controls-grid{gap:12px}
+      .search-input{max-width:420px}
+      .stock-metric-value{font-size:24px}
+      .mobile-stock-wizard-overlay{display:none!important}
+      .mobile-sizes-grid-wrap{display:none!important}
+    }
   </style>
 </head>
 <body>
-  <div class="container" style="max-width:1600px;margin:24px auto;">
-    <h1>Control de Stock</h1>
-    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
-      <a href="./index.html">← Volver al panel</a>
-      <span style="flex:1 1 auto"></span>
-      <a href="./products.html" style="padding:6px 10px;border:1px solid #ddd;border-radius:6px;text-decoration:none;">Productos</a>
-      <a href="./stock.html" style="padding:6px 10px;border:1px solid #ddd;border-radius:6px;text-decoration:none;">Stock</a>
-      <a href="./orders.html" style="padding:6px 10px;border:1px solid #ddd;border-radius:6px;text-decoration:none;">Pedidos</a>
-      <a href="./import-export.html" style="padding:6px 10px;border:1px solid #ddd;border-radius:6px;text-decoration:none;">Importar/Exportar</a>
+  <div id="stock-loading-overlay" class="stock-loading-overlay" aria-live="polite" aria-busy="true">
+    <div class="stock-loading-card">
+      <span class="stock-loading-spinner" aria-hidden="true"></span>
+      <span class="stock-loading-text">Cargando panel de stock...</span>
     </div>
+  </div>
+  <script>
+    (function () {
+      const overlay = document.getElementById("stock-loading-overlay");
+      if (!overlay) return;
+      window.setTimeout(function () {
+        overlay.classList.add("hidden");
+        overlay.setAttribute("aria-busy", "false");
+        const q = document.getElementById("q");
+        const reload = document.getElementById("reload");
+        if (q) q.disabled = false;
+        if (reload) reload.disabled = false;
+      }, 8000);
+      window.addEventListener("load", function () {
+        overlay.classList.add("hidden");
+        overlay.setAttribute("aria-busy", "false");
+        const q = document.getElementById("q");
+        const reload = document.getElementById("reload");
+        if (q) q.disabled = false;
+        if (reload) reload.disabled = false;
+      }, { once: true });
+    })();
+  </script>
 
-    <div id="incomplete-alert" style="display:none;margin-bottom:16px;padding:16px;background:linear-gradient(135deg,#fff3cd 0%,#ffeaa7 100%);border:2px solid #ffc107;border-radius:12px;box-shadow:0 4px 12px rgba(255,193,7,0.2);">
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
-        <div style="display:flex;align-items:center;gap:12px;">
-          <span style="font-size:24px;">⚠️</span>
+  <div class="container stock-page">
+    <header class="stock-topbar">
+      <div class="stock-title-wrap">
+        <div class="stock-title-group">
+          <h1>Control de Stock</h1>
+          <a href="./index.html" class="stock-back-link">← Volver al panel</a>
+          <span id="stock-build-version" class="stock-build-version">html-m260420</span>
+        </div>
+        <nav class="stock-nav" aria-label="Navegación admin">
+          <a href="./products.html" class="stock-nav-link">Productos</a>
+          <a href="./stock.html" class="stock-nav-link active">Stock</a>
+          <a href="./orders.html" class="stock-nav-link">Pedidos</a>
+          <a href="./import-export.html" class="stock-nav-link">Importar/Exportar</a>
+        </nav>
+      </div>
+    </header>
+
+    <div id="incomplete-alert" class="incomplete-alert">
+      <div class="incomplete-alert-content">
+        <div class="incomplete-alert-main">
+          <span class="incomplete-alert-icon">⚠️</span>
           <div>
-            <strong style="display:block;margin-bottom:4px;color:#856404;">Productos incompletos detectados</strong>
-            <span style="font-size:14px;color:#856404;">Hay <span id="incomplete-count">0</span> producto(s) nuevos que requieren completar stock antes de activarse.</span>
+            <strong class="incomplete-alert-title">Productos incompletos detectados</strong>
+            <span class="incomplete-alert-text">Hay <span id="incomplete-count">0</span> producto(s) nuevos que requieren completar stock antes de activarse.</span>
           </div>
         </div>
-        <a href="./incomplete-products.html" style="padding:10px 20px;background:#ffc107;color:#856404;border:none;border-radius:8px;text-decoration:none;font-weight:600;transition:all 0.3s ease;">
+        <a href="./incomplete-products.html" class="incomplete-alert-cta">
           Completar Productos →
         </a>
       </div>
     </div>
 
-    <div class="toolbar">
-      <input id="q" placeholder="Buscar por nombre de producto (min. 2 letras)..." list="product-names" style="flex:1;" />
-      <datalist id="product-names"></datalist>
-      <select id="f-category" class="pill">
-        <option value="">Categoría: todas</option>
-      </select>
-      <select id="f-color" class="pill">
-        <option value="">Color: todos</option>
-      </select>
-      <select id="f-size" class="pill">
-        <option value="">Talle: todos</option>
-      </select>
-      <select id="f-active" class="pill">
-        <option value="">Estado: todos</option>
-        <option value="true">Activas</option>
-        <option value="false">Inactivas</option>
-      </select>
-      <select id="f-supplier" class="pill">
-        <option value="">Proveedor: todos</option>
-      </select>
-      <label class="pill" style="display:flex;align-items:center;gap:6px;">
-        <input id="f-low" type="checkbox" />
-        Solo bajo stock
-      </label>
-      <span class="spacer"></span>
-      <button id="reload">Recargar</button>
-      <button id="low-alert" class="pill" title="Ver productos con bajo stock">Alertas bajo stock (<span id="low-alert-count">0</span>)</button>
-      <button id="old-products" class="pill" title="Productos antiguos (18+ meses)">Productos antiguos</button>
-      <button id="save-all" style="background:#155724;color:#fff;border:1px solid #0f3f1e">Guardar cambios (<span id="pending-count" class="counter">0</span>)</button>
-      <button id="discard-all" style="border:1px solid #ddd;">Descartar</button>
-      <span id="msg" class="counter"></span>
-    </div>
+    <section class="stock-controls card-surface">
+      <div class="controls-grid">
+        <div class="controls-row">
+          <input id="q" class="search-input" placeholder="Buscar por nombre de producto (min. 2 letras)..." list="product-names" autocapitalize="off" autocorrect="off" spellcheck="false" />
+          <datalist id="product-names"></datalist>
+          <button id="reload" class="btn">Recargar</button>
+        </div>
+        <div class="controls-row">
+          <select id="f-category" class="pill">
+            <option value="">Categoría: todas</option>
+          </select>
+          <select id="f-color" class="pill">
+            <option value="">Color: todos</option>
+          </select>
+          <select id="f-size" class="pill">
+            <option value="">Talle: todos</option>
+          </select>
+          <select id="f-active" class="pill">
+            <option value="">Estado: todos</option>
+            <option value="true">Activas</option>
+            <option value="false">Inactivas</option>
+          </select>
+          <select id="f-supplier" class="pill">
+            <option value="">Proveedor: todos</option>
+          </select>
+          <label id="f-low-wrap" class="pill">
+            <input id="f-low" type="checkbox" />
+            Solo bajo stock
+          </label>
+        </div>
+        <div class="toolbar-divider"></div>
+        <div class="controls-row">
+          <button id="low-alert" class="btn btn-alert" title="Ver productos con bajo stock">Alertas bajo stock (<span id="low-alert-count">0</span>)</button>
+          <button id="old-products" class="btn" title="Productos antiguos (18+ meses)">Productos antiguos</button>
+          <span class="spacer"></span>
+          <button id="save-all" class="btn btn-primary">Guardar cambios (<span id="pending-count" class="counter">0</span>)</button>
+          <button id="discard-all" class="btn btn-danger">Descartar</button>
+          <span id="msg" class="status-message counter" aria-live="polite"></span>
+        </div>
+      </div>
+    </section>
 
     <div id="products-container"></div>
-    <div id="no-results" style="display:none;text-align:center;padding:40px;color:#666;">
+    <div id="no-results" class="no-results-state">
       <p>No se encontraron productos. Escribe el nombre y busca para ver resultados.</p>
     </div>
-    
+
     <table id="tbl" style="width:100%;border-collapse:collapse;margin-top:16px;">
       <thead>
         <tr>
@@ -333,12 +538,85 @@
     </div>
   </div>
 
+  <div id="mobile-stock-wizard-overlay" class="mobile-stock-wizard-overlay" aria-hidden="true">
+    <div class="mobile-stock-wizard" role="dialog" aria-modal="true" aria-labelledby="mobile-stock-wizard-title">
+      <div class="mobile-stock-wizard-header">
+        <div>
+          <div class="mobile-stock-wizard-title-row">
+            <h3 id="mobile-stock-wizard-title" class="mobile-stock-wizard-title">Editar stock</h3>
+            <h3 id="mobile-stock-product-name" class="mobile-stock-product-name"></h3>
+          </div>
+          <p id="mobile-stock-wizard-subtitle" class="mobile-stock-wizard-subtitle">Flujo guiado para celular</p>
+        </div>
+        <button id="mobile-stock-close" class="mobile-stock-close" type="button">Cerrar</button>
+      </div>
+
+      <section id="mobile-stock-step-warehouse" class="mobile-stock-step active">
+        <p><strong>Donde queres editar?</strong></p>
+        <div class="mobile-stock-choice-grid">
+          <button type="button" class="mobile-stock-choice-btn" data-mobile-warehouse="stock_venta_publico">
+            Local
+            <small>Ajusta el stock de venta-publico</small>
+          </button>
+          <button type="button" class="mobile-stock-choice-btn" data-mobile-warehouse="stock_general">
+            Deposito general
+            <small>Ajusta stock del deposito principal</small>
+          </button>
+        </div>
+      </section>
+
+      <section id="mobile-stock-step-mode" class="mobile-stock-step">
+        <p><strong>Como queres editar?</strong></p>
+        <div class="mobile-stock-choice-grid">
+          <button type="button" class="mobile-stock-choice-btn mode-modify-btn" data-mobile-mode="modify">
+            Modificar
+            <small>Reemplaza la cantidad final del talle</small>
+          </button>
+          <button type="button" class="mobile-stock-choice-btn mode-add-btn" data-mobile-mode="add">
+            Agregar
+            <small>Suma la cantidad ingresada al stock actual</small>
+          </button>
+        </div>
+      </section>
+
+      <section id="mobile-stock-step-size" class="mobile-stock-step">
+        <span id="mobile-stock-mode-tag" class="mobile-stock-mode-tag"></span>
+        <div class="mobile-stock-step-count" id="mobile-stock-step-count">Talle 1 de 1</div>
+        <div id="mobile-stock-size-jump" class="mobile-stock-size-jump"></div>
+        <div class="mobile-stock-size-box">
+          <div id="mobile-stock-size-value" class="mobile-stock-size-value">36</div>
+          <div id="mobile-stock-size-meta" class="mobile-stock-size-meta">Stock actual: 0</div>
+        </div>
+        <div class="mobile-stock-qty-controls">
+          <button id="mobile-stock-minus" class="mobile-stock-qty-btn" type="button">-</button>
+          <input id="mobile-stock-qty-input" class="mobile-stock-qty-input" type="number" min="0" step="1" value="0" inputmode="numeric" pattern="[0-9]*" enterkeyhint="done" />
+          <button id="mobile-stock-plus" class="mobile-stock-qty-btn" type="button">+</button>
+        </div>
+        <div class="mobile-stock-nav">
+          <button id="mobile-stock-back" type="button">Atras</button>
+          <button id="mobile-stock-next" type="button" class="btn btn-primary">Siguiente</button>
+        </div>
+      </section>
+
+      <section id="mobile-stock-step-summary" class="mobile-stock-step">
+        <span id="mobile-stock-mode-tag-summary" class="mobile-stock-mode-tag"></span>
+        <p><strong>Resumen de cambios</strong></p>
+        <div id="mobile-stock-summary-list" class="mobile-stock-summary-list"></div>
+        <p class="mobile-stock-note">Revisa los talles y guarda para aplicar.</p>
+        <div class="mobile-stock-nav">
+          <button id="mobile-stock-summary-back" type="button">Atras</button>
+          <button id="mobile-stock-save" type="button" class="btn btn-primary">Guardar</button>
+        </div>
+      </section>
+    </div>
+  </div>
+
   <!-- QZ Tray script -->
   <script src="https://cdn.jsdelivr.net/npm/qz-tray@2.2.5/qz-tray.js"></script>
-  <script src="/config.local.js"></script>
+  <script src="/config.prod.js"></script>
 
   <script type="module" src="../scripts/config.js"></script>
   <script type="module" src="../scripts/supabase-client.js"></script>
-  <script type="module" src="./stock.js"></script>
+  <script type="module" src="./stock.js?v=m260420"></script>
 </body>
 </html>

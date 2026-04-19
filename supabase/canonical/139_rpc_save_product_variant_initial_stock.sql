@@ -180,7 +180,7 @@ begin
         'sku', vs.sku,
         'qr_code', vs.qr_code
       )
-      order by vs.size
+      order by vs.created_at, vs.size
     ),
     '[]'::json
   )

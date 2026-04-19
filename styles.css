@@ -289,6 +289,18 @@ header h1 { margin: 0; font-size: 1.5rem; }
   box-sizing: border-box;
 }
 
+#catalog-view {
+  view-transition-name: catalog-view;
+}
+
+#howto-page {
+  view-transition-name: howto-view;
+}
+
+#about-fyl-page {
+  view-transition-name: about-view;
+}
+
 @media (max-width: 480px) {
   #catalogo {
     grid-template-columns: repeat(2, 1fr) !important;
@@ -387,6 +399,58 @@ header h1 { margin: 0; font-size: 1.5rem; }
   margin: 0;
   width: 100%;
   box-sizing: border-box;
+}
+
+.card-skeleton {
+  pointer-events: none;
+}
+
+.card-skeleton__image {
+  width: 100%;
+  aspect-ratio: 4 / 5;
+  border-radius: 8px;
+  margin-bottom: 10px;
+  background: linear-gradient(110deg, #f1f1f1 8%, #e5e5e5 18%, #f1f1f1 33%);
+  background-size: 200% 100%;
+  animation: skeletonShimmer 1.2s linear infinite;
+}
+
+.card-skeleton__line {
+  height: 10px;
+  border-radius: 999px;
+  margin-bottom: 8px;
+  background: linear-gradient(110deg, #f1f1f1 8%, #e5e5e5 18%, #f1f1f1 33%);
+  background-size: 200% 100%;
+  animation: skeletonShimmer 1.2s linear infinite;
+}
+
+.card-skeleton__line--title {
+  width: 80%;
+}
+
+.card-skeleton__line--meta {
+  width: 55%;
+}
+
+.card-skeleton__chips {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.card-skeleton__chip {
+  width: 42px;
+  height: 20px;
+  border-radius: 999px;
+  background: linear-gradient(110deg, #f1f1f1 8%, #e5e5e5 18%, #f1f1f1 33%);
+  background-size: 200% 100%;
+  animation: skeletonShimmer 1.2s linear infinite;
+}
+
+@keyframes skeletonShimmer {
+  to {
+    background-position-x: -200%;
+  }
 }
 
 /* Tarjeta de producto específica */
@@ -1954,6 +2018,15 @@ body.pwa-install-modal-open {
   to { opacity: 1; transform: translateY(0); }
 }
 
+::view-transition-old(catalog-view),
+::view-transition-new(catalog-view),
+::view-transition-old(howto-view),
+::view-transition-new(howto-view),
+::view-transition-old(about-view),
+::view-transition-new(about-view) {
+  animation-duration: 220ms;
+}
+
 .card {
   animation: fadeIn 0.3s ease-out;
 }
@@ -2350,11 +2423,16 @@ body.pwa-install-modal-open {
   box-sizing: border-box;
   overflow-x: hidden;
   max-width: 100vw;
+  opacity: 0;
+  transform: translateY(24px);
+  transition: transform 0.28s ease, opacity 0.22s ease;
 }
 
 #product-modal.active,
 .product-modal.active {
   display: flex;
+  opacity: 1;
+  transform: translateY(0);
 }
 
 /* En dashboard (client-area), la bottom-nav debe quedar visible sobre el PDP */

@@ -114,6 +114,7 @@ const ORDER_STATUS_LABELS = {
   closed: "Cerrado",
   sent: "Enviado",
   pending: "Pendiente",
+  stock_pending: "Stock pendiente",
   waiting: "Espera",
 };
 
@@ -123,6 +124,7 @@ const ORDER_STATUS_CLASSES = {
   closed: "status-closed",
   sent: "status-sent",
   pending: "status-pending",
+  stock_pending: "status-stock-pending",
   cancelled: "status-cancelled",
   waiting: "status-waiting",
 };
@@ -1649,11 +1651,16 @@ async function loadOrders(resetPagination = true) {
       let lightErr = null;
 
       if (resetPagination || !clientTabFilteredIdsCache || clientTabFilteredIdsCache.filter !== currentFilter) {
-        const lightRes = await supabase
+        let lightQuery = supabase
           .from("orders")
           .select("id, created_at, expires_at, dismantle_at, status, order_items(status)")
-          .not("status", "in", '("sent","devolución","devolucion")')
-          .order("created_at", { ascending: false });
+          .not("status", "in", '("sent","devolución","devolucion")');
+
+        if (currentFilter === STATUS.ACTIVE || currentFilter === STATUS.PICKED || currentFilter === STATUS.WAITING) {
+          lightQuery = lightQuery.neq("status", "stock_pending");
+        }
+
+        const lightRes = await lightQuery.order("created_at", { ascending: false });
         lightRows = lightRes.data;
         lightErr = lightRes.error;
       }
@@ -2081,9 +2088,10 @@ async function loadBadgeCountsInBackground() {
     
     if (ordersForCounting) {
       const list = ordersForCounting;
-      const realActiveCount = filterOrdersForTab(list, STATUS.ACTIVE).length;
-      const realPickedCount = filterOrdersForTab(list, STATUS.PICKED).length;
-      const realWaitingCount = filterOrdersForTab(list, STATUS.WAITING).length;
+      const listForOperationalTabs = list.filter((order) => order.status !== "stock_pending");
+      const realActiveCount = filterOrdersForTab(listForOperationalTabs, STATUS.ACTIVE).length;
+      const realPickedCount = filterOrdersForTab(listForOperationalTabs, STATUS.PICKED).length;
+      const realWaitingCount = filterOrdersForTab(listForOperationalTabs, STATUS.WAITING).length;
       const realCancelledCount = filterOrdersForTab(list, STATUS.CANCELLED).length;
       
       // Actualizar badges con conteos reales
@@ -2957,7 +2965,7 @@ async function renderOrderCard(order) {
   let statusClass = ORDER_STATUS_CLASSES[displayStatus] || "status-active";
   
   // Si el pedido no está cerrado ni enviado, verificar el estado basado en los items
-  if (order.status !== "closed" && order.status !== "sent") {
+  if (order.status !== "closed" && order.status !== "sent" && order.status !== "stock_pending") {
     // Si tiene items en espera y estamos en el filtro de espera, mostrar como "Espera"
     // Mostrar como "Espera" si tiene al menos un item en espera (sin importar otros estados)
     if (currentFilter === 'waiting' && hasWaitingItems(order)) {
@@ -6211,6 +6219,8 @@ async function deleteOrderItemImmediate(itemId) {
   alert("✅ Producto eliminado del pedido.");
 }
 
+const cancelOrderInFlight = new Set();
+
 // Función para cancelar un pedido completo
 async function cancelOrder(orderId) {
   if (!canDeleteOrders) {
@@ -6219,6 +6229,7 @@ async function cancelOrder(orderId) {
   }
   
   if (!orderId) return;
+  if (cancelOrderInFlight.has(orderId)) return;
   
   const confirmed = confirm("¿Cancelar este pedido? Si tiene productos reservados, el stock volverá al almacén general.");
   if (!confirmed) return;
@@ -6229,197 +6240,81 @@ async function cancelOrder(orderId) {
     return;
   }
 
-  // Obtener el pedido completo con sus items
-  const { data: order, error: orderErr } = await supabase
-    .from("orders")
-    .select(`
-      id,
-      order_number,
-      status,
-      customer_id,
-      created_at,
-      dismantle_at,
-      order_items (
-        id,
-        variant_id,
-        size,
-        quantity,
-        status
-      )
-    `)
-    .eq("id", orderId)
-    .maybeSingle();
-  
-  if (orderErr || !order) {
-    alert("No se encontró el pedido.");
-    return;
-  }
-
-  const shouldNotifyDismantledByTimeout = isExpiredPendingAdminDisassembly(order);
-
-  // Verificar que el pedido pueda cancelarse (solo active, picked o waiting)
-  if (order.status === 'closed' || order.status === 'sent') {
-    alert("No se puede cancelar un pedido cerrado o enviado.");
-    return;
-  }
-
-  // Cargar almacenes si no están en cache
-  await loadWarehouses();
-  
-  if (!warehousesCache.general) {
-    console.error("❌ No se pudo cargar el almacén 'general'");
-    alert("Error: No se pudo encontrar el almacén 'general'. El pedido no se canceló.");
-    return;
-  }
-
-  // Si el pedido tiene items, devolver el stock de los items que no llegaron a enviarse
-  if (order.order_items && order.order_items.length > 0) {
-    const itemsToReturnStock = order.order_items.filter(item => 
-      item.status === 'reserved' || item.status === 'waiting' || item.status === 'picked'
-    );
-    
-    console.log(`🔄 Cancelando pedido ${order.order_number || orderId}: ${itemsToReturnStock.length} items a devolver stock`);
-    
-    for (const item of itemsToReturnStock) {
-      const qty = Number(item.quantity || 0) || 0;
-      const itemSize = item.size || null;
-      
-      if (!item.variant_id || !itemSize || qty === 0) {
-        console.warn(`⚠️ Item ${item.id} sin variant_id, size o cantidad válida, saltando...`);
-        continue;
-      }
-      
-      // Normalizar el tamaño
-      const normalizedItemSize = normalizeSize(itemSize);
-      if (!normalizedItemSize) {
-        console.warn(`⚠️ Item ${item.id} sin tamaño normalizado válido, saltando...`);
-        continue;
-      }
-      
-      console.log(`🔄 Devolviendo stock para item '${item.status}': variant ${item.variant_id}, size ${normalizedItemSize}, cantidad ${qty}`);
-      
-      // Obtener stock actual del talle en el almacén general
-      const { data: sizeStockData, error: sizeStockError } = await supabase
-        .from("variant_size_warehouse_stock")
-        .select("size, stock_qty")
-        .eq("variant_id", item.variant_id)
-        .eq("warehouse_id", warehousesCache.general);
-      
-      // Filtrar por tamaño normalizado después de obtener los datos
-      let matchingStock = null;
-      if (!sizeStockError && sizeStockData && sizeStockData.length > 0) {
-        matchingStock = sizeStockData.find(sws => {
-          const swsNormalizedSize = normalizeSize(sws.size || "");
-          return swsNormalizedSize === normalizedItemSize;
-        });
-      }
-      
-      let currentQty = 0;
-      if (matchingStock) {
-        currentQty = matchingStock.stock_qty || 0;
-      }
-      
-      const newQty = currentQty + qty;
-      console.log(`📦 Stock actual: ${currentQty}, Cantidad a devolver: ${qty}, Nuevo stock: ${newQty}`);
-      
-      // Actualizar o insertar el stock en variant_size_warehouse_stock
-      const { error: updateSizeError } = await supabase
-        .from("variant_size_warehouse_stock")
-        .upsert({
-          variant_id: item.variant_id,
-          size: normalizedItemSize,
-          warehouse_id: warehousesCache.general,
-          stock_qty: newQty
-        }, {
-          onConflict: 'variant_id,size,warehouse_id'
-        });
-      
-      if (updateSizeError) {
-        console.warn(`⚠️ Error devolviendo stock por talle para variant ${item.variant_id}, size ${normalizedItemSize}:`, updateSizeError);
-      } else {
-        console.log(`✅ Stock devuelto correctamente: ${qty} unidades agregadas al almacén 'general' para variant ${item.variant_id}, talle ${normalizedItemSize}`);
-        
-        // variant_sizes se actualiza automáticamente via trigger 84
-        // al escribir en variant_size_warehouse_stock.
-      }
-      
-      // También liberar la reserva en product_variants (por compatibilidad)
-      const { data: varRow } = await supabase
-        .from("product_variants")
-        .select("reserved_qty")
-        .eq("id", item.variant_id)
+  cancelOrderInFlight.add(orderId);
+  try {
+    // Consulta previa "best effort" solo para enriquecer UI / notificación.
+    // No bloquea el flujo: si no existe o falla, seguimos con la RPC.
+    let prefetchedOrder = null;
+    try {
+      const { data: orderData } = await supabase
+        .from("orders")
+        .select("id, order_number, status, customer_id, created_at, dismantle_at")
+        .eq("id", orderId)
         .maybeSingle();
-      
-      if (varRow && varRow.reserved_qty > 0) {
-        const newReservedQty = Math.max(0, (varRow.reserved_qty || 0) - qty);
-        await supabase
-          .from("product_variants")
-          .update({ reserved_qty: newReservedQty })
-          .eq("id", item.variant_id);
-      }
+      prefetchedOrder = orderData || null;
+    } catch (prefetchErr) {
+      console.warn("⚠️ No se pudo pre-cargar la orden (se continúa con la RPC):", prefetchErr);
     }
-  }
 
-  // Eliminar el pedido (los items se eliminarán automáticamente por on delete cascade si existe)
-  // Primero eliminar los items manualmente para asegurar que se eliminen correctamente
-  if (order.order_items && order.order_items.length > 0) {
-    const itemIds = order.order_items.map(item => item.id);
-    const { error: deleteItemsError } = await supabase
-      .from("order_items")
-      .delete()
-      .in("id", itemIds);
-    
-    if (deleteItemsError) {
-      console.error("❌ Error eliminando items del pedido:", deleteItemsError);
-      alert("Error al eliminar los items del pedido. El pedido no se canceló completamente.");
+    const shouldNotifyDismantledByTimeout =
+      prefetchedOrder ? isExpiredPendingAdminDisassembly(prefetchedOrder) : false;
+
+    const { data: cancelData, error: cancelError } = await supabase.rpc("rpc_cancel_order_full", {
+      p_order_id: orderId
+    });
+
+    if (cancelError) {
+      console.error("❌ Error en rpc_cancel_order_full:", cancelError);
+      alert(cancelError.message || "No se pudo cancelar el pedido.");
       return;
     }
-  }
-  
-  // Eliminar el pedido
-  const { error: deleteOrderError } = await supabase
-    .from("orders")
-    .delete()
-    .eq("id", orderId);
-  
-  if (deleteOrderError) {
-    console.error("❌ Error eliminando el pedido:", deleteOrderError);
-    alert("Error al eliminar el pedido.");
-    return;
-  }
 
-  if (shouldNotifyDismantledByTimeout && order.customer_id) {
-    const notifyResult = await emitCustomerNotification({
-      customerId: order.customer_id,
-      orderId: null,
-      type: CUSTOMER_NOTIFICATION_ORDER_DISMANTLED_TIMEOUT,
-      message:
-        "Tu pedido llegó al tiempo límite y nuestro equipo lo desarmó para liberar stock. Si querés, podés armar uno nuevo cuando quieras.",
-      payload: {
-        action_url: "/index.html",
-        order_number: order.order_number || null,
-      },
-    });
-    if (!notifyResult?.ok) {
-      console.warn("⚠️ No se pudo guardar notificación de desarme para cliente:", notifyResult?.error || notifyResult);
+    if (!cancelData || cancelData.ok !== true) {
+      alert("No se pudo cancelar el pedido.");
+      return;
     }
+
+    const wasIdempotentNoop = cancelData.idempotent_noop === true;
+
+    // Notificación de desarme: solo si teníamos datos y correspondía por timeout.
+    // Si el pedido ya no existía (noop), no podemos saberlo: se omite silenciosamente.
+    if (!wasIdempotentNoop && shouldNotifyDismantledByTimeout && prefetchedOrder?.customer_id) {
+      const notifyResult = await emitCustomerNotification({
+        customerId: prefetchedOrder.customer_id,
+        orderId: null,
+        type: CUSTOMER_NOTIFICATION_ORDER_DISMANTLED_TIMEOUT,
+        message:
+          "Tu pedido llegó al tiempo límite y nuestro equipo lo desarmó para liberar stock. Si querés, podés armar uno nuevo cuando quieras.",
+        payload: {
+          action_url: "/index.html",
+          order_number: prefetchedOrder.order_number || null,
+        },
+      });
+      if (!notifyResult?.ok) {
+        console.warn("⚠️ No se pudo guardar notificación de desarme para cliente:", notifyResult?.error || notifyResult);
+      }
+    }
+
+    const displayOrderNumber = prefetchedOrder?.order_number || cancelData.order_number || orderId;
+    if (wasIdempotentNoop) {
+      console.log(`ℹ️ Pedido ${displayOrderNumber} ya estaba cancelado (idempotent_noop).`);
+    } else {
+      console.log(`✅ Pedido ${displayOrderNumber} cancelado correctamente vía RPC`);
+    }
+
+    await loadOrders(true);
+    if (historyVisible) await loadClosedOrders();
+    updateActiveOrdersBadge();
+    updatePickedOrdersBadge();
+    updateWaitingOrdersBadge();
+    updateClosedOrdersBadge();
+    updateCancelledOrdersBadge();
+
+    const successMsg = wasIdempotentNoop
+      ? "✅ El pedido ya estaba cancelado. Vista actualizada."
+      : "✅ Pedido cancelado correctamente. Stock restaurado de forma segura.";
+    showToastNotification(successMsg, "success");
+  } finally {
+    cancelOrderInFlight.delete(orderId);
   }
-  
-  console.log(`✅ Pedido ${order.order_number || orderId} cancelado correctamente`);
-  
-  // Actualizar UI
-  const orderCard = document.querySelector(`.order-card[data-order-id="${orderId}"]`);
-  if (orderCard) {
-    orderCard.remove();
-  }
-  
-  // Actualizar badges
-  updateActiveOrdersBadge();
-  updatePickedOrdersBadge();
-  updateWaitingOrdersBadge();
-  updateClosedOrdersBadge();
-  updateCancelledOrdersBadge();
-  
-  // Mostrar notificación
-  showToastNotification("✅ Pedido cancelado correctamente. El stock ha sido devuelto al almacén general.", "success");
 }

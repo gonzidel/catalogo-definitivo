@@ -16,6 +16,26 @@ function isValidUUID(uuid) {
   return uuidRegex.test(uuid);
 }
 
+function logCriticalOrderConsistencyIssue(context, payload = {}) {
+  const incident = {
+    context,
+    at: new Date().toISOString(),
+    ...payload,
+  };
+  console.error("🚨 CRITICO: posible inconsistencia de orden", incident);
+
+  // Persistencia local best-effort para trazabilidad operativa en el cliente.
+  try {
+    const key = "fyl_order_consistency_incidents";
+    const currentRaw = localStorage.getItem(key);
+    const current = currentRaw ? JSON.parse(currentRaw) : [];
+    current.push(incident);
+    localStorage.setItem(key, JSON.stringify(current.slice(-50)));
+  } catch (persistError) {
+    console.error("🚨 CRITICO: no se pudo persistir incidente en localStorage", persistError);
+  }
+}
+
 let supabase = supabaseClient;
 let currentCustomer = null;
 let orderItems = [];
@@ -1533,6 +1553,7 @@ async function processQrCodeForOrder(qrCode) {
     }
     
     // Agregar producto al pedido
+    const hasConfirmedStock = (qtyFromGeneral + qtyFromVenta) >= quantity;
     const productToAdd = {
       product_name: product.name,
       color: variant.color,
@@ -1542,7 +1563,10 @@ async function processQrCodeForOrder(qrCode) {
       imagen: imageData?.url || null,
       variant_id: variant.id,
       qty_from_general: qtyFromGeneral,
-      qty_from_venta: qtyFromVenta
+      qty_from_venta: qtyFromVenta,
+      // Excepción operativa: si no hay stock confirmado, se guarda como missing
+      // para seguimiento manual y sin descuento automático.
+      status: hasConfirmedStock ? "picked" : "missing"
     };
     
     await addProductToOrder(productToAdd);
@@ -1999,8 +2023,9 @@ async function addSelectedProductsToOrder() {
   // Obtener información de cada variante seleccionada
   const productsToAdd = [];
   
-  for (const [quantityKey, quantity] of selectedQuantities.entries()) {
-    if (quantity <= 0) continue;
+  for (const [quantityKey, selectedQty] of selectedQuantities.entries()) {
+    if (selectedQty <= 0) continue;
+    let quantity = selectedQty;
     
     const square = resultsDiv.querySelector(`[data-quantity-key="${quantityKey}"]`);
     if (!square) continue;
@@ -2017,19 +2042,23 @@ async function addSelectedProductsToOrder() {
     const stockTotal = stockGeneral + stockVenta;
     
     // Verificar si ya existe este producto en el pedido para calcular cantidad total
-    const existingItem = orderItems.find(item => 
-      item.product_name === articulo &&
-      item.color === color &&
-      item.size === talle
-    );
-    const totalQuantity = (existingItem?.quantity || 0) + quantity;
+    const existingDeductibleQty = orderItems
+      .filter((item) =>
+        item.product_name === articulo &&
+        item.color === color &&
+        item.size === talle &&
+        String(item.status || "picked").trim().toLowerCase() !== "missing"
+      )
+      .reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
+    const totalQuantity = existingDeductibleQty + quantity;
     
     // Inicializar variables para cantidad de cada stock
     let qtyFromGeneral = 0;
     let qtyFromVenta = 0;
+    let itemStatus = "picked";
     
     if (totalQuantity > stockTotal) {
-      const available = Math.max(0, stockTotal - (existingItem?.quantity || 0));
+      const available = Math.max(0, stockTotal - existingDeductibleQty);
       if (available <= 0) {
         const confirmAdd = confirm(
           `⚠️ No hay stock disponible para ${articulo} - ${color} - Talle ${talle}.\n\n` +
@@ -2044,12 +2073,13 @@ async function addSelectedProductsToOrder() {
         // Permitir agregar con cantidad solicitada pero sin stock
         qtyFromGeneral = 0;
         qtyFromVenta = 0;
+        itemStatus = "missing";
         // Continuar con el flujo normal (no ajustar quantity, usar la cantidad solicitada)
       } else {
         const confirmAdd = confirm(
           `⚠️ Stock insuficiente para ${articulo} - ${color} - Talle ${talle}.\n\n` +
           `Stock disponible: ${stockTotal} (General: ${stockGeneral}, Venta: ${stockVenta})\n` +
-          `Ya en pedido: ${existingItem?.quantity || 0}\n` +
+          `Ya en pedido: ${existingDeductibleQty}\n` +
           `Cantidad a agregar: ${quantity}\n` +
           `Total sería: ${totalQuantity}\n\n` +
           `¿Desea agregar solo ${available} unidades disponibles?`
@@ -2115,7 +2145,8 @@ async function addSelectedProductsToOrder() {
       imagen: imagen,
       variant_id: variantId,
       qty_from_general: qtyFromGeneral,
-      qty_from_venta: qtyFromVenta
+      qty_from_venta: qtyFromVenta,
+      status: itemStatus
     });
   }
   
@@ -2193,6 +2224,7 @@ function addSpecialExtra() {
 
 // Agregar producto al pedido
 async function addProductToOrder(product) {
+  let resolvedStatus = product.status || "picked";
   // VALIDACIÓN: Verificar stock disponible si se proporciona información de stock
   if (product.variant_id && product.size && !product.is_special_extra) {
     // Obtener stock actual desde la base de datos para validación
@@ -2227,16 +2259,19 @@ async function addProductToOrder(product) {
         const stockTotal = stockGeneral + stockVenta;
         
         // Verificar si ya existe este producto en el pedido
-        const existingItem = orderItems.find(item => 
-          item.product_name === product.product_name &&
-          item.color === product.color &&
-          item.size === product.size
-        );
-        const totalQuantity = (existingItem?.quantity || 0) + product.quantity;
+        const existingDeductibleQty = orderItems
+          .filter((item) =>
+            item.product_name === product.product_name &&
+            item.color === product.color &&
+            item.size === product.size &&
+            String(item.status || "picked").trim().toLowerCase() !== "missing"
+          )
+          .reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
+        const totalQuantity = existingDeductibleQty + product.quantity;
         
         // Validar que no se exceda el stock disponible
         if (totalQuantity > stockTotal) {
-          const available = Math.max(0, stockTotal - (existingItem?.quantity || 0));
+          const available = Math.max(0, stockTotal - existingDeductibleQty);
           if (available <= 0) {
             // Si el stock es 0, permitir agregar si el usuario confirma
             const confirmAdd = confirm(
@@ -2252,12 +2287,13 @@ async function addProductToOrder(product) {
             // Permitir agregar con cantidad solicitada pero sin stock (qty_from_general = 0, qty_from_venta = 0)
             product.qty_from_general = 0;
             product.qty_from_venta = 0;
+            resolvedStatus = "missing";
             // Continuar con el flujo normal para agregar el producto
           } else {
             const confirmAdd = confirm(
               `⚠️ Stock insuficiente para ${product.product_name} - ${product.color} - Talle ${product.size}.\n\n` +
               `Stock disponible: ${stockTotal} (General: ${stockGeneral}, Venta: ${stockVenta})\n` +
-              `Ya en pedido: ${existingItem?.quantity || 0}\n` +
+              `Ya en pedido: ${existingDeductibleQty}\n` +
               `Cantidad a agregar: ${product.quantity}\n` +
               `Total sería: ${totalQuantity}\n\n` +
               `¿Desea agregar solo ${available} unidades disponibles?`
@@ -2293,10 +2329,13 @@ async function addProductToOrder(product) {
   }
   
   // Verificar si ya existe en el pedido
+  const productStatusForMerge = resolvedStatus || product.status || "picked";
   const existingIndex = orderItems.findIndex(item => 
     item.product_name === product.product_name &&
     item.color === product.color &&
-    item.size === product.size
+    item.size === product.size &&
+    String(item.status || "picked").trim().toLowerCase() === String(productStatusForMerge).trim().toLowerCase() &&
+    Boolean(item.is_special_extra) === Boolean(product.is_special_extra)
   );
   
   if (existingIndex >= 0) {
@@ -2314,7 +2353,7 @@ async function addProductToOrder(product) {
       id: `temp-${Date.now()}-${Math.random()}`,
       qty_from_general: product.qty_from_general || 0,
       qty_from_venta: product.qty_from_venta || 0,
-      status: product.status || 'picked' // Admin: por defecto "apartado"
+      status: productStatusForMerge // Admin: por defecto "apartado"; missing para excepción operativa
     });
   }
   
@@ -2410,12 +2449,15 @@ function updateOrderItemsList() {
     const itemStatus = item.status || 'reserved';
     const isWaiting = itemStatus === 'waiting';
     const isPicked = itemStatus === 'picked';
+    const isMissing = itemStatus === 'missing';
     const isSpecialExtra = item.is_special_extra === true;
     
     // Construir badge de estado
     let statusBadge = '';
     if (isSpecialExtra) {
       statusBadge = '<span style="background: #9c27b0; color: white; padding: 4px 8px; border-radius: 12px; font-size: 11px; font-weight: 600;">⭐ EXTRA</span>';
+    } else if (isMissing) {
+      statusBadge = '<span style="background: #fdecea; color: #b71c1c; padding: 4px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; border: 1px solid #f5c2c7;">⚠️ Falta stock</span>';
     } else if (isWaiting) {
       statusBadge = '<span style="background: #fff4e6; color: #e65100; padding: 4px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; border: 1px solid #ff9800;">⏳ Espera</span>';
     } else if (isPicked) {
@@ -2426,6 +2468,8 @@ function updateOrderItemsList() {
     let containerStyle = '';
     if (isSpecialExtra) {
       containerStyle = 'border-left: 4px solid #9c27b0; background: #f3e5f5;';
+    } else if (isMissing) {
+      containerStyle = 'border-left: 4px solid #dc3545; background: #fff5f5;';
     } else if (isWaiting) {
       containerStyle = 'border-left: 4px solid #ff9800; background: #fff9f0;';
     } else if (isPicked) {
@@ -2985,233 +3029,181 @@ async function getVariantIdsForItems(items) {
   });
 }
 
-// Función auxiliar para actualizar stock en batch (OPTIMIZACIÓN)
-async function updateStockBatch(itemsWithVariants) {
+// Función auxiliar para actualizar stock en batch
+//
+// Etapa 2: delega todo el descuento a rpc_apply_order_stock_deduction (166).
+// La RPC:
+//   - Toma un SELECT … FOR UPDATE sobre cada (variant, size, warehouse) → sin race.
+//   - Procesa en orden determinístico → sin deadlocks.
+//   - Agrega duplicados → mismo SKU en varias líneas se colapsa en un solo lock/log.
+//   - Valida stock suficiente por fila; si falla, rollback completo.
+//   - Registra en stock_history con change_type='order_deduction'.
+//
+// Esta función YA NO lee stock en cliente ni calcula newQty. Solo construye el
+// payload de descuentos desde itemsWithVariants y lo manda al servidor.
+async function updateStockBatch(itemsWithVariants, orderId = null, source = "order_creation") {
   if (!itemsWithVariants || itemsWithVariants.length === 0) {
     console.warn("⚠️ updateStockBatch: No hay items para actualizar stock");
     return;
   }
-  
-  console.log("🔵 updateStockBatch: Iniciando actualización de stock para", itemsWithVariants.length, "items");
-  console.log("🔵 updateStockBatch: Primer item ejemplo:", JSON.stringify(itemsWithVariants[0], null, 2));
-  
-  // Cargar warehouses
+
+  console.log("🔵 updateStockBatch: Iniciando descuento de stock (RPC) para", itemsWithVariants.length, "items");
+
+  // Warehouses siguen siendo necesarios para etiquetar los descuentos por almacén.
   if (!warehouses.general || !warehouses.ventaPublico) {
     await loadWarehouses();
   }
-  
+
   const warehouseIds = [warehouses.general, warehouses.ventaPublico].filter(Boolean);
   if (warehouseIds.length === 0) {
     console.error("❌ updateStockBatch: No se encontraron warehouses");
     return;
   }
-  
-  // Filtrar items con variant_id y size
-  const itemsToUpdate = itemsWithVariants.filter(i => i.variant_id && i.size);
+
+  // Solo ítems con variant_id + size y que NO estén en missing.
+  // missing = excepción operativa sin stock confirmado (no se descuenta automáticamente).
+  const itemsToUpdate = itemsWithVariants.filter((i) => {
+    const statusNorm = String(i?.status || "").trim().toLowerCase();
+    return i.variant_id && i.size && statusNorm !== "missing";
+  });
   if (itemsToUpdate.length === 0) {
     console.warn("⚠️ updateStockBatch: No hay items con variant_id y size para actualizar");
     return;
   }
-  
-  console.log("🔵 updateStockBatch: Items a actualizar:", itemsToUpdate.length);
-  
-  const variantIds = [...new Set(itemsToUpdate.map(i => i.variant_id))];
-  console.log("🔵 updateStockBatch: Variant IDs únicos:", variantIds.length, variantIds);
-  
-  // Validar que variantIds tenga valores
-  if (!variantIds || variantIds.length === 0) {
-    console.error("❌ updateStockBatch: No hay variant IDs para consultar");
-    return;
-  }
-  
-  // Consulta 1: Obtener stocks actuales de variant_size_warehouse_stock
-  console.log("🔵 updateStockBatch: Consultando stocks actuales...");
-  console.log("🔵 updateStockBatch: Warehouse IDs:", warehouseIds);
-  const { data: currentStocks, error: stocksError } = await supabase
-    .from("variant_size_warehouse_stock")
-    .select("variant_id, size, warehouse_id, stock_qty")
-    .in("variant_id", variantIds)
-    .in("warehouse_id", warehouseIds);
-  
-  if (stocksError) {
-    console.error("❌ updateStockBatch: Error obteniendo stocks actuales:", stocksError);
-    return;
-  }
-  
-  console.log("🔵 updateStockBatch: Stocks actuales obtenidos:", currentStocks?.length || 0);
-  if (currentStocks && currentStocks.length > 0) {
-    console.log("🔵 updateStockBatch: Primer stock ejemplo:", JSON.stringify(currentStocks[0], null, 2));
-  } else {
-    console.log("🔵 updateStockBatch: currentStocks es null o vacío");
-  }
-  
-  // Crear mapa de stock actual desde variant_size_warehouse_stock
-  const stockMap = new Map(
-    (currentStocks || []).map(s => [
-      `${s.variant_id}|${normalizeSize(s.size)}|${s.warehouse_id}`,
-      s.stock_qty || 0
-    ])
-  );
-  
-  console.log("🔵 updateStockBatch: Stock map creado con", stockMap.size, "entradas");
-  
-  // Preparar actualizaciones
-  const stockChanges = [];
-  // variant_sizes se actualiza automáticamente via trigger 84
-  
+
+  // ──────────────────────────────────────────────────────────────
+  // Construir p_items para rpc_apply_order_stock_deduction.
+  //
+  // Regla de split (preserva lógica de negocio actual):
+  //   a) Si el ítem trae qty_from_general + qty_from_venta > 0 y suman quantity
+  //      → usar ese split exacto (caso normal del admin con selección manual).
+  //   b) Si los valores son inconsistentes con quantity → descartarlos y caer al fallback.
+  //   c) Fallback (sin cantidades específicas): asumir venta-público como prioridad
+  //      (matching el comportamiento histórico, donde se intentaba venta-público
+  //      primero). Si venta-público no alcanza, la RPC devolverá "stock insuficiente"
+  //      y toda la transacción se revierte; el admin verá el error claro.
+  //
+  // NOTA: el viejo fallback hacía un split automático entre venta-público y general
+  // basado en el stock disponible leído en cliente. Ese split requería SELECT previo
+  // y tenía la race condition que esta migración elimina. Para casos donde el
+  // admin necesita ese split explícito, debe marcarlo manualmente al agregar el ítem.
+  // ──────────────────────────────────────────────────────────────
+  const deductions = [];
+
   itemsToUpdate.forEach((item, index) => {
     const normalizedSize = normalizeSize(item.size);
     if (!normalizedSize) {
       console.warn(`⚠️ updateStockBatch: Item ${index} sin tamaño normalizado:`, item.size);
       return;
     }
-    
-    // Obtener cantidades de cada almacén (si están definidas)
+
+    const quantity     = Number(item.quantity) || 0;
     let qtyFromGeneral = Number(item.qty_from_general) || 0;
-    let qtyFromVenta = Number(item.qty_from_venta) || 0;
-    const quantity = item.quantity || 0;
-    
-    console.log(`🔵 updateStockBatch: Item ${index} - Variant: ${item.variant_id}, Size: ${normalizedSize}, Qty: ${quantity}, From General: ${qtyFromGeneral}, From Venta: ${qtyFromVenta}`);
-    
-    // Validar consistencia: si tiene qty_from_general o qty_from_venta, deben sumar quantity
-    let hasSpecificQuantities = qtyFromGeneral > 0 || qtyFromVenta > 0;
-    if (hasSpecificQuantities && (qtyFromGeneral + qtyFromVenta) !== quantity) {
-      console.warn(`⚠️ Inconsistencia en cantidades para item ${item.variant_id} talle ${normalizedSize}: qty_from_general=${qtyFromGeneral}, qty_from_venta=${qtyFromVenta}, quantity=${quantity}. Se recalculará automáticamente por cantidad total.`);
-      // Si los "source qty" están desfasados (ej. suman más que quantity), no confiar en esos valores.
-      // Forzamos recálculo por cantidad para evitar sobre-descontar stock.
-      hasSpecificQuantities = false;
+    let qtyFromVenta   = Number(item.qty_from_venta) || 0;
+
+    if (quantity <= 0) {
+      console.warn(`⚠️ updateStockBatch: Item ${index} con quantity <= 0; se salta.`);
+      return;
+    }
+
+    // Consistencia: si hay split explícito pero no cuadra con quantity,
+    // descartar y caer al fallback (prioriza venta-público).
+    const hasExplicitSplit = qtyFromGeneral > 0 || qtyFromVenta > 0;
+    if (hasExplicitSplit && (qtyFromGeneral + qtyFromVenta) !== quantity) {
+      console.warn(
+        `⚠️ updateStockBatch: split inconsistente para variant=${item.variant_id} talle=${normalizedSize} ` +
+        `(general=${qtyFromGeneral}, venta=${qtyFromVenta}, total=${quantity}). Usando fallback venta-público.`
+      );
       qtyFromGeneral = 0;
       qtyFromVenta = 0;
     }
-    
-    // Si tiene cantidades específicas por almacén, usarlas
-    if (hasSpecificQuantities) {
-      // Descontar del almacén general si corresponde
-      if (qtyFromGeneral > 0 && warehouses.general) {
-        const key = `${item.variant_id}|${normalizedSize}|${warehouses.general}`;
-        let currentQty = stockMap.get(key) || 0;
-        
-        console.log(`🔵 updateStockBatch: Stock inicial para ${item.variant_id} talle ${normalizedSize} en general: ${currentQty}`);
-        // Sin fallback desde variant_sizes: si no hay stock por warehouse, queda en 0 y se aplican validaciones aguas arriba.
-        
-        const newQty = Math.max(0, currentQty - qtyFromGeneral);
-        console.log(`🔵 updateStockBatch: Descontando ${qtyFromGeneral} de general. Stock actual: ${currentQty}, Nuevo stock: ${newQty}`);
-        
-        if (newQty === 0 && currentQty > 0) {
-          console.log(`✅ updateStockBatch: Stock se descontará correctamente de ${currentQty} a ${newQty}`);
-        } else if (newQty === 0 && currentQty === 0) {
-          console.warn(`⚠️ updateStockBatch: ADVERTENCIA - Intentando descontar ${qtyFromGeneral} pero el stock actual es 0`);
-        }
-        
-        stockChanges.push({
-          variant_id: item.variant_id,
-          size: normalizedSize,
-          warehouse_id: warehouses.general,
-          stock_qty: newQty
-        });
-        stockMap.set(key, newQty);
-        
-        // variant_sizes se actualiza automáticamente via trigger 84
+
+    if (!hasExplicitSplit || (qtyFromGeneral + qtyFromVenta) !== quantity) {
+      // Fallback: asumir venta-público como default (si está configurado), sino general.
+      if (warehouses.ventaPublico) {
+        qtyFromVenta   = quantity;
+        qtyFromGeneral = 0;
+      } else if (warehouses.general) {
+        qtyFromGeneral = quantity;
+        qtyFromVenta   = 0;
       }
-      
-      // Descontar del almacén venta-publico si corresponde
-      if (qtyFromVenta > 0 && warehouses.ventaPublico) {
-        const key = `${item.variant_id}|${normalizedSize}|${warehouses.ventaPublico}`;
-        const currentQty = stockMap.get(key) || 0;
-        const newQty = Math.max(0, currentQty - qtyFromVenta);
-        
-        stockChanges.push({
-          variant_id: item.variant_id,
-          size: normalizedSize,
-          warehouse_id: warehouses.ventaPublico,
-          stock_qty: newQty
-        });
-        stockMap.set(key, newQty);
-      }
-    } else {
-      // FALLBACK: Si no tiene cantidades específicas, usar lógica de prioridad
-      // Priorizar venta-publico si hay stock, sino general
-      let remainingQty = quantity;
-      
-      // Intentar primero desde venta-publico
-      if (warehouses.ventaPublico && remainingQty > 0) {
-        const key = `${item.variant_id}|${normalizedSize}|${warehouses.ventaPublico}`;
-        const currentQty = stockMap.get(key) || 0;
-        const qtyToDeduct = Math.min(remainingQty, currentQty);
-        
-        if (qtyToDeduct > 0) {
-          const newQty = Math.max(0, currentQty - qtyToDeduct);
-          stockChanges.push({
-            variant_id: item.variant_id,
-            size: normalizedSize,
-            warehouse_id: warehouses.ventaPublico,
-            stock_qty: newQty
-          });
-          stockMap.set(key, newQty);
-          remainingQty -= qtyToDeduct;
-        }
-      }
-      
-      // Si aún queda cantidad, descontar de general
-      if (warehouses.general && remainingQty > 0) {
-        const key = `${item.variant_id}|${normalizedSize}|${warehouses.general}`;
-        const currentQty = stockMap.get(key) || 0;
-        const qtyToDeduct = Math.min(remainingQty, currentQty);
-        
-        if (qtyToDeduct > 0) {
-          const newQty = Math.max(0, currentQty - qtyToDeduct);
-          stockChanges.push({
-            variant_id: item.variant_id,
-            size: normalizedSize,
-            warehouse_id: warehouses.general,
-            stock_qty: newQty
-          });
-          stockMap.set(key, newQty);
-          remainingQty -= qtyToDeduct;
-        }
-      }
-      
-      // Si aún queda cantidad sin descontar, registrar advertencia
-      if (remainingQty > 0) {
-        console.warn(`⚠️ No hay suficiente stock para descontar ${remainingQty} unidades de ${item.variant_id} talle ${normalizedSize}`);
-      }
+    }
+
+    if (qtyFromGeneral > 0 && warehouses.general) {
+      deductions.push({
+        variant_id:     item.variant_id,
+        size:           normalizedSize,
+        warehouse_id:   warehouses.general,
+        qty_to_deduct:  qtyFromGeneral,
+        order_item_id:  item.order_item_id || null,
+      });
+    }
+    if (qtyFromVenta > 0 && warehouses.ventaPublico) {
+      deductions.push({
+        variant_id:     item.variant_id,
+        size:           normalizedSize,
+        warehouse_id:   warehouses.ventaPublico,
+        qty_to_deduct:  qtyFromVenta,
+        order_item_id:  item.order_item_id || null,
+      });
     }
   });
-  
-  // Consulta 2: Actualizar todos los stocks de una vez
-  console.log("🔵 updateStockBatch: Total cambios preparados:", stockChanges.length);
-  if (stockChanges.length > 0) {
-    console.log(`🔵 updateStockBatch: Actualizando ${stockChanges.length} registros de stock`);
-    console.log("🔵 updateStockBatch: Primer cambio ejemplo:", JSON.stringify(stockChanges[0], null, 2));
-    
-    try {
-      const { data, error } = await supabase
-        .from("variant_size_warehouse_stock")
-        .upsert(stockChanges, {
-          onConflict: 'variant_id,size,warehouse_id'
-        });
-      
-      if (error) {
-        console.error("❌ updateStockBatch: Error actualizando stock batch:", error);
-        console.error("❌ updateStockBatch: Detalles del error:", JSON.stringify(error, null, 2));
-        throw error;
-      } else {
-        console.log("✅ updateStockBatch: Stock actualizado correctamente para", stockChanges.length, "registros en variant_size_warehouse_stock");
-        if (data) {
-          console.log("✅ updateStockBatch: Datos retornados:", data.length || 0, "registros");
-        }
-      }
-      
-      // variant_sizes se actualiza automáticamente via trigger 84
-      // al escribir en variant_size_warehouse_stock.
-    } catch (error) {
-      console.error("❌ updateStockBatch: Excepción al actualizar stock:", error);
-      throw error;
-    }
-  } else {
-    console.warn("⚠️ updateStockBatch: No hay cambios de stock para aplicar");
-    console.warn("⚠️ updateStockBatch: Esto puede indicar que los items no tienen qty_from_general/qty_from_venta o que hay un problema con el procesamiento");
+
+  console.log(`🔵 updateStockBatch: ${deductions.length} descuento(s) preparado(s) para RPC.`);
+
+  if (deductions.length === 0) {
+    console.warn("⚠️ updateStockBatch: No hay descuentos válidos para aplicar");
+    return;
   }
+
+  // ──────────────────────────────────────────────────────────────
+  // Una sola llamada transaccional al servidor.
+  // ──────────────────────────────────────────────────────────────
+  const { data: rpcData, error: rpcErr } = await supabase.rpc(
+    "rpc_apply_order_stock_deduction",
+    {
+      p_items:    deductions,
+      p_order_id: orderId || null,
+      p_source:   source,
+    }
+  );
+
+  if (rpcErr) {
+    console.error("❌ updateStockBatch: Error RPC apply_order_stock_deduction:", rpcErr);
+    console.error("❌ updateStockBatch: Detalles:", JSON.stringify(rpcErr, null, 2));
+    throw new Error(`Error descontando stock: ${rpcErr.message}`);
+  }
+  if (!rpcData?.ok) {
+    console.error("❌ updateStockBatch: RPC devolvió ok=false:", rpcData);
+    throw new Error("Error descontando stock (respuesta inesperada del servidor).");
+  }
+
+  console.log(
+    `✅ updateStockBatch: ${rpcData.applied_items} descuento(s) aplicado(s) ` +
+    `(order_id=${rpcData.order_id ?? "null"}, source=${rpcData.source}).`,
+    rpcData.details
+  );
+
+  // --- Código original (Etapa 1) — desactivado. Conservado como referencia.
+  // Se elimina en el ciclo de limpieza post-validación de la Etapa 2.
+  /*
+  const { data: currentStocks } = await supabase
+    .from("variant_size_warehouse_stock")
+    .select("variant_id, size, warehouse_id, stock_qty")
+    .in("variant_id", variantIds)
+    .in("warehouse_id", warehouseIds);
+
+  const stockMap = new Map(...);
+  itemsToUpdate.forEach(item => {
+    // delta calculado en JS: newQty = max(0, currentQty - qty)
+    stockChanges.push({ variant_id, size, warehouse_id, stock_qty: newQty });
+  });
+
+  await supabase
+    .from("variant_size_warehouse_stock")
+    .upsert(stockChanges, { onConflict: 'variant_id,size,warehouse_id' });
+  */
+  // --- fin código original ---
 }
 
 // Crear nuevo pedido
@@ -3267,8 +3259,18 @@ async function createNewOrder(customerId, items, total, extraValues = {}) {
   
   // OPTIMIZACIÓN: Obtener variant_ids en batch (una sola consulta en lugar de N consultas)
   const itemsWithVariants = await getVariantIdsForItems(items);
+  const itemsForPersistence = itemsWithVariants.map((item) => {
+    const hasVariantAndSize = Boolean(item?.variant_id) && Boolean(item?.size);
+    const qtyGeneral = Number(item?.qty_from_general) || 0;
+    const qtyVenta = Number(item?.qty_from_venta) || 0;
+    const hasConfirmedStock = (qtyGeneral + qtyVenta) > 0;
+    if (hasVariantAndSize && !hasConfirmedStock) {
+      return { ...item, status: "missing" };
+    }
+    return item;
+  });
   
-  console.log("🔵 createNewOrder: itemsWithVariants:", itemsWithVariants);
+  console.log("🔵 createNewOrder: itemsWithVariants:", itemsForPersistence);
   
   // Preparar notes con valores extra
   const notes = Object.keys(extraValues || {}).length > 0 
@@ -3338,7 +3340,7 @@ async function createNewOrder(customerId, items, total, extraValues = {}) {
   console.log("✅ createNewOrder: Pedido creado:", order.id, "Número:", order.order_number);
   
   // Crear los items del pedido
-  const orderItemsData = itemsWithVariants.map(item => ({
+  const orderItemsData = itemsForPersistence.map(item => ({
     order_id: order.id,
     variant_id: item.variant_id,
     product_name: item.product_name,
@@ -3363,14 +3365,101 @@ async function createNewOrder(customerId, items, total, extraValues = {}) {
   }
   
   console.log("✅ createNewOrder: Items del pedido creados correctamente");
-  
-  // OPTIMIZACIÓN: Actualizar stock en batch (una sola consulta en lugar de N*M consultas)
-  console.log("🔵 createNewOrder: Actualizando stock...");
-  await updateStockBatch(itemsWithVariants);
-  
+
+  // Etapa 2 / Fase corta: descuento transaccional vía rpc_apply_order_stock_deduction.
+  // Si falla, intentamos rollback manual (DELETE items + DELETE order). Si ese
+  // rollback también falla (network, concurrencia, trigger, etc.), marcamos la
+  // orden como 'stock_pending' para intervención manual del admin y propagamos
+  // el error original al UI.
+  console.log("🔵 createNewOrder: Descontando stock (RPC)...");
+  try {
+    await updateStockBatch(itemsForPersistence, order.id, "order_creation");
+  } catch (stockErr) {
+    console.error("❌ createNewOrder: Falló descuento de stock:", stockErr);
+
+    // 1) Intentar rollback manual: borrar items y luego orden.
+    let rollbackOk = true;
+    try {
+      const { error: delItemsErr } = await supabase
+        .from("order_items")
+        .delete()
+        .eq("order_id", order.id);
+      if (delItemsErr) {
+        console.error("❌ createNewOrder: rollback DELETE order_items falló:", delItemsErr);
+        rollbackOk = false;
+      }
+    } catch (e) {
+      console.error("❌ createNewOrder: rollback DELETE order_items excepción:", e);
+      rollbackOk = false;
+    }
+
+    if (rollbackOk) {
+      try {
+        const { error: delOrderErr } = await supabase
+          .from("orders")
+          .delete()
+          .eq("id", order.id);
+        if (delOrderErr) {
+          console.error("❌ createNewOrder: rollback DELETE orders falló:", delOrderErr);
+          rollbackOk = false;
+        }
+      } catch (e) {
+        console.error("❌ createNewOrder: rollback DELETE orders excepción:", e);
+        rollbackOk = false;
+      }
+    }
+
+    // 2) Si el rollback falló, marcar status='stock_pending' + anotar motivo.
+    let markPendingOk = false;
+    if (!rollbackOk) {
+      const pendingNotesObj = (() => {
+        try { return notes ? JSON.parse(notes) : {}; } catch { return {}; }
+      })();
+      pendingNotesObj.stock_pending_reason = stockErr?.message || String(stockErr);
+      pendingNotesObj.stock_pending_at     = new Date().toISOString();
+      pendingNotesObj.stock_pending_source = "createNewOrder";
+
+      try {
+        await supabase
+          .from("orders")
+          .update({
+            status: "stock_pending",
+            notes:  JSON.stringify(pendingNotesObj),
+          })
+          .eq("id", order.id);
+        markPendingOk = true;
+        console.warn("⚠️ createNewOrder: Orden marcada stock_pending:", order.id);
+      } catch (e) {
+        console.error("❌ createNewOrder: No se pudo marcar stock_pending:", e);
+        logCriticalOrderConsistencyIssue("createNewOrder", {
+          order_id: order.id,
+          stage: "stock_deduction_and_rollback_failed_and_mark_pending_failed",
+          stock_error: stockErr?.message || String(stockErr),
+          mark_pending_error: e?.message || String(e),
+        });
+      }
+    } else {
+      console.log("🟡 createNewOrder: Rollback manual completado (orden eliminada).");
+    }
+
+    // 3) Propagar el error original al UI.
+    if (!rollbackOk && !markPendingOk) {
+      throw new Error(
+        `No se pudo completar el pedido: ${stockErr?.message || stockErr}. ` +
+        "La orden puede estar inconsistente. Contactar soporte."
+      );
+    }
+
+    throw new Error(
+      `No se pudo completar el pedido: ${stockErr?.message || stockErr}. ` +
+      (rollbackOk
+        ? "Los cambios fueron revertidos."
+        : "La orden quedó marcada como 'stock_pending' y requiere intervención manual.")
+    );
+  }
+
   console.log("✅ createNewOrder: Proceso completado exitosamente");
-  
-  // Retornar resultado exitoso
+
   return { success: true, order: order };
 }
 
@@ -3378,17 +3467,35 @@ async function createNewOrder(customerId, items, total, extraValues = {}) {
 async function addItemsToExistingOrder(orderId, items, newTotal = null, extraValues = {}) {
   // OPTIMIZACIÓN: Obtener variant_ids en batch (una sola consulta en lugar de N consultas)
   const itemsWithVariants = await getVariantIdsForItems(items);
+  const itemsForPersistence = itemsWithVariants.map((item) => {
+    const hasVariantAndSize = Boolean(item?.variant_id) && Boolean(item?.size);
+    const qtyGeneral = Number(item?.qty_from_general) || 0;
+    const qtyVenta = Number(item?.qty_from_venta) || 0;
+    const hasConfirmedStock = (qtyGeneral + qtyVenta) > 0;
+    if (hasVariantAndSize && !hasConfirmedStock) {
+      return { ...item, status: "missing" };
+    }
+    return item;
+  });
   
   // Obtener el pedido con sus items para verificar el estado
   const { data: order } = await supabase
     .from("orders")
     .select(`
+      status,
       total_amount,
       notes,
       order_items(status)
     `)
     .eq("id", orderId)
     .single();
+
+  if (order?.status === "stock_pending") {
+    throw new Error(
+      "No se puede editar esta orden porque está en estado 'stock_pending'. " +
+      "Resolvela manualmente (ajuste/cancelación) antes de volver a editar."
+    );
+  }
   
   // Verificar si todos los items existentes están en estado "picked" (apartado)
   const existingItems = order?.order_items || [];
@@ -3404,7 +3511,7 @@ async function addItemsToExistingOrder(orderId, items, newTotal = null, extraVal
     finalTotal = newTotal;
   } else {
     // Si no, calcular solo sumando los nuevos items
-    const newItemsTotal = itemsWithVariants.reduce((sum, item) => {
+    const newItemsTotal = itemsForPersistence.reduce((sum, item) => {
       return sum + ((item.price_snapshot || 0) * (item.quantity || 0));
     }, 0);
     finalTotal = (order?.total_amount || 0) + newItemsTotal;
@@ -3412,7 +3519,7 @@ async function addItemsToExistingOrder(orderId, items, newTotal = null, extraVal
   
   // Crear los items del pedido con el estado apropiado
   // Usar el estado que tiene cada item (puede ser 'reserved' o 'waiting')
-  const orderItemsData = itemsWithVariants.map(item => ({
+  const orderItemsData = itemsForPersistence.map(item => ({
     order_id: orderId,
     variant_id: item.variant_id,
     product_name: item.product_name,
@@ -3466,6 +3573,13 @@ async function addItemsToExistingOrder(orderId, items, newTotal = null, extraVal
     .single();
   
   if (currentOrder) {
+    if (currentOrder.status === "stock_pending") {
+      throw new Error(
+        "No se puede editar esta orden porque está en estado 'stock_pending'. " +
+        "Resolvela manualmente (ajuste/cancelación) antes de volver a editar."
+      );
+    }
+
     if (currentOrder.status === "closed" || currentOrder.status === "sent" || currentOrder.status === "devolución") {
       // Si está cerrado, enviado o en devolución, no cambiar el estado
       delete updateData.status;
@@ -3481,9 +3595,58 @@ async function addItemsToExistingOrder(orderId, items, newTotal = null, extraVal
     .from("orders")
     .update(updateData)
     .eq("id", orderId);
-  
-  // OPTIMIZACIÓN: Actualizar stock en batch (una sola consulta en lugar de N*M consultas)
-  await updateStockBatch(itemsWithVariants);
+
+  // Etapa 2 / Fase corta: descuento transaccional.
+  // En EDIT no hacemos rollback manual (restaurar items previos + total + notes
+  // es frágil y puede dejar peor estado). Si falla el descuento, marcamos la
+  // orden como 'stock_pending' para intervención manual y propagamos el error.
+  try {
+    await updateStockBatch(itemsForPersistence, orderId, "order_edit");
+  } catch (stockErr) {
+    console.error("❌ addItemsToExistingOrder: Falló descuento de stock:", stockErr);
+
+    // Marcar status='stock_pending' preservando notes existentes + razón.
+    const pendingNotesObj = (() => {
+      try { return notes ? JSON.parse(notes) : (order?.notes ? JSON.parse(order.notes) : {}); }
+      catch { return {}; }
+    })();
+    pendingNotesObj.stock_pending_reason = stockErr?.message || String(stockErr);
+    pendingNotesObj.stock_pending_at     = new Date().toISOString();
+    pendingNotesObj.stock_pending_source = "addItemsToExistingOrder";
+
+    let markPendingOk = false;
+    try {
+      await supabase
+        .from("orders")
+        .update({
+          status: "stock_pending",
+          notes:  JSON.stringify(pendingNotesObj),
+        })
+        .eq("id", orderId);
+      markPendingOk = true;
+      console.warn("⚠️ addItemsToExistingOrder: Orden marcada stock_pending:", orderId);
+    } catch (e) {
+      console.error("❌ addItemsToExistingOrder: No se pudo marcar stock_pending:", e);
+      logCriticalOrderConsistencyIssue("addItemsToExistingOrder", {
+        order_id: orderId,
+        stage: "stock_deduction_failed_and_mark_pending_failed",
+        stock_error: stockErr?.message || String(stockErr),
+        mark_pending_error: e?.message || String(e),
+      });
+    }
+
+    if (!markPendingOk) {
+      throw new Error(
+        `No se pudo completar la edición del pedido: ${stockErr?.message || stockErr}. ` +
+        "La orden puede estar inconsistente. Contactar soporte."
+      );
+    }
+
+    throw new Error(
+      `No se pudo completar la edición del pedido: ${stockErr?.message || stockErr}. ` +
+      "La orden quedó marcada como 'stock_pending' y requiere intervención manual."
+    );
+  }
 }
 
 // Cargar pedido para editar

@@ -12,6 +12,15 @@ await requireAuth();
 // Caja actual: 1 = finalizar venta aquí; 2 o 3 = enviar a Caja 1 (definido en HTML antes del script)
 const PUBLIC_SALES_CAJA = Number(window.PUBLIC_SALES_CAJA) || 1;
 
+function generateOperationId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  const nowHex = Date.now().toString(16).padStart(12, "0");
+  const randHex = Math.random().toString(16).slice(2).padEnd(20, "0").slice(0, 20);
+  return `${nowHex.slice(0, 8)}-${nowHex.slice(8, 12)}-4${randHex.slice(0, 3)}-a${randHex.slice(3, 6)}-${randHex.slice(6, 18)}`;
+}
+
 /** Escapa `%`, `_` y `\` para usar el término dentro de un patrón ILIKE con `%…%`. */
 function escapeForIlikeContains(raw) {
   return String(raw ?? "")
@@ -4287,7 +4296,11 @@ function renderSaleList() {
     }
 
     // Renderizar producto normal (con − y + por talle)
-    const sizesHtml = item.sizes.map((s, sizeIndex) => `
+    const sizesHtml = item.sizes.map((s, sizeIndex) => {
+      const srcVp = Number(s?.source?.ventaPublico || 0);
+      const srcGen = Number(s?.source?.general || 0);
+      const isWithoutConfirmedStock = !item.isReturn && (Number(s?.quantity || 0) > 0) && srcVp === 0 && srcGen === 0;
+      return `
       <div class="size-fraction">
         <div class="size">${escapeHtml(s.size)}</div>
         <div class="sale-qty-controls">
@@ -4295,8 +4308,10 @@ function renderSaleList() {
           <span class="qty">${s.quantity}</span>
           <button type="button" class="sale-qty-btn" onclick="event.stopPropagation(); increaseSaleItemQuantity(${originalIndex}, ${sizeIndex})" title="Aumentar">+</button>
         </div>
+        ${isWithoutConfirmedStock ? '<div style="margin-top:2px; font-size:10px; color:#b71c1c; font-weight:600;">⚠️ Sin stock confirmado</div>' : ''}
       </div>
-    `).join("");
+    `;
+    }).join("");
 
     const rowClass = item.isReturn ? "return-item" : "";
 
@@ -5244,6 +5259,14 @@ finalizeSaleBtn.addEventListener("click", async () => {
   }
 
   try {
+    // Un operation_id por intento real de confirmación (click actual).
+    // Si hubiera retry interno en este flujo, se debe reutilizar este mismo ID.
+    const createSaleOperationId = generateOperationId();
+    const createSaleRequest = {
+      source: "admin/public-sales.js",
+      action: "finalize_public_sale",
+    };
+
     // Preparar items para RPC
     const items = [];
 
@@ -5593,11 +5616,41 @@ finalizeSaleBtn.addEventListener("click", async () => {
         p_customer_id: selectedCustomer?.id || null,
         p_notes: notes || null,
         p_apply_credit: true,
-        p_total_amount: finalTotal // Incluir total con extras
+        p_total_amount: finalTotal, // Incluir total con extras
+        p_operation_id: createSaleOperationId,
+        p_request: createSaleRequest,
       });
 
 
-    if (error) throw error;
+    if (error) {
+      const errMsg = String(error?.message || "");
+      if (errMsg.includes("conflict_in_progress")) {
+        console.warn("⏳ rpc_create_public_sale conflict_in_progress", {
+          operationId: createSaleOperationId,
+          flow: "finalize_public_sale",
+        });
+      } else if (errMsg.includes("operation_id_conflict")) {
+        console.error("🚫 rpc_create_public_sale operation_id_conflict", {
+          operationId: createSaleOperationId,
+          flow: "finalize_public_sale",
+        });
+      }
+      throw error;
+    }
+
+    if (data?.idempotent_replay === true) {
+      console.info("♻️ rpc_create_public_sale replay", {
+        operationId: createSaleOperationId,
+        saleId: data?.sale_id || null,
+        saleNumber: data?.sale_number || null,
+      });
+    } else {
+      console.info("✅ rpc_create_public_sale operación normal", {
+        operationId: createSaleOperationId,
+        saleId: data?.sale_id || null,
+        saleNumber: data?.sale_number || null,
+      });
+    }
 
     // Si el total es negativo (saldo a favor), crear crédito solo si la casilla está marcada
     let creditAmount = 0;
@@ -7387,6 +7440,13 @@ document.getElementById("order-edit-finalize-btn")?.addEventListener("click", as
   const btn = document.getElementById("order-edit-finalize-btn");
   btn.disabled = true;
   try {
+    // Un operation_id por intento real de finalización desde edición de pedido local.
+    const createSaleOperationId = generateOperationId();
+    const createSaleRequest = {
+      source: "admin/public-sales.js",
+      action: "finalize_local_order_to_public_sale",
+    };
+
     // IMPORTANTE: persistir edición ANTES de finalizar/imprimir para que
     // los productos agregados en el modal descuenten stock correctamente.
     const { data: updateData, error: updateError } = await supabase.rpc("rpc_update_local_order", {
@@ -7465,8 +7525,38 @@ document.getElementById("order-edit-finalize-btn")?.addEventListener("click", as
       p_notes: `Pedido local ${editOrder.order_number || editOrderId}`,
       p_apply_credit: true,
       p_total_amount: finalTotal,
+      p_operation_id: createSaleOperationId,
+      p_request: createSaleRequest,
     });
-    if (saleError) throw saleError;
+    if (saleError) {
+      const errMsg = String(saleError?.message || "");
+      if (errMsg.includes("conflict_in_progress")) {
+        console.warn("⏳ rpc_create_public_sale conflict_in_progress", {
+          operationId: createSaleOperationId,
+          flow: "finalize_local_order_to_public_sale",
+        });
+      } else if (errMsg.includes("operation_id_conflict")) {
+        console.error("🚫 rpc_create_public_sale operation_id_conflict", {
+          operationId: createSaleOperationId,
+          flow: "finalize_local_order_to_public_sale",
+        });
+      }
+      throw saleError;
+    }
+
+    if (saleData?.idempotent_replay === true) {
+      console.info("♻️ rpc_create_public_sale replay", {
+        operationId: createSaleOperationId,
+        saleId: saleData?.sale_id || null,
+        saleNumber: saleData?.sale_number || null,
+      });
+    } else {
+      console.info("✅ rpc_create_public_sale operación normal", {
+        operationId: createSaleOperationId,
+        saleId: saleData?.sale_id || null,
+        saleNumber: saleData?.sale_number || null,
+      });
+    }
     await supabase.from("local_orders").update({ status: "completed", updated_at: new Date().toISOString() }).eq("id", editOrderId);
     const { data: saleDetails, error: detailsError } = await supabase.rpc("rpc_get_public_sale_details", { p_sale_id: saleData.sale_id });
     if (!detailsError && saleDetails) {
@@ -8809,12 +8899,25 @@ window.showSaleDetails = async function (saleId, inModal = false) {
           <tbody>
             ${items.map(item => {
         const itemTotal = parseFloat(item.price) * item.qty;
+        const hasBreakdown =
+          item.qty_venta_publico !== null &&
+          item.qty_venta_publico !== undefined &&
+          item.qty_general !== null &&
+          item.qty_general !== undefined;
+        const isWithoutConfirmedStock =
+          !item.is_return &&
+          hasBreakdown &&
+          Number(item.qty_venta_publico) === 0 &&
+          Number(item.qty_general) === 0;
         return `
               <tr style="${item.is_return ? 'background: #fee; border-left: 4px solid #dc3545;' : 'border-bottom: 1px solid #e9ecef;'} ${item.is_return ? '' : 'border-bottom: 1px solid #e9ecef;'}">
                 <td style="padding: 12px;">
                   ${item.is_return ? '<span style="color: #dc3545; font-weight: 700; font-size: 11px; text-transform: uppercase;">DEVOLUCIÓN</span>' : '<span style="color: #28a745; font-weight: 700; font-size: 11px; text-transform: uppercase;">VENTA</span>'}
                 </td>
-                <td style="padding: 12px; font-weight: 600; color: #212529;">${escapeHtml(item.product_name || '-')}</td>
+                <td style="padding: 12px; font-weight: 600; color: #212529;">
+                  ${escapeHtml(item.product_name || '-')}
+                  ${isWithoutConfirmedStock ? '<div style="margin-top:4px; font-size:11px; color:#b71c1c; font-weight:600;">⚠️ Sin stock confirmado (no descontó stock)</div>' : ''}
+                </td>
                 <td style="padding: 12px; color: #666;">${escapeHtml(item.color || '-')}</td>
                 <td style="padding: 12px; color: #666;">${escapeHtml(item.size || '-')}</td>
                 <td style="padding: 12px; text-align: center; font-weight: 600;">${item.qty}</td>
@@ -8852,13 +8955,26 @@ window.showSaleDetails = async function (saleId, inModal = false) {
       detailsDiv.scrollIntoView({ behavior: "smooth", block: "nearest" });
     } else {
       // Mostrar en alert (comportamiento original)
-      const itemsHtml = items.map(item => `
+      const itemsHtml = items.map(item => {
+        const hasBreakdown =
+          item.qty_venta_publico !== null &&
+          item.qty_venta_publico !== undefined &&
+          item.qty_general !== null &&
+          item.qty_general !== undefined;
+        const isWithoutConfirmedStock =
+          !item.is_return &&
+          hasBreakdown &&
+          Number(item.qty_venta_publico) === 0 &&
+          Number(item.qty_general) === 0;
+        return `
         <div style="padding: 8px; border-bottom: 1px solid #f0f0f0;">
           ${item.is_return ? '<span style="color: #ff69b4;">[DEVOLUCIÓN]</span> ' : ''}
           ${escapeHtml(item.product_name)} - ${escapeHtml(item.color)} - Talle ${escapeHtml(item.size)} - 
           Cantidad: ${item.qty} - $${parseARSNumber(item.price).toLocaleString('es-AR')}
+          ${isWithoutConfirmedStock ? ' - ⚠️ Sin stock confirmado (no descontó stock)' : ''}
         </div>
-      `).join("");
+      `;
+      }).join("");
 
       alert(`
         Venta: ${sale.sale_number}

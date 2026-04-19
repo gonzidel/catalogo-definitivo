@@ -221,12 +221,14 @@ begin
           do update set stock_qty = variant_warehouse_stock.stock_qty + v_restore_qty, updated_at = now();
         end if;
 
-        update public.order_item_stock_sources
-        set qty = greatest(coalesce(qty, 0) - v_restore_qty, 0)
-        where id = v_src.id;
-
-        delete from public.order_item_stock_sources
-        where id = v_src.id and coalesce(qty, 0) <= 0;
+        if v_restore_qty >= v_src.qty then
+          delete from public.order_item_stock_sources
+          where id = v_src.id;
+        else
+          update public.order_item_stock_sources
+          set qty = qty - v_restore_qty
+          where id = v_src.id;
+        end if;
 
         v_remaining_qty := v_remaining_qty - v_restore_qty;
       end loop;

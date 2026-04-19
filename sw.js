@@ -1,7 +1,7 @@
 // La versión se inyecta desde scripts/pwa-install.js al registrar: sw.js?v=<version>.
 // Así, para cada deploy solo cambiás el valor en pwa-install.js.
 const SW_VERSION =
-  new URL(self.location.href).searchParams.get("v") || "m260418";
+  new URL(self.location.href).searchParams.get("v") || "m260420";
 // index: network-first (abajo). Scripts críticos de boot: siempre red (sin cache-first).
 const CACHE_NAME = `fyl-catalog-${SW_VERSION}`;
 

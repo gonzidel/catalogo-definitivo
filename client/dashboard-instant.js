@@ -1790,15 +1790,23 @@ function setupCartActions() {
   if (clearBtn) {
     clearBtn.addEventListener("click", async () => {
       if (!currentUserId) {
-        const confirmClearGuest = confirm("¿Quieres vaciar completamente tu carrito?");
+        const confirmClearGuest = await showDashboardConfirmModal({
+          title: "¿Quieres vaciar completamente tu carrito?",
+          message: "",
+          confirmLabel: "Aceptar",
+          cancelLabel: "Cancelar",
+        });
         if (!confirmClearGuest) return;
         localStorage.setItem("fyl_cart", JSON.stringify([]));
         showNoSession();
         return;
       }
-      const confirmClear = confirm(
-        "¿Quieres vaciar completamente tu carrito?"
-      );
+      const confirmClear = await showDashboardConfirmModal({
+        title: "¿Quieres vaciar completamente tu carrito?",
+        message: "",
+        confirmLabel: "Aceptar",
+        cancelLabel: "Cancelar",
+      });
       if (!confirmClear) return;
       await clearCurrentCart();
     });
@@ -4091,6 +4099,20 @@ async function loadOrders(userId, options = {}) {
         order_items: Array.isArray(selectedItemsRaw) ? selectedItemsRaw : [],
       },
     ];
+    const selectedVisibleItems = getOrderNonCancelledItems(orders[0]).filter(
+      (item) => Math.max(0, Number(item?.quantity || 0) || 0) > 0
+    );
+    if (selectedVisibleItems.length === 0) {
+      currentOrderUiStateById.clear();
+      ordersSection.innerHTML = `
+        <div class="order-item" style="border:1px solid #e0e0e0; padding:16px; border-radius:8px; background:#fafafa;">
+          <div class="section-title dash-title" style="margin-bottom:12px;">📦 Mi pedido</div>
+          <p style="margin:0;">No tienes productos en tu pedido actual.</p>
+        </div>
+      `;
+      clearOrderDeadlineSyntheticNotifications();
+      return;
+    }
 
     // Precargar SKUs para que "Ver producto" vaya al PDP real (index#/pdp/<sku>)
     const allVariantIds = [];

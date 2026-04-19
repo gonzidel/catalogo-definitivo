@@ -571,25 +571,43 @@ window.saveStockAndRedirect = async function(productId) {
       // variant_sizes se actualiza automáticamente via trigger 84
       // al escribir en variant_size_warehouse_stock.
 
-      // Upsert en variant_size_warehouse_stock (stock por talle y warehouse)
+      // Etapa 2: con talle → rpc_set_variant_size_stock_batch (164).
+      // sizeWarehouseUpdates ya tiene el formato { variant_id, size, warehouse_id, stock_qty }.
+      if (sizeWarehouseUpdates.length > 0) {
+        const { data: rpcData, error: rpcErr } = await supabase.rpc(
+          "rpc_set_variant_size_stock_batch",
+          { p_items: sizeWarehouseUpdates, p_source: "complete_incomplete" }
+        );
+        if (rpcErr) {
+          console.error("Error actualizando stock por talle (RPC):", rpcErr);
+          throw new Error(`Error actualizando stock por talle y almacén: ${rpcErr.message}`);
+        }
+        if (!rpcData?.ok) {
+          console.error("rpc_set_variant_size_stock_batch ok=false:", rpcData);
+          throw new Error("Error actualizando stock por talle y almacén (respuesta inesperada del servidor).");
+        }
+        console.log(`✅ rpc_set_variant_size_stock_batch (incomplete): ${rpcData.changed_items} cambio(s), ${rpcData.skipped_unchanged} sin cambio.`);
+      }
+
+      // --- Código original (Etapa 1) — desactivado. Conservado como referencia.
+      /*
       if (sizeWarehouseUpdates.length > 0) {
         const { error: sizeWarehouseError } = await supabase
           .from("variant_size_warehouse_stock")
-          .upsert(sizeWarehouseUpdates, {
-            onConflict: "variant_id,size,warehouse_id",
-          });
-
+          .upsert(sizeWarehouseUpdates, { onConflict: "variant_id,size,warehouse_id" });
         if (sizeWarehouseError) {
           console.error("Error actualizando variant_size_warehouse_stock:", sizeWarehouseError);
           throw new Error(`Error actualizando stock por talle y almacén: ${sizeWarehouseError.message}`);
         }
       }
+      */
+      // --- fin código original ---
 
       // variant_warehouse_stock se actualiza automáticamente via trigger 145
       // al escribir en variant_size_warehouse_stock.
     }
 
-    // 4. Si hay variantes sin talles, guardar directamente en variant_warehouse_stock
+    // 4. Si hay variantes sin talles, guardar en variant_warehouse_stock
     if (variantTotals.size > 0) {
       const warehouseUpdates = [];
       variantTotals.forEach((stockData, variantId) => {
@@ -605,18 +623,37 @@ window.saveStockAndRedirect = async function(productId) {
         });
       });
 
+      // Etapa 2: sin talle → rpc_set_variant_warehouse_stock_batch (165).
+      // warehouseUpdates ya tiene el formato { variant_id, warehouse_id, stock_qty }.
+      if (warehouseUpdates.length > 0) {
+        const { data: rpcData, error: rpcErr } = await supabase.rpc(
+          "rpc_set_variant_warehouse_stock_batch",
+          { p_items: warehouseUpdates, p_source: "complete_incomplete" }
+        );
+        if (rpcErr) {
+          console.error("Error actualizando stock sin talle (RPC):", rpcErr);
+          throw new Error(`Error actualizando stock: ${rpcErr.message}`);
+        }
+        if (!rpcData?.ok) {
+          console.error("rpc_set_variant_warehouse_stock_batch ok=false:", rpcData);
+          throw new Error("Error actualizando stock (respuesta inesperada del servidor).");
+        }
+        console.log(`✅ rpc_set_variant_warehouse_stock_batch (incomplete): ${rpcData.changed_items} cambio(s), ${rpcData.skipped_unchanged} sin cambio.`);
+      }
+
+      // --- Código original (Etapa 1) — desactivado. Conservado como referencia.
+      /*
       if (warehouseUpdates.length > 0) {
         const { error: warehouseError } = await supabase
           .from("variant_warehouse_stock")
-          .upsert(warehouseUpdates, {
-            onConflict: "variant_id,warehouse_id",
-          });
-
+          .upsert(warehouseUpdates, { onConflict: "variant_id,warehouse_id" });
         if (warehouseError) {
           console.error("Error actualizando variant_warehouse_stock (sin talles):", warehouseError);
           throw new Error(`Error actualizando stock: ${warehouseError.message}`);
         }
       }
+      */
+      // --- fin código original ---
     }
   } catch (error) {
     showMessage(`Error guardando stock: ${error.message}`, "err");

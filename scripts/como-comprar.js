@@ -11,86 +11,97 @@ const ROUTE_RETRY_MS = 100;
  */
 async function applyHashRoute() {
   try {
-  const catalogView = document.getElementById("catalog-view");
-  const howtoPage = document.getElementById("howto-page");
-  const aboutPage = document.getElementById("about-fyl-page");
-  const waPopup = document.getElementById("wa-popup");
-  const collectionHeader = document.getElementById("collection-header");
-  const hash = location.hash || "#/";
-  const isComoComprar = hash === "#/como-comprar";
-  const isQuienesSomos = hash === "#/quienes-somos";
-  const isCollectionFYL = hash === "#/coleccion/fyl-originals";
-  const wasCollectionFYL = prevHash === "#/coleccion/fyl-originals";
+    const catalogView = document.getElementById("catalog-view");
+    const howtoPage = document.getElementById("howto-page");
+    const aboutPage = document.getElementById("about-fyl-page");
+    const waPopup = document.getElementById("wa-popup");
+    const collectionHeader = document.getElementById("collection-header");
+    const hash = location.hash || "#/";
+    const isComoComprar = hash === "#/como-comprar";
+    const isQuienesSomos = hash === "#/quienes-somos";
+    const isCollectionFYL = hash === "#/coleccion/fyl-originals";
+    const wasCollectionFYL = prevHash === "#/coleccion/fyl-originals";
+    const runTransition = typeof window.fylRunViewTransition === "function"
+      ? window.fylRunViewTransition
+      : (callback) => Promise.resolve(callback());
 
-  if (!catalogView || !howtoPage || !aboutPage) return;
+    if (!catalogView || !howtoPage || !aboutPage) return;
 
-  if (isComoComprar) {
-    catalogView.classList.add("is-hidden");
-    howtoPage.classList.remove("is-hidden");
-    aboutPage.classList.add("is-hidden");
-    waPopup?.classList.add("is-hidden");
-    if (collectionHeader) {
-      collectionHeader.classList.add("is-hidden");
-      collectionHeader.style.display = "none";
+    if (isComoComprar) {
+      await runTransition(() => {
+        catalogView.classList.add("is-hidden");
+        howtoPage.classList.remove("is-hidden");
+        aboutPage.classList.add("is-hidden");
+        waPopup?.classList.add("is-hidden");
+        if (collectionHeader) {
+          collectionHeader.classList.add("is-hidden");
+          collectionHeader.style.display = "none";
+        }
+        window.scrollTo(0, 0);
+      });
+    } else if (isQuienesSomos) {
+      await runTransition(() => {
+        catalogView.classList.add("is-hidden");
+        howtoPage.classList.add("is-hidden");
+        aboutPage.classList.remove("is-hidden");
+        waPopup?.classList.add("is-hidden");
+        if (collectionHeader) {
+          collectionHeader.classList.add("is-hidden");
+          collectionHeader.style.display = "none";
+        }
+        window.scrollTo(0, 0);
+      });
+    } else if (isCollectionFYL) {
+      if (window.__FYL_BOOT_SUPPRESS_ROUTE) {
+        return;
+      }
+      await runTransition(() => {
+        catalogView.classList.remove("is-hidden");
+        howtoPage.classList.add("is-hidden");
+        aboutPage.classList.add("is-hidden");
+        waPopup?.classList.remove("is-hidden");
+        if (collectionHeader) {
+          collectionHeader.classList.remove("is-hidden");
+          collectionHeader.style.display = "";
+          collectionHeader.setAttribute("aria-hidden", "false");
+        }
+        window.scrollTo(0, 0);
+      });
+      // Ocultar TODOS los banners editables (Nuevos ingresos, Preparate/custom, etc.)
+      if (typeof window.hidePromotionalBanner === "function") {
+        window.hidePromotionalBanner();
+      }
+      if (typeof window.hideCustomBanner === "function") {
+        window.hideCustomBanner();
+      }
+      if (typeof window.filterBySupplierFYL === "function") {
+        __routeRetryCount = 0;
+        await window.filterBySupplierFYL({ forCollectionView: true });
+      } else if (__routeRetryCount < ROUTE_RETRY_MAX) {
+        scheduleRouteRetry();
+      }
+    } else {
+      await runTransition(() => {
+        catalogView.classList.remove("is-hidden");
+        howtoPage.classList.add("is-hidden");
+        aboutPage.classList.add("is-hidden");
+        waPopup?.classList.remove("is-hidden");
+        if (collectionHeader) {
+          collectionHeader.classList.add("is-hidden");
+          collectionHeader.style.display = "none";
+          collectionHeader.setAttribute("aria-hidden", "true");
+        }
+        window.scrollTo(0, 0);
+      });
+      if (wasCollectionFYL && typeof window.cargarCategoria === "function") {
+        window.cargarCategoria("all");
+      }
+      if (typeof window.syncInfoBannerVisibility === "function") {
+        window.syncInfoBannerVisibility();
+      }
     }
-    window.scrollTo(0, 0);
-  } else if (isQuienesSomos) {
-    catalogView.classList.add("is-hidden");
-    howtoPage.classList.add("is-hidden");
-    aboutPage.classList.remove("is-hidden");
-    waPopup?.classList.add("is-hidden");
-    if (collectionHeader) {
-      collectionHeader.classList.add("is-hidden");
-      collectionHeader.style.display = "none";
-    }
-    window.scrollTo(0, 0);
-  } else if (isCollectionFYL) {
-    if (window.__FYL_BOOT_SUPPRESS_ROUTE) {
-      return;
-    }
-    catalogView.classList.remove("is-hidden");
-    howtoPage.classList.add("is-hidden");
-    aboutPage.classList.add("is-hidden");
-    waPopup?.classList.remove("is-hidden");
-    if (collectionHeader) {
-      collectionHeader.classList.remove("is-hidden");
-      collectionHeader.style.display = "";
-      collectionHeader.setAttribute("aria-hidden", "false");
-    }
-    // Ocultar TODOS los banners editables (Nuevos ingresos, Preparate/custom, etc.)
-    if (typeof window.hidePromotionalBanner === "function") {
-      window.hidePromotionalBanner();
-    }
-    if (typeof window.hideCustomBanner === "function") {
-      window.hideCustomBanner();
-    }
-    if (typeof window.filterBySupplierFYL === "function") {
-      __routeRetryCount = 0;
-      await window.filterBySupplierFYL({ forCollectionView: true });
-    } else if (__routeRetryCount < ROUTE_RETRY_MAX) {
-      scheduleRouteRetry();
-    }
-    window.scrollTo(0, 0);
-  } else {
-    catalogView.classList.remove("is-hidden");
-    howtoPage.classList.add("is-hidden");
-    aboutPage.classList.add("is-hidden");
-    waPopup?.classList.remove("is-hidden");
-    if (collectionHeader) {
-      collectionHeader.classList.add("is-hidden");
-      collectionHeader.style.display = "none";
-      collectionHeader.setAttribute("aria-hidden", "true");
-    }
-    if (wasCollectionFYL && typeof window.cargarCategoria === "function") {
-      window.cargarCategoria("all");
-    }
-    window.scrollTo(0, 0);
-    if (typeof window.syncInfoBannerVisibility === "function") {
-      window.syncInfoBannerVisibility();
-    }
-  }
 
-  prevHash = hash;
+    prevHash = hash;
   } catch (e) {
     console.warn("applyHashRoute:", e);
   }

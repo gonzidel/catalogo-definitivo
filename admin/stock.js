@@ -1243,7 +1243,12 @@ function setStockLoadingState(isLoading) {
 }
 
 function toggleVariantTableEditMode(productId, variantId) {
-  const table = document.querySelector(`#sizes-${productId}-${variantId} table`);
+  const sizesDetail = document.getElementById(`sizes-${productId}-${variantId}`);
+  if (sizesDetail && !sizesDetail.classList.contains("expanded")) {
+    sizesDetail.classList.add("expanded");
+  }
+
+  const table = document.querySelector(`#sizes-${productId}-${variantId} .sizes-table`);
   if (!table) return;
 
   const isEditing = table.dataset.editing === "true";
@@ -1781,87 +1786,6 @@ document.addEventListener("click", async (e) => {
         .eq("id", variantIdStr);
 
       error = variantError ?? null;
-
-      // --- Código original (Etapa 1) — desactivado. Conservado como referencia.
-      // Se elimina en el ciclo de limpieza post-validación de la Etapa 2.
-      /*
-      const { data: oldStockData } = await supabase
-        .from("variant_size_warehouse_stock")
-        .select("warehouse_id, stock_qty")
-        .eq("variant_id", variantIdStr)
-        .eq("size", row.size)
-        .in("warehouse_id", [generalWarehouseId, ventaPublicoWarehouseId]);
-
-      const oldStockGeneral = oldStockData?.find(s => String(s.warehouse_id) === String(generalWarehouseId))?.stock_qty || 0;
-      const oldStockVentaPublico = oldStockData?.find(s => String(s.warehouse_id) === String(ventaPublicoWarehouseId))?.stock_qty || 0;
-
-      const sizeStockUpdates = [
-        supabase
-          .from("variant_size_warehouse_stock")
-          .upsert({ variant_id: variantIdStr, size: sizeValue, warehouse_id: generalWarehouseId, stock_qty: stockGeneral }, { onConflict: "variant_id,size,warehouse_id" }),
-        supabase
-          .from("variant_size_warehouse_stock")
-          .upsert({ variant_id: variantIdStr, size: sizeValue, warehouse_id: ventaPublicoWarehouseId, stock_qty: stockVentaPublico }, { onConflict: "variant_id,size,warehouse_id" })
-      ];
-
-      const sizeStockResults = await Promise.all(sizeStockUpdates);
-      error = sizeStockResults.find((r) => r.error)?.error;
-
-      if (error) {
-        msg.textContent = `Error guardando stock por talle: ${error.message}`;
-        saveBtn.disabled = false;
-        return;
-      }
-
-      const productId = row.products?.id;
-      if (productId && !error) {
-        const stockGeneralChanged = stockGeneral !== oldStockGeneral;
-        const stockVentaPublicoChanged = stockVentaPublico !== oldStockVentaPublico;
-
-        if (stockGeneralChanged) {
-          const changeType = oldStockVentaPublico > 0 && stockVentaPublico < oldStockVentaPublico && stockGeneral > oldStockGeneral
-            ? "move_to_general"
-            : stockGeneral > oldStockGeneral ? "load" : "adjustment";
-          (async () => {
-            try {
-              await supabase.rpc("log_stock_change", {
-                p_product_id: productId, p_variant_id: variantIdStr, p_size: sizeValue,
-                p_warehouse_id: generalWarehouseId, p_change_type: changeType,
-                p_stock_before: oldStockGeneral, p_stock_after: stockGeneral,
-                p_from_warehouse_id: changeType === "move_to_general" ? ventaPublicoWarehouseId : null,
-                p_to_warehouse_id: changeType === "move_to_general" ? generalWarehouseId : null
-              });
-            } catch (err) { console.warn("Error registrando historial (general):", err); }
-          })();
-        }
-
-        if (stockVentaPublicoChanged) {
-          const changeType = oldStockGeneral > 0 && stockGeneral < oldStockGeneral && stockVentaPublico > oldStockVentaPublico
-            ? "move_to_venta_publico"
-            : stockVentaPublico > oldStockVentaPublico ? "load" : "adjustment";
-          (async () => {
-            try {
-              await supabase.rpc("log_stock_change", {
-                p_product_id: productId, p_variant_id: variantIdStr, p_size: sizeValue,
-                p_warehouse_id: ventaPublicoWarehouseId, p_change_type: changeType,
-                p_stock_before: oldStockVentaPublico, p_stock_after: stockVentaPublico,
-                p_from_warehouse_id: changeType === "move_to_venta_publico" ? generalWarehouseId : null,
-                p_to_warehouse_id: changeType === "move_to_venta_publico" ? ventaPublicoWarehouseId : null
-              });
-            } catch (err) { console.warn("Error registrando historial (venta-publico):", err); }
-          })();
-        }
-      }
-
-      if (!error) {
-        const { error: variantError } = await supabase
-          .from("product_variants")
-          .update({ price, active })
-          .eq("id", variantIdStr);
-        if (variantError) error = variantError;
-      }
-      */
-      // --- fin código original ---
     } else {
       // Etapa 2: write-path via rpc_set_variant_warehouse_stock_batch (sin talle).
       // Reemplaza: upsert directo a variant_warehouse_stock x2 + log_stock_change x2.
@@ -1908,70 +1832,6 @@ document.addEventListener("click", async (e) => {
           .eq("id", variantIdStr);
         if (variantError) error = variantError;
       }
-
-      // --- Código original (Etapa 1) — desactivado. Conservado como referencia.
-      // Se elimina en el ciclo de limpieza post-validación de la Etapa 2.
-      /*
-      const { data: oldStockData } = await supabase
-        .from("variant_warehouse_stock")
-        .select("warehouse_id, stock_qty")
-        .eq("variant_id", variantIdStr)
-        .in("warehouse_id", [generalWarehouseId, ventaPublicoWarehouseId]);
-
-      const oldStockGeneral = oldStockData?.find(s => String(s.warehouse_id) === String(generalWarehouseId))?.stock_qty || 0;
-      const oldStockVentaPublico = oldStockData?.find(s => String(s.warehouse_id) === String(ventaPublicoWarehouseId))?.stock_qty || 0;
-
-      const updates = [
-        supabase.from("variant_warehouse_stock")
-          .upsert({ variant_id: variantIdStr, warehouse_id: generalWarehouseId, stock_qty: stockGeneral }, { onConflict: "variant_id,warehouse_id" }),
-        supabase.from("variant_warehouse_stock")
-          .upsert({ variant_id: variantIdStr, warehouse_id: ventaPublicoWarehouseId, stock_qty: stockVentaPublico }, { onConflict: "variant_id,warehouse_id" }),
-        supabase.from("product_variants")
-          .update({ price, active }).eq("id", variantIdStr)
-      ];
-
-      const results = await Promise.all(updates);
-      error = results.find((r) => r.error)?.error;
-
-      const productId = row.products?.id;
-      if (productId && !error) {
-        const stockGeneralChanged = stockGeneral !== oldStockGeneral;
-        const stockVentaPublicoChanged = stockVentaPublico !== oldStockVentaPublico;
-
-        if (stockGeneralChanged) {
-          const changeType = oldStockVentaPublico > 0 && stockVentaPublico < oldStockVentaPublico && stockGeneral > oldStockGeneral
-            ? "move_to_general" : stockGeneral > oldStockGeneral ? "load" : "adjustment";
-          (async () => {
-            try {
-              await supabase.rpc("log_stock_change", {
-                p_product_id: productId, p_variant_id: variantIdStr, p_size: null,
-                p_warehouse_id: generalWarehouseId, p_change_type: changeType,
-                p_stock_before: oldStockGeneral, p_stock_after: stockGeneral,
-                p_from_warehouse_id: changeType === "move_to_general" ? ventaPublicoWarehouseId : null,
-                p_to_warehouse_id: changeType === "move_to_general" ? generalWarehouseId : null
-              });
-            } catch (err) { console.warn("Error registrando historial (general, sin talle):", err); }
-          })();
-        }
-
-        if (stockVentaPublicoChanged) {
-          const changeType = oldStockGeneral > 0 && stockGeneral < oldStockGeneral && stockVentaPublico > oldStockVentaPublico
-            ? "move_to_venta_publico" : stockVentaPublico > oldStockVentaPublico ? "load" : "adjustment";
-          (async () => {
-            try {
-              await supabase.rpc("log_stock_change", {
-                p_product_id: productId, p_variant_id: variantIdStr, p_size: null,
-                p_warehouse_id: ventaPublicoWarehouseId, p_change_type: changeType,
-                p_stock_before: oldStockVentaPublico, p_stock_after: stockVentaPublico,
-                p_from_warehouse_id: changeType === "move_to_venta_publico" ? generalWarehouseId : null,
-                p_to_warehouse_id: changeType === "move_to_venta_publico" ? ventaPublicoWarehouseId : null
-              });
-            } catch (err) { console.warn("Error registrando historial (venta-publico, sin talle):", err); }
-          })();
-        }
-      }
-      */
-      // --- fin código original ---
     }
     
     saveBtn.disabled = false;
@@ -2561,42 +2421,6 @@ async function saveAll() {
         warehouse_id: ventaPublicoWarehouseId,
         stock_qty:    stockVentaPublico,
       });
-
-      // --- Código original (Etapa 1) — desactivado. Conservado como referencia.
-      // Se elimina en el ciclo de limpieza post-validación de la Etapa 2.
-      /*
-      updates.push(
-        supabase
-          .from("variant_size_warehouse_stock")
-          .upsert({ variant_id: variantId, size: row.size, warehouse_id: generalWarehouseId, stock_qty: stockGeneral }, { onConflict: "variant_id,size,warehouse_id" }),
-        supabase
-          .from("variant_size_warehouse_stock")
-          .upsert({ variant_id: variantId, size: row.size, warehouse_id: ventaPublicoWarehouseId, stock_qty: stockVentaPublico }, { onConflict: "variant_id,size,warehouse_id" })
-      );
-
-      const productId = row.products?.id;
-      if (productId) {
-        if (stockGeneral !== oldStockGeneral) {
-          const changeType = oldStockVentaPublico > 0 && stockVentaPublico < oldStockVentaPublico && stockGeneral > oldStockGeneral
-            ? "move_to_general" : stockGeneral > oldStockGeneral ? "load" : "adjustment";
-          historyLogs.push({ product_id: productId, variant_id: variantId, size: row.size,
-            warehouse_id: generalWarehouseId, change_type: changeType,
-            stock_before: oldStockGeneral, stock_after: stockGeneral,
-            from_warehouse_id: changeType === "move_to_general" ? ventaPublicoWarehouseId : null,
-            to_warehouse_id: changeType === "move_to_general" ? generalWarehouseId : null });
-        }
-        if (stockVentaPublico !== oldStockVentaPublico) {
-          const changeType = oldStockGeneral > 0 && stockGeneral < oldStockGeneral && stockVentaPublico > oldStockVentaPublico
-            ? "move_to_venta_publico" : stockVentaPublico > oldStockVentaPublico ? "load" : "adjustment";
-          historyLogs.push({ product_id: productId, variant_id: variantId, size: row.size,
-            warehouse_id: ventaPublicoWarehouseId, change_type: changeType,
-            stock_before: oldStockVentaPublico, stock_after: stockVentaPublico,
-            from_warehouse_id: changeType === "move_to_venta_publico" ? generalWarehouseId : null,
-            to_warehouse_id: changeType === "move_to_venta_publico" ? ventaPublicoWarehouseId : null });
-        }
-      }
-      */
-      // --- fin código original ---
     } else {
       // Etapa 2: acumular en rpcNoSizeItems → rpc_set_variant_warehouse_stock_batch (165).
       // La RPC escribe, lockea e historiza en una sola transacción.
@@ -2613,44 +2437,6 @@ async function saveAll() {
           warehouse_id: ventaPublicoWarehouseId,
           stock_qty:    stockVentaPublico,
         });
-
-        // --- Código original (Etapa 1) — desactivado. Conservado como referencia.
-        // Se elimina en el ciclo de limpieza post-validación de la Etapa 2.
-        /*
-        if (change.stock_general !== undefined) {
-          updates.push(
-            supabase.from("variant_warehouse_stock")
-              .upsert({ variant_id: variantId, warehouse_id: generalWarehouseId, stock_qty: change.stock_general }, { onConflict: "variant_id,warehouse_id" })
-          );
-          const productId = row.products?.id;
-          if (productId && stockGeneral !== oldStockGeneral) {
-            const changeType = oldStockVentaPublico > 0 && stockVentaPublico < oldStockVentaPublico && stockGeneral > oldStockGeneral
-              ? "move_to_general" : stockGeneral > oldStockGeneral ? "load" : "adjustment";
-            historyLogs.push({ product_id: productId, variant_id: variantId, size: null,
-              warehouse_id: generalWarehouseId, change_type: changeType,
-              stock_before: oldStockGeneral, stock_after: stockGeneral,
-              from_warehouse_id: changeType === "move_to_general" ? ventaPublicoWarehouseId : null,
-              to_warehouse_id: changeType === "move_to_general" ? generalWarehouseId : null });
-          }
-        }
-        if (change.stock_venta_publico !== undefined) {
-          updates.push(
-            supabase.from("variant_warehouse_stock")
-              .upsert({ variant_id: variantId, warehouse_id: ventaPublicoWarehouseId, stock_qty: change.stock_venta_publico }, { onConflict: "variant_id,warehouse_id" })
-          );
-          const productId = row.products?.id;
-          if (productId && stockVentaPublico !== oldStockVentaPublico) {
-            const changeType = oldStockGeneral > 0 && stockGeneral < oldStockGeneral && stockVentaPublico > oldStockVentaPublico
-              ? "move_to_venta_publico" : stockVentaPublico > oldStockVentaPublico ? "load" : "adjustment";
-            historyLogs.push({ product_id: productId, variant_id: variantId, size: null,
-              warehouse_id: ventaPublicoWarehouseId, change_type: changeType,
-              stock_before: oldStockVentaPublico, stock_after: stockVentaPublico,
-              from_warehouse_id: changeType === "move_to_venta_publico" ? generalWarehouseId : null,
-              to_warehouse_id: changeType === "move_to_venta_publico" ? ventaPublicoWarehouseId : null });
-          }
-        }
-        */
-        // --- fin código original ---
       }
     }
     

@@ -353,6 +353,8 @@ function ensureEventListeners() {
   const cancelBtn = document.getElementById("cancel-order-btn");
   const productSearch = document.getElementById("product-search");
   const qrSearch = document.getElementById("qr-search");
+  const searchAddBtn = document.getElementById("product-search-add-btn");
+  const searchCloseBtn = document.getElementById("product-search-close-btn");
   
   // Re-registrar listeners de cerrar si no están funcionando
   if (closeBtn && !closeBtn.hasAttribute('data-listener-attached')) {
@@ -389,6 +391,23 @@ function ensureEventListeners() {
       }, 300);
     });
   }
+
+  if (searchAddBtn && !searchAddBtn.hasAttribute("data-listener-attached")) {
+    searchAddBtn.setAttribute("data-listener-attached", "true");
+    searchAddBtn.addEventListener("click", () => {
+      if (selectedQuantities.size === 0) return;
+      addSelectedProductsToOrder();
+    });
+  }
+
+  if (searchCloseBtn && !searchCloseBtn.hasAttribute("data-listener-attached")) {
+    searchCloseBtn.setAttribute("data-listener-attached", "true");
+    searchCloseBtn.addEventListener("click", () => {
+      const resultsDiv = document.getElementById("product-results");
+      if (!resultsDiv || resultsDiv.style.display === "none") return;
+      hideProductResults();
+    });
+  }
   
   // Registrar listener de búsqueda por QR
   // Usar solo debounce para leer el código completo: si el lector envía "145" + Enter + "565",
@@ -415,6 +434,8 @@ function ensureEventListeners() {
       }, QR_DEBOUNCE_MS);
     });
   }
+
+  updateProductSearchActionButtons();
 }
 
 // Abrir modal para crear pedido
@@ -1566,7 +1587,8 @@ async function processQrCodeForOrder(qrCode) {
       qty_from_venta: qtyFromVenta,
       // Excepción operativa: si no hay stock confirmado, se guarda como missing
       // para seguimiento manual y sin descuento automático.
-      status: hasConfirmedStock ? "picked" : "missing"
+      status: hasConfirmedStock ? "picked" : "missing",
+      admin_confirmed_missing: !hasConfirmedStock
     };
     
     await addProductToOrder(productToAdd);
@@ -1649,6 +1671,21 @@ function getProductSimilarityRank(productName, query) {
   return { bucket: 3, extra: Number.MAX_SAFE_INTEGER, name: normalizedName };
 }
 
+function updateProductSearchActionButtons() {
+  const addBtn = document.getElementById("product-search-add-btn");
+  const closeBtn = document.getElementById("product-search-close-btn");
+  const resultsDiv = document.getElementById("product-results");
+  if (!addBtn || !closeBtn) return;
+
+  const hasSelection = selectedQuantities.size > 0;
+  const isResultsOpen = Boolean(resultsDiv && resultsDiv.style.display !== "none");
+
+  addBtn.classList.toggle("is-active-add", hasSelection);
+  addBtn.classList.toggle("is-inactive", !hasSelection);
+  closeBtn.classList.toggle("is-active-close", isResultsOpen);
+  closeBtn.classList.toggle("is-inactive", !isResultsOpen);
+}
+
 // Mostrar resultados de productos
 function displayProductResults(products, query = "") {
   const resultsDiv = document.getElementById("product-results");
@@ -1657,6 +1694,7 @@ function displayProductResults(products, query = "") {
   if (!products || products.length === 0) {
     resultsDiv.innerHTML = "<div style='padding: 12px; color: #666;'>No se encontraron productos</div>";
     resultsDiv.style.display = "block";
+    updateProductSearchActionButtons();
     return;
   }
   
@@ -1770,20 +1808,10 @@ function displayProductResults(products, query = "") {
     </div>
   `).join("");
   
-  resultsDiv.innerHTML = productsHtml + `
-    <div style="margin-top: 16px; padding: 12px; background: #f8f9fa; border-radius: 8px; text-align: center; display: flex; flex-direction: column; gap: 8px;">
-      <button onclick="window.addSelectedProductsToOrder()" 
-              style="padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 15px;">
-        Agregar productos seleccionados
-      </button>
-      <button onclick="window.hideProductResults()" 
-              style="padding: 10px 20px; background: #dc3545; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 15px;">
-        Cerrar búsqueda
-      </button>
-    </div>
-  `;
+  resultsDiv.innerHTML = productsHtml;
   
   resultsDiv.style.display = "block";
+  updateProductSearchActionButtons();
   
   // Agregar event listeners a los cuadrados de talles
   resultsDiv.querySelectorAll("[data-variant-id]").forEach(square => {
@@ -1929,6 +1957,8 @@ function updateProductSquare(quantityKey) {
     const decreaseBtn = square.querySelector('[data-action="decrease"]');
     if (decreaseBtn) decreaseBtn.remove();
   }
+
+  updateProductSearchActionButtons();
 }
 
 // Función global para disminuir cantidad
@@ -2225,6 +2255,7 @@ function addSpecialExtra() {
 // Agregar producto al pedido
 async function addProductToOrder(product) {
   let resolvedStatus = product.status || "picked";
+  let resolvedMissingIsManual = Boolean(product.admin_confirmed_missing);
   // VALIDACIÓN: Verificar stock disponible si se proporciona información de stock
   if (product.variant_id && product.size && !product.is_special_extra) {
     // Obtener stock actual desde la base de datos para validación
@@ -2288,6 +2319,7 @@ async function addProductToOrder(product) {
             product.qty_from_general = 0;
             product.qty_from_venta = 0;
             resolvedStatus = "missing";
+            resolvedMissingIsManual = true;
             // Continuar con el flujo normal para agregar el producto
           } else {
             const confirmAdd = confirm(
@@ -2330,11 +2362,15 @@ async function addProductToOrder(product) {
   
   // Verificar si ya existe en el pedido
   const productStatusForMerge = resolvedStatus || product.status || "picked";
+  const isMissingManual = productStatusForMerge === "missing"
+    ? (resolvedMissingIsManual || Boolean(product.admin_confirmed_missing))
+    : false;
   const existingIndex = orderItems.findIndex(item => 
     item.product_name === product.product_name &&
     item.color === product.color &&
     item.size === product.size &&
     String(item.status || "picked").trim().toLowerCase() === String(productStatusForMerge).trim().toLowerCase() &&
+    Boolean(item.admin_confirmed_missing) === Boolean(isMissingManual) &&
     Boolean(item.is_special_extra) === Boolean(product.is_special_extra)
   );
   
@@ -2346,6 +2382,9 @@ async function addProductToOrder(product) {
       orderItems[existingIndex].qty_from_general = (orderItems[existingIndex].qty_from_general || 0) + product.qty_from_general;
       orderItems[existingIndex].qty_from_venta = (orderItems[existingIndex].qty_from_venta || 0) + product.qty_from_venta;
     }
+    if (productStatusForMerge === "missing" && isMissingManual) {
+      orderItems[existingIndex].admin_confirmed_missing = true;
+    }
   } else {
     // Agregar nuevo item con estado por defecto "reserved"
     orderItems.push({
@@ -2353,7 +2392,8 @@ async function addProductToOrder(product) {
       id: `temp-${Date.now()}-${Math.random()}`,
       qty_from_general: product.qty_from_general || 0,
       qty_from_venta: product.qty_from_venta || 0,
-      status: productStatusForMerge // Admin: por defecto "apartado"; missing para excepción operativa
+      status: productStatusForMerge, // Admin: por defecto "apartado"; missing para excepción operativa
+      admin_confirmed_missing: isMissingManual
     });
   }
   
@@ -2450,16 +2490,25 @@ function updateOrderItemsList() {
     const isWaiting = itemStatus === 'waiting';
     const isPicked = itemStatus === 'picked';
     const isMissing = itemStatus === 'missing';
+    const isMissingManual = isMissing && Boolean(item.admin_confirmed_missing);
+    // Ítems nuevos (post-fix): persisten como picked pero con trazabilidad de confirmación manual
+    const isPickedManual = isPicked && Boolean(item.admin_confirmed_missing);
     const isSpecialExtra = item.is_special_extra === true;
     
     // Construir badge de estado
     let statusBadge = '';
     if (isSpecialExtra) {
       statusBadge = '<span style="background: #9c27b0; color: white; padding: 4px 8px; border-radius: 12px; font-size: 11px; font-weight: 600;">⭐ EXTRA</span>';
+    } else if (isMissingManual) {
+      // Ítems legacy (antes del fix): missing + admin_confirmed_missing
+      statusBadge = '<span style="background: #fff4e6; color: #9a3412; padding: 4px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; border: 1px solid #fdba74;">⚠️ Falta (manual)</span>';
     } else if (isMissing) {
       statusBadge = '<span style="background: #fdecea; color: #b71c1c; padding: 4px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; border: 1px solid #f5c2c7;">⚠️ Falta stock</span>';
     } else if (isWaiting) {
       statusBadge = '<span style="background: #fff4e6; color: #e65100; padding: 4px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; border: 1px solid #ff9800;">⏳ Espera</span>';
+    } else if (isPickedManual) {
+      // Ítems nuevos (post-fix): picked confirmado manualmente
+      statusBadge = '<span style="background: #e6f4ea; color: #166534; padding: 4px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; border: 1px solid #86efac;">✓ Apartado (manual)</span>';
     } else if (isPicked) {
       statusBadge = '<span style="background: #e6f4ea; color: #1b5e20; padding: 4px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; border: 1px solid #28a745;">✓ Apartado</span>';
     }
@@ -2468,10 +2517,14 @@ function updateOrderItemsList() {
     let containerStyle = '';
     if (isSpecialExtra) {
       containerStyle = 'border-left: 4px solid #9c27b0; background: #f3e5f5;';
+    } else if (isMissingManual) {
+      containerStyle = 'border-left: 4px solid #f59e0b; background: #fffaf0;';
     } else if (isMissing) {
       containerStyle = 'border-left: 4px solid #dc3545; background: #fff5f5;';
     } else if (isWaiting) {
       containerStyle = 'border-left: 4px solid #ff9800; background: #fff9f0;';
+    } else if (isPickedManual) {
+      containerStyle = 'border-left: 4px solid #4ade80; background: #f0fdf4;';
     } else if (isPicked) {
       containerStyle = 'border-left: 4px solid #28a745; background: #f0f9f4;';
     }
@@ -2685,6 +2738,7 @@ function hideProductResults() {
   }
   // Limpiar selecciones cuando se ocultan los resultados
   selectedQuantities.clear();
+  updateProductSearchActionButtons();
 }
 
 // Hacer la función disponible globalmente
@@ -3041,6 +3095,47 @@ async function getVariantIdsForItems(items) {
 //
 // Esta función YA NO lee stock en cliente ni calcula newQty. Solo construye el
 // payload de descuentos desde itemsWithVariants y lo manda al servidor.
+// Inyecta y deduce stock para ítems confirmados manualmente sin stock en sistema.
+// Recibe los ítems ya insertados en DB (con su id real) y el orderId.
+// Usa rpc_admin_manual_inject_and_deduct para garantizar transaccionalidad y trazabilidad.
+async function applyManualConfirmedItems(insertedItems, orderId) {
+  if (!insertedItems || insertedItems.length === 0) return;
+
+  if (!warehouses.general) {
+    await loadWarehouses();
+  }
+  if (!warehouses.general) {
+    throw new Error("applyManualConfirmedItems: no se encontró warehouse general");
+  }
+
+  const manualItems = insertedItems.filter(
+    (i) => Boolean(i.admin_confirmed_missing) && i.variant_id && i.size && Number(i.quantity) > 0
+  );
+  if (manualItems.length === 0) return;
+
+  const p_items = manualItems.map((item) => ({
+    variant_id:     item.variant_id,
+    size:           normalizeSize(item.size),
+    warehouse_id:   warehouses.general,
+    qty:            Number(item.quantity),
+    order_item_id:  item.id,
+  }));
+
+  console.log(`🔵 applyManualConfirmedItems: ${manualItems.length} ítem(s) manual(es) a procesar para order ${orderId}`);
+
+  const { data, error } = await supabase.rpc("rpc_admin_manual_inject_and_deduct", {
+    p_items,
+    p_order_id: orderId || null,
+  });
+
+  if (error) {
+    console.error("❌ applyManualConfirmedItems: error RPC:", error);
+    throw error;
+  }
+
+  console.log(`✅ applyManualConfirmedItems: ${data?.processed ?? manualItems.length} ítem(s) procesado(s) con trazabilidad de stock.`);
+}
+
 async function updateStockBatch(itemsWithVariants, orderId = null, source = "order_creation") {
   if (!itemsWithVariants || itemsWithVariants.length === 0) {
     console.warn("⚠️ updateStockBatch: No hay items para actualizar stock");
@@ -3060,11 +3155,11 @@ async function updateStockBatch(itemsWithVariants, orderId = null, source = "ord
     return;
   }
 
-  // Solo ítems con variant_id + size y que NO estén en missing.
-  // missing = excepción operativa sin stock confirmado (no se descuenta automáticamente).
+  // Solo ítems con variant_id + size, que NO estén en missing,
+  // y que NO sean admin_confirmed_missing (esos pasan por rpc_admin_manual_inject_and_deduct).
   const itemsToUpdate = itemsWithVariants.filter((i) => {
     const statusNorm = String(i?.status || "").trim().toLowerCase();
-    return i.variant_id && i.size && statusNorm !== "missing";
+    return i.variant_id && i.size && statusNorm !== "missing" && !i.admin_confirmed_missing;
   });
   if (itemsToUpdate.length === 0) {
     console.warn("⚠️ updateStockBatch: No hay items con variant_id y size para actualizar");
@@ -3183,27 +3278,6 @@ async function updateStockBatch(itemsWithVariants, orderId = null, source = "ord
     `(order_id=${rpcData.order_id ?? "null"}, source=${rpcData.source}).`,
     rpcData.details
   );
-
-  // --- Código original (Etapa 1) — desactivado. Conservado como referencia.
-  // Se elimina en el ciclo de limpieza post-validación de la Etapa 2.
-  /*
-  const { data: currentStocks } = await supabase
-    .from("variant_size_warehouse_stock")
-    .select("variant_id, size, warehouse_id, stock_qty")
-    .in("variant_id", variantIds)
-    .in("warehouse_id", warehouseIds);
-
-  const stockMap = new Map(...);
-  itemsToUpdate.forEach(item => {
-    // delta calculado en JS: newQty = max(0, currentQty - qty)
-    stockChanges.push({ variant_id, size, warehouse_id, stock_qty: newQty });
-  });
-
-  await supabase
-    .from("variant_size_warehouse_stock")
-    .upsert(stockChanges, { onConflict: 'variant_id,size,warehouse_id' });
-  */
-  // --- fin código original ---
 }
 
 // Crear nuevo pedido
@@ -3265,7 +3339,10 @@ async function createNewOrder(customerId, items, total, extraValues = {}) {
     const qtyVenta = Number(item?.qty_from_venta) || 0;
     const hasConfirmedStock = (qtyGeneral + qtyVenta) > 0;
     if (hasVariantAndSize && !hasConfirmedStock) {
-      return { ...item, status: "missing" };
+      // Persiste como 'picked' (no 'missing'): el stock se maneja via
+      // rpc_admin_manual_inject_and_deduct, que inyecta y deduce en una TX.
+      // admin_confirmed_missing=true conserva la trazabilidad de que fue confirmación manual.
+      return { ...item, status: "picked", admin_confirmed_missing: true };
     }
     return item;
   });
@@ -3349,13 +3426,15 @@ async function createNewOrder(customerId, items, total, extraValues = {}) {
     quantity: item.quantity,
     price_snapshot: item.price_snapshot,
     imagen: item.imagen,
-    status: item.status || "picked" // Admin: por defecto "apartado"
+    status: item.status || "picked", // Admin: por defecto "apartado"
+    admin_confirmed_missing: Boolean(item.admin_confirmed_missing)
   }));
   
   console.log("🔵 createNewOrder: Creando items del pedido...");
-  const { error: itemsError } = await supabase
+  const { data: insertedItems, error: itemsError } = await supabase
     .from("order_items")
-    .insert(orderItemsData);
+    .insert(orderItemsData)
+    .select("id, variant_id, size, quantity, admin_confirmed_missing");
   
   if (itemsError) {
     console.error("❌ createNewOrder: Error creando items:", itemsError);
@@ -3366,13 +3445,13 @@ async function createNewOrder(customerId, items, total, extraValues = {}) {
   
   console.log("✅ createNewOrder: Items del pedido creados correctamente");
 
-  // Etapa 2 / Fase corta: descuento transaccional vía rpc_apply_order_stock_deduction.
-  // Si falla, intentamos rollback manual (DELETE items + DELETE order). Si ese
-  // rollback también falla (network, concurrencia, trigger, etc.), marcamos la
-  // orden como 'stock_pending' para intervención manual del admin y propagamos
-  // el error original al UI.
+  // Etapa 2 / Fase corta: descuento transaccional.
+  // Primero los ítems confirmados manualmente (inject-and-deduct),
+  // luego los ítems normales (rpc_apply_order_stock_deduction).
+  // Si falla cualquiera, rollback manual o stock_pending.
   console.log("🔵 createNewOrder: Descontando stock (RPC)...");
   try {
+    await applyManualConfirmedItems(insertedItems || [], order.id);
     await updateStockBatch(itemsForPersistence, order.id, "order_creation");
   } catch (stockErr) {
     console.error("❌ createNewOrder: Falló descuento de stock:", stockErr);
@@ -3473,7 +3552,8 @@ async function addItemsToExistingOrder(orderId, items, newTotal = null, extraVal
     const qtyVenta = Number(item?.qty_from_venta) || 0;
     const hasConfirmedStock = (qtyGeneral + qtyVenta) > 0;
     if (hasVariantAndSize && !hasConfirmedStock) {
-      return { ...item, status: "missing" };
+      // Mismo criterio que createNewOrder: persiste como 'picked' con trazabilidad.
+      return { ...item, status: "picked", admin_confirmed_missing: true };
     }
     return item;
   });
@@ -3528,12 +3608,14 @@ async function addItemsToExistingOrder(orderId, items, newTotal = null, extraVal
     quantity: item.quantity,
     price_snapshot: item.price_snapshot,
     imagen: item.imagen,
-    status: item.status || newItemStatus // Usar el estado del item si existe, sino usar el estado por defecto
+    status: item.status || newItemStatus, // Usar el estado del item si existe, sino usar el estado por defecto
+    admin_confirmed_missing: Boolean(item.admin_confirmed_missing)
   }));
   
-  const { error: itemsError } = await supabase
+  const { data: insertedItems, error: itemsError } = await supabase
     .from("order_items")
-    .insert(orderItemsData);
+    .insert(orderItemsData)
+    .select("id, variant_id, size, quantity, admin_confirmed_missing");
   
   if (itemsError) {
     throw new Error(`Error agregando productos: ${itemsError.message}`);
@@ -3597,10 +3679,11 @@ async function addItemsToExistingOrder(orderId, items, newTotal = null, extraVal
     .eq("id", orderId);
 
   // Etapa 2 / Fase corta: descuento transaccional.
-  // En EDIT no hacemos rollback manual (restaurar items previos + total + notes
-  // es frágil y puede dejar peor estado). Si falla el descuento, marcamos la
-  // orden como 'stock_pending' para intervención manual y propagamos el error.
+  // Primero los ítems confirmados manualmente (inject-and-deduct),
+  // luego los ítems normales (rpc_apply_order_stock_deduction).
+  // En EDIT no hacemos rollback manual: si falla, marcamos stock_pending.
   try {
+    await applyManualConfirmedItems(insertedItems || [], orderId);
     await updateStockBatch(itemsForPersistence, orderId, "order_edit");
   } catch (stockErr) {
     console.error("❌ addItemsToExistingOrder: Falló descuento de stock:", stockErr);

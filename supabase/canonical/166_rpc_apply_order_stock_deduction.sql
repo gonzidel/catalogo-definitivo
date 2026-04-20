@@ -292,6 +292,25 @@ begin
     );
   end loop;
 
+  -- ─────────────────────────────────────────────────────────────────
+  -- 6. Actualizar reserved_qty en product_variants.
+  --    Un UPDATE por variant_id afectado, sumando el total descontado
+  --    en esta llamada. Mantiene sincronía con la disponibilidad del
+  --    catálogo (get_total_stock - reserved_qty = stock disponible).
+  --    Se hace post-loop para evitar múltiples updates por variante.
+  -- ─────────────────────────────────────────────────────────────────
+  for v_rec in
+    select
+      (elem->>'variant_id')::uuid        as variant_id,
+      sum((elem->>'qty_deducted')::int)  as total_deducted
+    from jsonb_array_elements(v_details) as elem
+    group by (elem->>'variant_id')::uuid
+  loop
+    update public.product_variants
+    set reserved_qty = greatest(coalesce(reserved_qty, 0) + v_rec.total_deducted, 0)
+    where id = v_rec.variant_id;
+  end loop;
+
   return jsonb_build_object(
     'ok',            true,
     'total_input',   v_total_input,

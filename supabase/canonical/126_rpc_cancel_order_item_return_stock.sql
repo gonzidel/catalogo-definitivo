@@ -204,14 +204,9 @@ begin
       end if;
     end if;
 
-    begin
-      update public.product_variants
-      set reserved_qty = greatest(reserved_qty - v_quantity, 0)
-      where id = v_variant_id;
-    exception
-      when undefined_table or undefined_object or others then
-        null;
-    end;
+    update public.product_variants
+    set reserved_qty = greatest(reserved_qty - v_quantity, 0)
+    where id = v_variant_id;
   end if;
 
   -- Actualizar total del pedido

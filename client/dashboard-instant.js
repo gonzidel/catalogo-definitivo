@@ -307,6 +307,47 @@ let ordersRealtimeSetupPromise = null;
 let ordersRealtimeActiveUserId = null;
 let ordersRealtimeRetryTimeoutId = null;
 let isSubmittingCurrentCart = false;
+
+// ─── Sprint 3: idempotencia fuerte en checkout ────────────────────────────────
+// operation_id persiste entre intentos del mismo intento de checkout para que
+// un retry tras error de red obtenga el resultado idempotente del servidor.
+// Se resetea en éxito o cuando el fingerprint cambió (operation_id_conflict).
+let _checkoutOperationId = null;
+
+function generateOperationId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
+function buildCartFingerprint(items) {
+  if (!Array.isArray(items) || !items.length) return "empty";
+  const lines = items
+    .map((item) => ({
+      vid: String(item?.variant_id || "").trim(),
+      sz: String(item?.size || item?.talle || "").trim().toLowerCase(),
+      qty: Number(item?.quantity ?? item?.cantidad ?? item?.qty ?? 0),
+      price: Number(item?.price_snapshot ?? item?.precio ?? item?.price ?? 0),
+    }))
+    .sort((a, b) => {
+      const k1 = `${a.vid}|${a.sz}`;
+      const k2 = `${b.vid}|${b.sz}`;
+      return k1 < k2 ? -1 : k1 > k2 ? 1 : 0;
+    });
+  // djb2: hash ligero y determinista (no criptográfico, solo fingerprint)
+  const raw = JSON.stringify(lines);
+  let h = 5381;
+  for (let i = 0; i < raw.length; i++) {
+    h = (((h << 5) + h) + raw.charCodeAt(i)) >>> 0;
+  }
+  return h.toString(16);
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 const closeOrderInFlight = new Set();
 let pendingCheckoutOrderFeedback = null;
 const pendingCloseOrderFeedbackById = new Map();
@@ -1319,17 +1360,6 @@ async function fetchVariantInfo(articulo, color, talle, variantId = null, option
         if (normalizeSize(s.size) === normalizedSizeForStock) stockTotal += Number(s.stock_qty || 0);
       });
     }
-    if (stockTotal === 0 && normalizedSizeForStock) {
-      const { data: sizeData, error: sizeErr } = await supabase
-        .from("variant_sizes")
-        .select("variant_id, size, stock_qty")
-        .eq("variant_id", vid);
-      if (!sizeErr && sizeData && sizeData.length) {
-        const sizeRow = sizeData.find((r) => normalizeSize(r.size) === normalizedSizeForStock);
-        if (sizeRow) stockTotal = Number(sizeRow.stock_qty || 0);
-      }
-    }
-
     const available = Math.max(0, stockTotal - reserved);
     return setCachedMapValue(
       __dashVariantInfoCache,
@@ -2805,13 +2835,48 @@ async function submitCurrentCart() {
     const bagSection = document.getElementById("section-bag");
     if (bagSection) bagSection.classList.add("dash-fx-pending");
 
-    const { data, error } = await supabase.rpc("rpc_checkout_cart");
+    // Generar o reutilizar operation_id. Se mantiene entre intentos para que
+    // un retry tras error de red reciba el resultado idempotente del servidor.
+    if (!_checkoutOperationId) {
+      _checkoutOperationId = generateOperationId();
+    }
+    const checkoutOpId = _checkoutOperationId;
+    const checkoutRequest = {
+      source: "dashboard",
+      action: "checkout_cart",
+      cart_fingerprint: buildCartFingerprint(currentCartItems),
+    };
+
+    const { data, error } = await supabase.rpc("rpc_checkout_cart", {
+      p_operation_id: checkoutOpId,
+      p_request: checkoutRequest,
+    });
+
     if (error) {
-      console.error("âŒ Error enviando pedido:", error);
-      alert(error.message || "No se pudo enviar el pedido. Intenta nuevamente.");
+      const errMsg = error?.message || "";
+      if (errMsg.includes("conflict_in_progress")) {
+        console.warn("⏳ [checkout] conflict_in_progress — otra operación en curso. operation_id=", checkoutOpId);
+        alert("Hay un pedido en proceso. Esperá unos segundos e intentá nuevamente.");
+      } else if (errMsg.includes("operation_id_conflict")) {
+        console.warn("🚫 [checkout] operation_id_conflict — carrito modificado entre intentos. Reseteando operation_id.");
+        _checkoutOperationId = null;
+        alert("El carrito cambió entre intentos. Por favor, intentá nuevamente.");
+      } else {
+        console.error("❌ [checkout] Error enviando pedido:", error);
+        alert(error.message || "No se pudo enviar el pedido. Intenta nuevamente.");
+      }
       clearCartTransientState();
       return;
     }
+
+    if (data?.idempotent_replay === true) {
+      console.info("♻️ [checkout] Replay: pedido ya existía — devolviendo resultado previo. order_id=", data?.order_id);
+    } else {
+      console.info("✅ [checkout] Pedido enviado correctamente. order_id=", data?.order_id, "order_number=", data?.order_number);
+    }
+
+    // Checkout exitoso: resetear para que el próximo intento sea una operación nueva.
+    _checkoutOperationId = null;
 
     const checkoutOrderKey = String(
       (data && (data.order_number || data.order_id)) || ""
@@ -3960,10 +4025,14 @@ async function loadOrders(userId, options = {}) {
 
   function getOrderStatusSummary(orderItems = []) {
     const normStatus = (s) => String(s || "").toLowerCase().trim();
+    // Los ítems confirmados manualmente (missing + admin_confirmed_missing, o picked +
+    // admin_confirmed_missing) son operativamente equivalentes a "confirmado":
+    // el admin garantizó que la unidad existe físicamente.
+    const isManualConfirmed = (item) => Boolean(item?.admin_confirmed_missing);
     const counters = {
-      confirmed: 0, // picked -> confirmado
-      pending: 0,   // reserved/waiting -> pendiente
-      missing: 0,   // missing -> sin stock
+      confirmed: 0, // picked o confirmado manual
+      pending: 0,   // reserved/waiting
+      missing: 0,   // missing real (sin stock, sin confirmación manual)
     };
 
     orderItems.forEach((item) => {
@@ -3971,6 +4040,11 @@ async function loadOrders(userId, options = {}) {
       const qty = Math.max(0, Number(item.quantity || 0) || 0);
       const st = normStatus(item.status);
 
+      // Confirmación manual: cuenta como confirmado sin importar el status (missing o picked)
+      if (isManualConfirmed(item)) {
+        counters.confirmed += qty;
+        return;
+      }
       if (st === "missing") {
         counters.missing += qty;
         return;
@@ -3979,7 +4053,7 @@ async function loadOrders(userId, options = {}) {
         counters.confirmed += qty;
         return;
       }
-      // reserved / waiting / otros se resumen como pendiente
+      // reserved / waiting / otros → pendiente
       counters.pending += qty;
     });
 
@@ -3990,7 +4064,6 @@ async function loadOrders(userId, options = {}) {
     const hasPending = counters.pending > 0;
     const hasMissing = counters.missing > 0;
 
-    // Máximo 2 estados visibles, siguiendo los casos solicitados.
     if (hasMissing) {
       if (hasConfirmed) {
         return `${formatPart(counters.confirmed, "confirmado", "confirmados")} · ${formatPart(counters.missing, "sin stock", "sin stock")}`;
@@ -4088,7 +4161,7 @@ async function loadOrders(userId, options = {}) {
 
     const { data: selectedItemsRaw, error: selectedItemsError } = await supabase
       .from("order_items")
-      .select("id, order_id, product_name, color, size, quantity, price_snapshot, imagen, status, variant_id")
+      .select("id, order_id, product_name, color, size, quantity, price_snapshot, imagen, status, admin_confirmed_missing, variant_id")
       .eq("order_id", selectedOrder.id);
     if (selectedItemsError) {
       console.warn("⚠️ Error cargando items del pedido activo:", selectedItemsError.message || selectedItemsError);
@@ -4142,7 +4215,10 @@ async function loadOrders(userId, options = {}) {
         currentOrderUiStateById.set(order.id, uiState);
         
         // Calcular total excluyendo items faltantes (con precios normalizados)
-        const validItems = items.filter(item => item.status !== 'missing');
+        const validItems = items.filter((item) => {
+          const isMissing = String(item?.status || "").toLowerCase().trim() === "missing";
+          return !isMissing || Boolean(item?.admin_confirmed_missing);
+        });
         const total = validItems.reduce((sum, item) => {
           const qty = Number(item.quantity || 0) || 0;
           const price = orderItemUnitForDisplay(item);
@@ -4165,13 +4241,28 @@ async function loadOrders(userId, options = {}) {
         }
         const visibleItems = getOrderNonCancelledItems(order);
         const normStatus = (s) => (String(s || "").toLowerCase().trim());
-        /** Espera (waiting) es solo interno; el cliente ve todo como reserva. */
-        const clientVisibleStatus = (s) => {
-          const n = normStatus(s);
-          return n === "waiting" ? "reserved" : n;
+        /**
+         * Espera (waiting) es solo interno; el cliente ve todo como reserva.
+         * admin_confirmed_missing=true: el admin garantizó la unidad → el cliente
+         * lo ve como "picked" (Listo), sea cual sea el status técnico.
+         * Acepta el ítem completo (objeto) o solo el status (string).
+         */
+        const clientVisibleStatus = (itemOrStatus) => {
+          const isObj = itemOrStatus !== null && typeof itemOrStatus === "object";
+          const n = normStatus(isObj ? itemOrStatus.status : itemOrStatus);
+          if (n === "waiting") return "reserved";
+          if (n === "missing" && isObj && Boolean(itemOrStatus.admin_confirmed_missing)) return "picked";
+          return n;
         };
-        const missingItems = visibleItems.filter((item) => normStatus(item.status) === "missing");
-        const itemsForGroups = visibleItems.filter((item) => normStatus(item.status) !== "missing");
+        const missingItemsReal = visibleItems.filter(
+          (item) => normStatus(item.status) === "missing" && !Boolean(item.admin_confirmed_missing)
+        );
+        const missingItemsManual = visibleItems.filter(
+          (item) => normStatus(item.status) === "missing" && Boolean(item.admin_confirmed_missing)
+        );
+        const itemsForGroups = visibleItems.filter(
+          (item) => !(normStatus(item.status) === "missing" && !Boolean(item.admin_confirmed_missing))
+        );
 
         const groupsMap = new Map();
         itemsForGroups.forEach((item) => {
@@ -4199,7 +4290,7 @@ async function loadOrders(userId, options = {}) {
             const sizeStatusMap = new Map();
             group.forEach((g) => {
               const size = g.size || "Unico";
-              const st = clientVisibleStatus(g.status);
+              const st = clientVisibleStatus(g); // pasa el ítem completo para evaluar admin_confirmed_missing
               const key = `${size}|${st || "reserved"}`;
               const qty = Number(g.quantity || 0) || 0;
               if (!sizeStatusMap.has(key)) {
@@ -4251,6 +4342,8 @@ async function loadOrders(userId, options = {}) {
 
             const orderItemIds = group.map((g) => g.id).filter(Boolean).join(",");
 
+            // El status ya viene normalizado por clientVisibleStatus:
+            // "missing + admin_confirmed_missing" ya se convirtió en "picked".
             function getStatusMeta(status) {
               const st = normStatus(status);
               if (st === "picked") {
@@ -4276,7 +4369,7 @@ async function loadOrders(userId, options = {}) {
             }
 
             // Estado principal del grupo (se muestra en la fila principal)
-            const groupStatuses = new Set(group.map((g) => clientVisibleStatus(g.status)));
+            const groupStatuses = new Set(group.map((g) => clientVisibleStatus(g)));
             let mainStatus = "reserved";
             if (groupStatuses.size === 1) {
               mainStatus = groupStatuses.values().next().value || "reserved";
@@ -4337,7 +4430,7 @@ async function loadOrders(userId, options = {}) {
           })
           .join("");
 
-        const missingCardsHtml = missingItems
+        const missingCardsHtml = missingItemsReal
           .map((m) => {
             const productName = m.product_name || "Producto";
             const color = abbreviateColorLabel(m.color || "Color unico");
@@ -4415,7 +4508,8 @@ async function loadOrders(userId, options = {}) {
           const s = (item.status || "").toLowerCase();
           return s === "reserved" || s === "waiting";
         });
-        const hasMissingItems = missingItems.length > 0;
+        // Solo los missing reales bloquean el flujo del cliente (los manuales son confirmados).
+        const hasMissingItems = missingItemsReal.length > 0;
         // Regla UX: 4+ productos habilita, y los items "reservados" no bloquean.
         const canFinalize = totalUnits >= MIN_UNITS_TO_FINALIZE && !hasMissingItems && (allPickedForOrder || hasReservedInOrder);
         const finalizeBtnClass = canFinalize ? "btn-finalize-order--enabled" : "btn-finalize-order--disabled";
@@ -4518,7 +4612,7 @@ async function loadOrders(userId, options = {}) {
               <div class="dash-order__list cart-items-list dash-order__list--collapsible" style="margin-top:8px;" data-max-collapsed-items="4">
                 ${itemsHtmlAll || "<p>No hay productos asociados al pedido.</p>"}
               </div>
-              ${(groupedItems.length + missingItems.length) > 4
+              ${(groupedItems.length + missingItemsReal.length + missingItemsManual.length) > 4
                 ? `<button type="button" class="dash-order__list-toggle" data-order-id="${order.id}" aria-expanded="false">
                     Ver todo el pedido ▾
                   </button>`
@@ -5110,7 +5204,7 @@ async function loadClosedOrders(userId) {
     const { data: sentOrders, error: sentError } = await supabase
       .from("orders")
       .select(
-        "id, order_number, status, total_amount, created_at, updated_at, order_items(id, product_name, color, size, quantity, price_snapshot, imagen, status, variant_id)"
+        "id, order_number, status, total_amount, created_at, updated_at, order_items(id, product_name, color, size, quantity, price_snapshot, imagen, status, admin_confirmed_missing, variant_id)"
       )
       .eq("customer_id", userId)
       .eq("status", "sent")
@@ -5200,8 +5294,11 @@ async function loadClosedOrders(userId) {
         const histBadgeText = histStatus === "sent" ? "Enviado" : "Cerrado";
         const items = order.order_items || [];
         
-        // Calcular total excluyendo items faltantes
-        const validItems = items.filter(item => item.status !== 'missing');
+        // Calcular total excluyendo solo faltantes reales (missing manual sí cuenta).
+        const validItems = items.filter((item) => {
+          const isMissing = String(item?.status || "").toLowerCase().trim() === "missing";
+          return !isMissing || Boolean(item?.admin_confirmed_missing);
+        });
         const total = validItems.reduce((sum, item) => {
           const qty = Number(item.quantity || 0) || 0;
           const price = orderItemUnitForDisplay(item);
@@ -5218,17 +5315,20 @@ async function loadClosedOrders(userId) {
               const itemPrice = orderItemUnitForDisplay(item);
               const itemSubtotal = itemQuantity * itemPrice;
               const isMissing = item.status === 'missing';
-              const itemClass = isMissing ? 'order-item-detail missing' : 'order-item-detail';
+              // Ítems confirmados manualmente: no son faltantes reales, se muestran como normales
+              const isManualConfirmed = Boolean(item.admin_confirmed_missing);
+              const isRealMissing = isMissing && !isManualConfirmed;
+              const itemClass = isRealMissing ? 'order-item-detail missing' : 'order-item-detail';
               
               return `
                 <div class="${itemClass}">
                   <img src="${itemImage}" alt="${item.product_name || 'Producto'}" class="order-item-detail-image" onerror="this.onerror=null;this.src='${FALLBACK_IMAGE}'">
                   <div class="order-item-detail-info">
-                    <div class="order-item-detail-name">${item.product_name || "Producto sin nombre"} ${isMissing ? '<span style="color: #dc3545; font-size: 12px;">(Faltante)</span>' : ''}</div>
+                    <div class="order-item-detail-name">${item.product_name || "Producto sin nombre"} ${isRealMissing ? '<span style="color: #dc3545; font-size: 12px;">(Faltante)</span>' : ''}</div>
                     <div class="order-item-detail-meta">Color: ${item.color || "-"} • Talle: ${item.size || "-"}</div>
                     <div class="order-item-detail-quantity">Cantidad: ${itemQuantity}</div>
                   </div>
-                  <div class="order-item-detail-price" style="${isMissing ? 'text-decoration: line-through; opacity: 0.5;' : ''}">$${itemSubtotal.toLocaleString("es-AR")}</div>
+                  <div class="order-item-detail-price" style="${isRealMissing ? 'text-decoration: line-through; opacity: 0.5;' : ''}">$${itemSubtotal.toLocaleString("es-AR")}</div>
                 </div>
               `;
             }).join("")

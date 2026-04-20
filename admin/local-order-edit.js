@@ -4,6 +4,15 @@ import { supabase } from "../scripts/supabase-client.js";
 import { SUPABASE_URL, QZ_SIGN_SECRET } from "../scripts/config.js";
 import { normalizeSize } from "../scripts/utils/size-normalizer.js";
 
+function generateOperationId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  const nowHex = Date.now().toString(16).padStart(12, "0");
+  const randHex = Math.random().toString(16).slice(2).padEnd(20, "0").slice(0, 20);
+  return `${nowHex.slice(0, 8)}-${nowHex.slice(8, 12)}-4${randHex.slice(0, 3)}-a${randHex.slice(3, 6)}-${randHex.slice(6, 18)}`;
+}
+
 await requireAuth();
 
 const TICKET_WIDTH = 42;
@@ -402,11 +411,14 @@ finalizeBtn.addEventListener("click", async () => {
       }
     }
     const finalTotal = getTotal();
+    const createSaleOperationId = generateOperationId();
     const { data: saleData, error: saleError } = await supabase.rpc("rpc_create_public_sale", {
       p_items: saleItems,
       p_customer_id: customer.id,
       p_notes: `Pedido local ${order.order_number || orderId}`,
       p_apply_credit: true,
+      p_operation_id: createSaleOperationId,
+      p_request: { source: 'admin/local-order-edit.js', action: 'finalize_local_order' },
     });
     if (saleError) throw saleError;
 

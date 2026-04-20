@@ -4,7 +4,7 @@ const CANONICAL_TRANSPORTS = Object.freeze({
   CREDIFIN: "Credifin",
   SNAIDER: "Snaider",
   SEDE: "SEDE",
-  RETIRO_DE_LOCAL: "Retiro de Local",
+  RETIRO_DE_LOCAL: "Retira local",
 });
 
 const TRANSPORT_ALIAS_TO_CANONICAL = Object.freeze({
@@ -14,6 +14,7 @@ const TRANSPORT_ALIAS_TO_CANONICAL = Object.freeze({
   "snaider": CANONICAL_TRANSPORTS.SNAIDER,
   "transporte snaider": CANONICAL_TRANSPORTS.SNAIDER,
   "sede": CANONICAL_TRANSPORTS.SEDE,
+  "retira local": CANONICAL_TRANSPORTS.RETIRO_DE_LOCAL,
   "retiro de local": CANONICAL_TRANSPORTS.RETIRO_DE_LOCAL,
   "retiro del local": CANONICAL_TRANSPORTS.RETIRO_DE_LOCAL,
   "retiro local": CANONICAL_TRANSPORTS.RETIRO_DE_LOCAL,

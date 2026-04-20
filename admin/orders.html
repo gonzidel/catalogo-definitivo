@@ -246,7 +246,76 @@
             gap: 4px;
             white-space: nowrap;
         }
+        .product-search-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .product-search-row #product-search {
+            flex: 1;
+            min-width: 0;
+            padding: 9px 10px !important;
+        }
+        .product-search-action-btn {
+            min-width: 90px;
+            padding: 9px 10px;
+            border-radius: 6px;
+            border: none;
+            color: #fff;
+            font-weight: 700;
+            cursor: pointer;
+            transition: filter 0.2s ease, opacity 0.2s ease;
+        }
+        .product-search-action-btn:hover {
+            filter: brightness(0.95);
+        }
+        .product-search-action-btn.is-inactive {
+            background: #cfd4da !important;
+            color: #6c757d !important;
+            cursor: default;
+        }
+        .product-search-action-btn.is-inactive:hover {
+            filter: none;
+        }
+        .product-search-action-btn.is-active-add {
+            background: #28a745 !important;
+            color: #fff !important;
+        }
+        .product-search-action-btn.is-active-close {
+            background: #dc3545 !important;
+            color: #fff !important;
+        }
+        .transport-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 5px 10px;
+            border-radius: 8px;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.4px;
+            text-transform: uppercase;
+            border: 1px solid rgba(0, 0, 0, 0.12);
+            line-height: 1.2;
+            white-space: nowrap;
+        }
+        .transport-badge--correo-argentino { background: #ffd54f; color: #5d4037; }
+        .transport-badge--sede { background: #ef5350; color: #ffffff; }
+        .transport-badge--credifin { background: #42a5f5; color: #ffffff; }
+        .transport-badge--via-cargo { background: #66bb6a; color: #ffffff; }
+        .transport-badge--mym { background: #4dd0e1; color: #0b3a42; }
+        .transport-badge--snaider { background: #ba68c8; color: #ffffff; }
+        .transport-badge--retira-local { background: #fb8c00; color: #ffffff; }
+        .transport-badge--default { background: #e9ecef; color: #495057; }
         @media (max-width: 768px) {
+            .product-search-row {
+                gap: 6px;
+            }
+            .product-search-action-btn {
+                min-width: 76px;
+                padding: 8px 8px;
+                font-size: 12px;
+            }
             .customer-details span {
                 display: block;
                 white-space: normal;
@@ -1538,7 +1607,11 @@
                             <!-- Campo de búsqueda por nombre -->
                             <div style="margin-bottom: 16px; position: relative;">
                                 <label for="product-search">Buscar Producto:</label>
-                                <input type="text" id="product-search" placeholder="Por inicio de nombre o código (ej. 80, R18)..." style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 16px;">
+                                <div class="product-search-row">
+                                    <input type="text" id="product-search" placeholder="Por inicio de nombre o código (ej. 80, R18)..." style="width: 100%; border: 1px solid #ddd; border-radius: 6px; font-size: 16px;">
+                                    <button type="button" id="product-search-add-btn" class="product-search-action-btn is-inactive">Agregar</button>
+                                    <button type="button" id="product-search-close-btn" class="product-search-action-btn is-inactive">Cerrar</button>
+                                </div>
                                 <div id="product-results" style="max-height: 700px; overflow-y: auto; border: 1px solid #ddd; border-radius: 6px; margin-top: 8px; display: none; background: white; position: absolute; z-index: 1000; width: 100%; max-width: 100%; box-shadow: 0 4px 8px rgba(0,0,0,0.1);"></div>
                             </div>
                             <style>

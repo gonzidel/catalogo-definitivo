@@ -3,6 +3,15 @@
 import { SUPABASE_URL, QZ_SIGN_SECRET } from "../scripts/config.js";
 import { parseARSNumber, resolveOrderItemUnitPrice } from "../scripts/utils/price.js";
 
+function generateOperationId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  const nowHex = Date.now().toString(16).padStart(12, "0");
+  const randHex = Math.random().toString(16).slice(2).padEnd(20, "0").slice(0, 20);
+  return `${nowHex.slice(0, 8)}-${nowHex.slice(8, 12)}-4${randHex.slice(0, 3)}-a${randHex.slice(3, 6)}-${randHex.slice(6, 18)}`;
+}
+
 let supabase = null;
 
 // Función para obtener supabase, esperando a que esté disponible
@@ -2091,15 +2100,16 @@ async function markOrderAsDevolucion(orderId) {
 
     console.log(`🔄 Llamando a función RPC para marcar pedido ${orderId} como devolución...`);
 
-    // Llamar a la función RPC que maneja todo de manera atómica
+    const operationId = generateOperationId();
     const { error: rpcError } = await supabase.rpc('rpc_mark_order_as_devolucion', {
-      p_order_id: orderId
+      p_order_id: orderId,
+      p_operation_id: operationId,
+      p_request: { source: 'admin/sent-orders.js', action: 'mark_devolucion' },
     });
 
     if (rpcError) {
       console.error("❌ Error en función RPC rpc_mark_order_as_devolucion:", rpcError);
 
-      // Si la función RPC no existe, mostrar mensaje instructivo
       if (rpcError.code === '42883' || rpcError.message?.includes('does not exist')) {
         alert("⚠️ La función de devolución no está disponible. Por favor, ejecuta el script SQL '20_mark_order_as_devolucion.sql' en la base de datos.");
         console.error("❌ La función RPC rpc_mark_order_as_devolucion no existe. Ejecuta el script SQL correspondiente.");
@@ -2110,59 +2120,7 @@ async function markOrderAsDevolucion(orderId) {
       return;
     }
 
-    console.log(`✅ Función RPC ejecutada correctamente para pedido ${orderId}`);
-
-    // Verificar que el estado se actualizó correctamente inmediatamente
-    const { data: verifyOrder, error: verifyError } = await supabase
-      .from("orders")
-      .select("status")
-      .eq("id", orderId)
-      .maybeSingle();
-
-    if (verifyError) {
-      console.error("❌ Error verificando estado después de RPC:", verifyError);
-    } else if (verifyOrder && verifyOrder.status !== 'devolución') {
-      console.error(`❌ ADVERTENCIA: Después de RPC, el estado es ${verifyOrder.status}, no 'devolución'`);
-      alert(`⚠️ Advertencia: El proceso se completó pero el estado final es "${verifyOrder.status}" en lugar de "devolución". Por favor, verifica manualmente.`);
-    } else {
-      console.log(`✅ Estado verificado correctamente: ${verifyOrder?.status}`);
-    }
-
-    // Esperar un momento y verificar nuevamente para detectar cambios posteriores
-    await new Promise(resolve => setTimeout(resolve, 1000));
-
-    const { data: finalCheck, error: finalCheckError } = await supabase
-      .from("orders")
-      .select("status")
-      .eq("id", orderId)
-      .maybeSingle();
-
-    if (finalCheckError) {
-      console.error("❌ Error en verificación final después de delay:", finalCheckError);
-    } else if (finalCheck && finalCheck.status !== 'devolución') {
-      console.error(`❌ ADVERTENCIA CRÍTICA: Después de delay, el estado cambió a ${finalCheck.status}`);
-
-      // Intentar restaurar el estado a devolución
-      console.log(`🔄 Intentando restaurar estado a 'devolución'...`);
-      const { error: restoreError } = await supabase
-        .from("orders")
-        .update({
-          status: 'devolución',
-          updated_at: new Date().toISOString()
-        })
-        .eq("id", orderId)
-        .in("status", ["picked", "active", "closed", "sent"]);
-
-      if (restoreError) {
-        console.error("❌ Error restaurando estado:", restoreError);
-        alert(`⚠️ Error crítico: El estado del pedido cambió a "${finalCheck.status}" después de marcarlo como devolución. No se pudo restaurar automáticamente. Por favor, verifica manualmente.`);
-      } else {
-        console.log(`✅ Estado restaurado correctamente a 'devolución'`);
-        alert(`⚠️ Advertencia: El estado del pedido cambió temporalmente pero fue restaurado a "devolución".`);
-      }
-    } else {
-      console.log(`✅ Verificación final: Estado correcto (${finalCheck?.status})`);
-    }
+    console.log(`✅ Devolución procesada correctamente para pedido ${orderId} (op: ${operationId})`);
 
     if (currentOrder?.customer_id) {
       await emitCustomerNotification({

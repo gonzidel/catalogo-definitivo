@@ -117,13 +117,23 @@ export async function buscarProductosAlternativos({
       return attachPdpUrls(fallback);
     }
 
+    // Resolver UUIDs de warehouses una sola vez antes de enriquecer variantes
+    const { data: whRows } = await supabase
+      .from('warehouses')
+      .select('id, code')
+      .in('code', ['general', 'venta-publico']);
+    const whMap = new Map((whRows || []).map((w) => [w.code, w.id]));
+    const generalId = whMap.get('general') || null;
+    const ventaId = whMap.get('venta-publico') || null;
+    const whIds = [generalId, ventaId].filter(Boolean);
+
     // Enriquecer con imágenes y datos adicionales
     const productosEnriquecidosRaw = await Promise.all(
       similares.map(async (item) => {
-        // Obtener variante específica (color y talle)
+        // Obtener variante específica (color y talle) — sin columnas deprecated de stock
         const { data: variant } = await supabase
           .from('product_variants')
-          .select('id, color, size, sku, price, stock_qty, reserved_qty')
+          .select('id, color, size, sku, price')
           .eq('product_id', item.product_id)
           .eq('color', item.color)
           .in('size', item.available_sizes || [])
@@ -138,27 +148,45 @@ export async function buscarProductosAlternativos({
           .eq('position', 1)
           .maybeSingle();
 
+        // Calcular stock disponible desde fuente canónica por warehouse (usando UUIDs reales)
+        let stockDisponible = 0;
+        if (variant?.id && whIds.length > 0) {
+          const { data: whStock } = await supabase
+            .from('variant_warehouse_stock')
+            .select('stock_qty')
+            .eq('variant_id', variant.id)
+            .in('warehouse_id', whIds);
+          (whStock || []).forEach((row) => {
+            stockDisponible += Number(row.stock_qty ?? 0);
+          });
+          stockDisponible = Math.max(0, stockDisponible);
+        }
+
         // Obtener todos los colores disponibles para este producto y talle
-        const { data: coloresDisponibles } = await supabase
+        const { data: variantesColor } = await supabase
           .from('product_variants')
-          .select('color, price, stock_qty, reserved_qty')
+          .select('id, color, price')
           .eq('product_id', item.product_id)
           .in('size', item.available_sizes || [])
           .eq('active', true);
 
-        const coloresConStock = (coloresDisponibles || []).filter((c) => {
-          const stock = Number(c.stock_qty ?? 0);
-          const reserved = Number(c.reserved_qty ?? 0);
-          return stock - reserved > 0;
-        });
+        // Para cada variante de color, verificar stock canónico (usando UUIDs reales)
+        const coloresConStock = await Promise.all(
+          (variantesColor || []).map(async (v) => {
+            if (whIds.length === 0) return null;
+            const { data: stockRows } = await supabase
+              .from('variant_warehouse_stock')
+              .select('stock_qty')
+              .eq('variant_id', v.id)
+              .in('warehouse_id', whIds);
+            const total = (stockRows || []).reduce((sum, r) => sum + Number(r.stock_qty ?? 0), 0);
+            return total > 0 ? { color: v.color, precio: Number(v.price ?? 0), stock: total } : null;
+          })
+        ).then((results) => results.filter(Boolean));
 
         // Obtener highlights para mostrar como tags
         const { data: highlights } = await supabase
           .rpc('get_product_highlights', { product_id: item.product_id });
-
-        const stockDisponible = variant 
-          ? Number(variant.stock_qty ?? 0) - Number(variant.reserved_qty ?? 0)
-          : 0;
 
         return {
           product_id: item.product_id,
@@ -171,13 +199,9 @@ export async function buscarProductosAlternativos({
           precio: Number(item.price ?? 0) || 0,
           imagen: image?.url || null,
           stock_disponible: stockDisponible,
-          colores_disponibles: coloresConStock.map((c) => ({
-            color: c.color,
-            precio: Number(c.price ?? 0) || 0,
-            stock: Number(c.stock_qty ?? 0) - Number(c.reserved_qty ?? 0),
-          })),
+          colores_disponibles: coloresConStock,
           tags: (highlights || []).map(h => h.name),
-          similitud: item.similarity_score / 100, // Normalizar score a 0-1 para compatibilidad
+          similitud: item.similarity_score / 100,
           variant_id: variant?.id,
         };
       })

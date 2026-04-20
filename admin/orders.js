@@ -1,6 +1,44 @@
 // Importar dinámicamente para asegurar que se cargue después
 let supabase = null;
 
+function generateOperationId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  const nowHex = Date.now().toString(16).padStart(12, "0");
+  const randHex = Math.random().toString(16).slice(2).padEnd(20, "0").slice(0, 20);
+  return `${nowHex.slice(0, 8)}-${nowHex.slice(8, 12)}-4${randHex.slice(0, 3)}-a${randHex.slice(3, 6)}-${randHex.slice(6, 18)}`;
+}
+
+async function callMarkOrderItemsPicked(sb, itemIds, source) {
+  const operationId = generateOperationId();
+  const { data, error } = await sb.rpc("rpc_mark_order_items_picked", {
+    p_order_item_ids: itemIds,
+    p_operation_id: operationId,
+    p_request: { source: "admin/orders.js", action: source },
+  });
+
+  if (error) {
+    const code = error.code ?? error.message ?? "";
+    if (code.includes("conflict_in_progress")) {
+      console.warn("⏳ rpc_mark_order_items_picked: operación en curso (conflict_in_progress). Reintentar en 2 s.");
+    } else if (code.includes("operation_id_conflict")) {
+      console.error("❌ rpc_mark_order_items_picked: operation_id reutilizado con payload distinto (bug).", error);
+    } else {
+      console.error("❌ rpc_mark_order_items_picked error:", error);
+    }
+    throw error;
+  }
+
+  if (data?.idempotent_replay) {
+    console.log(`↩️  rpc_mark_order_items_picked replay (${source}): ${data.updated_count} actualizado(s), ${data.skipped_count} ya estaban en picked.`);
+  } else {
+    console.log(`✅ rpc_mark_order_items_picked (${source}): ${data?.updated_count ?? 0} actualizado(s), ${data?.skipped_count ?? 0} ya en picked.`);
+  }
+
+  return data;
+}
+
 // Verificar permisos de pedidos
 let canViewOrders = false;
 let canEditOrders = false;
@@ -137,6 +175,17 @@ const ITEM_STATUS_INFO = {
   waiting: { text: "Espera", className: "waiting" },
 };
 
+function isManualMissingOrderItem(item) {
+  const status = String(item?.status || "").trim().toLowerCase();
+  return status === "missing" && Boolean(item?.admin_confirmed_missing);
+}
+
+// Ítems nuevos (post-fix 179): picked pero con trazabilidad de confirmación manual.
+function isPickedManualConfirmed(item) {
+  const status = String(item?.status || "").trim().toLowerCase();
+  return status === "picked" && Boolean(item?.admin_confirmed_missing);
+}
+
 /** Línea en waiting que sale del depósito venta-público (local). */
 function isWaitingFromVentaPublico(item, warehouseInfoMap) {
   if (String(item?.status || "").trim().toLowerCase() !== "waiting") return false;
@@ -158,6 +207,12 @@ function isWaitingFromVentaPublico(item, warehouseInfoMap) {
 
 function getOrderItemStatusDisplayInfo(item, warehouseInfoMap = new Map()) {
   const base = ITEM_STATUS_INFO[item.status] || ITEM_STATUS_INFO.reserved;
+  if (isManualMissingOrderItem(item)) {
+    return { ...base, text: "Falta (manual)" };
+  }
+  if (isPickedManualConfirmed(item)) {
+    return { ...base, text: "Apartado (manual)" };
+  }
   if (isWaitingFromVentaPublico(item, warehouseInfoMap)) {
     return { ...base, text: "Espera en local" };
   }
@@ -172,13 +227,18 @@ function hasAllItemsPicked(order) {
     return false;
   }
   const items = isOrders2Page()
-    ? order.order_items.filter((item) => String(item?.status || "").trim().toLowerCase() !== "missing")
+    ? order.order_items.filter((item) => {
+        const status = String(item?.status || "").trim().toLowerCase();
+        return status !== "missing" || isManualMissingOrderItem(item);
+      })
     : order.order_items;
   const totalItems = items.length;
   const norm = (s) => String(s ?? "").trim().toLowerCase();
   const pickedItems = items.filter(item => {
     const st = norm(item.status);
-    return st === "picked" || st === "waiting";
+    // Los ítems confirmados manualmente (missing + admin_confirmed_missing) cuentan
+    // como "efectivamente apartados" para la asignación de pestañas.
+    return st === "picked" || st === "waiting" || isManualMissingOrderItem(item) || isPickedManualConfirmed(item);
   }).length;
   return pickedItems === totalItems && totalItems > 0;
 }
@@ -193,24 +253,18 @@ function hasReservedItems(order) {
 }
 
 // Función auxiliar para verificar si un pedido tiene items que necesitan atención
-// (reserved o missing - no completamente apartados)
+// (reserved o missing real — no los confirmados manualmente que ya son operativos)
 function hasItemsNeedingAttention(order) {
   if (!order.order_items || order.order_items.length === 0) {
     return false;
   }
-  // Un pedido necesita atención si tiene items "reserved" o "missing"
-  // Es decir, si NO todos los items están "picked" o "waiting"
-  const hasNeedingAttention = order.order_items.some(item => 
-    item.status === 'reserved' || item.status === 'missing'
+  // Los ítems missing confirmados manualmente (admin_confirmed_missing) NO son "faltantes
+  // reales": el admin confirmó que los tiene físicamente, así que no generan atención.
+  return order.order_items.some(item =>
+    (item.status === 'reserved' || item.status === 'missing') &&
+    !isManualMissingOrderItem(item) &&
+    !isPickedManualConfirmed(item)
   );
-  
-  // Log para depuración
-  if (!hasNeedingAttention && order.order_items.length > 0) {
-    const statuses = order.order_items.map(item => item.status);
-    console.log(`🔍 Pedido ${order.order_number || order.id} - Status de items:`, statuses);
-  }
-  
-  return hasNeedingAttention;
 }
 
 // Función auxiliar para verificar si un pedido tiene items en espera
@@ -515,12 +569,35 @@ async function loadTransportNames() {
   }
 }
 
+function normalizeTransportNameKey(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ");
+}
+
 function getOrderTransportLabel(order, customer) {
   const orderTransportId = String(order?.transport_id || "").trim();
   const customerTransportId = String(customer?.transport_id || "").trim();
   const transportId = orderTransportId || customerTransportId;
   if (!transportId) return "Sin transporte asignado";
   return transportNameById.get(transportId) || "Transporte asignado";
+}
+
+function getTransportBadgeClassByLabel(label) {
+  const key = normalizeTransportNameKey(label);
+  if (key === "correo argentino") return "transport-badge--correo-argentino";
+  if (key === "sede") return "transport-badge--sede";
+  if (key === "credifin") return "transport-badge--credifin";
+  if (key === "via cargo" || key === "via carlo") return "transport-badge--via-cargo";
+  if (key === "mym") return "transport-badge--mym";
+  if (key === "snaider") return "transport-badge--snaider";
+  if (key === "retira local" || key === "retiro del local" || key === "retiro de local") {
+    return "transport-badge--retira-local";
+  }
+  return "transport-badge--default";
 }
 
 /** Contribuciones por ítem (picked/waiting/missing/reserved) según BD o selección pendiente orders2. */
@@ -553,7 +630,7 @@ function collectContributionsForOrderItem(item, pendingEntry) {
     if (a === "delete-item" || a === "remove-missing" || a === "cleanup-cancelled") return [];
     if (a === "picked") return [piece("picked", qty)];
     if (a === "waiting") return [piece("waiting", qty)];
-    if (a === "missing") return [piece("missing", qty)];
+    if (a === "missing") return [piece(isManualMissingOrderItem(item) ? "missing_manual" : "missing", qty)];
     if (a === "reserved") return [piece("reserved", qty)];
     return [];
   }
@@ -561,7 +638,7 @@ function collectContributionsForOrderItem(item, pendingEntry) {
   const st = norm(item.status);
   if (st === "picked") return [piece("picked", qty)];
   if (st === "waiting") return [piece("waiting", qty)];
-  if (st === "missing") return [piece("missing", qty)];
+  if (st === "missing") return [piece(isManualMissingOrderItem(item) ? "missing_manual" : "missing", qty)];
   if (st === "reserved") return [piece("reserved", qty)];
   return [piece("reserved", qty)];
 }
@@ -577,14 +654,19 @@ function buildAdminClientSummaryFromContributions(contributions) {
     return `- ${q} unidades del artículo ${c.name}, color ${c.color}, talle ${c.size}`;
   };
 
-  const hasMissing = contributions.some((c) => c.kind === "missing");
+  const hasMissing = contributions.some((c) => c.kind === "missing" || c.kind === "missing_manual");
   const apartadosQty = contributions
     .filter((c) => c.kind === "picked" || c.kind === "waiting")
     .reduce((sum, c) => sum + c.qty, 0);
 
   const missingLines = contributions.filter((c) => c.kind === "missing").map(fmtMissingLine);
-  const stockBlock =
-    missingLines.length > 0 ? `❌ Sin stock:\n${missingLines.join("\n")}` : "";
+  const missingManualLines = contributions.filter((c) => c.kind === "missing_manual").map(fmtMissingLine);
+  const stockBlock = [
+    missingLines.length > 0 ? `❌ Sin stock:\n${missingLines.join("\n")}` : "",
+    missingManualLines.length > 0 ? `⚠ Carga manual sin stock confirmado:\n${missingManualLines.join("\n")}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 
   // Sin apartados efectivos y sin faltantes en el mensaje (p. ej. solo reserva interna): no inventar texto
   if (!hasMissing && apartadosQty === 0) {
@@ -1053,7 +1135,10 @@ function setupOrders2MissingItemsModalSystem() {
     if (!modal || !title || !body) return;
 
     const order = orders.find((o) => String(o?.id) === String(orderId));
-    const items = (order?.order_items || []).filter((i) => String(i?.status || "").trim().toLowerCase() === "missing");
+    const items = (order?.order_items || []).filter((i) => {
+      const status = String(i?.status || "").trim().toLowerCase();
+      return status === "missing" && !isManualMissingOrderItem(i);
+    });
 
     title.textContent = `Productos faltantes (${items.length || 0})`;
 
@@ -1617,7 +1702,7 @@ async function loadOrders(resetPagination = true) {
           .from("orders")
           .select(`
             id, order_number, status, total_amount, created_at, expires_at, dismantle_at, transport_id, updated_at, sent_at, customer_id, notes, source,
-            order_items ( id, product_name, color, size, quantity, price_snapshot, status, imagen, variant_id, order_item_stock_sources ( qty, warehouse_id ) ),
+            order_items ( id, product_name, color, size, quantity, price_snapshot, status, admin_confirmed_missing, imagen, variant_id, order_item_stock_sources ( qty, warehouse_id ) ),
             customers:customer_id!left ( id, customer_number, full_name, phone, city, province, dni, email, transport_id )
           `)
           .in("id", pageIds)
@@ -1717,6 +1802,7 @@ async function loadOrders(resetPagination = true) {
               quantity,
               price_snapshot,
               status,
+              admin_confirmed_missing,
               imagen,
               variant_id,
               order_item_stock_sources ( qty, warehouse_id )
@@ -3003,20 +3089,22 @@ async function renderOrderCard(order) {
   const customer = Array.isArray(order?.customers) ? (order.customers[0] ?? {}) : (order?.customers && typeof order.customers === 'object' ? order.customers : {});
   const isCustomerOrder = String(order?.source || "").trim().toLowerCase() === "customer";
 
-  const customerEmail = (customer?.email || '').trim() || '—';
   const customerPhone = (customer?.phone || '').trim() || '—';
   const customerPhoneDigits = buildWhatsAppHref(customerPhone) ? toWhatsAppPhoneDigits(customerPhone) : "";
   const customerPhoneHref = buildWhatsAppHref(customerPhone);
-  const customerDni = (customer?.dni || '').trim() || '';
   const customerNumber = (customer?.customer_number || '').trim() || '';
   const customerCity = (customer?.city || '').trim() || '';
   const customerProvince = (customer?.province || '').trim() || '';
   const customerIncidentPointsHtml = buildCustomerIncidentPointsHtml(customer?.id || order?.customer_id || "");
+  await loadTransportNames();
+  const transportLabelRaw = getOrderTransportLabel(order, customer);
+  const transportLabel = transportLabelRaw && transportLabelRaw !== "Transporte asignado"
+    ? transportLabelRaw
+    : "Sin transporte";
+  const transportBadgeClass = getTransportBadgeClassByLabel(transportLabel);
+  const transportBadgeText = transportLabel.toUpperCase();
   const showDetailButton = displayStatus === "picked";
   const showTransportUnderDetail = showDetailButton && isCustomerOrder;
-  if (showTransportUnderDetail) {
-    await loadTransportNames();
-  }
   const detailTransportLabel = showTransportUnderDetail ? getOrderTransportLabel(order, customer) : "";
   const detailActionHtml = showDetailButton ? `
     <div style="display:flex; flex-direction:column; align-items:flex-end; gap:6px;">
@@ -3157,6 +3245,7 @@ async function renderOrderCard(order) {
       activeItems = allItems.filter((item) => {
         if (item.status === "reserved") return true;
         if (item.status === "waiting" && orderHasReserved) return true;
+        if (item.status === "missing" && isManualMissingOrderItem(item)) return true;
         return false;
       });
     }
@@ -3167,9 +3256,12 @@ async function renderOrderCard(order) {
     activeItems = allItems.filter(item => item.status !== 'cancelled');
   }
 
-  // Orders2: los items faltantes se gestionan por aviso + modal, no se muestran como ficha en la card
+  // Orders2: ocultar solo missing real; missing manual sí se muestra como ficha en la card.
   if (isOrders2Page()) {
-    activeItems = (activeItems || []).filter((item) => String(item?.status || "").trim().toLowerCase() !== "missing");
+    activeItems = (activeItems || []).filter((item) => {
+      const status = String(item?.status || "").trim().toLowerCase();
+      return status !== "missing" || isManualMissingOrderItem(item);
+    });
   }
   
   // Mostrar advertencia si hay items cancelados (solo si no estamos en filtro de espera)
@@ -3184,9 +3276,10 @@ async function renderOrderCard(order) {
     </div>
   ` : '';
 
-  const missingBannerHtml = (isOrders2Page() && missingItemsAll.length > 0)
+  const missingItemsReal = missingItemsAll.filter((item) => !isManualMissingOrderItem(item));
+  const missingBannerHtml = (isOrders2Page() && missingItemsReal.length > 0)
     ? `<button type="button" class="orders2-missing-banner" data-open-missing-modal="${order.id}" aria-label="Ver productos faltantes">
-         ⚠️ Faltantes: ${missingItemsAll.length}
+         ⚠️ Faltantes: ${missingItemsReal.length}
        </button>`
     : "";
   
@@ -3527,14 +3620,13 @@ async function renderOrderCard(order) {
           ${detailActionHtml}
         </div>
         <div class="customer-details">
-          ${customerDni ? `<span>🆔 DNI: ${customerDni}</span>` : ""}
           ${
             (customerPhoneHref && customerPhoneDigits.length >= 8)
               ? `<a href="${customerPhoneHref}" target="_blank" rel="noopener noreferrer" style="color: inherit; text-decoration: underline; text-underline-offset: 3px; font-weight: 600;">📞 ${customerPhone}</a>`
               : `<span>📞 ${customerPhone}</span>`
           }
-          <span>📧 ${customerEmail}</span>
           ${(customerCity || customerProvince) ? `<span>📍 ${[customerCity, customerProvince].filter(Boolean).join(" - ")}</span>` : ""}
+          <span class="transport-badge ${transportBadgeClass}">${transportBadgeText}</span>
         </div>
         ${
           showClientSummaryBtn
@@ -5314,24 +5406,10 @@ async function pickAllReservedItems(orderId) {
     }
     
     console.log(`🔄 Apartando ${orderItems.length} productos reservados del pedido ${orderId}`);
-    
-    // OPTIMIZACIÓN: Actualización masiva en una sola operación
+
     const itemIds = orderItems.map(item => item.id);
-    const { error: updateError } = await supabase
-      .from("order_items")
-      .update({
-        status: "picked",
-        checked_by: currentAdminUser.id,
-        checked_at: new Date().toISOString()
-      })
-      .in("id", itemIds);
-    
-    if (updateError) {
-      console.error("❌ Error apartando productos:", updateError);
-      alert(`Error: No se pudieron apartar los productos. ${updateError.message}`);
-      return;
-    }
-    
+    await callMarkOrderItemsPicked(supabase, itemIds, "pick_reserved");
+
     console.log(`✅ ${orderItems.length} productos apartados correctamente`);
     
     // Delay para asegurar propagación de cambios en BD (evita mezcla entre pestañas)
@@ -5433,20 +5511,7 @@ async function pickAllWaitingItems(orderId) {
     }
 
     const itemIds = orderItems.map(item => item.id);
-    const { error: updateError } = await supabase
-      .from("order_items")
-      .update({
-        status: "picked",
-        checked_by: currentAdminUser.id,
-        checked_at: new Date().toISOString()
-      })
-      .in("id", itemIds);
-
-    if (updateError) {
-      console.error("❌ Error apartando productos en espera:", updateError);
-      alert(`Error: No se pudieron apartar los productos. ${updateError.message}`);
-      return;
-    }
+    await callMarkOrderItemsPicked(supabase, itemIds, "pick_waiting");
 
     await new Promise(resolve => setTimeout(resolve, 150));
     orders = [];
@@ -5530,20 +5595,7 @@ async function pickAllItems(orderId) {
     }
 
     const itemIds = orderItems.map(item => item.id);
-    const { error: updateError } = await supabase
-      .from("order_items")
-      .update({
-        status: "picked",
-        checked_by: currentAdminUser.id,
-        checked_at: new Date().toISOString()
-      })
-      .in("id", itemIds);
-
-    if (updateError) {
-      console.error("❌ Error apartando productos:", updateError);
-      alert(`Error: No se pudieron apartar los productos. ${updateError.message}`);
-      return;
-    }
+    await callMarkOrderItemsPicked(supabase, itemIds, "pick_all");
 
     await new Promise(resolve => setTimeout(resolve, 150));
     orders = [];

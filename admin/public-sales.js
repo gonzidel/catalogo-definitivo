@@ -1,4 +1,4 @@
-﻿// admin/public-sales.js
+// admin/public-sales.js
 import { requireAuth } from "./admin-auth.js";
 import { supabase } from "../scripts/supabase-client.js";
 import { SUPABASE_URL, QZ_SIGN_SECRET, fylDevLog } from "../scripts/config.js";
@@ -8789,7 +8789,12 @@ window.voidSale = async function (saleId) {
   }
   try {
     __voidSaleInFlight.add(saleId);
-    const { data, error } = await supabase.rpc('rpc_void_public_sale', { p_sale_id: saleId });
+    const voidOperationId = generateOperationId();
+    const { data, error } = await supabase.rpc('rpc_void_public_sale', {
+      p_sale_id: saleId,
+      p_operation_id: voidOperationId,
+      p_request: { source: 'admin/public-sales.js', action: 'void_public_sale' },
+    });
     if (error) throw error;
     __voidedSaleIds.add(saleId);
     showMessage('Venta anulada correctamente. Stock restablecido en venta al público.', 'success');

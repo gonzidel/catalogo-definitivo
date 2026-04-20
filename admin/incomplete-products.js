@@ -589,20 +589,6 @@ window.saveStockAndRedirect = async function(productId) {
         console.log(`✅ rpc_set_variant_size_stock_batch (incomplete): ${rpcData.changed_items} cambio(s), ${rpcData.skipped_unchanged} sin cambio.`);
       }
 
-      // --- Código original (Etapa 1) — desactivado. Conservado como referencia.
-      /*
-      if (sizeWarehouseUpdates.length > 0) {
-        const { error: sizeWarehouseError } = await supabase
-          .from("variant_size_warehouse_stock")
-          .upsert(sizeWarehouseUpdates, { onConflict: "variant_id,size,warehouse_id" });
-        if (sizeWarehouseError) {
-          console.error("Error actualizando variant_size_warehouse_stock:", sizeWarehouseError);
-          throw new Error(`Error actualizando stock por talle y almacén: ${sizeWarehouseError.message}`);
-        }
-      }
-      */
-      // --- fin código original ---
-
       // variant_warehouse_stock se actualiza automáticamente via trigger 145
       // al escribir en variant_size_warehouse_stock.
     }
@@ -641,19 +627,6 @@ window.saveStockAndRedirect = async function(productId) {
         console.log(`✅ rpc_set_variant_warehouse_stock_batch (incomplete): ${rpcData.changed_items} cambio(s), ${rpcData.skipped_unchanged} sin cambio.`);
       }
 
-      // --- Código original (Etapa 1) — desactivado. Conservado como referencia.
-      /*
-      if (warehouseUpdates.length > 0) {
-        const { error: warehouseError } = await supabase
-          .from("variant_warehouse_stock")
-          .upsert(warehouseUpdates, { onConflict: "variant_id,warehouse_id" });
-        if (warehouseError) {
-          console.error("Error actualizando variant_warehouse_stock (sin talles):", warehouseError);
-          throw new Error(`Error actualizando stock: ${warehouseError.message}`);
-        }
-      }
-      */
-      // --- fin código original ---
     }
   } catch (error) {
     showMessage(`Error guardando stock: ${error.message}`, "err");

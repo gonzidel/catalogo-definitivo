@@ -571,7 +571,6 @@ async function fetchVariantInfo(articulo, color, talle, variantId = null, option
         if (normalizeSize(s.size) === normalizedSize) stockTotal += s.stock_qty || 0;
       });
     }
-    if (stockTotal === 0 && sizeStockQty > 0) stockTotal = sizeStockQty;
     const available = Math.max(0, stockTotal - reserved);
 
     return setCachedMapValue(

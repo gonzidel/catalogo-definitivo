@@ -1167,7 +1167,29 @@ async function renderOrderCard(order) {
 
   // Buscar el transporte en la lista de transportes agendados (comparar como strings)
   const transport = transportId ? scheduledTransports.find(t => String(t.id) === String(transportId)) : null;
-  const transportName = transport ? transport.name : (transportId ? 'Transporte no encontrado' : 'Sin transporte asignado');
+  const transportName = transport
+    ? canonicalizeTransportName(transport.name || "")
+    : (transportId ? "Transporte no encontrado" : "Sin transporte asignado");
+  const transportOptions = [];
+  const seenTransportOptionKeys = new Set();
+  for (const t of scheduledTransports) {
+    const canonicalName = canonicalizeTransportName(t?.name || "");
+    const key = normalizeTransportKey(canonicalName || t?.name || "");
+    if (!key || seenTransportOptionKeys.has(key)) continue;
+    seenTransportOptionKeys.add(key);
+    transportOptions.push({
+      ...t,
+      displayName: canonicalName || t?.name || "Sin nombre",
+      canonicalKey: key,
+    });
+  }
+  const selectedTransportOption = transportOptions.find((opt) => {
+    if (!transportId) return false;
+    if (String(transportId) === String(opt.id)) return true;
+    if (!transport) return false;
+    return normalizeTransportKey(transportName) === opt.canonicalKey;
+  });
+  const selectedTransportOptionId = selectedTransportOption ? String(selectedTransportOption.id) : null;
 
   // Debug: Log para verificar el transporte asignado
   console.log(`🔍 Pedido ${order.order_number || order.id?.substring(0, 8)}: transportId=${transportId}, transport encontrado:`, transport ? transport.name : `NO ENCONTRADO (hay ${scheduledTransports.length} transportes disponibles: ${scheduledTransports.map(t => t.name).join(', ')})`);
@@ -1191,7 +1213,7 @@ async function renderOrderCard(order) {
         <div class="customer-name">
           ${customer.customer_number ? `<span style="color: #CD844D; font-weight: 600; margin-right: 8px;">#${customer.customer_number}</span>` : ""}
           ${formatCustomerDisplayName(customer)}
-          ${transport ? `<span style="margin-left: 12px; padding: 4px 8px; background: #e3f2fd; color: #1565c0; border-radius: 4px; font-size: 12px; font-weight: 500;">🚚 ${transport.name}</span>` : ''}
+          ${transport ? `<span style="margin-left: 12px; padding: 4px 8px; background: #e3f2fd; color: #1565c0; border-radius: 4px; font-size: 12px; font-weight: 500;">🚚 ${transportName}</span>` : ''}
         </div>
         <div class="customer-details">
           ${customer.dni ? `<span>🆔 DNI: ${customer.dni}</span>` : ""}
@@ -1205,17 +1227,17 @@ async function renderOrderCard(order) {
         <strong>🚚 Transporte:</strong>
         ${scheduledTransports.length > 0 ? `
         <div class="transport-selector">
-          <select class="transport-select" data-order-id="${order.id}" data-customer-id="${order.customer_id || customer.id || ''}" ${transportId ? `data-current-transport="${transportId}"` : ''}>
+          <select class="transport-select" data-order-id="${order.id}" data-customer-id="${order.customer_id || customer.id || ''}" ${selectedTransportOptionId ? `data-current-transport="${selectedTransportOptionId}"` : ''}>
             <option value="" ${!transportId ? 'selected' : ''}>Sin transporte</option>
-            ${scheduledTransports.map(t => {
-    const isSelected = transportId && String(transportId) === String(t.id);
+            ${transportOptions.map(t => {
+    const isSelected = selectedTransportOptionId && String(selectedTransportOptionId) === String(t.id);
     if (isSelected) {
       console.log(`✅ Transporte seleccionado en select: ${t.name} (${t.id}) para pedido ${order.order_number || order.id?.substring(0, 8)}`);
     }
-    return `<option value="${t.id}" ${isSelected ? 'selected' : ''}>${t.name || 'Sin nombre'}</option>`;
+    return `<option value="${t.id}" ${isSelected ? 'selected' : ''}>${t.displayName || 'Sin nombre'}</option>`;
   }).join('')}
           </select>
-          ${transportId ? `<input type="hidden" class="transport-id-debug" value="${transportId}" data-order-id="${order.id}" />` : ''}
+          ${selectedTransportOptionId ? `<input type="hidden" class="transport-id-debug" value="${selectedTransportOptionId}" data-order-id="${order.id}" />` : ''}
           <button class="btn btn-primary" style="padding: 6px 12px; font-size: 12px;" data-create-transport="${order.id}">+ Nuevo</button>
         </div>
         ` : `
@@ -1225,7 +1247,7 @@ async function renderOrderCard(order) {
         </div>
         `}
         <div style="margin-top: 8px; font-size: 13px; color: #666;">
-          ${transport ? `<strong>Asignado:</strong> ${transport.name || 'Sin nombre'}${transport.details ? ` - ${transport.details}` : ''}` : transportId ? `<strong>Asignado:</strong> Transporte (ID: ${transportId.substring(0, 8)}...)` : '<em>No hay transporte asignado</em>'}
+          ${transport ? `<strong>Asignado:</strong> ${transportName || 'Sin nombre'}${transport.details ? ` - ${transport.details}` : ''}` : transportId ? `<strong>Asignado:</strong> Transporte (ID: ${transportId.substring(0, 8)}...)` : '<em>No hay transporte asignado</em>'}
         </div>
       </div>
       <div class="order-summary">

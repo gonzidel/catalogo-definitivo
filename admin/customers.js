@@ -4,13 +4,53 @@
 console.log("📦 Módulo customers.js cargado");
 
 import { supabase as supabaseClient } from "../scripts/supabase-client.js";
-import { requireAdminAuth, isAdmin } from "./permissions-helper.js";
+import { preloadAuthState, can, isAdminUser } from "./auth-state.js";
+import { createScreenScope } from "../scripts/net/screen-scope.js";
+import { wrapSupabase, createAbortScope, FYL_ERROR_KIND, classifyError } from "../scripts/net/fyl-fetch.js";
+
+/**
+ * Scope de clientes: libera el estado "usable" cuando el buscador está
+ * operativo y el usuario puede buscar o crear clientes.
+ *
+ * Punto usable: después de reemplazar el placeholder "Cargando clientes..."
+ * por "Escribe en el campo..." y enganchar los listeners, AUNQUE la
+ * verificación de auth/permisos siga corriendo en segundo plano.
+ *
+ * onFirstPaint: asegura que el contenedor muestra el estado correcto.
+ * onReady: auth y permisos verificados, pantalla completamente garantizada.
+ */
+const customersScope = createScreenScope("admin-customers", {
+  onFirstPaint({ reason }) {
+    // El placeholder ya fue insertado antes de llamar aquí.
+    // Habilitamos explícitamente el input de búsqueda en caso de que haya
+    // quedado deshabilitado por algún path previo.
+    const searchInput = document.getElementById("customer-search");
+    if (searchInput) searchInput.disabled = false;
+    globalThis.markBootStage?.("admin-customers.ui_usable", { reason });
+  },
+  onReady({ reason }) {
+    globalThis.markBootStage?.("admin-customers.auth_verified", { reason });
+  },
+});
 
 let supabase = supabaseClient;
 let editingCustomerId = null;
 let searchTimeout = null;
 /** Última búsqueda no vacía; sirve para refrescar la lista tras guardar o eliminar. */
 let lastCustomerSearchQuery = "";
+
+/**
+ * AbortScope de búsqueda: independiente del lifecycle de la pantalla.
+ * Cada nueva búsqueda aborta la anterior para evitar que resultados tardíos
+ * pisen el DOM de una búsqueda más reciente.
+ */
+let _activeSearchAbortScope = null;
+
+/**
+ * Guard numérico de race condition: solo el seq más alto puede mutar
+ * el contenedor de resultados.
+ */
+let _searchSeq = 0;
 
 console.log("📦 Imports de customers.js completados");
 
@@ -286,176 +326,148 @@ function showMessage(message, type = "success") {
   }
 }
 
-// Cargar lista de clientes
+/**
+ * Carga clientes por término de búsqueda.
+ *
+ * Fase 2:
+ *  - wrapSupabase con signal + retry:1.
+ *  - AbortScope propio por invocación (_activeSearchAbortScope).
+ *  - Guard numérico (_searchSeq) para descartar resultados tardíos.
+ *  - Sin re-verificación de auth en cada búsqueda (ya verificada en boot).
+ *  - Errores de red → banner no bloqueante, sin "sin resultados".
+ *  - Auth / permission → actuar solo si el servidor lo confirmó.
+ */
 async function loadCustomers(searchQuery = "") {
-  console.log("🔍 loadCustomers llamado con query:", searchQuery);
   const container = document.getElementById("customers-container");
-  if (!container) {
-    console.error("❌ No se encontró el contenedor customers-container");
+  if (!container) return;
+
+  // Sin query: mostrar placeholder, sin tocar scopes ni sequencia.
+  if (!searchQuery || !searchQuery.trim()) {
+    container.innerHTML = '<div class="empty-state"><p>Escribe en el campo de búsqueda para ver los clientes</p></div>';
     return;
   }
 
-  container.innerHTML = '<div class="loading">Cargando clientes...</div>';
+  // — Abort de la búsqueda anterior, scope propio para esta invocación —
+  if (_activeSearchAbortScope) _activeSearchAbortScope.abort("new_search");
+  const myScope = createAbortScope();
+  _activeSearchAbortScope = myScope;
+  const signal = myScope.signal;
+  const mySeq = ++_searchSeq;
+
+  /** true si esta búsqueda fue superada o abortada. */
+  function isStale() { return mySeq !== _searchSeq || signal.aborted; }
+
+  lastCustomerSearchQuery = searchQuery.trim();
+  container.innerHTML = '<div class="loading">Buscando clientes...</div>';
 
   const db = await getSupabase();
   if (!db) {
-    console.error("❌ No se pudo obtener instancia de Supabase");
-    container.innerHTML = '<div class="empty-state"><p>Error: No se pudo conectar con la base de datos</p></div>';
+    if (isStale()) return;
+    container.innerHTML = '<div class="empty-state"><p>Error: No se pudo conectar con la base de datos.</p></div>';
     return;
   }
 
-  try {
-    // Verificar que el usuario es admin antes de consultar
-    const { data: { user } } = await db.auth.getUser();
-    if (!user) {
-      throw new Error("Usuario no autenticado");
-    }
+  const searchPattern = `%${searchQuery.trim()}%`;
 
-    console.log("👤 Usuario autenticado:", user.email);
-
-    // Verificar si es admin
-    const { data: adminCheck, error: adminError } = await db
-      .from("admins")
-      .select("id, role")
-      .eq("user_id", user.id)
-      .maybeSingle();
-
-    if (adminError) {
-      console.error("❌ Error verificando admin:", adminError);
-    }
-
-    if (!adminCheck) {
-      console.warn("⚠️ Usuario no es admin, pero intentando cargar clientes...");
-    } else {
-      console.log("✅ Usuario es admin:", adminCheck.role);
-    }
-
-    // Si no hay query de búsqueda, no hacer consulta
-    if (!searchQuery || !searchQuery.trim()) {
-      const searchMsg = '<p>Escribe en el campo de búsqueda para ver los clientes</p>';
-      container.innerHTML = `<div class="empty-state">${searchMsg}</div>`;
-      return;
-    }
-
-    lastCustomerSearchQuery = searchQuery.trim();
-
-    console.log("📡 Consultando tabla customers...");
-    console.log("🔎 Aplicando filtro de búsqueda:", searchQuery);
-    const searchPattern = `%${searchQuery}%`;
-    let query = db
+  const result = await wrapSupabase(
+    () => db
       .from("customers")
       .select("id, customer_number, full_name, dni, phone, email, city, province, address, auth_provider")
       .or(`full_name.ilike.${searchPattern},dni.ilike.${searchPattern},phone.ilike.${searchPattern},email.ilike.${searchPattern},customer_number.ilike.${searchPattern}`)
       .order("full_name", { ascending: true })
-      .limit(100);
+      .limit(100),
+    { retries: 1, signal, label: "customers.search" }
+  );
 
-    console.log("🔍 Ejecutando consulta...");
-    const { data, error } = await query;
+  if (isStale()) return;
+  if (result.aborted) return;
 
-    if (error) {
-      console.error("❌ Error en consulta:", error);
-      console.error("❌ Código de error:", error.code);
-      console.error("❌ Mensaje:", error.message);
-      console.error("❌ Detalles:", error.details);
-      console.error("❌ Hint:", error.hint);
-      throw error;
-    }
-
-    console.log("✅ Datos recibidos:", data?.length || 0, "clientes");
-    if (data && data.length > 0) {
-      console.log("📋 Primer cliente:", data[0]);
-    }
-
-    if (!data || data.length === 0) {
-      const searchMsg = searchQuery.trim()
-        ? `<p>No se encontraron clientes que coincidan con "${searchQuery}"</p>`
-        : '<p>Escribe en el campo de búsqueda para ver los clientes</p>';
-      container.innerHTML = `<div class="empty-state">${searchMsg}</div>`;
+  if (result.error) {
+    const kind = result.kind;
+    if (kind === FYL_ERROR_KIND.NETWORK || kind === FYL_ERROR_KIND.SERVER) {
+      // Error de red: no mostrar "sin resultados" — sería engañoso.
+      container.innerHTML = `
+        <div class="empty-state" style="display:flex;flex-direction:column;align-items:center;gap:10px;">
+          <p style="color:#c00;margin:0;">Sin conexión. Verificá tu red e intentá de nuevo.</p>
+          <button onclick="loadCustomers(lastCustomerSearchQuery)" style="padding:8px 14px;border:1px solid #c00;border-radius:6px;background:#fff;color:#c00;cursor:pointer;font-size:13px;">Reintentar</button>
+        </div>`;
       return;
     }
+    if (kind === FYL_ERROR_KIND.AUTH) {
+      window.location.href = "./index.html";
+      return;
+    }
+    // Permission / unknown: mostrar el error real sin inventar causa.
+    const errorMessage = result.error.message || "Error desconocido";
+    console.error("❌ Error cargando clientes:", result.error, "kind:", kind);
+    container.innerHTML = `
+      <div class="empty-state">
+        <p><strong>Error al cargar clientes:</strong></p>
+        <p style="color:#d32f2f;margin:8px 0;">${errorMessage}</p>
+        <p style="font-size:12px;color:#666;">Código: ${result.error.code || 'N/A'}</p>
+      </div>`;
+    return;
+  }
 
-    container.innerHTML = data.map(customer => {
-      const authBadge = getAuthProviderBadge(customer.auth_provider, customer.id);
-      const displayName = customer.full_name || "Sin nombre";
-      const safeName = escapeAttr(displayName);
-      return `
-      <div class="customer-card">
-        <div class="customer-header">
-          <div class="customer-info">
-            <h3>
-              ${customer.full_name || "Sin nombre"}
-              ${customer.customer_number ? `<span class="customer-number">#${customer.customer_number}</span>` : ""}
-              <span class="auth-provider-badge ${authBadge.class}" title="${authBadge.text}">
-                ${authBadge.icon} ${authBadge.text}
-              </span>
-            </h3>
-            <p>
-              ${customer.dni ? `DNI: ${customer.dni} • ` : ""}
-              ${customer.phone ? `Tel: ${customer.phone}` : ""}
-            </p>
-            <p>
-              ${customer.email || ""}
-              ${customer.city && customer.province ? ` • ${customer.city}, ${customer.province}` : ""}
-            </p>
-          </div>
-          <div class="actions">
-            <button type="button" class="btn-primary customer-btn-edit" data-customer-id="${customer.id}">
-              Editar
-            </button>
-            <div class="customer-menu-wrap" data-customer-id="${customer.id}" data-customer-name="${safeName}">
-              <button type="button" class="btn-icon-menu" aria-haspopup="true" aria-expanded="false" aria-label="Más opciones del cliente">⋯</button>
-              <div class="customer-menu-dropdown" role="menu">
-                <button type="button" class="customer-menu-item customer-menu-delete" role="menuitem">
-                  Eliminar cliente
-                </button>
-              </div>
+  const data = result.data || [];
+
+  if (data.length === 0) {
+    container.innerHTML = `<div class="empty-state"><p>No se encontraron clientes que coincidan con "${searchQuery}"</p></div>`;
+    return;
+  }
+
+  container.innerHTML = data.map(customer => {
+    const authBadge = getAuthProviderBadge(customer.auth_provider, customer.id);
+    const safeName = escapeAttr(customer.full_name || "Sin nombre");
+    return `
+    <div class="customer-card">
+      <div class="customer-header">
+        <div class="customer-info">
+          <h3>
+            ${customer.full_name || "Sin nombre"}
+            ${customer.customer_number ? `<span class="customer-number">#${customer.customer_number}</span>` : ""}
+            <span class="auth-provider-badge ${authBadge.class}" title="${authBadge.text}">
+              ${authBadge.icon} ${authBadge.text}
+            </span>
+          </h3>
+          <p>
+            ${customer.dni ? `DNI: ${customer.dni} • ` : ""}
+            ${customer.phone ? `Tel: ${customer.phone}` : ""}
+          </p>
+          <p>
+            ${customer.email || ""}
+            ${customer.city && customer.province ? ` • ${customer.city}, ${customer.province}` : ""}
+          </p>
+        </div>
+        <div class="actions">
+          <button type="button" class="btn-primary customer-btn-edit" data-customer-id="${customer.id}">
+            Editar
+          </button>
+          <div class="customer-menu-wrap" data-customer-id="${customer.id}" data-customer-name="${safeName}">
+            <button type="button" class="btn-icon-menu" aria-haspopup="true" aria-expanded="false" aria-label="Más opciones del cliente">⋯</button>
+            <div class="customer-menu-dropdown" role="menu">
+              <button type="button" class="customer-menu-item customer-menu-delete" role="menuitem">
+                Eliminar cliente
+              </button>
             </div>
           </div>
         </div>
       </div>
-    `;
-    }).join("");
-
-    console.log("✅ Clientes renderizados correctamente");
-
-  } catch (error) {
-    console.error("❌ Error cargando clientes:", error);
-    console.error("❌ Stack trace:", error.stack);
-    let errorMessage = error.message || "Error desconocido";
-
-    // Mostrar error más detallado en consola para debugging
-    if (error.code === 'PGRST301' || error.message?.includes('permission denied') || error.message?.includes('row-level security') || error.message?.includes('RLS')) {
-      console.error("❌ Error de permisos RLS. Verifica que las políticas permitan a los admins ver todos los clientes.");
-      console.error("💡 Ejecuta el script: supabase/canonical/36_fix_customers_admin_module.sql");
-      errorMessage = `Error de permisos RLS: ${error.message || 'No tienes acceso para ver clientes. Verifica las políticas RLS.'}`;
-    } else if (error.code === '23503') {
-      console.error("❌ Error de clave foránea. La restricción con auth.users puede estar causando problemas.");
-      console.error("💡 Ejecuta el script: supabase/canonical/36_fix_customers_admin_module.sql para eliminar la restricción");
-      errorMessage = `Error de base de datos: ${error.message || 'Problema con la estructura de la tabla customers.'}`;
-    }
-
-    container.innerHTML = `
-      <div class="empty-state">
-        <p><strong>Error al cargar clientes:</strong></p>
-        <p style="color: #d32f2f; margin: 8px 0;">${errorMessage}</p>
-        <p style="font-size: 12px; color: #666; margin-top: 8px;">
-          Código: ${error.code || 'N/A'} | 
-          Revisa la consola del navegador (F12) para más detalles.
-        </p>
-        <p style="font-size: 12px; color: #666; margin-top: 4px;">
-          💡 Asegúrate de haber ejecutado: <code>supabase/canonical/36_fix_customers_admin_module.sql</code>
-        </p>
-      </div>
-    `;
-  }
+    </div>`;
+  }).join("");
 }
 
-// Buscar clientes
-async function searchCustomers(query) {
+// Buscar clientes (con debounce de 300 ms)
+function searchCustomers(query) {
   clearTimeout(searchTimeout);
 
-  // Si el query está vacío, mostrar mensaje inicial
+  // Sin query: abortar búsqueda anterior y mostrar placeholder sin red.
   if (!query || query.trim() === "") {
+    if (_activeSearchAbortScope) {
+      _activeSearchAbortScope.abort("query_cleared");
+      _activeSearchAbortScope = null;
+    }
+    ++_searchSeq; // invalida cualquier resultado en vuelo
     const container = document.getElementById("customers-container");
     if (container) {
       container.innerHTML = '<div class="empty-state"><p>Escribe en el campo de búsqueda para ver los clientes</p></div>';
@@ -463,7 +475,7 @@ async function searchCustomers(query) {
     return;
   }
 
-  // Si hay query, buscar después de un pequeño delay
+  // Con query: esperar 300 ms antes de disparar la búsqueda real.
   searchTimeout = setTimeout(() => {
     loadCustomers(query);
   }, 300);
@@ -872,61 +884,29 @@ async function initializeCustomersModule() {
 
     console.log("✅ Instancia de Supabase obtenida");
 
-    // Verificar autenticación
-    const { data: { user }, error: authError } = await db.auth.getUser();
-
-    if (authError || !user) {
-      console.error("❌ Usuario no autenticado:", authError);
+    // Fase 3: resolver auth/permisos desde auth-state en una sola carga.
+    const { user } = await preloadAuthState();
+    if (!user) {
+      console.warn("⚠️ Sin sesión local, redirigiendo a login");
       window.location.href = "./index.html";
       return;
     }
+    console.log("✅ Sesión local verificada:", user.email);
 
-    console.log("✅ Usuario autenticado:", user.email);
-
-    // Verificar permisos de admin
-    const isUserAdmin = await isAdmin();
-    if (!isUserAdmin) {
+    const canViewCustomers = can("customers", "view");
+    const hasAdminProfile = isAdminUser();
+    if (!canViewCustomers && !hasAdminProfile) {
       console.error("❌ Usuario no es admin");
       const container = document.getElementById("customers-container");
       if (container) {
-        container.innerHTML = `<div class="empty-state"><p>Error: No tienes permisos de administrador para acceder a esta página.</p><p style="font-size: 12px; color: #666; margin-top: 8px;">Contacta al administrador del sistema para obtener acceso.</p></div>`;
+        container.innerHTML = `<div class="empty-state"><p>No tienes permisos de administrador para acceder a esta página.</p></div>`;
       }
       return;
     }
-    console.log("✅ Permisos de admin verificados");
+    console.log("✅ Permisos de customers/admin verificados");
 
-    // Test directo de consulta antes de cargar
-    console.log("🧪 Haciendo test de consulta directa...");
-    const testResult = await db
-      .from("customers")
-      .select("id")
-      .limit(1);
-
-    console.log("🧪 Resultado del test:", {
-      data: testResult.data,
-      error: testResult.error,
-      count: testResult.data?.length || 0
-    });
-
-    if (testResult.error) {
-      console.error("❌ Error en test de consulta:", testResult.error);
-      const container = document.getElementById("customers-container");
-      if (container) {
-        container.innerHTML = `
-          <div class="empty-state">
-            <p><strong>Error de permisos RLS:</strong></p>
-            <p style="color: #d32f2f; margin: 8px 0;">${testResult.error.message}</p>
-            <p style="font-size: 12px; color: #666; margin-top: 8px;">
-              Código: ${testResult.error.code || 'N/A'}
-            </p>
-            <p style="font-size: 12px; color: #666; margin-top: 4px;">
-              💡 Ejecuta el script: <code>supabase/canonical/38_fix_customers_rls_final.sql</code>
-            </p>
-          </div>
-        `;
-      }
-      return;
-    }
+    // La query de test RLS fue eliminada: bloqueaba el boot sin aportar valor en producción.
+    // Si hay un problema de RLS, aparecerá en la primera búsqueda real del usuario.
 
     // No cargar clientes automáticamente, solo cuando se busque
     const container = document.getElementById("customers-container");
@@ -997,6 +977,11 @@ async function initializeCustomersModule() {
 
     console.log("✅ Todos los event listeners configurados");
 
+    // Primer paint: buscador operativo + listeners activos. Auth ya fue
+    // verificado antes de llegar aquí, así que markFirstPaint coincide con
+    // el punto donde el usuario puede buscar, crear y ver clientes.
+    customersScope.markFirstPaint("search_ready");
+
     // Cerrar modal al hacer clic fuera
     const modal = document.getElementById("customer-modal");
     if (modal) {
@@ -1021,8 +1006,13 @@ async function initializeCustomersModule() {
     }
     document.addEventListener("click", onDocumentClickCloseCustomerMenus);
 
+    // Pantalla lista: auth + permisos verificados, todos los listeners activos.
+    customersScope.markReady("auth_and_listeners_ready");
+
   } catch (error) {
     console.error("❌ Error en inicialización:", error);
+    // Emitir first paint aunque sea con error para no dejar el scope colgado.
+    customersScope.markFirstPaint("init_error");
     const container = document.getElementById("customers-container");
     if (container) {
       container.innerHTML = `

@@ -1,0 +1,1532 @@
+{
+  "name": "Proveedores_Telegram_Ingest",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ]
+      },
+      "id": "prov_tg_trigger",
+      "name": "Telegram_Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ],
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "jsCode": "const u = items[0].json;\nconst m = u.message || u.edited_message || {};\nconst chatId = m.chat?.id;\nconst messageId = m.message_id;\nif (!chatId || !messageId) {\n  return [{ json: { error: 'no_message', raw: u } }];\n}\nlet message_type = 'other';\nconst raw_text = m.text ?? null;\nconst caption_text = m.caption ?? null;\nconst voice_file_id = m.voice?.file_id ?? null;\nconst photo_file_id = (m.photo && m.photo.length) ? m.photo[m.photo.length - 1].file_id : null;\nif (raw_text && !m.photo && !m.voice) message_type = 'text';\nelse if (voice_file_id) message_type = 'voice';\nelse if (photo_file_id) message_type = 'photo';\nreturn [{ json: {\n  telegram_chat_id: chatId,\n  telegram_message_id: messageId,\n  message_type,\n  raw_text,\n  caption_text,\n  voice_file_id,\n  photo_file_id,\n  telegram_update_raw: u,\n  mime_type: m.voice?.mime_type || null\n} }];"
+      },
+      "id": "prov_code_norm",
+      "name": "Code_NormalizarMensaje",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ ($env.SUPABASE_URL || \"\").replace(/\\/$/, \"\").replace(/\\/rest\\/v1\\/?$/, \"\") + \"/rest/v1/supplier_message_ingest?telegram_chat_id=eq.\" + $json[\"telegram_chat_id\"] + \"&telegram_message_id=eq.\" + $json[\"telegram_message_id\"] + \"&select=id,is_processed\" }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "prov_http_get_ing",
+      "name": "HTTP_GET_Ingest",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        440,
+        300
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Code_NormalizarMensaje').first().json;\nif (base.error) return [{ json: { ...base, _skip: true, _reason: 'bad_normalize' } }];\n\nfunction ingestRowsFromJson(j) {\n  if (j === undefined || j === null) return [];\n  if (Array.isArray(j)) return j;\n  if (typeof j === 'object' && j !== null && (j.id !== undefined || j.is_processed !== undefined) && !Array.isArray(j)) {\n    if (typeof j.message === 'string' && j.code !== undefined && j.id === undefined) return [];\n    return [j];\n  }\n  return [];\n}\n\nfunction collectRowsFromItems(arr) {\n  const out = [];\n  for (const it of arr) {\n    for (const r of ingestRowsFromJson(it.json)) out.push(r);\n  }\n  return out;\n}\n\nlet rows = collectRowsFromItems(items);\nif (!rows.length) {\n  try {\n    rows = collectRowsFromItems($('HTTP_GET_Ingest').all());\n  } catch (e) {\n    rows = [];\n  }\n}\n\nif (rows.length && rows[0].is_processed === true) {\n  return [{ json: { ...base, _skip: true, _reason: 'already_processed', _ingest_id: rows[0].id } }];\n}\nreturn [{ json: { ...base, _skip: false, _ingest_id: rows[0]?.id || null } }];"
+      },
+      "id": "prov_post_get",
+      "name": "Code_PostGET_Idempotencia",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c",
+              "leftValue": "={{ $json._skip }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "prov_if_skip",
+      "name": "IF_YaProcesado",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        880,
+        300
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "prov_noop_dup",
+      "name": "NoOp_SalirDuplicado",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        160
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "prov_noop_tipo",
+      "name": "NoOp_TipoNoSoportado",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1540,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.SUPABASE_URL || \"\").replace(/\\/$/, \"\").replace(/\\/rest\\/v1\\/?$/, \"\") + \"/rest/v1/supplier_message_ingest?on_conflict=telegram_chat_id,telegram_message_id\" }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "resolution=merge-duplicates,return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ telegram_chat_id: $json.telegram_chat_id, telegram_message_id: $json.telegram_message_id, message_type: $json.message_type, telegram_update_raw: $json.telegram_update_raw, parsed_status: 'received', is_processed: false }) }}",
+        "options": {}
+      },
+      "id": "prov_http_upsert",
+      "name": "HTTP_UpsertStub_Ingest",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1100,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Code_PostGET_Idempotencia').first().json;\nconst row = items[0].json;\nconst arr = Array.isArray(row) ? row : [row];\nconst id = arr[0]?.id;\nif (!id) throw new Error('ingest_upsert_sin_id: usar Prefer return=representation en HTTP_UpsertStub_Ingest');\nreturn [{ json: { ...base, ingest_id: id } }];"
+      },
+      "id": "prov_join_ingest",
+      "name": "Code_JoinIngestId",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c",
+              "leftValue": "={{ $json.message_type }}",
+              "rightValue": "text",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "prov_if_is_text",
+      "name": "IF_MessageIsText",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const j = items[0].json;\nconst text = [j.raw_text, j.caption_text].filter(Boolean).join('\\n') || '';\nreturn [{ json: { ...j, transcript_text: null, openai_input_text: text } }];"
+      },
+      "id": "prov_set_text",
+      "name": "Set_TextoParaInterpretar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c",
+              "leftValue": "={{ $json.message_type }}",
+              "rightValue": "voice",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "prov_if_is_voice",
+      "name": "IF_MessageIsVoice",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://api.telegram.org/bot\" + $env.TELEGRAM_BOT_TOKEN + \"/getFile?file_id=\" + encodeURIComponent($json.voice_file_id) }}",
+        "options": {}
+      },
+      "id": "prov_http_gf_v",
+      "name": "HTTP_TG_GetFile_Voice",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1760,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://api.telegram.org/file/bot\" + $env.TELEGRAM_BOT_TOKEN + \"/\" + ($json.result?.file_path || \"\") }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "prov_http_dl_v",
+      "name": "HTTP_TG_Download_Voice",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1980,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/audio/transcriptions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $env.OPENAI_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "whisper-1"
+            },
+            {
+              "name": "file",
+              "parameterType": "formBinaryData",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "prov_http_whisper",
+      "name": "HTTP_OpenAI_Transcribe",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        2200,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Code_JoinIngestId').first().json;\nconst t = items[0].json.text || items[0].json.transcript || '';\nreturn [{ json: { ...base, transcript_text: t, openai_input_text: t } }];"
+      },
+      "id": "prov_code_voice_j",
+      "name": "Code_TrasVoz_Unir",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c",
+              "leftValue": "={{ $json.message_type }}",
+              "rightValue": "photo",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "prov_if_is_photo",
+      "name": "IF_MessageIsPhoto",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://api.telegram.org/bot\" + $env.TELEGRAM_BOT_TOKEN + \"/getFile?file_id=\" + encodeURIComponent($json.photo_file_id) }}",
+        "options": {}
+      },
+      "id": "prov_http_gf_p",
+      "name": "HTTP_TG_GetFile_Photo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1760,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://api.telegram.org/file/bot\" + $env.TELEGRAM_BOT_TOKEN + \"/\" + ($json.result?.file_path || \"\") }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "prov_http_dl_p",
+      "name": "HTTP_TG_Download_Photo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1980,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Code_JoinIngestId').first().json;\nconst bin = items[0].binary?.data;\nif (!bin?.data) throw new Error('sin_binario_foto');\nconst mime = bin.mimeType || 'image/jpeg';\nreturn [{ json: {\n  ...base,\n  transcript_text: null,\n  openai_input_text: base.caption_text || '',\n  image_base64: typeof bin.data === 'string' ? bin.data : Buffer.from(bin.data).toString('base64'),\n  image_mime: mime\n} }];"
+      },
+      "id": "prov_code_photo",
+      "name": "Code_Foto_Base64yTexto",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const SYS = \"Extraccion MINIMA de pedido de compras a proveedores (espanol). Devuelves SOLO JSON valido sin markdown. NO calcules pares, descuentos, netos ni totales. NO inventes datos. Raiz: supplier_hint (string|null), currency_hint (string|null), confidence (0-1), needs_review (bool), has_actionable_order (bool), items[]. Cada item: raw_line_text, article_code, color, size, quantity (number), unit_text (literal del mensaje: tareas, pares, docenas...), unit_price (number|null), price_basis_hint: per_par|per_tarea|unknown, confidence, needs_review. Si no hay pedido util: has_actionable_order false e items []. Si duda: null + needs_review true.\";\nconst j = items[0].json;\nlet userContent;\nif (j.message_type === 'photo' && j.image_base64) {\n  userContent = [\n    { type: 'text', text: 'CONTEXTO message_type=photo. Texto/caption: ' + (j.openai_input_text || '') },\n    { type: 'image_url', image_url: { url: 'data:' + (j.image_mime || 'image/jpeg') + ';base64,' + j.image_base64 } }\n  ];\n} else {\n  const t = (j.openai_input_text || '') + (j.transcript_text ? ('\\n[transcripcion voz]: ' + j.transcript_text) : '');\n  userContent = 'CONTEXTO message_type=' + j.message_type + '\\n' + t;\n}\nconst openai_body = {\n  model: 'gpt-4o-mini',\n  response_format: { type: 'json_object' },\n  messages: [\n    { role: 'system', content: SYS },\n    { role: 'user', content: userContent }\n  ]\n};\nreturn [{ json: { ...j, openai_body } }];"
+      },
+      "id": "prov_code_oai_body",
+      "name": "Code_BuildOpenAIBody",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $env.OPENAI_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.openai_body) }}",
+        "options": {}
+      },
+      "id": "prov_http_oai",
+      "name": "HTTP_OpenAI_Interpretar",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        2860,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Code_BuildOpenAIBody').first().json;\nconst resp = items[0].json;\nconst content = resp?.choices?.[0]?.message?.content;\nif (!content) {\n  const msg = resp?.error?.message || resp?.message || resp?.hint || 'openai_empty_or_error';\n  return [{ json: {\n    ingest_id: base.ingest_id,\n    telegram_chat_id: base.telegram_chat_id,\n    telegram_message_id: base.telegram_message_id,\n    message_type: base.message_type,\n    parse_error: String(msg),\n    parsed_status: 'failed',\n    needs_review: true,\n    needs_review_source: 'orchestrator',\n    supplier_hint: null,\n    items: [],\n    has_actionable_order: false,\n    openai_model: 'gpt-4o-mini',\n    openai_response_raw: resp,\n    openai_input_text: base.openai_input_text,\n    transcript_text: base.transcript_text,\n    caption_text: base.caption_text,\n    raw_text: base.raw_text,\n    telegram_update_raw: base.telegram_update_raw,\n    _skip_order: true\n  } }];\n}\nlet parsed;\ntry {\n  parsed = typeof content === 'string' ? JSON.parse(content) : content;\n} catch (e) {\n  return [{ json: {\n    ingest_id: base.ingest_id,\n    telegram_chat_id: base.telegram_chat_id,\n    telegram_message_id: base.telegram_message_id,\n    message_type: base.message_type,\n    parse_error: String(e),\n    parsed_status: 'failed',\n    needs_review: true,\n    needs_review_source: 'orchestrator',\n    supplier_hint: null,\n    items: [],\n    has_actionable_order: false,\n    openai_model: 'gpt-4o-mini',\n    openai_response_raw: resp,\n    openai_input_text: base.openai_input_text,\n    transcript_text: base.transcript_text,\n    caption_text: base.caption_text,\n    raw_text: base.raw_text,\n    telegram_update_raw: base.telegram_update_raw,\n    _skip_order: true\n  } }];\n}\nif (!Array.isArray(parsed.items)) parsed.items = [];\nfor (const it of parsed.items) {\n  if (!it.unit_text && it.unit) it.unit_text = it.unit;\n}\nif (!parsed.items || parsed.items.length === 0) parsed.has_actionable_order = false;\nconst hasOrder = parsed.has_actionable_order === true && parsed.items.length > 0;\nconst hintRaw = parsed.supplier_hint;\nconst hint = hintRaw != null ? String(hintRaw).trim() : '';\nlet needsReview = !!parsed.needs_review;\nif (hasOrder && !hint) needsReview = true;\nif (hasOrder) {\n  for (const it of parsed.items) {\n    const q = it.quantity;\n    const qNum = typeof q === 'number' ? q : Number(q);\n    if (!Number.isFinite(qNum) || qNum <= 0) {\n      needsReview = true;\n      it.needs_review = true;\n    }\n  }\n}\nlet parsed_status = hasOrder ? 'parsed' : 'no_order_content';\nif (needsReview) parsed_status = 'needs_review';\nreturn [{ json: {\n  ingest_id: base.ingest_id,\n  telegram_chat_id: base.telegram_chat_id,\n  telegram_message_id: base.telegram_message_id,\n  message_type: base.message_type,\n  parse_error: null,\n  parsed_status,\n  needs_review: needsReview,\n  needs_review_source: needsReview ? (parsed.needs_review ? 'openai' : 'orchestrator') : null,\n  supplier_hint: hint || null,\n  items: parsed.items,\n  currency_hint: parsed.currency_hint || null,\n  confidence: parsed.confidence,\n  has_actionable_order: hasOrder,\n  openai_model: 'gpt-4o-mini',\n  openai_response_raw: resp,\n  openai_input_text: base.openai_input_text,\n  transcript_text: base.transcript_text,\n  caption_text: base.caption_text,\n  raw_text: base.raw_text,\n  telegram_update_raw: base.telegram_update_raw,\n  _skip_order: !hasOrder\n} }];"
+      },
+      "id": "prov_code_validate",
+      "name": "Code_ValidarExtraccionCompras",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3080,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c",
+              "leftValue": "={{ $json._skip_order }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "prov_if_order",
+      "name": "IF_CrearPedido",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Code_ValidarExtraccionCompras').first().json;\nlet purchase_supplier_id = null;\nlet orchestrator_fail = false;\nlet fail_reason = null;\ntry {\n  const pr = $('Code_PostResolveSupplier').first().json;\n  if (pr && pr.supplier_id) purchase_supplier_id = pr.supplier_id;\n  if (pr && pr._resolve_ok === false) {\n    orchestrator_fail = true;\n    fail_reason = pr._resolve_error || 'resolve';\n  }\n} catch (e) {}\ntry {\n  const mr = $('Code_MergeRulesAndBuildItems').first().json;\n  if (mr && mr._rules_ok === false) {\n    orchestrator_fail = true;\n    fail_reason = 'no_active_rules';\n  }\n} catch (e) {}\ntry {\n  const pc = $('Code_PostComputeLines').first().json;\n  if (pc && pc._compute_ok === false) {\n    orchestrator_fail = true;\n    fail_reason = 'compute_lines_failed';\n  }\n} catch (e) {}\ntry {\n  const br = $('Code_BuildPurchaseLineRows').first().json;\n  if (br && br.supplier_id) purchase_supplier_id = br.supplier_id;\n} catch (e) {}\ntry {\n  const mor = $('Code_MergePostPurchaseOrder').first().json;\n  if (mor && mor._purchase_post_failed) {\n    orchestrator_fail = true;\n    if (!fail_reason) fail_reason = 'purchase_order_post_failed';\n  }\n} catch (e) {}\ntry {\n  const al = $('Code_AfterPostLinesCheck').first().json;\n  if (al && al._lines_http_failed) {\n    orchestrator_fail = true;\n    fail_reason = 'purchase_lines_post_failed';\n  }\n} catch (e) {}\nlet parsed_status = ctx.parsed_status;\nif (orchestrator_fail && ctx.has_actionable_order) parsed_status = 'needs_review';\nconst needs_review = !!ctx.needs_review || orchestrator_fail;\nlet purchaseSuccess = false;\ntry {\n  const al = $('Code_AfterPostLinesCheck').first().json;\n  const mor = $('Code_MergePostPurchaseOrder').first().json;\n  if (mor && mor._purchase_post_failed === false && mor.order_id && al && al._lines_http_failed === false) {\n    purchaseSuccess = true;\n  }\n} catch (e) {}\nconst terminalIngest = !ctx.has_actionable_order || ctx.parsed_status === 'failed' || !!ctx.parse_error;\nlet is_processed;\nif (purchaseSuccess) is_processed = true;\nelse if (orchestrator_fail) is_processed = false;\nelse if (terminalIngest) is_processed = true;\nelse is_processed = true;\nconst patch = {\n  raw_text: ctx.raw_text,\n  transcript_text: ctx.transcript_text,\n  caption_text: ctx.caption_text,\n  openai_input_text: ctx.openai_input_text,\n  openai_model: ctx.openai_model,\n  openai_response_raw: ctx.openai_response_raw,\n  parse_error: ctx.parse_error || (orchestrator_fail ? fail_reason : null),\n  parse_confidence: typeof ctx.confidence === 'number' ? ctx.confidence : null,\n  needs_review,\n  has_actionable_order: ctx.has_actionable_order,\n  inferred_supplier_name: ctx.supplier_hint || null,\n  parsed_status,\n  is_processed,\n  purchase_supplier_id\n};\nreturn [{ json: { ingest_id: ctx.ingest_id, patch } }];"
+      },
+      "id": "prov_code_patch",
+      "name": "Code_BuildPatchIngestFinal",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        7000,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ ($env.SUPABASE_URL || \"\").replace(/\\/$/, \"\").replace(/\\/rest\\/v1\\/?$/, \"\") + \"/rest/v1/supplier_message_ingest?id=eq.\" + $json[\"ingest_id\"] }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.patch) }}",
+        "options": {}
+      },
+      "id": "prov_http_patch",
+      "name": "HTTP_PATCH_Ingest_Final",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        7220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.SUPABASE_URL || \"\").replace(/\\/$/, \"\").replace(/\\/rest\\/v1\\/?$/, \"\") + \"/rest/v1/rpc/purchase_resolve_supplier\" }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_hint: $json.supplier_hint }) }}",
+        "options": {}
+      },
+      "id": "prov_http_rpc_res",
+      "name": "HTTP_RPC_ResolveSupplier",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        3740,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Code_ValidarExtraccionCompras').first().json;\nlet res = items[0].json;\nif (Array.isArray(res)) res = res[0];\nif (res && typeof res.message === 'string' && res.code && res.ok !== true) {\n  return [{ json: { ...ctx, supplier_id: null, _resolve_ok: false, _resolve_error: 'supabase_http', _resolve_detail: res } }];\n}\nconst ok = !!(res && res.ok === true);\nconst supplier_id = ok ? res.supplier_id : null;\nreturn [{ json: {\n  ...ctx,\n  supplier_id,\n  _resolve_ok: ok,\n  _resolve_error: ok ? null : (res && res.reason) || 'resolve_failed',\n  _resolve_detail: res\n}}];"
+      },
+      "id": "prov_code_post_res",
+      "name": "Code_PostResolveSupplier",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3960,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c",
+              "leftValue": "={{ $json._resolve_ok }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "prov_if_res_ok",
+      "name": "IF_ResolveSupplierOk",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        4180,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ ($env.SUPABASE_URL || \"\").replace(/\\/$/, \"\").replace(/\\/rest\\/v1\\/?$/, \"\") + \"/rest/v1/purchase_supplier_rule_versions?supplier_id=eq.\" + $json[\"supplier_id\"] + \"&is_active=eq.true&select=id,version\" }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "prov_http_rules",
+      "name": "HTTP_GET_ActiveRuleVersion",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        4400,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Code_PostResolveSupplier').first().json;\nconst raw = items[0].json;\nconst rows = Array.isArray(raw) ? raw : [raw];\nconst first = rows[0];\nif (first && typeof first.message === 'string' && first.code) {\n  return [{ json: { ...ctx, rules_version_id: null, p_items: [], _rules_ok: false } }];\n}\nconst rules_version_id = first?.id || null;\nif (!rules_version_id) {\n  return [{ json: { ...ctx, rules_version_id: null, p_items: [], _rules_ok: false } }];\n}\nconst p_items = (ctx.items || []).map((it) => ({\n  quantity: it.quantity,\n  unit_text: it.unit_text,\n  unit_price: it.unit_price == null ? null : Number(it.unit_price),\n  price_basis_hint: it.price_basis_hint || 'unknown',\n  article_code: it.article_code ?? null,\n  color: it.color ?? null,\n  size: it.size ?? null,\n  raw_line_text: it.raw_line_text ?? null,\n  confidence: it.confidence == null ? null : Number(it.confidence),\n  needs_review: !!it.needs_review\n}));\nreturn [{ json: { ...ctx, rules_version_id, p_items, _rules_ok: true } }];"
+      },
+      "id": "prov_code_merge_rules",
+      "name": "Code_MergeRulesAndBuildItems",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4620,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c",
+              "leftValue": "={{ $json._rules_ok }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "prov_if_rules_ok",
+      "name": "IF_ActiveRulesOk",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        4840,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.SUPABASE_URL || \"\").replace(/\\/$/, \"\").replace(/\\/rest\\/v1\\/?$/, \"\") + \"/rest/v1/rpc/purchase_compute_lines\" }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_supplier_id: $json.supplier_id, p_rules_version_id: $json.rules_version_id, p_items: $json.p_items }) }}",
+        "options": {}
+      },
+      "id": "prov_http_rpc_comp",
+      "name": "HTTP_RPC_ComputeLines",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        5060,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Code_MergeRulesAndBuildItems').first().json;\nlet comp = items[0].json;\nif (Array.isArray(comp)) comp = comp[0];\nif (comp && typeof comp.message === 'string' && comp.code && comp.ok !== true) {\n  return [{ json: { ...ctx, compute: { ok: false, errors: [{ code: 'supabase_http' }] }, _compute_ok: false } }];\n}\nconst ok = !!(comp && comp.ok === true);\nreturn [{ json: { ...ctx, compute: comp, _compute_ok: ok } }];"
+      },
+      "id": "prov_code_post_comp",
+      "name": "Code_PostComputeLines",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5280,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c",
+              "leftValue": "={{ $json._compute_ok }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "prov_if_comp_ok",
+      "name": "IF_ComputeLinesOk",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        5500,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ ($env.SUPABASE_URL || \"\").replace(/\\/$/, \"\").replace(/\\/rest\\/v1\\/?$/, \"\") + \"/rest/v1/purchase_seasons?active=eq.true&order=created_at.desc&limit=1&select=id,label\" }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "prov_http_season",
+      "name": "HTTP_GET_DefaultSeason",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        5720,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Code_PostComputeLines').first().json;\nconst srows = Array.isArray(items[0].json) ? items[0].json : [items[0].json];\nconst season_id = srows[0]?.id || null;\nconst c = ctx.compute || {};\nconst totals = c.totals || {};\nconst linesArr = Array.isArray(c.lines) ? c.lines : [];\nconst anyLineReview = linesArr.some((l) => l && l.needs_review === true);\nconst needs_review = !!ctx.needs_review || anyLineReview;\nlet needs_review_source = null;\nif (anyLineReview) needs_review_source = 'rpc';\nelse if (ctx.needs_review) needs_review_source = ctx.needs_review_source || 'openai';\nconst order_payload = {\n  ingest_id: ctx.ingest_id,\n  supplier_id: ctx.supplier_id,\n  season_id,\n  status: 'open',\n  needs_review,\n  needs_review_source,\n  review_reason: anyLineReview ? 'line_compute_or_missing_price' : null,\n  notes: null,\n  total_gross: totals.total_gross ?? null,\n  total_discount: totals.total_discount ?? null,\n  total_net: totals.total_net ?? null,\n  total_estimated_pairs: totals.total_estimated_pairs ?? null\n};\nreturn [{ json: { ...ctx, season_id, order_payload, compute: c } }];"
+      },
+      "id": "prov_code_build_ord",
+      "name": "Code_BuildPurchaseOrderPayload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5940,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.SUPABASE_URL || \"\").replace(/\\/$/, \"\").replace(/\\/rest\\/v1\\/?$/, \"\") + \"/rest/v1/purchase_orders\" }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.order_payload) }}",
+        "options": {}
+      },
+      "id": "prov_http_post_ord",
+      "name": "HTTP_POST_PurchaseOrder",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        6160,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Code_BuildPurchaseOrderPayload').first().json;\nconst row = items[0].json;\nconst r = Array.isArray(row) ? row[0] : row;\nif (r && typeof r.message === 'string' && r.code) {\n  return [{ json: { ...ctx, order_id: null, _purchase_post_failed: true, _purchase_post_detail: r } }];\n}\nif (!r?.id) {\n  return [{ json: { ...ctx, order_id: null, _purchase_post_failed: true, _purchase_post_detail: r } }];\n}\nreturn [{ json: { ...ctx, order_id: r.id, _purchase_post_failed: false, _purchase_post_detail: null } }];"
+      },
+      "id": "prov_code_merge_ord",
+      "name": "Code_MergePostPurchaseOrder",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6270,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c",
+              "leftValue": "={{ $json._purchase_post_failed }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "prov_if_ord_post",
+      "name": "IF_PurchaseOrderPostOk",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        6380,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Code_MergePostPurchaseOrder').first().json;\nconst orderId = ctx.order_id;\nif (!orderId) throw new Error('sin_purchase_order_id');\nconst linesArr = Array.isArray(ctx.compute?.lines) ? ctx.compute.lines : [];\nconst lines_payload = linesArr.map((l, idx) => ({\n  order_id: orderId,\n  line_index: idx,\n  raw_line_text: l.raw_line_text,\n  article_code: l.article_code,\n  color: l.color,\n  size: l.size,\n  unit_text: l.unit_text,\n  normalized_unit_code: l.normalized_unit_code,\n  qty_ordered: l.qty_ordered,\n  unit_price: l.unit_price,\n  currency: l.currency,\n  price_basis_hint: l.price_basis_hint,\n  price_basis_resolved: l.price_basis_resolved,\n  estimated_pairs: l.estimated_pairs,\n  gross_amount: l.gross_amount,\n  discount_pct_applied: l.discount_pct_applied,\n  discount_amount: l.discount_amount,\n  net_amount: l.net_amount,\n  rules_version_id: l.rules_version_id,\n  calculation_snapshot: l.calculation_snapshot,\n  needs_review: l.needs_review,\n  needs_review_source: l.needs_review_source,\n  review_reason: l.review_reason,\n  parse_confidence: l.parse_confidence\n}));\nreturn [{ json: { ...ctx, order_id: orderId, lines_payload } }];"
+      },
+      "id": "prov_code_build_lines",
+      "name": "Code_BuildPurchaseLineRows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6500,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.SUPABASE_URL || \"\").replace(/\\/$/, \"\").replace(/\\/rest\\/v1\\/?$/, \"\") + \"/rest/v1/purchase_order_lines\" }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.lines_payload) }}",
+        "options": {}
+      },
+      "id": "prov_http_post_lines",
+      "name": "HTTP_POST_PurchaseOrderLines",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        6720,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const j = items[0].json;\nlet lines_http_failed = false;\nif (j && typeof j.code === 'string' && typeof j.message === 'string' && j.ok !== true) lines_http_failed = true;\nreturn [{ json: { _lines_http_failed: lines_http_failed, _lines_http_detail: j } }];"
+      },
+      "id": "prov_code_after_lines",
+      "name": "Code_AfterPostLinesCheck",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6840,
+        60
+      ]
+    }
+  ],
+  "connections": {
+    "Telegram_Trigger": {
+      "main": [
+        [
+          {
+            "node": "Code_NormalizarMensaje",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code_NormalizarMensaje": {
+      "main": [
+        [
+          {
+            "node": "HTTP_GET_Ingest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP_GET_Ingest": {
+      "main": [
+        [
+          {
+            "node": "Code_PostGET_Idempotencia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code_PostGET_Idempotencia": {
+      "main": [
+        [
+          {
+            "node": "IF_YaProcesado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF_YaProcesado": {
+      "main": [
+        [
+          {
+            "node": "NoOp_SalirDuplicado",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP_UpsertStub_Ingest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP_UpsertStub_Ingest": {
+      "main": [
+        [
+          {
+            "node": "Code_JoinIngestId",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code_JoinIngestId": {
+      "main": [
+        [
+          {
+            "node": "IF_MessageIsText",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF_MessageIsText": {
+      "main": [
+        [
+          {
+            "node": "Set_TextoParaInterpretar",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF_MessageIsVoice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set_TextoParaInterpretar": {
+      "main": [
+        [
+          {
+            "node": "Code_BuildOpenAIBody",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF_MessageIsVoice": {
+      "main": [
+        [
+          {
+            "node": "HTTP_TG_GetFile_Voice",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF_MessageIsPhoto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP_TG_GetFile_Voice": {
+      "main": [
+        [
+          {
+            "node": "HTTP_TG_Download_Voice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP_TG_Download_Voice": {
+      "main": [
+        [
+          {
+            "node": "HTTP_OpenAI_Transcribe",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP_OpenAI_Transcribe": {
+      "main": [
+        [
+          {
+            "node": "Code_TrasVoz_Unir",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code_TrasVoz_Unir": {
+      "main": [
+        [
+          {
+            "node": "Code_BuildOpenAIBody",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF_MessageIsPhoto": {
+      "main": [
+        [
+          {
+            "node": "HTTP_TG_GetFile_Photo",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "NoOp_TipoNoSoportado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP_TG_GetFile_Photo": {
+      "main": [
+        [
+          {
+            "node": "HTTP_TG_Download_Photo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP_TG_Download_Photo": {
+      "main": [
+        [
+          {
+            "node": "Code_Foto_Base64yTexto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code_Foto_Base64yTexto": {
+      "main": [
+        [
+          {
+            "node": "Code_BuildOpenAIBody",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code_BuildOpenAIBody": {
+      "main": [
+        [
+          {
+            "node": "HTTP_OpenAI_Interpretar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP_OpenAI_Interpretar": {
+      "main": [
+        [
+          {
+            "node": "Code_ValidarExtraccionCompras",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code_ValidarExtraccionCompras": {
+      "main": [
+        [
+          {
+            "node": "IF_CrearPedido",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF_CrearPedido": {
+      "main": [
+        [
+          {
+            "node": "HTTP_RPC_ResolveSupplier",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code_BuildPatchIngestFinal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP_RPC_ResolveSupplier": {
+      "main": [
+        [
+          {
+            "node": "Code_PostResolveSupplier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code_PostResolveSupplier": {
+      "main": [
+        [
+          {
+            "node": "IF_ResolveSupplierOk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF_ResolveSupplierOk": {
+      "main": [
+        [
+          {
+            "node": "HTTP_GET_ActiveRuleVersion",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code_BuildPatchIngestFinal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP_GET_ActiveRuleVersion": {
+      "main": [
+        [
+          {
+            "node": "Code_MergeRulesAndBuildItems",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code_MergeRulesAndBuildItems": {
+      "main": [
+        [
+          {
+            "node": "IF_ActiveRulesOk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF_ActiveRulesOk": {
+      "main": [
+        [
+          {
+            "node": "HTTP_RPC_ComputeLines",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code_BuildPatchIngestFinal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP_RPC_ComputeLines": {
+      "main": [
+        [
+          {
+            "node": "Code_PostComputeLines",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code_PostComputeLines": {
+      "main": [
+        [
+          {
+            "node": "IF_ComputeLinesOk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF_ComputeLinesOk": {
+      "main": [
+        [
+          {
+            "node": "HTTP_GET_DefaultSeason",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code_BuildPatchIngestFinal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP_GET_DefaultSeason": {
+      "main": [
+        [
+          {
+            "node": "Code_BuildPurchaseOrderPayload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code_BuildPurchaseOrderPayload": {
+      "main": [
+        [
+          {
+            "node": "HTTP_POST_PurchaseOrder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP_POST_PurchaseOrder": {
+      "main": [
+        [
+          {
+            "node": "Code_MergePostPurchaseOrder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code_MergePostPurchaseOrder": {
+      "main": [
+        [
+          {
+            "node": "IF_PurchaseOrderPostOk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF_PurchaseOrderPostOk": {
+      "main": [
+        [
+          {
+            "node": "Code_BuildPurchaseLineRows",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code_BuildPatchIngestFinal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code_BuildPurchaseLineRows": {
+      "main": [
+        [
+          {
+            "node": "HTTP_POST_PurchaseOrderLines",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP_POST_PurchaseOrderLines": {
+      "main": [
+        [
+          {
+            "node": "Code_AfterPostLinesCheck",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code_AfterPostLinesCheck": {
+      "main": [
+        [
+          {
+            "node": "Code_BuildPatchIngestFinal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code_BuildPatchIngestFinal": {
+      "main": [
+        [
+          {
+            "node": "HTTP_PATCH_Ingest_Final",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

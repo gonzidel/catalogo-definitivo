@@ -12,6 +12,8 @@ import { supabase as supabaseClient } from "./supabase-client.js?v=m260420";
 import { normalizeSize } from "./utils/size-normalizer.js";
 import { fylAnalytics } from "./analytics.js";
 import { formatARS as formatARSValue, parseARSNumber } from "./utils/price.js";
+import { createScreenScope } from "./net/screen-scope.js";
+import { wrapSupabase, createAbortScope, FYL_ERROR_KIND, classifyError } from "./net/fyl-fetch.js";
 
 await configReady;
 
@@ -109,6 +111,7 @@ let ultimoTabSlug = null; // Para trackear cambios de tab en popstate
 let productosActualesMap = new Map(); // Articulo -> producto (para Bottom Sheet)
 // Variables para paginación incremental
 let productosPendientes = []; // Array de productos pendientes de renderizar
+let searchIndex = []; // Índice textual derivado de productosPendientes
 let productosRenderizados = 0; // Cantidad de productos ya renderizados
 let offersCardsPendientes = []; // Ofertas pendientes de renderizar
 /** Tras insertar el banner destacado inline (4.ª card en Inicio), se dispara carga al finalizar el render. */
@@ -124,6 +127,11 @@ let catalogoAutoloadObserver = null;
 let catalogoAutoloadSentinel = null;
 let catalogoAutoloadFallbackEnabled = false;
 
+function setProductosPendientes(nextProductos) {
+  productosPendientes = Array.isArray(nextProductos) ? nextProductos : [];
+  rebuildSearchIndex();
+}
+
 /** Logs verbosos del catálogo/stock. Activar: `window.FYL_DEBUG_CATALOG = true` antes de cargar, o `?debug=catalog` en la URL. */
 function fylCatalogDebugEnabled() {
   if (typeof window === "undefined") return false;
@@ -138,8 +146,28 @@ function fylCatalogDbg(...args) {
   if (fylCatalogDebugEnabled()) console.log.apply(console, args);
 }
 
+// Guard para que fyl-catalog-boot-done se emita exactamente una vez por carga
+// de página, aunque hideCatalogBootOverlay sea llamado por el scope (first paint)
+// y luego de nuevo por el finally de inicializarCatalogo como safety net.
+let _bootDoneDispatched = false;
+const CATALOG_BOOT_MIN_VISIBLE_MS = 380;
+const _catalogBootShownAt =
+  typeof performance !== "undefined" && typeof performance.now === "function"
+    ? performance.now()
+    : Date.now();
+
 /** Oculta el overlay de arranque (index2) y restaura scroll del body. */
 function hideCatalogBootOverlay() {
+  const now =
+    typeof performance !== "undefined" && typeof performance.now === "function"
+      ? performance.now()
+      : Date.now();
+  const visibleFor = now - _catalogBootShownAt;
+  if (visibleFor < CATALOG_BOOT_MIN_VISIBLE_MS) {
+    setTimeout(hideCatalogBootOverlay, Math.ceil(CATALOG_BOOT_MIN_VISIBLE_MS - visibleFor));
+    return;
+  }
+
   const el = document.getElementById("catalog-boot-overlay");
   if (el) {
     el.classList.add("catalog-boot-overlay--hidden");
@@ -149,7 +177,52 @@ function hideCatalogBootOverlay() {
     el.style.display = "none";
   }
   document.body.classList.remove("catalog-boot-active");
-  window.dispatchEvent(new CustomEvent("fyl-catalog-boot-done"));
+  if (!_bootDoneDispatched) {
+    _bootDoneDispatched = true;
+    window.dispatchEvent(new CustomEvent("fyl-catalog-boot-done"));
+  }
+}
+
+/**
+ * Scope del catálogo: gestiona el estado "usable" de /index.html.
+ *
+ * shouldRun: solo actúa durante el boot inicial (__FYL_BOOT_SUPPRESS_ROUTE = true).
+ * Durante navegaciones internas (cambiarCategoria, quick-actions) el overlay se
+ * gestiona por showCatalogBootOverlay/hideCatalogBootOverlay directamente; el
+ * scope detecta esto con el guard y es no-op para el callback, pero emite el
+ * evento screen:first-paint para observabilidad.
+ *
+ * onFirstPaint: oculta el overlay del boot (si sigue visible).
+ * onReady: safety net — si el overlay sigue visible al final del init completo,
+ * lo cierra. Esto cubre edge cases donde cargarCategoria no llegó al punto usable.
+ */
+const catalogScope = createScreenScope("catalog", {
+  shouldRun: () =>
+    typeof window !== "undefined" &&
+    window.__FYL_BOOT_SUPPRESS_ROUTE === true,
+  onFirstPaint: () => {
+    const el = document.getElementById("catalog-boot-overlay");
+    if (!el || el.classList.contains("catalog-boot-overlay--hidden")) return;
+    hideCatalogBootOverlay();
+  },
+  onReady: () => {
+    // Safety net: el finally de inicializarCatalogo llama markReady; si el
+    // overlay sigue visible por algún edge case, cerrarlo aquí como último recurso.
+    const el = document.getElementById("catalog-boot-overlay");
+    if (el && !el.classList.contains("catalog-boot-overlay--hidden")) {
+      hideCatalogBootOverlay();
+    }
+  },
+});
+
+/**
+ * Delega al catalogScope. Mantiene el nombre original para compatibilidad
+ * con todos los call sites existentes en cargarCategoria, filterByOffer, etc.
+ *
+ * Solo actúa durante boot (__FYL_BOOT_SUPPRESS_ROUTE = true); idempotente.
+ */
+function releaseBootOverlayOnFirstPaint(reason) {
+  catalogScope.markFirstPaint(reason || "first_chunk_rendered");
 }
 
 /** Muestra nuevamente el overlay para transiciones pesadas (ej. volver a Inicio). */
@@ -386,12 +459,11 @@ async function cargarDesdeSupabase(cat) {
     if (cat === "Novedades" || cat === "Ofertas" || cat === "all") {
       // Para categorías especiales o 'all', cargar todas las categorías
       fylCatalogDbg(`📦 Cargando todas las categorías para: ${cat}`);
-      // [PERF] Para "all", limitar payload inicial para acelerar primer render.
-      // Novedades/Ofertas necesitan todos los datos para filtrar en JS.
-      const fetchQuery = cat === "all"
-        ? query.limit(100)
-        : query;
-      const { data, error } = await fetchQuery;
+      // NOTA: antes se limitaba "all" a 100 filas por performance, pero eso
+      // dejaba al buscador sin dataset completo (ej. buscar "bota" devolvía 1).
+      // La paginación real del catálogo ya es cliente-side (PRODUCTOS_INICIALES
+      // + "Ver más"), así que traer todo acá no aumenta el trabajo de DOM.
+      const { data, error } = await query;
       if (error) {
         console.error("❌ Error en consulta:", error);
         throw error;
@@ -907,7 +979,7 @@ async function cargarCategoria(cat) {
   ocultarIndicadorCargaInferior();
   indicadorCargaActivo = false;
 
-  if (loader) loader.classList.add("show");
+  if (loader) loader.classList.toggle("show", cat !== "all");
   renderCatalogSkeletonCards();
   
   // Ocultar banner dinámico si no estamos en inicio (solo se muestra en index puro)
@@ -969,6 +1041,8 @@ async function cargarCategoria(cat) {
           '<div class="no-data">No hay productos disponibles en esta categoría</div>';
       }
       fylCatalogDbg("⚠️ No hay productos para mostrar en la categoría:", cat);
+      // UI ya es usable (mensaje "sin productos"): liberamos el overlay del boot.
+      releaseBootOverlayOnFirstPaint("empty_category");
       return;
     }
 
@@ -1074,7 +1148,7 @@ async function cargarCategoria(cat) {
     }
     
     // Almacenar todos los productos para paginación y recomendados PDP
-    productosPendientes = productosOrdenados;
+    setProductosPendientes(productosOrdenados);
     window.__allProductsCache = productosOrdenados;
     productosRenderizados = 0;
     offersCardsPendientes = offersCards;
@@ -1082,6 +1156,7 @@ async function cargarCategoria(cat) {
     
     // Limpiar contenedor
     cont.innerHTML = "";
+    syncHomeTopSlotState({ pending: cat === "all" });
     
     // Renderizar el primer bloque y conservar la cantidad real renderizada.
     const firstChunkRendered = await renderizarProductosPagina(
@@ -1092,7 +1167,12 @@ async function cargarCategoria(cat) {
       PRODUCTOS_INICIALES
     );
     productosRenderizados = Number(firstChunkRendered) || 0;
-    
+
+    // Primer paint listo: liberar el overlay del boot ahora mismo. Todo lo que
+    // sigue (configurarEventos, FYL banner, banners auxiliares, modal desde URL,
+    // lazy-load de imágenes) corre en background y no debe tapar la home.
+    releaseBootOverlayOnFirstPaint("first_chunk_rendered");
+
     // Configurar eventos
     configurarEventos();
     
@@ -1137,6 +1217,7 @@ async function cargarCategoria(cat) {
           window.showPromotionalBanner();
         }
         syncInfoBannerVisibility();
+        syncHomeTopSlotState({ pending: false });
       };
 
       const scheduleHomeExtrasPostBoot = (task, timeoutMs = 1200) => {
@@ -1162,6 +1243,8 @@ async function cargarCategoria(cat) {
             ]);
           } catch (error) {
             console.warn("⚠️ No se pudo cargar FYL Originals en boot:", error?.message || error);
+          } finally {
+            syncHomeTopSlotState({ pending: false });
           }
         }
         // El resto de extras se mantiene en background para no alargar demasiado el boot.
@@ -1179,6 +1262,7 @@ async function cargarCategoria(cat) {
         window.hidePromotionalBanner();
       }
       syncInfoBannerVisibility();
+      syncHomeTopSlotState({ pending: false });
     }
     
     // Si hay un SKU en la URL y el modal ya está abierto, verificar si ahora está en skuIndex
@@ -1224,6 +1308,8 @@ async function cargarCategoria(cat) {
         </div>
       `;
     }
+    // El mensaje de error ya es visible y accionable: destapamos la home.
+    releaseBootOverlayOnFirstPaint("category_error");
   } finally {
     if (loader) loader.classList.remove("show");
   }
@@ -1331,6 +1417,18 @@ function syncInfoBannerVisibility() {
 }
 if (typeof window !== "undefined") window.syncInfoBannerVisibility = syncInfoBannerVisibility;
 
+function syncHomeTopSlotState({ pending = false } = {}) {
+  const slot = document.getElementById("home-top-dynamic-slot");
+  if (!slot) return;
+  const activeHome = categoriaActual === "all";
+  const shouldShow = activeHome && pending;
+  slot.classList.toggle("home-top-dynamic-slot--pending", shouldShow);
+  const localLoader = document.getElementById("home-top-dynamic-loader");
+  if (localLoader) {
+    localLoader.setAttribute("aria-hidden", shouldShow ? "false" : "true");
+  }
+}
+
 // Función auxiliar para renderizar un conjunto de productos
 // options.skipBanner: si true, no insertar el banner dinámico (solo debe mostrarse en index puro)
 async function renderizarProductosPagina(productos, container, offersCards = [], startIndex = 0, count = null, options = {}) {
@@ -1386,6 +1484,10 @@ async function renderizarProductosPagina(productos, container, offersCards = [],
       const fallbackUrlsAttr = fallbackUrls.length
         ? JSON.stringify(fallbackUrls).replace(/"/g, "&quot;")
         : "";
+      const isFirstChunk = startIndex === 0;
+      const isAboveFoldCard = isFirstChunk && productosRenderizadosEnEstaPagina <= 4;
+      const imageLoading = isAboveFoldCard ? "eager" : "lazy";
+      const imageFetchPriority = isAboveFoldCard ? ' fetchpriority="high"' : "";
 
       const productoHTML = `
         <div class="card producto"
@@ -1396,7 +1498,7 @@ async function renderizarProductosPagina(productos, container, offersCards = [],
              data-sku="${skuDefecto || ''}"
              data-name="${(producto.name || producto.Articulo || '').toLowerCase()}">
           <div class="main-image-wrapper">
-            <img class="main-image" loading="lazy" 
+            <img class="main-image" loading="${imageLoading}"${imageFetchPriority}
                  src="${mainSrc}" 
                  alt="${producto.Articulo}"
                  data-sku="${skuDefecto || ''}"
@@ -1895,7 +1997,7 @@ async function filterByOffer(campaignId) {
     });
     
     // Almacenar todos los productos para paginación y recomendados PDP
-    productosPendientes = productosOrdenados;
+    setProductosPendientes(productosOrdenados);
     window.__allProductsCache = productosOrdenados;
     productosRenderizados = 0;
     offersCardsPendientes = [];
@@ -2073,7 +2175,7 @@ async function filterBySupplierFYL(options = {}) {
     });
     
     // Almacenar todos los productos para paginación y recomendados PDP
-    productosPendientes = productosOrdenados;
+    setProductosPendientes(productosOrdenados);
     window.__allProductsCache = productosOrdenados;
     productosRenderizados = 0;
     offersCardsPendientes = [];
@@ -2535,17 +2637,168 @@ function buscarPorSKU(sku) {
   return skuIndex.get(sku.trim()) || null;
 }
 
-async function buscarPorSKUEnSupabase(sku) {
+// ── PDP: AbortScope + scope de pantalla ──────────────────────────────────────
+//
+// Un único AbortScope para toda la vida de la pestaña: se recrea en cada
+// apertura de modal y se aborta al cerrar o al abrir otro producto.
+// Esto garantiza que los fetches lentos de "otro producto" no pisen el actual.
+let pdpFetchAbortScope = null;
+
+/**
+ * Abre el modal del PDP inmediatamente con un skeleton (sin esperar red) y
+ * devuelve un screen-scope para que el caller marque cuándo los datos reales
+ * llegaron. Reemplaza el patrón "esperar fetch → abrir modal".
+ *
+ * @param {string} sku   SKU del producto a abrir (puede no estar en cache aún).
+ * @param {object} [hint]  Datos parciales de la card para pre-poblar el skeleton
+ *   con información visual más rica: { nombre?, imagen?, color? }
+ * @returns {import('./net/screen-scope.js').ScreenScope}
+ */
+function _abrirModalConSkeleton(sku, hint = {}) {
+  // Abortar cualquier fetch anterior del PDP y crear uno nuevo.
+  if (pdpFetchAbortScope) pdpFetchAbortScope.abort("new_product_opened");
+  pdpFetchAbortScope = createAbortScope();
+
+  const modal    = document.getElementById("product-modal");
+  const modalBody = document.getElementById("product-modal-body");
+  if (!modal || !modalBody) return null;
+
+  // SKU en dataset para que cerrarModal y otros helpers lo puedan leer.
+  modal.dataset.sku = sku;
+  modal.classList.add("active");
+  document.body.classList.add("modal-open");
+  if (typeof window.updateFloatingCartCta === "function") window.updateFloatingCartCta();
+
+  // Render del skeleton con datos parciales de la card si están disponibles.
+  modalBody.innerHTML = _renderPdpSkeleton(sku, hint);
+
+  // Scroll al inicio del modal para que el skeleton sea visible.
+  modalBody.scrollTop = 0;
+
+  // Screen-scope del PDP: markFirstPaint = skeleton visible, markReady = datos reales.
+  const scope = createScreenScope("pdp", {
+    onFirstPaint({ reason }) {
+      globalThis.markBootStage?.("pdp.skeleton_shown", { sku, reason });
+    },
+    onReady({ reason }) {
+      globalThis.markBootStage?.("pdp.data_loaded", { sku, reason });
+    },
+  });
+  scope.markFirstPaint("skeleton_shown");
+  return scope;
+}
+
+/**
+ * Genera el HTML del skeleton del PDP con la información parcial disponible
+ * en la card (nombre, imagen optimizada, color). Reutiliza la animación
+ * skeletonShimmer ya definida en styles.css.
+ *
+ * @param {string} sku
+ * @param {{ nombre?: string, imagen?: string, color?: string }} hint
+ * @returns {string}
+ */
+function _renderPdpSkeleton(sku, hint = {}) {
+  const nombre = (hint.nombre || "").replace(/</g, "&lt;");
+  const color  = (hint.color  || "").replace(/</g, "&lt;");
+  const imgUrl = hint.imagen || "";
+
+  const imagenHtml = imgUrl
+    ? `<img src="${imgUrl.replace(/"/g, "&quot;")}" alt="" style="width:100%;aspect-ratio:4/5;object-fit:cover;border-radius:10px;display:block;" loading="eager" decoding="async" />`
+    : `<div class="card-skeleton__image" style="width:100%;aspect-ratio:4/5;border-radius:10px;"></div>`;
+
+  const tituloHtml = nombre
+    ? `<div style="font-size:17px;font-weight:700;margin:10px 0 4px;color:#1a1a1a;">${nombre}${color ? ` <span style="font-weight:400;color:#666;">· ${color}</span>` : ""}</div>`
+    : `<div class="card-skeleton__line card-skeleton__line--title" style="margin:10px 0 4px;"></div>`;
+
+  return `
+    <div style="padding:14px 14px 80px;" data-pdp-skeleton="${sku}">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+        <button class="pdp-back product-modal-back" aria-label="Volver" style="background:none;border:none;font-size:22px;cursor:pointer;padding:4px 8px;">←</button>
+        <div class="card-skeleton__line" style="width:60px;height:12px;"></div>
+      </div>
+      ${imagenHtml}
+      ${tituloHtml}
+      <div class="card-skeleton__line card-skeleton__line--meta" style="margin-bottom:8px;"></div>
+      <div style="margin:14px 0 10px;display:flex;gap:8px;">
+        <div class="card-skeleton__chip" style="width:56px;height:24px;border-radius:6px;"></div>
+        <div class="card-skeleton__chip" style="width:56px;height:24px;border-radius:6px;"></div>
+        <div class="card-skeleton__chip" style="width:56px;height:24px;border-radius:6px;"></div>
+      </div>
+      <div class="card-skeleton__line" style="width:100%;height:48px;border-radius:10px;margin-bottom:8px;"></div>
+    </div>`;
+}
+
+/**
+ * Muestra un estado de error dentro del modal abierto (sin cerrarlo).
+ * Preserva el botón de cerrar para que el usuario pueda salir.
+ *
+ * @param {string} kind   FYL_ERROR_KIND
+ * @param {string} [sku]  Para retry con el mismo SKU.
+ */
+function _renderPdpError(kind, sku) {
+  const modalBody = document.getElementById("product-modal-body");
+  if (!modalBody) return;
+
+  let mensaje, accion;
+  if (kind === FYL_ERROR_KIND.NETWORK) {
+    mensaje = "Sin conexión. Verificá tu red e intentá de nuevo.";
+    accion  = sku
+      ? `<button onclick="window._pdpRetry('${sku.replace(/'/g, "\\'")}')" style="margin-top:12px;padding:10px 20px;background:#CD844D;color:#fff;border:none;border-radius:8px;font-size:14px;cursor:pointer;">Reintentar</button>`
+      : "";
+  } else if (kind === FYL_ERROR_KIND.PERMISSION) {
+    mensaje = "Este producto no está disponible.";
+    accion  = "";
+  } else if (kind === FYL_ERROR_KIND.SERVER) {
+    mensaje = "Error temporal del servidor. Intentá más tarde.";
+    accion  = sku
+      ? `<button onclick="window._pdpRetry('${sku.replace(/'/g, "\\'")}')" style="margin-top:12px;padding:10px 20px;background:#CD844D;color:#fff;border:none;border-radius:8px;font-size:14px;cursor:pointer;">Reintentar</button>`
+      : "";
+  } else {
+    mensaje = "No se pudo cargar el producto.";
+    accion  = "";
+  }
+
+  modalBody.innerHTML = `
+    <div style="padding:40px 20px;text-align:center;">
+      <button class="pdp-back product-modal-back" aria-label="Volver" style="display:block;margin-bottom:20px;background:none;border:none;font-size:22px;cursor:pointer;">←</button>
+      <p style="color:#555;font-size:15px;margin:0;">${mensaje}</p>
+      ${accion}
+    </div>`;
+}
+
+// Retry público: lo invoca el botón de "Reintentar" dentro del modal.
+// Debounce simple: si ya hay un fetch en vuelo (pdpFetchAbortScope no abortado),
+// el abort lo gestiona _abrirModalConSkeleton; la bandera evita que un doble
+// click dispare dos aperturas de skeleton en el mismo tick.
+let _pdpRetryInFlight = false;
+window._pdpRetry = function(sku) {
+  if (!sku || _pdpRetryInFlight) return;
+  _pdpRetryInFlight = true;
+  abrirPdpPorSkuIfPossible(sku, { pushState: false })
+    .catch(() => {})
+    .finally(() => { _pdpRetryInFlight = false; });
+};
+
+async function buscarPorSKUEnSupabase(sku, { signal } = {}) {
   if (!sku || !supabase) return null;
   
   try {
     // 1. Primero intentar buscar por SKU completo en variant_sizes (SKU con talle específico)
-    const { data: sizeData, error: sizeError } = await supabase
-      .from("variant_sizes")
-      .select("variant_id, size, stock_qty")
-      .eq("sku", sku.trim())
-      .limit(1)
-      .maybeSingle();
+    const { data: sizeData, error: sizeError, kind: sizeKind, aborted: sizeAborted } = await wrapSupabase(
+      () => supabase
+        .from("variant_sizes")
+        .select("variant_id, size, stock_qty")
+        .eq("sku", sku.trim())
+        .limit(1)
+        .maybeSingle(),
+      { retries: 1, signal, label: "pdp.variant_sizes" }
+    );
+    if (sizeAborted) return null;
+    if (sizeError && sizeKind !== FYL_ERROR_KIND.PERMISSION) {
+      // Propagar el error clasificado para que el caller decida la UX.
+      const err = Object.assign(new Error(sizeError.message || "pdp_fetch_failed"), { kind: sizeKind });
+      throw err;
+    }
     
     let variantId = null;
     let talle = null;
@@ -2560,28 +2813,32 @@ async function buscarPorSKUEnSupabase(sku) {
     
     // 2. Si no se encontró en variant_sizes, buscar por SKU base en product_variants (SKU sin talle)
     if (!variantId) {
-      const { data: variantData, error: variantError } = await supabase
-        .from("product_variants")
-        .select("id, color, reserved_qty, product_id")
-        .eq("sku", sku.trim())
-        .eq("active", true)
-        .limit(1)
-        .maybeSingle();
-      
-      if (variantError || !variantData) {
-        return null;
-      }
+      const { data: variantData, error: variantError, aborted: vAborted } = await wrapSupabase(
+        () => supabase
+          .from("product_variants")
+          .select("id, color, reserved_qty, product_id")
+          .eq("sku", sku.trim())
+          .eq("active", true)
+          .limit(1)
+          .maybeSingle(),
+        { retries: 1, signal, label: "pdp.product_variants" }
+      );
+      if (vAborted) return null;
+      if (variantError || !variantData) return null;
       
       variantId = variantData.id;
       
       // Si no hay talle específico, usar el primer talle disponible de la variante
-      const { data: firstSize, error: firstSizeError } = await supabase
-        .from("variant_sizes")
-        .select("size, stock_qty")
-        .eq("variant_id", variantId)
-        .limit(1)
-        .maybeSingle();
-      
+      const { data: firstSize, error: firstSizeError, aborted: fsAborted } = await wrapSupabase(
+        () => supabase
+          .from("variant_sizes")
+          .select("size, stock_qty")
+          .eq("variant_id", variantId)
+          .limit(1)
+          .maybeSingle(),
+        { signal, label: "pdp.first_size" }
+      );
+      if (fsAborted) return null;
       if (!firstSizeError && firstSize) {
         talle = normalizeSize(firstSize.size);
         sizeStockQty = firstSize.stock_qty || 0;
@@ -2593,17 +2850,18 @@ async function buscarPorSKUEnSupabase(sku) {
     }
     
     // 3. Obtener información completa de la variante
-    const { data: variantData, error: variantError } = await supabase
-      .from("product_variants")
-      .select("id, color, reserved_qty, product_id, products!inner(name, description)")
-      .eq("id", variantId)
-      .eq("active", true)
-      .limit(1)
-      .maybeSingle();
-    
-    if (variantError || !variantData) {
-      return null;
-    }
+    const { data: variantData, error: variantError, aborted: varAborted } = await wrapSupabase(
+      () => supabase
+        .from("product_variants")
+        .select("id, color, reserved_qty, product_id, products!inner(name, description)")
+        .eq("id", variantId)
+        .eq("active", true)
+        .limit(1)
+        .maybeSingle(),
+      { retries: 1, signal, label: "pdp.variant_full" }
+    );
+    if (varAborted) return null;
+    if (variantError || !variantData) return null;
     
     const variant = variantData;
     const productId = variant.product_id;
@@ -2613,18 +2871,18 @@ async function buscarPorSKUEnSupabase(sku) {
     if (articulo && supabase) {
       try {
         let catRows = null;
-        const rCat = await supabase
-          .from('catalog_public_view')
-          .select('*')
-          .eq('Articulo', articulo);
-        if (!rCat.error && rCat.data?.length) {
+        const rCat = await wrapSupabase(
+          () => supabase.from("catalog_public_view").select("*").eq("Articulo", articulo),
+          { retries: 1, signal, label: "pdp.catalog_view_exact" }
+        );
+        if (!rCat.aborted && !rCat.error && rCat.data?.length) {
           catRows = rCat.data;
-        } else if (!rCat.error) {
-          const rCatI = await supabase
-            .from('catalog_public_view')
-            .select('*')
-            .ilike('Articulo', articulo);
-          if (!rCatI.error && rCatI.data?.length) catRows = rCatI.data;
+        } else if (!rCat.aborted && !rCat.error) {
+          const rCatI = await wrapSupabase(
+            () => supabase.from("catalog_public_view").select("*").ilike("Articulo", articulo),
+            { signal, label: "pdp.catalog_view_ilike" }
+          );
+          if (!rCatI.aborted && !rCatI.error && rCatI.data?.length) catRows = rCatI.data;
         }
         if (catRows && catRows.length > 0) {
           const grouped = agruparProductos(catRows);
@@ -2654,15 +2912,18 @@ async function buscarPorSKUEnSupabase(sku) {
           }
         }
       } catch (e) {
-        console.warn('⚠️ catalog_public_view por artículo (PDP deep link):', e);
+        console.warn("⚠️ catalog_public_view por artículo (PDP deep link):", e);
       }
     }
 
     // 4. Obtener warehouses "general" y "venta-publico"
-    const { data: warehouses } = await supabase
-      .from("warehouses")
-      .select("id, code")
-      .in("code", ["general", "venta-publico"]);
+    const { data: warehouses } = await wrapSupabase(
+      () => supabase
+        .from("warehouses")
+        .select("id, code")
+        .in("code", ["general", "venta-publico"]),
+      { signal, label: "pdp.warehouses" }
+    );
     
     const warehouseMap = new Map();
     let generalWarehouseId = null;
@@ -2713,13 +2974,16 @@ async function buscarPorSKUEnSupabase(sku) {
     
     // Intentar obtener imagen del color desde variant_images
     // La tabla tiene columna "url" (no "image_url"); secure_url es alternativa Cloudinary
-    const { data: variantImages, error: imgError } = await supabase
-      .from("variant_images")
-      .select("url, secure_url")
-      .eq("variant_id", variantId)
-      .order("position", { ascending: true })
-      .limit(1);
-    
+    const { data: variantImages, error: imgError, aborted: imgAborted } = await wrapSupabase(
+      () => supabase
+        .from("variant_images")
+        .select("url, secure_url")
+        .eq("variant_id", variantId)
+        .order("position", { ascending: true })
+        .limit(1),
+      { signal, label: "pdp.variant_images" }
+    );
+    if (imgAborted) return null;
     if (!imgError && variantImages && variantImages.length > 0) {
       const vi = variantImages[0];
       image = vi.url || vi.secure_url || '';
@@ -2754,6 +3018,9 @@ async function buscarPorSKUEnSupabase(sku) {
       image
     };
   } catch (error) {
+    // Si el error ya viene con `kind` (lo asignamos en pasos 1-3), re-lanzar
+    // para que el caller (abrirPdpPorSkuIfPossible) lo maneje con UX correcta.
+    if (error?.kind) throw error;
     console.warn("⚠️ Error en buscarPorSKUEnSupabase:", error);
     return null;
   }
@@ -3081,7 +3348,7 @@ async function applyTagFilterAndRender(tagValue, { pushHash = true } = {}) {
   if (!cont) return;
   const all = await ensureAllCacheLoadedGrouped();
   const filtrados = filterProductsByTag(all, tagValue);
-  productosPendientes = filtrados;
+  setProductosPendientes(filtrados);
   productosRenderizados = 0;
   offersCardsPendientes = [];
   setCatalogLoadMode("paged");
@@ -3140,7 +3407,13 @@ function abrirModalPorSKU(sku, { pushState = true } = {}) {
   
   const resultado = buscarPorSKU(sku);
   if (!resultado) return false;
-  
+
+  // Abortar cualquier fetch slow-path que pudiera seguir en vuelo.
+  if (pdpFetchAbortScope) {
+    pdpFetchAbortScope.abort("fast_path_override");
+    pdpFetchAbortScope = null;
+  }
+
   productoActualEnModal = resultado.producto;
   const modal = document.getElementById('product-modal');
   if (!modal) return false;
@@ -3166,7 +3439,13 @@ function abrirModalPorSKU(sku, { pushState = true } = {}) {
 
 function abrirModalConResultado(resultado, { pushState = true } = {}) {
   if (!resultado || !resultado.producto) return false;
-  
+
+  // Abortar cualquier fetch slow-path que pudiera seguir en vuelo.
+  if (pdpFetchAbortScope) {
+    pdpFetchAbortScope.abort("fast_path_override");
+    pdpFetchAbortScope = null;
+  }
+
   productoActualEnModal = resultado.producto;
   const modal = document.getElementById('product-modal');
   if (!modal) return false;
@@ -3201,16 +3480,83 @@ function abrirModalConResultado(resultado, { pushState = true } = {}) {
   return true;
 }
 
-/** Abre PDP por SKU: índice de página actual, o carga completa vía Supabase (deep link / Ver más). */
-async function abrirPdpPorSkuIfPossible(sku, { pushState = true } = {}) {
+/**
+ * Abre PDP por SKU: índice de página actual (instantáneo) o fetch a Supabase
+ * con skeleton-first (responde inmediatamente, datos llegan después).
+ *
+ * Flujo skeleton-first:
+ *  1. Abre el modal con skeleton → markFirstPaint("skeleton_shown")
+ *  2. Fetch en background con señal de abort
+ *  3. Al llegar datos → render real + markReady("data_loaded")
+ *  4. Si error → render de error dentro del modal (sin cerrar)
+ *  5. Si abort (usuario cerró o abrió otro) → silencioso
+ */
+async function abrirPdpPorSkuIfPossible(sku, { pushState = true, hint = {} } = {}) {
   if (!sku) return false;
+
+  // Camino rápido: SKU ya está en cache → abre sin red, sin skeleton.
   if (abrirModalPorSKU(sku, { pushState })) return true;
-  const resultado = await buscarPorSKUEnSupabase(sku);
-  if (resultado && abrirModalConResultado(resultado, { pushState })) return true;
-  return false;
+
+  // Camino lento: abrir skeleton de inmediato y fetchear en background.
+  const pdpScope = _abrirModalConSkeleton(sku, hint);
+  if (!pdpScope) return false;
+
+  if (pushState) pushPdpState(sku);
+
+  try {
+    const signal = pdpFetchAbortScope?.signal;
+    const resultado = await buscarPorSKUEnSupabase(sku, { signal });
+
+    // Si el modal fue cerrado/reemplazado mientras fetcheábamos, no pintar.
+    const modal = document.getElementById("product-modal");
+    const esMismoSku = modal?.dataset.sku === sku && modal?.classList.contains("active");
+    if (!esMismoSku) return true; // Abierto con skeleton, abortado limpiamente.
+
+    if (resultado) {
+      productoActualEnModal = resultado.producto;
+      renderizarModalProducto(resultado.producto, resultado.color, resultado.talle);
+      const modalBody = document.getElementById("product-modal-body");
+      if (modalBody) modalBody.scrollTop = 0;
+      if (typeof window.updateFloatingCartCta === "function") window.updateFloatingCartCta();
+      fylCatalogViewItemForProducto(resultado.producto, sku);
+      trackMetaViewContent(resultado.producto, sku);
+      fylCatalogPdpSurface();
+      pdpScope.markReady("data_loaded");
+    } else {
+      // SKU no encontrado (sin error): producto inexistente.
+      _renderPdpError(FYL_ERROR_KIND.PERMISSION, null);
+      pdpScope.markReady("not_found");
+    }
+    return true;
+
+  } catch (err) {
+    const kind = err?.kind || classifyError(err);
+
+    // Si el modal fue cerrado mientras fetcheábamos, silencioso.
+    const modal = document.getElementById("product-modal");
+    if (!modal?.classList.contains("active") || modal?.dataset.sku !== sku) return true;
+
+    if (kind === FYL_ERROR_KIND.AUTH) {
+      // Sesión inválida confirmada por servidor → cerrar y redirigir.
+      cerrarModal(true);
+      window.location.href = window.location.pathname.includes("/admin/") ? "./index.html" : "/";
+      return true;
+    }
+
+    // Network, server, unknown → mostrar error dentro del modal sin cerrarlo.
+    _renderPdpError(kind, sku);
+    pdpScope.markReady("error_shown");
+    return true;
+  }
 }
 
 function cerrarModal(skipHistory = false) {
+  // Abortar fetch PDP pendiente (si se abrió con skeleton y el usuario cerró antes).
+  if (pdpFetchAbortScope && !pdpFetchAbortScope.aborted) {
+    pdpFetchAbortScope.abort("modal_closed");
+    pdpFetchAbortScope = null;
+  }
+
   const modal = document.getElementById('product-modal');
   if (modal) {
     modal.classList.remove('active');
@@ -4623,10 +4969,19 @@ function initGridEvents() {
       }
     }
     
-    // 3) Solo si no está en página → buscar en Supabase (lento, datos mínimos)
+    // 3) Solo si no está en página → skeleton-first + fetch en background.
     if (sku) {
-      buscarPorSKUEnSupabase(sku).then(resultado => {
-        if (resultado) abrirModalConResultado(resultado, { pushState: true });
+      // Extraer datos parciales de la card para pre-poblar el skeleton.
+      const imgEl   = card.querySelector(".main-image");
+      const nameEl  = card.querySelector(".card-title, [data-articulo], .product-name");
+      const colorEl = card.querySelector(".card-color, [data-color]");
+      const hint = {
+        imagen: imgEl?.src || imgEl?.dataset.src || "",
+        nombre: nameEl?.textContent?.trim() || nameEl?.dataset?.articulo || "",
+        color:  colorEl?.textContent?.trim() || colorEl?.dataset?.color  || "",
+      };
+      abrirPdpPorSkuIfPossible(sku, { pushState: true, hint }).catch((err) => {
+        console.warn("[pdp] abrirPdpPorSkuIfPossible error inesperado:", err);
       });
     }
   });
@@ -5530,8 +5885,11 @@ async function inicializarCatalogo() {
       }
     }
   } finally {
+    // markReady garantiza: (1) que first paint ocurrió, (2) safety net de overlay,
+    // (3) emisión de screen:ready. Se hace ANTES de limpiar __FYL_BOOT_SUPPRESS_ROUTE
+    // para que shouldRun() del scope todavía pueda actuar si first paint no corrió.
+    catalogScope.markReady("init_complete");
     window.__FYL_BOOT_SUPPRESS_ROUTE = false;
-    hideCatalogBootOverlay();
     globalThis.markBootStage?.("catalog.boot.finished");
   }
 }
@@ -5679,6 +6037,152 @@ function normalizeSearchText(value) {
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
+}
+
+function normalizeTagListText(value) {
+  return normalizeSearchText(String(value || "").replace(/[,;]+/g, " "));
+}
+
+// Construye un string normalizado con todos los campos buscables de un producto.
+// Se usa como "haystack" único en buscarProductosEnTodos para que el match
+// se evalúe contra nombre + descripción + categoría + tags (Filtro1/2/3) + color.
+// Filtro3 puede contener varios tags separados por coma o punto y coma; se
+// convierten a espacios para que cada tag quede como token independiente.
+function buildProductSearchHaystack(producto) {
+  if (!producto) return "";
+  const filtro3Clean = String(producto.Filtro3 || "").replace(/[,;]+/g, " ");
+  const parts = [
+    producto.Articulo,
+    producto.name,
+    producto.Descripcion,
+    producto.Categoria,
+    producto.Filtro1,
+    producto.Filtro2,
+    filtro3Clean,
+    producto.Color,
+  ];
+  return normalizeSearchText(parts.filter(Boolean).join(" "));
+}
+
+function buildSearchIndexEntry(producto) {
+  const nombre = normalizeSearchText((producto?.name || producto?.Articulo) || "");
+  const tag1 = normalizeSearchText(producto?.Filtro1 || "");
+  const tag2 = normalizeSearchText(producto?.Filtro2 || "");
+  const tags = normalizeTagListText(producto?.Filtro3 || "");
+  const categoria = normalizeSearchText(producto?.Categoria || "");
+  const color = normalizeSearchText(producto?.Color || "");
+  const haystack = buildProductSearchHaystack(producto);
+
+  return {
+    producto,
+    haystack,
+    nombre,
+    tag1,
+    tag2,
+    tags,
+    categoria,
+    color,
+  };
+}
+
+function rebuildSearchIndex() {
+  if (!Array.isArray(productosPendientes) || productosPendientes.length === 0) {
+    searchIndex = [];
+    return searchIndex;
+  }
+  searchIndex = productosPendientes.map((producto) => buildSearchIndexEntry(producto));
+  return searchIndex;
+}
+
+function computeRelevanceScore(entry, term) {
+  if (!entry || !term) return 0;
+  let score = 0;
+  const termToken = String(term || "").trim();
+
+  // nombre: exact match -> +1000, incluye -> +150
+  let nombreScore = 0;
+  if (entry.nombre) {
+    if (entry.nombre === termToken) {
+      nombreScore = 1000;
+    } else {
+      const nombreTokens = tokenizeSearchText(entry.nombre);
+      if (nombreTokens.includes(termToken)) {
+        nombreScore = 150;
+      }
+    }
+  }
+  score += Math.min(nombreScore, 1000);
+
+  // tag1/tag2: incluye -> +100
+  let tag12Score = 0;
+  if ((entry.tag1 && entry.tag1.includes(termToken)) || (entry.tag2 && entry.tag2.includes(termToken))) {
+    tag12Score = 100;
+  }
+  score += Math.min(tag12Score, 100);
+
+  // tags (Filtro3): incluye -> +80
+  let tagsScore = 0;
+  if (entry.tags && entry.tags.includes(termToken)) {
+    tagsScore = 80;
+  }
+  score += Math.min(tagsScore, 80);
+
+  // categoría: incluye -> +40
+  let categoriaScore = 0;
+  if (entry.categoria && entry.categoria.includes(termToken)) {
+    categoriaScore = 40;
+  }
+  score += Math.min(categoriaScore, 40);
+
+  // color: incluye -> +20
+  let colorScore = 0;
+  if (entry.color && entry.color.includes(termToken)) {
+    colorScore = 20;
+  }
+  score += Math.min(colorScore, 20);
+
+  return score;
+}
+
+function applyTextSearch(indexEntries, term) {
+  if (!Array.isArray(indexEntries) || indexEntries.length === 0 || !term) return [];
+
+  return indexEntries
+    .map((entry) => {
+      if (!matchesSearchWithTolerance(term, entry.haystack)) return null;
+      return {
+        producto: entry.producto,
+        score: computeRelevanceScore(entry, term),
+      };
+    })
+    .filter(Boolean);
+}
+
+function rankSearchResults(matches) {
+  if (!Array.isArray(matches) || matches.length === 0) return [];
+  return [...matches].sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return parseFecha(b.producto.FechaIngreso) - parseFecha(a.producto.FechaIngreso);
+  });
+}
+
+async function renderSearchResults(productos, cont) {
+  // Limpiar contenedor y ocultar banners cuando hay filtro de búsqueda
+  cont.innerHTML = "";
+  if (typeof window.hideFYLOriginalsBanner === 'function') window.hideFYLOriginalsBanner();
+  if (typeof window.hideCustomBanner === 'function') window.hideCustomBanner();
+  if (typeof window.hidePromotionalBanner === 'function') window.hidePromotionalBanner();
+  document.getElementById("info-banner-top-container")?.classList.add("is-hidden");
+
+  if (Array.isArray(productos) && productos.length > 0) {
+    await renderizarProductosPagina(productos, cont, [], 0, null, { skipBanner: true });
+    configurarEventos();
+  } else {
+    cont.insertAdjacentHTML('beforeend', '<div class="no-results" style="text-align: center; padding: 2rem; color: #666;">No se encontraron productos</div>');
+  }
+
+  initTagFilterClearDelegation();
+  refreshCatalogFilterBar();
 }
 
 function tokenizeSearchText(value) {
@@ -5863,6 +6367,7 @@ async function buscarProductosEnTodos(term) {
     if (cont) {
       cont.innerHTML = "";
       productosRenderizados = 0;
+      syncHomeTopSlotState({ pending: categoriaActual === "all" });
       const firstChunkRendered = await renderizarProductosPagina(
         productosPendientes,
         cont,
@@ -5890,6 +6395,7 @@ async function buscarProductosEnTodos(term) {
         await Promise.all(paralelos);
         if (typeof window.showPromotionalBanner === 'function') window.showPromotionalBanner();
         syncInfoBannerVisibility();
+        syncHomeTopSlotState({ pending: false });
       }
     }
     refreshCatalogFilterBar();
@@ -5905,53 +6411,15 @@ async function buscarProductosEnTodos(term) {
     return;
   }
 
-  // Filtrar y rankear productos por relevancia
-  const productosRankeados = productosPendientes.map((producto) => {
-    const art = normalizeSearchText(producto.Articulo || "");
-    const descripcion = normalizeSearchText(producto.Descripcion || "");
-    const nombre = normalizeSearchText((producto.name || producto.Articulo) || "");
-    const filtros = [
-      normalizeSearchText(producto.Filtro1 || ""),
-      normalizeSearchText(producto.Filtro2 || ""),
-      normalizeSearchText(producto.Filtro3 || "")
-    ].join(" ");
+  if (searchIndex.length !== productosPendientes.length) {
+    rebuildSearchIndex();
+  }
 
-    const isMatch = (
-      matchesSearchWithTolerance(termLower, art) ||
-      matchesSearchWithTolerance(termLower, descripcion) ||
-      matchesSearchWithTolerance(termLower, nombre) ||
-      matchesSearchWithTolerance(termLower, filtros)
-    );
-    if (!isMatch) return null;
-
-    return {
-      producto,
-      score: getSearchRelevanceScore(producto, termLower),
-    };
-  }).filter(Boolean);
-
-  productosRankeados.sort((a, b) => {
-    if (b.score !== a.score) return b.score - a.score;
-    return parseFecha(b.producto.FechaIngreso) - parseFecha(a.producto.FechaIngreso);
-  });
-
+  const productosRankeados = rankSearchResults(applyTextSearch(searchIndex, termLower));
   const productosFiltrados = productosRankeados.map((item) => item.producto);
   window.__fylSearchDerivedCategory = inferSearchCategoryFromProducts(productosFiltrados);
 
-  // Limpiar contenedor y ocultar banners cuando hay filtro de búsqueda
-  cont.innerHTML = "";
-  if (typeof window.hideFYLOriginalsBanner === 'function') window.hideFYLOriginalsBanner();
-  if (typeof window.hideCustomBanner === 'function') window.hideCustomBanner();
-  if (typeof window.hidePromotionalBanner === 'function') window.hidePromotionalBanner();
-  document.getElementById("info-banner-top-container")?.classList.add("is-hidden");
-  if (productosFiltrados.length > 0) {
-    await renderizarProductosPagina(productosFiltrados, cont, [], 0, null, { skipBanner: true });
-    configurarEventos();
-  } else {
-    cont.insertAdjacentHTML('beforeend', '<div class="no-results" style="text-align: center; padding: 2rem; color: #666;">No se encontraron productos</div>');
-  }
-  initTagFilterClearDelegation();
-  refreshCatalogFilterBar();
+  await renderSearchResults(productosFiltrados, cont);
   fylCatalogTrackViewItemList("search:" + termLower, productosFiltrados, "search_results");
 }
 

@@ -7,6 +7,32 @@ let cachedIsSuperAdmin = null;
 let cacheTimestamp = null;
 const CACHE_DURATION = 60000; // 1 minuto
 
+// Cache del objeto user (local, sin red). getSession() es siempre local.
+let _cachedUser = null;
+// Single-flight: si varias funciones piden el user al mismo tiempo, un solo fetch.
+let _userFetchPromise = null;
+// Single-flight para getUserPermissions
+let _permissionsFetchPromise = null;
+
+/**
+ * Obtiene el user de la sesión local (getSession, sin roundtrip de red).
+ * Idempotente: múltiples llamadas comparten la misma Promise si el fetch está en curso.
+ * @internal
+ */
+async function _getSessionUser() {
+  if (_cachedUser) return _cachedUser;
+  if (_userFetchPromise) return _userFetchPromise;
+  _userFetchPromise = supabase.auth.getSession().then(({ data }) => {
+    _cachedUser = data?.session?.user ?? null;
+    _userFetchPromise = null;
+    return _cachedUser;
+  }).catch(() => {
+    _userFetchPromise = null;
+    return null;
+  });
+  return _userFetchPromise;
+}
+
 /**
  * Limpia la caché de permisos
  */
@@ -14,6 +40,9 @@ export function clearPermissionsCache() {
   cachedUserPermissions = null;
   cachedIsSuperAdmin = null;
   cacheTimestamp = null;
+  _cachedUser = null;
+  _userFetchPromise = null;
+  _permissionsFetchPromise = null;
 }
 
 /**
@@ -22,12 +51,12 @@ export function clearPermissionsCache() {
  */
 export async function isSuperAdmin() {
   try {
-    // Verificar caché
     if (cachedIsSuperAdmin !== null && cacheTimestamp && Date.now() - cacheTimestamp < CACHE_DURATION) {
       return cachedIsSuperAdmin;
     }
 
-    const { data: { user } } = await supabase.auth.getUser();
+    // Usar session local (sin red) en lugar de getUser() (red)
+    const user = await _getSessionUser();
     if (!user) {
       cachedIsSuperAdmin = false;
       return false;
@@ -56,12 +85,26 @@ export async function isSuperAdmin() {
  */
 export async function getUserPermissions() {
   try {
-    // Verificar caché
     if (cachedUserPermissions && cacheTimestamp && Date.now() - cacheTimestamp < CACHE_DURATION) {
       return cachedUserPermissions;
     }
+    // Single-flight: si ya hay una carga en progreso, esperar a la misma Promise
+    if (_permissionsFetchPromise) return _permissionsFetchPromise;
 
-    const { data: { user } } = await supabase.auth.getUser();
+    _permissionsFetchPromise = _doGetUserPermissions().finally(() => {
+      _permissionsFetchPromise = null;
+    });
+    return _permissionsFetchPromise;
+  } catch (error) {
+    console.error("Error en getUserPermissions:", error);
+    return {};
+  }
+}
+
+async function _doGetUserPermissions() {
+  try {
+    // Usar session local (sin red)
+    const user = await _getSessionUser();
     if (!user) {
       cachedUserPermissions = {};
       return {};
@@ -89,6 +132,7 @@ export async function getUserPermissions() {
         labels: { can_view: true, can_edit: true, can_delete: true },
         customers: { can_view: true, can_edit: true, can_delete: true },
         'meta-feed': { can_view: true, can_edit: true, can_delete: true },
+        proveedores: { can_view: true, can_edit: true, can_delete: true },
       };
       cachedUserPermissions = allPermissions;
       cacheTimestamp = Date.now();
@@ -132,43 +176,30 @@ export async function getUserPermissions() {
     cacheTimestamp = Date.now();
     return permissionsObj;
   } catch (error) {
-    console.error("Error en getUserPermissions:", error);
+    console.error("Error en _doGetUserPermissions:", error);
     return {};
   }
 }
 
 /**
- * Verifica si el usuario tiene un permiso específico
- * @param {string} permissionKey - Clave del permiso ('stock', 'import', 'export', 'orders', etc.)
- * @param {string} action - Acción requerida ('view', 'edit', 'delete')
+ * Verifica si el usuario tiene un permiso específico.
+ *
+ * Fase 3: Usa getUserPermissions() (que ya tiene cache bulk + single-flight)
+ * en lugar de llamar a getUser() + isSuperAdmin() + RPC has_permission por
+ * separado. El primer checkPermission de la sesión hace 1-2 queries; los
+ * siguientes son lookups O(1) en memoria.
+ *
+ * @param {string} permissionKey
+ * @param {'view'|'edit'|'delete'} [action='view']
  * @returns {Promise<boolean>}
  */
 export async function checkPermission(permissionKey, action = 'view') {
   try {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      return false;
-    }
-
-    // Super admins tienen todos los permisos
-    if (await isSuperAdmin()) {
-      return true;
-    }
-
-    // Verificar permiso usando RPC
-    const { data, error } = await supabase
-      .rpc('has_permission', {
-        check_user_id: user.id,
-        permission_key: permissionKey,
-        action: action
-      });
-
-    if (error) {
-      console.error("Error verificando permiso:", error);
-      return false;
-    }
-
-    return !!data;
+    const permissions = await getUserPermissions();
+    const perm = permissions[permissionKey];
+    if (!perm) return false;
+    const key = `can_${action}`;
+    return !!perm[key];
   } catch (error) {
     console.error("Error en checkPermission:", error);
     return false;
@@ -194,7 +225,7 @@ export async function checkMultiplePermissions(permissions) {
  */
 export async function isAdmin() {
   try {
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = await _getSessionUser();
     if (!user) {
       console.log("isAdmin: No hay usuario autenticado");
       return false;
@@ -264,7 +295,7 @@ export async function getUserRole() {
  */
 export async function requireAdminAuth(redirectUrl = './index.html') {
   try {
-    const { data: { user } } = await supabase.auth.getUser();
+    const user = await _getSessionUser();
     if (!user) {
       alert("Debes iniciar sesión para acceder a esta página.");
       window.location.href = redirectUrl;
@@ -303,12 +334,9 @@ export async function requirePermission(permissionKey, action = 'view', redirect
   return true;
 }
 
-// Limpiar caché cuando el usuario cierra sesión
+// Limpiar caché cuando el usuario cierra/abre sesión
 supabase.auth.onAuthStateChange((event) => {
-  if (event === 'SIGNED_OUT') {
-    clearPermissionsCache();
-  } else if (event === 'SIGNED_IN') {
-    // Limpiar caché cuando se inicia sesión para asegurar datos frescos
+  if (event === 'SIGNED_OUT' || event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
     clearPermissionsCache();
   }
 });

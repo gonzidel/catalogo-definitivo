@@ -1,11 +1,9 @@
 // admin/publications.js
-import { requireAuth } from "./admin-auth.js";
 import { supabase } from "../scripts/supabase-client.js";
+import { preloadAuthState, can, isAdminUser } from "./auth-state.js";
 import { normalizeSize, compareCatalogSizes } from "../scripts/utils/size-normalizer.js";
 
-await requireAuth();
-
-// Verificar que Supabase esté disponible
+// Verificar que Supabase esté disponible (puede fallar en error de config, no de red)
 if (!supabase) {
   console.error("❌ Cliente de Supabase no disponible");
   document.body.innerHTML = `
@@ -14,6 +12,53 @@ if (!supabase) {
       <p>El cliente de Supabase no está disponible. Verifica la configuración.</p>
     </div>
   `;
+}
+
+let _publicationsAuthAllowed = false;
+let _publicationsAuthChecked = false;
+
+// Auth gate único para evitar cargas ambiguas antes de validar permisos.
+const publicationsAuthReady = (async () => {
+  try {
+    const { user } = await preloadAuthState();
+    if (!user) {
+      window.location.href = "./index.html";
+      return false;
+    }
+
+    // Mantener fallback seguro: si no hay key explícita pero sí perfil admin,
+    // no bloquear por inconsistencias transitorias de permisos.
+    const canViewPublications = can("publications", "view");
+    if (!canViewPublications && !isAdminUser()) {
+      window.location.href = "./index.html";
+      return false;
+    }
+
+    _publicationsAuthAllowed = true;
+    return true;
+  } catch (authErr) {
+    console.warn("[publications] error verificando auth-state:", authErr);
+    window.location.href = "./index.html";
+    return false;
+  } finally {
+    _publicationsAuthChecked = true;
+  }
+})();
+
+async function ensurePublicationsAuth() {
+  if (_publicationsAuthChecked && !_publicationsAuthAllowed) return false;
+  const ok = await publicationsAuthReady;
+  return ok && _publicationsAuthAllowed;
+}
+
+function runPublicationsTask(label, task) {
+  Promise.resolve()
+    .then(task)
+    .catch((err) => {
+      console.error(`[publications] ${label} failed:`, err);
+      const msg = err?.message || "Error inesperado. Reintentá.";
+      showMessage(msg, "error");
+    });
 }
 
 // Estado
@@ -221,7 +266,10 @@ function setupInfiniteScroll(containerId, tabName, loadFunction) {
     const documentHeight = document.documentElement.scrollHeight;
     
     if (scrollTop + windowHeight >= documentHeight - 100) {
-      loadFunction(false); // false = no reset, cargar más
+      runPublicationsTask(`scroll:${tabName}`, async () => {
+        if (!(await ensurePublicationsAuth())) return;
+        await loadFunction(false); // false = no reset, cargar más
+      });
     }
   };
   
@@ -252,17 +300,29 @@ tabs.forEach(tab => {
     
     // Cargar datos si es necesario
     if (targetTab === "new" && newProducts.length === 0) {
-      loadNewProducts(true);
+      runPublicationsTask("tab:new", async () => {
+        if (!(await ensurePublicationsAuth())) return;
+        await loadNewProducts(true);
+      });
     } else if (targetTab === "recommended" && recommendedProducts.length === 0) {
-      loadRecommendedProducts(true);
+      runPublicationsTask("tab:recommended", async () => {
+        if (!(await ensurePublicationsAuth())) return;
+        await loadRecommendedProducts(true);
+      });
     } else if (targetTab === "low-stock" && lowStockProducts.length === 0) {
-      loadLowStockProducts(true);
+      runPublicationsTask("tab:low-stock", async () => {
+        if (!(await ensurePublicationsAuth())) return;
+        await loadLowStockProducts(true);
+      });
     } else if (targetTab === "all") {
       // No cargar automáticamente - solo buscar si hay búsqueda activa
       const hasSearch = searchAll?.value?.trim() || categoryFilterAll?.value;
       if (hasSearch) {
         // Usar búsqueda directa en lugar de cargar todos los productos
-        searchAllProductsDirect(searchAll?.value?.trim() || "", categoryFilterAll?.value || "");
+        runPublicationsTask("tab:all_search", async () => {
+          if (!(await ensurePublicationsAuth())) return;
+          await searchAllProductsDirect(searchAll?.value?.trim() || "", categoryFilterAll?.value || "");
+        });
       } else {
         renderAllProducts();
       }
@@ -279,10 +339,13 @@ setupInfiniteScroll('low-stock-products-container', 'lowStock', loadLowStockProd
 setupInfiniteScroll('all-products-container', 'all', loadAllProducts);
 
 // Cargar productos iniciales cuando se carga la página
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+  const canBoot = await ensurePublicationsAuth();
+  if (!canBoot) return;
+
   // Solo cargar si el tab "new" está activo (ya no es el por defecto)
   if (document.getElementById('tab-new')?.classList.contains('active')) {
-    loadNewProducts(true);
+    runPublicationsTask("boot:new", () => loadNewProducts(true));
   }
   // La pestaña "Todo" es la activa por defecto, pero no carga productos automáticamente
   // Solo muestra el mensaje de búsqueda hasta que el usuario busque
@@ -2419,7 +2482,10 @@ function applyFilters(tabName, searchInput, categorySelect, renderFunction) {
     
     // Hay búsqueda activa: buscar directamente en la base de datos
     // Esto es más eficiente que cargar todos los productos primero
-    searchAllProductsDirect(searchQuery, categoryValue);
+    runPublicationsTask("filters:all_search", async () => {
+      if (!(await ensurePublicationsAuth())) return;
+      await searchAllProductsDirect(searchQuery, categoryValue);
+    });
     return;
   }
   

@@ -1,23 +1,27 @@
 // admin/fyl-products.js
-import { requireAuth } from "./admin-auth.js";
 import { supabase } from "../scripts/supabase-client.js";
-import { checkPermission } from "./permissions-helper.js";
-
-await requireAuth();
+import { preloadAuthState, can, isAdminUser } from "./auth-state.js";
 
 // Verificar permisos de stock
 let canViewStock = false;
 let canEditStock = false;
 
 async function checkStockPermissions() {
-  canViewStock = await checkPermission('stock', 'view');
-  canEditStock = await checkPermission('stock', 'edit');
+  const { user } = await preloadAuthState();
+  if (!user) {
+    window.location.href = "./index.html";
+    return false;
+  }
+
+  canViewStock = can("stock", "view") || isAdminUser();
+  canEditStock = can("stock", "edit") || isAdminUser();
   
   if (!canViewStock) {
     alert("No tienes permiso para ver el stock.");
     window.location.href = "./index.html";
-    return;
+    return false;
   }
+  return true;
 }
 
 await checkStockPermissions();

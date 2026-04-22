@@ -1,8 +1,5 @@
-import { requireAuth } from "./admin-auth.js";
 import { supabase } from "../scripts/supabase-client.js";
-import { checkPermission } from "./permissions-helper.js";
-
-await requireAuth();
+import { preloadAuthState, can, isAdminUser } from "./auth-state.js";
 
 const PAGE = {
   anomalies: 200,
@@ -873,13 +870,19 @@ function bindEvents() {
 }
 
 async function init() {
-  const canView = await checkPermission("stock-audit", "view");
+  const { user } = await preloadAuthState();
+  if (!user) {
+    window.location.href = "./index.html";
+    return;
+  }
+
+  const canView = can("stock-audit", "view") || isAdminUser();
   if (!canView) {
     alert("No tienes permiso para ver el módulo de auditoría de stock.");
     window.location.href = "./index.html";
     return;
   }
-  state.canEdit = await checkPermission("stock-audit", "edit");
+  state.canEdit = can("stock-audit", "edit") || isAdminUser();
   setDefaultDates();
   setMode("ops");
   bindEvents();

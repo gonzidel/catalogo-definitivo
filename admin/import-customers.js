@@ -2,11 +2,12 @@
 // Importación masiva de clientes desde CSV
 
 import { supabase as supabaseClient } from "../scripts/supabase-client.js";
-import { requireAdminAuth, isAdmin } from "./permissions-helper.js";
+import { preloadAuthState, can, isAdminUser } from "./auth-state.js";
 
 let supabase = supabaseClient;
 let parsedCustomers = [];
 let validatedCustomers = [];
+let _canImportCustomers = false;
 
 // Provincias argentinas para validación
 const ARGENTINA_PROVINCES = [
@@ -343,9 +344,8 @@ async function importCustomers() {
     return;
   }
   
-  // Verificar permisos
-  const isUserAdmin = await isAdmin();
-  if (!isUserAdmin) {
+  // Verificar permisos (resueltos en boot).
+  if (!_canImportCustomers) {
     showMessage("Error: No tienes permisos de administrador", "error");
     return;
   }
@@ -461,18 +461,16 @@ document.addEventListener("DOMContentLoaded", async () => {
       return;
     }
     
-    // Verificar autenticación
-    const { data: { user }, error: authError } = await db.auth.getUser();
-    
-    if (authError || !user) {
-      console.error("❌ Usuario no autenticado:", authError);
+    // Fase 3: sesión + permisos centralizados en auth-state.
+    const { user } = await preloadAuthState();
+    if (!user) {
+      console.error("❌ Usuario no autenticado");
       window.location.href = "./index.html";
       return;
     }
     
-    // Verificar permisos de admin
-    const isUserAdmin = await isAdmin();
-    if (!isUserAdmin) {
+    _canImportCustomers = can("customers", "edit") || isAdminUser();
+    if (!_canImportCustomers) {
       showMessage("Error: No tienes permisos de administrador", "error");
       return;
     }

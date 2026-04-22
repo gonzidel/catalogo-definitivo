@@ -660,41 +660,47 @@
       </button>
     </div>
 
-    <!-- Banner F&L Originals (fabricación propia, solo en vista Inicio) -->
-    <section id="fyl-originals-banner" class="orig-block fyl-originals-banner" style="display: none;">
-      <div class="orig-head">
-        <h2 class="orig-title">F&L Originals <span class="orig-subInline">• Fabricación propia</span></h2>
-        <a id="fyl-ver-todo-btn" class="orig-cta" href="#/coleccion/fyl-originals" aria-label="Ver colección F&L Originals">Ver colección →</a>
+    <div id="home-top-dynamic-slot" class="home-top-dynamic-slot home-top-dynamic-slot--pending" aria-live="polite">
+      <div id="home-top-dynamic-loader" class="home-top-dynamic-loader" aria-hidden="true">
+        <div class="spinner" aria-hidden="true"></div>
+        <span>Cargando destacados...</span>
       </div>
-      <div class="orig-carouselWrap">
-        <div class="fyl-originals-scroll orig-carousel" id="fyl-originals-scroll">
-          <!-- Se llenará dinámicamente con productos FYL -->
+      <!-- Banner F&L Originals (fabricación propia, solo en vista Inicio) -->
+      <section id="fyl-originals-banner" class="orig-block fyl-originals-banner" style="display: none;">
+        <div class="orig-head">
+          <h2 class="orig-title">F&L Originals <span class="orig-subInline">• Fabricación propia</span></h2>
+          <a id="fyl-ver-todo-btn" class="orig-cta" href="#/coleccion/fyl-originals" aria-label="Ver colección F&L Originals">Ver colección →</a>
         </div>
-        <div class="orig-fadeRight" aria-hidden="true"></div>
-      </div>
-    </section>
+        <div class="orig-carouselWrap">
+          <div class="fyl-originals-scroll orig-carousel" id="fyl-originals-scroll">
+            <!-- Se llenará dinámicamente con productos FYL -->
+          </div>
+          <div class="orig-fadeRight" aria-hidden="true"></div>
+        </div>
+      </section>
 
-    <!-- Banner informativo mayorista (solo en vista Inicio) -->
-    <div id="info-banner-top-container" class="is-hidden">
-      <a href="#/como-comprar" class="info-banner-top info-banner-top--visual" aria-label="Guía de compra mayorista">
-        <div class="info-banner-top__inner">
-          <div class="info-banner-top__iconWrap" aria-hidden="true">
-            <img class="info-banner-top__icon" src="assets/icono-carrito-x4.png" alt="" loading="lazy" decoding="async">
+      <!-- Banner informativo mayorista (solo en vista Inicio) -->
+      <div id="info-banner-top-container" class="is-hidden">
+        <a href="#/como-comprar" class="info-banner-top info-banner-top--visual" aria-label="Guía de compra mayorista">
+          <div class="info-banner-top__inner">
+            <div class="info-banner-top__iconWrap" aria-hidden="true">
+              <img class="info-banner-top__icon" src="assets/icono-carrito-x4.png" alt="" loading="lazy" decoding="async">
+            </div>
+            <div class="info-banner-top__content">
+              <h3 class="info-banner-top__title">
+                <span class="info-banner-top__title-main">COMPRA MÍNIMA</span>
+                <strong>4 productos combinables</strong>
+              </h3>
+              <p class="info-banner-top__line">Tenés hasta 7 días para armar tu pedido</p>
+              <span class="info-banner-top__cta">Guía de compra <span class="info-banner-top__cta-arrow" aria-hidden="true">➜</span></span>
+            </div>
           </div>
-          <div class="info-banner-top__content">
-            <h3 class="info-banner-top__title">
-              <span class="info-banner-top__title-main">COMPRA MÍNIMA</span>
-              <strong>4 productos combinables</strong>
-            </h3>
-            <p class="info-banner-top__line">Tenés hasta 7 días para armar tu pedido</p>
-            <span class="info-banner-top__cta">Guía de compra <span class="info-banner-top__cta-arrow" aria-hidden="true">➜</span></span>
-          </div>
-        </div>
-      </a>
+        </a>
+      </div>
+
+      <!-- Banner Promocional (solo en vista Inicio, debajo del banner F&L Originals) -->
+      <div class="promotional-banner-container" id="promotional-banner-container" style="display: none;"></div>
     </div>
-
-    <!-- Banner Promocional (solo en vista Inicio, debajo del banner F&L Originals) -->
-    <div class="promotional-banner-container" id="promotional-banner-container" style="display: none;"></div>
 
     <!-- Modal Filtro de Talles (Bottom Sheet) -->
     <div id="size-filter-modal" class="size-filter-modal">

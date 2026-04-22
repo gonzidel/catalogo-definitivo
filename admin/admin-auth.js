@@ -1,4 +1,5 @@
 ﻿// admin/admin-auth.js (simple y fiable)
+import { invalidate } from "./auth-state.js";
 import { supabase } from "../scripts/supabase-client.js";
 
 // Función para obtener elementos del DOM de forma segura
@@ -280,17 +281,12 @@ document.addEventListener("DOMContentLoaded", () => {
         console.log("✅ Login exitoso para:", email);
         console.log("Usuario:", data.user);
 
-        // Limpiar caché de permisos después del login
-        if (window.clearPermissionsCache) {
-          window.clearPermissionsCache();
-        } else {
-          // Importar y limpiar caché
-          try {
-            const { clearPermissionsCache } = await import("./permissions-helper.js");
-            clearPermissionsCache();
-          } catch (e) {
-            console.warn("No se pudo limpiar caché de permisos:", e);
-          }
+        // Invalidar auth-state + permissions-helper para no mezclar permisos viejos
+        try {
+          invalidate();
+        } catch (e) {
+          console.warn("No se pudo invalidar auth-state tras login:", e);
+          if (window.clearPermissionsCache) window.clearPermissionsCache();
         }
 
         // Esperar un momento para que la sesión se establezca completamente
@@ -590,6 +586,7 @@ document.addEventListener("DOMContentLoaded", () => {
     logoutBtn.addEventListener("click", async () => {
       try {
         await supabase.auth.signOut();
+        invalidate();
         await updateSessionUI();
       } catch (error) {
         console.error("Error al cerrar sesión:", error);
@@ -603,6 +600,7 @@ document.addEventListener("DOMContentLoaded", () => {
     forceLogoutBtn.addEventListener("click", async () => {
       try {
         await supabase.auth.signOut();
+        invalidate();
       } catch (error) {
         console.error("Error en signOut:", error);
       }

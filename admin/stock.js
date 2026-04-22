@@ -1,32 +1,37 @@
 // admin/stock.js
 import { requireAuth } from "./admin-auth.js";
 import { supabase } from "../scripts/supabase-client.js";
-import { checkPermission, requirePermission } from "./permissions-helper.js";
+import { can, preloadAuthState } from "./auth-state.js";
 import { normalizeSize, compareCatalogSizes } from "../scripts/utils/size-normalizer.js?v=m260420";
 import { printProductLabelsZebra } from "./qz-printing.js";
+import { wrapSupabase, createAbortScope, FYL_ERROR_KIND, classifyError } from "../scripts/net/fyl-fetch.js";
 
 // Verificar permisos de stock
 // Default permisivo durante boot para que el buscador funcione si la verificación
-// se retrasa en móviles. Luego se ajusta cuando termina checkStockPermissions().
+// se retrasa en móviles. Luego se ajusta cuando termina applyStockPermissions().
+// auth-state: 1× preloadAuthState = sesión (local) + 1 carga bulk de permisos; can() es O(1).
 let canViewStock = true;
 let canEditStock = true;
 let canDeleteStock = false;
 
-async function checkStockPermissions() {
+async function applyStockPermissions() {
   try {
-    canViewStock = await checkPermission('stock', 'view');
-    canEditStock = await checkPermission('stock', 'edit');
-    canDeleteStock = await checkPermission('stock', 'delete');
+    await preloadAuthState();
+    canViewStock   = can("stock", "view");
+    canEditStock   = can("stock", "edit");
+    canDeleteStock = can("stock", "delete");
+
+    // Sin permiso de vista confirmado: redirect (igual que orders).
+    if (canViewStock === false) {
+      alert("No tienes permiso para ver el stock.");
+      window.location.href = "./index.html";
+      return;
+    }
   } catch (permError) {
-    console.warn("Error verificando permisos de stock; usando fallback:", permError);
+    console.warn("Error verificando permisos de stock; usando fallback permisivo:", permError);
+    // RLS y backend protegen; no redirigir por fallo transitorio.
   }
-  
-  if (!canViewStock) {
-    alert("No tienes permiso para ver el stock.");
-    window.location.href = "./index.html";
-    return;
-  }
-  
+
   // Ocultar/mostrar elementos según permisos
   if (!canEditStock) {
     // Ocultar botones de guardar y editar
@@ -164,8 +169,29 @@ let stockLoadingWatchdog = null;
 let mobileKeyboardViewportListenersBound = false;
 const STOCK_BUILD_VERSION = "build-m260420";
 const MOBILE_STOCK_BREAKPOINT = 767;
-const AUTH_TIMEOUT_MS = 3500;
+const AUTH_SLOW_NOTICE_MS = 8000;
 const SEARCH_LOAD_TIMEOUT_MS = 15000;
+const _stockUiActionInFlight = new Set();
+
+function runStockTask(label, task) {
+  return Promise.resolve()
+    .then(task)
+    .catch((error) => {
+      console.error(`[stock] ${label} failed:`, error);
+      throw error;
+    });
+}
+
+/**
+ * AbortScope por búsqueda: se recrea en cada `runSearchByTerm`.
+ * Abortar la anterior cancela sus requests en vuelo sin afectar la nueva.
+ * La referencia vive en módulo; el scope anterior es GC-able.
+ * Al hacer unload, se aborta la búsqueda activa para liberar recursos.
+ */
+let _stockSearchAbortScope = null;
+window.addEventListener("beforeunload", () => {
+  if (_stockSearchAbortScope) _stockSearchAbortScope.abort("unload");
+}, { once: true });
 const mobileWizardState = {
   open: false,
   productId: null,
@@ -192,16 +218,24 @@ function withTimeout(promise, timeoutMs, timeoutMessage) {
 }
 
 async function requireAuthWithTimeout() {
+  const defaultMessage = `Escribe al menos ${MIN_SEARCH_CHARS} letras para buscar productos.`;
+  const slowMessage = "Conexión lenta: validando sesión en segundo plano.";
+  let slowNoticeTimer = setTimeout(() => {
+    if (msg) msg.textContent = slowMessage;
+  }, AUTH_SLOW_NOTICE_MS);
+
   try {
-    await withTimeout(
-      requireAuth(),
-      AUTH_TIMEOUT_MS,
-      "Timeout validando sesión en móvil"
-    );
+    // Validación real de auth (sin Promise.race para la notificación visual).
+    await requireAuth();
   } catch (authError) {
-    console.warn("Auth lenta/fallida. Continuando con fallback:", authError);
-    if (msg) {
-      msg.textContent = "Conexión lenta: validando sesión en segundo plano.";
+    console.warn("Auth fallida. Continuando con fallback:", authError);
+  } finally {
+    if (slowNoticeTimer) {
+      clearTimeout(slowNoticeTimer);
+      slowNoticeTimer = null;
+    }
+    if (msg && msg.textContent === slowMessage) {
+      msg.textContent = defaultMessage;
     }
   }
 }
@@ -393,40 +427,63 @@ function updateLowAlertBadge() {
 
 // Función normalizeSize importada desde scripts/utils/size-normalizer.js (centralizada)
 
-async function searchProductsByName(term) {
+/**
+ * Busca productos por nombre.
+ * Fase 2: acepta `signal` para abort, usa `wrapSupabase` para clasificar errores.
+ * Conserva el retry con término sanitizado (manejo específico de caracteres
+ * especiales de teclados móviles que disparan 400 en PostgREST).
+ * Lanza un error con `kind` si el fallo es de red/servidor, para que
+ * `runSearchByTerm` lo maneje como banner en lugar de mostrar "sin resultados".
+ */
+async function searchProductsByName(term, { signal } = {}) {
   const normalizedTerm = String(term || "").trim();
   if (normalizedTerm.length < MIN_SEARCH_CHARS) return [];
 
   const runNameSearch = async (queryTerm) =>
-    supabase
-      .from("products")
-      .select("id, name")
-      .neq("status", "archived")
-      .ilike("name", `%${queryTerm}%`)
-      .order("name", { ascending: true })
-      .limit(60);
+    wrapSupabase(
+      () => supabase
+        .from("products")
+        .select("id, name")
+        .neq("status", "archived")
+        .ilike("name", `%${queryTerm}%`)
+        .order("name", { ascending: true })
+        .limit(60),
+      { signal, label: "stock.search.products" }
+    );
 
-  let { data, error } = await runNameSearch(normalizedTerm);
-  // En móviles reales algunos teclados insertan caracteres especiales (smart quotes/símbolos)
-  // que pueden disparar 400 en PostgREST. Reintentamos con término sanitizado.
-  if (error) {
-    const sanitizedTerm = normalizedTerm
-      .normalize("NFKC")
-      .replace(/[^\p{L}\p{N}\s\-_.]/gu, "")
-      .trim();
-    if (sanitizedTerm.length >= MIN_SEARCH_CHARS && sanitizedTerm !== normalizedTerm) {
-      const retry = await runNameSearch(sanitizedTerm);
-      data = retry.data;
-      error = retry.error;
+  let res = await runNameSearch(normalizedTerm);
+  if (res.aborted) return [];
+
+  // Retry con término sanitizado: teclados móviles pueden insertar smart quotes
+  // o símbolos Unicode que PostgREST rechaza con 400. Sólo aplicar si el error
+  // no es de red (un error de red no mejora con un término distinto).
+  if (res.error) {
+    const kind = res.kind;
+    if (kind !== FYL_ERROR_KIND.NETWORK && kind !== FYL_ERROR_KIND.SERVER) {
+      const sanitizedTerm = normalizedTerm
+        .normalize("NFKC")
+        .replace(/[^\p{L}\p{N}\s\-_.]/gu, "")
+        .trim();
+      if (sanitizedTerm.length >= MIN_SEARCH_CHARS && sanitizedTerm !== normalizedTerm) {
+        const retry = await runNameSearch(sanitizedTerm);
+        if (retry.aborted) return [];
+        res = retry;
+      }
     }
   }
-  if (error) {
-    console.error("Error buscando productos por nombre:", error);
+
+  if (res.error) {
+    const kind = res.kind;
+    if (kind === FYL_ERROR_KIND.NETWORK || kind === FYL_ERROR_KIND.SERVER) {
+      // Lanzar para que runSearchByTerm muestre banner de red, no "sin resultados".
+      throw Object.assign(new Error(res.error.message || "network"), { kind });
+    }
+    console.error("Error buscando productos por nombre:", res.error, "kind:", kind);
     msg.textContent = "Error en búsqueda. Intenta con menos caracteres especiales.";
     return [];
   }
 
-  return (data || []).map((p) => p.id).filter(Boolean);
+  return (res.data || []).map((p) => p.id).filter(Boolean);
 }
 
 function isBadRequestError(error) {
@@ -469,7 +526,7 @@ async function fetchVariantWarehouseStocksAdaptive(variantIds, warehouseIds) {
   return { data: collected, error: null };
 }
 
-async function load(productIds = []) {
+async function load(productIds = [], { signal } = {}) {
   const ids = Array.isArray(productIds) ? productIds.filter(Boolean) : [];
   if (ids.length === 0) {
     allData = [];
@@ -480,25 +537,35 @@ async function load(productIds = []) {
     return true;
   }
 
+  if (signal?.aborted) return false;
+
   msg.textContent = "Cargando...";
   tbody.innerHTML = "";
   allData = []; // Limpiar al inicio para que, si hay return anticipado, no queden datos viejos
-  // Reiniciar pendientes en cada carga/recarga
   pendingChanges.clear();
   setPendingCount();
-  
-  // Obtener variantes solo de los productos buscados
-  const { data: variants, error: variantsError } = await supabase
-    .from("product_variants")
-    .select("id, product_id, sku, color, price, active, products(id, name, category, status, created_at, handle)")
-    .in("product_id", ids)
-    .order("sku", { ascending: true });
-  
-  if (variantsError) {
-    msg.textContent = variantsError.message;
-    console.error("Error cargando variantes:", variantsError);
+
+  // ── Query crítica 1: variantes de los productos buscados ─────────────────
+  const variantsRes = await wrapSupabase(
+    () => supabase
+      .from("product_variants")
+      .select("id, product_id, sku, color, price, active, products(id, name, category, status, created_at, handle)")
+      .in("product_id", ids)
+      .order("sku", { ascending: true }),
+    { retries: 1, signal, label: "stock.load.variants" }
+  );
+  if (signal?.aborted || variantsRes.aborted) return false;
+  if (variantsRes.error) {
+    const kind = variantsRes.kind;
+    if (kind === FYL_ERROR_KIND.NETWORK || kind === FYL_ERROR_KIND.SERVER) {
+      // Propagar para que runSearchByTerm muestre banner de red.
+      throw Object.assign(new Error(variantsRes.error.message || "network"), { kind });
+    }
+    msg.textContent = variantsRes.error.message;
+    console.error("Error cargando variantes:", variantsRes.error, "kind:", kind);
     return false;
   }
+  const variants = variantsRes.data;
   
   console.log(`📦 Total variantes cargadas: ${(variants || []).length}`);
   
@@ -522,18 +589,26 @@ async function load(productIds = []) {
     return true;
   }
   
-  // Obtener IDs de almacenes
-  const { data: warehouses, error: warehousesError } = await supabase
-    .from("warehouses")
-    .select("id, code")
-    .in("code", ["general", "venta-publico"]);
-  
-  if (warehousesError) {
-    msg.textContent = `Error cargando almacenes: ${warehousesError.message}`;
-    console.error("Error cargando almacenes:", warehousesError);
+  // ── Query crítica 2: IDs de almacenes ────────────────────────────────────
+  const warehousesRes = await wrapSupabase(
+    () => supabase
+      .from("warehouses")
+      .select("id, code")
+      .in("code", ["general", "venta-publico"]),
+    { retries: 1, signal, label: "stock.load.warehouses" }
+  );
+  if (signal?.aborted || warehousesRes.aborted) return false;
+  if (warehousesRes.error) {
+    const kind = warehousesRes.kind;
+    if (kind === FYL_ERROR_KIND.NETWORK || kind === FYL_ERROR_KIND.SERVER) {
+      throw Object.assign(new Error(warehousesRes.error.message || "network"), { kind });
+    }
+    msg.textContent = `Error cargando almacenes: ${warehousesRes.error.message}`;
+    console.error("Error cargando almacenes:", warehousesRes.error, "kind:", kind);
     return false;
   }
-  
+  const warehouses = warehousesRes.data;
+
   const warehouseMap = new Map();
   warehouses.forEach(w => warehouseMap.set(w.code, w.id));
   const generalWarehouseId = warehouseMap.get("general");
@@ -556,6 +631,7 @@ async function load(productIds = []) {
   
   // Procesar en lotes para evitar error 400 con arrays grandes
   for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+    if (signal?.aborted) return false; // búsqueda cancelada: salir del loop
     const startIndex = batchIndex * batchSize;
     const endIndex = Math.min(startIndex + batchSize, variantIds.length);
     const batchVariantIds = variantIds.slice(startIndex, endIndex);
@@ -650,6 +726,7 @@ async function load(productIds = []) {
   // Dividir en lotes para evitar error 400 con arrays grandes
   let allSizeWarehouseStocks = [];
   for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+    if (signal?.aborted) return false; // búsqueda cancelada: salir del loop
     const startIndex = batchIndex * batchSize;
     const endIndex = Math.min(startIndex + batchSize, variantIds.length);
     const batchVariantIds = variantIds.slice(startIndex, endIndex);
@@ -2205,17 +2282,19 @@ if (mobileSummaryBackBtn) {
 }
 
 if (mobileSaveBtn) {
-  mobileSaveBtn.addEventListener("click", async () => {
+  mobileSaveBtn.addEventListener("click", () => {
     if (!canEditStock) {
       alert("No tienes permiso para editar el stock.");
       return;
     }
     mobileSaveBtn.disabled = true;
-    try {
-      await applyMobileWizardAndSave();
-    } finally {
+    runStockTask("mobile_wizard_save", applyMobileWizardAndSave)
+      .catch(() => {
+        msg.textContent = "No se pudo guardar desde el asistente móvil. Reintentá.";
+      })
+      .finally(() => {
       mobileSaveBtn.disabled = false;
-    }
+      });
   });
 }
 
@@ -2541,6 +2620,12 @@ async function runSearchByTerm(term) {
   const trimmedTerm = String(term || "").trim();
   const requestId = ++activeSearchRequest;
 
+  // — Abort de la búsqueda anterior, scope propio para esta invocación —
+  if (_stockSearchAbortScope) _stockSearchAbortScope.abort("new_search");
+  const myScope = createAbortScope();
+  _stockSearchAbortScope = myScope;
+  const signal = myScope.signal;
+
   if (trimmedTerm.length < MIN_SEARCH_CHARS) {
     currentProductIds = [];
     dataLoaded = false;
@@ -2556,20 +2641,28 @@ async function runSearchByTerm(term) {
   loadInProgress = true;
 
   try {
-    const productIds = await searchProductsByName(trimmedTerm);
-    if (requestId !== activeSearchRequest) return;
+    const productIds = await searchProductsByName(trimmedTerm, { signal });
+    if (requestId !== activeSearchRequest || signal.aborted) return;
 
     currentProductIds = productIds;
     const ok = await withTimeout(
-      load(productIds),
+      load(productIds, { signal }),
       SEARCH_LOAD_TIMEOUT_MS,
       "Timeout cargando stock. Revisa la conexión y toca Recargar."
     );
     if (requestId !== activeSearchRequest) return;
     dataLoaded = Boolean(ok);
   } catch (searchError) {
-    console.error("Error/timeout en búsqueda de stock:", searchError);
-    msg.textContent = searchError?.message || "Error al cargar resultados de búsqueda.";
+    if (requestId !== activeSearchRequest) return; // resultado de búsqueda vieja — ignorar
+    const kind = searchError?.kind || classifyError(searchError);
+    if (kind === FYL_ERROR_KIND.NETWORK || kind === FYL_ERROR_KIND.SERVER) {
+      // Error de red: banner informativo, sin pisar la lista con "sin resultados".
+      msg.textContent = "Sin conexión. Verificá tu red y toca Recargar.";
+    } else {
+      // Timeout del withTimeout u otro error: mostrar el mensaje del error.
+      msg.textContent = searchError?.message || "Error al cargar resultados de búsqueda.";
+    }
+    console.error("Error en búsqueda de stock:", searchError, "kind:", kind);
   } finally {
     loadInProgress = false;
   }
@@ -2721,7 +2814,13 @@ async function openOldProductsModal() {
   overlayOld.setAttribute("aria-hidden", "false");
 }
 
-oldBtn?.addEventListener("click", openOldProductsModal);
+oldBtn?.addEventListener("click", () => {
+  runStockTask("open_old_products_modal", openOldProductsModal)
+    .catch(() => {
+      oldSummary.textContent = "No se pudo abrir la lista de productos viejos.";
+      oldSummary.style.color = "#c00";
+    });
+});
 closeOverlayOld?.addEventListener("click", () => {
   overlayOld.classList.remove("show");
   overlayOld.setAttribute("aria-hidden", "true");
@@ -2736,7 +2835,13 @@ oldCheckAll?.addEventListener("change", () => {
   const boxes = overlayOld.querySelectorAll(".old-check");
   boxes.forEach((b) => (b.checked = oldCheckAll.checked));
 });
-archiveSelectedBtn?.addEventListener("click", async () => {
+archiveSelectedBtn?.addEventListener("click", () => {
+  const lockKey = "archive-selected";
+  if (_stockUiActionInFlight.has(lockKey)) return;
+  _stockUiActionInFlight.add(lockKey);
+  if (archiveSelectedBtn) archiveSelectedBtn.disabled = true;
+
+  runStockTask("archive_selected_products", async () => {
   if (!canDeleteStock) {
     alert("No tienes permiso para eliminar/archivar productos.");
     return;
@@ -2772,6 +2877,13 @@ archiveSelectedBtn?.addEventListener("click", async () => {
   const ok = await load(currentProductIds); // recargar resultados actuales
   if (ok) dataLoaded = true;
   await openOldProductsModal(); // reabrir con lista actualizada
+  }).catch((error) => {
+    oldSummary.textContent = `Error: ${error?.message || "No se pudo archivar."}`;
+    oldSummary.style.color = "#c00";
+  }).finally(() => {
+    _stockUiActionInFlight.delete(lockKey);
+    if (archiveSelectedBtn) archiveSelectedBtn.disabled = false;
+  });
 });
 // No cargar automáticamente al inicio - solo cargar cuando hay filtros o búsqueda
 // load(); // Comentado: no cargar automáticamente
@@ -2786,7 +2898,7 @@ async function bootstrapStockUi() {
     // Validar sesión sin bloquear la inicialización del buscador.
     requireAuthWithTimeout().catch((err) => console.warn("requireAuthWithTimeout async:", err));
     // Verificar permisos en paralelo, sin bloquear el arranque inicial
-    checkStockPermissions().catch((err) => console.warn("checkStockPermissions async:", err));
+    applyStockPermissions().catch((err) => console.warn("applyStockPermissions async:", err));
     await loadProductNames();
     msg.textContent = `Escribe al menos ${MIN_SEARCH_CHARS} letras para buscar productos.`;
     isStockUiReady = true;

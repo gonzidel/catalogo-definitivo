@@ -1,9 +1,41 @@
 // admin/collaborators.js
 import { supabase } from "../scripts/supabase-client.js";
-import { isSuperAdmin, requirePermission } from "./permissions-helper.js";
+import { isSuperAdmin } from "./permissions-helper.js";
+import { preloadAuthState, isAdminUser } from "./auth-state.js";
+
+let _sessionUser = null;
+const _permissionUpdateInFlight = new Set();
+const _collaboratorActionInFlight = new Set();
+
+function runCollaboratorsTask(label, task) {
+  return Promise.resolve()
+    .then(task)
+    .catch((error) => {
+      console.error(`[collaborators] ${label} failed:`, error);
+      showMessage(`Error: ${error?.message || "Error inesperado"}`, "error");
+      throw error;
+    });
+}
+
+async function ensureCollaboratorsAccess() {
+  const { user } = await preloadAuthState();
+  _sessionUser = user ?? null;
+  if (!_sessionUser) {
+    window.location.href = "./index.html";
+    return false;
+  }
+  if (!isAdminUser()) {
+    window.location.href = "./index.html";
+    return false;
+  }
+  return true;
+}
 
 // Verificar que el usuario sea super_admin
 async function initCollaborators() {
+  const hasSession = await ensureCollaboratorsAccess();
+  if (!hasSession) return;
+
   const isSuper = await isSuperAdmin();
   if (!isSuper) {
     alert("Solo el administrador principal puede acceder a esta página.");
@@ -29,7 +61,7 @@ function waitForDOM() {
 
 // Inicializar cuando el DOM esté listo
 waitForDOM().then(() => {
-  initCollaborators();
+  runCollaboratorsTask("init", initCollaborators).catch(() => {});
 });
 
 // Definiciones de permisos disponibles
@@ -119,8 +151,7 @@ async function loadCollaborators() {
   try {
     container.innerHTML = '<div class="loading">Cargando colaboradores...</div>';
 
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
+    if (!_sessionUser) {
       container.innerHTML = '<div class="empty-state"><p>No hay sesión activa</p></div>';
       return;
     }
@@ -267,8 +298,7 @@ async function handleAddCollaborator(e) {
     btn.disabled = true;
     btn.textContent = createAccount ? "Creando cuenta y agregando..." : "Agregando...";
 
-    const { data: { user: currentUser } } = await supabase.auth.getUser();
-    if (!currentUser) {
+    if (!_sessionUser) {
       throw new Error("No hay sesión activa");
     }
 
@@ -287,7 +317,7 @@ async function handleAddCollaborator(e) {
 
     if (createAccount) {
       // Guardar el ID del super_admin antes de crear el usuario
-      const superAdminId = currentUser.id;
+      const superAdminId = _sessionUser.id;
       
       // Intentar primero usar la función RPC que crea el usuario directamente
       // Esto evita problemas de confirmación de email y cambios de sesión
@@ -385,7 +415,7 @@ async function handleAddCollaborator(e) {
         const { data: rpcResult, error: rpcError } = await supabase
           .rpc('add_collaborator_by_email', {
             p_email: email,
-            p_created_by_user_id: currentUser.id
+            p_created_by_user_id: _sessionUser.id
           });
 
         if (rpcError) {
@@ -432,7 +462,7 @@ async function handleAddCollaborator(e) {
             user_id: userId,
             email: email,
             role: 'collaborator',
-            created_by: currentUser.id
+            created_by: _sessionUser.id
           })
           .select()
           .single();
@@ -467,7 +497,19 @@ async function handleAddCollaborator(e) {
 
 // Actualizar permiso
 window.updatePermission = async function(adminId, permissionKey, action, enabled) {
+  const lockKey = `${adminId}:${permissionKey}:${action}`;
+  if (_permissionUpdateInFlight.has(lockKey)) return;
+  _permissionUpdateInFlight.add(lockKey);
+
+  const selector = `.collaborator-card[data-admin-id="${adminId}"] input[data-permission="${permissionKey}"][data-action="${action}"]`;
+  const checkboxEl = document.querySelector(selector);
+  if (checkboxEl) checkboxEl.disabled = true;
+
   try {
+    if (!(await ensureCollaboratorsAccess())) {
+      throw new Error("Sesión inválida o sin permisos.");
+    }
+
     // Obtener el permiso actual
     const { data: existing } = await supabase
       .from("admin_permissions")
@@ -511,6 +553,9 @@ window.updatePermission = async function(adminId, permissionKey, action, enabled
     showMessage(`Error: ${error.message}`, "error");
     // Recargar para revertir cambios visuales
     await loadCollaborators();
+  } finally {
+    _permissionUpdateInFlight.delete(lockKey);
+    if (checkboxEl) checkboxEl.disabled = false;
   }
 };
 
@@ -520,9 +565,12 @@ window.sendPasswordReset = async function(email) {
     return;
   }
 
+  const actionKey = `reset:${email}`;
+  if (_collaboratorActionInFlight.has(actionKey)) return;
+  _collaboratorActionInFlight.add(actionKey);
+
   try {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
+    if (!(await ensureCollaboratorsAccess())) {
       throw new Error("No hay sesión activa");
     }
 
@@ -540,6 +588,8 @@ window.sendPasswordReset = async function(email) {
   } catch (error) {
     console.error("Error enviando reset de contraseña:", error);
     showMessage(`Error: ${error.message}`, "error");
+  } finally {
+    _collaboratorActionInFlight.delete(actionKey);
   }
 };
 
@@ -549,7 +599,15 @@ window.deleteCollaborator = async function(adminId, email) {
     return;
   }
 
+  const actionKey = `delete:${adminId}`;
+  if (_collaboratorActionInFlight.has(actionKey)) return;
+  _collaboratorActionInFlight.add(actionKey);
+
   try {
+    if (!(await ensureCollaboratorsAccess())) {
+      throw new Error("No hay sesión activa");
+    }
+
     const { error } = await supabase
       .from("admins")
       .delete()
@@ -563,6 +621,8 @@ window.deleteCollaborator = async function(adminId, email) {
   } catch (error) {
     console.error("Error eliminando colaborador:", error);
     showMessage(`Error: ${error.message}`, "error");
+  } finally {
+    _collaboratorActionInFlight.delete(actionKey);
   }
 };
 

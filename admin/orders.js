@@ -1,6 +1,59 @@
 // Importar dinámicamente para asegurar que se cargue después
 let supabase = null;
 
+import { createScreenScope } from "../scripts/net/screen-scope.js";
+import { wrapSupabase, createAbortScope, FYL_ERROR_KIND, classifyError } from "../scripts/net/fyl-fetch.js";
+import { getSessionUser, getAdminPermissions, can, preloadAuthState } from "./auth-state.js";
+
+/**
+ * Scope de pedidos: libera el spinner de "#orders-content" cuando la primera
+ * tanda de pedidos ya está visible, sin esperar badges, realtime ni conteos.
+ *
+ * onFirstPaint: no-op (el spinner ya fue reemplazado por loadOrders antes de
+ * llamar markFirstPaint). El valor está en el evento screen:first-paint para
+ * telemetría y en la semántica uniforme entre pantallas.
+ * onReady: emite screen:ready cuando realtime + badges quedaron configurados.
+ */
+const ordersScope = createScreenScope("admin-orders", {
+  onFirstPaint({ reason }) {
+    globalThis.markBootStage?.("admin-orders.ui_usable", { reason });
+  },
+  onReady({ reason }) {
+    globalThis.markBootStage?.("admin-orders.fully_ready", { reason });
+  },
+});
+
+/** AbortScope de la pantalla: cancela TODO el I/O al salir (beforeunload). */
+const ordersAbortScope = createAbortScope();
+window.addEventListener("beforeunload", () => ordersAbortScope.abort("unload"), { once: true });
+
+/**
+ * AbortScope de búsqueda: independiente del scope de pantalla.
+ * Se recrea en cada llamada a searchOrdersInDatabase para cancelar la búsqueda
+ * anterior. Así evitamos que resultados tardíos pisen el estado de una nueva
+ * búsqueda sin necesidad de un scope global compartido.
+ *
+ * Nota: no se expone fuera de la función — la referencia vive en el closure
+ * de cada invocación activa.
+ */
+let _activeSearchAbortScope = null;
+
+/**
+ * Contador de búsquedas activas: race condition guard.
+ * Solo la invocación con el seq más alto puede mutar `orders` y llamar displayOrders.
+ */
+let _searchSeq = 0;
+const _ordersUiActionInFlight = new Set();
+
+function runOrdersTask(label, task) {
+  return Promise.resolve()
+    .then(task)
+    .catch((error) => {
+      console.error(`[orders] ${label} failed:`, error);
+      throw error;
+    });
+}
+
 function generateOperationId() {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
@@ -39,33 +92,39 @@ async function callMarkOrderItemsPicked(sb, itemIds, source) {
   return data;
 }
 
-// Verificar permisos de pedidos
-let canViewOrders = false;
-let canEditOrders = false;
+// Permisos de pedidos — default permisivo durante boot (igual que stock.js).
+// Se actualizan en applyOrdersPermissions(), llamada desde initOrders().
+let canViewOrders = true;
+let canEditOrders = true;
 let canDeleteOrders = false;
 
-async function checkOrdersPermissions() {
+/**
+ * Carga y aplica permisos usando auth-state (Fase 3).
+ *
+ * Antes: 3 × checkPermission() = 3 × getUser() + isSuperAdmin() + hasta 3 RPCs.
+ * Ahora: getAdminPermissions() = 1 getSession (local) + 1 bulk query → cache.
+ *        can() es síncrono O(1) en los lookups siguientes.
+ *
+ * Se llama desde initOrders(), no en top-level, para no correr antes de que
+ * Supabase esté disponible.
+ */
+async function applyOrdersPermissions() {
   try {
-    const { checkPermission } = await import("./permissions-helper.js");
-    canViewOrders = await checkPermission('orders', 'view');
-    canEditOrders = await checkPermission('orders', 'edit');
-    canDeleteOrders = await checkPermission('orders', 'delete');
-    
-    if (!canViewOrders) {
+    await getAdminPermissions(); // carga bulk, una sola vez por sesión
+    canViewOrders   = can("orders", "view");
+    canEditOrders   = can("orders", "edit");
+    canDeleteOrders = can("orders", "delete");
+
+    if (canViewOrders === false) {
+      // Solo redirigir cuando el servidor confirmó explícitamente sin permiso.
       alert("No tienes permiso para ver pedidos.");
       window.location.href = "./index.html";
-      return;
     }
-  } catch (error) {
-    console.error("Error verificando permisos:", error);
-    // Si hay error, permitir acceso (fallback)
-    canViewOrders = true;
-    canEditOrders = true;
+  } catch (permError) {
+    console.warn("Error verificando permisos de orders; usando fallback permisivo:", permError);
+    // Error de red transitorio: no degradar permisos. RLS protege el backend.
   }
 }
-
-// Verificar permisos al cargar
-checkOrdersPermissions();
 
 // Función para obtener supabase, esperando a que esté disponible
 async function getSupabase() {
@@ -1075,26 +1134,38 @@ function setupOrders2ClientSummaryCopy() {
   if (window.__orders2ClientSummaryCopySetup) return;
   window.__orders2ClientSummaryCopySetup = true;
 
-  document.addEventListener("click", async (e) => {
+  document.addEventListener("click", (e) => {
     const btn = e.target.closest?.("[data-copy-client-summary]");
     if (!btn) return;
     const orderId = btn.getAttribute("data-copy-client-summary");
     if (!orderId) return;
     e.preventDefault();
-    const order = ordersMap.get(orderId);
-    if (!order) {
-      alert("No se encontró el pedido.");
-      return;
-    }
-    const live = buildAdminClientSummaryWithPending(order).trim();
-    const text = live || getAdminClientSummaryFromOrder(order);
-    if (!text) {
-      alert("No hay datos para armar el mensaje. Marcá al menos un producto o aceptá los cambios primero.");
-      return;
-    }
-    const ok = await copyTextToClipboard(text);
-    if (ok) showToastNotification("Mensaje generado y copiado al portapapeles.", "success");
-    else alert("No se pudo copiar. Copiá el texto manualmente desde el pedido.");
+    const lockKey = `copy-summary:${orderId}`;
+    if (_ordersUiActionInFlight.has(lockKey)) return;
+    _ordersUiActionInFlight.add(lockKey);
+    btn.disabled = true;
+
+    runOrdersTask("copy_client_summary", async () => {
+      const order = ordersMap.get(orderId);
+      if (!order) {
+        alert("No se encontró el pedido.");
+        return;
+      }
+      const live = buildAdminClientSummaryWithPending(order).trim();
+      const text = live || getAdminClientSummaryFromOrder(order);
+      if (!text) {
+        alert("No hay datos para armar el mensaje. Marcá al menos un producto o aceptá los cambios primero.");
+        return;
+      }
+      const ok = await copyTextToClipboard(text);
+      if (ok) showToastNotification("Mensaje generado y copiado al portapapeles.", "success");
+      else alert("No se pudo copiar. Copiá el texto manualmente desde el pedido.");
+    }).catch(() => {
+      alert("No se pudo copiar. Reintentá.");
+    }).finally(() => {
+      _ordersUiActionInFlight.delete(lockKey);
+      btn.disabled = false;
+    });
   });
 }
 
@@ -1307,20 +1378,22 @@ const SOFT_REFRESH_DELAY_MS = 1500;
 function scheduleSoftRefresh(orderId) {
   if (orderId) softRefreshOrderId = orderId;
   if (softRefreshTimer) return;
-  softRefreshTimer = setTimeout(async () => {
+  softRefreshTimer = setTimeout(() => {
     softRefreshTimer = null;
     const id = softRefreshOrderId;
     softRefreshOrderId = null;
-    if (id && typeof refreshOneOrder === "function") {
-      await refreshOneOrder(id);
-    } else if (typeof loadOrders === "function") {
-      await loadOrders(false);
-    }
-    if (typeof updateActiveOrdersBadge === "function") updateActiveOrdersBadge();
-    if (typeof updatePickedOrdersBadge === "function") updatePickedOrdersBadge();
-    if (typeof updateClosedOrdersBadge === "function") updateClosedOrdersBadge();
-    if (typeof updateCancelledOrdersBadge === "function") updateCancelledOrdersBadge();
-    if (typeof updateWaitingOrdersBadge === "function") updateWaitingOrdersBadge();
+    runOrdersTask("schedule_soft_refresh", async () => {
+      if (id && typeof refreshOneOrder === "function") {
+        await refreshOneOrder(id);
+      } else if (typeof loadOrders === "function") {
+        await loadOrders(false);
+      }
+      if (typeof updateActiveOrdersBadge === "function") updateActiveOrdersBadge();
+      if (typeof updatePickedOrdersBadge === "function") updatePickedOrdersBadge();
+      if (typeof updateClosedOrdersBadge === "function") updateClosedOrdersBadge();
+      if (typeof updateCancelledOrdersBadge === "function") updateCancelledOrdersBadge();
+      if (typeof updateWaitingOrdersBadge === "function") updateWaitingOrdersBadge();
+    }).catch(() => {});
   }, SOFT_REFRESH_DELAY_MS);
 }
 
@@ -1431,22 +1504,26 @@ function setupSearchControls() {
   input.value = currentSearch;
   input.addEventListener('input', () => {
     if (searchDebounce) clearTimeout(searchDebounce);
-    searchDebounce = setTimeout(async () => {
-      const newSearch = input.value || '';
-      currentSearch = newSearch;
-      
-      // Si hay búsqueda, buscar directamente en la base de datos
-      if (newSearch.trim().length > 0) {
-        showLoading();
-        await searchOrdersInDatabase(newSearch.trim());
-      } else {
-        // Si no hay búsqueda, recargar pedidos normalmente con paginación
-        currentPage = 0;
-        orders = [];
-        hasMoreOrders = true;
-        allOrdersLoaded = false;
-        await loadOrders(true);
-      }
+    searchDebounce = setTimeout(() => {
+      runOrdersTask("search_input_refresh", async () => {
+        const newSearch = input.value || '';
+        currentSearch = newSearch;
+        
+        // Si hay búsqueda, buscar directamente en la base de datos
+        if (newSearch.trim().length > 0) {
+          showLoading();
+          await searchOrdersInDatabase(newSearch.trim());
+        } else {
+          // Si no hay búsqueda, recargar pedidos normalmente con paginación
+          currentPage = 0;
+          orders = [];
+          hasMoreOrders = true;
+          allOrdersLoaded = false;
+          await loadOrders(true);
+        }
+      }).catch((err) => {
+        console.warn("[orders] search_input_refresh error:", err);
+      });
     }, 250);
   });
 }
@@ -1468,25 +1545,29 @@ async function initOrders() {
       }
     }
     
-    // Verificar autenticación primero
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    
-    if (authError || !user) {
-      // Usuario no autenticado: redirigir a index.html para login
+    // Fase 3: preloadAuthState() carga usuario (getSession local) y permisos
+    // (bulk, una sola query) en paralelo. Ambos quedan cacheados para toda la sesión.
+    const { user } = await preloadAuthState();
+
+    if (!user) {
       window.location.href = "index.html";
       return;
     }
-    
-    // Usuario autenticado, verificar si es admin
-    const isAdmin = await verifyAdminAuth();
+
+    // verifyAdminAuth reutiliza el user de auth-state (no hace otro getUser).
+    const isAdmin = await verifyAdminAuth(user);
     
     if (!isAdmin) {
-      // Usuario autenticado pero no es admin: redirigir
       window.location.href = "index.html";
       return;
     }
     
-    // Usuario es admin, continuar con la carga
+    // Aplicar permisos de pedidos en background sin bloquear la carga de la UI.
+    // getAdminPermissions() ya fue calentado por preloadAuthState() → O(1) desde cache.
+    applyOrdersPermissions().catch(err =>
+      console.warn("applyOrdersPermissions async:", err)
+    );
+
     setupFilters();
     setupButtons();
     setupInfiniteScroll();
@@ -1496,7 +1577,11 @@ async function initOrders() {
     
     // Cargar pedidos
     await loadOrders();
-    
+
+    // Primer paint: pedidos ya están en el DOM y el usuario puede operar.
+    // Todo lo que sigue (realtime, badges, visibilitychange) es secundario.
+    ordersScope.markFirstPaint("orders_loaded");
+
     setupRealtimeSubscription();
 
     if (typeof document !== "undefined") {
@@ -1539,30 +1624,32 @@ async function initOrders() {
     // Cargar conteos exactos en background (no bloquea UI)
     // Esto actualizará los badges con números reales después de que el usuario vea los pedidos
     loadBadgeCountsInBackground();
+
+    // Pantalla completamente lista: realtime configurado + badges actualizados.
+    ordersScope.markReady("realtime_and_badges_ready");
   } catch (error) {
     console.error("❌ Error inicializando panel de pedidos:", error);
-    window.location.href = "index.html";
+    ordersScope.markFirstPaint("init_error");
+    // Usar classifyError (ya importado de fyl-fetch) en lugar de regex manual.
+    const kind = classifyError(error);
+    if (kind === FYL_ERROR_KIND.NETWORK || kind === FYL_ERROR_KIND.SERVER) {
+      _showOrdersNetworkError("Error de conexión. Verificá tu red y recargá la página.");
+    } else {
+      window.location.href = "index.html";
+    }
   }
 }
 
-async function verifyAdminAuth() {
+async function verifyAdminAuth(existingUser = null) {
   try {
-    // Asegurar que supabase esté disponible
     if (!supabase) {
       supabase = await getSupabase();
     }
-    
-    if (!supabase) {
-      return false;
-    }
+    if (!supabase) return false;
 
-    const {
-      data: { user },
-      error,
-    } = await supabase.auth.getUser();
-    if (error || !user) {
-      return false;
-    }
+    // Reutilizar el user ya obtenido en initOrders para evitar segundo getUser().
+    const user = existingUser ?? (await supabase.auth.getUser()).data?.user;
+    if (!user) return false;
 
     const { data: adminRow, error: adminError } = await supabase
       .from("admins")
@@ -1677,18 +1764,27 @@ async function loadOrders(resetPagination = true) {
   let totalCount = 0;
 
   if (filterMode === "items" && currentFilter === "cancelled") {
-    // Cancelaciones: pedidos con al menos un ítem cancelado (order_items.status = 'cancelled'), no orders.status
-    const { data: cancelledRows, error: errIds } = await supabase
-      .from("orders")
-      .select("id, created_at, order_items!inner(status)")
-      .eq("order_items.status", "cancelled")
-      .order("created_at", { ascending: false });
-    if (errIds) {
-      error = errIds;
+    // Cancelaciones: pedidos con al menos un ítem cancelado.
+    const cancelledRes = await wrapSupabase(
+      () => supabase
+        .from("orders")
+        .select("id, created_at, order_items!inner(status)")
+        .eq("order_items.status", "cancelled")
+        .order("created_at", { ascending: false }),
+      { retries: 1, signal: ordersAbortScope.signal, label: "orders.load.cancelled_ids" }
+    );
+    if (cancelledRes.aborted) return;
+    if (cancelledRes.error) {
+      const kind = cancelledRes.kind;
+      if (kind === FYL_ERROR_KIND.NETWORK || kind === FYL_ERROR_KIND.SERVER) {
+        _showOrdersNetworkError("No se pudieron cargar los pedidos cancelados. Verificá tu conexión.");
+        return;
+      }
+      error = cancelledRes.error;
       data = [];
     } else {
       const seen = new Set();
-      const idsOrdered = (cancelledRows || []).map((r) => r.id).filter((id) => {
+      const idsOrdered = (cancelledRes.data || []).map((r) => r.id).filter((id) => {
         if (seen.has(id)) return false;
         seen.add(id);
         return true;
@@ -1698,20 +1794,24 @@ async function loadOrders(resetPagination = true) {
       if (pageIds.length === 0) {
         data = [];
       } else {
-        const { data: pageOrders, error: errPage } = await supabase
-          .from("orders")
-          .select(`
-            id, order_number, status, total_amount, created_at, expires_at, dismantle_at, transport_id, updated_at, sent_at, customer_id, notes, source,
-            order_items ( id, product_name, color, size, quantity, price_snapshot, status, admin_confirmed_missing, imagen, variant_id, order_item_stock_sources ( qty, warehouse_id ) ),
-            customers:customer_id!left ( id, customer_number, full_name, phone, city, province, dni, email, transport_id )
-          `)
-          .in("id", pageIds)
-          .order("created_at", { ascending: false });
-        if (errPage) {
-          error = errPage;
+        const cancelledPageRes = await wrapSupabase(
+          () => supabase
+            .from("orders")
+            .select(`
+              id, order_number, status, total_amount, created_at, expires_at, dismantle_at, transport_id, updated_at, sent_at, customer_id, notes, source,
+              order_items ( id, product_name, color, size, quantity, price_snapshot, status, admin_confirmed_missing, imagen, variant_id, order_item_stock_sources ( qty, warehouse_id ) ),
+              customers:customer_id!left ( id, customer_number, full_name, phone, city, province, dni, email, transport_id )
+            `)
+            .in("id", pageIds)
+            .order("created_at", { ascending: false }),
+          { retries: 1, signal: ordersAbortScope.signal, label: "orders.load.cancelled_page" }
+        );
+        if (cancelledPageRes.aborted) return;
+        if (cancelledPageRes.error) {
+          error = cancelledPageRes.error;
           data = [];
         } else {
-          const orderById = new Map((pageOrders || []).map((o) => [o.id, o]));
+          const orderById = new Map((cancelledPageRes.data || []).map((o) => [o.id, o]));
           data = pageIds.map((id) => orderById.get(id)).filter(Boolean);
         }
       }
@@ -1725,10 +1825,25 @@ async function loadOrders(resetPagination = true) {
       }
 
       query = query.order("created_at", { ascending: false }).range(currentPage * pageSize, (currentPage + 1) * pageSize - 1);
-      const response = await query;
-      data = response.data;
-      error = response.error;
-      totalCount = response.count || 0;
+      const response = await wrapSupabase(() => query, {
+        retries: 1,
+        signal: ordersAbortScope.signal,
+        label: `orders.load.sql.${currentFilter}`,
+      });
+      if (response.aborted) return;
+      if (response.error) {
+        const kind = response.kind;
+        if (kind === FYL_ERROR_KIND.NETWORK || kind === FYL_ERROR_KIND.SERVER) {
+          _showOrdersNetworkError("No se pudieron cargar los pedidos. Verificá tu conexión.");
+          return;
+        }
+        // permission / unknown / auth: propagar el error para que el caller decida
+        error = response.error;
+      } else {
+        data = response.data;
+        // wrapSupabase reexpone `count` del header de Supabase cuando se usa { count: 'exact' }
+        totalCount = response.count ?? response.data?.length ?? 0;
+      }
     } else if (filterMode === "client") {
       // Activos / Apartados / Espera: el criterio es por estados de order_items. Paginar por IDs filtrados
       // (si pagináramos solo por fecha, los N más recientes podrían ser casi todos "Apartados" y la pestaña Activos quedaría casi vacía).
@@ -1745,7 +1860,18 @@ async function loadOrders(resetPagination = true) {
           lightQuery = lightQuery.neq("status", "stock_pending");
         }
 
-        const lightRes = await lightQuery.order("created_at", { ascending: false });
+        const lightRes = await wrapSupabase(
+          () => lightQuery.order("created_at", { ascending: false }),
+          { retries: 1, signal: ordersAbortScope.signal, label: `orders.load.light.${currentFilter}` }
+        );
+        if (lightRes.aborted) return;
+        if (lightRes.error) {
+          const kind = lightRes.kind;
+          if (kind === FYL_ERROR_KIND.NETWORK || kind === FYL_ERROR_KIND.SERVER) {
+            _showOrdersNetworkError("No se pudieron cargar los pedidos. Verificá tu conexión.");
+            return;
+          }
+        }
         lightRows = lightRes.data;
         lightErr = lightRes.error;
       }
@@ -1819,15 +1945,21 @@ async function loadOrders(resetPagination = true) {
               transport_id
             )
           `;
-          const { data: pageOrders, error: errPage } = await supabase
-            .from("orders")
-            .select(fullSelect)
-            .in("id", pageIds);
-          if (errPage) {
-            error = errPage;
+          const fullRes = await wrapSupabase(
+            () => supabase.from("orders").select(fullSelect).in("id", pageIds),
+            { retries: 1, signal: ordersAbortScope.signal, label: `orders.load.full.${currentFilter}` }
+          );
+          if (fullRes.aborted) return;
+          if (fullRes.error) {
+            const kind = fullRes.kind;
+            if (kind === FYL_ERROR_KIND.NETWORK || kind === FYL_ERROR_KIND.SERVER) {
+              _showOrdersNetworkError("No se pudieron cargar los pedidos. Verificá tu conexión.");
+              return;
+            }
+            error = fullRes.error;
             data = [];
           } else {
-            const orderById = new Map((pageOrders || []).map((o) => [o.id, o]));
+            const orderById = new Map((fullRes.data || []).map((o) => [o.id, o]));
             data = pageIds.map((id) => orderById.get(id)).filter(Boolean);
           }
         }
@@ -1839,15 +1971,6 @@ async function loadOrders(resetPagination = true) {
       }
     }
   }
-
-  // Log temporal: respuesta de Supabase (antes del guard)
-  console.log("[orders AUDIT] Supabase response", {
-    currentFilter,
-    filterMode,
-    dataLength: data ? data.length : 0,
-    totalCount,
-    firstStatuses: (data && data.length) ? data.slice(0, 3).map((o) => o.status) : [],
-  });
 
   // Verificar si hay más pedidos para cargar
   if (data && !error) {
@@ -1879,16 +2002,11 @@ async function loadOrders(resetPagination = true) {
   }
 
   if (seq !== ordersLoadSeq || filterAtStart !== currentFilter) {
-    console.log("[orders AUDIT] guard DROPPED response", { seq, ordersLoadSeq, filterAtStart, currentFilter });
     if (DEBUG_ORDERS) console.log("[orders] loadOrders dropped", { seq, filterAtStart, currentFilter, reason: "stale or filter changed" });
     return;
   }
   ordersLastAppliedSeq = seq;
   if (DEBUG_ORDERS) console.log("[orders] loadOrders apply", { seq, currentFilter });
-
-  // Log temporal: justo antes de asignar orders
-  const ordersBefore = (data || []).length;
-  console.log("[orders AUDIT] before assign orders", { currentFilter, dataLength: ordersBefore, resetPagination });
 
   // Agregar nuevos pedidos a la lista (no reemplazar si estamos paginando)
   if (resetPagination) {
@@ -1928,8 +2046,6 @@ async function loadOrders(resetPagination = true) {
     const statuses = [...new Set((orders || []).map((o) => o.status).filter(Boolean))];
     console.log("[debug] loadOrders rows", orders.length, "filter", currentFilter, "statuses", statuses);
   }
-  // Log temporal: justo antes de displayOrders
-  console.log("[orders AUDIT] before displayOrders", { currentFilter, ordersLength: (orders || []).length, orderStatuses: (orders || []).map((o) => o.status) });
   // Si es reset, reemplazar todo; si no, agregar al final
   await displayOrders(!resetPagination);
   updateActiveOrdersBadge();
@@ -1937,7 +2053,18 @@ async function loadOrders(resetPagination = true) {
   updateClosedOrdersBadge();
 }
 
-// Función para buscar pedidos directamente en la base de datos (sin límite)
+/**
+ * Busca pedidos en la base de datos por término libre.
+ *
+ * Fase 2:
+ *  - Todas las queries envueltas con wrapSupabase (clasificación + retry).
+ *  - Cada llamada crea su propio AbortScope y aborta el scope anterior,
+ *    evitando que búsquedas previas muten el DOM de la búsqueda actual.
+ *  - Guard numérico (_searchSeq) como segunda línea de defensa contra
+ *    race conditions si dos invocaciones se solapan en tiempo.
+ *  - Errores de red → banner no bloqueante, sin redirect, sin "sin resultados".
+ *  - Auth / permission → solo actuar si el servidor lo confirmó.
+ */
 async function searchOrdersInDatabase(searchTerm) {
   if (!supabase) {
     supabase = await getSupabase();
@@ -1947,59 +2074,129 @@ async function searchOrdersInDatabase(searchTerm) {
     return;
   }
 
+  // — Abort de la búsqueda anterior y creación del scope propio —
+  if (_activeSearchAbortScope) _activeSearchAbortScope.abort("new_search");
+  const myScope = createAbortScope();
+  _activeSearchAbortScope = myScope;
+  const signal = myScope.signal;
+
+  // — Guard numérico: solo el seq más reciente puede mutar el DOM —
+  const mySeq = ++_searchSeq;
+
+  /** Retorna true si esta invocación ya fue superada o abortada. */
+  function isStale() {
+    return mySeq !== _searchSeq || signal.aborted;
+  }
+
+  /** Muestra un banner de error de red dentro del contenedor de búsqueda. */
+  function showSearchNetworkError(msg) {
+    if (isStale()) return;
+    const container = document.getElementById("orders-content");
+    if (!container) return;
+    container.innerHTML = `
+      <div class="loading" style="flex-direction:column;gap:10px;">
+        <p style="color:#c00;font-size:14px;margin:0;">${msg}</p>
+        <button onclick="location.reload()" style="padding:8px 16px;border:1px solid #c00;border-radius:6px;background:#fff;color:#c00;cursor:pointer;font-size:13px;">Recargar</button>
+      </div>`;
+  }
+
   try {
-    // Buscar clientes que coincidan con el término de búsqueda
-    const { data: customersData, error: customersError } = await supabase
-      .from("customers")
-      .select("id")
-      .or(`full_name.ilike.%${searchTerm}%,dni.ilike.%${searchTerm}%,phone.ilike.%${searchTerm}%,email.ilike.%${searchTerm}%`);
-
-    if (customersError) {
-      console.error("❌ Error buscando clientes:", customersError);
-    }
-
-    const customerIds = customersData?.map(c => c.id) || [];
-
-    // Buscar pedidos que tengan productos que coincidan con el término de búsqueda
-    const { data: ordersWithProducts, error: ordersError } = await supabase
-      .from("order_items")
-      .select("order_id")
-      .or(`product_name.ilike.%${searchTerm}%,color.ilike.%${searchTerm}%`)
-      .limit(1000); // Límite razonable para evitar consultas muy grandes
-
-    const orderIdsFromProducts = ordersWithProducts ? [...new Set(ordersWithProducts.map(item => item.order_id))] : [];
-
-    // Combinar todos los IDs de pedidos encontrados
-    const allOrderIds = new Set();
-    
-    // Agregar IDs de pedidos encontrados por productos
-    orderIdsFromProducts.forEach(id => allOrderIds.add(id));
-    
-    // Buscar pedidos por cliente y agregar sus IDs
-    if (customerIds.length > 0) {
-      const { data: ordersByCustomer, error: ordersByCustomerError } = await supabase
-        .from("orders")
+    // ── Query 1: clientes por nombre/DNI/teléfono/email ──────────────────────
+    const custRes = await wrapSupabase(
+      () => supabase
+        .from("customers")
         .select("id")
-        .in("customer_id", customerIds)
-        .limit(1000);
-      
-      if (!ordersByCustomerError && ordersByCustomer) {
-        ordersByCustomer.forEach(order => allOrderIds.add(order.id));
+        .or(`full_name.ilike.%${searchTerm}%,dni.ilike.%${searchTerm}%,phone.ilike.%${searchTerm}%,email.ilike.%${searchTerm}%`),
+      { retries: 1, signal, label: "orders.search.customers" }
+    );
+    if (isStale()) return;
+    if (custRes.aborted) return;
+    if (custRes.error) {
+      const kind = custRes.kind;
+      if (kind === FYL_ERROR_KIND.NETWORK || kind === FYL_ERROR_KIND.SERVER) {
+        showSearchNetworkError("Error de conexión. Verificá tu red e intentá de nuevo.");
+        return;
+      }
+      // permission/unknown: continuar sin IDs de clientes (búsqueda parcial)
+      console.warn("[orders.search] customers query error:", custRes.error, "kind:", kind);
+    }
+    const customerIds = custRes.data?.map(c => c.id) || [];
+
+    // ── Query 2: items por nombre de producto o color ─────────────────────────
+    const itemsRes = await wrapSupabase(
+      () => supabase
+        .from("order_items")
+        .select("order_id")
+        .or(`product_name.ilike.%${searchTerm}%,color.ilike.%${searchTerm}%`)
+        .limit(1000),
+      { retries: 1, signal, label: "orders.search.items" }
+    );
+    if (isStale()) return;
+    if (itemsRes.aborted) return;
+    if (itemsRes.error) {
+      const kind = itemsRes.kind;
+      if (kind === FYL_ERROR_KIND.NETWORK || kind === FYL_ERROR_KIND.SERVER) {
+        showSearchNetworkError("Error de conexión. Verificá tu red e intentá de nuevo.");
+        return;
+      }
+      console.warn("[orders.search] order_items query error:", itemsRes.error, "kind:", kind);
+    }
+    const orderIdsFromItems = itemsRes.data
+      ? [...new Set(itemsRes.data.map(i => i.order_id))]
+      : [];
+
+    // ── Combinar IDs hasta aquí ───────────────────────────────────────────────
+    const allOrderIds = new Set(orderIdsFromItems);
+
+    // ── Query 3 (condicional): pedidos por customer_id ────────────────────────
+    if (customerIds.length > 0) {
+      const byCustomerRes = await wrapSupabase(
+        () => supabase
+          .from("orders")
+          .select("id")
+          .in("customer_id", customerIds)
+          .limit(1000),
+        { retries: 1, signal, label: "orders.search.by_customer" }
+      );
+      if (isStale()) return;
+      if (byCustomerRes.aborted) return;
+      if (!byCustomerRes.error && byCustomerRes.data) {
+        byCustomerRes.data.forEach(o => allOrderIds.add(o.id));
+      } else if (byCustomerRes.error) {
+        const kind = byCustomerRes.kind;
+        if (kind === FYL_ERROR_KIND.NETWORK || kind === FYL_ERROR_KIND.SERVER) {
+          showSearchNetworkError("Error de conexión. Verificá tu red e intentá de nuevo.");
+          return;
+        }
+        console.warn("[orders.search] by_customer error:", byCustomerRes.error, "kind:", kind);
       }
     }
-    
-    // Buscar pedidos por order_number y agregar sus IDs
-    const { data: ordersByNumber, error: ordersByNumberError } = await supabase
-      .from("orders")
-      .select("id")
-      .ilike("order_number", `%${searchTerm}%`)
-      .limit(1000);
-    
-    if (!ordersByNumberError && ordersByNumber) {
-      ordersByNumber.forEach(order => allOrderIds.add(order.id));
+
+    // ── Query 4: pedidos por order_number ─────────────────────────────────────
+    const byNumberRes = await wrapSupabase(
+      () => supabase
+        .from("orders")
+        .select("id")
+        .ilike("order_number", `%${searchTerm}%`)
+        .limit(1000),
+      { retries: 1, signal, label: "orders.search.by_number" }
+    );
+    if (isStale()) return;
+    if (byNumberRes.aborted) return;
+    if (!byNumberRes.error && byNumberRes.data) {
+      byNumberRes.data.forEach(o => allOrderIds.add(o.id));
+    } else if (byNumberRes.error) {
+      const kind = byNumberRes.kind;
+      if (kind === FYL_ERROR_KIND.NETWORK || kind === FYL_ERROR_KIND.SERVER) {
+        showSearchNetworkError("Error de conexión. Verificá tu red e intentá de nuevo.");
+        return;
+      }
+      console.warn("[orders.search] by_number error:", byNumberRes.error, "kind:", kind);
     }
-    
-    // Si no se encontraron pedidos, retornar vacío
+
+    if (isStale()) return;
+
+    // ── Sin resultados: limpiar lista ─────────────────────────────────────────
     if (allOrderIds.size === 0) {
       orders = [];
       await displayOrders();
@@ -2008,92 +2205,90 @@ async function searchOrdersInDatabase(searchTerm) {
       updateClosedOrdersBadge();
       return;
     }
-    
-    // Buscar todos los pedidos encontrados con sus datos completos
+
+    // ── Query 5: datos completos de los pedidos encontrados ───────────────────
     const orderIdsArray = Array.from(allOrderIds);
-    const query = supabase
-      .from("orders")
-      .select(
-        `
-          id,
-          order_number,
-          status,
-          total_amount,
-          created_at,
-          expires_at,
-          dismantle_at,
-          transport_id,
-          updated_at,
-          sent_at,
-          customer_id,
-          notes,
-          source,
+    const fullOrdersRes = await wrapSupabase(
+      () => supabase
+        .from("orders")
+        .select(`
+          id, order_number, status, total_amount, created_at, expires_at,
+          dismantle_at, transport_id, updated_at, sent_at, customer_id, notes, source,
           order_items (
-            id,
-            product_name,
-            color,
-            size,
-            quantity,
-            price_snapshot,
-            status,
-            imagen,
-            variant_id,
+            id, product_name, color, size, quantity, price_snapshot,
+            status, imagen, variant_id,
             order_item_stock_sources ( qty, warehouse_id )
           )
-        `
-      )
-      .in("id", orderIdsArray)
-      .order("created_at", { ascending: false });
+        `)
+        .in("id", orderIdsArray)
+        .order("created_at", { ascending: false }),
+      { retries: 1, signal, label: "orders.search.full_data" }
+    );
+    if (isStale()) return;
+    if (fullOrdersRes.aborted) return;
+    if (fullOrdersRes.error) {
+      const kind = fullOrdersRes.kind;
+      if (kind === FYL_ERROR_KIND.NETWORK || kind === FYL_ERROR_KIND.SERVER) {
+        showSearchNetworkError("Error de conexión al cargar los pedidos. Verificá tu red.");
+        return;
+      }
+      console.error("❌ Error buscando pedidos completos:", fullOrdersRes.error, "kind:", kind);
+      orders = [];
+      await displayOrders();
+      return;
+    }
 
-    const response = await query;
-    let data = response.data;
-    let error = response.error;
+    let data = fullOrdersRes.data || [];
 
-    // Si hay datos, obtener información completa de customers
-    if (data && !error && data.length > 0) {
-      const allCustomerIds = [...new Set(data.map(order => order.customer_id).filter(Boolean))];
-      
+    // ── Query 6 (condicional): datos completos de customers ───────────────────
+    if (data.length > 0) {
+      const allCustomerIds = [...new Set(data.map(o => o.customer_id).filter(Boolean))];
       if (allCustomerIds.length > 0) {
-        const { data: customersFullData, error: customersFullError } = await supabase
-          .from("customers")
-          .select("id, customer_number, full_name, phone, city, province, dni, email, transport_id")
-          .in("id", allCustomerIds);
-        
-        if (!customersFullError && customersFullData) {
-          const customersMap = new Map();
-          customersFullData.forEach(c => {
-            customersMap.set(c.id, c);
-          });
-          
-          data = data.map(order => {
-            const customer = customersMap.get(order.customer_id) || {};
-            return {
-              ...order,
-              customers: customer
-            };
-          });
+        const custFullRes = await wrapSupabase(
+          () => supabase
+            .from("customers")
+            .select("id, customer_number, full_name, phone, city, province, dni, email, transport_id")
+            .in("id", allCustomerIds),
+          { retries: 1, signal, label: "orders.search.customers_full" }
+        );
+        if (isStale()) return;
+        if (custFullRes.aborted) return;
+        if (!custFullRes.error && custFullRes.data) {
+          const custMap = new Map(custFullRes.data.map(c => [c.id, c]));
+          data = data.map(o => ({ ...o, customers: custMap.get(o.customer_id) || {} }));
         }
+        // Error en customers full: continuar sin datos de cliente (degraded, no romper)
       }
     }
 
-    if (error) {
-      console.error("❌ Error buscando pedidos:", error);
-      orders = [];
-    } else {
-      await refreshCustomerIncidentPoints(data || []);
-      orders = data || [];
-      // Resetear paginación cuando hay búsqueda
-      currentPage = 0;
-      hasMoreOrders = false;
-      allOrdersLoaded = true;
-    }
+    if (isStale()) return;
+
+    // ── Aplicar resultados al estado del módulo ───────────────────────────────
+    await refreshCustomerIncidentPoints(data);
+    if (isStale()) return;
+
+    orders = data;
+    currentPage = 0;
+    hasMoreOrders = false;
+    allOrdersLoaded = true;
 
     await displayOrders();
     updateActiveOrdersBadge();
     updatePickedOrdersBadge();
     updateClosedOrdersBadge();
-  } catch (error) {
-    console.error("❌ Error en searchOrdersInDatabase:", error);
+
+  } catch (err) {
+    if (isStale()) return; // error de una búsqueda ya superada — ignorar
+    const kind = classifyError(err);
+    if (kind === FYL_ERROR_KIND.NETWORK || kind === FYL_ERROR_KIND.SERVER) {
+      showSearchNetworkError("Error de conexión durante la búsqueda. Verificá tu red.");
+      return;
+    }
+    if (kind === FYL_ERROR_KIND.AUTH) {
+      window.location.href = "index.html";
+      return;
+    }
+    console.error("❌ Error inesperado en searchOrdersInDatabase:", err, "kind:", kind);
     orders = [];
     await displayOrders();
   }
@@ -2312,17 +2507,22 @@ function scheduleRealtimeDelta(payload) {
 
   pendingOrderIds.add(orderId);
   if (pendingTimer) return;
-  pendingTimer = setTimeout(async () => {
-    const ids = Array.from(pendingOrderIds);
-    pendingOrderIds.clear();
-    pendingTimer = null;
-    const t0 = performance.now();
-    for (const id of ids) {
-      await refreshOneOrder(id);
-    }
-    updateAllBadges();
-    const t1 = performance.now();
-    if (DEBUG_ORDERS) console.log("[perf] realtime batch", ids.length, "orders in", (t1 - t0).toFixed(0), "ms");
+  pendingTimer = setTimeout(() => {
+    runOrdersTask("realtime_batch_refresh", async () => {
+      const ids = Array.from(pendingOrderIds);
+      pendingOrderIds.clear();
+      pendingTimer = null;
+      const t0 = performance.now();
+      for (const id of ids) {
+        await refreshOneOrder(id);
+      }
+      updateAllBadges();
+      const t1 = performance.now();
+      if (DEBUG_ORDERS) console.log("[perf] realtime batch", ids.length, "orders in", (t1 - t0).toFixed(0), "ms");
+    }).catch((err) => {
+      pendingTimer = null;
+      console.warn("[orders] realtime_batch_refresh error:", err);
+    });
   }, 250);
 }
 
@@ -2487,9 +2687,6 @@ async function displayOrders(append = false) {
   const container = document.getElementById("orders-content");
   if (!container) return;
 
-  // Log temporal: entrada a displayOrders
-  console.log("[orders AUDIT] displayOrders entry", { currentFilter, ordersLength: (orders || []).length, append });
-
   // CRÍTICO: Validar que el filtro actual coincide con los datos
   // Si orders está vacío o no hay datos, mostrar mensaje apropiado
   if (!orders || orders.length === 0) {
@@ -2508,7 +2705,6 @@ async function displayOrders(append = false) {
 
   // Filtrar por pestaña actual
   const filteredByTab = filterOrders(orders);
-  console.log("[orders AUDIT] after filterOrders", { currentFilter, ordersLength: orders.length, filteredByTabLength: filteredByTab.length });
 
   // Aplicar búsqueda si existe
   let filtered = filteredByTab;
@@ -4304,6 +4500,24 @@ function hideLoading() {
   if (loading) {
     loading.classList.add("hidden");
   }
+}
+
+/**
+ * Muestra un banner de error de red no bloqueante dentro de #orders-content.
+ * No cierra el modal ni redirige. El usuario puede recargar manualmente.
+ * Solo se muestra si el contenedor sigue en estado de "loading" (primer render);
+ * si ya hay pedidos visibles, el error se ignora para no pisar la UI usable.
+ */
+function _showOrdersNetworkError(msg) {
+  const container = document.getElementById("orders-content");
+  if (!container) return;
+  // Si ya hay tarjetas de pedidos en pantalla, no interrumpir con el banner.
+  if (container.querySelector(".order-card, [data-order-id]")) return;
+  container.innerHTML = `
+    <div class="loading" style="flex-direction:column;gap:10px;">
+      <p style="color:#c00;font-size:14px;margin:0;">${msg}</p>
+      <button onclick="location.reload()" style="padding:8px 16px;border:1px solid #c00;border-radius:6px;background:#fff;color:#c00;cursor:pointer;font-size:13px;">Recargar</button>
+    </div>`;
 }
 
 function showOrderActionLoading(orderId) {

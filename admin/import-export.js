@@ -1,17 +1,21 @@
 // admin/import-export.js
-import { requireAuth } from "./admin-auth.js";
 import { supabase } from "../scripts/supabase-client.js";
-import { checkPermission, requirePermission } from "./permissions-helper.js";
-
-await requireAuth();
+import { preloadAuthState, can, isAdminUser } from "./auth-state.js";
 
 // Verificar permisos de import/export
 let canExport = false;
 let canImport = false;
 
 async function checkImportExportPermissions() {
-  canExport = await checkPermission('export', 'view');
-  canImport = await checkPermission('import', 'edit');
+  const { user } = await preloadAuthState();
+  if (!user) {
+    window.location.href = "./index.html";
+    return false;
+  }
+
+  // Fallback seguro: si por cache/permisos no está la key, mantener acceso admin.
+  canExport = can("export", "view") || isAdminUser();
+  canImport = can("import", "edit") || isAdminUser();
   
   // Ocultar botones según permisos
   const exportAllBtn = document.getElementById("export-all");
@@ -40,6 +44,7 @@ async function checkImportExportPermissions() {
     const fileInputs = document.querySelectorAll('input[type="file"]');
     fileInputs.forEach(input => input.style.display = "none");
   }
+  return true;
 }
 
 await checkImportExportPermissions();

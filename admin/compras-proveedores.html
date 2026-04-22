@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex" />
+  <title>Compras a proveedores | Admin</title>
+  <link rel="stylesheet" href="../styles.css" />
+  <script src="./suppress-extension-errors.js"></script>
+  <script>
+    window.redirectTarget = "./compras-proveedores.html";
+    window.skipPanelRedirect = true;
+  </script>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; background: #f5f5f5; margin: 0; padding: 20px; }
+    .container { max-width: 1200px; margin: 0 auto; }
+    h1 { margin: 0 0 8px; font-size: 24px; color: #333; }
+    .back-link { display: inline-block; margin-bottom: 16px; color: #CD844D; text-decoration: none; font-weight: 500; }
+    .muted { color: #666; font-size: 13px; margin-bottom: 16px; }
+    .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+    .tab {
+      padding: 8px 14px; border: 1px solid #ddd; border-radius: 8px; background: #fff;
+      cursor: pointer; font-size: 14px;
+    }
+    .tab.active { background: #CD844D; color: #fff; border-color: #CD844D; }
+    .panel { display: none; background: #fff; border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 20px; }
+    .panel.open { display: block; }
+    .section-title { font-size: 17px; font-weight: 600; margin: 0 0 12px; color: #333; border-bottom: 2px solid #CD844D; padding-bottom: 6px; }
+    .btn { padding: 8px 14px; border: none; border-radius: 6px; font-size: 14px; font-weight: 500; cursor: pointer; background: #CD844D; color: #fff; }
+    .btn:hover { background: #B8734A; }
+    .btn-secondary { background: #e9ecef; color: #333; }
+    .btn-secondary:hover { background: #dee2e6; }
+    table.data { width: 100%; border-collapse: collapse; font-size: 13px; }
+    table.data th, table.data td { padding: 8px; text-align: left; border-bottom: 1px solid #eee; }
+    table.data th { background: #f8f9fa; font-weight: 600; }
+    label { display: block; font-size: 13px; font-weight: 600; margin: 8px 0 4px; }
+    input, textarea, select { width: 100%; max-width: 520px; padding: 8px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; box-sizing: border-box; }
+    textarea { min-height: 120px; font-family: ui-monospace, monospace; font-size: 12px; max-width: 100%; }
+    .row-actions { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
+    #global-err { color: #c0392b; font-size: 14px; margin-bottom: 12px; display: none; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; background: #e9ecef; color: #495057; }
+    .receipt-line { border: 1px solid #eee; border-radius: 8px; padding: 10px; margin-bottom: 8px; max-width: 640px; }
+    .receipt-line input { max-width: 120px; display: inline-block; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <a class="back-link" href="./index.html">← Volver al panel</a>
+    <h1>Compras a proveedores</h1>
+    <p class="muted">
+      Módulo <code>purchase_*</code> independiente del catálogo. Contrato JSON: <code>docs/PURCHASE_RULES_SCHEMA.md</code>.
+    </p>
+    <p id="global-err"></p>
+
+    <div class="tabs" id="tabs">
+      <button type="button" class="tab active" data-panel="p-seasons">Temporadas</button>
+      <button type="button" class="tab" data-panel="p-suppliers">Proveedores y reglas</button>
+      <button type="button" class="tab" data-panel="p-orders">Pedidos</button>
+      <button type="button" class="tab" data-panel="p-receipts">Recepciones</button>
+      <button type="button" class="tab" data-panel="p-arqueo">Arqueo</button>
+    </div>
+
+    <div id="p-seasons" class="panel open">
+      <h2 class="section-title">Temporadas (<code>purchase_seasons</code>)</h2>
+      <p class="muted">Usadas en cabecera de pedido y vistas de inversión por período.</p>
+      <div class="row-actions">
+        <button type="button" class="btn btn-secondary" id="btn-reload-seasons">Recargar</button>
+      </div>
+      <table class="data" aria-label="Temporadas">
+        <thead><tr><th>Etiqueta</th><th>Inicio</th><th>Fin</th><th>Activa</th></tr></thead>
+        <tbody id="tbody-seasons"></tbody>
+      </table>
+      <h3 class="section-title" style="margin-top:20px;font-size:15px;">Nueva temporada</h3>
+      <label for="new-season-label">Etiqueta</label>
+      <input id="new-season-label" type="text" placeholder="Ej. Invierno 2026" />
+      <label for="new-season-start">Fecha inicio</label>
+      <input id="new-season-start" type="date" />
+      <label for="new-season-end">Fecha fin</label>
+      <input id="new-season-end" type="date" />
+      <div class="row-actions">
+        <button type="button" class="btn" id="btn-add-season">Guardar</button>
+      </div>
+    </div>
+
+    <div id="p-suppliers" class="panel">
+      <h2 class="section-title">Proveedores (<code>purchase_suppliers</code>)</h2>
+      <div class="row-actions">
+        <button type="button" class="btn btn-secondary" id="btn-reload-suppliers">Recargar</button>
+      </div>
+      <table class="data" aria-label="Proveedores compras">
+        <thead><tr><th>Nombre</th><th>Slug</th><th>Aliases (coma)</th><th></th></tr></thead>
+        <tbody id="tbody-suppliers"></tbody>
+      </table>
+
+      <h3 class="section-title" style="margin-top:24px;font-size:15px;">Nueva versión de reglas (RPC)</h3>
+      <p class="muted">Desactiva versiones anteriores y activa una nueva. JSON según contrato.</p>
+      <label for="rule-supplier">Proveedor</label>
+      <select id="rule-supplier"></select>
+      <label for="rule-json">Rules JSON</label>
+      <textarea id="rule-json" spellcheck="false"></textarea>
+      <div class="row-actions">
+        <button type="button" class="btn" id="btn-activate-rules">Activar versión</button>
+      </div>
+      <p id="rule-msg" class="muted"></p>
+    </div>
+
+    <div id="p-orders" class="panel">
+      <h2 class="section-title">Pedidos (<code>purchase_orders</code>)</h2>
+      <div class="row-actions">
+        <button type="button" class="btn btn-secondary" id="btn-reload-orders">Recargar</button>
+      </div>
+      <table class="data" aria-label="Pedidos compra">
+        <thead>
+          <tr>
+            <th>Fecha</th><th>Proveedor</th><th>Temporada</th><th>Neto</th><th>Pares est.</th><th>Revisión</th>
+          </tr>
+        </thead>
+        <tbody id="tbody-orders"></tbody>
+      </table>
+    </div>
+
+    <div id="p-receipts" class="panel">
+      <h2 class="section-title">Recepciones (<code>purchase_register_receipt</code>)</h2>
+      <p class="muted">Cantidades en la unidad de la línea del pedido; <strong>pairs_received</strong> obligatorio (puede coincidir con sugerencia de la línea).</p>
+      <label for="receipt-order">Pedido</label>
+      <select id="receipt-order"></select>
+      <div id="receipt-lines"></div>
+      <label for="receipt-note">Nota (opcional)</label>
+      <input id="receipt-note" type="text" placeholder="Remito / observación" />
+      <div class="row-actions">
+        <button type="button" class="btn" id="btn-submit-receipt">Registrar recepción</button>
+      </div>
+      <p id="receipt-msg" class="muted"></p>
+    </div>
+
+    <div id="p-arqueo" class="panel">
+      <h2 class="section-title">Arqueo (<code>purchase_spend_by_season</code>)</h2>
+      <div class="row-actions">
+        <button type="button" class="btn btn-secondary" id="btn-reload-arqueo">Recargar</button>
+      </div>
+      <table class="data" aria-label="Gasto por temporada">
+        <thead>
+          <tr>
+            <th>Temporada</th><th>Proveedor</th><th>Pedidos</th><th>Neto</th><th>Bruto</th><th>Dto.</th><th>Pares est.</th>
+          </tr>
+        </thead>
+        <tbody id="tbody-arqueo"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script type="module" src="../scripts/config.js"></script>
+  <script type="module" src="../scripts/supabase-client.js"></script>
+  <script type="module" src="./admin-auth.js"></script>
+  <script type="module" src="./compras-proveedores.js"></script>
+</body>
+</html>

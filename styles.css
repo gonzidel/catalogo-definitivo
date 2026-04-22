@@ -6300,6 +6300,46 @@ body.modal-open {
 }
 
 /* Banner F&L Originals (fabricación propia) */
+.home-top-dynamic-slot {
+  width: 100%;
+}
+
+.home-top-dynamic-slot--pending {
+  min-height: 220px;
+}
+
+.home-top-dynamic-loader {
+  display: none;
+  width: calc(100% - 1.5rem);
+  margin: 6px 0.75rem 8px;
+  min-height: 116px;
+  border-radius: 14px;
+  border: 1px dashed rgba(205, 132, 77, 0.32);
+  background: rgba(246, 241, 232, 0.72);
+  color: #7b5c43;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.home-top-dynamic-slot--pending .home-top-dynamic-loader {
+  display: flex;
+}
+
+@media (max-width: 480px) {
+  .home-top-dynamic-slot--pending {
+    min-height: 196px;
+  }
+  .home-top-dynamic-loader {
+    width: calc(100% - 1rem);
+    margin: 4px 0.5rem 6px;
+    min-height: 102px;
+    font-size: 0.86rem;
+  }
+}
+
 .orig-block {
   margin: 6px 0.75rem 8px;
   padding: 8px 10px;

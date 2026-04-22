@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex" />
+  <title>Proveedores | Admin</title>
+  <link rel="stylesheet" href="../styles.css" />
+  <script src="./suppress-extension-errors.js"></script>
+  <script>
+    window.redirectTarget = "./proveedores.html";
+    window.skipPanelRedirect = true;
+  </script>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; background: #f5f5f5; margin: 0; padding: 20px; }
+    .container { max-width: 1200px; margin: 0 auto; }
+    h1 { margin: 0 0 8px; font-size: 24px; color: #333; }
+    .back-link { display: inline-block; margin-bottom: 20px; color: #CD844D; text-decoration: none; font-weight: 500; }
+    .back-link:hover { text-decoration: underline; }
+    .section {
+      background: #fff;
+      border-radius: 12px;
+      padding: 20px 24px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+    .section-title {
+      font-size: 18px;
+      font-weight: 600;
+      margin: 0 0 12px;
+      color: #333;
+      border-bottom: 2px solid #CD844D;
+      padding-bottom: 8px;
+    }
+    .checklist { margin: 0; padding-left: 20px; color: #555; line-height: 1.6; font-size: 14px; }
+    .checklist code { background: #f0f0f0; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+    .muted { color: #666; font-size: 13px; margin-bottom: 12px; }
+    .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+    .btn {
+      padding: 8px 14px;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      background: #CD844D;
+      color: #fff;
+    }
+    .btn:hover { background: #B8734A; }
+    .btn-secondary { background: #e9ecef; color: #333; }
+    .btn-secondary:hover { background: #dee2e6; }
+    table.ingest-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    table.ingest-table th, table.ingest-table td {
+      padding: 10px 8px;
+      text-align: left;
+      border-bottom: 1px solid #eee;
+    }
+    table.ingest-table th { background: #f8f9fa; font-weight: 600; color: #444; }
+    table.ingest-table tr:hover { background: #fafafa; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+    .badge-warn { background: #fff3cd; color: #856404; }
+    .badge-ok { background: #d4edda; color: #155724; }
+    .badge-muted { background: #e9ecef; color: #495057; }
+    .cell-actions { white-space: nowrap; }
+    .btn-link {
+      background: none;
+      border: none;
+      color: #CD844D;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 13px;
+      padding: 0;
+      text-decoration: underline;
+    }
+    #load-err { color: #c0392b; font-size: 14px; margin-top: 8px; }
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.45);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal-box {
+      background: #fff;
+      border-radius: 12px;
+      max-width: 900px;
+      width: 100%;
+      max-height: 90vh;
+      overflow: auto;
+      padding: 20px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+    }
+    .modal-box h2 { margin: 0 0 12px; font-size: 18px; }
+    .modal-pre {
+      background: #1e1e1e;
+      color: #d4d4d4;
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 11px;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .modal-actions { margin-top: 16px; display: flex; gap: 8px; justify-content: flex-end; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <a class="back-link" href="./index.html">← Volver al panel</a>
+    <h1>Proveedores (Telegram)</h1>
+    <p class="muted">Módulo independiente del catálogo: ingest de mensajes y pedidos interpretados. Sin impacto en stock ni pedidos web.</p>
+
+    <div class="section">
+      <h2 class="section-title">Configuración (checklist)</h2>
+      <ol class="checklist">
+        <li>Aplicar migraciones SQL <code>supabase/canonical/180_supplier_telegram_ingest.sql</code> y <code>supabase/canonical/181_purchase_suppliers_module.sql</code> (módulo <code>purchase_*</code>, RPC y <code>unaccent</code>).</li>
+        <li>Crear bot en Telegram y configurar webhook hacia tu instancia n8n.</li>
+        <li>Importar workflow n8n: probá primero <code>docs/n8n-proveedores-ingest-minimal.workflow.json</code> (solo mensajes texto; máxima compatibilidad). Luego <code>docs/n8n-proveedores-ingest.workflow.json</code> (texto + voz + foto). Asignar credencial del nodo Telegram.</li>
+        <li>Si tu n8n bloquea <code>$env</code> (“access to env vars denied”): abrí <code>docs/n8n-proveedores-ingest-minimal.placeholder.workflow.json</code> o <code>docs/n8n-proveedores-ingest.placeholder.workflow.json</code> en un editor de texto, reemplazá los marcadores <code>__SUPABASE_PROJECT_REF__</code> (solo el subdominio del proyecto), <code>__SUPABASE_SERVICE_ROLE_JWT__</code>, <code>__TELEGRAM_BOT_TOKEN__</code> y <code>__OPENAI_API_KEY__</code>, guardá e importá ese JSON. No subas ese archivo con valores reales al repo.</li>
+        <li>Variables de entorno en n8n (si no usás la variante <code>*.placeholder.workflow.json</code>): <code>TELEGRAM_BOT_TOKEN</code>, <code>OPENAI_API_KEY</code>, <code>SUPABASE_URL</code>, <code>SUPABASE_SERVICE_ROLE_KEY</code>.</li>
+        <li>Bucket Storage <code>supplier-ingest</code> (creado por la migración). Referencias en BD: <code>storage_bucket</code> + <code>storage_object_path</code>.</li>
+        <li>Colaboradores: permiso <code>proveedores</code> en <code>admin_permissions</code> si deben ver esta página.</li>
+        <li>UI compras (fichas, recepciones, arqueo): <a href="./compras-proveedores.html">Compras proveedores</a>. Contrato reglas: <code>docs/PURCHASE_RULES_SCHEMA.md</code>.</li>
+      </ol>
+      <p class="muted" style="margin-top:12px;margin-bottom:0;">
+        Regenerar el JSON del workflow: <code>node scripts/build-n8n-proveedores-workflow.mjs</code>
+      </p>
+    </div>
+
+    <div class="section">
+      <h2 class="section-title">Ingest reciente</h2>
+      <div class="toolbar">
+        <button type="button" class="btn btn-secondary" id="btn-refresh">Actualizar</button>
+      </div>
+      <p id="load-err" style="display:none;"></p>
+      <div style="overflow-x:auto;">
+        <table class="ingest-table" aria-label="Ingest de proveedores">
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>Proveedor</th>
+              <th>Estado</th>
+              <th>Needs review</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="ingest-tbody">
+            <tr><td colspan="5" class="muted">Cargando…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="detail-modal" role="dialog" aria-modal="true" aria-labelledby="detail-title">
+    <div class="modal-box">
+      <h2 id="detail-title">Detalle de ingest</h2>
+      <pre class="modal-pre" id="detail-pre"></pre>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" id="detail-close">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="../scripts/config.js"></script>
+  <script type="module" src="../scripts/supabase-client.js"></script>
+  <script type="module" src="./admin-auth.js"></script>
+  <script type="module" src="./proveedores.js"></script>
+</body>
+</html>

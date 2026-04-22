@@ -1,25 +1,63 @@
 // admin/products.js
 import { supabase } from "../scripts/supabase-client.js";
+import { preloadAuthState, can, isAdminUser } from "./auth-state.js";
 
 console.log("🔧 products.js cargado");
 
 // Verificación simple de autenticación sin bloquear
 let __currentUser = null;
-async function checkAuth() {
-  try {
-    const { data } = await supabase.auth.getSession();
-    if (data?.session) {
-      __currentUser = data.session.user;
-      console.log("✅ Usuario autenticado:", __currentUser?.email);
-      return true;
-    } else {
-      console.log("⚠️ No hay sesión activa");
+let __authStatePromise = null;
+
+async function ensureAuthState() {
+  if (__authStatePromise) return __authStatePromise;
+  __authStatePromise = preloadAuthState()
+    .then(({ user }) => {
+      __currentUser = user ?? null;
+      return !!__currentUser;
+    })
+    .catch((e) => {
+      console.warn("⚠️ Error en preloadAuthState(products):", e);
+      __currentUser = null;
       return false;
-    }
-  } catch (e) {
-    console.log("⚠️ Error de autenticación:", e.message);
+    })
+    .finally(() => {
+      __authStatePromise = null;
+    });
+  return __authStatePromise;
+}
+
+async function checkAuth() {
+  const ok = await ensureAuthState();
+  if (ok) {
+    console.log("✅ Usuario autenticado:", __currentUser?.email);
+    return true;
+  }
+  console.log("⚠️ No hay sesión activa");
+  return false;
+}
+
+function canEditProducts() {
+  if (!isAdminUser()) return false;
+  return can("products", "edit") || can("products", "delete");
+}
+
+function canViewProductsCost() {
+  if (!isAdminUser()) return false;
+  // Criterio conservador: si no hay permiso explícito de edición, ocultar costos.
+  return can("products", "edit");
+}
+
+async function ensureProductsEditPermission(errorMessage) {
+  const isAuthenticated = await checkAuth();
+  if (!isAuthenticated) {
+    if (errorMessage) alert(errorMessage);
     return false;
   }
+  if (!canEditProducts()) {
+    alert("No tienes permisos para editar productos.");
+    return false;
+  }
+  return true;
 }
 
 // Verificar autenticación sin bloquear
@@ -31,6 +69,16 @@ const statusEl = document.getElementById("save-status");
 const variantsTable = document.querySelector("#variants-table tbody");
 const addVariantBtn = document.getElementById("add-variant");
 let canViewCostFields = false;
+const _variantImageOpsInFlight = new Set();
+
+function runProductsTask(label, task, onError) {
+  Promise.resolve()
+    .then(task)
+    .catch((error) => {
+      console.error(`[products] ${label} failed:`, error);
+      if (typeof onError === "function") onError(error);
+    });
+}
 
 console.log("🔍 Elementos encontrados:", {
   form: !!form,
@@ -49,6 +97,22 @@ function applyCostVisibilityToRow(row) {
   }
 }
 
+function getVariantImageOpKey(row, suffix) {
+  const variantId = row?.dataset?.variantId || "no-variant";
+  return `${variantId}:${suffix}`;
+}
+
+async function withVariantImageOpLock(key, task) {
+  if (_variantImageOpsInFlight.has(key)) return false;
+  _variantImageOpsInFlight.add(key);
+  try {
+    await task();
+    return true;
+  } finally {
+    _variantImageOpsInFlight.delete(key);
+  }
+}
+
 function applyCostFieldVisibility() {
   document.querySelectorAll("[data-cost-sensitive]").forEach((el) => {
     el.style.display = canViewCostFields ? "" : "none";
@@ -61,8 +125,8 @@ function applyCostFieldVisibility() {
 
 async function initRoleBasedCostVisibility() {
   try {
-    const { isSuperAdmin } = await import("./permissions-helper.js");
-    canViewCostFields = await isSuperAdmin();
+    await ensureAuthState();
+    canViewCostFields = canViewProductsCost();
   } catch (error) {
     console.warn("No se pudo resolver rol para visibilidad de costos:", error);
     canViewCostFields = false;
@@ -681,16 +745,20 @@ function renderVariantImages(row, images) {
       cursor: ${index === 0 ? "not-allowed" : "pointer"};
       border-radius: 3px;
     `;
-    btnUp.addEventListener("click", async () => {
-      if (index > 0) {
-        const newOrder = [...images];
-        [newOrder[index - 1], newOrder[index]] = [newOrder[index], newOrder[index - 1]];
-        const orderedIds = newOrder.map(i => i.id);
-        const variantId = row.dataset.variantId;
-        if (variantId && await reorderVariantImages(variantId, orderedIds)) {
-          await loadVariantImages(row, variantId);
-        }
-      }
+    btnUp.addEventListener("click", () => {
+      runProductsTask("image_move_up", async () => {
+        if (index <= 0) return;
+        const lockKey = getVariantImageOpKey(row, "reorder");
+        await withVariantImageOpLock(lockKey, async () => {
+          const newOrder = [...images];
+          [newOrder[index - 1], newOrder[index]] = [newOrder[index], newOrder[index - 1]];
+          const orderedIds = newOrder.map(i => i.id);
+          const variantId = row.dataset.variantId;
+          if (variantId && await reorderVariantImages(variantId, orderedIds)) {
+            await loadVariantImages(row, variantId);
+          }
+        });
+      });
     });
 
     // Botón bajar
@@ -707,16 +775,20 @@ function renderVariantImages(row, images) {
       cursor: ${index === images.length - 1 ? "not-allowed" : "pointer"};
       border-radius: 3px;
     `;
-    btnDown.addEventListener("click", async () => {
-      if (index < images.length - 1) {
-        const newOrder = [...images];
-        [newOrder[index], newOrder[index + 1]] = [newOrder[index + 1], newOrder[index]];
-        const orderedIds = newOrder.map(i => i.id);
-        const variantId = row.dataset.variantId;
-        if (variantId && await reorderVariantImages(variantId, orderedIds)) {
-          await loadVariantImages(row, variantId);
-        }
-      }
+    btnDown.addEventListener("click", () => {
+      runProductsTask("image_move_down", async () => {
+        if (index >= images.length - 1) return;
+        const lockKey = getVariantImageOpKey(row, "reorder");
+        await withVariantImageOpLock(lockKey, async () => {
+          const newOrder = [...images];
+          [newOrder[index], newOrder[index + 1]] = [newOrder[index + 1], newOrder[index]];
+          const orderedIds = newOrder.map(i => i.id);
+          const variantId = row.dataset.variantId;
+          if (variantId && await reorderVariantImages(variantId, orderedIds)) {
+            await loadVariantImages(row, variantId);
+          }
+        });
+      });
     });
 
     // Botón eliminar
@@ -733,15 +805,19 @@ function renderVariantImages(row, images) {
       cursor: pointer;
       border-radius: 3px;
     `;
-    btnDelete.addEventListener("click", async () => {
-      if (confirm("¿Eliminar esta imagen?")) {
-        const variantId = row.dataset.variantId;
-        if (await deleteVariantImage(img.id)) {
-          if (variantId) {
-            await loadVariantImages(row, variantId);
+    btnDelete.addEventListener("click", () => {
+      if (!confirm("¿Eliminar esta imagen?")) return;
+      runProductsTask("image_delete", async () => {
+        const lockKey = getVariantImageOpKey(row, `delete:${img.id}`);
+        await withVariantImageOpLock(lockKey, async () => {
+          const variantId = row.dataset.variantId;
+          if (await deleteVariantImage(img.id)) {
+            if (variantId) {
+              await loadVariantImages(row, variantId);
+            }
           }
-        }
-      }
+        });
+      });
     });
 
     controls.appendChild(btnUp);
@@ -1008,8 +1084,7 @@ async function ensureVariantId(row) {
     const logisticAmountValue = parseARS(document.getElementById("logistic-amount")?.value || "500");
     
     // Obtener user_id actual para marcar created_by (si existe la columna)
-    const { data: session } = await supabase.auth.getSession();
-    const userId = session?.session?.user?.id || null;
+    const userId = __currentUser?.id || null;
     
     // Calcular estado inicial: si no tiene stock ni imágenes, será pending_stock
     // (se actualizará automáticamente cuando se guarden variantes y talles)
@@ -1726,40 +1801,10 @@ function updateVariantStatus(row, status) {
  */
 async function uploadImagesToCloudinary(row, files) {
   // 0. Verificar autenticación y permisos ANTES de subir
-  const isAuthenticated = await checkAuth();
-  if (!isAuthenticated) {
-    alert("Debes estar autenticado para subir imágenes. Por favor, inicia sesión.");
-    return false;
-  }
-
-  // Verificar que el usuario puede editar productos (super_admin o colaborador con permiso)
-  try {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      alert("No se pudo verificar tu identidad. Por favor, recarga la página e inicia sesión nuevamente.");
-      return false;
-    }
-
-    const { data: canEdit, error: permError } = await supabase
-      .rpc("has_permission", {
-        check_user_id: user.id,
-        permission_key: "products",
-        action: "edit"
-      });
-
-    if (permError) {
-      console.error("Error verificando permisos:", permError);
-      alert("Error verificando permisos de administrador. Por favor, contacta al administrador del sistema.");
-      return false;
-    }
-
-    if (!canEdit) {
-      alert("No tienes permisos para subir imágenes. Necesitas permiso de edición de productos.");
-      return false;
-    }
-  } catch (err) {
-    console.error("Error verificando permisos:", err);
-    alert("Error verificando permisos. Por favor, recarga la página e intenta nuevamente.");
+  const canProceed = await ensureProductsEditPermission(
+    "Debes estar autenticado para subir imágenes. Por favor, inicia sesión."
+  );
+  if (!canProceed) {
     return false;
   }
 
@@ -2215,7 +2260,13 @@ function showUrlModalForRow(row) {
   // Event listeners
   modalClose.onclick = closeModal;
   modalCancel.onclick = closeModal;
-  modalSubmit.onclick = processUrls;
+  modalSubmit.onclick = () => {
+    runProductsTask(
+      "url_modal_submit",
+      processUrls,
+      () => alert("Error procesando URLs. Reintentá.")
+    );
+  };
   
   // Cerrar con Escape
   const handleEscape = (e) => {
@@ -5537,10 +5588,10 @@ async function saveProduct(shouldReset = true) {
   if (saveBtn) saveBtn.disabled = true;
   if (preSaveBtn) preSaveBtn.disabled = true;
 
-  // Verificar autenticación antes de guardar
-  const isAuthenticated = await checkAuth();
-  if (!isAuthenticated) {
-    statusEl.textContent = "Debes estar autenticado para guardar";
+  // Verificar autenticación + permiso de edición antes de guardar
+  const canProceed = await ensureProductsEditPermission();
+  if (!canProceed) {
+    statusEl.textContent = "No tienes permisos para guardar o tu sesión no es válida";
     statusEl.style.color = "#c00";
     if (saveBtn) saveBtn.disabled = false;
     if (preSaveBtn) preSaveBtn.disabled = false;
@@ -5548,22 +5599,8 @@ async function saveProduct(shouldReset = true) {
     return;
   }
 
-  // Verificar que el usuario tenga permisos de admin
   console.log("🔧 Usuario autenticado:", __currentUser?.email);
-  console.log("🔧 Verificando permisos de admin...");
-
-  // Verificar sesión activa antes de continuar
-  const { data: currentSession } = await supabase.auth.getSession();
-  if (!currentSession?.session) {
-    statusEl.textContent =
-      "Sesión expirada. Por favor, inicia sesión nuevamente.";
-    statusEl.style.color = "#c00";
-    if (saveBtn) saveBtn.disabled = false;
-    isSaving = false;
-    return;
-  }
-
-  console.log("🔧 Sesión verificada:", currentSession.session.user.email);
+  console.log("🔧 Permisos de edición de productos verificados");
 
   statusEl.textContent = "Guardando...";
   statusEl.style.color = "inherit";

@@ -27,6 +27,8 @@ const SW_VERSION = "m260420";
 let __swRefreshing = false;
 
 if ("serviceWorker" in navigator && !__IS_LOCAL) {
+  let __hadControllerAtStartup = !!navigator.serviceWorker.controller;
+
   function __fylCheckSwUpdate(registration) {
     try {
       registration.update();
@@ -61,6 +63,13 @@ if ("serviceWorker" in navigator && !__IS_LOCAL) {
 
   navigator.serviceWorker.addEventListener("controllerchange", () => {
     if (__swRefreshing) return;
+
+    // Primera toma de control del SW: no recargar
+    if (!__hadControllerAtStartup) {
+      __hadControllerAtStartup = true;
+      return;
+    }
+
     __swRefreshing = true;
     window.location.reload();
   });

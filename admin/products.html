@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="es" class="js-cost-visibility-pending">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -68,6 +68,10 @@
     .modal-body .hint{color:#6b7280;font-size:12px;margin-top:8px;line-height:1.5}
     .modal-footer{display:flex;gap:12px;justify-content:flex-end;padding-top:16px;border-top:2px solid #e5e7eb}
     .modal-footer .btn{min-width:100px}
+    /* Evita flash de costos antes de que el módulo resuelva super_admin */
+    html.js-cost-visibility-pending [data-cost-sensitive],
+    html.js-cost-visibility-pending th[data-cost-sensitive="cost-col-header"],
+    html.js-cost-visibility-pending [data-cost-sensitive="cost-col-cell"]{visibility:hidden;pointer-events:none}
   </style>
 </head>
 <body>

@@ -1,6 +1,7 @@
 // admin/products.js
 import { supabase } from "../scripts/supabase-client.js";
 import { preloadAuthState, can, isAdminUser } from "./auth-state.js";
+import { isSuperAdmin } from "./permissions-helper.js";
 
 console.log("🔧 products.js cargado");
 
@@ -41,10 +42,15 @@ function canEditProducts() {
   return can("products", "edit") || can("products", "delete");
 }
 
-function canViewProductsCost() {
+/** Solo super_admin ve/edita costo, % ganancia y monto logístico (no basta con products:edit). */
+async function canViewCostSensitiveProductFields() {
   if (!isAdminUser()) return false;
-  // Criterio conservador: si no hay permiso explícito de edición, ocultar costos.
-  return can("products", "edit");
+  try {
+    return await isSuperAdmin();
+  } catch (e) {
+    console.warn("No se pudo verificar isSuperAdmin para costos:", e);
+    return false;
+  }
 }
 
 async function ensureProductsEditPermission(errorMessage) {
@@ -95,6 +101,10 @@ function applyCostVisibilityToRow(row) {
   if (costCell) {
     costCell.style.display = canViewCostFields ? "" : "none";
   }
+  if (costInput) {
+    costInput.disabled = !canViewCostFields;
+    if (!canViewCostFields) costInput.value = "";
+  }
 }
 
 function getVariantImageOpKey(row, suffix) {
@@ -117,6 +127,16 @@ function applyCostFieldVisibility() {
   document.querySelectorAll("[data-cost-sensitive]").forEach((el) => {
     el.style.display = canViewCostFields ? "" : "none";
   });
+  const pricePct = document.getElementById("price-percentage");
+  const logistic = document.getElementById("logistic-amount");
+  if (pricePct) {
+    pricePct.disabled = !canViewCostFields;
+    if (!canViewCostFields) pricePct.value = "";
+  }
+  if (logistic) {
+    logistic.disabled = !canViewCostFields;
+    if (!canViewCostFields) logistic.value = "";
+  }
 
   variantsTable?.querySelectorAll("tr").forEach((row) => {
     applyCostVisibilityToRow(row);
@@ -126,13 +146,14 @@ function applyCostFieldVisibility() {
 async function initRoleBasedCostVisibility() {
   try {
     await ensureAuthState();
-    canViewCostFields = canViewProductsCost();
+    canViewCostFields = await canViewCostSensitiveProductFields();
   } catch (error) {
     console.warn("No se pudo resolver rol para visibilidad de costos:", error);
     canViewCostFields = false;
   }
 
   applyCostFieldVisibility();
+  document.documentElement.classList.remove("js-cost-visibility-pending");
 }
 
 // Search / load controls
@@ -1080,6 +1101,7 @@ async function ensureVariantId(row) {
     }
     
     const supplierValue = document.getElementById("supplier")?.value || null;
+    const allowSensitive = await isSuperAdmin();
     const pricePercentageValue = parseFloat(document.getElementById("price-percentage")?.value || "30");
     const logisticAmountValue = parseARS(document.getElementById("logistic-amount")?.value || "500");
     
@@ -1097,9 +1119,13 @@ async function ensureVariantId(row) {
       description: document.getElementById("description")?.value?.trim() || "",
       status: initialStatus,
       supplier_id: supplierValue || null,
-      price_percentage: pricePercentageValue || 30,
-      logistic_amount: logisticAmountValue || 500,
       updated_at: new Date().toISOString(),
+      ...(allowSensitive
+        ? {
+            price_percentage: pricePercentageValue || 30,
+            logistic_amount: logisticAmountValue || 500,
+          }
+        : {}),
     };
 
     const { data: prod, error: prodErr } = await supabase
@@ -3707,6 +3733,7 @@ function ensureDefaultVariant() {
 
 // Función para recalcular todos los precios recomendados
 function recalculateAllRecommendedPrices() {
+  if (!canViewCostFields) return;
   const percentage = parseFloat(document.getElementById("price-percentage")?.value || "30");
   const logisticAmount = document.getElementById("logistic-amount")?.value || "500";
   
@@ -5035,6 +5062,7 @@ function savePercentage(category, percentage) {
 
 // Función para actualizar el porcentaje según la categoría seleccionada
 function updatePercentageByCategory(force = false) {
+  if (!canViewCostFields) return;
   const categoryEl = document.getElementById("category");
   const pricePercentageEl = document.getElementById("price-percentage");
   
@@ -5091,7 +5119,7 @@ document.getElementById("category")?.addEventListener("change", async () => {
   const categoryEl = document.getElementById("category");
   const oldCategory = categoryEl?.dataset?.previousCategory || "Calzado";
   const pricePercentageEl = document.getElementById("price-percentage");
-  if (pricePercentageEl && oldCategory) {
+  if (canViewCostFields && pricePercentageEl && oldCategory) {
     const currentPercentage = parseFloat(pricePercentageEl.value) || 0;
     if (currentPercentage > 0) {
       savePercentage(oldCategory, currentPercentage);
@@ -5440,23 +5468,27 @@ async function loadProductById(id) {
   // Actualizar dropdowns de talles guardados con la categoría del producto
   variantsTable.querySelectorAll(".sizes-presets").forEach(sel => refreshSizesPresets(sel, category));
   
-  // Populate pricing fields
+  // Populate pricing fields (solo super_admin: no volcar costos a DOM para colaboradores)
   const pricePercentageEl = document.getElementById("price-percentage");
   const logisticAmountEl = document.getElementById("logistic-amount");
-  if (pricePercentageEl) {
-    // Prioridad: porcentaje del producto > porcentaje guardado para la categoría > default
-    const productPercentage = prod.price_percentage;
-    if (productPercentage) {
-      pricePercentageEl.value = productPercentage;
-    } else {
-      // Si no tiene porcentaje en el producto, usar el guardado para la categoría o el default
-      const savedPercentage = getSavedPercentage(category);
-      const defaultPercentage = getDefaultPercentageForCategory(category);
-      pricePercentageEl.value = savedPercentage !== null ? savedPercentage : defaultPercentage;
+  if (canViewCostFields) {
+    if (pricePercentageEl) {
+      // Prioridad: porcentaje del producto > porcentaje guardado para la categoría > default
+      const productPercentage = prod.price_percentage;
+      if (productPercentage) {
+        pricePercentageEl.value = productPercentage;
+      } else {
+        const savedPercentage = getSavedPercentage(category);
+        const defaultPercentage = getDefaultPercentageForCategory(category);
+        pricePercentageEl.value = savedPercentage !== null ? savedPercentage : defaultPercentage;
+      }
     }
-  }
-  if (logisticAmountEl) {
-    logisticAmountEl.value = prod.logistic_amount ? formatARS(prod.logistic_amount) : formatARS(500);
+    if (logisticAmountEl) {
+      logisticAmountEl.value = prod.logistic_amount ? formatARS(prod.logistic_amount) : formatARS(500);
+    }
+  } else {
+    if (pricePercentageEl) pricePercentageEl.value = "";
+    if (logisticAmountEl) logisticAmountEl.value = "";
   }
 
   // Variants
@@ -5468,7 +5500,8 @@ async function loadProductById(id) {
     // Si tiene talles desde variant_sizes, cargarlos en la UI
     const sizesData = v.sizes || [];
     console.log(`🔧 Cargando variante ${v.id} (${v.color}) con ${sizesData.length} talles:`, sizesData);
-    const row = addVariantRow({ ...v, cost: prod.cost ? formatARS(prod.cost) : "", sizes: sizesData });
+    const showCost = canViewCostFields && prod.cost;
+    const row = addVariantRow({ ...v, cost: showCost ? formatARS(prod.cost) : "", sizes: sizesData });
     
     // Cargar imágenes desde DB después de crear la fila
     if (v.id) {
@@ -5481,25 +5514,26 @@ async function loadProductById(id) {
   variantsTable.querySelectorAll(".sizes-presets").forEach(sel => refreshSizesPresets(sel, currentCategory));
 
   // Verificar si los precios cargados coinciden con el cálculo esperado y marcarlos como auto-calculados
-  const percentage = prod.price_percentage || 30;
-  const logisticAmount = prod.logistic_amount || 500;
-  const cost = prod.cost || 0;
-  
-  if (cost > 0) {
-    const expectedPrice = calculateRecommendedPrice(cost, percentage, logisticAmount);
-    const rows = variantsTable.querySelectorAll("tr");
-    rows.forEach((row) => {
-      const priceEl = row.querySelector(".v-price");
-      if (priceEl) {
-        const currentPrice = parseARS(priceEl.value || "0");
-        // Si el precio coincide con el esperado, marcarlo como auto-calculado
-        if (currentPrice === expectedPrice && currentPrice > 0) {
-          priceEl.dataset.autoCalculated = "true";
-        } else {
-          priceEl.dataset.autoCalculated = "false";
+  if (canViewCostFields) {
+    const percentage = prod.price_percentage || 30;
+    const logisticAmount = prod.logistic_amount || 500;
+    const cost = prod.cost || 0;
+    
+    if (cost > 0) {
+      const expectedPrice = calculateRecommendedPrice(cost, percentage, logisticAmount);
+      const rows = variantsTable.querySelectorAll("tr");
+      rows.forEach((row) => {
+        const priceEl = row.querySelector(".v-price");
+        if (priceEl) {
+          const currentPrice = parseARS(priceEl.value || "0");
+          if (currentPrice === expectedPrice && currentPrice > 0) {
+            priceEl.dataset.autoCalculated = "true";
+          } else {
+            priceEl.dataset.autoCalculated = "false";
+          }
         }
-      }
-    });
+      });
+    }
   }
 
   // Asegurar que siempre haya al menos una variante
@@ -5518,7 +5552,7 @@ pNew.addEventListener("click", async () => {
   // Guardar porcentaje actual antes de resetear
   const categoryEl = document.getElementById("category");
   const currentCategory = categoryEl?.value || "Calzado";
-  if (pricePercentageEl && currentCategory) {
+  if (canViewCostFields && pricePercentageEl && currentCategory) {
     const currentPercentage = parseFloat(pricePercentageEl.value) || 0;
     if (currentPercentage > 0) {
       savePercentage(currentCategory, currentPercentage);
@@ -5605,6 +5639,9 @@ async function saveProduct(shouldReset = true) {
   statusEl.textContent = "Guardando...";
   statusEl.style.color = "inherit";
 
+  // Defensa en profundidad: no confiar solo en UI oculta (DevTools)
+  const allowSensitiveProductPricing = await isSuperAdmin();
+
   // 1) Crear o actualizar producto
   const statusValue = document.getElementById("status").value;
   const supplierValue = document.getElementById("supplier").value;
@@ -5673,7 +5710,7 @@ async function saveProduct(shouldReset = true) {
     description: document.getElementById("description").value.trim(),
     status: finalStatus,
     supplier_id: supplierValue || null,
-    ...(canViewCostFields
+    ...(allowSensitiveProductPricing
       ? {
           cost: costValue > 0 ? costValue : null,
           price_percentage: pricePercentageValue || 30,

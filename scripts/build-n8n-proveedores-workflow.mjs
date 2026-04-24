@@ -28,6 +28,10 @@ const SYS_PROMPT = [
   "Raiz: supplier_hint (string|null), currency_hint (string|null), confidence (0-1), needs_review (bool), has_actionable_order (bool), items[].",
   "Cada item: raw_line_text, article_code, color, size, quantity (number), unit_text (literal del mensaje: tareas, pares, docenas...),",
   "unit_price (number|null), price_basis_hint: per_par|per_tarea|unknown, confidence, needs_review.",
+  "Para message_type=photo prioriza OCR de texto MANUSCRITO (notas de proveedor en papel).",
+  "Si hay encabezado con nombre de proveedor (ej: DONNA), usarlo como supplier_hint.",
+  "Interpretar cantidades y unidades aunque haya ruido de OCR (ej: '3 tareas').",
+  "No bloquear por ortografia imperfecta (ej: azil/azul): preservar en raw_line_text y completar campos con mejor lectura posible sin inventar.",
   "Si no hay pedido util: has_actionable_order false e items []. Si duda: null + needs_review true.",
 ].join(" ");
 
@@ -203,7 +207,7 @@ if (!content) {
     supplier_hint: null,
     items: [],
     has_actionable_order: false,
-    openai_model: 'gpt-4o-mini',
+    openai_model: 'gpt-4o',
     openai_response_raw: resp,
     openai_input_text: base.openai_input_text,
     transcript_text: base.transcript_text,
@@ -229,7 +233,7 @@ try {
     supplier_hint: null,
     items: [],
     has_actionable_order: false,
-    openai_model: 'gpt-4o-mini',
+    openai_model: 'gpt-4o',
     openai_response_raw: resp,
     openai_input_text: base.openai_input_text,
     transcript_text: base.transcript_text,
@@ -275,7 +279,7 @@ return [{ json: {
   currency_hint: parsed.currency_hint || null,
   confidence: parsed.confidence,
   has_actionable_order: hasOrder,
-  openai_model: 'gpt-4o-mini',
+  openai_model: 'gpt-4o',
   openai_response_raw: resp,
   openai_input_text: base.openai_input_text,
   transcript_text: base.transcript_text,
@@ -831,7 +835,7 @@ if (j.message_type === 'photo' && j.image_base64) {
   userContent = 'CONTEXTO message_type=' + j.message_type + '\\n' + t;
 }
 const openai_body = {
-  model: 'gpt-4o-mini',
+  model: 'gpt-4o',
   response_format: { type: 'json_object' },
   messages: [
     { role: 'system', content: SYS },

@@ -10,6 +10,13 @@ Contenido relevante:
 - `manifest.json` - manifiesto PWA.
 - `cloudinary-optimize/` - utilidad Node para optimizar imágenes vía Cloudinary.
 - `clave/` - contiene credenciales privadas (NO subir a repositorio).
+- `docs/FYL-Obsidian/` - documentación técnica viva del sistema (bóveda Obsidian; ver sección siguiente y [CONTRIBUTING.md](CONTRIBUTING.md)).
+
+## Documentación viva
+
+La carpeta **`docs/FYL-Obsidian/`** es parte del proyecto: describe arquitectura, flujos de stock y pedidos, RPCs, tablas, permisos y catálogo a partir del código y las migraciones. Debe **mantenerse al día** junto con los cambios de lógica o de esquema; no es material colateral opcional.
+
+Las reglas de cuándo y qué actualizar están en [CONTRIBUTING.md](CONTRIBUTING.md) (mantenimiento de la bóveda y checklist por tipo de cambio). La [meta-auditoría](docs/FYL-Obsidian/99-AUDITORIA-DOCUMENTACION.md) contrasta periódicamente la bóveda con el código.
 
 Cómo probar localmente (estático):
 

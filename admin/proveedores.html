@@ -49,6 +49,28 @@
     .btn:hover { background: #B8734A; }
     .btn-secondary { background: #e9ecef; color: #333; }
     .btn-secondary:hover { background: #dee2e6; }
+    .grid-form {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .field label { display:block; font-size:12px; color:#555; margin-bottom:4px; font-weight:600; }
+    .field input, .field select, .field textarea {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 8px 10px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      font-size: 14px;
+      background: #fff;
+    }
+    .field textarea { min-height: 70px; resize: vertical; }
+    .field-checkbox { display:flex; align-items:center; gap:8px; margin-top:22px; }
+    .field-checkbox input { width: auto; }
+    .msg-ok { color: #155724; font-size: 13px; }
+    .msg-warn { color: #856404; font-size: 13px; }
+    .msg-err { color: #c0392b; font-size: 13px; }
     table.ingest-table { width: 100%; border-collapse: collapse; font-size: 13px; }
     table.ingest-table th, table.ingest-table td {
       padding: 10px 8px;
@@ -129,6 +151,96 @@
       <p class="muted" style="margin-top:12px;margin-bottom:0;">
         Regenerar el JSON del workflow: <code>node scripts/build-n8n-proveedores-workflow.mjs</code>
       </p>
+    </div>
+
+    <div class="section">
+      <h2 class="section-title">Nuevo proveedor</h2>
+      <p class="muted">Alta rápida de <code>purchase_suppliers</code> + creación automática de reglas activas.</p>
+      <form id="new-supplier-form">
+        <div class="grid-form">
+          <div class="field">
+            <label for="new-supplier-name">Nombre del proveedor</label>
+            <input id="new-supplier-name" type="text" placeholder="Cara Regina" required />
+          </div>
+          <div class="field">
+            <label for="new-supplier-slug">Slug</label>
+            <input id="new-supplier-slug" type="text" placeholder="cara-regina" required />
+          </div>
+          <div class="field">
+            <label for="new-supplier-aliases">Alias (separados por coma)</label>
+            <input id="new-supplier-aliases" type="text" placeholder="cara regina, regina, cara-regina" />
+          </div>
+          <div class="field field-checkbox">
+            <input id="new-supplier-active" type="checkbox" checked />
+            <label for="new-supplier-active">Activo</label>
+          </div>
+          <div class="field" style="grid-column: 1 / -1;">
+            <label for="new-supplier-notes">Notas (opcional)</label>
+            <textarea id="new-supplier-notes" placeholder="Observaciones internas"></textarea>
+          </div>
+        </div>
+
+        <h3 class="section-title" style="font-size:15px;">Reglas básicas iniciales</h3>
+        <div class="grid-form">
+          <div class="field">
+            <label for="new-rule-currency">Moneda</label>
+            <input id="new-rule-currency" type="text" value="ARS" />
+          </div>
+          <div class="field">
+            <label for="new-rule-discount">Descuento %</label>
+            <input id="new-rule-discount" type="number" step="0.01" value="0" />
+          </div>
+          <div class="field">
+            <label for="new-rule-unit">Unidad principal</label>
+            <select id="new-rule-unit">
+              <option value="par">par</option>
+              <option value="tarea">tarea</option>
+              <option value="docena">docena</option>
+              <option value="bulto">bulto</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="new-rule-pairs">Pares por unidad</label>
+            <input id="new-rule-pairs" type="number" step="0.01" value="1" />
+          </div>
+          <div class="field">
+            <label for="new-rule-basis">Base de precio</label>
+            <select id="new-rule-basis">
+              <option value="per_par">per_par</option>
+              <option value="per_tarea">per_tarea</option>
+              <option value="per_docena">per_docena</option>
+              <option value="per_bulto">per_bulto</option>
+            </select>
+          </div>
+        </div>
+        <div class="toolbar">
+          <button type="submit" class="btn" id="btn-create-supplier">Crear proveedor</button>
+        </div>
+        <p id="new-supplier-msg" class="muted"></p>
+      </form>
+    </div>
+
+    <div class="section">
+      <h2 class="section-title">Proveedores existentes</h2>
+      <div class="toolbar">
+        <button type="button" class="btn btn-secondary" id="btn-reload-suppliers">Recargar</button>
+      </div>
+      <div style="overflow-x:auto;">
+        <table class="ingest-table" aria-label="Proveedores de compras">
+          <thead>
+            <tr>
+              <th>Nombre</th>
+              <th>Slug</th>
+              <th>Aliases</th>
+              <th>Activo</th>
+              <th>Reglas activas</th>
+            </tr>
+          </thead>
+          <tbody id="suppliers-tbody">
+            <tr><td colspan="5" class="muted">Cargando…</td></tr>
+          </tbody>
+        </table>
+      </div>
     </div>
 
     <div class="section">

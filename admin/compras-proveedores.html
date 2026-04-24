@@ -41,6 +41,15 @@
     .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; background: #e9ecef; color: #495057; }
     .receipt-line { border: 1px solid #eee; border-radius: 8px; padding: 10px; margin-bottom: 8px; max-width: 640px; }
     .receipt-line input { max-width: 120px; display: inline-block; }
+    .grid-form {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .msg-ok { color: #155724; font-size: 13px; margin-top: 8px; }
+    .msg-warn { color: #856404; font-size: 13px; margin-top: 8px; }
+    .msg-err { color: #c0392b; font-size: 13px; margin-top: 8px; }
   </style>
 </head>
 <body>
@@ -48,19 +57,67 @@
     <a class="back-link" href="./index.html">← Volver al panel</a>
     <h1>Compras a proveedores</h1>
     <p class="muted">
-      Módulo <code>purchase_*</code> independiente del catálogo. Contrato JSON: <code>docs/PURCHASE_RULES_SCHEMA.md</code>.
+      Pedidos y reglas de compra a proveedores (independiente del catálogo público). Las reglas se cargan con el formulario; no hace falta escribir JSON salvo casos muy puntuales.
     </p>
     <p id="global-err"></p>
 
     <div class="tabs" id="tabs">
-      <button type="button" class="tab active" data-panel="p-seasons">Temporadas</button>
+      <button type="button" class="tab active" data-panel="p-orders">Pedidos</button>
+      <button type="button" class="tab" data-panel="p-seasons">Temporadas</button>
       <button type="button" class="tab" data-panel="p-suppliers">Proveedores y reglas</button>
-      <button type="button" class="tab" data-panel="p-orders">Pedidos</button>
       <button type="button" class="tab" data-panel="p-receipts">Recepciones</button>
       <button type="button" class="tab" data-panel="p-arqueo">Arqueo</button>
     </div>
 
-    <div id="p-seasons" class="panel open">
+    <div id="p-orders" class="panel open">
+      <h2 class="section-title">Pedidos (<code>purchase_orders</code>)</h2>
+      <p class="muted" style="margin-top:0;">
+        Los pedidos de compra viven en <code>purchase_orders</code>. Si ves ingests de Telegram pero no filas acá, el pipeline falló antes de crear el pedido (revisá estado y <code>parse_error</code> abajo).
+      </p>
+      <div class="row-actions">
+        <button type="button" class="btn btn-secondary" id="btn-reload-orders">Recargar pedidos e ingests</button>
+      </div>
+      <p id="orders-panel-msg" class="muted" style="margin-bottom:8px;"></p>
+      <table class="data" aria-label="Pedidos compra">
+        <thead>
+          <tr>
+            <th>Fecha</th><th>Proveedor</th><th>Detalle del pedido</th><th>Temporada</th><th>Neto</th><th>Pares est.</th><th>Revisión</th><th>Estado</th>
+          </tr>
+        </thead>
+        <tbody id="tbody-orders"></tbody>
+      </table>
+
+      <h3 class="section-title" style="margin-top:22px;font-size:15px;">Telegram / n8n — últimos ingests (<code>supplier_message_ingest</code>)</h3>
+      <p class="muted" style="margin-top:0;">Mensajes entrantes antes de convertirse en pedido. Si falla el proceso, acá ves el motivo en palabras simples.</p>
+      <details class="muted" style="font-size:13px;margin-bottom:10px;max-width:720px;">
+        <summary style="cursor:pointer;font-weight:600;">Leyenda: estados y errores frecuentes</summary>
+        <p style="margin:8px 0 4px;"><strong>Estados</strong></p>
+        <ul style="margin:0;padding-left:1.2rem;">
+          <li><strong>Recibido</strong>: el mensaje entró, aún no se interpretó por completo.</li>
+          <li><strong>Interpretado</strong>: ya se leyó el contenido con la IA.</li>
+          <li><strong>Revisar</strong>: conviene mirar el mensaje o corregir datos.</li>
+          <li><strong>Falló</strong>: no se pudo seguir el flujo.</li>
+          <li><strong>Sin pedido</strong>: no había ítems de compra en el texto/foto/audio.</li>
+        </ul>
+        <p style="margin:10px 0 4px;"><strong>Errores (código → significado)</strong></p>
+        <ul style="margin:0;padding-left:1.2rem;">
+          <li><code>empty_hint</code>: no se detectó nombre de proveedor en el mensaje.</li>
+          <li><code>not_found</code>: el proveedor no coincide con ninguno cargado (revisar alias en admin).</li>
+          <li><code>compute_lines_failed</code>: el proveedor existe pero las reglas/unidades no permiten calcular el pedido (revisar JSON de reglas y unidades del mensaje).</li>
+        </ul>
+      </details>
+      <p id="orders-ingest-msg" class="muted" style="margin-bottom:8px;"></p>
+      <table class="data" aria-label="Ingests proveedores recientes">
+        <thead>
+          <tr>
+            <th>Fecha</th><th>Estado</th><th>Proveedor (inferido)</th><th>Qué pidieron (IA)</th><th>¿Hay pedido?</th><th>¿Terminó?</th><th>Qué pasó</th>
+          </tr>
+        </thead>
+        <tbody id="tbody-orders-ingest"></tbody>
+      </table>
+    </div>
+
+    <div id="p-seasons" class="panel">
       <h2 class="section-title">Temporadas (<code>purchase_seasons</code>)</h2>
       <p class="muted">Usadas en cabecera de pedido y vistas de inversión por período.</p>
       <div class="row-actions">
@@ -83,40 +140,170 @@
     </div>
 
     <div id="p-suppliers" class="panel">
-      <h2 class="section-title">Proveedores (<code>purchase_suppliers</code>)</h2>
+      <h2 class="section-title">Proveedores y reglas</h2>
+      <h3 class="section-title" style="margin-top:0;font-size:15px;">Nuevo proveedor</h3>
+      <form id="new-supplier-form">
+        <div class="grid-form">
+          <div>
+            <label for="new-supplier-name">Nombre del proveedor</label>
+            <input id="new-supplier-name" type="text" placeholder="Cara Regina" />
+          </div>
+          <div>
+            <label for="new-supplier-slug">Slug</label>
+            <input id="new-supplier-slug" type="text" placeholder="cara-regina" />
+          </div>
+          <div>
+            <label for="new-supplier-aliases">Alias (coma)</label>
+            <input id="new-supplier-aliases" type="text" placeholder="cara regina, regina, cara-regina" />
+          </div>
+          <div>
+            <label for="new-supplier-active">Activo</label>
+            <select id="new-supplier-active">
+              <option value="true" selected>Sí</option>
+              <option value="false">No</option>
+            </select>
+          </div>
+          <div style="grid-column: 1 / -1;">
+            <label for="new-supplier-notes">Notas</label>
+            <textarea id="new-supplier-notes" style="min-height:70px;" placeholder="Opcional"></textarea>
+          </div>
+        </div>
+
+        <h4 style="margin:8px 0 6px;">Reglas básicas</h4>
+        <div class="grid-form">
+          <div>
+            <label for="new-rule-currency">Moneda</label>
+            <input id="new-rule-currency" type="text" value="ARS" />
+          </div>
+          <div>
+            <label for="new-rule-discount">Descuento %</label>
+            <input id="new-rule-discount" type="number" step="0.01" value="0" />
+          </div>
+          <div>
+            <label for="new-rule-unit">Unidad principal</label>
+            <select id="new-rule-unit">
+              <option value="par">par</option>
+              <option value="tarea">tarea</option>
+              <option value="docena">docena</option>
+              <option value="bulto">bulto</option>
+            </select>
+          </div>
+          <div>
+            <label for="new-rule-pairs">Pares por unidad</label>
+            <input id="new-rule-pairs" type="number" step="0.01" value="1" />
+          </div>
+          <div>
+            <label for="new-rule-basis">Base de precio</label>
+            <select id="new-rule-basis">
+              <option value="per_par">per_par</option>
+              <option value="per_tarea">per_tarea</option>
+              <option value="per_docena">per_docena</option>
+              <option value="per_bulto">per_bulto</option>
+            </select>
+          </div>
+        </div>
+        <div class="row-actions">
+          <button type="submit" class="btn" id="btn-create-supplier">Crear proveedor</button>
+        </div>
+        <p id="new-supplier-msg" class="muted"></p>
+      </form>
+
       <div class="row-actions">
         <button type="button" class="btn btn-secondary" id="btn-reload-suppliers">Recargar</button>
       </div>
       <table class="data" aria-label="Proveedores compras">
-        <thead><tr><th>Nombre</th><th>Slug</th><th>Aliases (coma)</th><th></th></tr></thead>
+        <thead><tr><th>Nombre</th><th>Slug</th><th>Aliases (coma)</th><th>Activo</th><th>Reglas activas</th><th></th></tr></thead>
         <tbody id="tbody-suppliers"></tbody>
       </table>
 
-      <h3 class="section-title" style="margin-top:24px;font-size:15px;">Nueva versión de reglas (RPC)</h3>
-      <p class="muted">Desactiva versiones anteriores y activa una nueva. JSON según contrato.</p>
+      <h3 class="section-title" style="margin-top:24px;font-size:15px;">Editar / eliminar proveedor</h3>
+      <p class="muted">Edición rápida y borrado con confirmación. Si tiene dependencias, Supabase puede bloquear el borrado.</p>
+      <div class="grid-form">
+        <div>
+          <label for="edit-supplier-id">Proveedor</label>
+          <select id="edit-supplier-id"></select>
+        </div>
+        <div>
+          <label for="edit-supplier-name">Nombre</label>
+          <input id="edit-supplier-name" type="text" />
+        </div>
+        <div>
+          <label for="edit-supplier-slug">Slug</label>
+          <input id="edit-supplier-slug" type="text" />
+        </div>
+        <div>
+          <label for="edit-supplier-aliases">Aliases (coma)</label>
+          <input id="edit-supplier-aliases" type="text" />
+        </div>
+        <div>
+          <label for="edit-supplier-active">Activo</label>
+          <select id="edit-supplier-active">
+            <option value="true">Sí</option>
+            <option value="false">No</option>
+          </select>
+        </div>
+        <div style="grid-column: 1 / -1;">
+          <label for="edit-supplier-notes">Notas</label>
+          <textarea id="edit-supplier-notes" style="min-height:70px;"></textarea>
+        </div>
+      </div>
+      <div class="row-actions">
+        <button type="button" class="btn" id="btn-update-supplier">Guardar cambios</button>
+        <button type="button" class="btn btn-secondary" id="btn-delete-supplier">Eliminar proveedor</button>
+      </div>
+      <p id="edit-supplier-msg" class="muted"></p>
+
+      <h3 class="section-title" style="margin-top:24px;font-size:15px;">Actualizar reglas de un proveedor</h3>
+      <p class="muted">Se crea una <strong>nueva versión</strong> de reglas y queda activa. Se incluyen automáticamente par, tarea y docena (y bulto si lo usás) para que los mensajes de Telegram no fallen por unidad.</p>
       <label for="rule-supplier">Proveedor</label>
       <select id="rule-supplier"></select>
-      <label for="rule-json">Rules JSON</label>
-      <textarea id="rule-json" spellcheck="false"></textarea>
-      <div class="row-actions">
-        <button type="button" class="btn" id="btn-activate-rules">Activar versión</button>
-      </div>
-      <p id="rule-msg" class="muted"></p>
-    </div>
 
-    <div id="p-orders" class="panel">
-      <h2 class="section-title">Pedidos (<code>purchase_orders</code>)</h2>
-      <div class="row-actions">
-        <button type="button" class="btn btn-secondary" id="btn-reload-orders">Recargar</button>
+      <h4 style="margin:14px 0 6px;font-size:14px;">Valores comerciales</h4>
+      <div class="grid-form">
+        <div>
+          <label for="rule-rev-currency">Moneda</label>
+          <input id="rule-rev-currency" type="text" value="ARS" maxlength="8" />
+        </div>
+        <div>
+          <label for="rule-rev-discount">Descuento % (sobre el bruto)</label>
+          <input id="rule-rev-discount" type="number" step="0.01" value="0" />
+        </div>
+        <div>
+          <label for="rule-rev-unit">Unidad principal del proveedor</label>
+          <select id="rule-rev-unit">
+            <option value="par">Par</option>
+            <option value="tarea">Tarea</option>
+            <option value="docena">Docena</option>
+            <option value="bulto">Bulto</option>
+          </select>
+        </div>
+        <div>
+          <label for="rule-rev-pairs">Pares por unidad (tarea/bulto)</label>
+          <input id="rule-rev-pairs" type="number" step="0.01" value="24" />
+        </div>
+        <div>
+          <label for="rule-rev-basis">Base de precio por defecto</label>
+          <select id="rule-rev-basis">
+            <option value="per_par">Por par</option>
+            <option value="per_tarea">Por tarea</option>
+            <option value="per_docena">Por docena</option>
+            <option value="per_bulto">Por bulto</option>
+          </select>
+        </div>
       </div>
-      <table class="data" aria-label="Pedidos compra">
-        <thead>
-          <tr>
-            <th>Fecha</th><th>Proveedor</th><th>Temporada</th><th>Neto</th><th>Pares est.</th><th>Revisión</th>
-          </tr>
-        </thead>
-        <tbody id="tbody-orders"></tbody>
-      </table>
+      <div class="row-actions">
+        <button type="button" class="btn" id="btn-activate-rules">Guardar y activar reglas</button>
+      </div>
+      <details class="muted" style="margin-top:14px;max-width:720px;font-size:13px;">
+        <summary style="cursor:pointer;font-weight:600;">Opción avanzada: pegar JSON completo</summary>
+        <p style="margin:8px 0;">Solo si necesitás campos que este formulario no muestra (por ejemplo unidades personalizadas). Reemplaza todo el objeto de reglas.</p>
+        <label for="rule-json">JSON de reglas</label>
+        <textarea id="rule-json" spellcheck="false" rows="8" placeholder='Ej.: {"currency":"ARS","default_discount_pct":20,"units":{...}}'></textarea>
+        <div class="row-actions">
+          <button type="button" class="btn btn-secondary" id="btn-activate-rules-json">Activar desde JSON pegado</button>
+        </div>
+      </details>
+      <p id="rule-msg" class="muted"></p>
     </div>
 
     <div id="p-receipts" class="panel">

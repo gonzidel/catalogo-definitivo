@@ -137,51 +137,78 @@ end $$;
 -- 3) RLS — solo admins autenticados (JWT). Service role (n8n) bypass RLS.
 -- ---------------------------------------------------------------------------
 
+-- Misma semántica que compras-proveedores.html: colaboradores con permiso `proveedores`.
+-- Si 181_purchase_suppliers_module.sql ya se aplicó, esta definición queda idéntica (create or replace).
+create or replace function public.purchase_module_admin_auth(check_user_id uuid default auth.uid())
+returns boolean
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_admin_id uuid;
+begin
+  if check_user_id is null then
+    return false;
+  end if;
+
+  if public.is_super_admin(check_user_id) then
+    return true;
+  end if;
+
+  select a.id into v_admin_id
+  from public.admins a
+  where a.user_id = check_user_id
+  limit 1;
+
+  if v_admin_id is null then
+    return false;
+  end if;
+
+  return exists (
+    select 1
+    from public.admin_permissions p
+    where p.admin_id = v_admin_id
+      and p.permission_key = 'proveedores'
+      and (
+        coalesce(p.can_view, false)
+        or coalesce(p.can_edit, false)
+        or coalesce(p.can_delete, false)
+      )
+  );
+end;
+$$;
+
+grant execute on function public.purchase_module_admin_auth(uuid) to authenticated;
+grant execute on function public.purchase_module_admin_auth(uuid) to service_role;
+
 alter table public.supplier_message_ingest enable row level security;
 alter table public.supplier_orders enable row level security;
 alter table public.supplier_order_lines enable row level security;
 
-do $$
-begin
-  if not exists (
-    select 1 from pg_policies
-    where schemaname = 'public' and tablename = 'supplier_message_ingest'
-      and policyname = 'supplier_message_ingest_admin_select'
-  ) then
-    create policy supplier_message_ingest_admin_select
-      on public.supplier_message_ingest
-      for select to authenticated
-      using (
-        exists (select 1 from public.admins a where a.user_id = auth.uid())
-      );
-  end if;
+drop policy if exists supplier_message_ingest_admin_select on public.supplier_message_ingest;
+drop policy if exists supplier_orders_admin_select on public.supplier_orders;
+drop policy if exists supplier_order_lines_admin_select on public.supplier_order_lines;
 
-  if not exists (
-    select 1 from pg_policies
-    where schemaname = 'public' and tablename = 'supplier_orders'
-      and policyname = 'supplier_orders_admin_select'
-  ) then
-    create policy supplier_orders_admin_select
-      on public.supplier_orders
-      for select to authenticated
-      using (
-        exists (select 1 from public.admins a where a.user_id = auth.uid())
-      );
-  end if;
+drop policy if exists supplier_message_ingest_module_select on public.supplier_message_ingest;
+drop policy if exists supplier_orders_module_select on public.supplier_orders;
+drop policy if exists supplier_order_lines_module_select on public.supplier_order_lines;
 
-  if not exists (
-    select 1 from pg_policies
-    where schemaname = 'public' and tablename = 'supplier_order_lines'
-      and policyname = 'supplier_order_lines_admin_select'
-  ) then
-    create policy supplier_order_lines_admin_select
-      on public.supplier_order_lines
-      for select to authenticated
-      using (
-        exists (select 1 from public.admins a where a.user_id = auth.uid())
-      );
-  end if;
-end $$;
+create policy supplier_message_ingest_module_select
+  on public.supplier_message_ingest
+  for select to authenticated
+  using (public.purchase_module_admin_auth(auth.uid()));
+
+create policy supplier_orders_module_select
+  on public.supplier_orders
+  for select to authenticated
+  using (public.purchase_module_admin_auth(auth.uid()));
+
+create policy supplier_order_lines_module_select
+  on public.supplier_order_lines
+  for select to authenticated
+  using (public.purchase_module_admin_auth(auth.uid()));
 
 grant select on public.supplier_message_ingest to authenticated;
 grant select on public.supplier_orders to authenticated;

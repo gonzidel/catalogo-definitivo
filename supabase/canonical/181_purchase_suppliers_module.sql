@@ -214,6 +214,7 @@ set search_path = public, extensions
 as $$
 declare
   v_norm text;
+  v_norm_alt text;
   v_count int;
   v_id uuid;
 begin
@@ -222,6 +223,10 @@ begin
     return jsonb_build_object('ok', false, 'reason', 'empty_hint');
   end if;
 
+  -- Caso típico de ASR: "para dona" => "paradona". Probamos sin prefijo "para".
+  v_norm_alt := nullif(trim(regexp_replace(v_norm, '^para\s*', '', 'g')), '');
+
+  -- 1) Match exacto (slug/display_name/aliases) con hint normalizado original.
   select count(*)::int into v_count
   from public.purchase_suppliers ps
   where ps.active
@@ -234,6 +239,44 @@ begin
         where public.purchase_normalize_hint(alias_val) = v_norm
       )
     );
+
+  -- 2) Match exacto alternativo sin prefijo "para", solo si no hubo match.
+  if v_count = 0 and v_norm_alt is not null and v_norm_alt <> v_norm then
+    select count(*)::int into v_count
+    from public.purchase_suppliers ps
+    where ps.active
+      and (
+        public.purchase_normalize_hint(ps.slug) = v_norm_alt
+        or public.purchase_normalize_hint(ps.display_name) = v_norm_alt
+        or exists (
+          select 1
+          from unnest(ps.aliases) a(alias_val)
+          where public.purchase_normalize_hint(alias_val) = v_norm_alt
+        )
+      );
+    if v_count > 0 then
+      v_norm := v_norm_alt;
+    end if;
+  end if;
+
+  -- 3) Fallback: contains bidireccional (e.g. "paradona" contiene "dona").
+  if v_count = 0 then
+    select count(*)::int into v_count
+    from public.purchase_suppliers ps
+    where ps.active
+      and (
+        public.purchase_normalize_hint(ps.slug) like '%' || v_norm || '%'
+        or v_norm like '%' || public.purchase_normalize_hint(ps.slug) || '%'
+        or public.purchase_normalize_hint(ps.display_name) like '%' || v_norm || '%'
+        or v_norm like '%' || public.purchase_normalize_hint(ps.display_name) || '%'
+        or exists (
+          select 1
+          from unnest(ps.aliases) a(alias_val)
+          where public.purchase_normalize_hint(alias_val) like '%' || v_norm || '%'
+             or v_norm like '%' || public.purchase_normalize_hint(alias_val) || '%'
+        )
+      );
+  end if;
 
   if v_count = 0 then
     return jsonb_build_object('ok', false, 'reason', 'not_found', 'normalized_hint', v_norm);
@@ -256,6 +299,25 @@ begin
       )
     )
   limit 1;
+
+  if v_id is null then
+    select ps.id into v_id
+    from public.purchase_suppliers ps
+    where ps.active
+      and (
+        public.purchase_normalize_hint(ps.slug) like '%' || v_norm || '%'
+        or v_norm like '%' || public.purchase_normalize_hint(ps.slug) || '%'
+        or public.purchase_normalize_hint(ps.display_name) like '%' || v_norm || '%'
+        or v_norm like '%' || public.purchase_normalize_hint(ps.display_name) || '%'
+        or exists (
+          select 1
+          from unnest(ps.aliases) a(alias_val)
+          where public.purchase_normalize_hint(alias_val) like '%' || v_norm || '%'
+             or v_norm like '%' || public.purchase_normalize_hint(alias_val) || '%'
+        )
+      )
+    limit 1;
+  end if;
 
   return jsonb_build_object('ok', true, 'supplier_id', v_id, 'normalized_hint', v_norm);
 end;
@@ -701,6 +763,49 @@ group by o.season_id, s.label, o.supplier_id, ps.display_name;
 -- 8) RLS (admins autenticados) + service_role grants
 -- ---------------------------------------------------------------------------
 
+-- Alineado con el gate del admin web: permiso granular `proveedores` (y super_admin),
+-- no solo "existe fila en public.admins".
+create or replace function public.purchase_module_admin_auth(check_user_id uuid default auth.uid())
+returns boolean
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_admin_id uuid;
+begin
+  if check_user_id is null then
+    return false;
+  end if;
+
+  if public.is_super_admin(check_user_id) then
+    return true;
+  end if;
+
+  select a.id into v_admin_id
+  from public.admins a
+  where a.user_id = check_user_id
+  limit 1;
+
+  if v_admin_id is null then
+    return false;
+  end if;
+
+  return exists (
+    select 1
+    from public.admin_permissions p
+    where p.admin_id = v_admin_id
+      and p.permission_key = 'proveedores'
+      and (
+        coalesce(p.can_view, false)
+        or coalesce(p.can_edit, false)
+        or coalesce(p.can_delete, false)
+      )
+  );
+end;
+$$;
+
 alter table public.purchase_seasons enable row level security;
 alter table public.purchase_suppliers enable row level security;
 alter table public.purchase_supplier_rule_versions enable row level security;
@@ -709,52 +814,57 @@ alter table public.purchase_order_lines enable row level security;
 alter table public.purchase_receipts enable row level security;
 alter table public.purchase_receipt_lines enable row level security;
 
-do $$
-begin
-  -- purchase_seasons
-  if not exists (select 1 from pg_policies where tablename = 'purchase_seasons' and policyname = 'purchase_seasons_admin_all') then
-    create policy purchase_seasons_admin_all on public.purchase_seasons
-      for all to authenticated
-      using (exists (select 1 from public.admins a where a.user_id = auth.uid()))
-      with check (exists (select 1 from public.admins a where a.user_id = auth.uid()));
-  end if;
-  if not exists (select 1 from pg_policies where tablename = 'purchase_suppliers' and policyname = 'purchase_suppliers_admin_all') then
-    create policy purchase_suppliers_admin_all on public.purchase_suppliers
-      for all to authenticated
-      using (exists (select 1 from public.admins a where a.user_id = auth.uid()))
-      with check (exists (select 1 from public.admins a where a.user_id = auth.uid()));
-  end if;
-  if not exists (select 1 from pg_policies where tablename = 'purchase_supplier_rule_versions' and policyname = 'purchase_rule_versions_admin_all') then
-    create policy purchase_rule_versions_admin_all on public.purchase_supplier_rule_versions
-      for all to authenticated
-      using (exists (select 1 from public.admins a where a.user_id = auth.uid()))
-      with check (exists (select 1 from public.admins a where a.user_id = auth.uid()));
-  end if;
-  if not exists (select 1 from pg_policies where tablename = 'purchase_orders' and policyname = 'purchase_orders_admin_all') then
-    create policy purchase_orders_admin_all on public.purchase_orders
-      for all to authenticated
-      using (exists (select 1 from public.admins a where a.user_id = auth.uid()))
-      with check (exists (select 1 from public.admins a where a.user_id = auth.uid()));
-  end if;
-  if not exists (select 1 from pg_policies where tablename = 'purchase_order_lines' and policyname = 'purchase_order_lines_admin_all') then
-    create policy purchase_order_lines_admin_all on public.purchase_order_lines
-      for all to authenticated
-      using (exists (select 1 from public.admins a where a.user_id = auth.uid()))
-      with check (exists (select 1 from public.admins a where a.user_id = auth.uid()));
-  end if;
-  if not exists (select 1 from pg_policies where tablename = 'purchase_receipts' and policyname = 'purchase_receipts_admin_all') then
-    create policy purchase_receipts_admin_all on public.purchase_receipts
-      for all to authenticated
-      using (exists (select 1 from public.admins a where a.user_id = auth.uid()))
-      with check (exists (select 1 from public.admins a where a.user_id = auth.uid()));
-  end if;
-  if not exists (select 1 from pg_policies where tablename = 'purchase_receipt_lines' and policyname = 'purchase_receipt_lines_admin_all') then
-    create policy purchase_receipt_lines_admin_all on public.purchase_receipt_lines
-      for all to authenticated
-      using (exists (select 1 from public.admins a where a.user_id = auth.uid()))
-      with check (exists (select 1 from public.admins a where a.user_id = auth.uid()));
-  end if;
-end $$;
+-- Políticas idempotentes (reemplazan nombres legacy *_admin_all).
+drop policy if exists purchase_seasons_admin_all on public.purchase_seasons;
+drop policy if exists purchase_suppliers_admin_all on public.purchase_suppliers;
+drop policy if exists purchase_rule_versions_admin_all on public.purchase_supplier_rule_versions;
+drop policy if exists purchase_orders_admin_all on public.purchase_orders;
+drop policy if exists purchase_order_lines_admin_all on public.purchase_order_lines;
+drop policy if exists purchase_receipts_admin_all on public.purchase_receipts;
+drop policy if exists purchase_receipt_lines_admin_all on public.purchase_receipt_lines;
+
+drop policy if exists purchase_seasons_module_all on public.purchase_seasons;
+drop policy if exists purchase_suppliers_module_all on public.purchase_suppliers;
+drop policy if exists purchase_rule_versions_module_all on public.purchase_supplier_rule_versions;
+drop policy if exists purchase_orders_module_all on public.purchase_orders;
+drop policy if exists purchase_order_lines_module_all on public.purchase_order_lines;
+drop policy if exists purchase_receipts_module_all on public.purchase_receipts;
+drop policy if exists purchase_receipt_lines_module_all on public.purchase_receipt_lines;
+
+create policy purchase_seasons_module_all on public.purchase_seasons
+  for all to authenticated
+  using (public.purchase_module_admin_auth(auth.uid()))
+  with check (public.purchase_module_admin_auth(auth.uid()));
+
+create policy purchase_suppliers_module_all on public.purchase_suppliers
+  for all to authenticated
+  using (public.purchase_module_admin_auth(auth.uid()))
+  with check (public.purchase_module_admin_auth(auth.uid()));
+
+create policy purchase_rule_versions_module_all on public.purchase_supplier_rule_versions
+  for all to authenticated
+  using (public.purchase_module_admin_auth(auth.uid()))
+  with check (public.purchase_module_admin_auth(auth.uid()));
+
+create policy purchase_orders_module_all on public.purchase_orders
+  for all to authenticated
+  using (public.purchase_module_admin_auth(auth.uid()))
+  with check (public.purchase_module_admin_auth(auth.uid()));
+
+create policy purchase_order_lines_module_all on public.purchase_order_lines
+  for all to authenticated
+  using (public.purchase_module_admin_auth(auth.uid()))
+  with check (public.purchase_module_admin_auth(auth.uid()));
+
+create policy purchase_receipts_module_all on public.purchase_receipts
+  for all to authenticated
+  using (public.purchase_module_admin_auth(auth.uid()))
+  with check (public.purchase_module_admin_auth(auth.uid()));
+
+create policy purchase_receipt_lines_module_all on public.purchase_receipt_lines
+  for all to authenticated
+  using (public.purchase_module_admin_auth(auth.uid()))
+  with check (public.purchase_module_admin_auth(auth.uid()));
 
 grant select, insert, update, delete on public.purchase_seasons to authenticated;
 grant select, insert, update, delete on public.purchase_suppliers to authenticated;

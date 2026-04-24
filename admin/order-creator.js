@@ -1833,9 +1833,10 @@ function displayProductResults(products, query = "") {
       const hasNoStock = square.dataset.hasNoStock === 'true';
       const currentQty = selectedQuantities.get(quantityKey) || 0;
       
-      // Si no hay stock, mostrar modal de confirmación
+      // Sin stock: el admin agrega al pedido sin confirmación (mal arqueo / carga operativa).
       if (hasNoStock) {
-        showStockMaxConfirmModal(articulo, color, talle, 0, stockGeneral, stockVenta, quantityKey, currentQty, true);
+        selectedQuantities.set(quantityKey, currentQty + 1);
+        updateProductSquare(quantityKey);
       } else {
         // Incrementar cantidad si hay stock disponible
         if (currentQty < stockTotal) {
@@ -2090,21 +2091,10 @@ async function addSelectedProductsToOrder() {
     if (totalQuantity > stockTotal) {
       const available = Math.max(0, stockTotal - existingDeductibleQty);
       if (available <= 0) {
-        const confirmAdd = confirm(
-          `⚠️ No hay stock disponible para ${articulo} - ${color} - Talle ${talle}.\n\n` +
-          `Stock disponible: ${stockTotal} (General: ${stockGeneral}, Venta: ${stockVenta})\n\n` +
-          `¿Desea agregarlo de todas formas? (Útil en caso de mal conteo de stock)`
-        );
-        
-        if (!confirmAdd) {
-          continue; // Saltar este producto
-        }
-        
-        // Permitir agregar con cantidad solicitada pero sin stock
+        // Sin stock: agregar al pedido sin aviso (coherente con clic en talle sin modal)
         qtyFromGeneral = 0;
         qtyFromVenta = 0;
         itemStatus = "missing";
-        // Continuar con el flujo normal (no ajustar quantity, usar la cantidad solicitada)
       } else {
         const confirmAdd = confirm(
           `⚠️ Stock insuficiente para ${articulo} - ${color} - Talle ${talle}.\n\n` +
@@ -2176,7 +2166,8 @@ async function addSelectedProductsToOrder() {
       variant_id: variantId,
       qty_from_general: qtyFromGeneral,
       qty_from_venta: qtyFromVenta,
-      status: itemStatus
+      status: itemStatus,
+      admin_confirmed_missing: itemStatus === "missing"
     });
   }
   
@@ -2304,23 +2295,11 @@ async function addProductToOrder(product) {
         if (totalQuantity > stockTotal) {
           const available = Math.max(0, stockTotal - existingDeductibleQty);
           if (available <= 0) {
-            // Si el stock es 0, permitir agregar si el usuario confirma
-            const confirmAdd = confirm(
-              `⚠️ No hay stock disponible para ${product.product_name} - ${product.color} - Talle ${product.size}.\n\n` +
-              `Stock disponible: ${stockTotal} (General: ${stockGeneral}, Venta: ${stockVenta})\n\n` +
-              `¿Desea agregarlo de todas formas? (Útil en caso de mal conteo de stock)`
-            );
-            
-            if (!confirmAdd) {
-              return;
-            }
-            
-            // Permitir agregar con cantidad solicitada pero sin stock (qty_from_general = 0, qty_from_venta = 0)
+            // Sin aviso: misma lógica que el paso de búsqueda (addSelectedProductsToOrder)
             product.qty_from_general = 0;
             product.qty_from_venta = 0;
             resolvedStatus = "missing";
             resolvedMissingIsManual = true;
-            // Continuar con el flujo normal para agregar el producto
           } else {
             const confirmAdd = confirm(
               `⚠️ Stock insuficiente para ${product.product_name} - ${product.color} - Talle ${product.size}.\n\n` +
@@ -3136,6 +3115,35 @@ async function applyManualConfirmedItems(insertedItems, orderId) {
   console.log(`✅ applyManualConfirmedItems: ${data?.processed ?? manualItems.length} ítem(s) procesado(s) con trazabilidad de stock.`);
 }
 
+// Solo estos ítems deben ir a rpc_apply_order_stock_deduction (reserva/real vía almacén).
+// Sin asignación explícita (0+0), o con admin_confirmed_missing / status missing → no (manuales / sin descuento físico aquí).
+function itemQualifiesForApplyOrderStockDeduction(i) {
+  if (!i?.variant_id || !i?.size) return false;
+  const statusNorm = String(i?.status || "").trim().toLowerCase();
+  if (statusNorm === "missing") return false;
+  if (i.admin_confirmed_missing) return false;
+  const q = Number(i.quantity) || 0;
+  if (q <= 0) return false;
+  const g = Number(i.qty_from_general) || 0;
+  const v = Number(i.qty_from_venta) || 0;
+  // Exige split alineado con la cantidad: evita el bug del fallback que pedía
+  // toda la venta a un depósito tras “reset” de un split inconsistente.
+  return g + v === q && g + v > 0;
+}
+
+function rowForStockLog(item) {
+  return {
+    product: String(item.product_name || "").slice(0, 40),
+    variant_id: item.variant_id,
+    size: item.size,
+    quantity: item.quantity,
+    q_general: item.qty_from_general,
+    q_venta: item.qty_from_venta,
+    status: item.status,
+    admin_confirmed_missing: item.admin_confirmed_missing ? 1 : 0,
+  };
+}
+
 async function updateStockBatch(itemsWithVariants, orderId = null, source = "order_creation") {
   if (!itemsWithVariants || itemsWithVariants.length === 0) {
     console.warn("⚠️ updateStockBatch: No hay items para actualizar stock");
@@ -3155,33 +3163,30 @@ async function updateStockBatch(itemsWithVariants, orderId = null, source = "ord
     return;
   }
 
-  // Solo ítems con variant_id + size, que NO estén en missing,
-  // y que NO sean admin_confirmed_missing (esos pasan por rpc_admin_manual_inject_and_deduct).
-  const itemsToUpdate = itemsWithVariants.filter((i) => {
-    const statusNorm = String(i?.status || "").trim().toLowerCase();
-    return i.variant_id && i.size && statusNorm !== "missing" && !i.admin_confirmed_missing;
-  });
+  // Ítems con línea de stock “real”: variant + talle, no missing, no confirmación manual sin stock,
+  // y con reparto depósito (general/venta) explícito que suma = quantity.
+  const itemsToUpdate = itemsWithVariants.filter(itemQualifiesForApplyOrderStockDeduction);
+
+  const itemsForStockDeduction = itemsToUpdate.map(rowForStockLog);
+  const itemsSkippedFromStockDeduction = itemsWithVariants
+    .filter((i) => i.variant_id && i.size)
+    .filter((i) => !itemQualifiesForApplyOrderStockDeduction(i))
+    .map(rowForStockLog);
+
+  console.log("[admin order] updateStockBatch: itemsForStockDeduction (vía rpc_apply_order_stock_deduction):");
+  console.table(itemsForStockDeduction);
+  console.log("[admin order] updateStockBatch: itemsSkippedFromStockDeduction (sin descuento por esta RPC):");
+  console.table(itemsSkippedFromStockDeduction);
+
   if (itemsToUpdate.length === 0) {
-    console.warn("⚠️ updateStockBatch: No hay items con variant_id y size para actualizar");
+    console.warn("⚠️ updateStockBatch: Ningún ítem califica para rpc_apply_order_stock_deduction (revisar split o manuales).");
     return;
   }
 
   // ──────────────────────────────────────────────────────────────
   // Construir p_items para rpc_apply_order_stock_deduction.
-  //
-  // Regla de split (preserva lógica de negocio actual):
-  //   a) Si el ítem trae qty_from_general + qty_from_venta > 0 y suman quantity
-  //      → usar ese split exacto (caso normal del admin con selección manual).
-  //   b) Si los valores son inconsistentes con quantity → descartarlos y caer al fallback.
-  //   c) Fallback (sin cantidades específicas): asumir venta-público como prioridad
-  //      (matching el comportamiento histórico, donde se intentaba venta-público
-  //      primero). Si venta-público no alcanza, la RPC devolverá "stock insuficiente"
-  //      y toda la transacción se revierte; el admin verá el error claro.
-  //
-  // NOTA: el viejo fallback hacía un split automático entre venta-público y general
-  // basado en el stock disponible leído en cliente. Ese split requería SELECT previo
-  // y tenía la race condition que esta migración elimina. Para casos donde el
-  // admin necesita ese split explícito, debe marcarlo manualmente al agregar el ítem.
+  // Únicamente a partir de qty_from_general / qty_from_venta ya alineados con quantity
+  // (sin fallback que asignara toda la cantidad a un depósito y rompiera stock insuficiente).
   // ──────────────────────────────────────────────────────────────
   const deductions = [];
 
@@ -3193,35 +3198,12 @@ async function updateStockBatch(itemsWithVariants, orderId = null, source = "ord
     }
 
     const quantity     = Number(item.quantity) || 0;
-    let qtyFromGeneral = Number(item.qty_from_general) || 0;
-    let qtyFromVenta   = Number(item.qty_from_venta) || 0;
+    const qtyFromGeneral = Number(item.qty_from_general) || 0;
+    const qtyFromVenta   = Number(item.qty_from_venta) || 0;
 
-    if (quantity <= 0) {
-      console.warn(`⚠️ updateStockBatch: Item ${index} con quantity <= 0; se salta.`);
+    if (quantity <= 0 || qtyFromGeneral + qtyFromVenta !== quantity) {
+      console.warn(`⚠️ updateStockBatch: Item ${index} con cantidad/split inesperado; se omite.`, item);
       return;
-    }
-
-    // Consistencia: si hay split explícito pero no cuadra con quantity,
-    // descartar y caer al fallback (prioriza venta-público).
-    const hasExplicitSplit = qtyFromGeneral > 0 || qtyFromVenta > 0;
-    if (hasExplicitSplit && (qtyFromGeneral + qtyFromVenta) !== quantity) {
-      console.warn(
-        `⚠️ updateStockBatch: split inconsistente para variant=${item.variant_id} talle=${normalizedSize} ` +
-        `(general=${qtyFromGeneral}, venta=${qtyFromVenta}, total=${quantity}). Usando fallback venta-público.`
-      );
-      qtyFromGeneral = 0;
-      qtyFromVenta = 0;
-    }
-
-    if (!hasExplicitSplit || (qtyFromGeneral + qtyFromVenta) !== quantity) {
-      // Fallback: asumir venta-público como default (si está configurado), sino general.
-      if (warehouses.ventaPublico) {
-        qtyFromVenta   = quantity;
-        qtyFromGeneral = 0;
-      } else if (warehouses.general) {
-        qtyFromGeneral = quantity;
-        qtyFromVenta   = 0;
-      }
     }
 
     if (qtyFromGeneral > 0 && warehouses.general) {

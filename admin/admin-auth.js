@@ -217,9 +217,32 @@ function hideLoadingSpinner() {
 window.hideLoadingSpinner = hideLoadingSpinner;
 window.updateSessionUI = updateSessionUI;
 
-// Entrar
-document.addEventListener("DOMContentLoaded", () => {
-  console.log("📋 DOMContentLoaded - Configurando eventos de login");
+let __fylAdminAuthFormListenersBound = false;
+
+function runWhenDocumentInteractive(fn) {
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => fn(), { once: true });
+  } else {
+    fn();
+  }
+}
+
+// Entrar + OAuth + resto de acciones (debe correr aunque DOMContentLoaded ya haya ocurrido:
+// admin-auth carga tras supabase-client con top-level await y puede inscribirse demasiado tarde.)
+function setupAuthFormListeners() {
+  if (__fylAdminAuthFormListenersBound) {
+    return;
+  }
+  __fylAdminAuthFormListenersBound = true;
+
+  if (!supabase) {
+    console.error(
+      "[FYL admin-auth] supabase no está disponible; no se configuran eventos de login"
+    );
+    return;
+  }
+
+  console.log("📋 Configurando eventos de login (dom ready state:", document.readyState, ")");
   const { loginBtn, loginErr, emailEl, passEl } = getDOMElements();
   
   if (loginBtn) {
@@ -616,8 +639,9 @@ document.addEventListener("DOMContentLoaded", () => {
       location.reload();
     });
   }
-});
+}
 
+runWhenDocumentInteractive(setupAuthFormListeners);
 
 // Función para inicializar la UI cuando la página carga
 async function initializeUI() {

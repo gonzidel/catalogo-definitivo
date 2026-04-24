@@ -644,24 +644,26 @@
 
     <!-- Acciones Rápidas (SOLO mobile - reemplazan el menú de categorías) -->
     <div class="quick-actions-container">
-      <div class="quick-actions" id="quick-actions">
-        <!-- Se llenará dinámicamente -->
+      <div class="category-bar" id="category-bar" aria-label="Categorías del catálogo">
+        <div class="quick-actions" id="quick-actions">
+          <!-- Se llenará dinámicamente -->
+        </div>
       </div>
-      <!-- Botón Talles - Separado y fijado -->
-      <button class="size-filter-btn" id="size-filter-btn">
-        <span class="filter-icon">
+      <!-- Botón Talles: filtro (clase .size-filter-chip) -->
+      <button type="button" class="size-filter-chip" id="size-filter-btn" aria-label="Filtrar por talle">
+        <span class="size-filter-chip__icon filter-icon" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <line x1="4" y1="6" x2="20" y2="6"></line>
             <line x1="4" y1="12" x2="20" y2="12"></line>
             <line x1="4" y1="18" x2="20" y2="18"></line>
           </svg>
         </span>
-        <span>Talles</span>
+        <span class="size-filter-chip__label" id="size-filter-btn-label">Talles</span>
       </button>
     </div>
 
-    <div id="home-top-dynamic-slot" class="home-top-dynamic-slot home-top-dynamic-slot--pending" aria-live="polite">
-      <div id="home-top-dynamic-loader" class="home-top-dynamic-loader" aria-hidden="true">
+    <div id="home-top-dynamic-slot" class="home-top-dynamic-slot" aria-live="polite">
+      <div id="home-top-dynamic-loader" class="home-top-dynamic-loader" hidden aria-hidden="true">
         <div class="spinner" aria-hidden="true"></div>
         <span>Cargando destacados...</span>
       </div>
@@ -707,7 +709,7 @@
       <div class="size-filter-overlay"></div>
       <div class="size-filter-panel">
         <div class="size-filter-header">
-          <h2>Filtrar por Talle</h2>
+          <h2>Filtrar por talle</h2>
           <button class="size-filter-close" id="size-filter-close" aria-label="Cerrar">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <line x1="18" y1="6" x2="6" y2="18"></line>
@@ -719,8 +721,10 @@
           <!-- Se llenará dinámicamente con selector de categoría o grid de talles -->
         </div>
         <div class="size-filter-footer" id="size-filter-footer" style="display: none;">
-          <button class="size-filter-clear-btn" id="size-filter-clear">Limpiar Filtros</button>
-          <button class="size-filter-apply-btn" id="size-filter-apply">Aplicar</button>
+          <div class="size-filter-footer__actions">
+            <button type="button" class="size-filter-clear-btn" id="size-filter-clear" style="display: none">Limpiar</button>
+            <button type="button" class="size-filter-apply-btn" id="size-filter-apply">Ver productos</button>
+          </div>
         </div>
       </div>
     </div>
@@ -728,15 +732,15 @@
     <!-- Filtros y búsqueda desktop (OCULTO en mobile) -->
     <div class="filter-search-view" id="filter-container">
       <button id="toggleFiltros">Filtros</button>
-      <button type="button" class="desktop-only-talles" id="size-filter-btn-desktop" title="Filtrar por talle" aria-label="Filtrar por talle">
-        <span class="filter-icon" aria-hidden="true">
+      <button type="button" class="size-filter-chip desktop-only-talles" id="size-filter-btn-desktop" title="Filtrar por talle" aria-label="Filtrar por talle">
+        <span class="size-filter-chip__icon filter-icon" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16">
             <line x1="4" y1="6" x2="20" y2="6"></line>
             <line x1="4" y1="12" x2="20" y2="12"></line>
             <line x1="4" y1="18" x2="20" y2="18"></line>
           </svg>
         </span>
-        <span>Talles</span>
+        <span class="size-filter-chip__label" id="size-filter-btn-desktop-label">Talles</span>
       </button>
       <div id="filtroMenu" style="display:none"></div>
       <input type="text" id="searchInput" placeholder="Buscar artículo...">

@@ -130,7 +130,7 @@ function renderQuickActions() {
   // Renderizar acciones desde BD (solo texto, sin iconos)
   quickActionsData.forEach((action) => {
     const btn = document.createElement("button");
-    btn.className = "quick-action-btn";
+    btn.className = "category-chip quick-action-btn";
     btn.dataset.actionId = action.id;
     btn.dataset.actionType = action.type;
     btn.dataset.actionValue = action.value;
@@ -185,14 +185,13 @@ function getDefaultIcon(type) {
 async function handleQuickAction(action) {
   // Remover active de todos los botones
   document.querySelectorAll(".quick-action-btn").forEach((btn) => {
-    btn.classList.remove("active");
+    btn.classList.remove("category-chip--active");
   });
 
-  // Agregar active al botón clickeado
   const clickedBtn = document.querySelector(`[data-action-id="${action.id}"]`);
 
   if (clickedBtn) {
-    clickedBtn.classList.add("active");
+    clickedBtn.classList.add("category-chip--active");
   }
   
   // Si es acción de inicio, activar también el botón de navegación inferior

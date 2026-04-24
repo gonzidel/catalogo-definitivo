@@ -100,6 +100,57 @@
             background: #f8f9fa;
         }
 
+        /* Misma fila de búsqueda que admin/orders.html (order-creator.js: Agregar / Cerrar) */
+        .product-search-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .product-search-row #product-search {
+            flex: 1;
+            min-width: 0;
+            padding: 9px 10px !important;
+        }
+        .product-search-action-btn {
+            min-width: 90px;
+            padding: 9px 10px;
+            border-radius: 6px;
+            border: none;
+            color: #fff;
+            font-weight: 700;
+            cursor: pointer;
+            transition: filter 0.2s ease, opacity 0.2s ease;
+        }
+        .product-search-action-btn:hover {
+            filter: brightness(0.95);
+        }
+        .product-search-action-btn.is-inactive {
+            background: #cfd4da !important;
+            color: #6c757d !important;
+            cursor: default;
+        }
+        .product-search-action-btn.is-inactive:hover {
+            filter: none;
+        }
+        .product-search-action-btn.is-active-add {
+            background: #28a745 !important;
+            color: #fff !important;
+        }
+        .product-search-action-btn.is-active-close {
+            background: #dc3545 !important;
+            color: #fff !important;
+        }
+        @media (max-width: 768px) {
+            .product-search-row {
+                gap: 6px;
+            }
+            .product-search-action-btn {
+                min-width: 76px;
+                padding: 8px 8px;
+                font-size: 12px;
+            }
+        }
+
         .customers-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
@@ -788,15 +839,19 @@
                     </div>
                 </div>
 
-                <!-- Búsqueda de Productos -->
+                <!-- Búsqueda de Productos (misma estructura que admin/orders.html + order-creator.js) -->
                 <div class="order-form-section">
                     <h3>🛍️ Agregar Productos</h3>
-                    <div style="margin-bottom: 16px;">
+                    <div style="margin-bottom: 16px; position: relative;">
                         <label for="product-search">Buscar Producto:</label>
-                        <input type="text" id="product-search" placeholder="Por inicio de nombre o código (ej. 80, R18)..."
-                            style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
+                        <div class="product-search-row">
+                            <input type="text" id="product-search" placeholder="Por inicio de nombre o código (ej. 80, R18)..."
+                                style="width: 100%; border: 1px solid #ddd; border-radius: 6px; font-size: 16px;">
+                            <button type="button" id="product-search-add-btn" class="product-search-action-btn is-inactive">Agregar</button>
+                            <button type="button" id="product-search-close-btn" class="product-search-action-btn is-inactive">Cerrar</button>
+                        </div>
                         <div id="product-results"
-                            style="max-height: 300px; overflow-y: auto; border: 1px solid #ddd; border-radius: 6px; margin-top: 8px; display: none; background: white; position: absolute; z-index: 1000; width: 100%; max-width: 600px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
+                            style="max-height: 300px; overflow-y: auto; border: 1px solid #ddd; border-radius: 6px; margin-top: 8px; display: none; background: white; position: absolute; z-index: 1000; width: 100%; max-width: 100%; box-shadow: 0 4px 8px rgba(0,0,0,0.1); left: 0; right: 0;">
                         </div>
                     </div>
                 </div>

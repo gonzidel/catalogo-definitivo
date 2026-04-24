@@ -2,7 +2,7 @@
 
 import { fylDevLog } from "./config.js";
 import { supabase } from "./supabase-client.js";
-import { normalizeSize } from "./utils/size-normalizer.js";
+import { compareCatalogSizes, normalizeSize } from "./utils/size-normalizer.js";
 
 // Estado global
 let currentCategory = null;
@@ -36,23 +36,281 @@ function doesCategoryMatchProduct(selectedCategory, productCategory) {
 }
 
 function getCardArticulo(card) {
+  const fromBadge = card?.querySelector(".product-name-badge")?.textContent?.trim() || "";
+  const badgeArticulo = fromBadge.replace(/^Art\.\s+/i, "").trim();
   return (
     card?.dataset?.articulo?.trim() ||
     card?.querySelector(".article-box")?.textContent?.trim() ||
-    card?.querySelector(".product-name-badge")?.textContent?.trim() ||
+    badgeArticulo ||
     ""
   );
 }
 
-function setSizeFilterButtonsActiveState(isActive) {
-  const buttonIds = ["size-filter-btn", "size-filter-btn-desktop"];
-  buttonIds.forEach((id) => {
-    const btn = document.getElementById(id);
+function getAppliedSizeFilterCount() {
+  if (!sizeFilterActive) return 0;
+  const raw =
+    typeof window !== "undefined" ? window.__fylActiveSizeFilters : [];
+  const arr = Array.isArray(raw) ? raw : [];
+  return arr.filter(Boolean).length;
+}
+
+/** Sincroniza clase activa, texto (Talles · N) y limpia estilos inline legacy en los botones. */
+function updateSizeFilterButtonsUI() {
+  const count = getAppliedSizeFilterCount();
+  const labelText =
+    sizeFilterActive && count > 0 ? `Talles · ${count}` : "Talles";
+  const ariaLabel =
+    sizeFilterActive && count > 0
+      ? `Filtrar por talle, ${count} activos`
+      : "Filtrar por talle";
+
+  const entries = [
+    {
+      btn: document.getElementById("size-filter-btn"),
+      label: document.getElementById("size-filter-btn-label"),
+    },
+    {
+      btn: document.getElementById("size-filter-btn-desktop"),
+      label: document.getElementById("size-filter-btn-desktop-label"),
+    },
+  ];
+
+  entries.forEach(({ btn, label }) => {
     if (!btn) return;
-    btn.style.background = isActive ? "#CD844D" : "";
-    btn.style.color = isActive ? "white" : "";
-    btn.style.borderColor = isActive ? "#CD844D" : "";
+    btn.classList.toggle("is-active", sizeFilterActive);
+    btn.style.background = "";
+    btn.style.color = "";
+    btn.style.borderColor = "";
+    const lab = label || btn.querySelector(".size-filter-chip__label, .size-filter-btn__label");
+    if (lab) lab.textContent = labelText;
+    btn.setAttribute("aria-label", ariaLabel);
   });
+}
+
+/** Letras principales (Ropa). 6XL+ no forman parte del bloque S–5XL. */
+const ROPA_LETTER_SET = new Set(["S", "M", "L", "XL", "2XL", "3XL", "4XL", "5XL"]);
+const ROPA_LETTER_ORDER = ["S", "M", "L", "XL", "2XL", "3XL", "4XL", "5XL"];
+
+/**
+ * Pares letra + número: una sola celda; el filtro acepta talle de letra O talle numérico (OR).
+ * Claves = las de classifyRopaTalle (ROPA:L:* y ROPA:N:*).
+ */
+const ROPA_UNIFIED_PAIRS = [
+  { label: "S/1", keys: ["ROPA:L:S", "ROPA:N:1"] },
+  { label: "M/2", keys: ["ROPA:L:M", "ROPA:N:2"] },
+  { label: "L/3", keys: ["ROPA:L:L", "ROPA:N:3"] },
+  { label: "XL/4", keys: ["ROPA:L:XL", "ROPA:N:4"] },
+  { label: "2XL/5", keys: ["ROPA:L:2XL", "ROPA:N:5"] },
+  { label: "3XL/6", keys: ["ROPA:L:3XL", "ROPA:N:6"] },
+  { label: "4XL/7", keys: ["ROPA:L:4XL", "ROPA:N:7"] },
+  { label: "5XL/8", keys: ["ROPA:L:5XL", "ROPA:N:8"] },
+];
+
+const ROPA_PAIR_LABELS = new Set(ROPA_UNIFIED_PAIRS.map((p) => p.label));
+
+function stripTrailingSizeDots(s) {
+  return String(s ?? "")
+    .trim()
+    .replace(/\.+$/g, "")
+    .trim();
+}
+
+/**
+ * Clave de comparación y de deduplicación: trim, sin puntos finales.
+ */
+function normalizeRopaTalleString(s) {
+  return stripTrailingSizeDots(s);
+}
+
+/**
+ * "UNICO", "úNico", " unica. " → unico/unica (sin acento para comparar).
+ */
+function isRopaUnicoToken(s) {
+  if (s == null) return false;
+  const t = String(s)
+    .trim()
+    .replace(/\.+$/g, "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+  return t === "unico" || t === "unica";
+}
+
+/**
+ * S, M, L, 2XL… (solo ROPA_LETTER_SET). 6XL+ → null (va a «Otros talles»).
+ */
+function ropaLetterCanonicalFromText(s) {
+  const raw = String(s ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "");
+  if (!raw) return null;
+  if (/^(6|7|8|9|1[0-9]|[2-9]\d)xl$/.test(raw)) return null;
+
+  const map = {
+    s: "S",
+    m: "M",
+    l: "L",
+    xl: "XL",
+    xxl: "2XL",
+    "2xl": "2XL",
+    xxxl: "3XL",
+    "3xl": "3XL",
+    xxxxl: "4XL",
+    "4xl": "4XL",
+    xxxxxl: "5XL",
+    "5xl": "5XL",
+  };
+  const c = map[raw] ?? (ROPA_LETTER_SET.has(raw.toUpperCase()) ? raw.toUpperCase() : null);
+  return c && ROPA_LETTER_SET.has(c) ? c : null;
+}
+
+function parseRopaIntSize(s) {
+  const t = normalizeRopaTalleString(s);
+  if (t === "") return null;
+  if (!/^\d+(\.\d+)?$/.test(t)) return null;
+  const n = parseInt(normalizeSize(t) || t, 10);
+  if (Number.isNaN(n) || n < 0) return null;
+  return n;
+}
+
+/**
+ * Un talle → una sección. `filterValue` = valor en data-size (coincide con lógica de filtro).
+ * `mainType`: letter | num1_10 | extra (dentro de sección M).
+ * Orden de reglas: Único → letras 2xl… (no confundir "2" con "2xl") → enteros.
+ */
+function classifyRopaTalle(s) {
+  const t0 = String(s);
+  if (!t0 || !String(t0).trim()) return null;
+  const t = normalizeRopaTalleString(t0);
+  if (!t) return null;
+
+  if (isRopaUnicoToken(t)) {
+    return {
+      key: "ROPA:U",
+      display: "Único",
+      filterValue: "Único",
+      section: "U",
+      mainType: null,
+    };
+  }
+
+  const letterFirst = ropaLetterCanonicalFromText(t);
+  if (letterFirst) {
+    return {
+      key: `ROPA:L:${letterFirst}`,
+      display: letterFirst,
+      filterValue: letterFirst,
+      section: "M",
+      mainType: "letter",
+    };
+  }
+
+  const n = parseRopaIntSize(t);
+  if (n !== null) {
+    const fv = String(n);
+    if (n >= 36 && n <= 58) {
+      return {
+        key: `ROPA:P:${n}`,
+        display: fv,
+        filterValue: fv,
+        section: "P",
+        mainType: null,
+      };
+    }
+    if (n >= 1 && n <= 10) {
+      return {
+        key: `ROPA:N:${n}`,
+        display: fv,
+        filterValue: fv,
+        section: "M",
+        mainType: "num1_10",
+      };
+    }
+    return {
+      key: `ROPA:E:${n}`,
+      display: fv,
+      filterValue: fv,
+      section: "M",
+      mainType: "extra",
+    };
+  }
+
+  const x = t.replace(/\s+/g, " ").trim();
+  const k = `ROPA:X:${x.normalize("NFD").toLowerCase()}`;
+  return {
+    key: k,
+    display: x,
+    filterValue: x,
+    section: "M",
+    mainType: "extra",
+  };
+}
+
+function ropaTalleKey(s) {
+  const c = classifyRopaTalle(s);
+  return c ? c.key : "";
+}
+
+function isRopaFilterCategoryName(cat) {
+  return normalizeCategoryName(cat) === "ropa";
+}
+
+function ropaSelectionKey(sel) {
+  const t = String(sel ?? "").trim();
+  if (ROPA_PAIR_LABELS.has(t)) {
+    return `ROPA:SEL:PAIR:${t}`;
+  }
+  return ropaTalleKey(t) || "";
+}
+
+function isSizeSelectedRopa(value, selectedList) {
+  const kv = ropaSelectionKey(value);
+  if (!kv) return false;
+  return (selectedList || []).some((x) => ropaSelectionKey(x) === kv);
+}
+
+/**
+ * Construye la grilla principal Ropa: pares S/1…, 9 y 10, extras, Único al final.
+ * Los pares se muestran si existe en catálogo cualquiera de sus dos clases (letra o número).
+ */
+function buildRopaUnifiedMainEntries(byKey) {
+  const consumed = new Set();
+  const out = [];
+
+  for (const p of ROPA_UNIFIED_PAIRS) {
+    const show = p.keys.some((k) => byKey.has(k));
+    if (show) {
+      p.keys.forEach((k) => consumed.add(k));
+      out.push({ kind: "pair", token: p.label });
+    }
+  }
+
+  for (const n of [9, 10]) {
+    const k = `ROPA:N:${n}`;
+    if (byKey.has(k) && !consumed.has(k)) {
+      consumed.add(k);
+      out.push({ kind: "num", token: String(n) });
+    }
+  }
+
+  const extraItems = [];
+  for (const [key, fv] of byKey.entries()) {
+    if (consumed.has(key)) continue;
+    if (key.startsWith("ROPA:P:") || key === "ROPA:U") continue;
+    consumed.add(key);
+    extraItems.push(fv);
+  }
+  extraItems.sort((a, b) => compareCatalogSizes(a, b));
+  for (const fv of extraItems) {
+    out.push({ kind: "extra", token: fv });
+  }
+
+  if (byKey.has("ROPA:U")) {
+    out.push({ kind: "unico", token: "Único" });
+  }
+
+  return out;
 }
 
 function getSearchDerivedCategory() {
@@ -96,7 +354,7 @@ function getCurrentCategory() {
   }
   
   // Detectar desde el botón activo de acciones rápidas
-  const activeBtn = document.querySelector('.quick-action-btn.active');
+  const activeBtn = document.querySelector('.quick-action-btn.category-chip--active');
   if (activeBtn) {
     const actionValue = activeBtn.dataset.actionValue;
     if (actionValue && actionValue !== 'all') {
@@ -360,15 +618,18 @@ async function getAvailableSizes(category = null, productIds = null) {
   }
 }
 
-// Renderizar selector de categoría
+/**
+ * @deprecated Dejó de usarse: sin categoría activa se muestra toast + resaltado de chips, no el modal.
+ * Se mantiene por si se reutiliza (tests / admin / otro flujo).
+ */
 function renderCategorySelector() {
   const body = document.getElementById('size-filter-body');
   const footer = document.getElementById('size-filter-footer');
-  
+
   if (!body) return;
-  
+
   footer.style.display = 'none';
-  
+
   body.innerHTML = `
     <div class="size-filter-category-selector">
       <p>Seleccione una categoría</p>
@@ -379,15 +640,82 @@ function renderCategorySelector() {
       </div>
     </div>
   `;
-  
-  // Event listeners para botones de categoría
-  body.querySelectorAll('.size-filter-category-btn').forEach(btn => {
+
+  body.querySelectorAll('.size-filter-category-btn').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const category = btn.dataset.category;
       tempCategoryForSizeFilter = category;
       await loadSizesForCategory(category);
     });
   });
+}
+
+let categoryToastTimer = null;
+let categoryBarAttentionTimer = null;
+
+function showCategoryRequiredToast() {
+  let toast = document.getElementById('category-required-toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'category-required-toast';
+    toast.className = 'category-required-toast';
+    toast.setAttribute('role', 'status');
+    toast.setAttribute('aria-live', 'polite');
+    document.body.appendChild(toast);
+  }
+
+  const bar =
+    document.getElementById('category-bar') ||
+    document.querySelector('.category-bar') ||
+    document.querySelector('.quick-actions-container');
+  if (bar) {
+    const rect = bar.getBoundingClientRect();
+    const y = Math.round(rect.bottom + 8);
+    toast.style.top = `${y}px`;
+  } else {
+    toast.style.top = '112px';
+  }
+  toast.textContent = 'Elegí una categoría para ver talles';
+
+  window.clearTimeout(categoryToastTimer);
+  toast.classList.remove('is-visible');
+  void toast.offsetWidth;
+  toast.classList.add('is-visible');
+
+  categoryToastTimer = window.setTimeout(() => {
+    toast.classList.remove('is-visible');
+    categoryToastTimer = null;
+  }, 1800);
+}
+
+function pulseCategoryBar() {
+  const bar =
+    document.getElementById('category-bar') ||
+    document.querySelector('.category-bar') ||
+    document.querySelector('.quick-actions-container') ||
+    document.querySelector('.category-chips') ||
+    document.querySelector('.top-categories');
+  if (!bar) return;
+
+  window.clearTimeout(categoryBarAttentionTimer);
+  bar.classList.remove('category-bar--attention');
+  void bar.offsetWidth;
+  bar.classList.add('category-bar--attention');
+
+  categoryBarAttentionTimer = window.setTimeout(() => {
+    bar.classList.remove('category-bar--attention');
+    categoryBarAttentionTimer = null;
+  }, 600);
+}
+
+function hasCategoryForSizeFilter() {
+  const c = getCurrentCategory();
+  return Boolean(c && String(c).trim() !== 'all');
+}
+
+function showNeedCategoryFirstFeedback() {
+  showCategoryRequiredToast();
+  pulseCategoryBar();
 }
 
 // Cargar talles para una categoría
@@ -430,7 +758,7 @@ async function loadSizesForCategory(category) {
     }
     
     renderSizeGrid(sizes);
-    footer.style.display = 'flex';
+    footer.style.display = 'block';
   } catch (error) {
     console.error('❌ Error cargando talles:', error);
     body.innerHTML = `<div class="size-filter-empty">Error al cargar talles: ${error.message}</div>`;
@@ -443,67 +771,30 @@ function organizeSizesInGroups(sizes, category) {
   const categoryLower = (category || '').toLowerCase();
   
   // Si es Ropa
-  if (categoryLower === 'ropa') {
-    const letterSizes = []; // S, M, L, XL, 2XL, 3XL, etc.
-    const size36_58 = []; // 36, 37, 38, 39, hasta 58
-    const size1_35 = []; // 1, 2, 3, 4, etc. (hasta 35)
-    const otherSizes = [];
-    
-    // Orden esperado para letras: S, M, L, XL, 2XL, 3XL, 4XL, 5XL, 6XL, 7XL, 8XL
-    const letterOrder = ['S', 'M', 'L', 'XL', '2XL', '3XL', '4XL', '5XL', '6XL', '7XL', '8XL'];
-    
-    sizes.forEach(size => {
-      const sizeUpper = size.toUpperCase().trim();
-      const numSize = parseInt(size);
-      
-      // Verificar si es un talle de letra (S, M, L, XL, 2XL, etc.)
-      if (letterOrder.includes(sizeUpper) || sizeUpper.match(/^[0-9]*XL$/)) {
-        letterSizes.push(size);
-      } else if (!isNaN(numSize)) {
-        if (numSize >= 36 && numSize <= 58) {
-          size36_58.push(size);
-        } else if (numSize >= 1 && numSize <= 35) {
-          size1_35.push(size);
-        } else {
-          otherSizes.push(size);
-        }
-      } else {
-        otherSizes.push(size);
+  if (categoryLower === "ropa") {
+    const byKey = new Map();
+    for (const raw of sizes) {
+      const t = String(raw).trim();
+      if (!t) continue;
+      const c = classifyRopaTalle(t);
+      if (!c) continue;
+      if (!byKey.has(c.key)) {
+        byKey.set(c.key, c.filterValue);
       }
-    });
-    
-    // Ordenar letras según el orden esperado
-    letterSizes.sort((a, b) => {
-      const aUpper = a.toUpperCase();
-      const bUpper = b.toUpperCase();
-      const aIndex = letterOrder.indexOf(aUpper);
-      const bIndex = letterOrder.indexOf(bUpper);
-      
-      if (aIndex !== -1 && bIndex !== -1) return aIndex - bIndex;
-      if (aIndex !== -1) return -1;
-      if (bIndex !== -1) return 1;
-      
-      // Si no está en el orden, ordenar alfabéticamente
-      return aUpper.localeCompare(bUpper);
-    });
-    
-    // Ordenar números
-    size36_58.sort((a, b) => parseInt(a) - parseInt(b));
-    size1_35.sort((a, b) => parseInt(a) - parseInt(b));
-    otherSizes.sort((a, b) => {
-      const numA = parseInt(a);
-      const numB = parseInt(b);
-      if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
-      return a.localeCompare(b);
-    });
-    
-    return {
-      group1: letterSizes,
-      group2: size36_58,
-      group3: size1_35,
-      others: otherSizes
-    };
-  } 
+    }
+
+    const ropaMain = buildRopaUnifiedMainEntries(byKey);
+    const ropaP = [];
+    for (const fv of byKey.values()) {
+      const m = classifyRopaTalle(fv);
+      if (m && m.section === "P") {
+        ropaP.push(fv);
+      }
+    }
+    ropaP.sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
+
+    return { isRopa: true, ropaMain, ropaP };
+  }
   // Si es Calzado (o cualquier otra categoría)
   else {
     const size35_40 = [];
@@ -540,90 +831,263 @@ function organizeSizesInGroups(sizes, category) {
     });
     
     return {
+      isRopa: false,
       group1: size35_40,
       group2: size41_46,
       group3: size18_34,
-      others: otherSizes
+      others: otherSizes,
     };
   }
 }
 
-// Renderizar grid de talles
-function renderSizeGrid(sizes) {
-  const body = document.getElementById('size-filter-body');
-  
-  if (!body) {
-    console.error('size-filter-body no encontrado para renderizar grid');
+const SIZE_KIDS_COLLAPSE_THRESHOLD = 8;
+
+function escDataAttr(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+}
+
+function escHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/**
+ * Mapea grupos técnicos a secciones con títulos (Calzado / Ropa / resto).
+ */
+function getSizeFilterSections(sizes, category) {
+  const groups = organizeSizesInGroups(sizes, category);
+  const cat = (category || "").toLowerCase();
+
+  if (cat === "ropa" && groups.isRopa) {
+    return [
+      {
+        type: "ropaLetrasYEquiv",
+        key: "ropa-unified",
+        title: "Letras y tallas",
+        subtitle: "S/1 a 5XL/8, 9 y 10. Único con borde punteado al final",
+        entries: groups.ropaMain,
+        sizes: null,
+        collapse: false,
+      },
+      {
+        key: "pants",
+        title: "Pantalones",
+        subtitle: "Talles numerados de pantalón",
+        sizes: groups.ropaP,
+        collapse: false,
+      },
+    ].filter((s) => {
+      if (s.type === "ropaLetrasYEquiv") {
+        return s.entries && s.entries.length > 0;
+      }
+      return s.sizes && s.sizes.length > 0;
+    });
+  }
+
+  return [
+    {
+      key: "mujer",
+      title: "Mujer",
+      subtitle: "Talles más frecuentes",
+      sizes: groups.group1,
+      collapse: false,
+    },
+    {
+      key: "hombre",
+      title: "Especiales / Hombre",
+      subtitle: "41 a 46",
+      sizes: groups.group2,
+      collapse: false,
+    },
+    {
+      key: "ninos",
+      title: "Niños",
+      subtitle: "Talles infantiles",
+      sizes: groups.group3,
+      collapse: (groups.group3 || []).length > SIZE_KIDS_COLLAPSE_THRESHOLD,
+      kidsStyle: true,
+    },
+    {
+      key: "other",
+      title: "Otros",
+      subtitle: null,
+      sizes: groups.others,
+      collapse: false,
+    },
+  ].filter((s) => s.sizes && s.sizes.length > 0);
+}
+
+function buildRopaLetrasYEquivGridHtml(entries) {
+  const cat = tempCategoryForSizeFilter || getCurrentCategory() || "";
+  return (entries || [])
+    .map((e) => {
+      const token = e.token;
+      const isSel = isSizeSelectedRopa(token, selectedSizes);
+      const sel = isSel ? "is-selected" : "";
+      const ds = escDataAttr(token);
+      const uClass = e.kind === "unico" ? " size-option--unico" : "";
+      if (e.kind === "unico") {
+        return `<button type="button" class="size-option${uClass} ${sel}" data-size="${ds}" data-category="${escDataAttr(cat)}" data-kind="unico">${escHtml(token)}</button>`;
+      }
+      if (e.kind === "pair") {
+        return `<button type="button" class="size-option size-option--pair ${sel}" data-size="${ds}" data-category="${escDataAttr(cat)}" data-kind="pair">${escHtml(token)}</button>`;
+      }
+      return `<button type="button" class="size-option ${sel}" data-size="${ds}" data-category="${escDataAttr(cat)}">${escHtml(token)}</button>`;
+    })
+    .join("");
+}
+
+function buildSizeOptionsGridHtml(sizes) {
+  const cat = tempCategoryForSizeFilter || getCurrentCategory() || "";
+  const ropa = isRopaFilterCategoryName(cat);
+  return (sizes || [])
+    .map((size) => {
+      const isSel = ropa
+        ? isSizeSelectedRopa(size, selectedSizes)
+        : selectedSizes.includes(size);
+      const ds = escDataAttr(size);
+      return `<button type="button" class="size-option ${isSel ? "is-selected" : ""}" data-size="${ds}" data-category="${escDataAttr(cat)}">${escHtml(String(size))}</button>`;
+    })
+    .join("");
+}
+
+function updateSizeFilterFooter() {
+  const applyBtn = document.getElementById("size-filter-apply");
+  const clearBtn = document.getElementById("size-filter-clear");
+  const n = selectedSizes.length;
+  if (applyBtn) {
+    applyBtn.textContent = n > 0 ? "Aplicar talles" : "Ver productos";
+  }
+  if (clearBtn) {
+    clearBtn.style.display = n > 0 ? "" : "none";
+  }
+}
+
+function toggleSizeOptionByButton(btn) {
+  const size = btn.getAttribute("data-size");
+  if (size == null || size === "") return;
+  const cat = tempCategoryForSizeFilter || getCurrentCategory() || "";
+  toggleSize(size);
+  const isSel = isRopaFilterCategoryName(cat)
+    ? isSizeSelectedRopa(size, selectedSizes)
+    : selectedSizes.includes(size);
+  btn.classList.toggle("is-selected", isSel);
+  updateSizeFilterFooter();
+}
+
+function handleSizeFilterModalClick(ev) {
+  const modal = document.getElementById("size-filter-modal");
+  if (!modal || !modal.classList.contains("active")) return;
+
+  const opt = ev.target.closest(".size-option");
+  if (opt) {
+    ev.preventDefault();
+    toggleSizeOptionByButton(opt);
     return;
   }
-  
-  console.log('🎨 Renderizando grid con', sizes.length, 'talles');
-  
-  // Obtener categoría actual
-  const category = tempCategoryForSizeFilter || getCurrentCategory() || '';
-  
-  // Organizar talles en grupos según categoría
-  const groups = organizeSizesInGroups(sizes, category);
-  
-  let gridHTML = '';
-  
-  // Función helper para renderizar un grupo de talles
-  const renderGroup = (groupSizes) => {
-    return groupSizes.map(size => {
-      const isActive = selectedSizes.includes(size);
-      return `
-        <button class="size-filter-size-btn ${isActive ? 'active' : ''}" 
-                data-size="${size}"
-                data-category="${tempCategoryForSizeFilter || getCurrentCategory() || ''}">
-          ${size}
-        </button>
-      `;
-    }).join('');
-  };
-  
-  // Renderizar grupo 1: 35-40
-  if (groups.group1.length > 0) {
-    gridHTML += renderGroup(groups.group1);
-    gridHTML += '<div class="size-filter-separator"></div>';
-  }
-  
-  // Renderizar grupo 2: 41-46
-  if (groups.group2.length > 0) {
-    gridHTML += renderGroup(groups.group2);
-    gridHTML += '<div class="size-filter-separator"></div>';
-  }
-  
-  // Renderizar grupo 3: 18-34
-  if (groups.group3.length > 0) {
-    gridHTML += renderGroup(groups.group3);
-    if (groups.others.length > 0) {
-      gridHTML += '<div class="size-filter-separator"></div>';
+
+  const reveal = ev.target.closest(".size-kids-reveal");
+  if (reveal) {
+    const wrap = reveal.closest(".size-kids-wrap");
+    if (!wrap) return;
+    const panel = wrap.querySelector(".size-kids-grid-wrap");
+    const expandLabel =
+      reveal.getAttribute("data-text-expand") || "Ver talles de niños";
+    const collapseLabel =
+      reveal.getAttribute("data-text-collapse") || "Ocultar talles de niños";
+    const expanded = wrap.classList.toggle("is-expanded");
+    if (panel) {
+      if (expanded) {
+        panel.removeAttribute("hidden");
+        reveal.setAttribute("aria-expanded", "true");
+        reveal.textContent = collapseLabel;
+      } else {
+        panel.setAttribute("hidden", "");
+        reveal.setAttribute("aria-expanded", "false");
+        reveal.textContent = expandLabel;
+      }
     }
   }
-  
-  // Renderizar otros talles
-  if (groups.others.length > 0) {
-    gridHTML += renderGroup(groups.others);
+}
+
+// Renderizar secciones + grillas compactas
+function renderSizeGrid(sizes) {
+  const body = document.getElementById("size-filter-body");
+  if (!body) {
+    console.error("size-filter-body no encontrado para renderizar grid");
+    return;
   }
-  
-  body.innerHTML = `<div class="size-filter-grid">${gridHTML}</div>`;
-  
-  // Event listeners para botones de talles
-  const sizeButtons = body.querySelectorAll('.size-filter-size-btn');
-  console.log('🔘 Botones de talles creados:', sizeButtons.length);
-  
-  sizeButtons.forEach(btn => {
-    btn.addEventListener('click', () => {
-      const size = btn.dataset.size;
-      toggleSize(size);
-      btn.classList.toggle('active');
-      console.log('📏 Talle toggled:', size, 'Seleccionados:', selectedSizes);
-    });
+
+  const category = tempCategoryForSizeFilter || getCurrentCategory() || "";
+  const sections = getSizeFilterSections(sizes, category);
+  if (sections.length === 0) {
+    body.innerHTML = '<div class="size-filter-empty">No hay talles disponibles</div>';
+    updateSizeFilterFooter();
+    return;
+  }
+
+  const parts = sections.map((sec) => {
+    const hasKidsStyle = sec.kidsStyle;
+    const doCollapse = sec.collapse && hasKidsStyle;
+    const grid =
+      sec.type === "ropaLetrasYEquiv"
+        ? buildRopaLetrasYEquivGridHtml(sec.entries)
+        : buildSizeOptionsGridHtml(sec.sizes);
+
+    if (doCollapse) {
+      const expandL = sec.revealExpandText || "Ver talles de niños";
+      const collapseL = sec.revealCollapseText || "Ocultar talles de niños";
+      return `
+        <section class="size-section size-section--ninos" data-key="${escHtml(sec.key)}">
+          <h3 class="size-section-title">${escHtml(sec.title)}</h3>
+          ${
+            sec.subtitle
+              ? `<p class="size-section-subtitle">${escHtml(sec.subtitle)}</p>`
+              : ""
+          }
+          <div class="size-kids-wrap">
+            <div class="size-kids-cta">
+              <button type="button" class="size-kids-reveal" aria-expanded="false" data-text-expand="${escDataAttr(expandL)}" data-text-collapse="${escDataAttr(collapseL)}">${escHtml(expandL)}</button>
+            </div>
+            <div class="size-kids-grid-wrap" hidden>
+              <div class="size-options-grid">${grid}</div>
+            </div>
+          </div>
+        </section>`;
+    }
+
+    return `
+      <section class="size-section" data-key="${escHtml(sec.key)}">
+        <h3 class="size-section-title">${escHtml(sec.title)}</h3>
+        ${
+          sec.subtitle
+            ? `<p class="size-section-subtitle">${escHtml(sec.subtitle)}</p>`
+            : ""
+        }
+        <div class="size-options-grid">${grid}</div>
+      </section>`;
   });
+
+  body.innerHTML = `<div class="size-filter-sections">${parts.join("")}</div>`;
+  updateSizeFilterFooter();
 }
 
 // Toggle selección de talle
 function toggleSize(size) {
+  const cat = tempCategoryForSizeFilter || getCurrentCategory() || "";
+  if (isRopaFilterCategoryName(cat)) {
+    const k = ropaSelectionKey(size);
+    const index = selectedSizes.findIndex((s) => ropaSelectionKey(s) === k);
+    if (index > -1) {
+      selectedSizes.splice(index, 1);
+    } else {
+      selectedSizes.push(size);
+    }
+    return;
+  }
   const index = selectedSizes.indexOf(size);
   if (index > -1) {
     selectedSizes.splice(index, 1);
@@ -639,29 +1103,26 @@ async function openSizeFilterModal() {
     console.error('Modal size-filter-modal no encontrado');
     return;
   }
-  
-  console.log('🔍 Abriendo modal de filtro de talles...');
-  
-  selectedSizes = [];
-  tempCategoryForSizeFilter = null;
-  
+
   const category = getCurrentCategory();
   const hasSearch = hasActiveSearch();
-  
-  console.log('📊 Estado actual:', { category, hasSearch });
-  
+  console.log('🔍 Talles: estado', { category, hasSearch });
+
+  if (!hasCategoryForSizeFilter()) {
+    showNeedCategoryFirstFeedback();
+    return;
+  }
+
+  const cat = String(category || '').trim();
+  selectedSizes = [];
+  tempCategoryForSizeFilter = cat;
+
   modal.classList.add('active');
   document.body.classList.add('modal-open');
-  
-  // Si no hay categoría activa (está en "Inicio/Todas"), mostrar selector
-  if (!category || category === 'all' || (!hasSearch && (category === 'Novedades' || category === 'Ofertas'))) {
-    console.log('📋 Mostrando selector de categoría');
-    renderCategorySelector();
-  } else {
-    // Cargar talles directamente
-    console.log('📏 Cargando talles para categoría:', category);
-    await loadSizesForCategory(category);
-  }
+  document.body.classList.add('size-filter-open');
+
+  console.log('📏 Cargando talles para categoría:', cat);
+  await loadSizesForCategory(cat);
 }
 
 // Cerrar modal
@@ -671,8 +1132,8 @@ function closeSizeFilterModal() {
     modal.classList.remove('active');
   }
   document.body.classList.remove('modal-open');
-  
-  // Si estaba en selector de categoría, limpiar estado temporal
+  document.body.classList.remove('size-filter-open');
+
   if (tempCategoryForSizeFilter && !sizeFilterActive) {
     tempCategoryForSizeFilter = null;
   }
@@ -752,7 +1213,7 @@ async function applySizeFilter() {
   closeSizeFilterModal();
   
   // Actualizar botones de filtro para indicar que está activo
-  setSizeFilterButtonsActiveState(true);
+  updateSizeFilterButtonsUI();
   if (typeof window !== "undefined") {
     window.__fylActiveSizeFilters = selectedSizes.slice();
   }
@@ -764,6 +1225,73 @@ async function applySizeFilter() {
 // Verificar si un producto tiene alguno de los talles seleccionados
 async function checkProductHasSizes(articulo, selectedSizesArray, category) {
   try {
+    if (isRopaFilterCategoryName(category)) {
+      const keySet = new Set();
+      for (const s of selectedSizesArray || []) {
+        const t = String(s).trim();
+        if (ROPA_PAIR_LABELS.has(t)) {
+          const pair = ROPA_UNIFIED_PAIRS.find((p) => p.label === t);
+          if (pair) {
+            pair.keys.forEach((k) => keySet.add(k));
+            continue;
+          }
+        }
+        const k = ropaTalleKey(t);
+        if (k) keySet.add(k);
+      }
+      if (keySet.size === 0) {
+        return false;
+      }
+      const { data: products, error: productError } = await supabase
+        .from("products")
+        .select("id, category")
+        .eq("name", articulo)
+        .eq("status", "active")
+        .limit(1);
+      if (productError || !products || products.length === 0) {
+        return false;
+      }
+      const product = products[0];
+      if (!doesCategoryMatchProduct(category, product.category)) {
+        return false;
+      }
+      const { data: variants, error: variantError } = await supabase
+        .from("product_variants")
+        .select("id")
+        .eq("product_id", product.id)
+        .eq("active", true);
+      if (variantError || !variants || variants.length === 0) {
+        return false;
+      }
+      const variantIds = variants.map((v) => v.id);
+      const { data: variantSizes, error: sizeError } = await supabase
+        .from("variant_sizes")
+        .select("size")
+        .in("variant_id", variantIds)
+        .gt("stock_qty", 0);
+      if (sizeError || !variantSizes || variantSizes.length === 0) {
+        return false;
+      }
+      for (const variantSize of variantSizes) {
+        const sizeRaw = variantSize.size?.trim();
+        if (!sizeRaw) continue;
+        if (sizeRaw.includes("/")) {
+          const parts = sizeRaw
+            .split("/")
+            .map((p) => p.trim())
+            .filter(Boolean);
+          for (const part of parts) {
+            const k = ropaTalleKey(part);
+            if (k && keySet.has(k)) return true;
+          }
+        } else {
+          const k = ropaTalleKey(sizeRaw);
+          if (k && keySet.has(k)) return true;
+        }
+      }
+      return false;
+    }
+
     const selectedNormalized = new Set(
       (selectedSizesArray || [])
         .map((size) => normalizeSize(size) || String(size || "").trim().toUpperCase())
@@ -883,7 +1411,7 @@ function clearSizeFilter() {
   }
   
   // Restaurar estilo de ambos botones (mobile + desktop)
-  setSizeFilterButtonsActiveState(false);
+  updateSizeFilterButtonsUI();
   if (typeof window !== "undefined") {
     window.__fylActiveSizeFilters = [];
   }
@@ -918,10 +1446,18 @@ function initSizeFilter() {
   }
   
   if (clearBtn) {
-    clearBtn.addEventListener('click', () => {
-      clearSizeFilter();
-      closeSizeFilterModal();
+    clearBtn.addEventListener("click", () => {
+      selectedSizes = [];
+      document
+        .querySelectorAll("#size-filter-body .size-option.is-selected")
+        .forEach((b) => b.classList.remove("is-selected"));
+      updateSizeFilterFooter();
     });
+  }
+
+  if (modal && !modal.dataset.fylSizeDelegate) {
+    modal.dataset.fylSizeDelegate = "1";
+    modal.addEventListener("click", handleSizeFilterModalClick);
   }
   
   // Cerrar con ESC
@@ -980,6 +1516,7 @@ if (typeof window !== 'undefined') {
   window.clearSizeFilter = clearSizeFilter;
   window.applySizeFilterFromURL = applySizeFilterFromURL;
   window.reapplyActiveSizeFilter = reapplyActiveSizeFilter;
+  window.updateSizeFilterButtonsUI = updateSizeFilterButtonsUI;
   fylDevLog("✅ Funciones de size-filter exportadas globalmente");
 }
 
@@ -989,9 +1526,11 @@ if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => {
     initSizeFilter();
     hookCambiarCategoria();
+    updateSizeFilterButtonsUI();
   });
 } else {
   initSizeFilter();
+  updateSizeFilterButtonsUI();
   // Ya cargado, ejecutar después de un breve delay
   setTimeout(hookCambiarCategoria, 500);
 }

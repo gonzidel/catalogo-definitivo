@@ -382,6 +382,42 @@ function mainImageFallback(imgEl) {
   } catch (_) {}
 }
 
+/** Texto seguro para insertar en HTML (badge, spans). */
+function fylEscapeHtmlText(str) {
+  return String(str ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/**
+ * Identificador único del header del PDP: "Art. {codigo}" si hay artículo;
+ * si no, una sola línea corta (sin descripción larga en el header).
+ */
+function formatPdpHeaderIdentifier(producto) {
+  const articulo = String(producto?.Articulo || "").trim();
+  if (articulo) {
+    return {
+      innerHtml: `Art. ${fylEscapeHtmlText(articulo)}`,
+      plainAlt: articulo,
+    };
+  }
+  const raw = String(producto?.Nombre || producto?.name || "")
+    .trim()
+    .replace(/\s+/g, " ");
+  const max = 28;
+  let compact = raw;
+  if (compact.length > max) {
+    compact = `${compact.slice(0, max - 1)}\u2026`;
+  }
+  const display = compact || "Producto";
+  return {
+    innerHtml: fylEscapeHtmlText(display),
+    plainAlt: display,
+  };
+}
+
 // Inicializar Supabase
 async function inicializarSupabase() {
   const setFail = (code, hint) => {
@@ -1193,31 +1229,35 @@ async function cargarCategoria(cat) {
         typeof window !== "undefined" && window.__FYL_BOOT_SUPPRESS_ROUTE === true;
 
       const runHomeExtras = async ({ includeFylBanner = true } = {}) => {
-        const paralelos = [];
-        if (includeFylBanner && typeof window.loadAndShowFYLBanner === "function") {
-          paralelos.push(Promise.resolve(window.loadAndShowFYLBanner()));
+        try {
+          const paralelos = [];
+          if (includeFylBanner && typeof window.loadAndShowFYLBanner === "function") {
+            paralelos.push(Promise.resolve(window.loadAndShowFYLBanner()));
+          }
+          if (
+            hashOk &&
+            !hayBusquedaActiva &&
+            !hayFiltroActivo &&
+            fylPendingHomeCustomBanner &&
+            typeof window.loadAndShowCustomBanner === "function"
+          ) {
+            fylPendingHomeCustomBanner = false;
+            paralelos.push(Promise.resolve(window.loadAndShowCustomBanner()));
+          } else {
+            fylPendingHomeCustomBanner = false;
+          }
+          if (typeof window.loadBanner === "function") {
+            paralelos.push(Promise.resolve(window.loadBanner()));
+          }
+          await Promise.allSettled(paralelos);
+          if (typeof window.showPromotionalBanner === "function") {
+            window.showPromotionalBanner();
+          }
+          syncInfoBannerVisibility();
+        } finally {
+          // Siempre liberar pending aunque falle un extra; si no, el loader local queda visible (mobile).
+          syncHomeTopSlotState({ pending: false });
         }
-        if (
-          hashOk &&
-          !hayBusquedaActiva &&
-          !hayFiltroActivo &&
-          fylPendingHomeCustomBanner &&
-          typeof window.loadAndShowCustomBanner === "function"
-        ) {
-          fylPendingHomeCustomBanner = false;
-          paralelos.push(Promise.resolve(window.loadAndShowCustomBanner()));
-        } else {
-          fylPendingHomeCustomBanner = false;
-        }
-        if (typeof window.loadBanner === "function") {
-          paralelos.push(Promise.resolve(window.loadBanner()));
-        }
-        await Promise.allSettled(paralelos);
-        if (typeof window.showPromotionalBanner === "function") {
-          window.showPromotionalBanner();
-        }
-        syncInfoBannerVisibility();
-        syncHomeTopSlotState({ pending: false });
       };
 
       const scheduleHomeExtrasPostBoot = (task, timeoutMs = 1200) => {
@@ -1425,7 +1465,15 @@ function syncHomeTopSlotState({ pending = false } = {}) {
   slot.classList.toggle("home-top-dynamic-slot--pending", shouldShow);
   const localLoader = document.getElementById("home-top-dynamic-loader");
   if (localLoader) {
-    localLoader.setAttribute("aria-hidden", shouldShow ? "false" : "true");
+    if (shouldShow) {
+      localLoader.removeAttribute("hidden");
+      localLoader.setAttribute("aria-hidden", "false");
+      localLoader.setAttribute("aria-busy", "true");
+    } else {
+      localLoader.setAttribute("hidden", "");
+      localLoader.setAttribute("aria-hidden", "true");
+      localLoader.setAttribute("aria-busy", "false");
+    }
   }
 }
 
@@ -1488,6 +1536,10 @@ async function renderizarProductosPagina(productos, container, offersCards = [],
       const isAboveFoldCard = isFirstChunk && productosRenderizadosEnEstaPagina <= 4;
       const imageLoading = isAboveFoldCard ? "eager" : "lazy";
       const imageFetchPriority = isAboveFoldCard ? ' fetchpriority="high"' : "";
+      const articuloBadgeCode = String(producto.Articulo || "").trim();
+      const catalogArtBadgeHtml = articuloBadgeCode
+        ? `Art. ${fylEscapeHtmlText(articuloBadgeCode)}`
+        : "";
 
       const productoHTML = `
         <div class="card producto"
@@ -1503,7 +1555,7 @@ async function renderizarProductosPagina(productos, container, offersCards = [],
                  alt="${producto.Articulo}"
                  data-sku="${skuDefecto || ''}"
                  ${fallbackUrlsAttr ? `data-fallback-urls="${fallbackUrlsAttr}" onerror="window.mainImageFallback&&window.mainImageFallback(this)"` : ""}/>
-            <div class="product-name-badge">${producto.Articulo || producto.Descripcion || 'Producto'}</div>
+            ${catalogArtBadgeHtml ? `<div class="product-name-badge product-art-badge">${catalogArtBadgeHtml}</div>` : ""}
           </div>
           <div class="image-loader"><div class="spinner"></div></div>
           ${renderOfferAndPromoBadges(producto)}
@@ -3282,13 +3334,14 @@ function refreshCatalogFilterBar() {
   const sizeFilters = getActiveSizeFilters();
   if (searchTerm) {
     renderTagFilterBar(searchTerm, { type: 'search', sizeFilters });
-    return;
-  }
-  if (sizeFilters.length > 0) {
+  } else if (sizeFilters.length > 0) {
     renderTagFilterBar(sizeFilters.join(", "), { type: 'size', sizeFilters });
-    return;
+  } else {
+    clearTagFilterBar();
   }
-  clearTagFilterBar();
+  if (typeof window.updateSizeFilterButtonsUI === 'function') {
+    window.updateSizeFilterButtonsUI();
+  }
 }
 
 async function clearAllCatalogFilters() {
@@ -3758,13 +3811,17 @@ function renderizarModalProducto(producto, colorSeleccionado, talleSeleccionado)
     ? parseARSNumber(offerPrice)
     : parseARSNumber(producto.Precio || 0);
 
+  const pdpHeaderId = formatPdpHeaderIdentifier(producto);
+
   const modalFooter = document.getElementById('product-modal-footer');
 
   modalBody.innerHTML = `
     <div class="pdp-header product-modal-header">
       <div class="pdp-header__row1">
         <button class="pdp-back product-modal-back" aria-label="Volver">←</button>
-        <div class="pdp-title product-modal-title"><span class="pdp-title__name">${(producto.Articulo || '').replace(/</g, '&lt;')}</span>${detalleColor?.color ? `<span class="pdp-title__sep">•</span><span class="pdp-title__color">${(detalleColor.color || '').replace(/</g, '&lt;')}</span>` : ''}</div>
+        <div class="pdp-header__title-col">
+          <div class="pdp-article-code">${pdpHeaderId.innerHtml}</div>
+        </div>
         <div class="pdp-price product-modal-price-container">${renderPriceWithOffer(producto)}</div>
         <button class="pdp-close product-modal-close-inner" aria-label="Cerrar">✕</button>
       </div>
@@ -3781,7 +3838,7 @@ function renderizarModalProducto(producto, colorSeleccionado, talleSeleccionado)
         <div class="pdp-main-image-wrap">
           <img class="product-modal-main-image" 
                src="${mainImgUrl}" 
-               alt="${producto.Articulo}"
+               alt="${String(pdpHeaderId.plainAlt).replace(/"/g, "&quot;")}"
                loading="eager"/>
         </div>
         <div class="pdp-thumbs">${gal}</div>
@@ -4581,30 +4638,6 @@ function initModalEvents() {
         const variantesHTML = renderizarVariantesModalPDP(productoActualEnModal, color, color);
         const variantsContainer = modal.querySelector('.product-modal-variants');
         if (variantsContainer) variantsContainer.innerHTML = variantesHTML;
-        const titleEl = modal.querySelector('.pdp-title') || modal.querySelector('.product-modal-title');
-        if (titleEl) {
-          const nameEl = titleEl.querySelector('.pdp-title__name');
-          const sepEl = titleEl.querySelector('.pdp-title__sep');
-          const colorEl = titleEl.querySelector('.pdp-title__color');
-          if (nameEl) nameEl.textContent = productoActualEnModal.Articulo || '';
-          if (color) {
-            if (!sepEl) {
-              const sep = document.createElement('span');
-              sep.className = 'pdp-title__sep';
-              sep.textContent = '•';
-              nameEl?.after(sep);
-            }
-            if (!colorEl) {
-              const col = document.createElement('span');
-              col.className = 'pdp-title__color';
-              col.textContent = color;
-              titleEl.querySelector('.pdp-title__sep')?.after(col);
-            } else colorEl.textContent = color;
-          } else {
-            sepEl?.remove();
-            colorEl?.remove();
-          }
-        }
         const colorLabelEl = modal.querySelector('.product-modal-color-label strong');
         if (colorLabelEl) colorLabelEl.textContent = color;
         const addBtn = modal.querySelector('.pdp-add-btn');
@@ -4745,7 +4778,7 @@ function initModalEvents() {
         const precioStr = modal.querySelector('.product-modal-price-container .price')?.textContent || modal.querySelector('.product-modal-price-container')?.textContent || '0';
         const precio = parseARSNumber(precioStr);
         const imagen = modal.querySelector('.product-modal-main-image')?.src || '';
-        const descripcion = (modal.querySelector('.pdp-title') || modal.querySelector('.product-modal-title'))?.textContent || '';
+        const descripcion = modal.querySelector('.pdp-article-code')?.textContent?.trim() || articulo || '';
 
         const detalleColor = productoActualEnModal?.DetalleColor?.find(d =>
           (d.color || "").trim().toLowerCase() === (color || "").trim().toLowerCase()
@@ -5023,7 +5056,7 @@ async function resetHomeState() {
   window.__quickFilter = null;
   clearTagFilterBar();
   // Desmarcar acciones rápidas (si el usuario venía desde una categoría/tag)
-  document.querySelectorAll(".quick-action-btn").forEach((btn) => btn.classList.remove("active"));
+  document.querySelectorAll(".quick-action-btn").forEach((btn) => btn.classList.remove("category-chip--active"));
 
   // Evitar recargar desde Supabase si ya estamos en "all" y no había filtros activos
   if (!isAlreadyAll) {
@@ -5320,9 +5353,9 @@ async function cambiarCategoria(cat) {
     refreshCatalogFilterBar();
   }
 
-  // Inicio (all): la barra móvil usa .quick-action-btn, no .menu; limpiar selección visual.
+  // Inicio (all): la barra móvil usa .quick-action-btn + .category-chip--active, no .menu; limpiar selección visual.
   if (cat === "all") {
-    document.querySelectorAll(".quick-action-btn").forEach((btn) => btn.classList.remove("active"));
+    document.querySelectorAll(".quick-action-btn").forEach((btn) => btn.classList.remove("category-chip--active"));
   }
 
   // Actualizar botón activo
@@ -5798,9 +5831,9 @@ async function inicializarCatalogo() {
         if (inicioBtn) {
           // Remover active de todos primero
           document.querySelectorAll(".quick-action-btn").forEach((btn) => {
-            btn.classList.remove("active");
+            btn.classList.remove("category-chip--active");
           });
-          inicioBtn.classList.add("active");
+          inicioBtn.classList.add("category-chip--active");
         }
       }, 100);
     }

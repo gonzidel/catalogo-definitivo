@@ -127,6 +127,7 @@ Nota de contexto: el usuario aclaro que los SQL analizados ya estan cargados y a
 | `05-FLUJO-PEDIDOS.md` | Bastante confiable | Ya refleja checkout cliente y `operation_id`, pero podria incorporar la parte de carrito persistente/localStorage y las rutas legacy. |
 | `06-FLUJO-CATALOGO.md` | Confiable en diagnostico general | Ya advierte que `client/cart.html` no parece ser el flujo principal. Ahora puede ampliarse con evidencia de `cart-persistent`. |
 | `99-AUDITORIA-DOCUMENTACION.md` | Confiable | Ya marca rutas de carrito multiples como riesgo documental. |
+| `21-CONTEXTO-AGENTE-HARDENING-2026-04.md` | Vigente (2026-04) | Handoff post-auditoria: fixes de `variant_id`, sync y slot superior del index; no contradice la auditoria, la actualiza en seccion 11. |
 
 ## 9. Riesgos prioritarios
 
@@ -143,3 +144,17 @@ Nota de contexto: el usuario aclaro que los SQL analizados ya estan cargados y a
 3. Documentar oficialmente que el flujo vivo es `scripts/cart-persistent.js` + `client/dashboard-instant.js` + `rpc_checkout_cart(uuid,jsonb)`.
 4. Decidir si `client/cart.html` queda como ruta activa o legacy; si queda legacy, documentarlo claramente y evitar que el checkout alternativo marque estados divergentes.
 5. Mantener `cart_items` con unique indexes activos por `cart_id,variant_id,size` para sostener idempotencia ante doble click/retry.
+
+## 11. Cambios posteriores a esta auditoria (2026-04, ya en codigo)
+
+La seccion 1 de esta nota declara **solo lectura** en la fecha de auditoria. **Despues** se aplicaron fixes en el frontend alineados con la regla de DB: `rpc_checkout_cart` exige `cart_items.variant_id` no nulo (ver `supabase/canonical/10_checkout_flow.sql` y delegacion en `124_*`).
+
+| Tema | Que se hizo | Donde |
+|---|---|---|
+| Sync a Supabase sin variante | No insertar/actualizar lineas si no se resuelve `variant_id` (`fetchVariantInfo` con `forceFresh`); evita filas null. | `scripts/cart-persistent.js` — `syncCartWithSupabase` |
+| Reparo al cargar dashboard | Tras leer `cart_items`, actualizar `variant_id` cuando el producto/talle permiten resolverlo. | `client/dashboard-instant.js` — `repairCartItemsMissingVariantIds` |
+| Duplicados | Al consolidar, resolver variante antes del `insert`; no insertar fila rota. | `cleanupDuplicateCartItems` en `client/dashboard-instant.js` |
+| Submit | Si queda item sin variante, alert y no llamar RPC; error RPC mapeado si el mensaje menciona “no tiene variante asociada”. | `submitCurrentCart` en `client/dashboard-instant.js` |
+| SQL diagnostico | `cart_items` **no** tiene columna `sku` en el esquema actual; listar con `where variant_id is null`. | (consultas manuales en Supabase) |
+
+Detalle, lista de archivos y trampas: [[21-CONTEXTO-AGENTE-HARDENING-2026-04]].

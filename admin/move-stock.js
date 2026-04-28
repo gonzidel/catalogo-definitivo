@@ -15,6 +15,8 @@ const searchSection = document.getElementById("search-section");
 const qrReaderModeEl = document.getElementById("qr-reader-mode");
 const qrReaderHint = document.getElementById("qr-reader-hint");
 const clearQrListBtn = document.getElementById("clear-qr-list-btn");
+const readerTotalBox = document.getElementById("reader-total-box");
+const readerTotalValue = document.getElementById("reader-total-value");
 
 let searchTimeout = null;
 let suggestionsTimeout = null;
@@ -26,11 +28,28 @@ const pendingMoves = new Map(); // key variantId::normalizedSize -> línea acumu
 let qrInputTimeout = null;
 let qrProcessingQueue = [];
 let isProcessingQr = false;
+const QR_MIN_DIGITS = 6;
+const QR_INPUT_DEBOUNCE_MS = 50;
+const QR_VARIANT_STOCK_CACHE_TTL_MS = 4000;
+const qrMetaCache = new Map(); // qr -> metadata|{notFound:true}
+const variantStockCache = new Map(); // variantId -> { at, data, sizeMap }
 
 const SEARCH_PLACEHOLDER_MANUAL =
   "Buscar producto por nombre, SKU, color o talle...";
 const SEARCH_PLACEHOLDER_READER =
   "Escaneá el código QR (producto + color + talle)...";
+
+function isCompleteReaderQr(value) {
+  const v = String(value ?? "").trim();
+  return /^\d+$/.test(v) && v.length >= QR_MIN_DIGITS;
+}
+
+function shouldAutoFocusMoveStockReaderInput() {
+  const isCoarsePointer = typeof window !== "undefined"
+    && typeof window.matchMedia === "function"
+    && window.matchMedia("(pointer: coarse)").matches;
+  return !isCoarsePointer;
+}
 
 function generateOperationId() {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -106,6 +125,24 @@ function setReaderModeUi(on) {
     clearQrListBtn.style.display =
       on && pendingMoves.size > 0 ? "inline-block" : "none";
   }
+  updateReaderTotalCounter();
+}
+
+function getPendingTotalUnits() {
+  return [...pendingMoves.values()].reduce((acc, line) => {
+    const qty = Number(line?.quantity || 0);
+    return acc + (Number.isFinite(qty) && qty > 0 ? qty : 0);
+  }, 0);
+}
+
+function updateReaderTotalCounter() {
+  if (!readerTotalBox || !readerTotalValue) return;
+  if (!isQrReaderMode) {
+    readerTotalBox.style.display = "none";
+    return;
+  }
+  readerTotalBox.style.display = "flex";
+  readerTotalValue.textContent = String(getPendingTotalUnits());
 }
 
 function updateQrResultsHeader() {
@@ -125,13 +162,44 @@ function getSourceStockFromRow(sizeRow) {
   return currentMode === "to_public" ? sizeRow.general : sizeRow.ventaPublico;
 }
 
+function clearMoveStockCaches() {
+  qrMetaCache.clear();
+  variantStockCache.clear();
+}
+
+function invalidateVariantStockCache(variantId) {
+  if (variantId === undefined || variantId === null) return;
+  variantStockCache.delete(String(variantId));
+}
+
+function getStockRowFromCacheEntry(cacheEntry, size) {
+  if (!cacheEntry?.sizeMap) return null;
+  return cacheEntry.sizeMap.get(normalizeSize(size)) || null;
+}
+
+async function getVariantStockCached(variantId, options = {}) {
+  const key = String(variantId);
+  const force = Boolean(options.force);
+  const now = Date.now();
+  const cached = variantStockCache.get(key);
+  if (!force && cached && now - cached.at <= QR_VARIANT_STOCK_CACHE_TTL_MS) {
+    return cached;
+  }
+  const data = await getVariantStock(variantId);
+  const sizeMap = new Map();
+  (data?.sizes || []).forEach((s) => {
+    sizeMap.set(normalizeSize(s.size), s);
+  });
+  const entry = { at: now, data, sizeMap };
+  variantStockCache.set(key, entry);
+  return entry;
+}
+
 async function refreshPendingMovesStock() {
   const entries = [...pendingMoves.values()];
   for (const line of entries) {
-    const stockData = await getVariantStock(line.variantId);
-    const sizeRow = (stockData.sizes || []).find(
-      (s) => normalizeSize(s.size) === normalizeSize(line.size)
-    );
+    const stockEntry = await getVariantStockCached(line.variantId, { force: true });
+    const sizeRow = getStockRowFromCacheEntry(stockEntry, line.size);
     line.sourceStock = getSourceStockFromRow(sizeRow);
   }
 }
@@ -140,6 +208,7 @@ function renderQrPendingList() {
   if (!isQrReaderMode) return;
 
   updateQrResultsHeader();
+  updateReaderTotalCounter();
 
   if (pendingMoves.size === 0) {
     resultsContainer.innerHTML = `
@@ -281,6 +350,7 @@ function onQrLineRemove(e) {
 }
 
 function addToQrQueue(qrCode) {
+  if (!isCompleteReaderQr(qrCode)) return;
   searchInput.value = "";
   qrProcessingQueue.push(qrCode);
   if (!isProcessingQr) {
@@ -304,68 +374,84 @@ async function processQrQueue() {
       "error"
     );
   }
-  setTimeout(() => processQrQueue(), 0);
+  queueMicrotask(() => processQrQueue());
 }
 
 async function processQrCodeForMoveStock(qrCode) {
-  const { data: sizeData, error: sizeError } = await supabase
-    .from("variant_sizes")
-    .select(`
-      variant_id,
-      size,
-      sku,
-      qr_code,
-      product_variants!inner (
-        id,
+  let qrMeta = qrMetaCache.get(qrCode);
+  if (!qrMeta) {
+    const { data: sizeData, error: sizeError } = await supabase
+      .from("variant_sizes")
+      .select(`
+        variant_id,
+        size,
         sku,
-        color,
-        active,
-        products!inner (
+        qr_code,
+        product_variants!inner (
           id,
-          name,
-          category,
-          status
+          sku,
+          color,
+          active,
+          products!inner (
+            id,
+            name,
+            category,
+            status
+          )
         )
-      )
-    `)
-    .eq("qr_code", qrCode)
-    .eq("product_variants.active", true)
-    .in("product_variants.products.status", ["active", "pending_stock", "draft"])
-    .maybeSingle();
+      `)
+      .eq("qr_code", qrCode)
+      .eq("product_variants.active", true)
+      .in("product_variants.products.status", ["active", "pending_stock", "draft"])
+      .maybeSingle();
 
-  if (sizeError) throw sizeError;
-  if (!sizeData || !sizeData.product_variants) {
+    if (sizeError) throw sizeError;
+    if (!sizeData || !sizeData.product_variants) {
+      qrMetaCache.set(qrCode, { notFound: true });
+      showMessage(`No se encontró el producto con el código QR "${qrCode}"`, "error");
+      return;
+    }
+
+    const pv = sizeData.product_variants;
+    const product = pv.products;
+    qrMeta = {
+      variantId: pv.id,
+      normalizedSize: normalizeSize(sizeData.size) || sizeData.size,
+      productName: product?.name || "",
+      color: pv.color || "",
+      sku: pv.sku || sizeData.sku || "",
+    };
+    qrMetaCache.set(qrCode, qrMeta);
+  }
+
+  if (qrMeta?.notFound) {
     showMessage(`No se encontró el producto con el código QR "${qrCode}"`, "error");
     return;
   }
 
-  const pv = sizeData.product_variants;
-  const product = pv.products;
-  const variantId = pv.id;
-  const normalizedSize = normalizeSize(sizeData.size) || sizeData.size;
-  const stockData = await getVariantStock(variantId);
-  const sizeRow = (stockData.sizes || []).find(
-    (s) => normalizeSize(s.size) === normalizeSize(normalizedSize)
-  );
+  const variantId = qrMeta.variantId;
+  const normalizedSize = qrMeta.normalizedSize;
+  const stockEntry = await getVariantStockCached(variantId);
+  const sizeRow = getStockRowFromCacheEntry(stockEntry, normalizedSize);
   const sourceStock = getSourceStockFromRow(sizeRow);
 
   const key = pendingLineKey(variantId, normalizedSize);
-  const sku = pv.sku || sizeData.sku || "";
+  const sku = qrMeta.sku;
 
   if (pendingMoves.has(key)) {
     const line = pendingMoves.get(key);
     line.quantity += 1;
     line.sourceStock = sourceStock;
     line.sku = sku;
-    line.productName = product.name;
-    line.color = pv.color || "";
+    line.productName = qrMeta.productName;
+    line.color = qrMeta.color;
   } else {
     pendingMoves.set(key, {
       key,
       variantId,
       size: normalizedSize,
-      productName: product.name,
-      color: pv.color || "",
+      productName: qrMeta.productName,
+      color: qrMeta.color,
       sku,
       quantity: 1,
       sourceStock,
@@ -374,7 +460,7 @@ async function processQrCodeForMoveStock(qrCode) {
 
   renderQrPendingList();
   setReaderModeUi(true);
-  searchInput.focus();
+  if (shouldAutoFocusMoveStockReaderInput()) searchInput.focus();
 }
 
 async function handleMoveQrLineClick(e) {
@@ -443,6 +529,7 @@ async function handleMoveQrLineClick(e) {
     );
 
     pendingMoves.delete(key);
+    invalidateVariantStockCache(variantId);
     await refreshPendingMovesStock();
     renderQrPendingList();
     setReaderModeUi(true);
@@ -534,6 +621,7 @@ async function handleMoveQrPendingAll() {
           successCount++;
           const k = pendingLineKey(item.variantId, item.size);
           pendingMoves.delete(k);
+          invalidateVariantStockCache(item.variantId);
         } else {
           errorCount++;
           console.error(
@@ -549,6 +637,9 @@ async function handleMoveQrPendingAll() {
     }
 
     if (successCount > 0) {
+      if (errorCount === 0) {
+        qrMetaCache.clear();
+      }
       showMessage(
         `✅ Se movieron ${successCount} línea(s)${errorCount > 0 ? ` (${errorCount} error(es))` : ""}`,
         errorCount > 0 ? "error" : "success"
@@ -1359,10 +1450,10 @@ searchInput.addEventListener("input", (e) => {
     qrInputTimeout = setTimeout(() => {
       const current = searchInput.value.trim();
       if (!current) return;
-      if (/^\d+$/.test(current)) {
+      if (isCompleteReaderQr(current)) {
         addToQrQueue(current);
       }
-    }, 150);
+    }, QR_INPUT_DEBOUNCE_MS);
     return;
   }
 
@@ -1395,7 +1486,7 @@ searchInput.addEventListener("keydown", (e) => {
     e.preventDefault();
     clearTimeout(qrInputTimeout);
     const v = searchInput.value.trim();
-    if (/^\d+$/.test(v)) {
+    if (isCompleteReaderQr(v)) {
       addToQrQueue(v);
     }
   }
@@ -1630,9 +1721,12 @@ if (qrReaderModeEl) {
       clearTimeout(searchTimeout);
       clearTimeout(suggestionsTimeout);
       clearTimeout(qrInputTimeout);
+      qrProcessingQueue = [];
+      isProcessingQr = false;
       renderQrPendingList();
-      searchInput.focus();
+      if (shouldAutoFocusMoveStockReaderInput()) searchInput.focus();
     } else {
+      clearMoveStockCaches();
       const term = searchInput.value.trim();
       if (term.length >= 2) {
         searchProducts(term);
@@ -1654,9 +1748,11 @@ if (clearQrListBtn) {
     ev.preventDefault();
     ev.stopPropagation();
     pendingMoves.clear();
+    qrProcessingQueue = [];
+    isProcessingQr = false;
     renderQrPendingList();
     setReaderModeUi(true);
-    searchInput.focus();
+    if (shouldAutoFocusMoveStockReaderInput()) searchInput.focus();
   });
 }
 

@@ -233,6 +233,141 @@
     .mobile-stock-summary-item span{font-size:13px;color:#374151}
     .mobile-stock-note{font-size:12px;color:#555;margin-top:8px}
 
+    /* Modo lector (reconteo QR) — solo wizard móvil */
+    .mobile-stock-lector-toggle{
+      display:flex;
+      align-items:center;
+      gap:8px;
+      margin-bottom:10px;
+      font-size:13px;
+      font-weight:600;
+      color:#374151;
+      cursor:pointer;
+      user-select:none;
+    }
+    .mobile-stock-lector-toggle input{
+      width:18px;
+      height:18px;
+      accent-color:var(--primary);
+      cursor:pointer;
+    }
+    .mobile-stock-total-counter{
+      border:1px solid #d7d5cc;
+      border-radius:12px;
+      background:#f6f5f1;
+      padding:10px 12px;
+      margin:0 0 10px;
+      display:flex;
+      align-items:baseline;
+      justify-content:space-between;
+      gap:12px;
+    }
+    .mobile-stock-total-counter-label{
+      font-size:12px;
+      font-weight:700;
+      color:#4b5563;
+      text-transform:uppercase;
+      letter-spacing:.03em;
+    }
+    .mobile-stock-total-counter-value{
+      font-size:30px;
+      font-weight:800;
+      line-height:1;
+      color:#111827;
+      font-variant-numeric:tabular-nums;
+    }
+    .mobile-stock-lector-panel{margin-bottom:10px}
+    .mobile-stock-lector-search-row{
+      display:flex;
+      gap:8px;
+      align-items:stretch;
+      margin-bottom:8px;
+    }
+    .mobile-stock-lector-input{
+      flex:1;
+      min-width:0;
+      padding:11px 12px;
+      border:1px solid var(--line-strong);
+      border-radius:10px;
+      font-size:16px;
+      font-weight:600;
+      background:#fff;
+      box-sizing:border-box;
+    }
+    .mobile-stock-lector-reset{
+      flex-shrink:0;
+      min-height:44px;
+      padding:8px 12px;
+      font-size:13px;
+      font-weight:700;
+      border-radius:10px;
+      border:1px solid var(--line-strong);
+      background:#f5f4f1;
+      cursor:pointer;
+    }
+    .mobile-stock-lector-reset:hover{background:#eceae5}
+    .mobile-stock-lector-status{
+      margin:0 0 10px;
+      min-height:1.2em;
+      font-size:12px;
+      line-height:1.35;
+      color:#555;
+    }
+    .mobile-stock-lector-status.is-error{color:var(--danger);font-weight:600}
+    .mobile-stock-lector-status.is-success{color:var(--primary);font-weight:600}
+    .mobile-stock-lector-grid{
+      display:grid;
+      grid-template-columns:repeat(auto-fit,minmax(64px,1fr));
+      gap:8px;
+      margin-bottom:6px;
+    }
+    .mobile-stock-lector-cell{
+      border:1px solid #d6d6d6;
+      border-radius:10px;
+      padding:8px 6px;
+      background:#fff;
+      text-align:center;
+      transition:background .15s,border-color .15s;
+    }
+    .mobile-stock-lector-cell.has-scans{
+      border-color:#9ab89f;
+      background:#f0f7f1;
+    }
+    @keyframes mobileStockLectorPulse{
+      0%{box-shadow:0 0 0 0 rgba(20,83,45,.45)}
+      100%{box-shadow:0 0 0 10px rgba(20,83,45,0)}
+    }
+    .mobile-stock-lector-cell.last-scanned{
+      animation:mobileStockLectorPulse .45s ease-out 1;
+    }
+    .mobile-stock-lector-cell-size{
+      font-size:16px;
+      font-weight:800;
+      line-height:1.1;
+      margin-bottom:6px;
+      color:#111;
+    }
+    .mobile-stock-lector-cell-count{
+      width:100%;
+      box-sizing:border-box;
+      text-align:center;
+      font-size:18px;
+      font-weight:700;
+      padding:6px 4px;
+      border:1px solid #d4d4d4;
+      border-radius:8px;
+      background:#fafaf8;
+    }
+    .mobile-stock-lector-cell-count::-webkit-outer-spin-button,
+    .mobile-stock-lector-cell-count::-webkit-inner-spin-button{
+      -webkit-appearance:none;
+      margin:0;
+    }
+    .mobile-stock-lector-cell-count{
+      -moz-appearance:textfield;
+      appearance:textfield;
+    }
+
     @media (max-width:767px){
       #incomplete-alert{display:none!important}
       .stock-nav{display:none}
@@ -346,7 +481,7 @@
         <div class="stock-title-group">
           <h1>Control de Stock</h1>
           <a href="./index.html" class="stock-back-link">← Volver al panel</a>
-          <span id="stock-build-version" class="stock-build-version">html-m260420</span>
+          <span id="stock-build-version" class="stock-build-version">html-m270426</span>
         </div>
         <nav class="stock-nav" aria-label="Navegación admin">
           <a href="./products.html" class="stock-nav-link">Productos</a>
@@ -585,16 +720,41 @@
 
       <section id="mobile-stock-step-size" class="mobile-stock-step">
         <span id="mobile-stock-mode-tag" class="mobile-stock-mode-tag"></span>
+        <label id="mobile-stock-lector-toggle" class="mobile-stock-lector-toggle" hidden>
+          <input type="checkbox" id="mobile-stock-lector-checkbox" />
+          <span>Modo lector (reconteo por QR)</span>
+        </label>
+        <div id="mobile-stock-total-counter" class="mobile-stock-total-counter" aria-live="polite">
+          <span class="mobile-stock-total-counter-label">Total sumado</span>
+          <strong id="mobile-stock-total-counter-value" class="mobile-stock-total-counter-value">0</strong>
+        </div>
         <div class="mobile-stock-step-count" id="mobile-stock-step-count">Talle 1 de 1</div>
         <div id="mobile-stock-size-jump" class="mobile-stock-size-jump"></div>
-        <div class="mobile-stock-size-box">
+        <div id="mobile-stock-size-box" class="mobile-stock-size-box">
           <div id="mobile-stock-size-value" class="mobile-stock-size-value">36</div>
           <div id="mobile-stock-size-meta" class="mobile-stock-size-meta">Stock actual: 0</div>
         </div>
-        <div class="mobile-stock-qty-controls">
+        <div id="mobile-stock-qty-controls" class="mobile-stock-qty-controls">
           <button id="mobile-stock-minus" class="mobile-stock-qty-btn" type="button">-</button>
           <input id="mobile-stock-qty-input" class="mobile-stock-qty-input" type="number" min="0" step="1" value="0" inputmode="numeric" pattern="[0-9]*" enterkeyhint="done" />
           <button id="mobile-stock-plus" class="mobile-stock-qty-btn" type="button">+</button>
+        </div>
+        <div id="mobile-stock-lector-panel" class="mobile-stock-lector-panel" hidden>
+          <div class="mobile-stock-lector-search-row">
+            <input
+              id="mobile-stock-lector-input"
+              class="mobile-stock-lector-input"
+              type="text"
+              inputmode="numeric"
+              autocomplete="off"
+              autocorrect="off"
+              spellcheck="false"
+              placeholder="Escaneá QR..."
+            />
+            <button id="mobile-stock-lector-reset" type="button" class="mobile-stock-lector-reset">Reiniciar</button>
+          </div>
+          <p id="mobile-stock-lector-status" class="mobile-stock-lector-status" aria-live="polite"></p>
+          <div id="mobile-stock-lector-grid" class="mobile-stock-lector-grid"></div>
         </div>
         <div class="mobile-stock-nav">
           <button id="mobile-stock-back" type="button">Atras</button>

@@ -90,6 +90,26 @@ function abbreviateColorLabel(raw) {
   return s.slice(0, 5) + "..";
 }
 
+/**
+ * Inserción segura: `referenceNode` debe ser hijo directo de `parent`.
+ * Evita "The node before which the new node is to be inserted is not a child of this node."
+ */
+function safeInsertBefore(parent, newNode, referenceNode, fallback = "append") {
+  if (!parent || !newNode) return;
+  if (referenceNode && referenceNode.parentNode === parent) {
+    parent.insertBefore(newNode, referenceNode);
+    return;
+  }
+  if (referenceNode) {
+    console.warn("[dashboard] safeInsertBefore fallback", { parent, referenceNode });
+  }
+  if (fallback === "prepend") {
+    parent.prepend(newNode);
+  } else {
+    parent.appendChild(newNode);
+  }
+}
+
 // PDP real del catálogo usa hash route: index.html#/pdp/<SKU>
 const __variantSkuCache = new Map(); // variant_id -> sku (string)
 /** Precio de catálogo por variante (para corregir price_snapshot corrupto en pedidos) */
@@ -844,12 +864,15 @@ function insertInlineOrderFeedback(orderCard, opts) {
   `;
 
   const insertAfterNode = orderCard.querySelector(".dash-order__head--compact");
-  if (insertAfterNode?.nextSibling) {
-    orderCard.insertBefore(feedback, insertAfterNode.nextSibling);
-  } else if (insertAfterNode) {
-    orderCard.appendChild(feedback);
+  if (insertAfterNode) {
+    const headParent = insertAfterNode.parentNode;
+    if (headParent) {
+      safeInsertBefore(headParent, feedback, insertAfterNode.nextSibling, "append");
+    } else {
+      safeInsertBefore(orderCard, feedback, null, "append");
+    }
   } else {
-    orderCard.prepend(feedback);
+    safeInsertBefore(orderCard, feedback, null, "prepend");
   }
 }
 
@@ -2706,6 +2729,16 @@ async function submitCurrentCart() {
       return;
     }
 
+    const hasMissingVariantId = (currentCartItems || []).some(
+      (it) => it.variant_id == null || it.variant_id === ""
+    );
+    if (hasMissingVariantId) {
+      alert(
+        "Hay un producto del carrito que ya no está disponible o necesita actualizarse. Eliminá ese producto y volvé a intentar."
+      );
+      return;
+    }
+
     // Confirmar con el usuario cuántos productos quiere enviar
     const totalUnits = (currentCartItems || []).reduce(
       (sum, item) => sum + (Number(item.quantity) || 0),
@@ -2861,6 +2894,10 @@ async function submitCurrentCart() {
         console.warn("🚫 [checkout] operation_id_conflict — carrito modificado entre intentos. Reseteando operation_id.");
         _checkoutOperationId = null;
         alert("El carrito cambió entre intentos. Por favor, intentá nuevamente.");
+      } else if (/no tiene variante asociada/i.test(errMsg)) {
+        alert(
+          "Hay un producto del carrito que ya no está disponible o necesita actualizarse. Eliminá ese producto y volvé a intentar."
+        );
       } else {
         console.error("❌ [checkout] Error enviando pedido:", error);
         alert(error.message || "No se pudo enviar el pedido. Intenta nuevamente.");
@@ -3576,6 +3613,25 @@ async function cleanupDuplicateCartItems(cartId, items) {
         group.duplicates
       );
 
+      let resolvedVariantId = primary.variant_id;
+      if (resolvedVariantId == null || resolvedVariantId === "") {
+        const vi = await fetchVariantInfo(
+          primary.product_name,
+          primary.color || "Único",
+          primary.size,
+          null,
+          { forceFresh: true }
+        );
+        resolvedVariantId = vi?.id || null;
+      }
+      if (!resolvedVariantId) {
+        console.warn(
+          "No se pudo consolidar duplicados: falta variant_id resoluble para",
+          primary?.product_name
+        );
+        continue;
+      }
+
       // Insertar la fila consolidada ANTES de borrar las duplicadas.
       // Si el insert falla, no borramos: evita carrito vacío en DB con UI mostrando ítems fantasma.
       const { error: insertError } = await supabase.from("cart_items").insert({
@@ -3588,7 +3644,7 @@ async function cleanupDuplicateCartItems(cartId, items) {
         price_snapshot: primary.price_snapshot,
         status: primary.status || "reserved",
         imagen: primary.imagen || null,
-        variant_id: primary.variant_id || null,
+        variant_id: resolvedVariantId,
       });
 
       if (insertError) {
@@ -3618,6 +3674,35 @@ async function cleanupDuplicateCartItems(cartId, items) {
   }
 
   return cleaned;
+}
+
+/**
+ * Líneas sin variant_id hacen fallar rpc_checkout_cart. Origen típico: sync con carrito
+ * local (invitado) o filas antiguas. Intenta resolver y persistir variant_id.
+ */
+async function repairCartItemsMissingVariantIds(_cartId, items) {
+  if (!Array.isArray(items) || !items.length) return;
+  for (const row of items) {
+    if (!row || (row.variant_id != null && row.variant_id !== "")) continue;
+    const vi = await fetchVariantInfo(
+      row.product_name,
+      row.color || "Único",
+      row.size,
+      null,
+      { forceFresh: true }
+    );
+    if (!vi?.id) {
+      fylDevLog("⚠️ [dashboard] No se pudo reparar variant_id para", row.id, row.product_name);
+      continue;
+    }
+    const { error } = await supabase
+      .from("cart_items")
+      .update({ variant_id: vi.id })
+      .eq("id", row.id);
+    if (!error) {
+      row.variant_id = vi.id;
+    }
+  }
 }
 
 async function loadCart(userId, options = {}) {
@@ -3723,6 +3808,8 @@ async function loadCart(userId, options = {}) {
     }
 
     cartItems = cartItems || [];
+
+    await repairCartItemsMissingVariantIds(cart.id, cartItems);
 
     const cleaned = await cleanupDuplicateCartItems(cart.id, cartItems);
     if (cleaned) {
@@ -5622,7 +5709,7 @@ function showError(message) {
         </div>
       </div>
     `;
-    dashboardContent.insertBefore(messageDiv, dashboardContent.firstChild);
+    safeInsertBefore(dashboardContent, messageDiv, dashboardContent.firstChild, "prepend");
   }
 
 /** Primer nombre para el saludo corto del header: "Cuenta de [nombre]" */

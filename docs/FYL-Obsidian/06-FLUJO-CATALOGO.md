@@ -2,6 +2,8 @@
 
 Esta nota resume catalogo, PDP y carrito. Para el detalle real de carrito/checkout, ver [[19-AUDITORIA-MODULO-CLIENTE-CARRITO]].
 
+**Hardening 2026-04 (overlay, primer paint, slot superior del home, red/abort, PDP):** ver [[21-CONTEXTO-AGENTE-HARDENING-2026-04]].
+
 ## Carga de productos
 
 - Entrada principal: `index.html`.
@@ -46,6 +48,7 @@ Flujo vivo:
 
 ## Enlaces
 
+- [[21-CONTEXTO-AGENTE-HARDENING-2026-04]]
 - [[19-AUDITORIA-MODULO-CLIENTE-CARRITO]]
 - [[03-MAPA-DE-RPCS]]
 - [[04-FLUJO-STOCK]]

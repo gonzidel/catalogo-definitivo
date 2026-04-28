@@ -360,6 +360,25 @@
     .btn-danger-ghost:hover:not(:disabled) {
       background: #ffe0e0;
     }
+    .reader-total-box {
+      display: none;
+      margin: 0 0 12px auto;
+      width: 84px;
+      height: 84px;
+      padding: 0;
+      border: 2px solid #d7d5cc;
+      border-radius: 10px;
+      background: #f6f5f1;
+      align-items: center;
+      justify-content: center;
+    }
+    .reader-total-value {
+      font-size: 42px;
+      font-weight: 800;
+      line-height: 1;
+      color: #15803d;
+      font-variant-numeric: tabular-nums;
+    }
   </style>
 </head>
 <body>
@@ -381,6 +400,9 @@
           <input type="checkbox" id="qr-reader-mode" />
           Modo lector QR
         </label>
+        <div id="reader-total-box" class="reader-total-box" aria-live="polite">
+          <strong id="reader-total-value" class="reader-total-value">0</strong>
+        </div>
       </div>
       <input 
         type="text" 

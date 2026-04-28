@@ -10,12 +10,15 @@ Fuentes de verdad, en orden:
 4. Mapas generales 01-13.
 5. Documentacion historica o comentarios sueltos.
 
+**Saneamiento stock/pedidos/ventas (índice dedicado):** [[00-INDICE]] (notas `01-` a `10-`, `99-AUDITORIA-FINAL`); complementa los mapas `01-13` y no sustituye `docs/STOCK_GOVERNANCE.md` / `docs/RUNBOOK.md` en el repo.
+
 Nota importante: el usuario confirmo que los SQL analizados ya estan cargados y activos en Supabase. Cuando se menciona riesgo de versionado, se refiere a mantenimiento/documentacion futura, no a una afirmacion de falta de deploy.
 
 ## Indice principal
 
 | # | Archivo | Contenido |
 |---|---|---|
+| 0 | [[00-INDICE]] | Saneamiento técnico: resumen, checklist, enlaces 01-11, 99 final |
 | 1 | [[01-ARQUITECTURA-GENERAL]] | Estructura del repo, hosting, entradas |
 | 2 | [[02-MAPA-DE-TABLAS]] | Tablas clave, riesgo y referencias |
 | 3 | [[03-MAPA-DE-RPCS]] | RPCs y funciones SQL llamadas o historicas |
@@ -29,6 +32,8 @@ Nota importante: el usuario confirmo que los SQL analizados ya estan cargados y 
 | 11 | [[11-DECISIONES-TECNICAS]] | Decisiones tecnicas registradas |
 | 12 | [[12-CHECKLIST-CAMBIOS-FUTUROS]] | Checklist para cambios |
 | 13 | [[13-RPCS-DEPLOY-STATE]] | Registro de version/firma activa de RPCs |
+| 21 | [[21-CONTEXTO-AGENTE-HARDENING-2026-04]] | Handoff agente: hardening UX/red/auth, index top, carrito `variant_id` |
+| 99a | [[99-AUDITORIA-FINAL]] | Verificacion final saneamiento (grep, SQL, cierre vs backlog) |
 | 99 | [[99-AUDITORIA-DOCUMENTACION]] | Auditoria meta de la documentacion |
 
 ## Workflows e integraciones
@@ -49,6 +54,8 @@ Estas notas son la referencia mas reciente por modulo:
 | Orders | [[17-AUDITORIA-MODULO-ORDERS]] |
 | Public Sales | [[18-AUDITORIA-MODULO-PUBLIC-SALES]] |
 | Cliente/Carrito | [[19-AUDITORIA-MODULO-CLIENTE-CARRITO]] |
+
+**Contexto operativo (2026-04):** [[21-CONTEXTO-AGENTE-HARDENING-2026-04]] resume cambios de código y trampas comunes (no sustituye auditorias 14-19; las complementa cuando hubo refactor en el mismo periodo).
 
 ## Regla de lectura
 

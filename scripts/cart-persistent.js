@@ -1024,6 +1024,29 @@ async function syncCartWithSupabase(options = {}) {
           }
         }
 
+        // Sin variant_id el checkout falla (rpc_checkout_cart). Resolución p. ej. tras login con carrito local sin variant.
+        let resolvedVariantId = item.variant_id || null;
+        if (!resolvedVariantId) {
+          const vi = await fetchVariantInfo(
+            item.articulo,
+            item.color || "Único",
+            item.talle ?? item.size,
+            null,
+            { forceFresh: true }
+          );
+          if (vi?.id) {
+            resolvedVariantId = vi.id;
+            item.variant_id = vi.id;
+          }
+        }
+        if (!resolvedVariantId) {
+          fylDevLog(
+            "⚠️ [cart sync] Se omite línea: no se pudo resolver variant_id para",
+            getCartItemKey(item)
+          );
+          continue;
+        }
+
         const payload = {
           cart_id: cartId,
           product_name: item.articulo,
@@ -1034,7 +1057,7 @@ async function syncCartWithSupabase(options = {}) {
           price_snapshot: Number(item.precio) || 0,
           status: "reserved",
           imagen: imagen || null,
-          variant_id: item.variant_id || null,
+          variant_id: resolvedVariantId,
         };
 
         if (payload.variant_id) {

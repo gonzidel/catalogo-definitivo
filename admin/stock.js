@@ -154,6 +154,17 @@ const mobileNextBtn = document.getElementById("mobile-stock-next");
 const mobileSummaryList = document.getElementById("mobile-stock-summary-list");
 const mobileSummaryBackBtn = document.getElementById("mobile-stock-summary-back");
 const mobileSaveBtn = document.getElementById("mobile-stock-save");
+const mobileLectorToggle = document.getElementById("mobile-stock-lector-toggle");
+const mobileLectorCheckbox = document.getElementById("mobile-stock-lector-checkbox");
+const mobileLectorPanel = document.getElementById("mobile-stock-lector-panel");
+const mobileLectorInput = document.getElementById("mobile-stock-lector-input");
+const mobileLectorReset = document.getElementById("mobile-stock-lector-reset");
+const mobileLectorStatus = document.getElementById("mobile-stock-lector-status");
+const mobileLectorGrid = document.getElementById("mobile-stock-lector-grid");
+const mobileStockSizeBox = document.getElementById("mobile-stock-size-box");
+const mobileStockQtyControls = document.getElementById("mobile-stock-qty-controls");
+const mobileStockTotalCounter = document.getElementById("mobile-stock-total-counter");
+const mobileStockTotalCounterValue = document.getElementById("mobile-stock-total-counter-value");
 
 let allData = [];
 const pendingChanges = new Map(); // id -> { stock_general, stock_venta_publico, price, active }
@@ -167,7 +178,7 @@ let activeSearchRequest = 0;
 let isStockUiReady = true;
 let stockLoadingWatchdog = null;
 let mobileKeyboardViewportListenersBound = false;
-const STOCK_BUILD_VERSION = "build-m260420";
+const STOCK_BUILD_VERSION = "build-m270426";
 const MOBILE_STOCK_BREAKPOINT = 767;
 const AUTH_SLOW_NOTICE_MS = 8000;
 const SEARCH_LOAD_TIMEOUT_MS = 15000;
@@ -201,7 +212,30 @@ const mobileWizardState = {
   mode: null,
   currentIndex: 0,
   values: new Map(),
+  lectorActive: false,
 };
+
+let mobileLectorInputTimeout = null;
+let mobileLectorLastFlashTimeout = null;
+let mobileLectorScanQueue = [];
+let mobileLectorIsProcessingQueue = false;
+const MOBILE_LECTOR_MIN_DIGITS = 6;
+const mobileLectorRowMap = new Map();
+const mobileLectorSizeMap = new Map();
+const mobileLectorQrMap = new Map();
+const mobileLectorCellMap = new Map();
+
+function isCompleteMobileLectorCode(raw) {
+  const code = String(raw ?? "").trim();
+  return /^\d+$/.test(code) && code.length >= MOBILE_LECTOR_MIN_DIGITS;
+}
+
+function shouldAutoFocusMobileLectorInput() {
+  const isCoarsePointer = typeof window !== "undefined"
+    && typeof window.matchMedia === "function"
+    && window.matchMedia("(pointer: coarse)").matches;
+  return !isCoarsePointer;
+}
 
 if (stockBuildVersionEl) {
   stockBuildVersionEl.textContent = STOCK_BUILD_VERSION;
@@ -1357,6 +1391,58 @@ function resetMobileWizardState() {
   mobileWizardState.mode = null;
   mobileWizardState.currentIndex = 0;
   mobileWizardState.values = new Map();
+  mobileWizardState.lectorActive = false;
+  mobileLectorRowMap.clear();
+  mobileLectorSizeMap.clear();
+  mobileLectorQrMap.clear();
+  mobileLectorCellMap.clear();
+  mobileLectorScanQueue = [];
+  mobileLectorIsProcessingQueue = false;
+}
+
+function clearMobileLectorUi() {
+  if (mobileLectorInputTimeout) {
+    clearTimeout(mobileLectorInputTimeout);
+    mobileLectorInputTimeout = null;
+  }
+  if (mobileLectorLastFlashTimeout) {
+    clearTimeout(mobileLectorLastFlashTimeout);
+    mobileLectorLastFlashTimeout = null;
+  }
+  if (mobileLectorCheckbox) mobileLectorCheckbox.checked = false;
+  if (mobileLectorInput) mobileLectorInput.value = "";
+  if (mobileLectorStatus) {
+    mobileLectorStatus.textContent = "";
+    mobileLectorStatus.classList.remove("is-error", "is-success");
+  }
+  if (mobileLectorGrid) mobileLectorGrid.innerHTML = "";
+  if (mobileLectorPanel) mobileLectorPanel.hidden = true;
+  mobileLectorCellMap.clear();
+  mobileLectorScanQueue = [];
+  mobileLectorIsProcessingQueue = false;
+}
+
+function setMobileLectorStatus(message, kind) {
+  if (!mobileLectorStatus) return;
+  mobileLectorStatus.textContent = message || "";
+  mobileLectorStatus.classList.remove("is-error", "is-success");
+  if (kind === "error") mobileLectorStatus.classList.add("is-error");
+  else if (kind === "success") mobileLectorStatus.classList.add("is-success");
+}
+
+function getMobileTotalCount() {
+  return mobileWizardState.rows.reduce((acc, row) => {
+    const n = Number(mobileWizardState.values.get(row.rowId) || 0);
+    return acc + (Number.isFinite(n) && n > 0 ? n : 0);
+  }, 0);
+}
+
+function renderMobileTotalCounter() {
+  if (!mobileStockTotalCounterValue) return;
+  mobileStockTotalCounterValue.textContent = String(getMobileTotalCount());
+  if (mobileStockTotalCounter) {
+    mobileStockTotalCounter.hidden = !mobileWizardState.rows.length;
+  }
 }
 
 function setMobileModeTag(element, mode) {
@@ -1387,6 +1473,37 @@ function buildMobileVariantRows(productId, variantId) {
   return rows;
 }
 
+function rebuildMobileLectorRowIndexes() {
+  mobileLectorRowMap.clear();
+  mobileLectorSizeMap.clear();
+  mobileWizardState.rows.forEach((row) => {
+    const rowId = String(row.rowId ?? "");
+    mobileLectorRowMap.set(rowId, row);
+    mobileLectorSizeMap.set(normalizeSize(row.size), row);
+  });
+}
+
+async function preloadMobileLectorQrCache() {
+  const variantId = mobileWizardState.variantId;
+  if (!variantId) return;
+  const { data, error } = await supabase
+    .from("variant_sizes")
+    .select("qr_code, size")
+    .eq("variant_id", variantId)
+    .not("qr_code", "is", null);
+  if (error) {
+    console.warn("[stock] No se pudo precargar cache QR lector:", error);
+    return;
+  }
+  for (const item of data || []) {
+    const qr = String(item?.qr_code ?? "").trim();
+    if (!qr) continue;
+    const row = mobileLectorSizeMap.get(normalizeSize(item?.size));
+    if (!row) continue;
+    mobileLectorQrMap.set(qr, String(row.rowId ?? ""));
+  }
+}
+
 function getCurrentWarehouseStock(row, field) {
   const uniqueKey = row.rowId || `${row.id}_${row.size || "null"}`;
   const pending = pendingChanges.get(uniqueKey);
@@ -1411,6 +1528,7 @@ function openMobileStockWizard(productId, variantId) {
   mobileWizardState.productId = productId;
   mobileWizardState.variantId = variantId;
   mobileWizardState.rows = rows;
+  rebuildMobileLectorRowIndexes();
   const productName = rows[0]?.products?.name || "";
 
   if (mobileWizardSubtitle) {
@@ -1419,6 +1537,7 @@ function openMobileStockWizard(productId, variantId) {
   if (mobileWizardProductName) {
     mobileWizardProductName.textContent = productName ? `- ${productName}` : "";
   }
+  clearMobileLectorUi();
   mobileWarehouseButtons.forEach((btn) => btn.classList.remove("active"));
   mobileModeButtons.forEach((btn) => btn.classList.remove("active"));
   setMobileModeTag(mobileModeTag, null);
@@ -1437,6 +1556,7 @@ function closeMobileStockWizard() {
   if (mobileWizardProductName) {
     mobileWizardProductName.textContent = "";
   }
+  clearMobileLectorUi();
   resetMobileWizardState();
 }
 
@@ -1452,10 +1572,39 @@ function updateMobileWizardKeyboardOffset() {
 }
 
 function updateMobileSizeStep() {
-  const row = mobileWizardState.rows[mobileWizardState.currentIndex];
-  if (!row) return;
   const field = mobileWizardState.selectedField;
   const mode = mobileWizardState.mode;
+  const isLector = Boolean(mobileWizardState.lectorActive && mode === "modify");
+
+  if (mobileLectorToggle) {
+    mobileLectorToggle.hidden = mode !== "modify";
+    if (mode !== "modify") {
+      mobileWizardState.lectorActive = false;
+      if (mobileLectorCheckbox) mobileLectorCheckbox.checked = false;
+    }
+  }
+  renderMobileTotalCounter();
+
+  if (isLector) {
+    if (mobileStepCount) mobileStepCount.style.display = "none";
+    if (mobileSizeJump) mobileSizeJump.style.display = "none";
+    if (mobileStockSizeBox) mobileStockSizeBox.style.display = "none";
+    if (mobileStockQtyControls) mobileStockQtyControls.style.display = "none";
+    if (mobileLectorPanel) mobileLectorPanel.hidden = false;
+    setMobileModeTag(mobileModeTag, mode);
+    renderMobileLectorGrid();
+    return;
+  }
+
+  if (mobileStepCount) mobileStepCount.style.display = "";
+  if (mobileSizeJump) mobileSizeJump.style.display = "";
+  if (mobileStockSizeBox) mobileStockSizeBox.style.display = "";
+  if (mobileStockQtyControls) mobileStockQtyControls.style.display = "";
+  if (mobileLectorPanel) mobileLectorPanel.hidden = true;
+
+  const row = mobileWizardState.rows[mobileWizardState.currentIndex];
+  if (!row) return;
+
   const currentStock = getCurrentWarehouseStock(row, field);
   const savedValue = mobileWizardState.values.get(row.rowId);
   const inputValue = savedValue !== undefined ? savedValue : 0;
@@ -1497,6 +1646,128 @@ function renderMobileSizeJumpButtons() {
       return `<button type="button" class="${classes}" data-mobile-size-index="${index}">${row.size}</button>`;
     })
     .join("");
+}
+
+function escapeMobileLectorHtml(str) {
+  return String(str ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/"/g, "&quot;");
+}
+
+function escapeMobileLectorAttr(str) {
+  return escapeMobileLectorHtml(str).replace(/'/g, "&#39;");
+}
+
+function renderMobileLectorGrid() {
+  if (!mobileLectorGrid) return;
+  const { rows, values } = mobileWizardState;
+  mobileLectorCellMap.clear();
+  if (!rows.length) {
+    mobileLectorGrid.innerHTML = "";
+    return;
+  }
+  mobileLectorGrid.innerHTML = rows
+    .map((r) => {
+      const v = Number(values.get(r.rowId) || 0);
+      const safeSize = escapeMobileLectorHtml(r.size);
+      const safeKey = escapeMobileLectorAttr(String(r.rowId ?? ""));
+      const has = v > 0 ? " has-scans" : "";
+      return `<div class="mobile-stock-lector-cell${has}" data-row-id="${safeKey}">
+        <div class="mobile-stock-lector-cell-size">${safeSize}</div>
+        <input type="number" class="mobile-stock-lector-cell-count" data-row-id="${safeKey}" min="0" step="1" value="${v}" inputmode="numeric" />
+      </div>`;
+    })
+    .join("");
+  mobileLectorGrid.querySelectorAll("input.mobile-stock-lector-cell-count").forEach((input) => {
+    const rowId = String(input.getAttribute("data-row-id") || "");
+    const cell = input.closest(".mobile-stock-lector-cell");
+    if (!rowId || !cell) return;
+    mobileLectorCellMap.set(rowId, { input, cell });
+  });
+}
+
+function updateLectorCellForRow(rowId, flash) {
+  const rid = String(rowId);
+  const count = Number(mobileWizardState.values.get(rowId) ?? 0);
+  const refs = mobileLectorCellMap.get(rid);
+  const input = refs?.input || null;
+  const cell = refs?.cell || null;
+  if (input) input.value = String(count);
+  if (cell) {
+    cell.classList.toggle("has-scans", count > 0);
+    if (flash) {
+      cell.classList.remove("last-scanned");
+      // reflow para reiniciar animación
+      void cell.offsetWidth;
+      cell.classList.add("last-scanned");
+      if (mobileLectorLastFlashTimeout) clearTimeout(mobileLectorLastFlashTimeout);
+      mobileLectorLastFlashTimeout = setTimeout(() => {
+        cell.classList.remove("last-scanned");
+        mobileLectorLastFlashTimeout = null;
+      }, 500);
+    }
+  }
+}
+
+async function processLectorQrCode(raw) {
+  const qrCode = String(raw ?? "").trim();
+  if (!qrCode || !mobileWizardState.open || !mobileWizardState.lectorActive) return;
+
+  const variantId = mobileWizardState.variantId;
+  if (!variantId) return;
+
+  let row = null;
+  const cachedRowId = mobileLectorQrMap.get(qrCode);
+  if (cachedRowId) {
+    row = mobileLectorRowMap.get(String(cachedRowId)) || null;
+  }
+
+  if (!row) {
+    const { data, error } = await supabase
+      .from("variant_sizes")
+      .select("variant_id, size")
+      .eq("qr_code", qrCode)
+      .maybeSingle();
+
+    if (error) {
+      console.error("[stock] lector QR:", error);
+      setMobileLectorStatus("Error al buscar el QR. Reintentá.", "error");
+      triggerMobileHapticFeedback(60);
+      return;
+    }
+
+    if (!data) {
+      setMobileLectorStatus(`QR no encontrado (${qrCode})`, "error");
+      triggerMobileHapticFeedback(60);
+      return;
+    }
+
+    if (String(data.variant_id) !== String(variantId)) {
+      setMobileLectorStatus("QR de otra variante o producto. No se contabilizó.", "error");
+      triggerMobileHapticFeedback(60);
+      return;
+    }
+
+    row = mobileLectorSizeMap.get(normalizeSize(data.size)) || null;
+    if (row) {
+      mobileLectorQrMap.set(qrCode, String(row.rowId ?? ""));
+    }
+  }
+
+  if (!row) {
+    setMobileLectorStatus("El talle del QR no coincide con esta variante.", "error");
+    triggerMobileHapticFeedback(60);
+    return;
+  }
+
+  const prev = Number(mobileWizardState.values.get(row.rowId) || 0);
+  const next = prev + 1;
+  mobileWizardState.values.set(row.rowId, next);
+  updateLectorCellForRow(row.rowId, true);
+  renderMobileTotalCounter();
+  setMobileLectorStatus(`Talle ${row.size}: +1 → total ${next}`, "success");
+  triggerMobileHapticFeedback(15);
 }
 
 function buildMobileSummary() {
@@ -2187,9 +2458,19 @@ function triggerMobileHapticFeedback(duration = 12) {
 }
 
 function saveMobileCurrentStepValue() {
+  if (mobileWizardState.lectorActive) return;
   const row = mobileWizardState.rows[mobileWizardState.currentIndex];
   if (!row || !mobileQtyInput) return;
   mobileWizardState.values.set(row.rowId, clampMobileQty(mobileQtyInput.value));
+  renderMobileTotalCounter();
+}
+
+function syncCurrentMobileQtyToState() {
+  const row = mobileWizardState.rows[mobileWizardState.currentIndex];
+  if (!row || !mobileQtyInput || mobileWizardState.lectorActive) return;
+  mobileWizardState.values.set(row.rowId, clampMobileQty(mobileQtyInput.value));
+  renderMobileTotalCounter();
+  renderMobileSizeJumpButtons();
 }
 
 mobileWarehouseButtons.forEach((btn) => {
@@ -2197,6 +2478,8 @@ mobileWarehouseButtons.forEach((btn) => {
     mobileWarehouseButtons.forEach((item) => item.classList.remove("active"));
     btn.classList.add("active");
     mobileWizardState.selectedField = btn.getAttribute("data-mobile-warehouse");
+    mobileWizardState.lectorActive = false;
+    if (mobileLectorCheckbox) mobileLectorCheckbox.checked = false;
     switchMobileWizardStep(mobileStepMode);
   });
 });
@@ -2207,6 +2490,8 @@ mobileModeButtons.forEach((btn) => {
     btn.classList.add("active");
     mobileWizardState.mode = btn.getAttribute("data-mobile-mode");
     mobileWizardState.currentIndex = 0;
+    mobileWizardState.lectorActive = false;
+    if (mobileLectorCheckbox) mobileLectorCheckbox.checked = false;
     switchMobileWizardStep(mobileStepSize);
     updateMobileSizeStep();
   });
@@ -2218,6 +2503,7 @@ if (mobileMinusBtn) {
     triggerMobileHapticFeedback();
     const current = clampMobileQty(mobileQtyInput.value);
     mobileQtyInput.value = String(Math.max(0, current - 1));
+    syncCurrentMobileQtyToState();
   });
 }
 
@@ -2227,12 +2513,121 @@ if (mobilePlusBtn) {
     triggerMobileHapticFeedback();
     const current = clampMobileQty(mobileQtyInput.value);
     mobileQtyInput.value = String(current + 1);
+    syncCurrentMobileQtyToState();
   });
 }
 
 if (mobileQtyInput) {
   mobileQtyInput.addEventListener("input", () => {
     mobileQtyInput.value = String(clampMobileQty(mobileQtyInput.value));
+    syncCurrentMobileQtyToState();
+  });
+}
+
+function submitMobileLectorScan(raw) {
+  const trimmed = String(raw ?? "").trim();
+  if (!trimmed || !mobileWizardState.open || !mobileWizardState.lectorActive) return;
+  if (!isCompleteMobileLectorCode(trimmed)) return;
+  mobileLectorScanQueue.push(trimmed);
+  if (mobileLectorInput) {
+    mobileLectorInput.value = "";
+    if (shouldAutoFocusMobileLectorInput()) {
+      window.setTimeout(() => mobileLectorInput.focus(), 10);
+    }
+  }
+  if (mobileLectorIsProcessingQueue) return;
+  mobileLectorIsProcessingQueue = true;
+  void (async () => {
+    try {
+      while (mobileLectorScanQueue.length > 0) {
+        const nextCode = mobileLectorScanQueue.shift();
+        if (!nextCode) continue;
+        try {
+          await processLectorQrCode(nextCode);
+        } catch (err) {
+          console.error("[stock] lector scan:", err);
+          setMobileLectorStatus("Error al procesar el QR.", "error");
+          triggerMobileHapticFeedback(60);
+        }
+      }
+    } finally {
+      mobileLectorIsProcessingQueue = false;
+    }
+  })();
+}
+
+if (mobileLectorCheckbox) {
+  mobileLectorCheckbox.addEventListener("change", () => {
+    mobileWizardState.lectorActive = Boolean(mobileLectorCheckbox.checked);
+    if (mobileWizardState.lectorActive) {
+      mobileWizardState.rows.forEach((r) => {
+        mobileWizardState.values.set(r.rowId, 0);
+      });
+      mobileLectorQrMap.clear();
+      void preloadMobileLectorQrCache();
+      if (shouldAutoFocusMobileLectorInput()) {
+        window.setTimeout(() => {
+          if (mobileLectorInput) mobileLectorInput.focus();
+        }, 30);
+      }
+    } else {
+      mobileLectorScanQueue = [];
+    }
+    updateMobileSizeStep();
+  });
+}
+
+if (mobileLectorInput) {
+  mobileLectorInput.addEventListener("input", () => {
+    if (!mobileWizardState.lectorActive) return;
+    const v = mobileLectorInput.value.trim();
+    if (v.length === 0) return;
+    if (mobileLectorInputTimeout) clearTimeout(mobileLectorInputTimeout);
+    mobileLectorInputTimeout = window.setTimeout(() => {
+      mobileLectorInputTimeout = null;
+      const current = mobileLectorInput.value.trim();
+      if (isCompleteMobileLectorCode(current)) {
+        submitMobileLectorScan(current);
+      }
+    }, 50);
+  });
+
+  mobileLectorInput.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    if (mobileLectorInputTimeout) {
+      clearTimeout(mobileLectorInputTimeout);
+      mobileLectorInputTimeout = null;
+    }
+    submitMobileLectorScan(mobileLectorInput.value);
+  });
+}
+
+if (mobileLectorReset) {
+  mobileLectorReset.addEventListener("click", () => {
+    if (!mobileWizardState.lectorActive) return;
+    mobileWizardState.rows.forEach((r) => {
+      mobileWizardState.values.set(r.rowId, 0);
+    });
+    renderMobileLectorGrid();
+    renderMobileTotalCounter();
+    setMobileLectorStatus("Contadores reiniciados.", "success");
+    if (mobileLectorInput && shouldAutoFocusMobileLectorInput()) mobileLectorInput.focus();
+  });
+}
+
+if (mobileLectorGrid) {
+  mobileLectorGrid.addEventListener("input", (e) => {
+    const inp = e.target.closest("input.mobile-stock-lector-cell-count");
+    if (!inp || !mobileWizardState.lectorActive) return;
+    const attrKey = inp.getAttribute("data-row-id");
+    const row = mobileWizardState.rows.find((r) => String(r.rowId) === String(attrKey));
+    if (!row) return;
+    const n = clampMobileQty(inp.value);
+    mobileWizardState.values.set(row.rowId, n);
+    renderMobileTotalCounter();
+    const cell = inp.closest(".mobile-stock-lector-cell");
+    if (cell) cell.classList.toggle("has-scans", n > 0);
   });
 }
 
@@ -2251,6 +2646,12 @@ if (mobileSizeJump) {
 if (mobileBackBtn) {
   mobileBackBtn.addEventListener("click", () => {
     saveMobileCurrentStepValue();
+    if (mobileWizardState.lectorActive) {
+      mobileWizardState.lectorActive = false;
+      if (mobileLectorCheckbox) mobileLectorCheckbox.checked = false;
+      switchMobileWizardStep(mobileStepMode);
+      return;
+    }
     if (mobileWizardState.currentIndex === 0) {
       switchMobileWizardStep(mobileStepMode);
       return;
@@ -2263,6 +2664,11 @@ if (mobileBackBtn) {
 if (mobileNextBtn) {
   mobileNextBtn.addEventListener("click", () => {
     saveMobileCurrentStepValue();
+    if (mobileWizardState.lectorActive && mobileWizardState.mode === "modify") {
+      buildMobileSummary();
+      switchMobileWizardStep(mobileStepSummary);
+      return;
+    }
     const isLast = mobileWizardState.currentIndex >= mobileWizardState.rows.length - 1;
     if (isLast) {
       buildMobileSummary();

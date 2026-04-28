@@ -94,9 +94,70 @@ Quien no debería ver costo/margen/logístico accedía a esos campos o veían pr
 - Probar con usuario colaborador: campos de costo vacíos o deshabilitados; con `super_admin`, visibles.  
 - Revisar `console` por advertencias al resolver `isSuperAdmin()`.
 
+---
+
+## 2026-04 (aprox.) — Checkout falla: item sin variante asociada (`variant_id` null)
+
+### Sintoma
+
+Al hacer pedido desde el dashboard, `rpc_checkout_cart` devuelve un error cuyo mensaje indica que el item (UUID) no tiene variante asociada (ver texto exacto en `10_checkout_flow.sql` / RPC).
+
+### Causa
+
+- Filas en `public.cart_items` con **`variant_id` NULL** (merge desde `localStorage`, consolidacion de duplicados, sync previo, o legacy).
+- La RPC itera `cart_items` y exige variante; ver flujo en `supabase/canonical/10_checkout_flow.sql` y cuerpo en `124_*`.
+
+### Solucion aplicada (en codigo)
+
+- `syncCartWithSupabase`: resolver variante con `fetchVariantInfo`; **no** persistir lineas sin `variant_id` resuelto.
+- `repairCartItemsMissingVariantIds` al cargar carrito en dashboard.
+- `cleanupDuplicateCartItems`: no insertar duplicado sin variante.
+- `submitCurrentCart`: validacion previa y mensaje amigable; manejo de error RPC.
+
+### Archivos (referencia)
+
+- `scripts/cart-persistent.js`, `client/dashboard-instant.js`
+
+### Riesgo futuro
+
+- Cualquier nuevo camino que escriba `cart_items` sin `variant_id` reabre el fallo.  
+- Documentacion o SQL de diagnostico que asuman columna `sku` en `cart_items` (no existe en el esquema actual).
+
+### Como verificar
+
+- Consulta `select ... from cart_items where variant_id is null`.  
+- Flujo: agregar con sesion, duplicar lineas, merge post-login, checkout.
+
+**Nota de contexto ampliada:** [[21-CONTEXTO-AGENTE-HARDENING-2026-04]].
+
+---
+
+## 2026-04 (aprox.) — Index: loader y texto “Cargando destacados…” mal posicionado / persistente
+
+### Sintoma
+
+En mobile u orden de carga, el area superior (F&L, banners) “salta” o queda un loader/etiqueta de carga visible de forma confusa.
+
+### Causa
+
+- Layout sin reserva de altura en el bloque superior; uso del loader global bajo filtros en lugar de estado local al slot; overlay de boot vs carga de extras de home desalineados.
+
+### Solucion aplicada (en codigo y CSS)
+
+- Contenedor `#home-top-dynamic-slot` con clases de estado, `min-height` y `syncHomeTopSlotState` en `scripts/main-supabase.js`.  
+- Loader local `#home-top-dynamic-loader` con atributo `hidden` y reglas en `styles.css` para no dejar texto visible al terminar.
+
+### Archivos (referencia)
+
+- `index.html`, `styles.css`, `scripts/main-supabase.js`
+
+**Nota de contexto ampliada:** [[21-CONTEXTO-AGENTE-HARDENING-2026-04]] (seccion 3.2).
+
+---
+
 ## Enlaces
 
-- [[11-DECISIONES-TECNICAS]] · [[12-CHECKLIST-CAMBIOS-FUTUROS]] · [[99-AUDITORIA-DOCUMENTACION]]
+- [[11-DECISIONES-TECNICAS]] · [[12-CHECKLIST-CAMBIOS-FUTUROS]] · [[99-AUDITORIA-DOCUMENTACION]] · [[21-CONTEXTO-AGENTE-HARDENING-2026-04]]
 
 ## VALIDACIÓN
 

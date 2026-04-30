@@ -38,6 +38,42 @@ window.addEventListener("beforeunload", () => ordersAbortScope.abort("unload"), 
  */
 let _activeSearchAbortScope = null;
 
+function normalizeCustomerSearchText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function tokenizeCustomerSearch(value) {
+  return normalizeCustomerSearchText(value)
+    .split(" ")
+    .map((t) => t.trim())
+    .filter(Boolean);
+}
+
+function customerMatchesFlexible(searchTerm, customer) {
+  const normQuery = normalizeCustomerSearchText(searchTerm);
+  const tokens = tokenizeCustomerSearch(normQuery);
+  const fullName = normalizeCustomerSearchText(customer?.full_name || "");
+  const dni = String(customer?.dni || "").toLowerCase();
+  const email = String(customer?.email || "").toLowerCase();
+  const customerNumber = String(customer?.customer_number || "").toLowerCase();
+  const phoneDigits = String(customer?.phone || "").replace(/\D/g, "");
+  const queryDigits = String(searchTerm || "").replace(/\D/g, "");
+
+  if (fullName === normQuery) return true;
+  if (fullName.startsWith(normQuery)) return true;
+  if (tokens.length > 0 && tokens.every((t) => fullName.includes(t))) return true;
+  if (customerNumber && customerNumber.includes(normQuery)) return true;
+  if (dni && dni.includes(normQuery)) return true;
+  if (email && email.includes(normQuery)) return true;
+  if (queryDigits && phoneDigits.includes(queryDigits)) return true;
+  return false;
+}
+
 /**
  * Contador de búsquedas activas: race condition guard.
  * Solo la invocación con el seq más alto puede mutar `orders` y llamar displayOrders.
@@ -2101,12 +2137,16 @@ async function searchOrdersInDatabase(searchTerm) {
   }
 
   try {
-    // ── Query 1: clientes por nombre/DNI/teléfono/email ──────────────────────
+    const safeSearchTerm = String(searchTerm || "").trim();
+    const escapedSearchTerm = safeSearchTerm.replace(/[%_]/g, "");
+
+    // ── Query 1: clientes por nombre/DNI/teléfono/email/número cliente ───────
     const custRes = await wrapSupabase(
       () => supabase
         .from("customers")
-        .select("id")
-        .or(`full_name.ilike.%${searchTerm}%,dni.ilike.%${searchTerm}%,phone.ilike.%${searchTerm}%,email.ilike.%${searchTerm}%`),
+        .select("id, full_name, dni, phone, email, customer_number")
+        .or(`full_name.ilike.%${escapedSearchTerm}%,dni.ilike.%${escapedSearchTerm}%,phone.ilike.%${escapedSearchTerm}%,email.ilike.%${escapedSearchTerm}%,customer_number.ilike.%${escapedSearchTerm}%`)
+        .limit(800),
       { retries: 1, signal, label: "orders.search.customers" }
     );
     if (isStale()) return;
@@ -2120,7 +2160,9 @@ async function searchOrdersInDatabase(searchTerm) {
       // permission/unknown: continuar sin IDs de clientes (búsqueda parcial)
       console.warn("[orders.search] customers query error:", custRes.error, "kind:", kind);
     }
-    const customerIds = custRes.data?.map(c => c.id) || [];
+    const customerIds = (custRes.data || [])
+      .filter((c) => customerMatchesFlexible(safeSearchTerm, c))
+      .map((c) => c.id);
 
     // ── Query 2: items por nombre de producto o color ─────────────────────────
     const itemsRes = await wrapSupabase(

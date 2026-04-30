@@ -63,10 +63,12 @@ Ver [[10-BACKLOG-NO-CRITICO]]: columnas legacy, RLS fino, helpers duplicados, `r
 ## Enlaces a documentación general FYL (vault)
 
 - [[00-INICIO]] — índice histórico del vault
+- [[23-CAMBIOS-OPERATIVOS-2026-04-29]] — bitácora consolidada de cambios operativos recientes (incluye reparo PDP banner F&L Originals en catalogo publico)
+- [[22-BANNER-FYL-ORIGINALS]] — banner home F&L Originals; navegacion clic → PDP y nota de reparo 2026-04
 - [[04-FLUJO-STOCK]] / [[05-FLUJO-PEDIDOS]] — flujos (pueden solaparse con [[03-FLUJO-PEDIDOS-Y-STOCK]]; priorizar notas de saneamiento para decisiones 2024–2026)
 - [[19-AUDITORIA-MODULO-CLIENTE-CARRITO]] + §11 post-auditoría
 - [[21-CONTEXTO-AGENTE-HARDENING-2026-04]] — hardening admin/catálogo
 
 ---
 
-*Última actualización: al cierre de documentación de saneamiento (vault).*
+*Última actualización: saneamiento (vault); enlaces FYL catalogo/banner revisados 2026-04.*

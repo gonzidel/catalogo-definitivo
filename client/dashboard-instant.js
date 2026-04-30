@@ -1339,12 +1339,11 @@ async function fetchVariantInfo(articulo, color, talle, variantId = null, option
     if (vid) {
       const { data: pv, error: pvErr } = await supabase
         .from("product_variants")
-        .select("id, reserved_qty, price, color")
+        .select("id, price, color")
         .eq("id", vid)
         .maybeSingle();
       if (!pvErr && pv) {
         price = Number(pv.price ?? 0) || 0;
-        reserved = Number(pv.reserved_qty ?? 0);
       }
     }
     if (!vid) {
@@ -1356,7 +1355,7 @@ async function fetchVariantInfo(articulo, color, talle, variantId = null, option
       if (productError || !product) return null;
       const { data: pv, error: pvErr } = await supabase
         .from("product_variants")
-        .select("id, reserved_qty, price, color")
+        .select("id, price, color")
         .eq("product_id", product.id)
         .ilike("color", normalizedColor)
         .eq("active", true)
@@ -1364,7 +1363,6 @@ async function fetchVariantInfo(articulo, color, talle, variantId = null, option
       if (pvErr || !pv) return null;
       vid = pv.id;
       price = Number(pv.price ?? 0) || 0;
-      reserved = Number(pv.reserved_qty ?? 0);
     }
     if (!vid) return null;
 
@@ -1382,6 +1380,12 @@ async function fetchVariantInfo(articulo, color, talle, variantId = null, option
       (sws || []).forEach((s) => {
         if (normalizeSize(s.size) === normalizedSizeForStock) stockTotal += Number(s.stock_qty || 0);
       });
+    }
+    const { data: reservedRows, error: reservedErr } = await supabase
+      .rpc("rpc_get_variant_size_reserved", { p_variant_ids: [vid] });
+    if (!reservedErr && Array.isArray(reservedRows) && normalizedSizeForStock) {
+      const reservedRow = reservedRows.find((r) => normalizeSize(r.size) === normalizedSizeForStock);
+      reserved = Number(reservedRow?.reserved_qty || 0) || 0;
     }
     const available = Math.max(0, stockTotal - reserved);
     return setCachedMapValue(

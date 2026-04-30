@@ -18,6 +18,352 @@ const PRODUCTS_PER_PAGE = 10; // Cantidad de productos a cargar por página
 let scrollListenerAttached = false; // Flag para evitar múltiples listeners
 let currentScrollHandler = null; // Referencia al handler de scroll actual
 
+function buildLocalDateKey(date = new Date()) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function stableStringHash(text) {
+  const input = String(text || "");
+  let hash = 2166136261;
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function getMainImage(producto) {
+  return producto?.VariantePrincipal || producto?.DetalleColor?.[0]?.images?.[0] || "";
+}
+
+function getPrimaryColorLabel(producto) {
+  return (producto?.DetalleColor?.[0]?.color || "sin-color").trim().toLowerCase();
+}
+
+function getFirstVariantDetail(producto) {
+  for (const detalleColor of producto?.DetalleColor || []) {
+    for (const vd of detalleColor?.variantDetails || []) {
+      if (!vd) continue;
+      if (vd.sku || vd.variant_id || vd.variantId) return vd;
+    }
+  }
+  return null;
+}
+
+function getProductIdentity(producto) {
+  if (!producto) return null;
+  const sku = obtenerSKUDefecto(producto);
+  if (sku) return `sku:${String(sku).trim().toLowerCase()}`;
+
+  const firstVariant = getFirstVariantDetail(producto);
+  const variantId = firstVariant?.variant_id || firstVariant?.variantId || producto.variant_id;
+  if (variantId) return `variant:${String(variantId).trim().toLowerCase()}`;
+
+  const articulo = (producto.Articulo || "").trim().toLowerCase();
+  const color = getPrimaryColorLabel(producto);
+  if (articulo) return `articuloColor:${articulo}__${color}`;
+  return null;
+}
+
+function isActiveProduct(producto) {
+  const activo = producto?.Activo;
+  if (activo === false) return false;
+  if (typeof activo === "string" && activo.trim().toLowerCase() === "false") return false;
+  return true;
+}
+
+function hasPositiveStock(producto) {
+  let total = 0;
+  let sawNumericSignal = false;
+
+  for (const detalleColor of producto?.DetalleColor || []) {
+    for (const vd of detalleColor?.variantDetails || []) {
+      if (vd?.available === null || vd?.available === undefined || vd?.available === "") {
+        continue;
+      }
+      const num = Number(vd?.available);
+      if (!Number.isNaN(num)) {
+        total += num;
+        sawNumericSignal = true;
+      }
+    }
+  }
+
+  if (!sawNumericSignal) return true;
+  return total > 0;
+}
+
+function isRenderableProduct(producto) {
+  const image = getMainImage(producto);
+  const nombre = (producto?.Articulo || producto?.Descripcion || "").trim();
+  const id = getProductIdentity(producto);
+  return Boolean(image && nombre && id);
+}
+
+function normalizeCategory(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function isVisuallyDistinctFromTop3(producto, top3) {
+  const ownCategory = normalizeCategory(producto?.Filtro1 || producto?.Filtro2 || producto?.Filtro3);
+  const ownColor = getPrimaryColorLabel(producto);
+
+  for (const p of top3) {
+    if (!p) continue;
+    const cat = normalizeCategory(p?.Filtro1 || p?.Filtro2 || p?.Filtro3);
+    const color = getPrimaryColorLabel(p);
+    if (ownCategory && cat && ownCategory === cat) return false;
+    if (ownColor && color && ownColor === color) return false;
+  }
+  return true;
+}
+
+function dedupeBySafeIdentity(products) {
+  const seen = new Set();
+  const out = [];
+  products.forEach((p) => {
+    const id = getProductIdentity(p);
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    out.push(p);
+  });
+  return out;
+}
+
+function excludeProducts(base, excludedProducts) {
+  const excludedIds = new Set(
+    (excludedProducts || [])
+      .map((p) => getProductIdentity(p))
+      .filter(Boolean)
+  );
+  return base.filter((p) => !excludedIds.has(getProductIdentity(p)));
+}
+
+function pickBestCandidate(pool, scorer) {
+  let best = null;
+  let bestScore = Number.NEGATIVE_INFINITY;
+
+  pool.forEach((p) => {
+    const score = scorer(p);
+    const id = getProductIdentity(p) || "";
+    const bestId = getProductIdentity(best) || "";
+
+    if (score > bestScore || (score === bestScore && id < bestId)) {
+      best = p;
+      bestScore = score;
+    }
+  });
+
+  return best;
+}
+
+function parseDateMs(value) {
+  if (value instanceof Date) {
+    const ms = value.getTime();
+    return Number.isNaN(ms) ? 0 : ms;
+  }
+
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  const text = String(value || "").trim();
+  if (!text) return 0;
+
+  // Soportar DD/MM/YYYY (fecha local) proveniente de catalog_public_view.
+  const dmyMatch = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (dmyMatch) {
+    const day = Number(dmyMatch[1]);
+    const month = Number(dmyMatch[2]);
+    const year = Number(dmyMatch[3]);
+    const localDate = new Date(year, month - 1, day);
+    if (
+      localDate.getFullYear() === year &&
+      localDate.getMonth() === month - 1 &&
+      localDate.getDate() === day
+    ) {
+      return localDate.getTime();
+    }
+    return 0;
+  }
+
+  const ms = Date.parse(text);
+  return Number.isNaN(ms) ? 0 : ms;
+}
+
+function getBestRecencyMs(producto) {
+  const candidates = [
+    producto?.FechaIngreso,
+    producto?.updated_at,
+    producto?.created_at,
+    producto?.Fecha,
+    producto?.fecha,
+  ];
+
+  for (const value of candidates) {
+    const ms = parseDateMs(value);
+    if (ms > 0) return ms;
+  }
+  return 0;
+}
+
+// Calcula la mejor fecha de "publicación reciente" para una fila de variante.
+// Prioridad: republicación explícita > updated_at > created_at > FechaIngreso.
+// Devuelve { ms, source } para diagnosticar de dónde salió el valor.
+function getVariantRecency(row) {
+  if (!row || typeof row !== "object") return { ms: 0, source: "" };
+
+  const candidates = [
+    ["republished_at", row.republished_at],
+    ["republished_at", row.republishedAt],
+    ["last_published_at", row.last_published_at],
+    ["variant_updated_at", row.variant_updated_at],
+    ["product_variant_updated_at", row.product_variant_updated_at],
+    ["updated_at", row.updated_at],
+    ["variant_created_at", row.variant_created_at],
+    ["product_variant_created_at", row.product_variant_created_at],
+    ["created_at", row.created_at],
+    ["FechaIngreso", row.FechaIngreso],
+  ];
+
+  for (const [source, value] of candidates) {
+    const ms = parseDateMs(value);
+    if (ms > 0) return { ms, source };
+  }
+  return { ms: 0, source: "" };
+}
+
+// Recibe filas (rows) o detalles de color del mismo artículo y devuelve la
+// más reciente según getVariantRecency(). Útil para el banner FYL Originals.
+function pickMostRecentVariant(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+
+  let winner = null;
+  let winnerMs = -1;
+  let winnerSource = "";
+  let winnerIndex = -1;
+
+  rows.forEach((row, index) => {
+    const { ms, source } = getVariantRecency(row);
+    if (ms > winnerMs || (ms === winnerMs && index < winnerIndex)) {
+      winner = row;
+      winnerMs = ms;
+      winnerSource = source;
+      winnerIndex = index;
+    }
+  });
+
+  return winner ? { row: winner, ms: winnerMs, source: winnerSource } : null;
+}
+
+function fallbackBasicOrdering(products) {
+  if (!Array.isArray(products) || products.length === 0) return [];
+
+  const dated = products
+    .map((product, index) => ({
+      product,
+      index,
+      ms: parseDateMs(product?.FechaIngreso),
+    }))
+    .filter((item) => item.ms > 0);
+
+  if (dated.length > 0) {
+    return [...products].sort((a, b) => parseDateMs(b?.FechaIngreso) - parseDateMs(a?.FechaIngreso));
+  }
+
+  console.warn("[FYL] Fallback sin fecha válida: se mantiene orden original", {
+    totalProducts: products.length,
+  });
+  return products;
+}
+
+function sumKnownStock(producto) {
+  let sum = 0;
+
+  const candidates = [producto?.Stock, producto?.stock, producto?.available, producto?.Available];
+  candidates.forEach((v) => {
+    const n = Number(v);
+    if (!Number.isNaN(n) && n > 0) sum += n;
+  });
+
+  for (const detalleColor of producto?.DetalleColor || []) {
+    for (const vd of detalleColor?.variantDetails || []) {
+      const n = Number(vd?.available);
+      if (!Number.isNaN(n) && n > 0) sum += n;
+    }
+  }
+  return sum;
+}
+
+function scoreRecentProduct(producto) {
+  return getBestRecencyMs(producto);
+}
+
+function scoreStrongProduct(producto) {
+  let score = 0;
+  if (producto?.OfertaActiva === true || producto?.OfertaActiva === "true") score += 4;
+  if (String(producto?.PromoActiva || "").trim() !== "") score += 3;
+  score += Math.min(3, Math.floor(sumKnownStock(producto) / 5));
+  score += parseDateMs(producto?.FechaIngreso) / 1e13;
+  return score;
+}
+
+function scorePushProduct(producto) {
+  const stock = sumKnownStock(producto);
+  const recencyPenalty = parseDateMs(producto?.FechaIngreso) / 1e12;
+  return stock - recencyPenalty;
+}
+
+function pickDailyHookByDateIndex(pool, dateKey) {
+  if (!pool || pool.length === 0) return null;
+  const sorted = [...pool].sort((a, b) => {
+    const ida = getProductIdentity(a) || "";
+    const idb = getProductIdentity(b) || "";
+    return ida.localeCompare(idb);
+  });
+  const dateHash = stableStringHash(dateKey);
+  const index = dateHash % sorted.length;
+  return sorted[index] || null;
+}
+
+function curateFylOriginalsSlots(products, now = new Date()) {
+  if (!Array.isArray(products) || products.length === 0) return [];
+
+  const eligible = dedupeBySafeIdentity(
+    products
+      .filter(isActiveProduct)
+      .filter(isRenderableProduct)
+      .filter(hasPositiveStock)
+  );
+
+  if (eligible.length === 0) {
+    console.warn("[FYL] Curaduría no aplicada: eligible vacío", {
+      totalProducts: products.length,
+    });
+    return fallbackBasicOrdering(products);
+  }
+
+  const slot1 = pickBestCandidate(eligible, scoreRecentProduct);
+  const poolAfter1 = excludeProducts(eligible, [slot1]);
+  const slot2 = pickBestCandidate(poolAfter1, scoreStrongProduct);
+  const poolAfter2 = excludeProducts(poolAfter1, [slot2]);
+  const slot3 = pickBestCandidate(poolAfter2, scorePushProduct);
+  const poolAfter3 = excludeProducts(poolAfter2, [slot3]);
+
+  const top3 = [slot1, slot2, slot3].filter(Boolean);
+  const diverseCandidates = poolAfter3.filter((p) => isVisuallyDistinctFromTop3(p, top3));
+  const slot4Pool = diverseCandidates.length > 0 ? diverseCandidates : poolAfter3;
+  const dateKey = buildLocalDateKey(now);
+  const slot4 = pickDailyHookByDateIndex(slot4Pool, dateKey) || slot4Pool[0] || null;
+
+  const top4 = [slot1, slot2, slot3, slot4].filter(Boolean);
+  const rest = excludeProducts(products, top4);
+  return [...top4, ...rest];
+}
+
 // Cargar productos del proveedor FYL
 export async function loadFYLOriginals() {
   try {
@@ -51,10 +397,20 @@ export async function loadFYLOriginals() {
       return [];
     }
 
+    const getRowRecencyMs = (row) => {
+      return (
+        parseDateMs(row?.updated_at) ||
+        parseDateMs(row?.created_at) ||
+        parseDateMs(row?.FechaIngreso) ||
+        0
+      );
+    };
+
     // Agrupar productos por artículo (similar a cargarCategoria)
     const grupos = data.reduce((acc, i) => {
       const art = i.Articulo?.trim();
       if (!art) return acc;
+      const rowRecencyMs = getRowRecencyMs(i);
 
       if (!acc[art]) {
         acc[art] = {
@@ -87,28 +443,184 @@ export async function loadFYLOriginals() {
       }
 
       // Agregar color si no existe
-      const colorExists = acc[art].DetalleColor.find(c => 
+      const colorExists = acc[art].DetalleColor.find(c =>
         (c.color || "").trim().toLowerCase() === (i.Color || "").trim().toLowerCase()
       );
 
       if (!colorExists) {
+        const talles = String(i.Numeracion || "")
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean);
         acc[art].DetalleColor.push({
           color: i.Color || "Sin color",
           hex_color: i.ColorHex || null,
-          talles: i.Numeracion?.split(",").map((t) => t.trim()) || ["Único"],
+          talles: talles.length > 0 ? talles : ["Único"],
           images: [
             i["Imagen Principal"],
             i["Imagen 1"],
             i["Imagen 2"],
             i["Imagen 3"],
           ].filter(Boolean),
+          __recencyMs: rowRecencyMs,
         });
+      } else {
+        const existingRecency = Number(colorExists.__recencyMs) || 0;
+        if (rowRecencyMs > existingRecency) {
+          const incomingImages = [
+            i["Imagen Principal"],
+            i["Imagen 1"],
+            i["Imagen 2"],
+            i["Imagen 3"],
+          ].filter(Boolean);
+          if (incomingImages.length > 0) {
+            colorExists.images = incomingImages;
+          }
+          colorExists.__recencyMs = rowRecencyMs;
+        }
       }
 
       return acc;
     }, {});
 
-    fylProducts = Object.values(grupos);
+    const productosAgrupados = Object.values(grupos);
+
+    // Cargar fechas reales por variante (created_at/updated_at) para calcular
+    // VariantePrincipal según la variante MÁS RECIENTE, no por orden alfabético
+    // de color. catalog_public_view solo expone FechaIngreso del producto, que
+    // es idéntico para todos los colores y no sirve para distinguir variantes.
+    const articulos = productosAgrupados
+      .map((p) => (p.Articulo || "").trim())
+      .filter(Boolean);
+
+    const articleColorRecency = new Map(); // articulo(lower) -> Map(color(lower) -> { ms, source })
+
+    if (articulos.length > 0) {
+      try {
+        const { data: variantsData, error: variantsError } = await supabase
+          .from("products")
+          .select(
+            "name, product_variants(color, active, created_at, updated_at)"
+          )
+          .in("name", articulos);
+
+        if (variantsError) {
+          console.warn(
+            "⚠️ No se pudieron obtener fechas de variantes para FYL Originals:",
+            variantsError.message
+          );
+        } else if (Array.isArray(variantsData)) {
+          variantsData.forEach((row) => {
+            const articuloKey = (row?.name || "").trim().toLowerCase();
+            if (!articuloKey) return;
+
+            const colorMap =
+              articleColorRecency.get(articuloKey) || new Map();
+            (row.product_variants || []).forEach((v) => {
+              if (!v || v.active === false) return;
+              const colorKey = (v.color || "").trim().toLowerCase();
+              if (!colorKey) return;
+              const { ms, source } = getVariantRecency(v);
+              if (ms <= 0) return;
+              const prev = colorMap.get(colorKey);
+              if (!prev || ms > prev.ms) {
+                colorMap.set(colorKey, { ms, source });
+              }
+            });
+            if (colorMap.size > 0) {
+              articleColorRecency.set(articuloKey, colorMap);
+            }
+          });
+        }
+      } catch (e) {
+        console.warn(
+          "⚠️ Excepción cargando fechas de variantes para FYL Originals:",
+          e?.message || e
+        );
+      }
+    }
+
+    fylProducts = productosAgrupados.map((producto) => {
+      const colors = Array.isArray(producto.DetalleColor) ? producto.DetalleColor : [];
+      if (colors.length === 0) return producto;
+
+      const articuloKey = (producto.Articulo || "").trim().toLowerCase();
+      const colorRecencyMap = articleColorRecency.get(articuloKey) || null;
+
+      // Propagar __variantRecencyMs real (de product_variants) a cada color.
+      let usedRealVariantDates = false;
+      if (colorRecencyMap) {
+        colors.forEach((color) => {
+          const colorKey = (color?.color || "").trim().toLowerCase();
+          const entry = colorRecencyMap.get(colorKey);
+          if (entry?.ms > 0) {
+            color.__variantRecencyMs = entry.ms;
+            color.__variantRecencySource = entry.source;
+            usedRealVariantDates = true;
+          }
+        });
+      }
+
+      // Elegir el color más reciente con imagen, priorizando datos reales de
+      // variante si están disponibles. Usamos pickMostRecentVariant que ya
+      // resuelve la prioridad (updated_at > created_at > FechaIngreso) sobre
+      // las propiedades expuestas en cada DetalleColor.
+      const colorsWithImage = colors.filter(
+        (c) => Array.isArray(c?.images) && c.images.length > 0 && c.images[0]
+      );
+
+      // Para que pickMostRecentVariant funcione directo sobre DetalleColor,
+      // exponemos updated_at/created_at desde __variantRecencyMs cuando existe;
+      // si no, dejamos FechaIngreso del producto como fallback débil.
+      const variantPick = pickMostRecentVariant(
+        colorsWithImage.map((c) => ({
+          __color: c,
+          updated_at:
+            Number(c?.__variantRecencyMs) > 0
+              ? new Date(Number(c.__variantRecencyMs)).toISOString()
+              : null,
+          created_at: null,
+          FechaIngreso:
+            Number(c?.__recencyMs) > 0
+              ? new Date(Number(c.__recencyMs)).toISOString()
+              : producto.FechaIngreso || null,
+        }))
+      );
+
+      const bestColor = variantPick?.row?.__color || null;
+
+      if (bestColor && bestColor.images?.[0]) {
+        producto.VariantePrincipal = bestColor.images[0];
+
+        // Si se usaron fechas reales de variante, marcar la fuente para que
+        // enrichProductsWithStock no sobrescriba la decisión del banner.
+        if (usedRealVariantDates) {
+          producto.__variantePrincipalSource = "recency-banner";
+
+          // Reordenar DetalleColor por recencia descendente (estable) para
+          // que los color-dots y la imagen ganadora coincidan en el banner.
+          producto.DetalleColor = [...colors].sort((a, b) => {
+            const aMs =
+              Number(a?.__variantRecencyMs) || Number(a?.__recencyMs) || 0;
+            const bMs =
+              Number(b?.__variantRecencyMs) || Number(b?.__recencyMs) || 0;
+            return bMs - aMs;
+          });
+
+          fylDevLog("[FYL] VariantePrincipal por recencia real", {
+            articulo: producto.Articulo,
+            color: bestColor.color,
+            sku: getFirstVariantDetail(producto)?.sku || null,
+            fechaMs: variantPick?.ms || 0,
+            fuente: bestColor.__variantRecencySource || variantPick?.source || "",
+            imagen: bestColor.images[0],
+          });
+        }
+      }
+
+      return producto;
+    });
+
     fylDevLog(`✅ Productos FYL cargados: ${fylProducts.length}`);
 
     return fylProducts;
@@ -230,25 +742,23 @@ function waitForFirstFYLImage(maxMs = 900) {
   });
 }
 
-// Función helper para obtener SKU defecto (reutilizar de main-supabase.js si está disponible)
+// Misma heurística que main-supabase.js (obtenerSKUDefecto): no depende de window.skuIndex
+// (skuIndex no está expuesto globalmente; antes este helper devolvía siempre null).
 function obtenerSKUDefecto(producto) {
   if (!producto || !producto.DetalleColor) return null;
-  
-  // Buscar en skuIndex si está disponible
-  if (typeof window !== 'undefined' && window.skuIndex) {
-    for (const detalleColor of producto.DetalleColor) {
-      if (!detalleColor.variantDetails) continue;
-      
-      const conStock = detalleColor.variantDetails.find(vd => 
-        vd.sku && (vd.available === null || vd.available > 0)
-      );
-      if (conStock && conStock.sku) return conStock.sku;
-      
-      const primerSku = detalleColor.variantDetails.find(vd => vd.sku);
-      if (primerSku && primerSku.sku) return primerSku.sku;
-    }
+
+  for (const detalleColor of producto.DetalleColor) {
+    if (!detalleColor.variantDetails) continue;
+
+    const conStock = detalleColor.variantDetails.find(
+      (vd) => vd.sku && (vd.available === null || vd.available > 0)
+    );
+    if (conStock && conStock.sku) return conStock.sku;
+
+    const primerSku = detalleColor.variantDetails.find((vd) => vd.sku);
+    if (primerSku && primerSku.sku) return primerSku.sku;
   }
-  
+
   return null;
 }
 
@@ -286,6 +796,21 @@ function renderMoreFYLProducts(products, startIndex, count) {
   return endIndex;
 }
 
+// PDP rápido (skuIndex) o lento (skeleton + fetch en main-supabase.js)
+function tryOpenPdpFromSku(sku) {
+  const s = sku != null ? String(sku).trim() : "";
+  if (!s) return false;
+
+  if (typeof window.abrirModalPorSKU === "function" && window.abrirModalPorSKU(s, { pushState: true })) {
+    return true;
+  }
+  if (typeof window.abrirPdpPorSkuIfPossible === "function") {
+    void window.abrirPdpPorSkuIfPossible(s, { pushState: true });
+    return true;
+  }
+  return false;
+}
+
 // Configurar event listeners para las cards
 function setupFYLCardListeners(scrollContainer, startIndex = 0, endIndex = null) {
   const allCards = scrollContainer.querySelectorAll('.fyl-originals-card');
@@ -315,21 +840,18 @@ function setupFYLCardListeners(scrollContainer, startIndex = 0, endIndex = null)
       e.preventDefault();
       const sku = card.dataset.sku;
       const articulo = card.dataset.articulo;
-      
-      if (sku && typeof window.abrirModalPorSKU === 'function') {
-        const abierto = window.abrirModalPorSKU(sku, { pushState: true });
-        if (abierto) return;
-      }
-      
-      const productoEncontrado = fylProducts.find(p => 
+
+      if (tryOpenPdpFromSku(sku)) return;
+
+      const productoEncontrado = fylProducts.find(p =>
         (p.Articulo || "").trim() === (articulo || "").trim()
       );
-      
+
       if (productoEncontrado) {
         let skuDisponible = null;
         for (const detalleColor of productoEncontrado.DetalleColor || []) {
           if (!detalleColor.variantDetails) continue;
-          const conStock = detalleColor.variantDetails.find(vd => 
+          const conStock = detalleColor.variantDetails.find(vd =>
             vd.sku && (vd.available === null || vd.available > 0)
           );
           if (conStock && conStock.sku) {
@@ -342,14 +864,11 @@ function setupFYLCardListeners(scrollContainer, startIndex = 0, endIndex = null)
             break;
           }
         }
-        
-        if (skuDisponible && typeof window.abrirModalPorSKU === 'function') {
-          window.abrirModalPorSKU(skuDisponible, { pushState: true });
-          return;
-        }
-        
-        // Fallback: abrir con producto directo si no hay SKU (abrirModalConResultado)
-        if (typeof window.abrirModalConResultado === 'function') {
+
+        if (tryOpenPdpFromSku(skuDisponible)) return;
+
+        // Sin SKU en variantes: abrir PDP con el objeto producto (misma ruta que el catálogo)
+        if (typeof window.abrirModalConResultado === "function") {
           const primerColor = productoEncontrado.DetalleColor?.[0]?.color || null;
           window.abrirModalConResultado(
             { producto: productoEncontrado, color: primerColor, talle: null },
@@ -357,14 +876,14 @@ function setupFYLCardListeners(scrollContainer, startIndex = 0, endIndex = null)
           );
           return;
         }
-        
-        const cardsEnCatalogo = document.querySelectorAll(`.card.producto`);
+
+        const cardsEnCatalogo = document.querySelectorAll(".card.producto");
         for (const cardEnCatalogo of cardsEnCatalogo) {
-          const cardArticulo = cardEnCatalogo.querySelector('.article-box')?.textContent?.trim();
+          const cardArticulo = cardEnCatalogo.querySelector(".article-box")?.textContent?.trim();
           if (cardArticulo === (articulo || "").trim()) {
-            cardEnCatalogo.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            cardEnCatalogo.scrollIntoView({ behavior: "smooth", block: "center" });
             setTimeout(() => {
-              const img = cardEnCatalogo.querySelector('.main-image');
+              const img = cardEnCatalogo.querySelector(".main-image");
               if (img) img.click();
               else cardEnCatalogo.click();
             }, 300);
@@ -466,6 +985,61 @@ export function hideFYLOriginalsBanner() {
   }
 }
 
+function applyLatestVariantMainImage(products) {
+  if (!Array.isArray(products) || products.length === 0) return;
+
+  products.forEach((producto) => {
+    // Si el banner ya eligió VariantePrincipal con datos reales de variante,
+    // no la sobrescribimos: el orden DetalleColor también ya viene aplicado.
+    if (producto?.__variantePrincipalSource === "recency-banner") return;
+
+    const colors = Array.isArray(producto?.DetalleColor) ? producto.DetalleColor : [];
+    if (colors.length === 0) return;
+
+    const getColorRecency = (detalleColor) => {
+      const directRecency =
+        Number(detalleColor?.__variantRecencyMs) ||
+        Number(detalleColor?.__recencyMs) ||
+        0;
+      if (directRecency > 0) return directRecency;
+
+      let best = 0;
+      for (const vd of detalleColor?.variantDetails || []) {
+        const vdRecency =
+          parseDateMs(vd?.updated_at) ||
+          parseDateMs(vd?.created_at) ||
+          parseDateMs(vd?.FechaIngreso) ||
+          0;
+        if (vdRecency > best) best = vdRecency;
+      }
+      return best;
+    };
+
+    const decorated = colors.map((color) => ({
+      color,
+      recency: getColorRecency(color),
+      image: Array.isArray(color?.images) && color.images[0] ? color.images[0] : "",
+    }));
+
+    const hasRecency = decorated.some((entry) => entry.recency > 0);
+    if (!hasRecency) return;
+
+    const winner = decorated
+      .filter((entry) => entry.image)
+      .sort((a, b) => b.recency - a.recency)[0];
+
+    if (!winner?.image) return;
+
+    producto.VariantePrincipal = winner.image;
+    fylDevLog("[FYL] VariantePrincipal recalculada post-enrich", {
+      articulo: producto?.Articulo || producto?.Descripcion || "",
+      colorGanador: winner?.color?.color || "",
+      imagenGanadora: winner.image,
+      recencyUsada: winner.recency,
+    });
+  });
+}
+
 // Función principal para cargar y mostrar banner
 export async function loadAndShowFYLBanner() {
   const products = await loadFYLOriginals();
@@ -473,9 +1047,11 @@ export async function loadAndShowFYLBanner() {
   // Enriquecer productos con información de stock/variantes si es necesario
   if (products.length > 0 && typeof window.enrichProductsWithStock === 'function') {
     await window.enrichProductsWithStock(products);
+    applyLatestVariantMainImage(products);
   }
   
-  renderFYLOriginalsBanner(products);
+  const curatedProducts = curateFylOriginalsSlots(products, new Date());
+  renderFYLOriginalsBanner(curatedProducts);
   await waitForFirstFYLImage();
 }
 

@@ -73,9 +73,15 @@ function setupNavHandlers() {
   if (navInicio) {
     navInicio.addEventListener("click", (e) => {
       e.preventDefault();
+
+      // Si hay PDP abierto, cerrarlo antes de volver al inicio.
+      const productModal = document.getElementById("product-modal");
+      if (productModal?.classList.contains("active") && typeof window.cerrarModal === "function") {
+        window.cerrarModal(true);
+      }
       
-      // Si estamos en banner.html, redirigir a index.html
-      if (window.location.pathname.includes('banner.html')) {
+      // Legacy: en banner.html redirigía a index, pero en /catalogo nunca debemos salir a index.
+      if (!window.__CATALOG_ONLY__ && window.location.pathname.includes('banner.html')) {
         window.location.href = 'index.html';
         return;
       }
@@ -167,8 +173,8 @@ function setupNavHandlers() {
     navCategorias.addEventListener("click", (e) => {
       e.preventDefault();
       
-      // Si estamos en banner.html, redirigir a index.html
-      if (window.location.pathname.includes('banner.html')) {
+      // Legacy: en banner.html redirigía a index, pero en /catalogo nunca debemos salir a index.
+      if (!window.__CATALOG_ONLY__ && window.location.pathname.includes('banner.html')) {
         window.location.href = 'index.html';
         return;
       }

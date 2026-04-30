@@ -364,8 +364,9 @@ function getMainImageFallbackUrls(producto, width = 800) {
       urls.push(url);
     }
   };
-  add(producto.VariantePrincipal);
+  // Priorizar color principal de la card (DetalleColor ya viene ordenado).
   (producto.DetalleColor || []).forEach((d) => (d.images || []).forEach(add));
+  add(producto.VariantePrincipal);
   return urls;
 }
 
@@ -2363,6 +2364,7 @@ async function enrichProductsWithStock(productos = [], { mergeSkuIndex = false }
     let generalWarehouseId = null;
     let ventaPublicoWarehouseId = null;
     const variantSizesMap = new Map();
+    const reservedBySizeMap = new Map(); // key: `${variant_id}_${normalizedSize}` -> reserved_qty
 
     if (allVariantIds.length > 0) {
       const warehousePromise = supabase
@@ -2408,7 +2410,26 @@ async function enrichProductsWithStock(productos = [], { mergeSkuIndex = false }
         })
         .catch(e => { console.warn("\u26a0\ufe0f Error obteniendo talles desde variant_sizes:", e); });
 
-      await Promise.all([warehousePromise, sizesPromise]);
+      const reservedPromise = supabase
+        .rpc("rpc_get_variant_size_reserved", { p_variant_ids: allVariantIds })
+        .then(({ data: reservedRows, error: reservedError }) => {
+          if (reservedError) {
+            console.warn("⚠️ Error obteniendo reservas por talle:", reservedError.message || reservedError);
+            return;
+          }
+          (reservedRows || []).forEach((row) => {
+            const normalizedSize = normalizeSize(row.size);
+            if (!row?.variant_id || !normalizedSize) return;
+            const key = `${row.variant_id}_${normalizedSize}`;
+            const prev = reservedBySizeMap.get(key) || 0;
+            reservedBySizeMap.set(key, prev + (Number(row.reserved_qty) || 0));
+          });
+        })
+        .catch((e) => {
+          console.warn("⚠️ Excepción obteniendo reservas por talle:", e);
+        });
+
+      await Promise.all([warehousePromise, sizesPromise, reservedPromise]);
     }
 
     // Obtener stock por talle desde variant_size_warehouse_stock (DISTRIBUCIÓN POR WAREHOUSE)
@@ -2492,8 +2513,6 @@ async function enrichProductsWithStock(productos = [], { mergeSkuIndex = false }
 
         const isActive = variante.active !== false;
         const variantId = variante.id;
-        const reserved = isActive ? Number(variante.reserved_qty ?? 0) : 0;
-
         // Obtener talles para esta variante desde variantSizesMap
         const variantSizes = variantSizesMap.get(variantId) || [];
         const variantSizesBySize = new Map();
@@ -2563,12 +2582,15 @@ async function enrichProductsWithStock(productos = [], { mergeSkuIndex = false }
           // PRIORIDAD 2: Si tiene stock en warehouses, usar ese stock
           // PRIORIDAD 3: Si no está en variant_sizes pero está en catalog_public_view.Numeracion, usar null (inconsistencia)
           let available;
+          const reservedBySize = isActive
+            ? (reservedBySizeMap.get(`${variantId}_${normalizedSize}`) || 0)
+            : 0;
           if (hasTalleInVariantSizes) {
             // El talle está en variant_sizes - usar el stock real (puede ser 0 para mostrar tachado)
-            available = Math.max(0, stockTotal - reserved);
+            available = Math.max(0, stockTotal - reservedBySize);
           } else if (stockTotal > 0) {
             // Tiene stock en warehouses aunque no esté en variant_sizes (raro pero posible)
-            available = Math.max(0, stockTotal - reserved);
+            available = Math.max(0, stockTotal - reservedBySize);
           } else if (stockTotal === 0 && sizeStockQty === 0 && !hasTalleInVariantSizes && variantSizes.length === 0) {
             // Si variantSizesBySize está completamente vacío (no se encontraron talles para esta variante),
             // pero el talle está en catalog_public_view.Numeracion, es una inconsistencia de datos.
@@ -2582,7 +2604,7 @@ async function enrichProductsWithStock(productos = [], { mergeSkuIndex = false }
             console.debug(`🔍 [DEBUG] Talle "${normalizedSize}" (original: "${talle}") no encontrado en variantSizesBySize para producto ${producto.Articulo}, color ${detalle.color}, variantId ${variantId}. Talles disponibles: ${Array.from(variantSizesBySize.keys()).join(', ') || 'ninguno'}.`);
           } else {
             // Fallback: calcular available normalmente (puede ser 0)
-            available = Math.max(0, stockTotal - reserved);
+            available = Math.max(0, stockTotal - reservedBySize);
           }
 
           // Construir skuIndex solo con variantes activas que tengan SKU
@@ -2611,7 +2633,7 @@ async function enrichProductsWithStock(productos = [], { mergeSkuIndex = false }
           return {
             talle: normalizedSize, // Usar tamaño normalizado
             stock: available === null ? null : stockTotal, // Si available es null, stock también debe ser null
-            reserved: available === null ? null : reserved, // Si available es null, reserved también debe ser null
+            reserved: available === null ? null : reservedBySize, // Reserva agregada por talle (no variante completa)
             available: available, // Puede ser null (disponibilidad por confirmar) o un número
             variant_id: isActive ? variantId : null,
             sku: isActive && variante.sku ? variante.sku.trim() : null,
@@ -2623,6 +2645,7 @@ async function enrichProductsWithStock(productos = [], { mergeSkuIndex = false }
           variantDetails,
         };
       });
+
     });
   } catch (error) {
     console.warn("⚠️ Error enriqueciendo productos con stock:", error.message);
@@ -2868,7 +2891,7 @@ async function buscarPorSKUEnSupabase(sku, { signal } = {}) {
       const { data: variantData, error: variantError, aborted: vAborted } = await wrapSupabase(
         () => supabase
           .from("product_variants")
-          .select("id, color, reserved_qty, product_id")
+          .select("id, color, product_id")
           .eq("sku", sku.trim())
           .eq("active", true)
           .limit(1)
@@ -2905,7 +2928,7 @@ async function buscarPorSKUEnSupabase(sku, { signal } = {}) {
     const { data: variantData, error: variantError, aborted: varAborted } = await wrapSupabase(
       () => supabase
         .from("product_variants")
-        .select("id, color, reserved_qty, product_id, products!inner(name, description)")
+        .select("id, color, product_id, products!inner(name, description)")
         .eq("id", variantId)
         .eq("active", true)
         .limit(1)
@@ -3011,8 +3034,19 @@ async function buscarPorSKUEnSupabase(sku, { signal } = {}) {
     }
     
     const stockTotal = stockGeneral + stockVentaPublico;
-    const reserved = Number(variant.reserved_qty || 0);
-    const available = Math.max(0, stockTotal - reserved);
+    let reservedBySize = 0;
+    if (talle && variantId) {
+      const { data: reservedRows, error: reservedError, aborted: reservedAborted } = await wrapSupabase(
+        () => supabase.rpc("rpc_get_variant_size_reserved", { p_variant_ids: [variantId] }),
+        { signal, label: "pdp.reserved_by_size" }
+      );
+      if (!reservedAborted && !reservedError && Array.isArray(reservedRows)) {
+        const normalizedTalle = normalizeSize(talle);
+        const row = reservedRows.find((r) => normalizeSize(r.size) === normalizedTalle);
+        reservedBySize = Number(row?.reserved_qty || 0) || 0;
+      }
+    }
+    const available = Math.max(0, stockTotal - reservedBySize);
     
     // 6. Usar datos del producto desde la relación (ya obtenidos en variant)
     const productoData = {
@@ -3055,7 +3089,7 @@ async function buscarPorSKUEnSupabase(sku, { signal } = {}) {
           variant_id: variantId,
           available: available,
           stock: stockTotal,
-          reserved: reserved
+          reserved: reservedBySize
         }]
       }]
     };

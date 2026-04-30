@@ -317,17 +317,6 @@ document.addEventListener(
       return;
     }
 
-    const originalCard = event.target.closest(".fyl-originals-card");
-    if (originalCard && !event.target.closest(".color-dot-btn, .color-dot-more")) {
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation();
-      openPublicFylOriginalPdp(originalCard).then((opened) => {
-        if (!opened) console.warn("[public-catalog] No se pudo abrir FYL Originals:", originalCard.dataset.articulo || "");
-      });
-      return;
-    }
-
     if (window.__PUBLIC_CATALOG__) {
       const publicQuantityControl = event.target.closest(
         "#product-modal .size-stepper-panel, #product-modal .size-stepper-controls, #product-modal .size-stepper-btn"

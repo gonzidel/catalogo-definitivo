@@ -15,6 +15,9 @@ function fylCatalogDebugEnabled() {
 function fylCatalogDbg(...args) {
   if (fylCatalogDebugEnabled()) console.log.apply(console, args);
 }
+function fylCatalogWarn(...args) {
+  if (fylCatalogDebugEnabled()) console.warn.apply(console, args);
+}
 
 let customBannerProducts = [];
 let customBannerProductsLoaded = 0; // Contador de productos mostrados
@@ -421,7 +424,7 @@ function renderColorDots(producto, cardIndex) {
 
 // Renderizar card individual de producto
 function renderCustomBannerProductCard(producto, index) {
-  const skuDefecto = obtenerSKUDefecto(producto);
+  const skuDefecto = getSafePdpSku(producto);
   const imagen = producto.VariantePrincipal || producto.DetalleColor?.[0]?.images?.[0] || '';
   const precioDisplay = producto.OfertaActiva && producto.PrecioOferta 
     ? producto.PrecioOferta 
@@ -452,22 +455,43 @@ function renderCustomBannerProductCard(producto, index) {
 function obtenerSKUDefecto(producto) {
   if (!producto || !producto.DetalleColor) return null;
   
-  // Buscar en skuIndex si está disponible
-  if (typeof window !== 'undefined' && window.skuIndex) {
-    for (const detalleColor of producto.DetalleColor) {
-      if (!detalleColor.variantDetails) continue;
-      
-      const conStock = detalleColor.variantDetails.find(vd => 
-        vd.sku && (vd.available === null || vd.available > 0)
-      );
-      if (conStock && conStock.sku) return conStock.sku;
-      
-      const primerSku = detalleColor.variantDetails.find(vd => vd.sku);
-      if (primerSku && primerSku.sku) return primerSku.sku;
-    }
+  // Resolver SKU desde variantDetails enriquecido (no depender de window.skuIndex)
+  for (const detalleColor of producto.DetalleColor) {
+    if (!detalleColor.variantDetails) continue;
+    
+    const conStock = detalleColor.variantDetails.find(vd => 
+      vd?.sku && Number(vd?.available) > 0
+    );
+    if (conStock && conStock.sku) return conStock.sku;
   }
   
   return null;
+}
+
+function getSafePdpSku(producto) {
+  return obtenerSKUDefecto(producto);
+}
+
+function hasUsableImage(producto) {
+  const imagen = producto?.VariantePrincipal || producto?.DetalleColor?.[0]?.images?.[0] || '';
+  return Boolean(String(imagen || '').trim());
+}
+
+function hasAtLeastOneVariantWithRealStock(producto) {
+  if (!producto || !Array.isArray(producto.DetalleColor)) return false;
+  return producto.DetalleColor.some((detalleColor) =>
+    Array.isArray(detalleColor?.variantDetails) &&
+    detalleColor.variantDetails.some((vd) => vd?.sku && Number(vd?.available) > 0)
+  );
+}
+
+function isCustomBannerEligible(producto) {
+  if (!producto) return false;
+  if (!hasUsableImage(producto)) return false;
+  const skuSeguro = getSafePdpSku(producto);
+  if (!skuSeguro) return false;
+  if (!hasAtLeastOneVariantWithRealStock(producto)) return false;
+  return true;
 }
 
 // Función helper para cloudinaryOptimized (reutilizar si está disponible)
@@ -516,54 +540,18 @@ function setupCustomBannerCardListeners(scrollContainer, startIndex = 0, endInde
 
     // Configurar click en la card
     card.addEventListener('click', () => {
-      const sku = card.dataset.sku;
       const articulo = card.dataset.articulo;
-      
-      if (sku && typeof window.abrirModalPorSKU === 'function') {
-        const abierto = window.abrirModalPorSKU(sku, { pushState: true });
-        if (abierto) return;
-      }
-      
       const productoEncontrado = customBannerProducts.find(p => 
-        (p.Articulo || "").trim() === articulo.trim()
+        (p.Articulo || "").trim() === (articulo || "").trim()
       );
+      const skuSeguro = getSafePdpSku(productoEncontrado);
       
-      if (productoEncontrado) {
-        let skuDisponible = null;
-        for (const detalleColor of productoEncontrado.DetalleColor || []) {
-          if (!detalleColor.variantDetails) continue;
-          const conStock = detalleColor.variantDetails.find(vd => 
-            vd.sku && (vd.available === null || vd.available > 0)
-          );
-          if (conStock && conStock.sku) {
-            skuDisponible = conStock.sku;
-            break;
-          }
-          const primerSku = detalleColor.variantDetails.find(vd => vd.sku);
-          if (primerSku && primerSku.sku) {
-            skuDisponible = primerSku.sku;
-            break;
-          }
-        }
-        
-        if (skuDisponible && typeof window.abrirModalPorSKU === 'function') {
-          window.abrirModalPorSKU(skuDisponible, { pushState: true });
-          return;
-        }
-        
-        const cardsEnCatalogo = document.querySelectorAll(`.card.producto`);
-        for (const cardEnCatalogo of cardsEnCatalogo) {
-          const cardArticulo = cardEnCatalogo.querySelector('.article-box')?.textContent?.trim();
-          if (cardArticulo === articulo.trim()) {
-            cardEnCatalogo.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            setTimeout(() => {
-              const img = cardEnCatalogo.querySelector('.main-image');
-              if (img) img.click();
-              else cardEnCatalogo.click();
-            }, 300);
-            return;
-          }
-        }
+      if (skuSeguro && typeof window.abrirModalPorSKU === 'function') {
+        const abierto = window.abrirModalPorSKU(skuSeguro, { pushState: true });
+        if (abierto) return;
+        fylCatalogWarn("⚠️ abrirModalPorSKU no pudo abrir desde custom banner para SKU seguro:", skuSeguro, "artículo:", articulo);
+      } else {
+        fylCatalogWarn("⚠️ Custom banner sin SKU seguro; se omite apertura PDP.", { articulo });
       }
     });
   });
@@ -779,6 +767,15 @@ export async function loadAndShowCustomBanner() {
     if (products.length > 0 && typeof window.enrichProductsWithStock === 'function') {
       fylCatalogDbg("🔄 Enriqueciendo productos con información de stock...");
       await window.enrichProductsWithStock(products);
+    }
+
+    products = products.filter(isCustomBannerEligible);
+    fylCatalogDbg(`📉 Productos elegibles para custom banner (stock real > 0): ${products.length}`);
+
+    if (products.length === 0) {
+      fylCatalogWarn("⚠️ Custom banner oculto: no hay productos elegibles con stock real positivo.");
+      hideCustomBanner();
+      return;
     }
     
     if (location.hash === "#/coleccion/fyl-originals") {

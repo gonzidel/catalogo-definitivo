@@ -207,13 +207,14 @@ async function initOrderCreator() {
     productSearch.addEventListener("input", (e) => {
       clearTimeout(searchTimeout);
       const query = e.target.value.trim();
-      if (query.length < 2) {
+      if (query.length < PRODUCT_SEARCH_MIN_LEN) {
         hideProductResults();
         return;
       }
+      const debounceMs = getProductSearchDebounce(query);
       searchTimeout = setTimeout(() => {
         searchProducts(query);
-      }, 300);
+      }, debounceMs);
     });
   }
   
@@ -382,13 +383,14 @@ function ensureEventListeners() {
     productSearch.addEventListener("input", (e) => {
       clearTimeout(searchTimeout);
       const query = e.target.value.trim();
-      if (query.length < 2) {
+      if (query.length < PRODUCT_SEARCH_MIN_LEN) {
         hideProductResults();
         return;
       }
+      const debounceMs = getProductSearchDebounce(query);
       searchTimeout = setTimeout(() => {
         searchProducts(query);
-      }, 300);
+      }, debounceMs);
     });
   }
 
@@ -409,13 +411,11 @@ function ensureEventListeners() {
     });
   }
   
-  // Registrar listener de búsqueda por QR
-  // Usar solo debounce para leer el código completo: si el lector envía "145" + Enter + "565",
-  // no procesar en Enter para no enviar "145"; esperar 250 ms tras el último carácter y procesar "145565".
+  // Registrar listener de búsqueda por QR.
+  // Se evita procesar fragmentos cortos: solo se procesa cuando alcanza longitud mínima.
   if (qrSearch && !qrSearch.hasAttribute('data-listener-attached')) {
     qrSearch.setAttribute('data-listener-attached', 'true');
     let qrDebounceTimer;
-    const QR_DEBOUNCE_MS = 250;
 
     qrSearch.addEventListener("keydown", (e) => {
       if (e.key === "Enter") e.preventDefault(); // Evitar newline y que se procese un fragmento
@@ -424,14 +424,14 @@ function ensureEventListeners() {
     qrSearch.addEventListener("input", () => {
       clearTimeout(qrDebounceTimer);
       const value = qrSearch.value.trim();
-      if (!/^\d*$/.test(value) || value.length < 3) return;
+      if (!/^\d*$/.test(value) || value.length < QR_SEARCH_MIN_DIGITS) return;
       qrDebounceTimer = setTimeout(() => {
         const current = qrSearch.value.trim();
-        if (/^\d+$/.test(current) && current.length >= 3) {
+        if (/^\d+$/.test(current) && current.length >= QR_SEARCH_MIN_DIGITS) {
           addToQrQueue(current);
           qrSearch.value = "";
         }
-      }, QR_DEBOUNCE_MS);
+      }, QR_SEARCH_DEBOUNCE_MS);
     });
   }
 
@@ -577,21 +577,123 @@ async function searchCustomers(query) {
   }
   
   try {
+    const cleanQuery = String(query || "").trim();
+    if (cleanQuery.length < 2) {
+      hideCustomerResults();
+      return;
+    }
+    const normQuery = normalizeCustomerSearchText(cleanQuery);
+    const tokens = tokenizeCustomerSearch(normQuery);
+    const escapedQuery = cleanQuery.replace(/[%_]/g, "");
+
     const { data, error } = await supabase
       .from("customers")
       .select("id, customer_number, full_name, dni, phone, email, city, province")
-      .or(`full_name.ilike.%${query}%,dni.ilike.%${query}%,email.ilike.%${query}%`)
-      .limit(10);
+      .or(`full_name.ilike.%${escapedQuery}%,dni.ilike.%${escapedQuery}%,phone.ilike.%${escapedQuery}%,email.ilike.%${escapedQuery}%,customer_number.ilike.%${escapedQuery}%`)
+      .limit(80);
     
     if (error) {
       console.error("❌ Error buscando clientes:", error);
       return;
     }
     
-    displayCustomerResults(data || []);
+    const ranked = rankCustomersForSearch(data || [], normQuery, tokens).slice(0, 12);
+    displayCustomerResults(ranked, cleanQuery);
   } catch (error) {
     console.error("❌ Error en búsqueda de clientes:", error);
   }
+}
+
+function normalizeCustomerSearchText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function tokenizeCustomerSearch(value) {
+  return normalizeCustomerSearchText(value)
+    .split(" ")
+    .map((t) => t.trim())
+    .filter(Boolean);
+}
+
+function rankCustomersForSearch(customers, normQuery, tokens) {
+  return [...customers]
+    .map((customer) => {
+      const fullName = normalizeCustomerSearchText(customer.full_name || "");
+      const dni = String(customer.dni || "").toLowerCase();
+      const email = String(customer.email || "").toLowerCase();
+      const phone = String(customer.phone || "").replace(/\D/g, "");
+      const customerNumber = String(customer.customer_number || "").toLowerCase();
+      const queryDigits = String(normQuery || "").replace(/\D/g, "");
+      const allTokensMatch = tokens.length > 0 && tokens.every((t) => fullName.includes(t));
+      const startsWithAllTokens =
+        tokens.length > 0 &&
+        fullName &&
+        tokens.every((t) => fullName.startsWith(t) || fullName.includes(` ${t}`));
+
+      let score = 0;
+      if (fullName === normQuery) score += 140;
+      if (fullName.startsWith(normQuery)) score += 100;
+      if (startsWithAllTokens) score += 75;
+      if (allTokensMatch) score += 55;
+      if (customerNumber && customerNumber.includes(normQuery)) score += 45;
+      if (dni && dni.includes(normQuery)) score += 35;
+      if (queryDigits && phone.includes(queryDigits)) score += 35;
+      if (email && email.includes(normQuery)) score += 20;
+      if (!fullName && (dni || email || customerNumber || phone)) score += 5;
+
+      return { customer, score, fullName };
+    })
+    .filter((row) => row.score > 0)
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return a.fullName.localeCompare(b.fullName, "es", { sensitivity: "base" });
+    })
+    .map((row) => row.customer);
+}
+
+function escapeCustomerResultHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function highlightCustomerMatch(text, query) {
+  const rawText = String(text || "");
+  const rawQuery = String(query || "").trim();
+  if (!rawText || !rawQuery) return escapeCustomerResultHtml(rawText);
+  const escapedQuery = rawQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  try {
+    const regex = new RegExp(`(${escapedQuery})`, "ig");
+    return escapeCustomerResultHtml(rawText).replace(regex, "<mark style=\"background:#fff3cd;padding:0 2px;border-radius:3px;\">$1</mark>");
+  } catch (_) {
+    return escapeCustomerResultHtml(rawText);
+  }
+}
+
+function buildCustomerMatchChips(customer, query) {
+  const normQuery = normalizeCustomerSearchText(query || "");
+  const queryDigits = String(query || "").replace(/\D/g, "");
+  const chips = [];
+  if (!normQuery) return chips;
+  const fullName = normalizeCustomerSearchText(customer.full_name || "");
+  const customerNumber = String(customer.customer_number || "").toLowerCase();
+  const dni = String(customer.dni || "").toLowerCase();
+  const email = String(customer.email || "").toLowerCase();
+  const phoneDigits = String(customer.phone || "").replace(/\D/g, "");
+  if (fullName.includes(normQuery)) chips.push("Nombre");
+  if (customerNumber && customerNumber.includes(normQuery)) chips.push("Nº cliente");
+  if (dni && dni.includes(normQuery)) chips.push("DNI");
+  if (queryDigits && phoneDigits.includes(queryDigits)) chips.push("Teléfono");
+  if (email && email.includes(normQuery)) chips.push("Email");
+  return chips;
 }
 
 // Función auxiliar para formatear nombres de clientes
@@ -606,7 +708,7 @@ function formatName(c) {
 }
 
 // Mostrar resultados de clientes
-function displayCustomerResults(customers) {
+function displayCustomerResults(customers, query = "") {
   const resultsDiv = document.getElementById("customer-results");
   if (!resultsDiv) return;
   
@@ -616,17 +718,27 @@ function displayCustomerResults(customers) {
     return;
   }
 
-  resultsDiv.innerHTML = customers.map(customer => `
+  resultsDiv.innerHTML = customers.map(customer => {
+    const chips = buildCustomerMatchChips(customer, query);
+    const chipsHtml = chips.length > 0
+      ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;">
+          ${chips.map((chip) => `<span style="font-size:10px;padding:2px 6px;border-radius:999px;background:#eef2ff;color:#1e3a8a;border:1px solid #c7d2fe;">${escapeCustomerResultHtml(chip)}</span>`).join("")}
+        </div>`
+      : "";
+    const nameText = formatName(customer);
+    return `
     <div class="customer-result-item" data-customer-id="${customer.id}">
-      <strong>${formatName(customer)}</strong>
-      ${customer.customer_number ? `<span style="color: #CD844D;">#${customer.customer_number}</span>` : ''}
+      <strong>${highlightCustomerMatch(nameText, query)}</strong>
+      ${customer.customer_number ? `<span style="color: #CD844D;">#${highlightCustomerMatch(customer.customer_number, query)}</span>` : ''}
       <div style="font-size: 12px; color: #666; margin-top: 4px;">
-        ${customer.dni ? `DNI: ${customer.dni} • ` : ''}
-        ${customer.phone ? `Tel: ${customer.phone}` : ''}
-        ${customer.email ? ` • ${customer.email}` : ''}
+        ${customer.dni ? `DNI: ${highlightCustomerMatch(customer.dni, query)} • ` : ''}
+        ${customer.phone ? `Tel: ${highlightCustomerMatch(customer.phone, query)}` : ''}
+        ${customer.email ? ` • ${highlightCustomerMatch(customer.email, query)}` : ''}
       </div>
+      ${chipsHtml}
     </div>
-  `).join("");
+  `;
+  }).join("");
   
   resultsDiv.style.display = "block";
   
@@ -1154,6 +1266,21 @@ let warehouses = { general: null, ventaPublico: null };
 // Sistema de cola para procesar múltiples QR seguidos
 let qrProcessingQueue = [];
 let isProcessingQr = false;
+const PRODUCT_SEARCH_MIN_LEN = 2;
+const PRODUCT_SEARCH_TEXT_DEBOUNCE_MS = 250;
+const PRODUCT_SEARCH_NUMERIC_DEBOUNCE_MS = 550;
+const QR_SEARCH_MIN_DIGITS = 6;
+const QR_SEARCH_DEBOUNCE_MS = 250;
+
+function isLikelyNumericCode(value) {
+  return /^\d+$/.test(String(value || "").trim());
+}
+
+function getProductSearchDebounce(query) {
+  return isLikelyNumericCode(query)
+    ? PRODUCT_SEARCH_NUMERIC_DEBOUNCE_MS
+    : PRODUCT_SEARCH_TEXT_DEBOUNCE_MS;
+}
 
 async function loadWarehouses() {
   if (!supabase) {

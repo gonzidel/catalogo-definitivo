@@ -32,6 +32,8 @@ Nota importante: el usuario confirmo que los SQL analizados ya estan cargados y 
 | 11 | [[11-DECISIONES-TECNICAS]] | Decisiones tecnicas registradas |
 | 12 | [[12-CHECKLIST-CAMBIOS-FUTUROS]] | Checklist para cambios |
 | 13 | [[13-RPCS-DEPLOY-STATE]] | Registro de version/firma activa de RPCs |
+| 22 | [[22-BANNER-FYL-ORIGINALS]] | Funcionamiento tecnico del banner FYL Originals en home (curaduria, slot diario, fallbacks) |
+| 23 | [[23-CAMBIOS-OPERATIVOS-2026-04-29]] | Registro consolidado de cambios: stock/move-stock lector QR y búsquedas de clientes/pedidos |
 | 21 | [[21-CONTEXTO-AGENTE-HARDENING-2026-04]] | Handoff agente: hardening UX/red/auth, index top, carrito `variant_id` |
 | 99a | [[99-AUDITORIA-FINAL]] | Verificacion final saneamiento (grep, SQL, cierre vs backlog) |
 | 99 | [[99-AUDITORIA-DOCUMENTACION]] | Auditoria meta de la documentacion |

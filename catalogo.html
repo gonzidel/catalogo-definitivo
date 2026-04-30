@@ -126,6 +126,108 @@
       display: none !important;
     }
 
+    /* Banner principal compacto para /catalogo */
+    html.public-catalog #info-banner-top-container {
+      width: 100%;
+      max-width: none;
+      margin: 8px 0 6px;
+      margin-left: 0;
+      margin-right: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html.public-catalog #home-top-dynamic-slot {
+      margin-bottom: 0;
+    }
+
+    html.public-catalog .info-banner-top.info-banner-top--visual {
+      width: 100%;
+      max-width: none;
+      margin: 0;
+      border-radius: 10px;
+      border: 1px solid rgba(205, 132, 77, 0.45);
+      background: #f3e7dc;
+      padding: 10px 12px;
+      min-height: 0;
+      box-shadow: none;
+      box-sizing: border-box;
+      display: block;
+    }
+
+    html.public-catalog .info-banner-top__inner {
+      gap: 0;
+      background: transparent;
+      border: 0;
+      border-radius: 0;
+      box-shadow: none;
+      padding: 0;
+      overflow: visible;
+      box-sizing: border-box;
+      display: block;
+    }
+
+    html.public-catalog .info-banner-top__inner::after {
+      display: none;
+      content: none;
+    }
+
+    html.public-catalog .info-banner-top__content {
+      padding-left: 0;
+      box-sizing: border-box;
+    }
+
+    html.public-catalog .info-banner-top__title {
+      margin: 0;
+      line-height: 1.1;
+      box-sizing: border-box;
+    }
+
+    html.public-catalog .info-banner-top__title-main {
+      display: block;
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: #1f1f1f;
+      line-height: 1.1;
+      box-sizing: border-box;
+    }
+
+    html.public-catalog .info-banner-top__line {
+      margin: 4px 0 6px;
+      font-size: 12px;
+      font-weight: 400;
+      line-height: 1.15;
+      color: #585858;
+      box-sizing: border-box;
+    }
+
+    html.public-catalog .info-banner-top__cta {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      height: 32px;
+      min-height: 32px;
+      padding: 0 10px;
+      border-radius: 10px;
+      background: #CD844D;
+      color: #fff;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.2px;
+      line-height: 1;
+      margin: 0;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+      box-sizing: border-box;
+    }
+
+    html.public-catalog .info-banner-top__cta-arrow {
+      margin-left: 6px;
+      font-size: 18px;
+      line-height: 1;
+    }
+
     /* Banner Promocional */
     .promotional-banner {
       background: #CD844D;
@@ -507,11 +609,10 @@
           <div class="info-banner-top__inner">
             <div class="info-banner-top__content">
               <h3 class="info-banner-top__title">
-                <span class="info-banner-top__title-main">CATALOGO PUBLICO</span>
-                <strong>Explorá y consultá por WhatsApp</strong>
+                <span class="info-banner-top__title-main">Elegí modelos para vender hoy</span>
               </h3>
-              <p class="info-banner-top__line">Ves stock, talles, colores y fotos listas para compartir.</p>
-              <span class="info-banner-top__cta">Cómo usar el catálogo <span class="info-banner-top__cta-arrow" aria-hidden="true">></span></span>
+              <p class="info-banner-top__line">Stock visible y fotos listas para vender</p>
+              <span class="info-banner-top__cta">Cómo hacer tu pedido <span class="info-banner-top__cta-arrow" aria-hidden="true">></span></span>
             </div>
           </div>
         </a>
@@ -614,36 +715,28 @@
     </section>
     <section class="howto-section" id="howto-steps" aria-labelledby="howto-steps-title">
       <div class="howto-section__head">
-        <h2 id="howto-steps-title">Usalo en 4 pasos</h2>
-        <p class="muted">Esta versión no tiene compra online: las consultas y pedidos se coordinan por WhatsApp.</p>
+        <h2 id="howto-steps-title">Cómo hacer tu pedido</h2>
       </div>
       <ol class="steps" aria-label="Pasos para comprar">
         <li class="step">
           <div class="step__num">1</div>
           <div class="step__body">
-            <h3>Explorá el catálogo</h3>
-            <p>Buscá por artículo, categoría, tag, color o talle.</p>
+            <h3>Elegí los modelos que querés vender</h3>
+            <p>Explorá el catálogo y revisá fotos, talles y stock disponible</p>
           </div>
         </li>
         <li class="step">
           <div class="step__num">2</div>
           <div class="step__body">
-            <h3>Entrá al detalle</h3>
-            <p>Revisá fotos, colores, talles disponibles, stock y precio si está publicado.</p>
+            <h3>Prepará tus ventas con las fotos</h3>
+            <p>Podés descargar o compartir imágenes con tus clientas</p>
           </div>
         </li>
         <li class="step">
           <div class="step__num">3</div>
           <div class="step__body">
-            <h3>Descargá o compartí fotos</h3>
-            <p>Usá las acciones de cada producto para enviar imágenes a tus clientas.</p>
-          </div>
-        </li>
-        <li class="step">
-          <div class="step__num">4</div>
-          <div class="step__body">
-            <h3>Consultá por WhatsApp</h3>
-            <p>El botón principal abre WhatsApp con el modelo y el link del producto.</p>
+            <h3>Consultanos por WhatsApp</h3>
+            <p>Te ayudamos a armar y confirmar tu pedido</p>
           </div>
         </li>
       </ol>
@@ -653,22 +746,22 @@
     </section>
     <section class="howto-section" id="howto-notes" aria-labelledby="howto-notes-title">
       <div class="howto-section__head">
-        <h2 id="howto-notes-title">Aclaraciones importantes</h2>
-        <p class="muted">Condiciones que te conviene tener en cuenta.</p>
+        <h2 id="howto-notes-title">Antes de hacer tu pedido</h2>
+        <p class="muted">Datos importantes para comprar</p>
       </div>
       <div class="cards">
         <article class="info-card">
-          <h3>Stock visible</h3>
-          <p>El stock publicado sirve como referencia para consultar disponibilidad por WhatsApp.</p>
+          <h3>Stock disponible</h3>
+          <p>Podés ver qué hay disponible antes de consultar</p>
         </article>
         <article class="info-card">
-          <h3>Envíos y retiro</h3>
-          <p>Hacemos envíos a todo el país. También podés retirar en el local, pero esperá nuestra confirmación antes de venir.</p>
-          <p>Av. Alberdi 1099, Resistencia, Chaco.</p>
+          <h3>Envíos a todo el país</h3>
+          <p>Hacemos envíos a todo el país. También podés retirar en Resistencia con coordinación previa</p>
+          <p>Resistencia, Chaco.</p>
         </article>
         <article class="info-card">
-          <h3>Medios de pago</h3>
-          <p>Transferencia o contra reembolso según localidad. Si pagás con tarjeta puede haber un recargo; te lo indicamos al confirmar.</p>
+          <h3>Pagos simples</h3>
+          <p>Transferencia o contra reembolso según tu localidad</p>
         </article>
       </div>
     </section>
@@ -678,33 +771,41 @@
       </div>
       <div class="faq" role="region" aria-label="Preguntas frecuentes">
         <div class="faq-item">
-          <button class="faq-q" type="button" aria-expanded="false">¿Puedo consultar varios modelos? <span class="faq-icon" aria-hidden="true">+</span></button>
-          <div class="faq-a" hidden>Sí. Podés consultar los modelos que te interesen por WhatsApp.</div>
+          <button class="faq-q" type="button" aria-expanded="false">¿Cómo hago un pedido? <span class="faq-icon" aria-hidden="true">+</span></button>
+          <div class="faq-a" hidden>Elegís los modelos y nos escribís por WhatsApp. Te ayudamos a armar y confirmar tu pedido.</div>
         </div>
         <div class="faq-item">
-          <button class="faq-q" type="button" aria-expanded="false">¿Qué pasa si un producto no hay en stock? <span class="faq-icon" aria-hidden="true">+</span></button>
-          <div class="faq-a" hidden>Te avisamos al confirmar y podés reemplazarlo por otro disponible.</div>
+          <button class="faq-q" type="button" aria-expanded="false">¿Puedo consultar varios modelos juntos? <span class="faq-icon" aria-hidden="true">+</span></button>
+          <div class="faq-a" hidden>Sí, podés consultar todos los modelos que quieras en un mismo mensaje.</div>
         </div>
         <div class="faq-item">
-          <button class="faq-q" type="button" aria-expanded="false">¿Puedo comprar desde esta página? <span class="faq-icon" aria-hidden="true">+</span></button>
-          <div class="faq-a" hidden>No. Esta versión es para explorar el catálogo y consultar; los pedidos se coordinan por WhatsApp.</div>
+          <button class="faq-q" type="button" aria-expanded="false">¿Qué pasa si un producto no está disponible? <span class="faq-icon" aria-hidden="true">+</span></button>
+          <div class="faq-a" hidden>Te avisamos al momento de confirmar y podés elegir otro modelo disponible.</div>
+        </div>
+        <div class="faq-item">
+          <button class="faq-q" type="button" aria-expanded="false">¿Hacen envíos a todo el país? <span class="faq-icon" aria-hidden="true">+</span></button>
+          <div class="faq-a" hidden>Sí, hacemos envíos a todo el país o podés retirar en Resistencia coordinando previamente.</div>
+        </div>
+        <div class="faq-item">
+          <button class="faq-q" type="button" aria-expanded="false">¿Cómo se coordinan los pedidos? <span class="faq-icon" aria-hidden="true">+</span></button>
+          <div class="faq-a" hidden>Los pedidos se coordinan directamente por WhatsApp para confirmar stock y envío.</div>
         </div>
         <div class="faq-item">
           <button class="faq-q" type="button" aria-expanded="false">¿Hay cambios o devoluciones? <span class="faq-icon" aria-hidden="true">+</span></button>
-          <div class="faq-a" hidden>Consultalo con nosotros al confirmar; te pasamos la política según el producto y el caso.</div>
+          <div class="faq-a" hidden>Las condiciones se confirman según el producto al momento de tu pedido.</div>
         </div>
       </div>
     </section>
     <section class="howto-final" aria-label="Acción final">
-      <h2>¿Lista para consultar?</h2>
-      <p class="muted">Entrá al catálogo, elegí un modelo y usá el botón de WhatsApp.</p>
-      <a class="btn btn-primary btn-wide" href="#/" data-action="go-home">Ir al catálogo</a>
+      <h2>¿Querés consultar un modelo?</h2>
+      <p class="muted">Entrá al catálogo, elegí el producto y escribinos por WhatsApp.</p>
+      <a class="btn btn-primary btn-wide" href="#/" data-action="go-home">Ver catálogo</a>
     </section>
 
     <section class="howto-section" aria-label="Redes sociales">
       <div class="howto-section__head">
-        <h2>Nuestras redes</h2>
-        <p class="muted">Podés ver nuestros productos y cómo trabajamos en nuestras redes.</p>
+        <h2>Seguinos en redes</h2>
+        <p class="muted">Novedades, productos y contenido para revendedoras.</p>
       </div>
       <div class="about-fyl__socialActions" aria-label="Acciones de redes">
         <a class="btn about-fyl__socialBtn about-fyl__socialBtn--ig" href="https://www.instagram.com/fylmodaok/" target="_blank" rel="noopener" aria-label="Abrir Instagram @fylmodaok">
@@ -895,7 +996,7 @@
   <script type="module" src="scripts/mobile-nav.js?v=m260420"></script>
   <script type="module" src="scripts/banner.js?v=m260420"></script>
   <script type="module" src="scripts/size-filter.js?v=m260420"></script>
-  <script type="module" src="scripts/fyl-originals-banner.js?v=m260420"></script>
+  <script type="module" src="scripts/fyl-originals-banner.js?v=m291026"></script>
   <script type="module" src="scripts/custom-banner.js?v=m260420"></script>
   <script type="module" src="scripts/como-comprar.js?v=m260420"></script>
   <!-- [PERF] Scripts diferidos: se cargan despues del primer render del catalogo -->

@@ -555,16 +555,27 @@ async function saveTagsAndDetails() {
       if (deleteError) throw deleteError;
     }
     
-    tagsStatus.textContent = "✓ Tags guardados correctamente. El estado del producto se actualizará automáticamente.";
+    // Activar el producto (no existe trigger automático para esta transición)
+    const { error: activateError } = await supabase
+      .from("products")
+      .update({ status: "active" })
+      .eq("id", currentProductId);
+
+    if (activateError) {
+      console.warn("Tags guardados pero el estado no pudo actualizarse:", activateError.message);
+      tagsStatus.textContent = "✓ Tags guardados. No se pudo activar el producto (verificar permisos).";
+    } else {
+      tagsStatus.textContent = "✓ Tags guardados. Producto activado en el catálogo.";
+    }
     tagsStatus.className = "status-message success";
-    
-    // Recargar productos (el producto debería desaparecer de la lista)
+
+    // Recargar lista (el producto ya no debería aparecer en missing_tags)
     setTimeout(() => {
       loadProductsWithoutTags();
       tagsSection.classList.remove("active");
       currentProductId = null;
     }, 2000);
-    
+
   } catch (error) {
     console.error("Error guardando tags:", error);
     tagsStatus.textContent = `Error: ${error.message}`;
@@ -572,10 +583,22 @@ async function saveTagsAndDetails() {
   }
 }
 
-// Función auxiliar para mostrar mensajes
+// Función auxiliar para mostrar mensajes globales (errores de carga, etc.)
 function showStatus(message, type = "info") {
-  // Esta función se puede implementar si se necesita mostrar mensajes globales
   console.log(`[${type}] ${message}`);
+  if (type !== "error") return;
+  // Mostrar error visible en el contenedor de productos
+  if (!productsContainer) return;
+  let errEl = productsContainer.querySelector(".global-status-msg");
+  if (!errEl) {
+    errEl = document.createElement("div");
+    errEl.className = "global-status-msg";
+    errEl.style.cssText =
+      "padding:12px 16px;border-radius:8px;margin-bottom:12px;" +
+      "background:#fff3f3;border:1px solid #fecaca;color:#dc2626;font-size:14px;";
+    productsContainer.prepend(errEl);
+  }
+  errEl.textContent = message;
 }
 
 // Event listeners
@@ -758,6 +781,7 @@ detailsSearch?.addEventListener("input", () => {
 });
 
 // Agregar highlights desde details
+// Comportamiento: marcar un detalle lo agrega automáticamente a "destacados" si hay cupo (máx 2).
 detailsList?.addEventListener("change", (e) => {
   if (e.target.type === "checkbox" && e.target.checked) {
     const tag3Id = e.target.value;
@@ -765,6 +789,16 @@ detailsList?.addEventListener("change", (e) => {
       if (!selectedHighlightsIds.includes(tag3Id)) {
         selectedHighlightsIds.push(tag3Id);
         renderHighlights();
+        // Avisar al operador del auto-agregado
+        const tagsStatus = document.getElementById("tags-status");
+        if (tagsStatus) {
+          tagsStatus.textContent =
+            "ⓘ Se marcó automáticamente como destacado (máx. 2). Podés quitarlo desde la sección de arriba.";
+          tagsStatus.className = "status-message info";
+          setTimeout(() => {
+            if (tagsStatus.textContent.startsWith("ⓘ")) tagsStatus.textContent = "";
+          }, 5000);
+        }
       }
     }
   }

@@ -86,15 +86,24 @@ function importWithTimeout(moduleUrl, ms) {
   ]);
 }
 
-/** Bundle ~400KB: en 3G/móvil real puede superar 8s; PC en Wi‑Fi no. */
-const SUPABASE_LOCAL_IMPORT_MS = 35000;
+/**
+ * Versión del bundle local. Debe coincidir con el app-version del HTML
+ * para que el cache del browser se invalide cuando cambie el bundle.
+ * Al subir esta versión el browser descarga el nuevo bundle y lo cachea
+ * como immutable (firebase.json: Cache-Control: public, max-age=31536000).
+ * TODO (Phase B): cuando se reactive el SW, el sw.js también debe versionar
+ * el precache de este bundle con la misma clave.
+ */
+const __SUPABASE_BUNDLE_VERSION = "m260503";
+
+/** Bundle ~400KB: en 3G/móvil real con señal débil puede superar 35s; 60s da margen. */
+const SUPABASE_LOCAL_IMPORT_MS = 60000;
 /** Cada intento CDN (móvil lento / DNS). */
 const SUPABASE_CDN_IMPORT_MS = 28000;
 
-const SUPABASE_LOCAL_BUNDLE = new URL(
-  "./vendor/supabase-js.bundle.min.js",
-  import.meta.url
-).href;
+const SUPABASE_LOCAL_BUNDLE =
+  new URL("./vendor/supabase-js.bundle.min.js", import.meta.url).href +
+  "?v=" + __SUPABASE_BUNDLE_VERSION;
 
 const SUPABASE_CDN_URLS = [
   "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.0/+esm",
@@ -116,11 +125,75 @@ function describeError(e) {
   };
 }
 
+/**
+ * Verifica HTTP status y Content-Type del bundle local via fetch HEAD.
+ * Solo actúa cuando debug_boot=1 está activo para no añadir latencia en producción.
+ * Corre en paralelo con el import() — no bloquea la carga.
+ *
+ * Distingue tres escenarios problemáticos de Safari:
+ *   - Firebase sirviendo HTML por rewrite ** (sw_cache_suspect / bundle_missing)
+ *   - MIME type incorrecto que Safari rechaza para import()
+ *   - Bundle inaccesible (404 / red)
+ */
+async function probeBundleForDebug(url) {
+  if (!globalThis.__FYL_BOOT__?.debug) return null;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 5000);
+    const r = await fetch(url, { method: "HEAD", cache: "no-store", signal: ctrl.signal });
+    clearTimeout(timer);
+    const ct = r.headers.get("content-type") || "(sin header)";
+    const looksLikeHtml = /text\/html/i.test(ct);
+    const validMime = /application\/javascript|text\/javascript/i.test(ct);
+    const probe = {
+      status: r.status,
+      contentType: ct,
+      looksLikeHtml,
+      validMime,
+    };
+    globalThis.markBootStage?.("supabase.bundle.probe", probe);
+    if (looksLikeHtml) {
+      console.error(
+        `${LOG} [sw_cache_suspect] Bundle URL devuelve HTML (status=${r.status}). ` +
+        `Firebase puede estar sirviendo el rewrite **. El bundle no está deployado o ` +
+        `el SW viejo está interceptando la request. URL: ${url}`
+      );
+    } else if (!r.ok) {
+      console.error(`${LOG} Bundle URL HTTP ${r.status}. El archivo puede no estar deployado.`);
+    } else if (!validMime) {
+      console.warn(
+        `${LOG} MIME inesperado para el bundle: "${ct}". ` +
+        `Safari requiere application/javascript o text/javascript para import() de módulos.`
+      );
+    } else {
+      fylDevInfo(`${LOG} Bundle probe OK: status=${r.status} type="${ct}"`);
+    }
+    return probe;
+  } catch (e) {
+    const d = describeError(e);
+    globalThis.markBootStage?.("supabase.bundle.probe_failed", { name: d.name, message: d.message });
+    return null;
+  }
+}
+
 /** @returns {{ createClient: Function, source: string }} */
 async function loadCreateClient() {
   let lastErr = null;
 
   fylDevInfo(`${LOG} Carga de @supabase/supabase-js: primero bundle local, luego CDN.`);
+  fylDevInfo(`${LOG} Bundle local URL:`, SUPABASE_LOCAL_BUNDLE);
+
+  // Exponer la URL del bundle para el panel de diagnóstico (?debug_boot=1).
+  globalThis.markBootStage?.("supabase.runtime.bundle_url", {
+    url: SUPABASE_LOCAL_BUNDLE,
+    version: __SUPABASE_BUNDLE_VERSION,
+  });
+
+  // Probe de MIME type concurrente (solo debug_boot=1; no bloquea el import).
+  const _probeP = probeBundleForDebug(SUPABASE_LOCAL_BUNDLE);
+  void _probeP;
+
+  const t0local = typeof performance !== "undefined" ? performance.now() : Date.now();
 
   try {
     fylDevInfo(`${LOG} Intento 1/local (${SUPABASE_LOCAL_IMPORT_MS}ms):`, SUPABASE_LOCAL_BUNDLE);
@@ -129,27 +202,46 @@ async function loadCreateClient() {
       SUPABASE_LOCAL_IMPORT_MS
     );
     if (mod?.createClient) {
-      fylDevInfo(`${LOG} OK: createClient desde bundle local (mismo origen).`);
-      globalThis.markBootStage?.("supabase.runtime.loaded", { source: "local" });
+      const elapsedMs = Math.round(
+        (typeof performance !== "undefined" ? performance.now() : Date.now()) - t0local
+      );
+      fylDevInfo(`${LOG} OK: createClient desde bundle local (mismo origen) en ${elapsedMs}ms.`);
+      globalThis.markBootStage?.("supabase.runtime.loaded", {
+        source: "local",
+        elapsedMs,
+      });
       return { createClient: mod.createClient, source: "local" };
     }
-    lastErr = new Error("Módulo local sin export createClient");
+    lastErr = new Error("supabase_local_import_failed: módulo sin export createClient");
     const d = describeError(lastErr);
     console.warn(`${LOG} Local: ${d.name} — ${d.message}`);
+    globalThis.markBootStage?.("supabase.runtime.local_failed", {
+      kind: "supabase_local_import_failed",
+      name: d.name,
+      message: d.message,
+    });
   } catch (e) {
     lastErr = e;
     const d = describeError(e);
+    const kind = d.isTimeout ? "supabase_local_timeout" : "supabase_local_import_failed";
+    const elapsedMs = Math.round(
+      (typeof performance !== "undefined" ? performance.now() : Date.now()) - t0local
+    );
     console.warn(
-      `${LOG} Falló bundle local → fallback CDN. Tipo: ${d.name} | ${d.message}`
+      `${LOG} [${kind}] Falló bundle local → fallback CDN. ` +
+      `Tipo: ${d.name} | ${d.message} | elapsed: ${elapsedMs}ms`
     );
     globalThis.markBootStage?.("supabase.runtime.local_failed", {
+      kind,
       name: d.name,
       message: d.message,
+      elapsedMs,
     });
   }
 
   for (let i = 0; i < SUPABASE_CDN_URLS.length; i++) {
     const url = SUPABASE_CDN_URLS[i];
+    const t0cdn = typeof performance !== "undefined" ? performance.now() : Date.now();
     try {
       fylDevInfo(
         `${LOG} Intento CDN ${i + 1}/${SUPABASE_CDN_URLS.length} (${SUPABASE_CDN_IMPORT_MS}ms):`,
@@ -157,29 +249,47 @@ async function loadCreateClient() {
       );
       const mod = await importWithTimeout(url, SUPABASE_CDN_IMPORT_MS);
       if (mod?.createClient) {
-        fylDevInfo(`${LOG} OK: createClient desde CDN (${i + 1}).`);
+        const elapsedMs = Math.round(
+          (typeof performance !== "undefined" ? performance.now() : Date.now()) - t0cdn
+        );
+        fylDevInfo(`${LOG} OK: createClient desde CDN ${i + 1} en ${elapsedMs}ms.`);
         const source = `cdn-${i + 1}`;
-        globalThis.markBootStage?.("supabase.runtime.loaded", { source });
+        globalThis.markBootStage?.("supabase.runtime.loaded", { source, elapsedMs });
         return { createClient: mod.createClient, source };
       }
-      lastErr = new Error(`CDN ${i + 1}: módulo sin createClient`);
+      lastErr = new Error(`supabase_cdn_failed: CDN ${i + 1} sin createClient`);
       console.warn(`${LOG} CDN ${i + 1}: sin createClient en namespace`);
+      globalThis.markBootStage?.("supabase.runtime.cdn_failed", {
+        kind: "supabase_cdn_failed",
+        index: i + 1,
+        url,
+        message: "sin createClient",
+      });
     } catch (e) {
       lastErr = e;
       const d = describeError(e);
+      const kind = d.isTimeout ? "supabase_cdn_timeout" : "supabase_cdn_failed";
+      const elapsedMs = Math.round(
+        (typeof performance !== "undefined" ? performance.now() : Date.now()) - t0cdn
+      );
       console.warn(
-        `${LOG} CDN ${i + 1} falló. Tipo: ${d.name} | ${d.message}`
+        `${LOG} [${kind}] CDN ${i + 1} falló. ` +
+        `Tipo: ${d.name} | ${d.message} | elapsed: ${elapsedMs}ms`
       );
       globalThis.markBootStage?.("supabase.runtime.cdn_failed", {
+        kind,
         index: i + 1,
+        url,
         name: d.name,
         message: d.message,
+        elapsedMs,
       });
     }
   }
 
   const finalD = describeError(lastErr);
   globalThis.markBootStage?.("supabase.runtime.all_failed", {
+    kind: "create_client_failed",
     name: finalD.name,
     message: finalD.message,
   });

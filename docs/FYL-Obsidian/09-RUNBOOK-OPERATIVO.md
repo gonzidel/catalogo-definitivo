@@ -8,7 +8,15 @@
 - Gate (tras migraciones 175+):
 
 ```sql
-SELECT go_live_ready, health_score, blocking_reasons
+-- Nota: "health_score" NO es una columna de esta vista (corregido 2026-05-04).
+SELECT
+  go_live_ready,
+  release_decision,
+  blocking_reasons,
+  variant_sizes_diffs,
+  reserved_qty_diffs,
+  trigger_84_active,
+  trigger_145_active
 FROM public.vw_stock_audit_release_gate;
 ```
 

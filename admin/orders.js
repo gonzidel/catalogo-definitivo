@@ -225,6 +225,7 @@ const STATUS = {
   PENDING: "pending",
   WAITING: "waiting",
   CANCELLED: "cancelled",
+  STOCK_PENDING: "stock_pending",
   DEVOLUCION: "devolución",
   DEVOLUCION_ALT: "devolucion",
 };
@@ -239,6 +240,7 @@ const TAB_FILTER_MODE = {
   all: "sql",
   picked: "client",
   waiting: "client",
+  stock_pending: "sql",
 };
 
 const ORDER_STATUS_LABELS = {
@@ -565,6 +567,46 @@ function getEnable24hUsesFromOrder(order) {
   } catch {
     return 0;
   }
+}
+
+function parseOrderNotesObject(rawNotes) {
+  if (!rawNotes) return {};
+  try {
+    const parsed = JSON.parse(String(rawNotes));
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+  } catch {
+    // ignore parse errors, fallback to empty object
+  }
+  return {};
+}
+
+function parseStockPendingReasonConflict(rawReason) {
+  const reason = String(rawReason || "");
+  if (!reason) return null;
+  const variantMatch = reason.match(/variant=([0-9a-fA-F-]{36})/);
+  const sizeMatch = reason.match(/size=([^,\s)]+)/i);
+  const availableMatch = reason.match(/disponible=(\d+)/i);
+  const requestedMatch = reason.match(/solicitado=(\d+)/i);
+  if (!variantMatch) return null;
+  return {
+    variant_id: variantMatch[1],
+    size: normalizeSize(sizeMatch?.[1] || ""),
+    available: Number(availableMatch?.[1] || 0),
+    requested: Number(requestedMatch?.[1] || 0),
+  };
+}
+
+function describeStockPendingConflict(order, parsedConflict, fallbackReason = "") {
+  if (!parsedConflict?.variant_id) return fallbackReason || "Conflicto de stock sin detalle.";
+  const items = Array.isArray(order?.order_items) ? order.order_items : [];
+  const targetItem = items.find((item) => {
+    const sameVariant = String(item?.variant_id || "") === String(parsedConflict.variant_id);
+    const sameSize = normalizeSize(item?.size || "") === parsedConflict.size;
+    return sameVariant && sameSize;
+  });
+  if (!targetItem) return fallbackReason || "Conflicto de stock sin detalle.";
+  const productLabel = [targetItem.product_name || "Producto", targetItem.color || "-", targetItem.size || "-"].join(" · ");
+  return `${productLabel} | Disponible: ${parsedConflict.available} · Solicitado: ${parsedConflict.requested}`;
 }
 
 function clampIncidentPoints(value) {
@@ -2371,12 +2413,19 @@ function updateWaitingOrdersBadge() {
   return;
 }
 
+// Función para actualizar el badge de stock pendiente
+// Los conteos solo los actualiza loadBadgeCountsInBackground() con datos reales de BD.
+function updateStockPendingOrdersBadge() {
+  return;
+}
+
 // Exponer funciones de actualización de badges globalmente (después de que estén definidas)
 window.updateActiveOrdersBadge = updateActiveOrdersBadge;
 window.updatePickedOrdersBadge = updatePickedOrdersBadge;
 window.updateClosedOrdersBadge = updateClosedOrdersBadge;
 window.updateCancelledOrdersBadge = updateCancelledOrdersBadge;
 window.updateWaitingOrdersBadge = updateWaitingOrdersBadge;
+window.updateStockPendingOrdersBadge = updateStockPendingOrdersBadge;
 window.loadOrders = loadOrders;
 window.refreshOneOrder = refreshOneOrder;
 
@@ -2431,14 +2480,20 @@ async function loadBadgeCountsInBackground() {
       .from("orders")
       .select("*", { count: 'exact', head: true })
       .eq("status", "closed");
+    const { count: stockPendingCount } = await supabase
+      .from("orders")
+      .select("*", { count: 'exact', head: true })
+      .eq("status", "stock_pending");
     
     updateBadgeWithCount('closed-orders-badge', closedCount || 0);
+    updateBadgeWithCount('stock-pending-orders-badge', stockPendingCount || 0);
     
     // Marcar que los conteos totales ya se cargaron
     badgeCountsLoaded = true;
     
     const cancelledBadgeValue = document.getElementById('cancelled-orders-badge')?.textContent || "0";
-    console.log(`✅ Conteos exactos cargados: Cerrados=${closedCount}, Cancelados=${cancelledBadgeValue}`);
+    const stockPendingBadgeValue = document.getElementById('stock-pending-orders-badge')?.textContent || "0";
+    console.log(`✅ Conteos exactos cargados: Cerrados=${closedCount}, Cancelados=${cancelledBadgeValue}, StockPendiente=${stockPendingBadgeValue}`);
     
   } catch (error) {
     console.error("❌ Error cargando conteos de badges en background:", error);
@@ -2530,6 +2585,7 @@ function updateAllBadges() {
   if (typeof updateClosedOrdersBadge === "function") updateClosedOrdersBadge();
   if (typeof updateCancelledOrdersBadge === "function") updateCancelledOrdersBadge();
   if (typeof updateWaitingOrdersBadge === "function") updateWaitingOrdersBadge();
+  if (typeof updateStockPendingOrdersBadge === "function") updateStockPendingOrdersBadge();
 }
 
 function scheduleRealtimeDelta(payload) {
@@ -3356,6 +3412,15 @@ async function renderOrderCard(order) {
       ` : ""}
     </div>
   ` : "";
+  const orderNotesObj = parseOrderNotesObject(order?.notes);
+  const stockPendingReasonRaw = String(orderNotesObj?.stock_pending_reason || "").trim();
+  const stockPendingConflict = parseStockPendingReasonConflict(stockPendingReasonRaw);
+  const stockPendingReasonUi = describeStockPendingConflict(order, stockPendingConflict, stockPendingReasonRaw);
+  const stockPendingBannerHtml = order.status === STATUS.STOCK_PENDING
+    ? `<div style="background:#fdecea; border:1px solid #f5c2c7; color:#7f1d1d; border-radius:8px; padding:10px; margin-bottom:10px; font-size:13px;">
+         <strong>Stock pendiente:</strong> ${stockPendingReasonUi || "Resolver conflicto de stock para continuar."}
+       </div>`
+    : "";
   
   // Obtener ofertas y promociones (con timeout para no bloquear el renderizado)
   // Si tarda más de 2 segundos, usar datos vacíos para mostrar el pedido rápidamente
@@ -3708,6 +3773,11 @@ async function renderOrderCard(order) {
       <button class="btn" style="background: #17a2b8; color: white;" data-edit-order="${order.id}">✏️ Editar Pedido</button>
       <button class="btn" style="background: #28a745; color: white;" data-mark-sent="${order.id}">TERMINADO</button>
     `;
+  } else if (order.status === STATUS.STOCK_PENDING) {
+    actionButtons = `
+      <button class="btn" style="background: #b42318; color: white;" data-resolve-stock-pending="${order.id}">Resolver conflicto</button>
+      <button class="btn" style="background: #dc3545; color: white;" data-cancel-order="${order.id}">Cancelar pedido</button>
+    `;
   } else if (order.status !== "sent") {
     // Botón "Editar Pedido" siempre visible
     actionButtons = `
@@ -3838,7 +3908,7 @@ async function renderOrderCard(order) {
       <div class="order-header">
         <div class="order-id" style="display: flex; align-items: center; gap: 8px;">
           Pedido #${orderDisplayNumber}${createdLabel}${sentLabel}
-          ${(displayStatus === 'active' || displayStatus === 'picked' || displayStatus === 'waiting') ? `
+          ${(displayStatus === 'active' || displayStatus === 'picked' || displayStatus === 'waiting' || displayStatus === STATUS.STOCK_PENDING) ? `
             <button class="btn-cancel-order" 
                     data-cancel-order="${order.id}" 
                     title="Cancelar pedido"
@@ -3849,6 +3919,7 @@ async function renderOrderCard(order) {
         </div>
         <div class="order-status ${statusClass}">${statusLabel}</div>
       </div>
+      ${stockPendingBannerHtml}
       <div class="customer-info">
         <div class="customer-name" style="display: flex; justify-content: space-between; align-items: center;">
           <div>
@@ -4496,6 +4567,10 @@ function filterOrders(list) {
       return hasCancelledItems || isExpiredPendingAdminDisassembly(order);
     });
   }
+
+  if (currentFilter === STATUS.STOCK_PENDING) {
+    return list.filter((order) => String(order?.status || "").trim().toLowerCase() === STATUS.STOCK_PENDING);
+  }
   
   // Fallback: filtrar por status
   return list.filter((order) => order.status === currentFilter);
@@ -5071,6 +5146,15 @@ function attachOrderEventHandlers() {
     btn.addEventListener("click", async () => {
       const orderId = btn.dataset.sendToLocal;
       await sendOrderToLocal(orderId);
+    });
+  });
+
+  document.querySelectorAll("[data-resolve-stock-pending]").forEach((btn) => {
+    if (btn.dataset.resolveStockPendingBound === "1") return;
+    btn.dataset.resolveStockPendingBound = "1";
+    btn.addEventListener("click", async () => {
+      const orderId = btn.dataset.resolveStockPending;
+      await resolveStockPendingOrder(orderId);
     });
   });
 
@@ -6525,6 +6609,104 @@ async function deleteOrderItemImmediate(itemId) {
   await loadOrders();
   if (historyVisible) await loadClosedOrders();
   alert("✅ Producto eliminado del pedido.");
+}
+
+async function resolveStockPendingOrder(orderId) {
+  if (!canDeleteOrders) {
+    alert("No tienes permiso para resolver pedidos en stock pendiente.");
+    return;
+  }
+  if (!orderId) return;
+  if (!supabase) supabase = await getSupabase();
+  if (!supabase) {
+    alert("No se pudo conectar con la base de datos.");
+    return;
+  }
+
+  const { data: orderRow, error: orderError } = await supabase
+    .from("orders")
+    .select("id, status, notes, order_items(id, variant_id, size, product_name, color, status)")
+    .eq("id", orderId)
+    .maybeSingle();
+
+  if (orderError || !orderRow) {
+    alert("No se pudo cargar el pedido en stock pendiente.");
+    return;
+  }
+  if (String(orderRow.status || "").trim().toLowerCase() !== STATUS.STOCK_PENDING) {
+    alert("Este pedido ya no está en stock pendiente.");
+    if (typeof loadOrders === "function") await loadOrders(true);
+    return;
+  }
+
+  const notesObj = parseOrderNotesObject(orderRow.notes);
+  const reasonRaw = String(notesObj.stock_pending_reason || "").trim();
+  const parsed = parseStockPendingReasonConflict(reasonRaw);
+  if (!parsed?.variant_id) {
+    alert("No se pudo identificar automáticamente el producto en conflicto. Cancelá el pedido manualmente.");
+    return;
+  }
+
+  const targetItem = (orderRow.order_items || []).find((item) => {
+    const sameVariant = String(item?.variant_id || "") === String(parsed.variant_id);
+    const sameSize = normalizeSize(item?.size || "") === parsed.size;
+    const itemStatus = String(item?.status || "").trim().toLowerCase();
+    return sameVariant && sameSize && itemStatus !== "cancelled";
+  });
+  if (!targetItem?.id) {
+    alert("No se encontró el ítem conflictivo para resolver esta orden.");
+    return;
+  }
+
+  const itemLabel = [targetItem.product_name || "Producto", targetItem.color || "-", targetItem.size || "-"].join(" · ");
+  const confirmed = confirm(
+    `Se eliminará el ítem conflictivo:\n${itemLabel}\n\nDisponible: ${parsed.available} · Solicitado: ${parsed.requested}\n\n¿Continuar?`
+  );
+  if (!confirmed) return;
+
+  const { data: removeData, error: removeError } = await supabase.rpc("rpc_remove_order_item_restore_stock", {
+    p_order_item_id: targetItem.id,
+  });
+  if (removeError) {
+    console.error("❌ resolveStockPendingOrder: error removiendo ítem conflictivo:", removeError);
+    alert(removeError.message || "No se pudo eliminar el ítem conflictivo.");
+    return;
+  }
+  if (removeData && removeData.ok === false) {
+    alert("No se pudo resolver el conflicto de stock.");
+    return;
+  }
+
+  const nextNotes = { ...notesObj };
+  delete nextNotes.stock_pending_reason;
+  delete nextNotes.stock_pending_at;
+  delete nextNotes.stock_pending_source;
+  const nextNotesRaw = JSON.stringify(nextNotes);
+
+  const { error: updateError } = await supabase
+    .from("orders")
+    .update({
+      status: "active",
+      notes: nextNotesRaw === "{}" ? null : nextNotesRaw,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", orderId);
+
+  if (updateError) {
+    console.error("❌ resolveStockPendingOrder: error actualizando estado:", updateError);
+    alert(updateError.message || "El ítem se eliminó, pero no se pudo actualizar el estado del pedido.");
+    return;
+  }
+
+  await loadOrders(true);
+  if (historyVisible) await loadClosedOrders();
+  updateActiveOrdersBadge();
+  updatePickedOrdersBadge();
+  updateWaitingOrdersBadge();
+  updateClosedOrdersBadge();
+  updateCancelledOrdersBadge();
+  if (typeof loadBadgeCountsInBackground === "function") loadBadgeCountsInBackground();
+  showToastNotification("Conflicto resuelto. El pedido volvió a Activos.", "success");
 }
 
 const cancelOrderInFlight = new Set();

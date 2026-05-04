@@ -6,11 +6,11 @@ Principio: no borrar nada sin proceso aparte. Esta nota clasifica evidencia dete
 
 | Item | Evidencia | Clasificacion |
 |---|---|---|
-| `rpc_update_cart_item_quantity` | Existe `supabase/canonical/124_rpc_update_cart_item_quantity.sql`; no se detecto llamada en el flujo vivo JS revisado. | DUDOSA / posible API externa |
-| `rpc_get_or_create_cart` | Aparece en `scripts/cart.js`, que no es cargado por `index.html`. | LEGACY / ruta no principal |
-| `rpc_reserve_item` | Aparece en `scripts/cart.js`, que no es cargado por `index.html`. | LEGACY / ruta no principal |
-| `rpc_submit_cart` | Aparece en `scripts/cart.js`, que no es cargado por `index.html`. | LEGACY / ruta no principal |
-| `get_user_cart`, `get_cart_items_simple`, `clear_cart_items`, `add_cart_item` | Definidas como `SECURITY DEFINER` en SQL viejo de carrito; no aparecen en flujo vivo principal. | LEGACY / revisar grants |
+| `rpc_update_cart_item_quantity` | EXECUTE confirmado a `anon`, `authenticated` y `PUBLIC` (FASE 4 — 2026-05-04). | **ALTO — revocar grants (FASE 6/7)** |
+| `rpc_get_or_create_cart` | EXECUTE confirmado a `anon`, `authenticated` y `PUBLIC` (FASE 4). Aparece en `scripts/cart.js` no cargado por `index.html`. | **ALTO — revocar grants (FASE 6/7)** |
+| `rpc_reserve_item` | EXECUTE confirmado a `anon`, `authenticated` y `PUBLIC` (FASE 4). Puede reservar stock sin flujo canónico. | **ALTO — revocar grants (FASE 6/7)** |
+| `rpc_submit_cart` | EXECUTE confirmado a `anon`, `authenticated` y `PUBLIC` (FASE 4). Checkout alternativo legacy que NO descuenta stock correctamente. | **CRÍTICO — revocar grants (FASE 6/7)** |
+| `get_user_cart`, `get_cart_items_simple`, `clear_cart_items`, `add_cart_item` | Definidas como `SECURITY DEFINER`; EXECUTE confirmado a `anon`, `authenticated` y `PUBLIC` (FASE 4 — 2026-05-04). | **CRÍTICO — revocar grants (FASE 6/7)** |
 | `get_meta_feed` | Definida en SQL; sin llamada JS detectada en esta auditoria. | DUDOSA |
 | `rpc_set_transport_before_close` | Definida en SQL; sin llamada JS detectada en esta auditoria. | DUDOSA |
 | `rpc_remove_missing_order_item` | Definida en SQL; no aparece como llamada en JS principal. | DUDOSA |
@@ -21,9 +21,9 @@ Principio: no borrar nada sin proceso aparte. Esta nota clasifica evidencia dete
 |---|---|---|
 | `scripts/cart-persistent.js` | ACTIVA | Flujo vivo de catalogo/sticky cart. Ver [[19-AUDITORIA-MODULO-CLIENTE-CARRITO]]. |
 | `client/dashboard-instant.js` | ACTIVA | Carga carrito y ejecuta checkout con `rpc_checkout_cart(uuid,jsonb)`. |
-| `client/cart.html` + `client/cart.js` | ACTIVA o accesible, pero divergente | No usa `rpc_checkout_cart`; marca `carts.status = pending`. Revisar si debe seguir disponible. |
-| `client/cart-fixed.js` | DUDOSA | Variante corregida, no detectada como cargada por `client/cart.html`. |
-| `scripts/cart.js` | LEGACY / ruta no principal | Contiene RPCs viejas de carrito. |
+| `client/cart.html` + `client/cart.js` | **DECISION TOMADA — PENDIENTE IMPLEMENTAR** | No usa `rpc_checkout_cart`; su checkout solo marca `carts.status = pending` sin crear pedido ni descontar stock. **Decisión 2026-05-04:** debe redirigirse al dashboard o eliminarse. No debe mantenerse como checkout funcional separado. Implementación exacta (redirección JS, HTTP redirect, o eliminación de archivos) se define en FASE 6 del roadmap. Ver [[11-DECISIONES-TECNICAS]] §D5. |
+| `client/cart-fixed.js` | DUDOSA | Variante corregida de `client/cart.js`, no detectada como cargada por `client/cart.html`. |
+| `scripts/cart.js` | LEGACY / ruta no principal | Contiene RPCs viejas de carrito (`rpc_get_or_create_cart`, `rpc_reserve_item`, `rpc_submit_cart`). No es cargado por `index.html`. |
 
 ## Multiples definiciones SQL
 

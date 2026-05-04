@@ -1752,7 +1752,6 @@ async function finalizeOrder(orderId) {
   }
 
   console.log("✅ Pedido finalizado correctamente");
-  alert("✅ Pedido finalizado. Se ha movido a 'Enviados'.");
   await loadClosedOrders();
 }
 

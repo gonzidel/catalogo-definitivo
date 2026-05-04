@@ -4,380 +4,383 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="robots" content="noindex" />
-  <title>Auditoría de Stock | Admin</title>
+  <title>Salud de stock | Admin</title>
   <link rel="stylesheet" href="../styles.css" />
   <style>
-    .container { max-width: 1600px; margin: 24px auto; padding: 0 12px; }
-    .topbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+    .container { max-width: 960px; margin: 20px auto; padding: 0 12px; }
+    .topbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; padding: 0 12px; }
     .topbar .spacer { flex: 1 1 auto; }
-    .topbar a { padding: 6px 10px; border: 1px solid #ddd; border-radius: 6px; text-decoration: none; color: inherit; }
-    .subtitle { color: #666; margin: 6px 0 16px; }
+    .topbar a { padding: 6px 10px; border: 1px solid #ddd; border-radius: 6px; text-decoration: none; color: inherit; font-size: 13px; }
+    .topbar a:hover { background: #f9fafb; }
+    .topbar h1 { font-size: 16px; font-weight: 700; margin: 0; }
 
-    .filters { position: sticky; top: 0; z-index: 30; background: #fff; border: 1px solid #eee; border-radius: 10px; padding: 10px; display: grid; grid-template-columns: repeat(4, minmax(180px, 1fr)); gap: 8px; }
-    .filters input, .filters select { width: 100%; }
-    .filters .full { grid-column: 1 / -1; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-    .filters .full label { display: inline-flex; align-items: center; gap: 6px; }
-    .anomaly-help {
-      grid-column: 1 / -1;
-      border: 1px solid #e5e7eb;
-      border-left: 3px solid #cbd5e1;
-      background: #f8fafc;
-      border-radius: 8px;
-      padding: 8px 10px;
-      margin-top: 2px;
-    }
-    .anomaly-help-title {
-      margin: 0 0 6px;
-      font-size: 12px;
-      font-weight: 700;
-      color: #334155;
-    }
-    .anomaly-help-list {
-      margin: 0;
-      padding-left: 16px;
-      color: #475569;
-      font-size: 12px;
-      line-height: 1.45;
-    }
-    .anomaly-help-list li { margin: 2px 0; }
-
-    .section { margin-top: 14px; background: #fff; border: 1px solid #eee; border-radius: 10px; padding: 12px; }
-    .section-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
-    .section h2 { margin: 0; font-size: 18px; }
-    .muted { color: #6b7280; font-size: 12px; }
-    .advanced-only { display: block; }
-    .hidden { display: none !important; }
-
-    .mode-switch { display: inline-flex; border: 1px solid #ddd; border-radius: 8px; overflow: hidden; }
-    .mode-switch button {
-      border: 0;
-      background: #fff;
-      padding: 6px 10px;
-      font-size: 12px;
-      cursor: pointer;
-    }
-    .mode-switch button.active { background: #111827; color: #fff; }
-
-    .ops-panel {
-      margin-top: 12px;
-      border: 1px solid #e5e7eb;
+    /* Header de estado */
+    .sh-header {
       border-radius: 10px;
-      background: #fff;
-      padding: 12px;
-    }
-    .ops-grid {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(160px, 1fr));
-      gap: 8px;
-    }
-    .ops-card {
-      border: 1px solid #e5e7eb;
-      border-radius: 8px;
-      padding: 10px;
-      background: #fafafa;
-    }
-    .ops-card .label { font-size: 12px; color: #6b7280; }
-    .ops-card .value { font-size: 22px; font-weight: 800; margin-top: 4px; line-height: 1.1; }
-    .ops-card .hint { font-size: 11px; color: #6b7280; margin-top: 4px; }
-    .ops-ok { border-color: #10b981; background: #ecfdf5; }
-    .ops-warn { border-color: #f59e0b; background: #fffbeb; }
-    .ops-bad { border-color: #ef4444; background: #fef2f2; }
-    .ops-actions {
-      margin-top: 10px;
-      border-top: 1px dashed #e5e7eb;
-      padding-top: 10px;
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 8px;
-    }
-    .ops-callout {
-      border: 1px solid #e5e7eb;
-      border-radius: 8px;
-      padding: 10px;
-      background: #fff;
-    }
-    .ops-callout h3 { margin: 0 0 4px; font-size: 13px; }
-    .ops-callout p { margin: 0; font-size: 12px; color: #475569; line-height: 1.4; }
-
-    .kpis { display: grid; grid-template-columns: repeat(4, minmax(160px, 1fr)); gap: 8px; }
-    .kpi { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; }
-    .kpi .label { color: #6b7280; font-size: 12px; }
-    .kpi .value { font-size: 22px; font-weight: 700; margin-top: 4px; }
-
-    .table-wrap { overflow: auto; border: 1px solid #eee; border-radius: 8px; }
-    table { width: 100%; border-collapse: collapse; min-width: 980px; }
-    th, td { padding: 8px; border-bottom: 1px solid #f1f1f1; text-align: left; font-size: 13px; white-space: nowrap; }
-    th { position: sticky; top: 0; background: #fafafa; z-index: 1; }
-    .num { text-align: right; font-variant-numeric: tabular-nums; }
-    .delta-pos { color: #166534; font-weight: 600; }
-    .delta-neg { color: #b91c1c; font-weight: 600; }
-
-    .badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; border: 1px solid transparent; font-size: 11px; font-weight: 700; }
-    .sev-critical { background: #FEE2E2; color: #B91C1C; border-color: #B91C1C; }
-    .sev-warning { background: #FEF3C7; color: #92400E; border-color: #92400E; }
-    .sev-review { background: #E0F2FE; color: #0C4A6E; border-color: #0C4A6E; }
-    .trace-exact { background: #DCFCE7; color: #166534; border-color: #166534; }
-    .trace-partial { background: #FEF9C3; color: #854D0E; border-color: #854D0E; }
-    .trace-legacy { background: #E5E7EB; color: #374151; border-color: #374151; }
-    .trace-insufficient { background: #F3E8FF; color: #6B21A8; border-color: #6B21A8; }
-
-    .actions { display: flex; gap: 8px; }
-    .btn-small { padding: 6px 10px; border: 1px solid #ddd; border-radius: 6px; background: #fff; cursor: pointer; }
-    .btn-small:hover { background: #f7f7f7; }
-    .status-line { margin-top: 8px; font-size: 12px; color: #6b7280; }
-    .error-box { color: #b91c1c; font-size: 12px; margin-top: 6px; }
-    .footer-note { margin-top: 14px; color: #666; font-size: 12px; }
-    .link-cell { color: #0c4a6e; text-decoration: underline; text-underline-offset: 2px; }
-    .health-banner {
-      margin: 12px 0;
-      border: 1px solid #e5e7eb;
-      border-radius: 10px;
-      padding: 10px;
+      padding: 16px 20px;
+      margin-bottom: 20px;
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      gap: 10px;
+      gap: 16px;
       flex-wrap: wrap;
     }
-    .health-banner-ok { background: #ecfdf5; border-color: #34d399; }
-    .health-banner-warn { background: #fef3c7; border-color: #f59e0b; }
-    .health-banner-critical { background: #fee2e2; border-color: #ef4444; }
-    .health-main { font-size: 14px; font-weight: 700; }
-    .health-meta { font-size: 12px; color: #475569; }
-    @media (max-width: 980px) {
-      .filters { grid-template-columns: repeat(2, minmax(140px, 1fr)); position: static; }
-      .kpis { grid-template-columns: repeat(2, minmax(140px, 1fr)); }
-      .ops-grid { grid-template-columns: repeat(2, minmax(140px, 1fr)); }
-      .ops-actions { grid-template-columns: 1fr; }
+    .sh-header.saludable { background: #f0fdf4; border: 1px solid #bbf7d0; }
+    .sh-header.atencion  { background: #fffbeb; border: 1px solid #fde68a; }
+    .sh-header.critico   { background: #fff1f2; border: 1px solid #fecdd3; }
+    .sh-header.cargando  { background: #f8fafc; border: 1px solid #e2e8f0; }
+
+    .sh-status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 15px;
+      font-weight: 700;
+      padding: 6px 14px;
+      border-radius: 20px;
+      white-space: nowrap;
+    }
+    .sh-status-badge.saludable { background: #16a34a; color: #fff; }
+    .sh-status-badge.atencion  { background: #d97706; color: #fff; }
+    .sh-status-badge.critico   { background: #dc2626; color: #fff; }
+    .sh-status-badge.cargando  { background: #94a3b8; color: #fff; }
+
+    .sh-header-info { flex: 1; min-width: 160px; }
+    .sh-header-info p { margin: 2px 0; font-size: 13px; color: #374151; }
+    .sh-header-meta { font-size: 12px; color: #6b7280; margin-top: 4px !important; }
+    .sh-header-tech {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid rgba(0,0,0,0.06);
+      font-size: 12px;
+      color: #4b5563;
+      line-height: 1.45;
+    }
+    .sh-header-tech-line { margin: 2px 0; }
+    .sh-header-tech-warn { margin: 6px 0 0; color: #b45309; font-size: 11px; }
+    .sh-header-actions { display: flex; gap: 8px; margin-left: auto; }
+
+    /* Bloques */
+    .sh-block { margin-bottom: 24px; }
+    .sh-block-title {
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin: 0 0 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .sh-block-title.critico   { color: #dc2626; }
+    .sh-block-title.atencion  { color: #d97706; }
+    .sh-block-title.operativo { color: #2563eb; }
+    .sh-block-title.oportunidad { color: #7c3aed; }
+    .sh-block-title.analisis    { color: #0369a1; }
+
+    /* Cards */
+    .sh-card {
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      padding: 16px;
+      margin-bottom: 12px;
+      background: #fff;
+    }
+    .sh-card.critico     { border-left: 4px solid #dc2626; }
+    .sh-card.atencion    { border-left: 4px solid #d97706; }
+    .sh-card.operativo   { border-left: 4px solid #2563eb; }
+    .sh-card.oportunidad { border-left: 4px solid #7c3aed; }
+    .sh-card.analisis    { border-left: 4px solid #0369a1; }
+
+    .sh-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .sh-card-title { font-size: 14px; font-weight: 700; margin: 0 0 4px; }
+    .sh-card-desc  { font-size: 13px; color: #4b5563; margin: 0 0 8px; }
+    .sh-card-hint {
+      font-size: 12px;
+      color: #92400e;
+      background: #fffbeb;
+      border: 1px solid #fde68a;
+      border-radius: 8px;
+      padding: 8px 10px;
+      margin: 0 0 8px;
+      line-height: 1.4;
+    }
+    .sh-card-count {
+      font-size: 22px;
+      font-weight: 800;
+      color: #111827;
+      line-height: 1;
+      min-width: 32px;
+      text-align: right;
+    }
+    .sh-card-count.critico     { color: #dc2626; }
+    .sh-card-count.atencion    { color: #d97706; }
+    .sh-card-count.operativo   { color: #2563eb; }
+    .sh-card-count.oportunidad { color: #7c3aed; }
+    .sh-card-count.analisis    { color: #0369a1; }
+    .sh-vr-badge.positive      { background: #dcfce7; color: #166534; }
+    .sh-vr-badge.neutral       { background: #f0f9ff; color: #0369a1; }
+
+    /* Lista de variantes dentro de una card */
+    .sh-variant-list { margin-top: 10px; border-top: 1px solid #f3f4f6; }
+    .sh-variant-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+      padding: 7px 0;
+      border-bottom: 1px solid #f9fafb;
+      font-size: 12px;
+    }
+    .sh-variant-row:last-child { border-bottom: none; }
+    .sh-vr-product { font-weight: 600; color: #111827; }
+    .sh-vr-color   { color: #374151; }
+    .sh-vr-sku     { font-family: monospace; font-size: 11px; color: #6b7280; background: #f3f4f6; padding: 1px 5px; border-radius: 4px; }
+    .sh-vr-detail  { color: #6b7280; }
+    .sh-vr-badge   { padding: 2px 7px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+    .sh-vr-badge.danger      { background: #fee2e2; color: #dc2626; }
+    .sh-vr-badge.warning     { background: #fef3c7; color: #d97706; }
+    .sh-vr-badge.info        { background: #dbeafe; color: #2563eb; }
+    .sh-vr-badge.oportunidad { background: #ede9fe; color: #7c3aed; }
+
+    .sh-card-footer { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; align-items: center; }
+    .sh-card-footer .sh-more-hint { font-size: 12px; color: #6b7280; margin-left: auto; }
+
+    /* Última revisión */
+    .sh-footer-text { font-size: 12px; color: #9ca3af; text-align: center; margin-top: 24px; padding-bottom: 20px; }
+
+    /* Botones */
+    .sh-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 8px 16px;
+      border-radius: 7px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      transition: opacity 0.15s;
+    }
+    .sh-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .sh-btn.primary   { background: #2563eb; color: #fff; }
+    .sh-btn.secondary { background: #f3f4f6; color: #374151; border: 1px solid #e5e7eb; }
+    .sh-btn.danger    { background: #dc2626; color: #fff; }
+    .sh-btn.ghost     { background: transparent; color: #374151; border: 1px solid #e5e7eb; }
+    .sh-btn.sm        { padding: 5px 12px; font-size: 12px; }
+    .sh-btn:not(:disabled):hover { opacity: 0.85; }
+
+    /* Modal */
+    .sh-modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.45);
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    .sh-modal-box {
+      background: #fff;
+      border-radius: 12px;
+      padding: 24px;
+      max-width: 440px;
+      width: 100%;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+    }
+    .sh-modal-title { font-size: 15px; font-weight: 700; margin: 0 0 10px; }
+    .sh-modal-message { font-size: 14px; color: #374151; line-height: 1.55; margin: 0 0 20px; }
+    .sh-modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+
+    /* Estado vacío / error en bloque */
+    .sh-empty { font-size: 13px; color: #9ca3af; padding: 8px 0; }
+    .sh-error  { font-size: 12px; color: #dc2626; padding: 6px 0; }
+
+    /* Spinner */
+    .sh-spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #e5e7eb; border-top-color: #2563eb; border-radius: 50%; animation: spin 0.7s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Utilidad */
+    .hidden { display: none !important; }
+
+    /* ── IA: panel de informe ── */
+    .ai-panel {
+      border: 1px solid #e0e7ff;
+      border-left: 4px solid #6366f1;
+      border-radius: 10px;
+      padding: 18px 20px;
+      background: #fafafe;
+      margin-bottom: 20px;
+    }
+    .ai-panel-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #e0e7ff;
+    }
+    .ai-panel-title { font-size: 14px; font-weight: 700; color: #1e1b4b; }
+    .ai-section { margin-bottom: 14px; }
+    .ai-section-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #4338ca; margin: 0 0 6px; }
+    .ai-resumen p { font-size: 13px; line-height: 1.6; color: #1f2937; margin: 0; }
+    .ai-list { margin: 0; padding-left: 18px; }
+    .ai-list li { font-size: 13px; color: #374151; line-height: 1.55; margin-bottom: 4px; }
+    .ai-empty { font-size: 12px; color: #9ca3af; margin: 0; }
+    .ai-footnote { font-size: 11px; color: #9ca3af; margin: 12px 0 0; text-align: right; }
+
+    /* ── IA: bloque de preguntas ── */
+    .ai-questions-block {
+      border: 1px solid #e0e7ff;
+      border-radius: 10px;
+      padding: 16px 20px;
+      background: #f9fafe;
+      margin-bottom: 20px;
+    }
+    .ai-questions-title { font-size: 13px; font-weight: 700; color: #1e1b4b; margin: 0 0 12px; }
+    .ai-suggestions { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+    .ai-suggestion-btn {
+      padding: 6px 12px;
+      border: 1px solid #c7d2fe;
+      border-radius: 16px;
+      background: #eef2ff;
+      color: #3730a3;
+      font-size: 12px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .ai-suggestion-btn:hover { background: #e0e7ff; }
+    .ai-question-row { display: flex; gap: 8px; align-items: center; }
+    .ai-question-row input {
+      flex: 1;
+      padding: 8px 12px;
+      border: 1px solid #c7d2fe;
+      border-radius: 7px;
+      font-size: 13px;
+      outline: none;
+    }
+    .ai-question-row input:focus { border-color: #6366f1; box-shadow: 0 0 0 2px rgba(99,102,241,0.15); }
+    .ai-answer {
+      margin-top: 12px;
+      padding: 12px 14px;
+      background: #fff;
+      border: 1px solid #e0e7ff;
+      border-radius: 8px;
+    }
+    .ai-answer-question { font-size: 12px; color: #6366f1; font-weight: 600; margin: 0 0 6px; }
+    .ai-answer-text { font-size: 13px; color: #1f2937; line-height: 1.6; margin: 0; white-space: pre-wrap; }
+
+    @media (max-width: 480px) {
+      .sh-header { flex-direction: column; align-items: flex-start; gap: 10px; }
+      .sh-header-actions { margin-left: 0; }
+      .sh-card-header { flex-direction: column; }
+      .sh-card-count { font-size: 18px; }
     }
   </style>
 </head>
 <body>
-  <div class="container">
-    <h1>Auditoría de Stock (Solo lectura)</h1>
-    <p class="subtitle">Observabilidad y detección de inconsistencias. No edita inventario ni ejecuta acciones operativas.</p>
+  <div class="topbar">
+    <a href="./index.html">← Panel</a>
+    <div class="spacer"></div>
+    <h1>Salud de stock</h1>
+    <div class="spacer"></div>
+    <a href="./stock.html">Stock</a>
+    <a href="./move-stock.html">Mover</a>
+    <a href="./orders.html">Pedidos</a>
+    <button id="ai-report-btn" class="sh-btn ghost sm" style="border-color:#6366f1;color:#4338ca;">🧠 Generar informe</button>
+    <span id="ai-report-status" style="font-size:12px;color:#dc2626;"></span>
+  </div>
 
-    <div class="topbar">
-      <a href="./index.html">← Volver al panel</a>
-      <span class="spacer"></span>
-      <div class="mode-switch" role="tablist" aria-label="Modo de visualización">
-        <button id="btn-mode-ops" class="active" type="button">Modo operativo</button>
-        <button id="btn-mode-advanced" type="button">Modo avanzado</button>
-      </div>
-      <a href="./stock.html">Stock</a>
-      <a href="./move-stock.html">Mover Stock</a>
-      <a href="./orders.html">Pedidos</a>
-      <a href="./public-sales.html">Venta al público</a>
+  <div class="container">
+
+    <!-- Header de estado general -->
+    <div id="health-header" class="sh-header cargando">
+      <span class="sh-status-badge cargando"><span class="sh-spinner"></span> Cargando...</span>
     </div>
 
-    <section class="health-banner health-banner-ok" id="health-banner">
-      <div>
-        <div class="health-main" id="health-main">Cargando salud de stock...</div>
-        <div class="health-meta" id="health-meta"></div>
+    <!-- Panel IA: informe completo (oculto hasta que se genere) -->
+    <div id="ai-report-panel" class="hidden"></div>
+
+    <!-- Bloque IA: preguntas al sistema -->
+    <div class="ai-questions-block">
+      <p class="ai-questions-title">💬 Consultar al asistente de stock</p>
+      <div class="ai-suggestions">
+        <button class="ai-suggestion-btn" data-ai-question="¿Qué producto corre riesgo de quiebre de stock esta semana?">¿Qué corre riesgo de quiebre?</button>
+        <button class="ai-suggestion-btn" data-ai-question="¿Se venden más botas o zapatillas?">¿Botas o zapatillas?</button>
+        <button class="ai-suggestion-btn" data-ai-question="¿Qué tipo de producto rota mejor en los últimos 90 días?">¿Qué rota mejor?</button>
+        <button class="ai-suggestion-btn" data-ai-question="¿Qué categoría conviene publicar esta semana?">¿Qué publicar esta semana?</button>
+        <button class="ai-suggestion-btn" data-ai-question="¿Qué tags tienen mucho stock acumulado y pocas ventas?">¿Tags con stock acumulado?</button>
+        <button class="ai-suggestion-btn" data-ai-question="¿Qué productos nuevos están vendiendo bien?">¿Nuevos con buena rotación?</button>
       </div>
-      <div class="actions">
-        <button id="btn-reconcile-stock" class="btn-small hidden">Reconciliar stock</button>
+      <div class="ai-question-row">
+        <input
+          id="ai-question-input"
+          type="text"
+          placeholder="O escribí tu propia pregunta sobre el stock..."
+          autocomplete="off"
+        />
+        <button id="ai-ask-btn" class="sh-btn" style="background:#6366f1;color:#fff;border:none;white-space:nowrap;">Preguntar</button>
       </div>
+      <span id="ai-ask-status" style="font-size:12px;color:#dc2626;display:block;margin-top:4px;"></span>
+      <p id="ai-tag-hint" style="display:none;font-size:12px;color:#d97706;margin:6px 0 0;padding:6px 10px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;"></p>
+      <div id="ai-answer-container" class="hidden"></div>
+    </div>
+
+    <!-- Bloque 1: Acciones críticas -->
+    <section id="block-critical" class="sh-block hidden">
+      <p class="sh-block-title critico">▲ Acciones requeridas</p>
+      <div id="card-phantom"></div>
+      <div id="card-deflated"></div>
+      <div id="card-triggers"></div>
     </section>
 
-    <section class="ops-panel" id="ops-panel">
-      <div class="section-header" style="margin-bottom:8px;">
-        <h2>Estado para lanzamiento</h2>
-        <span class="muted" id="ops-updated-at">Sin datos</span>
-      </div>
-      <div class="ops-grid">
-        <div class="ops-card" id="ops-go-card">
-          <div class="label">Gate lanzamiento</div>
-          <div class="value" id="ops-go-value">-</div>
-          <div class="hint" id="ops-go-hint">Esperando métricas</div>
-        </div>
-        <div class="ops-card" id="ops-structural-card">
-          <div class="label">Inconsistencias estructurales</div>
-          <div class="value" id="ops-structural-value">0</div>
-          <div class="hint">diffs talle + depósito + huérfanos</div>
-        </div>
-        <div class="ops-card" id="ops-critical-card">
-          <div class="label">Señales críticas</div>
-          <div class="value" id="ops-critical-value">0</div>
-          <div class="hint">eventos con riesgo inmediato</div>
-        </div>
-        <div class="ops-card" id="ops-trigger-card">
-          <div class="label">Triggers sincronización</div>
-          <div class="value" id="ops-trigger-value">-</div>
-          <div class="hint">84 y 145</div>
-        </div>
-      </div>
-      <div class="ops-actions">
-        <div class="ops-callout">
-          <h3>Qué significa este estado</h3>
-          <p id="ops-summary-text">Esperando carga inicial.</p>
-        </div>
-        <div class="ops-callout">
-          <h3>Siguiente acción recomendada</h3>
-          <p id="ops-next-action">Ejecuta una carga para ver recomendaciones.</p>
-        </div>
-      </div>
+    <!-- Bloque 2: Problemas de catálogo -->
+    <section id="block-attention" class="sh-block hidden">
+      <p class="sh-block-title atencion">◉ Situaciones a revisar</p>
+      <div id="card-inflated"></div>
+      <div id="card-sizes-diff"></div>
+      <div id="card-orphan"></div>
     </section>
 
-    <section class="filters" id="filters">
-      <select id="f-anomaly-type">
-        <option value="">Tipo anomalía: todas</option>
-        <option value="variant_sizes_vs_sum_size_warehouse">variant_sizes vs suma por talle</option>
-        <option value="variant_warehouse_vs_sum_size_rows">variant_warehouse vs suma por depósito</option>
-        <option value="orphan_size_row_missing_variant_sizes">filas huérfanas de talle</option>
-      </select>
-      <input id="f-search" type="text" placeholder="Buscar producto, SKU o referencia..." />
-      <select id="f-warehouse">
-        <option value="">Depósito: todos</option>
-        <option value="general">general</option>
-        <option value="venta-publico">venta-publico</option>
-        <option value="mixed">mixed</option>
-      </select>
-      <select id="f-severity">
-        <option value="">Severity: todas</option>
-        <option value="critical">critical</option>
-        <option value="warning">warning</option>
-        <option value="review">review</option>
-      </select>
-      <select id="f-trace-status">
-        <option value="">Trace status: todos</option>
-        <option value="exact">exact</option>
-        <option value="partial">partial</option>
-        <option value="legacy">legacy</option>
-        <option value="insufficient">insufficient</option>
-      </select>
-      <input id="f-reference" type="text" placeholder="Referencia (order/sale/id)..." />
-      <input id="f-date-from" type="date" />
-      <input id="f-date-to" type="date" />
-      <div class="full">
-        <label><input id="f-delta-only" type="checkbox" checked /> Solo delta != 0</label>
-        <label><input id="f-legacy-only" type="checkbox" /> Solo legacy/fallback</label>
-        <div class="actions">
-          <button id="btn-apply-filters" class="btn-small">Aplicar filtros</button>
-          <button id="btn-reset-filters" class="btn-small">Reset</button>
-        </div>
-      </div>
-      <div class="anomaly-help" aria-live="polite">
-        <p class="anomaly-help-title">Referencia de anomalías</p>
-        <ul class="anomaly-help-list">
-          <li><strong>variant_sizes vs suma por talle</strong>: el stock total del talle no coincide</li>
-          <li><strong>variant_warehouse_stock vs suma por depósito</strong>: el stock del depósito no coincide</li>
-          <li><strong>filas huérfanas de talle</strong>: hay stock cargado sin su talle correspondiente</li>
-        </ul>
-      </div>
+    <!-- Bloque 3: Oportunidades operativas -->
+    <section id="block-operational" class="sh-block hidden">
+      <p class="sh-block-title operativo">◈ Oportunidades operativas</p>
+      <div id="card-no-images"></div>
+      <div id="card-draft-stock"></div>
+      <div id="card-inactive-variants"></div>
     </section>
 
-    <section class="section advanced-only" id="sec-summary">
-      <div class="section-header">
-        <h2>Resumen ejecutivo</h2>
-        <button class="btn-small" id="btn-reload-summary">Recargar bloque</button>
-      </div>
-      <div class="kpis">
-        <div class="kpi"><div class="label">Critical</div><div class="value" id="kpi-critical">0</div></div>
-        <div class="kpi"><div class="label">Warning</div><div class="value" id="kpi-warning">0</div></div>
-        <div class="kpi"><div class="label">Review</div><div class="value" id="kpi-review">0</div></div>
-        <div class="kpi"><div class="label">Variantes afectadas</div><div class="value" id="kpi-variants">0</div></div>
-      </div>
-      <div class="status-line" id="summary-status"></div>
-      <div class="error-box" id="summary-error"></div>
+    <!-- Bloque 4: Comportamiento de productos (inteligencia operativa) -->
+    <section id="block-behavior" class="sh-block hidden">
+      <p class="sh-block-title analisis">◈ Comportamiento de productos</p>
+      <div id="card-fast-sellers"></div>
+      <div id="card-new-rotation"></div>
+      <div id="card-stock-acum"></div>
+      <div id="card-pub-inefficiency"></div>
     </section>
 
-    <section class="section advanced-only" id="sec-anomalies">
-      <div class="section-header">
-        <h2>Inconsistencias estructurales</h2>
-        <div class="actions">
-          <button class="btn-small" id="btn-export-anomalies">Exportar CSV</button>
-          <button class="btn-small" id="btn-reload-anomalies">Recargar bloque</button>
-          <button class="btn-small" id="btn-more-anomalies">Ver más</button>
-        </div>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Severity</th><th>Tipo</th><th>Producto</th><th>Variante</th><th>Talle</th><th>Depósito</th>
-              <th class="num">Esperado</th><th class="num">Actual</th><th class="num">Delta</th>
-            </tr>
-          </thead>
-          <tbody id="anomalies-body"></tbody>
-        </table>
-      </div>
-      <div class="status-line" id="anomalies-status"></div>
-      <div class="error-box" id="anomalies-error"></div>
+    <!-- Bloque 5: Stock sin movimiento (análisis de oportunidad) -->
+    <section id="block-opportunity" class="sh-block hidden">
+      <p class="sh-block-title oportunidad">◆ Stock sin movimiento</p>
+      <div id="card-dead-stock"></div>
     </section>
 
-    <section class="section advanced-only" id="sec-snapshot">
-      <div class="section-header">
-        <h2>Snapshot auditable</h2>
-        <div class="actions">
-          <button class="btn-small" id="btn-export-snapshot">Exportar CSV</button>
-          <button class="btn-small" id="btn-reload-snapshot">Recargar bloque</button>
-          <button class="btn-small" id="btn-more-snapshot">Ver más</button>
-        </div>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Producto</th><th>Variante</th><th>Talle</th><th>Depósito</th>
-              <th class="num">Stock talla/deposito</th><th class="num">variant_sizes</th><th class="num">variant_warehouse</th>
-              <th class="num">Delta vs row</th><th class="num">Delta vs suma wh</th>
-            </tr>
-          </thead>
-          <tbody id="snapshot-body"></tbody>
-        </table>
-      </div>
-      <div class="status-line" id="snapshot-status"></div>
-      <div class="error-box" id="snapshot-error"></div>
-    </section>
+    <!-- Última revisión -->
+    <p id="last-review" class="sh-footer-text hidden"></p>
 
-    <section class="section advanced-only" id="sec-signals">
-      <div class="section-header">
-        <h2>Señales de trazabilidad</h2>
-        <div class="actions">
-          <button class="btn-small" id="btn-export-signals">Exportar CSV</button>
-          <button class="btn-small" id="btn-reload-signals">Recargar bloque</button>
-          <button class="btn-small" id="btn-more-signals">Ver más</button>
-        </div>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Severity</th><th>Trace</th><th>Origen</th><th>Referencia</th><th>Estado</th><th>Fecha</th>
-              <th>Variante</th><th>Talle</th><th>Depósito</th><th class="num">Qty</th><th>Reason</th>
-            </tr>
-          </thead>
-          <tbody id="signals-body"></tbody>
-        </table>
-      </div>
-      <div class="status-line" id="signals-status"></div>
-      <div class="error-box" id="signals-error"></div>
-    </section>
+  </div>
 
-    <section class="section advanced-only" id="sec-timeline">
-      <div class="section-header">
-        <h2>Timeline por variante</h2>
-        <div class="muted" id="timeline-status">Haz click en una variante para ver su historia de movimientos.</div>
+  <!-- Modal de confirmación -->
+  <div id="confirm-modal" class="sh-modal-overlay hidden">
+    <div class="sh-modal-box">
+      <p class="sh-modal-title">Confirmar acción</p>
+      <p id="confirm-message" class="sh-modal-message"></p>
+      <div class="sh-modal-actions">
+        <button id="confirm-cancel" class="sh-btn secondary">Cancelar</button>
+        <button id="confirm-ok" class="sh-btn danger">Confirmar</button>
       </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Fecha</th><th>Origen</th><th>Trace</th><th>Referencia</th><th>Depósito</th><th>Talle</th><th class="num">Qty</th><th>Reason</th>
-            </tr>
-          </thead>
-          <tbody id="timeline-body">
-            <tr><td colspan="8" class="muted">Sin variante seleccionada.</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <div class="error-box" id="timeline-error"></div>
-    </section>
-
-    <p class="footer-note" id="footer-note">
-      Cobertura V1: `reserved_qty` es señal heurística (review). Existen ramas legacy/fallback con trazabilidad parcial.
-    </p>
+    </div>
   </div>
 
   <script type="module" src="../scripts/config.js"></script>

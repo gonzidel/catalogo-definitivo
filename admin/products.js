@@ -4866,6 +4866,10 @@ tag1Create?.addEventListener("click", async () => {
     tag1New.style.display = "none";
     tag1Create.style.display = "none";
     await renderTags1();
+    // FIX: renderTags2/3 no se llamaban tras crear Tag1; Tag2 quedaba deshabilitado
+    // hasta que el usuario deseleccionara y volviera a elegir Tag1 manualmente.
+    await renderTags2();
+    await renderTags3();
   }
 });
 
@@ -4991,32 +4995,15 @@ async function updateNamePrefix() {
   let currentName = nameEl.value.trim();
   
   if (category === "Ropa") {
-    // Si el nombre está vacío, autocompletar con el siguiente número progresivo
-    if (!currentName) {
-      const nextNumber = await getNextRopaNumber();
-      nameEl.value = `R${nextNumber}`;
-      // Si el handle no fue editado manualmente, actualizarlo
-      if (!handleDirty) {
-        handleEl.value = slugify(nameEl.value);
-      }
-    } else {
-      // Si es Ropa y el nombre no comienza con "R" seguido de dígitos, agregar R
-      if (!/^R\d/.test(currentName)) {
-        nameEl.value = "R" + currentName;
-        // Si el handle no fue editado manualmente, actualizarlo
-        if (!handleDirty) {
-          handleEl.value = slugify(nameEl.value);
-        }
-      }
-    }
-  } else {
-    // Si no es Ropa y el nombre comienza con "R" seguido de dígitos, quitarlo
-    if (/^R\d/.test(currentName)) {
-      nameEl.value = currentName.replace(/^R\d+/, "").trim();
-      // Si el handle no fue editado manualmente, actualizarlo
-      if (!handleDirty) {
-        handleEl.value = slugify(nameEl.value);
-      }
+    // FIX: Ropa no autocompleta ni prefija el nombre; el usuario escribe libremente.
+    return;
+  }
+
+  // Si no es Ropa y el nombre comienza con "R" seguido de dígitos, quitarlo
+  if (/^R\d/.test(currentName)) {
+    nameEl.value = currentName.replace(/^R\d+/, "").trim();
+    if (!handleDirty) {
+      handleEl.value = slugify(nameEl.value);
     }
   }
 }
@@ -5404,6 +5391,12 @@ async function loadProductById(id) {
     images = imgRows || [];
   }
 
+  // FIX: categoría se establece en el DOM ANTES de renderizar cualquier selector de tags,
+  // de lo contrario getProductCategory() leía la categoría anterior (ej. "Calzado") y cargaba
+  // tags de la categoría equivocada.
+  const category = prod.category || "Calzado";
+  document.getElementById("category").value = category;
+
   // Cargar tags jerárquicos del producto
   try {
     const { data: pt, error: ptError } = await supabase
@@ -5441,14 +5434,12 @@ async function loadProductById(id) {
     await renderTags3();
   }
 
-  // Cargar details y highlights
+  // Cargar details y highlights (ya con la categoría correcta en el DOM)
   await loadProductDetails(id);
   await loadProductHighlights(id);
   await renderDetailsList();
 
-  // Populate form
-  const category = prod.category || "Calzado";
-  document.getElementById("category").value = category;
+  // Populate form (category ya fue asignada arriba)
   document.getElementById("handle").value = prod.handle || "";
   // Mostrar nombre en mayúsculas al cargar
   // Cargar nombre y corregir formato si es Ropa (eliminar espacio después de R)

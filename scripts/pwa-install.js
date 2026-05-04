@@ -1,6 +1,25 @@
 // scripts/pwa-install.js — Service worker + PWA install prompt (post-pedido, UX no invasiva)
 
-// --- Service worker (sin cambios de comportamiento) ---
+// =============================================================================
+// PHASE A (TEMPORAL) — bug iPhone/Safari "no_client"
+// =============================================================================
+// Motivo: iPhones con un Service Worker anterior a la migración de dominio
+// interceptaban /scripts/vendor/supabase-js.bundle.min.js y /config.prod.js con
+// lógica de caché obsoleta, haciendo fallar la carga de @supabase/supabase-js.
+//
+// Durante Phase A:
+//   - NO se registra ningún Service Worker nuevo.
+//   - Se desregistra de forma explícita cualquier SW previo en cada visita.
+//   - El archivo sw.js del sitio es una "tombstone" (ver sw.js) que, si un
+//     cliente todavía lo pide, se unregistra y recarga una vez.
+//
+// Rollback (Phase B):
+//   - Restaurar este bloque al contenido previo (register + listeners de
+//     update/controllerchange/visibilitychange/pageshow).
+//   - Bumpear SW_VERSION (por ejemplo m260420 → m260421).
+//   - Restaurar sw.js al SW normal.
+// =============================================================================
+
 const __LOCAL_HOSTS = ["localhost", "127.0.0.1", "::1"];
 
 function __isLanIpv4(hostname) {
@@ -23,73 +42,20 @@ const __IS_LOCAL =
   __LOCAL_HOSTS.includes(location.hostname) ||
   (__isLanIpv4(location.hostname) && (__IS_DEV_PORT || true));
 
+// Mantenido para compatibilidad con referencias futuras (p. ej. Phase B al
+// restaurar). No se usa durante Phase A.
 const SW_VERSION = "m260420";
-let __swRefreshing = false;
+void SW_VERSION;
 
-if ("serviceWorker" in navigator && !__IS_LOCAL) {
-  let __hadControllerAtStartup = !!navigator.serviceWorker.controller;
-
-  function __fylCheckSwUpdate(registration) {
-    try {
-      registration.update();
-    } catch (_e) {}
-  }
-
-  navigator.serviceWorker
-    .register(`sw.js?v=${SW_VERSION}`)
-    .then((registration) => {
-      if (registration.waiting) {
-        registration.waiting.postMessage({ type: "SKIP_WAITING" });
-      }
-
-      registration.addEventListener("updatefound", () => {
-        const newWorker = registration.installing;
-        if (!newWorker) return;
-        newWorker.addEventListener("statechange", () => {
-          if (
-            newWorker.state === "installed" &&
-            navigator.serviceWorker.controller
-          ) {
-            newWorker.postMessage({ type: "SKIP_WAITING" });
-          }
-        });
-      });
-
-      __fylCheckSwUpdate(registration);
-    })
-    .catch((err) => {
-      console.warn("[PWA] No se pudo registrar SW:", err);
-    });
-
-  navigator.serviceWorker.addEventListener("controllerchange", () => {
-    if (__swRefreshing) return;
-
-    // Primera toma de control del SW: no recargar
-    if (!__hadControllerAtStartup) {
-      __hadControllerAtStartup = true;
-      return;
-    }
-
-    __swRefreshing = true;
-    window.location.reload();
-  });
-
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState !== "visible") return;
-    navigator.serviceWorker.getRegistration().then((reg) => {
-      if (reg) __fylCheckSwUpdate(reg);
-    });
-  });
-
-  window.addEventListener("pageshow", (ev) => {
-    if (!ev.persisted) return;
-    navigator.serviceWorker.getRegistration().then((reg) => {
-      if (reg) __fylCheckSwUpdate(reg);
-    });
-  });
-} else if ("serviceWorker" in navigator && __IS_LOCAL) {
+if ("serviceWorker" in navigator) {
+  // Phase A: desregistrar TODO SW previo, sin volver a registrar.
+  // Idéntico comportamiento en producción y en local.
   navigator.serviceWorker.getRegistrations?.().then((regs) => {
-    regs.forEach((r) => r.unregister());
+    regs.forEach((r) => {
+      try {
+        r.unregister();
+      } catch (_e) {}
+    });
   });
 }
 

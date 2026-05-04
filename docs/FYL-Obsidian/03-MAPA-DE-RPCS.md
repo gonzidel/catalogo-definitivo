@@ -65,13 +65,29 @@ Detalle: [[18-AUDITORIA-MODULO-PUBLIC-SALES]].
 
 ## Carrito
 
-Flujo vivo segun [[19-AUDITORIA-MODULO-CLIENTE-CARRITO]]:
+Flujo vivo según [[19-AUDITORIA-MODULO-CLIENTE-CARRITO]]:
 
 - `index.html` carga `scripts/cart-persistent.js`.
 - `client/dashboard.html` carga `scripts/cart-persistent.js` y `client/dashboard-instant.js`.
-- Checkout real: `rpc_checkout_cart(uuid,jsonb)`.
-- `scripts/cart.js` contiene `rpc_get_or_create_cart`, `rpc_reserve_item`, `rpc_submit_cart`, pero queda como LEGACY/ruta no principal salvo que se confirme otro consumidor.
-- `client/cart.html` carga `client/cart.js`, que es ruta separada y no usa `rpc_checkout_cart`; esta observacion esta en [[15-OBSERVACIONES-PRODUCTS-A-REVISAR]].
+- Checkout real: `rpc_checkout_cart(uuid,jsonb)` desde `client/dashboard-instant.js`.
+- El carrito usa inserts/upserts directos a `carts` y `cart_items` (via `scripts/cart-persistent.js`), no RPCs de carrito legacy.
+
+### RPCs de carrito legacy (no usadas en flujo vivo)
+
+Estas RPCs existen en el repo y posiblemente en Supabase, pero **no son llamadas por el flujo principal actual**. Revisar grants antes de cualquier operación de seguridad. Ver [[09-TABLAS-COLUMNAS-DUDOSAS-O-LEGACY]] y [[13-RPCS-DEPLOY-STATE]].
+
+| RPC / Función | Definida en | Clasificación | Riesgo |
+|---|---|---|---|
+| `rpc_get_or_create_cart` | `scripts/cart.js` (no cargado por index) | LEGACY | Bajo si no tiene grants amplios |
+| `rpc_reserve_item` | `scripts/cart.js` (no cargado por index) | LEGACY | Bajo si no tiene grants amplios |
+| `rpc_submit_cart` | `scripts/cart.js` (no cargado por index) | LEGACY | Bajo si no tiene grants amplios |
+| `get_user_cart` | `08_cart_items_flexible_fixed.sql` | LEGACY / REVISAR GRANTS | ALTO si tiene `EXECUTE TO authenticated` |
+| `get_cart_items_simple` | `08_cart_items_flexible_fixed.sql` | LEGACY / REVISAR GRANTS | ALTO si tiene `EXECUTE TO authenticated` |
+| `clear_cart_items` | `08_cart_items_flexible_fixed.sql` | LEGACY / REVISAR GRANTS | ALTO — puede vaciar carrito ajeno si grants son amplios |
+| `add_cart_item` | `08_cart_items_flexible_fixed.sql` | LEGACY / REVISAR GRANTS | ALTO si tiene `EXECUTE TO authenticated` |
+| `rpc_update_cart_item_quantity` | `124_rpc_update_cart_item_quantity.sql` | DUDOSA — posible API externa | Verificar si hay consumidor fuera del JS auditado |
+
+**Verificación pendiente (FASE 4):** consultar grants reales con la query de `information_schema.routine_privileges` en [[13-RPCS-DEPLOY-STATE]].
 
 ## Clientes, colaboradores, compras y estadisticas
 

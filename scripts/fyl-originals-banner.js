@@ -485,7 +485,7 @@ export async function loadFYLOriginals() {
 
     const productosAgrupados = Object.values(grupos);
 
-    // Cargar fechas reales por variante (created_at/updated_at) para calcular
+    // Cargar fecha real de publicación por variante para calcular
     // VariantePrincipal según la variante MÁS RECIENTE, no por orden alfabético
     // de color. catalog_public_view solo expone FechaIngreso del producto, que
     // es idéntico para todos los colores y no sirve para distinguir variantes.
@@ -500,7 +500,7 @@ export async function loadFYLOriginals() {
         const { data: variantsData, error: variantsError } = await supabase
           .from("products")
           .select(
-            "name, product_variants(color, active, created_at, updated_at)"
+            "name, product_variants(color, active, last_published_at)"
           )
           .in("name", articulos);
 

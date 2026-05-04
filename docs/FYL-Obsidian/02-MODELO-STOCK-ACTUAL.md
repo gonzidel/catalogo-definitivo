@@ -38,6 +38,22 @@ Toda lógica de “cuánto hay en depósito X para talle Y” debe alinearse con
 
 *Pendiente de verificación puntual:* si queda **algún** `upsert` legacy en `admin/*.js` hacia canónica — usar grep recomendado en [[99-AUDITORIA-FINAL]].
 
+## Cómo lee `catalog_public_view` el stock (importante)
+
+`catalog_public_view` **no consulta `variant_size_warehouse_stock` directamente**. Filtra variantes visibles usando:
+
+```sql
+inner join (
+    select distinct variant_id from variant_sizes where stock_qty > 0
+) vs_with_stock on vs_with_stock.variant_id = pv.id
+```
+
+Y construye la "Numeración" (talles visibles) también desde `variant_sizes WHERE stock_qty > 0`.
+
+**Consecuencia directa:** si el trigger 84 (`trigger_sync_variant_sizes_on_warehouse_stock`) está inactivo, `variant_sizes` queda desactualizado y el catálogo muestra datos de stock incorrectos (productos sin stock que aparecen, o productos con stock que no aparecen).
+
+**Adicionalmente:** `catalog_public_view` no expone `product_id` en su SELECT final. Las columnas disponibles son `"Articulo"`, `"Color"`, `"Numeracion"`, `"Precio"`, `"Filtro1"`, `"Filtro2"`, `"Filtro3"`, etc. Para identificar productos por ID desde la vista, hay que hacer join por `"Articulo"` + `"Color"` o una subquery a `product_variants`.
+
 ## Reglas de oro (resumen)
 
 1. **Leer** stock operativo (catálogo, alternativas, carrito) desde `variant_size_warehouse_stock` filtrando `warehouses` por `code` resuelto a **UUID** (`general`, `venta-publico` típicamente).

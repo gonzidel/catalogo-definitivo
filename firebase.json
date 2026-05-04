@@ -39,6 +39,18 @@
       "test-*.html",
       "verificar-*.html"
     ],
+    "redirects": [
+      {
+        "source": "/",
+        "destination": "/catalogo",
+        "type": 301
+      },
+      {
+        "source": "/index.html",
+        "destination": "/catalogo",
+        "type": 301
+      }
+    ],
     "rewrites": [
       {
         "source": "/privacy-policy",
@@ -61,8 +73,12 @@
         "destination": "/catalogo.html"
       },
       {
+        "source": "/catalogo/**",
+        "destination": "/catalogo.html"
+      },
+      {
         "source": "**",
-        "destination": "/index.html"
+        "destination": "/catalogo.html"
       }
     ],
     "headers": [
@@ -178,6 +194,19 @@
         ]
       },
       {
+        "source": "scripts/vendor/supabase-js.bundle.min.js",
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/javascript; charset=utf-8"
+          },
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=31536000, immutable"
+          }
+        ]
+      },
+      {
         "source": "**/*.@(js|css)",
         "headers": [
           {
@@ -217,24 +246,7 @@
           }
         ]
       },
-      {
-        "source": "scripts/vendor/supabase-js.bundle.js",
-        "headers": [
-          {
-            "key": "Cache-Control",
-            "value": "no-cache, no-store, must-revalidate"
-          }
-        ]
-      },
-      {
-        "source": "scripts/vendor/supabase-js.bundle.min.js",
-        "headers": [
-          {
-            "key": "Cache-Control",
-            "value": "no-cache, no-store, must-revalidate"
-          }
-        ]
-      },
+      
       {
         "source": "scripts/config.local.js",
         "headers": [

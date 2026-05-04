@@ -1463,6 +1463,10 @@
                 Cancelaciones
                 <span class="filter-btn-badge hidden" id="cancelled-orders-badge">0</span>
             </button>
+            <button class="filter-btn" data-status="stock_pending">
+                Stock pendiente
+                <span class="filter-btn-badge hidden" id="stock-pending-orders-badge">0</span>
+            </button>
             <button class="filter-btn" data-status="all">Todos</button>
             <div style="margin-left:auto; display:flex; align-items:center; gap:8px;">
                 <input id="search-input" type="text" placeholder="Buscar (nombre, DNI, teléfono)" style="padding:10px; border:1px solid #ddd; border-radius:8px; font-size:16px; min-width: 260px;" />
@@ -1764,6 +1768,20 @@
           <button class="btn btn-primary" id="no-stock-confirm-yes" style="padding: 10px 24px; font-size: 14px;">Sí, Agregar</button>
           <button class="btn btn-secondary" id="no-stock-confirm-no" style="padding: 10px 24px; font-size: 14px;">Cancelar</button>
         </div>
+      </div>
+    </div>
+
+    <!-- Modal conflicto de stock antes de guardar -->
+    <div class="modal" id="stock-conflict-modal">
+      <div class="modal-content" style="max-width: 560px; width: 100%;">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom: 12px;">
+          <h3 style="margin:0; font-size:18px; color:#7f1d1d;">Conflicto de stock detectado</h3>
+          <button id="stock-conflict-close" class="order-modal-close" aria-label="Cerrar">&times;</button>
+        </div>
+        <p style="margin:0 0 14px; color:#444; font-size:14px;">
+          No se puede guardar el pedido porque hay productos con stock insuficiente. Eliminá los conflictivos y se reintentará automáticamente.
+        </p>
+        <div id="stock-conflict-list"></div>
       </div>
     </div>
 

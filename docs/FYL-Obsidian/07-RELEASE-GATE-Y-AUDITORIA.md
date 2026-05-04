@@ -20,11 +20,20 @@ Tras `175`, **`go_live_ready`** exige también `hs.reserved_qty_diffs = 0` (adem
 ## `go_live_ready` y `blocking_reasons` (chequeo rápido)
 
 ```sql
+-- Nota: "health_score" NO es una columna de esta vista (corregido 2026-05-04).
+-- La vista expone KPIs individuales. Usar:
 SELECT
   go_live_ready,
   release_decision,
   blocking_reasons,
-  health_score
+  variant_sizes_diffs,
+  variant_warehouse_diffs,
+  orphan_rows,
+  critical_signals,
+  reserved_qty_diffs,
+  trigger_84_active,
+  trigger_145_active,
+  measured_at
 FROM public.vw_stock_audit_release_gate;
 ```
 
@@ -39,7 +48,7 @@ ORDER BY severity, measured_at;
 
 ## Uso en deploy (antes / después)
 
-1. **Antes:** exigir `go_live_ready` y criterio de `health_score` (RUNBOOK: típicamente ≥ 95 — ver `docs/RUNBOOK.md` §5).
+1. **Antes:** exigir `go_live_ready = true` y `release_decision = 'go'` (ver `docs/RUNBOOK.md` §5). No hay columna `health_score` — usar KPIs individuales de la vista.
 2. **Después:** reconsultar `release_gate` y `alerts` tras migración SQL o carga masiva.
 3. Si `no-go`: [[06-RESERVED-QTY-Y-RECONCILE]] + inspección de orígenes (órphan variants, señales `vw_stock_audit_reference_signals`).
 

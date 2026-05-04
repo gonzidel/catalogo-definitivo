@@ -112,6 +112,7 @@ let productosActualesMap = new Map(); // Articulo -> producto (para Bottom Sheet
 // Variables para paginación incremental
 let productosPendientes = []; // Array de productos pendientes de renderizar
 let searchIndex = []; // Índice textual derivado de productosPendientes
+let searchRenderSeq = 0;
 let productosRenderizados = 0; // Cantidad de productos ya renderizados
 let offersCardsPendientes = []; // Ofertas pendientes de renderizar
 /** Tras insertar el banner destacado inline (4.ª card en Inicio), se dispara carga al finalizar el render. */
@@ -480,6 +481,25 @@ async function inicializarSupabase() {
   }
 }
 
+async function fetchAllCatalogPublicRows(createQuery, pageSize = 1000) {
+  const allRows = [];
+  let from = 0;
+
+  while (true) {
+    const to = from + pageSize - 1;
+    const { data, error } = await createQuery().range(from, to);
+    if (error) return { data: null, error };
+
+    const rows = Array.isArray(data) ? data : [];
+    allRows.push(...rows);
+
+    if (rows.length < pageSize) break;
+    from += pageSize;
+  }
+
+  return { data: allRows, error: null };
+}
+
 // Cargar datos desde Supabase
 async function cargarDesdeSupabase(cat) {
   if (!supabase) {
@@ -491,7 +511,7 @@ async function cargarDesdeSupabase(cat) {
 
     // [PERF] Query de validacion de categorias eliminada (era solo diagnostico).
 
-    let query = supabase.from("catalog_public_view").select("*");
+    const createCatalogQuery = () => supabase.from("catalog_public_view").select("*");
 
     if (cat === "Novedades" || cat === "Ofertas" || cat === "all") {
       // Para categorías especiales o 'all', cargar todas las categorías
@@ -500,7 +520,7 @@ async function cargarDesdeSupabase(cat) {
       // dejaba al buscador sin dataset completo (ej. buscar "bota" devolvía 1).
       // La paginación real del catálogo ya es cliente-side (PRODUCTOS_INICIALES
       // + "Ver más"), así que traer todo acá no aumenta el trabajo de DOM.
-      const { data, error } = await query;
+      const { data, error } = await fetchAllCatalogPublicRows(createCatalogQuery);
       if (error) {
         console.error("❌ Error en consulta:", error);
         throw error;
@@ -605,7 +625,7 @@ async function cargarDesdeSupabase(cat) {
         fylCatalogDbg(`📦 Filtrando por tag "${tagValue}" en TODAS las categorías`);
         
         // Obtener TODOS los productos (no limitar a "Otros")
-        const { data: todosProductos, error: errorProductos } = await query;
+        const { data: todosProductos, error: errorProductos } = await fetchAllCatalogPublicRows(createCatalogQuery);
         
         if (errorProductos) {
           console.error("❌ Error en consulta de productos:", errorProductos);
@@ -706,7 +726,7 @@ async function cargarDesdeSupabase(cat) {
       
       // Para categorías normales, filtrar por categoría
       fylCatalogDbg(`📦 Filtrando por categoría: "${cat}"`);
-      const { data, error } = await query.eq("Categoria", cat);
+      const { data, error } = await fetchAllCatalogPublicRows(() => createCatalogQuery().eq("Categoria", cat));
       
       if (error) {
         console.error("❌ Error en consulta filtrada:", error);
@@ -928,6 +948,26 @@ function intercalarProductosPorCategoria(productos) {
 }
 
 /** Agrupar filas crudas (variantes) en productos por Articulo. Reutilizable por cargarCategoria y ensureAllCacheLoadedGrouped. */
+function getCatalogColorKey(color) {
+  return String(color || "Sin color").trim().toLowerCase();
+}
+
+function mergeCatalogColorDetail(target, source) {
+  if (!target || !source) return;
+
+  (source.talles || []).forEach((talle) => {
+    if (talle && !target.talles.includes(talle)) target.talles.push(talle);
+  });
+
+  (source.images || []).forEach((image) => {
+    if (image && !target.images.includes(image)) target.images.push(image);
+  });
+
+  target.OfertaActiva = target.OfertaActiva || source.OfertaActiva;
+  if (!target.PrecioOferta && source.PrecioOferta) target.PrecioOferta = source.PrecioOferta;
+  if (!target.PromoActiva && source.PromoActiva) target.PromoActiva = source.PromoActiva;
+}
+
 function agruparProductos(rows) {
   if (!rows || rows.length === 0) return [];
   const grupos = rows.reduce((acc, i) => {
@@ -960,7 +1000,8 @@ function agruparProductos(rows) {
       }
     }
     if (i.PromoActiva && i.PromoActiva !== '') acc[art].PromoActiva = i.PromoActiva;
-    acc[art].DetalleColor.push({
+
+    const detalleColor = {
       color: i.Color || "Sin color",
       hex_color: i.ColorHex || null,
       ColorDisplayNumber: i.ColorDisplayNumber || null,
@@ -972,7 +1013,15 @@ function agruparProductos(rows) {
       OfertaActiva: i.OfertaActiva === true || i.OfertaActiva === 'true',
       PrecioOferta: i.PrecioOferta || '',
       PromoActiva: i.PromoActiva || '',
-    });
+    };
+
+    const colorKey = getCatalogColorKey(detalleColor.color);
+    const colorExistente = acc[art].DetalleColor.find((detalle) => getCatalogColorKey(detalle.color) === colorKey);
+    if (colorExistente) {
+      mergeCatalogColorDetail(colorExistente, detalleColor);
+    } else {
+      acc[art].DetalleColor.push(detalleColor);
+    }
     return acc;
   }, {});
   return Object.values(grupos);
@@ -1491,6 +1540,10 @@ async function renderizarProductosPagina(productos, container, offersCards = [],
   
   if (productosARenderizar.length > 0) {
     await enrichProductsWithStock(productosARenderizar);
+  }
+
+  if (typeof options.shouldRender === "function" && !options.shouldRender()) {
+    return 0;
   }
   
   // Crear array combinado de productos y ofertas
@@ -6233,7 +6286,10 @@ function rankSearchResults(matches) {
   });
 }
 
-async function renderSearchResults(productos, cont) {
+async function renderSearchResults(productos, cont, requestId) {
+  const isCurrentSearch = () => requestId == null || requestId === searchRenderSeq;
+  if (!isCurrentSearch()) return false;
+
   // Limpiar contenedor y ocultar banners cuando hay filtro de búsqueda
   cont.innerHTML = "";
   if (typeof window.hideFYLOriginalsBanner === 'function') window.hideFYLOriginalsBanner();
@@ -6242,14 +6298,21 @@ async function renderSearchResults(productos, cont) {
   document.getElementById("info-banner-top-container")?.classList.add("is-hidden");
 
   if (Array.isArray(productos) && productos.length > 0) {
-    await renderizarProductosPagina(productos, cont, [], 0, null, { skipBanner: true });
+    await renderizarProductosPagina(productos, cont, [], 0, null, {
+      skipBanner: true,
+      shouldRender: isCurrentSearch,
+    });
+    if (!isCurrentSearch()) return false;
     configurarEventos();
   } else {
+    if (!isCurrentSearch()) return false;
     cont.insertAdjacentHTML('beforeend', '<div class="no-results" style="text-align: center; padding: 2rem; color: #666;">No se encontraron productos</div>');
   }
 
+  if (!isCurrentSearch()) return false;
   initTagFilterClearDelegation();
   refreshCatalogFilterBar();
+  return true;
 }
 
 function tokenizeSearchText(value) {
@@ -6426,6 +6489,8 @@ function inferSearchCategoryFromProducts(productos) {
 
 // Función para buscar productos en todos los productos pendientes
 async function buscarProductosEnTodos(term) {
+  const requestId = ++searchRenderSeq;
+
   if (!term || term.trim() === '') {
     window.__fylSearchDerivedCategory = null;
     setCatalogLoadMode("paged");
@@ -6486,7 +6551,8 @@ async function buscarProductosEnTodos(term) {
   const productosFiltrados = productosRankeados.map((item) => item.producto);
   window.__fylSearchDerivedCategory = inferSearchCategoryFromProducts(productosFiltrados);
 
-  await renderSearchResults(productosFiltrados, cont);
+  const rendered = await renderSearchResults(productosFiltrados, cont, requestId);
+  if (!rendered || requestId !== searchRenderSeq) return;
   fylCatalogTrackViewItemList("search:" + termLower, productosFiltrados, "search_results");
 }
 

@@ -94,3 +94,10 @@ config.local.js
 
 # Artefactos locales
 diff-dashboard-instant.txt
+
+# Supabase CLI cache (no versionar)
+supabase/.temp/
+
+# Config local de herramientas (no versionar)
+.claude/
+.obsidian/

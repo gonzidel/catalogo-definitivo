@@ -47,6 +47,7 @@ let shippingAmount = 0;
 let discountAmount = 0;
 let extrasAmount = 0;
 let extrasPercentage = 0;
+let stockConflictRetryTimer = null;
 
 // Provincias y ciudades argentinas para autocomplete (importadas desde archivo compartido)
 const PROVINCE_CITIES = PROVINCE_CITIES_DATA;
@@ -2370,10 +2371,31 @@ function addSpecialExtra() {
   console.log(`✅ Extra especial agregado: ${name} - $${amount}`);
 }
 
+// Reparto depósito general vs venta (misma prioridad que grilla / RPC). Evita que al fusionar
+// dos líneas del mismo SKU se sume dos veces "todo desde venta" cuando el stock está partido.
+function computeWarehouseQtySplitForOrderItem(quantity, stockGeneral, stockVenta) {
+  const q = Math.max(0, Number(quantity) || 0);
+  const gAvail = Math.max(0, Number(stockGeneral) || 0);
+  const vAvail = Math.max(0, Number(stockVenta) || 0);
+  let qtyFromVenta = 0;
+  let qtyFromGeneral = 0;
+  if (vAvail > 0) {
+    qtyFromVenta = Math.min(q, vAvail);
+    const remaining = q - qtyFromVenta;
+    if (remaining > 0 && gAvail > 0) {
+      qtyFromGeneral = Math.min(remaining, gAvail);
+    }
+  } else if (gAvail > 0) {
+    qtyFromGeneral = Math.min(q, gAvail);
+  }
+  return { qty_from_general: qtyFromGeneral, qty_from_venta: qtyFromVenta };
+}
+
 // Agregar producto al pedido
 async function addProductToOrder(product) {
   let resolvedStatus = product.status || "picked";
   let resolvedMissingIsManual = Boolean(product.admin_confirmed_missing);
+  let fetchedStockForSplit = null;
   // VALIDACIÓN: Verificar stock disponible si se proporciona información de stock
   if (product.variant_id && product.size && !product.is_special_extra) {
     // Obtener stock actual desde la base de datos para validación
@@ -2406,6 +2428,7 @@ async function addProductToOrder(product) {
         }
         
         const stockTotal = stockGeneral + stockVenta;
+        fetchedStockForSplit = { stockGeneral, stockVenta };
         
         // Verificar si ya existe este producto en el pedido
         const existingDeductibleQty = orderItems
@@ -2483,10 +2506,14 @@ async function addProductToOrder(product) {
   if (existingIndex >= 0) {
     // Actualizar cantidad
     orderItems[existingIndex].quantity += product.quantity;
-    // Actualizar cantidades de stock si existen
+    // Actualizar cantidades de stock si existen (si ya leímos depósitos en BD, se recalcula abajo)
     if (product.qty_from_general !== undefined) {
-      orderItems[existingIndex].qty_from_general = (orderItems[existingIndex].qty_from_general || 0) + product.qty_from_general;
-      orderItems[existingIndex].qty_from_venta = (orderItems[existingIndex].qty_from_venta || 0) + product.qty_from_venta;
+      if (!fetchedStockForSplit) {
+        orderItems[existingIndex].qty_from_general =
+          (orderItems[existingIndex].qty_from_general || 0) + product.qty_from_general;
+        orderItems[existingIndex].qty_from_venta =
+          (orderItems[existingIndex].qty_from_venta || 0) + product.qty_from_venta;
+      }
     }
     if (productStatusForMerge === "missing" && isMissingManual) {
       orderItems[existingIndex].admin_confirmed_missing = true;
@@ -2501,6 +2528,25 @@ async function addProductToOrder(product) {
       status: productStatusForMerge, // Admin: por defecto "apartado"; missing para excepción operativa
       admin_confirmed_missing: isMissingManual
     });
+  }
+
+  const targetItem =
+    existingIndex >= 0 ? orderItems[existingIndex] : orderItems[orderItems.length - 1] || null;
+  if (
+    targetItem &&
+    fetchedStockForSplit &&
+    targetItem.variant_id &&
+    !targetItem.is_special_extra &&
+    String(targetItem.status || "picked").trim().toLowerCase() !== "missing" &&
+    !targetItem.admin_confirmed_missing
+  ) {
+    const split = computeWarehouseQtySplitForOrderItem(
+      targetItem.quantity,
+      fetchedStockForSplit.stockGeneral,
+      fetchedStockForSplit.stockVenta
+    );
+    targetItem.qty_from_general = split.qty_from_general;
+    targetItem.qty_from_venta = split.qty_from_venta;
   }
   
   // NOTA: El stock NO se descuenta aquí al agregar productos.
@@ -2836,6 +2882,82 @@ function updateOrderTotal() {
 window.updateProductQuantity = updateProductQuantity;
 window.removeProductFromOrder = removeProductFromOrder;
 
+function getStockConflictModalElements() {
+  return {
+    modal: document.getElementById("stock-conflict-modal"),
+    list: document.getElementById("stock-conflict-list"),
+    closeBtn: document.getElementById("stock-conflict-close"),
+  };
+}
+
+function hideStockConflictModal() {
+  const { modal, list } = getStockConflictModalElements();
+  if (!modal) return;
+  modal.classList.remove("active");
+  modal.style.display = "none";
+  if (list) list.innerHTML = "";
+}
+
+function getItemLabelForConflict(conflict) {
+  const base = [conflict.product_name || "Producto", conflict.color || "-", conflict.size || "-"].join(" · ");
+  return `${base} (${conflict.warehouse_label || "Depósito"})`;
+}
+
+function openStockConflictModal(conflicts = []) {
+  const { modal, list, closeBtn } = getStockConflictModalElements();
+  if (!modal || !list) return false;
+  const entries = Array.isArray(conflicts) ? conflicts : [];
+
+  list.innerHTML = entries.map((conflict, idx) => {
+    const itemLabel = getItemLabelForConflict(conflict);
+    const removeAction = conflict.item_id
+      ? `<button class="btn btn-danger" data-stock-conflict-remove="${conflict.item_id}" style="padding: 6px 10px; font-size: 12px;">Eliminar del pedido</button>`
+      : `<span style="font-size:12px; color:#666;">Sin ítem editable</span>`;
+    return `
+      <div style="border:1px solid #f5c2c7; border-radius:8px; padding:10px; background:#fff5f5; display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:8px;">
+        <div>
+          <div style="font-weight:600; color:#7f1d1d;">${idx + 1}. ${itemLabel}</div>
+          <div style="font-size:13px; color:#7f1d1d; margin-top:4px;">
+            Disponible: ${Number(conflict.available || 0)} · Solicitado: ${Number(conflict.requested || 0)}
+          </div>
+        </div>
+        ${removeAction}
+      </div>
+    `;
+  }).join("");
+
+  if (closeBtn && closeBtn.dataset.stockConflictBound !== "1") {
+    closeBtn.dataset.stockConflictBound = "1";
+    closeBtn.addEventListener("click", () => hideStockConflictModal());
+  }
+
+  if (modal.dataset.stockConflictBound !== "1") {
+    modal.dataset.stockConflictBound = "1";
+    modal.addEventListener("click", (e) => {
+      if (e.target === modal) {
+        hideStockConflictModal();
+        return;
+      }
+      const removeBtn = e.target.closest?.("[data-stock-conflict-remove]");
+      if (!removeBtn) return;
+      const itemId = removeBtn.getAttribute("data-stock-conflict-remove");
+      if (!itemId) return;
+      removeProductFromOrder(itemId);
+      hideStockConflictModal();
+      if (stockConflictRetryTimer) clearTimeout(stockConflictRetryTimer);
+      stockConflictRetryTimer = setTimeout(() => {
+        saveOrder().catch((err) => {
+          console.error("❌ Reintento tras conflicto de stock falló:", err);
+        });
+      }, 80);
+    });
+  }
+
+  modal.style.display = "flex";
+  modal.classList.add("active");
+  return true;
+}
+
 // Ocultar resultados de productos
 function hideProductResults() {
   const resultsDiv = document.getElementById("product-results");
@@ -3084,6 +3206,13 @@ async function saveOrder() {
   } catch (error) {
     console.error("❌ Error guardando pedido:", error);
     console.error("❌ Stack trace:", error.stack);
+    if (error?.code === "STOCK_CONFLICT_PRECHECK") {
+      const shown = openStockConflictModal(error.conflicts || []);
+      if (!shown) {
+        alert("Hay conflicto de stock en uno o más productos. Eliminá los conflictivos para continuar.");
+      }
+      return;
+    }
     alert(`Error al guardar el pedido: ${error.message || "Error desconocido"}`);
     // NO cerrar el modal si hay error para que el usuario pueda corregir
   } finally {
@@ -3271,6 +3400,104 @@ function rowForStockLog(item) {
   };
 }
 
+function buildStockConflictError(conflicts) {
+  const first = conflicts?.[0] || null;
+  const itemLabel = first ? getItemLabelForConflict(first) : "producto";
+  const error = new Error(`Conflicto de stock detectado en ${itemLabel}.`);
+  error.code = "STOCK_CONFLICT_PRECHECK";
+  error.conflicts = Array.isArray(conflicts) ? conflicts : [];
+  return error;
+}
+
+async function validateStockBeforeSave(itemsWithVariants) {
+  const items = Array.isArray(itemsWithVariants) ? itemsWithVariants : [];
+  if (items.length === 0) return { ok: true, conflicts: [] };
+
+  if (!warehouses.general || !warehouses.ventaPublico) {
+    await loadWarehouses();
+  }
+  if (!warehouses.general || !warehouses.ventaPublico) {
+    return { ok: true, conflicts: [] };
+  }
+
+  const grouped = new Map();
+  const trackRow = (item, warehouseId, requestedQty, warehouseLabel) => {
+    if (!warehouseId || requestedQty <= 0) return;
+    const sizeNorm = normalizeSize(item.size || "");
+    if (!sizeNorm) return;
+    const key = `${item.variant_id}|${sizeNorm}|${warehouseId}`;
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        key,
+        variant_id: item.variant_id,
+        size: sizeNorm,
+        warehouse_id: warehouseId,
+        warehouse_label: warehouseLabel,
+        requested_total: 0,
+        rows: [],
+      });
+    }
+    const bucket = grouped.get(key);
+    bucket.requested_total += requestedQty;
+    bucket.rows.push({
+      item_id: item.id || null,
+      product_name: item.product_name || "Producto",
+      color: item.color || "-",
+      size: sizeNorm,
+      warehouse_label: warehouseLabel,
+      requested: requestedQty,
+      variant_id: item.variant_id,
+    });
+  };
+
+  const candidates = items.filter(itemQualifiesForApplyOrderStockDeduction);
+  candidates.forEach((item) => {
+    const qtyGeneral = Number(item.qty_from_general) || 0;
+    const qtyVenta = Number(item.qty_from_venta) || 0;
+    trackRow(item, warehouses.general, qtyGeneral, "General");
+    trackRow(item, warehouses.ventaPublico, qtyVenta, "Local");
+  });
+
+  if (grouped.size === 0) return { ok: true, conflicts: [] };
+
+  const variantIds = [...new Set([...grouped.values()].map((v) => v.variant_id))];
+  const sizes = [...new Set([...grouped.values()].map((v) => v.size))];
+  const warehouseIds = [...new Set([...grouped.values()].map((v) => v.warehouse_id))];
+
+  const { data, error } = await supabase
+    .from("variant_size_warehouse_stock")
+    .select("variant_id, size, warehouse_id, stock_qty")
+    .in("variant_id", variantIds)
+    .in("size", sizes)
+    .in("warehouse_id", warehouseIds);
+
+  if (error) {
+    console.warn("⚠️ validateStockBeforeSave: no se pudo validar stock (se continúa):", error);
+    return { ok: true, conflicts: [] };
+  }
+
+  const stockMap = new Map();
+  (data || []).forEach((row) => {
+    const key = `${row.variant_id}|${normalizeSize(row.size || "")}|${row.warehouse_id}`;
+    stockMap.set(key, Number(row.stock_qty) || 0);
+  });
+
+  const conflicts = [];
+  for (const bucket of grouped.values()) {
+    const available = stockMap.get(bucket.key) ?? 0;
+    if (available >= bucket.requested_total) continue;
+    bucket.rows.forEach((row) => {
+      conflicts.push({
+        ...row,
+        available,
+        requested: bucket.requested_total,
+      });
+    });
+  }
+
+  return { ok: conflicts.length === 0, conflicts };
+}
+
 async function updateStockBatch(itemsWithVariants, orderId = null, source = "order_creation") {
   if (!itemsWithVariants || itemsWithVariants.length === 0) {
     console.warn("⚠️ updateStockBatch: No hay items para actualizar stock");
@@ -3455,6 +3682,10 @@ async function createNewOrder(customerId, items, total, extraValues = {}) {
     }
     return item;
   });
+  const preflight = await validateStockBeforeSave(itemsForPersistence);
+  if (!preflight.ok) {
+    throw buildStockConflictError(preflight.conflicts);
+  }
   
   console.log("🔵 createNewOrder: itemsWithVariants:", itemsForPersistence);
   
@@ -3666,6 +3897,10 @@ async function addItemsToExistingOrder(orderId, items, newTotal = null, extraVal
     }
     return item;
   });
+  const preflight = await validateStockBeforeSave(itemsForPersistence);
+  if (!preflight.ok) {
+    throw buildStockConflictError(preflight.conflicts);
+  }
   
   // Obtener el pedido con sus items para verificar el estado
   const { data: order } = await supabase

@@ -31,8 +31,15 @@ rg "p_operation_id" admin client --glob "*.js"
 ## SQL de chequeo (operativo)
 
 ```sql
--- Gate
-SELECT go_live_ready, blocking_reasons, health_score
+-- Gate (nota: "health_score" NO existe como columna — corregido 2026-05-04)
+SELECT
+  go_live_ready,
+  release_decision,
+  blocking_reasons,
+  variant_sizes_diffs,
+  reserved_qty_diffs,
+  trigger_84_active,
+  trigger_145_active
 FROM public.vw_stock_audit_release_gate;
 
 -- Drift de reservas

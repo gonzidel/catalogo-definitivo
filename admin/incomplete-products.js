@@ -689,16 +689,31 @@ function showMessage(text, type = "ok") {
 async function refreshProducts() {
   console.log("🔄 Refrescando productos incompletos...");
   incompleteProducts = await loadIncompleteProducts();
-  
-  console.log(`📋 Total productos incompletos: ${incompleteProducts.length}`);
-  
-  const shoes = incompleteProducts.filter(p => p.category === "Calzado");
+
+  const shoes   = incompleteProducts.filter(p => p.category === "Calzado");
   const clothing = incompleteProducts.filter(p => p.category === "Ropa");
-  
-  console.log(`👟 Calzado: ${shoes.length}, 👕 Ropa: ${clothing.length}`);
-  
+  const others  = incompleteProducts.filter(p => p.category !== "Calzado" && p.category !== "Ropa");
+
   renderProducts(shoes, "shoes-container");
   renderProducts(clothing, "clothing-container");
+  renderProducts(others, "others-container");
+
+  // Mostrar/ocultar sección Otros según si tiene productos
+  const othersSection = document.getElementById("others-section");
+  if (othersSection) othersSection.style.display = others.length > 0 ? "" : "none";
+
+  // Estado vacío global cuando no hay nada pendiente
+  const msgContainer = document.getElementById("message-container");
+  if (msgContainer) {
+    if (incompleteProducts.length === 0) {
+      msgContainer.innerHTML = `
+        <div class="empty-state">
+          <p>✅ No hay productos pendientes de stock. Todo está completo.</p>
+        </div>`;
+    } else {
+      msgContainer.innerHTML = "";
+    }
+  }
 }
 
 

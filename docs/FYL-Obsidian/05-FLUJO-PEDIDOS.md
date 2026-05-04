@@ -25,6 +25,25 @@ Riesgo documentado: `price_snapshot` llega desde frontend y debe tratarse como d
 - Confirmacion manual/faltante: `rpc_admin_manual_inject_and_deduct`.
 - Ver [[16-AUDITORIA-MODULO-STOCK]] y [[17-AUDITORIA-MODULO-ORDERS]].
 
+## Estados de `orders.status`
+
+Estados del pedido cabecera. Las transiciones son realizadas por RPCs o por admin según el flujo.
+
+| Estado | Descripción | Quién lo produce |
+|--------|-------------|-----------------|
+| `active` | Pedido abierto, en preparación | Checkout cliente (`rpc_checkout_cart`) o creación admin |
+| `closing_soon` | Pedido próximo a cerrarse (ventana de cierre activa) | Lógica de ventana / `rpc_close_order` con aviso previo |
+| `closed` | Pedido cerrado, listo para despacho | `rpc_close_order` |
+| `sent` | Pedido enviado al cliente | `rpc_mark_order_as_sent` |
+| `devolución` | Pedido devuelto (total o parcial) | `rpc_mark_order_as_devolucion` |
+| `stock_pending` | Fallo al descontar stock en pedido admin; requiere intervención manual | `admin/order-creator.js` (fallback si rollback manual falla) |
+| `cancelled` | Pedido cancelado | `rpc_cancel_order_full` o proceso de expiración |
+| `expired` | Pedido expirado por ventana de tiempo | Lógica de expiración automática (ver `123_order_expiry_and_notifications.sql`) |
+
+Nota: al pasar a **`sent`**, **`expired`** o **`devolución`** desde un estado no final, la migración **188** (`order_reserved_qty_released` + trigger en `orders`) **resta** de `product_variants.reserved_qty` la suma de `order_item_stock_sources` del pedido (sin tocar stock físico ni borrar fuentes). El drift **histórico** previo a 188 y casos límite (p. ej. expiración con fuentes ya en cero) siguen pudiendo alinearse con **`rpc_reconcile_stock(true)`**. Ver [[06-RESERVED-QTY-Y-RECONCILE]].
+
+Los estados `sent`, `expired` y `devolución` están excluidos del cálculo de reservas activas en `vw_stock_audit_reserved_qty_diff` (175).
+
 ## Estados de `order_items`
 
 | Estado | Uso |

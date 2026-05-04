@@ -32,6 +32,66 @@
 
 ---
 
+## D) Decisiones de negocio — 2026-05-04
+
+Decisiones tomadas durante la auditoría de stock y saneamiento del vault. Fecha: 2026-05-04.
+
+### D1 — Visibilidad de productos sin stock
+
+**Decisión:** Los productos sin stock **no deben mostrarse en el catálogo**.
+
+- Un producto desaparece del catálogo cuando `variant_sizes.stock_qty = 0` para todas sus variantes activas.
+- No existe estado "próximamente" ni "reposición" visible para el cliente por el momento.
+- Cuando vuelve el stock, el producto reaparece automáticamente (comportamiento actual de `catalog_public_view`).
+- Esta regla es correcta en el sistema actual y no requiere cambio de código.
+
+### D2 — Estado de reposición
+
+**Decisión:** No hay estado de reposición visible para el cliente en esta etapa.
+
+- Si no hay stock, el producto desaparece. Sin indicadores de "vuelve pronto" ni "agotado".
+- Si en el futuro se necesita este estado, requiere una decisión técnica explícita y cambios en `catalog_public_view`.
+
+### D3 — Productos discontinuados
+
+**Decisión:** Un producto discontinuado queda fuera del catálogo mediante:
+
+- `products.status != 'active'` → todo el producto desaparece (todas las variantes/colores).
+- `product_variants.active = false` → solo esa variante/color desaparece; el producto sigue visible con las demás variantes activas.
+
+No se crea un estado especial de "discontinuado". La combinación de `status` y `active` es suficiente para el flujo actual.
+
+### D4 — Señales warning históricas (5884 detectadas el 2026-05-04)
+
+**Decisión:** Las 5884 señales warning de `vw_stock_audit_reference_signals` se aceptan como **deuda histórica**.
+
+- Son registros de trazabilidad incompleta creados antes de que el sistema de trazabilidad actual existiera.
+- No representan stock roto en tiempo real.
+- No se investigan individualmente ni se corrigen automáticamente por ahora.
+- Se acepta que el gate puede reportarlas como warnings sin que eso bloquee operaciones.
+- Esta decisión se revisará si en el futuro aparecen señales con `severity = 'critical'` o si el volumen de warnings aumenta significativamente.
+
+### D5 — Ruta `client/cart.html`
+
+**Decisión:** `client/cart.html` + `client/cart.js` **no debe mantenerse como checkout funcional separado**.
+
+- La ruta tiene un checkout que solo marca `carts.status = pending` sin llamar `rpc_checkout_cart`, sin crear pedido, sin descontar stock.
+- Debe redirigirse al dashboard o eliminarse en una fase posterior.
+- Hasta que se implemente la corrección, la ruta sigue accesible pero no debe promoverse.
+- Implementación exacta (redirección JS, HTTP redirect, o eliminación) se define en FASE 6 del roadmap.
+
+### D6 — Permisos de reconciliación de stock
+
+**Decisión:** `rpc_reconcile_stock(true)` (y cualquier operación correctiva de stock crítica) queda reservada a **super_admin**.
+
+- Admins normales pueden ver las vistas de auditoría (`vw_stock_audit_*`) y ejecutar `rpc_reconcile_stock(false)` (que reconcilia derivadas pero no toca `reserved_qty`).
+- Solo super_admin puede ejecutar `rpc_reconcile_stock(true)`.
+- **Estado actual del sistema:** la RPC valida únicamente `EXISTS (SELECT 1 FROM admins WHERE user_id = auth.uid())`, sin distinción de rol. La validación granular de super_admin **aún no está implementada en DB**.
+- Esta decisión debe traducirse en una migración SQL que agregue la validación interna. Pendiente para FASE 6/7 del roadmap.
+- Mientras tanto, el acceso vía UI (`admin/stock-audit.js`) no pasa `p_fix_reserved_qty=true`, por lo que hay una protección de facto aunque no formal.
+
+---
+
 ## C) Documentales (vault)
 
 - Auditorías 14–19: referencia por módulo; [[15-OBSERVACIONES-PRODUCTS-A-REVISAR]] riesgos transversales.

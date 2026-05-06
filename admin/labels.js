@@ -2,6 +2,7 @@
 import { requireAuth } from "./admin-auth.js";
 import { supabase } from "../scripts/supabase-client.js";
 import { SUPABASE_URL, QZ_SIGN_SECRET } from "../scripts/config.js";
+import { compareCatalogSizes } from "../scripts/utils/size-normalizer.js";
 
 await requireAuth();
 
@@ -551,42 +552,48 @@ async function showLabelProductDetail(product) {
           <div class="variant-content" id="${variantId}">
       `;
 
-      // Renderizar cada talle de cada variante de este color
+      // Mismo color: juntar todos los talles (todas las variant-rows de ese color), ordenar una sola vez
+      const flatLabelRows = [];
       colorVariants.forEach(variant => {
-        // Mostrar todas las variantes, incluso si no tienen talles (tendrán placeholder "Sin talle")
-        if (!variant.sizes || variant.sizes.length === 0) {
-          // Si por alguna razón no tiene sizes, agregar placeholder
-          variant.sizes = [{
-            size: "Sin talle",
-            stock_qty: 0,
-            sku: variant.sku || null,
-            qr_code: null,
-            stock_deposito: 0,
-            stock_local: 0
-          }];
-        }
-
-        // Ordenar talles
-        const sortedSizes = [...variant.sizes].sort((a, b) => {
-          const sizeA = parseFloat(a.size) || 0;
-          const sizeB = parseFloat(b.size) || 0;
-          if (sizeA !== sizeB) return sizeA - sizeB;
-          return (a.size || "").localeCompare(b.size || "", "es");
+        const sizes =
+          variant.sizes && variant.sizes.length > 0
+            ? variant.sizes
+            : [
+                {
+                  size: "Sin talle",
+                  stock_qty: 0,
+                  sku: variant.sku || null,
+                  qr_code: null,
+                  stock_deposito: 0,
+                  stock_local: 0,
+                },
+              ];
+        sizes.forEach(sizeData => {
+          flatLabelRows.push({ variant, sizeData });
         });
+      });
 
-        sortedSizes.forEach(sizeData => {
-          const rowId = `row-${variant.id}-${sizeData.size}`;
-          const sizeSku = sizeData.sku || variant.sku || "";
-          const qrCode = sizeData.qr_code || null;
-          const stockTotal = sizeData.stock_qty || 0;
-          const stockDeposito = sizeData.stock_deposito || 0;
-          const stockLocal = sizeData.stock_local || 0;
+      flatLabelRows.sort((a, b) => {
+        const bySize = compareCatalogSizes(a.sizeData.size, b.sizeData.size);
+        if (bySize !== 0) return bySize;
+        const byVar = String(a.variant.id).localeCompare(String(b.variant.id));
+        if (byVar !== 0) return byVar;
+        return String(a.sizeData.sku || "").localeCompare(String(b.sizeData.sku || ""));
+      });
 
-          html += `
+      flatLabelRows.forEach(({ variant, sizeData }) => {
+        const rowId = `row-${variant.id}-${encodeURIComponent(String(sizeData.size || ""))}`;
+        const sizeSku = sizeData.sku || variant.sku || "";
+        const qrCode = sizeData.qr_code || null;
+        const stockTotal = sizeData.stock_qty || 0;
+        const stockDeposito = sizeData.stock_deposito || 0;
+        const stockLocal = sizeData.stock_local || 0;
+
+        html += `
             <div class="label-size-row" 
                  id="${rowId}"
                  data-sku="${escapeHtml(sizeSku)}"
-                 data-qr-code="${escapeHtml(qrCode || '')}"
+                 data-qr-code="${escapeHtml(qrCode || "")}"
                  data-name="${escapeHtml(product.name)}"
                  data-color="${escapeHtml(color)}"
                  data-size="${escapeHtml(sizeData.size)}"
@@ -594,13 +601,12 @@ async function showLabelProductDetail(product) {
                  data-stock-deposito="${stockDeposito}"
                  data-stock-local="${stockLocal}">
               <span class="label-size-name">${escapeHtml(sizeData.size)}</span>
-              <span class="label-size-stock">SKU: ${escapeHtml(sizeSku)}${qrCode ? ` | QR: ${escapeHtml(qrCode)}` : ''}</span>
+              <span class="label-size-stock">SKU: ${escapeHtml(sizeSku)}${qrCode ? ` | QR: ${escapeHtml(qrCode)}` : ""}</span>
               <span class="label-size-stock">Stock: ${stockTotal} (Dep: ${stockDeposito} | Loc: ${stockLocal})</span>
               <input type="number" class="label-size-qty" min="1" value="" />
               <button class="btn-print-custom-qty" data-row-id="${rowId}">Imprimir cantidad</button>
             </div>
           `;
-        });
       });
 
       html += `
@@ -710,17 +716,11 @@ function setupDetailEventListeners() {
       return;
     }
 
-    // Ordenar por color (alfabéticamente) y luego por talle (numéricamente, luego alfabéticamente)
+    // Por color (bloque completo), luego talle: números de menor a mayor, después S, M, L, XL, 2XL…
     rowsToPrint.sort((a, b) => {
-      // Primero ordenar por color
       const colorCompare = (a.color || "").localeCompare(b.color || "", "es");
       if (colorCompare !== 0) return colorCompare;
-
-      // Si el color es igual, ordenar por talle
-      const sizeA = parseFloat(a.size) || 0;
-      const sizeB = parseFloat(b.size) || 0;
-      if (sizeA !== sizeB) return sizeA - sizeB;
-      return (a.size || "").localeCompare(b.size || "", "es");
+      return compareCatalogSizes(a.size, b.size);
     });
 
     // Imprimir en orden

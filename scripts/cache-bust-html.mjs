@@ -111,8 +111,16 @@ function patchQueryVersionsInFile(contents, version) {
   return next;
 }
 
+function patchFylVersionExport(contents, version) {
+  return contents.replace(
+    /export const FYL_VERSION = "[^"]*";/,
+    `export const FYL_VERSION = "${version}";`
+  );
+}
+
 const EXTRA_VERSIONED_FILES = [
   "scripts/main-supabase.js",
+  "scripts/fyl-runtime-resilience.js",
 ];
 
 function main() {
@@ -152,6 +160,15 @@ function main() {
     if (nextPwa !== prevPwa) {
       pwaChanged = true;
       if (!args.dryRun) fs.writeFileSync(pwaPath, nextPwa, "utf8");
+    }
+  }
+
+  const fylVersionPath = path.join(__repoRoot, "scripts", "fyl-version.js");
+  if (fs.existsSync(fylVersionPath)) {
+    const prevFv = fs.readFileSync(fylVersionPath, "utf8");
+    const nextFv = patchFylVersionExport(prevFv, version);
+    if (nextFv !== prevFv && !args.dryRun) {
+      fs.writeFileSync(fylVersionPath, nextFv, "utf8");
     }
   }
 

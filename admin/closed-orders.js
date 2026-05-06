@@ -2898,6 +2898,14 @@ async function loadOrdersForExtract(startDate, endDate, transportId = null) {
   }
 }
 
+/** Monto para celda Excel: entero si no hay centavos (evita 207000.00); número con decimales si hace falta. */
+function amountForExcelExport(value) {
+  const raw = parseARSNumber(value || 0);
+  if (!Number.isFinite(raw)) return 0;
+  const rounded2 = Math.round(raw * 100) / 100;
+  return Math.abs(rounded2 - Math.round(rounded2)) < 1e-6 ? Math.round(rounded2) : rounded2;
+}
+
 // Función para descargar Excel con los datos extraídos
 function downloadExtractExcel(orders, startDate, endDate) {
   try {
@@ -2923,9 +2931,7 @@ function downloadExtractExcel(orders, startDate, endDate) {
         fechaEnvio = `${day}/${month}/${year}`;
       }
 
-      // Formatear monto como número para Excel (usar punto para decimales)
-      // Excel reconocerá esto como número y aplicará formato local automáticamente
-      const monto = parseARSNumber(order.total_amount || 0).toFixed(2);
+      const monto = amountForExcelExport(order.total_amount);
 
       return {
         "Fecha de envío": fechaEnvio,

@@ -1,6 +1,7 @@
 -- 186_vw_stock_publication_inefficiency.sql
 -- Vista de análisis operativo: productos publicados en redes (last_published_at IS NOT NULL)
 -- que tienen stock disponible pero cero ventas desde la fecha de publicación.
+-- Ver también 191_vw_stock_publication_last_pub_performance.sql (ventanas 24/72/7d; mismo límite de una sola fecha).
 --
 -- "Publicación ineficiente" = el esfuerzo de publicar no generó conversión en ventas.
 -- Esto puede indicar: precio fuera de rango, imágenes poco efectivas, producto equivocado.

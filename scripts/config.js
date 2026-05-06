@@ -262,3 +262,29 @@ export {
   USE_OPEN_SHEET_FALLBACK,
   configReady,
 };
+
+/** Registro temprano del SW (antes de supabase-client) para rutas críticas network-only. */
+(function fylRegisterProductionServiceWorker() {
+  if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
+  if (window.__FYL_SW_REGISTER_SCHEDULED__) return;
+  window.__FYL_SW_REGISTER_SCHEDULED__ = true;
+  const h = window.location.hostname;
+  if (h === "localhost" || h === "127.0.0.1" || h === "") return;
+  queueMicrotask(() => {
+    const swUrl = new URL("/sw.js", window.location.origin).href;
+    navigator.serviceWorker
+      .register(swUrl, { scope: "/", updateViaCache: "none" })
+      .then(() => {
+        globalThis.markBootStage?.("sw.registered", { url: swUrl });
+      })
+      .catch((e) => {
+        const msg = e && e.message ? String(e.message).slice(0, 200) : String(e);
+        globalThis.markBootStage?.("sw.register_failed", { message: msg });
+        import("./fyl-runtime-resilience.js")
+          .then((m) =>
+            m.fylReportClientError({ kind: "sw.register_failed", message: msg })
+          )
+          .catch(() => {});
+      });
+  });
+})();

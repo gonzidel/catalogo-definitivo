@@ -4,6 +4,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dashboard Debug - Catálogo FYL</title>
+    <script>
+      (function () {
+        try {
+          var h = String(location.hostname || "").toLowerCase();
+          if (h === "localhost" || h === "127.0.0.1") return;
+          var q = String(location.search || "");
+          if (/[?&]fyl_dashboard_dev=1(?:&|$)/.test(q)) return;
+          location.replace(location.origin + "/catalogo#/");
+        } catch (_e) {}
+      })();
+    </script>
     <style>
         body {
             font-family: 'Poppins', sans-serif;

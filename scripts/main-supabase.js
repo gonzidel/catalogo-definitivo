@@ -14,6 +14,7 @@ import { fylAnalytics } from "./analytics.js";
 import { formatARS as formatARSValue, parseARSNumber } from "./utils/price.js";
 import { createScreenScope } from "./net/screen-scope.js";
 import { wrapSupabase, createAbortScope, FYL_ERROR_KIND, classifyError } from "./net/fyl-fetch.js";
+import { ensureCatalogSupabaseHealthy } from "./fyl-runtime-resilience.js";
 
 await configReady;
 
@@ -448,8 +449,8 @@ async function inicializarSupabase() {
       FALLBACK: USE_OPEN_SHEET_FALLBACK,
     });
 
-    // Usar SOLO el cliente importado de supabase-client.js (evitar crear múltiples instancias)
-    if (!supabase || !supabase.from) {
+    const healthy = await ensureCatalogSupabaseHealthy(() => supabase);
+    if (!healthy || !supabase || typeof supabase.from !== "function") {
       console.error(
         "❌ Cliente de Supabase no disponible (p. ej. Safari bloqueó la carga del script o falló la red). Revisá [FYL supabase] en consola."
       );
@@ -511,7 +512,7 @@ async function cargarDesdeSupabase(cat) {
 
     // [PERF] Query de validacion de categorias eliminada (era solo diagnostico).
 
-    const createCatalogQuery = () => supabase.from("catalog_public_view").select("*");
+    const createCatalogQuery = () => supabase.from("catalog_public_available_view").select("*");
 
     if (cat === "Novedades" || cat === "Ofertas" || cat === "all") {
       // Para categorías especiales o 'all', cargar todas las categorías
@@ -579,7 +580,7 @@ async function cargarDesdeSupabase(cat) {
         // Obtener todos los tags únicos de "Otros" (Filtro1, Filtro2, Filtro3)
         try {
           const { data: otrosTags, error: tagsError } = await supabase
-            .from("catalog_public_view")
+            .from("catalog_public_available_view")
             .select("Filtro1, Filtro2, Filtro3")
             .eq("Categoria", "Otros");
           
@@ -3000,14 +3001,14 @@ async function buscarPorSKUEnSupabase(sku, { signal } = {}) {
       try {
         let catRows = null;
         const rCat = await wrapSupabase(
-          () => supabase.from("catalog_public_view").select("*").eq("Articulo", articulo),
+          () => supabase.from("catalog_public_available_view").select("*").eq("Articulo", articulo),
           { retries: 1, signal, label: "pdp.catalog_view_exact" }
         );
         if (!rCat.aborted && !rCat.error && rCat.data?.length) {
           catRows = rCat.data;
         } else if (!rCat.aborted && !rCat.error) {
           const rCatI = await wrapSupabase(
-            () => supabase.from("catalog_public_view").select("*").ilike("Articulo", articulo),
+            () => supabase.from("catalog_public_available_view").select("*").ilike("Articulo", articulo),
             { signal, label: "pdp.catalog_view_ilike" }
           );
           if (!rCatI.aborted && !rCatI.error && rCatI.data?.length) catRows = rCatI.data;
@@ -5575,7 +5576,7 @@ async function existeNovedades() {
     // La vista devuelve Mostrar como booleano true, no como string "TRUE"
     // Por eso no usamos .eq() aquí, sino que filtramos después
     const { data, error } = await supabase
-      .from("catalog_public_view")
+      .from("catalog_public_available_view")
       .select("*");
 
     if (error) throw error;
@@ -5603,7 +5604,7 @@ async function existeOfertas() {
     }
 
     const { data, error } = await supabase
-      .from("catalog_public_view")
+      .from("catalog_public_available_view")
       .select("Oferta, Mostrar")
       .limit(4000);
 
@@ -5752,7 +5753,7 @@ async function inicializarCatalogo() {
     if (similaresParam === '1' && articuloParam && articuloParam.trim()) {
       try {
         const { data: productoData } = await supabase
-          .from("catalog_public_view")
+          .from("catalog_public_available_view")
           .select("Filtro1, Filtro2, Filtro3")
           .eq("Articulo", articuloParam.trim())
           .maybeSingle();
@@ -5776,7 +5777,7 @@ async function inicializarCatalogo() {
       // Verificar si es un tag de "Otros" (buscar en Filtro1, Filtro2, Filtro3)
       try {
         const { data: otrosTags, error: tagsError } = await supabase
-          .from("catalog_public_view")
+          .from("catalog_public_available_view")
           .select("Filtro1, Filtro2, Filtro3")
           .eq("Categoria", "Otros");
         

@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Métricas v2 - Catálogo FYL</title>
+  <link rel="stylesheet" href="../styles.css" />
+  <script>
+    window.redirectTarget = "./metrics_v2.html";
+    window.skipPanelRedirect = true;
+  </script>
+  <style>
+    .metrics-v2 {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 12px;
+    }
+    .metrics-v2-header {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-bottom: 14px;
+      text-align: center;
+    }
+    .metrics-v2-title {
+      margin: 0;
+      font-size: 22px;
+      color: #1f2937;
+    }
+    .metrics-v2-toolbar {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: 1fr 1fr;
+      grid-template-areas:
+        "desde hasta"
+        "actions actions"
+        "status status";
+      align-items: end;
+      text-align: left;
+      background: #fff;
+      border: 1px solid #ececec;
+      border-radius: 12px;
+      padding: 12px;
+    }
+    .metrics-v2-toolbar > div:nth-child(1) {
+      grid-area: desde;
+    }
+    .metrics-v2-toolbar > div:nth-child(2) {
+      grid-area: hasta;
+    }
+    .metrics-v2-toolbar > div:nth-child(3) {
+      grid-area: actions;
+    }
+    .metrics-v2-toolbar > div:nth-child(4) {
+      grid-area: status;
+    }
+    .metrics-v2-toolbar label {
+      font-size: 12px;
+      color: #4b5563;
+      margin-bottom: 4px;
+      display: block;
+    }
+    .metrics-v2-toolbar input {
+      width: 100%;
+      padding: 10px 10px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      font-size: 14px;
+    }
+    .metrics-v2-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      justify-content: flex-start;
+    }
+    .metrics-v2-btn {
+      border: 0;
+      background: #cd844d;
+      color: #fff;
+      font-weight: 600;
+      padding: 10px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      min-height: 42px;
+    }
+    .metrics-v2-btn:disabled {
+      opacity: 0.65;
+      cursor: wait;
+    }
+    .metrics-v2-link {
+      text-decoration: none;
+      border: 1px solid #ddd;
+      color: #374151;
+      background: #fff;
+      border-radius: 8px;
+      min-height: 42px;
+      display: inline-flex;
+      align-items: center;
+      padding: 0 12px;
+      font-size: 14px;
+    }
+    .metrics-v2-status {
+      font-size: 12px;
+      color: #6b7280;
+      line-height: 1.35;
+      padding-top: 2px;
+    }
+    .metrics-v2-date-context {
+      font-size: 13px;
+      color: #4b5563;
+      margin-top: 2px;
+    }
+    .metrics-v2-alerts {
+      display: none;
+      margin: 8px 0 12px;
+      gap: 8px;
+      flex-direction: column;
+    }
+    .metrics-v2-alert {
+      background: #fff7cc;
+      border: 1px solid #f59e0b;
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 13px;
+      color: #7c4a03;
+      line-height: 1.35;
+    }
+    .metrics-v2-tabs {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      margin: 8px 0 14px;
+    }
+    .metrics-v2-tab {
+      border: 1px solid #ddd;
+      background: #fff;
+      border-radius: 8px;
+      min-height: 44px;
+      padding: 8px 6px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #374151;
+      cursor: pointer;
+      text-align: center;
+    }
+    .metrics-v2-tab.active {
+      border-color: #cd844d;
+      background: #fff5ee;
+      color: #8f5223;
+    }
+    .metrics-v2-panel {
+      display: none;
+    }
+    .metrics-v2-panel.active {
+      display: block;
+    }
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .kpi-card {
+      background: #fff;
+      border: 1px solid #ececec;
+      border-radius: 12px;
+      padding: 12px;
+      min-height: 92px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+    .kpi-card h3 {
+      margin: 0;
+      font-size: 12px;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+    .kpi-card .value {
+      margin-top: 6px;
+      font-size: 28px;
+      line-height: 1.1;
+      color: #111827;
+      font-weight: 700;
+    }
+    .kpi-card.primary {
+      border-color: #cd844d;
+      background: #fff7f2;
+    }
+    .kpi-card.primary .value {
+      color: #b7662c;
+      font-size: 32px;
+    }
+    @media (min-width: 768px) {
+      .kpi-grid .kpi-card.primary {
+        grid-column: 1 / -1;
+        min-height: auto;
+        padding: 14px 16px;
+      }
+      .kpi-grid .kpi-card.primary .value {
+        font-size: 36px;
+      }
+    }
+    .skeleton {
+      position: relative;
+      overflow: hidden;
+      min-height: 86px;
+      background: #f3f4f6;
+    }
+    .skeleton::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      transform: translateX(-100%);
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.55), transparent);
+      animation: shimmer 1.2s infinite;
+    }
+    @keyframes shimmer {
+      100% { transform: translateX(100%); }
+    }
+    .card-section {
+      background: #fff;
+      border: 1px solid #ececec;
+      border-radius: 12px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+    .card-section h2 {
+      margin: 0 0 10px;
+      font-size: 16px;
+      color: #1f2937;
+    }
+    .table-wrap {
+      overflow-x: auto;
+    }
+    .simple-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .simple-table th,
+    .simple-table td {
+      padding: 8px;
+      border-bottom: 1px solid #f0f0f0;
+      text-align: left;
+      white-space: nowrap;
+    }
+    .simple-table th {
+      background: #fafafa;
+      color: #374151;
+      font-weight: 600;
+    }
+    .text-right {
+      text-align: right !important;
+    }
+    .empty {
+      color: #6b7280;
+      font-size: 13px;
+      padding: 10px 0;
+    }
+    .weekly-plan-hint {
+      margin: 0 0 10px;
+      font-size: 12px;
+      color: #6b7280;
+    }
+    .weekly-plan-resumen {
+      display: grid;
+      gap: 8px;
+      margin-bottom: 12px;
+      font-size: 13px;
+      color: #374151;
+    }
+    .weekly-plan-block {
+      margin-bottom: 12px;
+    }
+    .weekly-plan-block h3 {
+      margin: 0 0 6px;
+      font-size: 13px;
+      font-weight: 700;
+      color: #1f2937;
+    }
+    .weekly-plan-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      font-size: 13px;
+      color: #374151;
+    }
+    .weekly-plan-list li {
+      padding: 6px 0;
+      border-bottom: 1px solid #f0f0f0;
+      line-height: 1.35;
+    }
+    .weekly-plan-list li:last-child {
+      border-bottom: 0;
+    }
+    .supplier-order-card {
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      padding: 10px 12px;
+      margin-bottom: 10px;
+      background: #fafafa;
+    }
+    .supplier-order-card.critical {
+      border-color: #fecaca;
+      background: #fef2f2;
+    }
+    .supplier-order-card h3 {
+      margin: 0 0 8px;
+      font-size: 14px;
+      color: #111827;
+    }
+    .supplier-order-meta {
+      font-size: 12px;
+      color: #4b5563;
+      margin-bottom: 8px;
+    }
+    @media (min-width: 768px) {
+      .metrics-v2-toolbar {
+        grid-template-columns: minmax(140px, 1fr) minmax(140px, 1fr) auto minmax(160px, 1.2fr);
+        grid-template-areas: "desde hasta actions status";
+        align-items: end;
+      }
+      .metrics-v2-actions {
+        justify-content: flex-end;
+        flex-wrap: nowrap;
+      }
+      .metrics-v2-status {
+        text-align: right;
+        justify-self: stretch;
+      }
+      .kpi-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      #kpi-comportamiento {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+    }
+    @media (max-width: 380px) {
+      .metrics-v2-tabs {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="metrics-v2">
+    <header class="metrics-v2-header">
+      <h1 class="metrics-v2-title">Métricas v2</h1>
+      <div class="metrics-v2-date-context" id="metrics-date-context"></div>
+      <div class="metrics-v2-toolbar">
+        <div>
+          <label for="metrics-from">Desde</label>
+          <input id="metrics-from" type="date" />
+        </div>
+        <div>
+          <label for="metrics-to">Hasta</label>
+          <input id="metrics-to" type="date" />
+        </div>
+        <div class="metrics-v2-actions">
+          <button id="metrics-refresh" class="metrics-v2-btn">Actualizar</button>
+          <a class="metrics-v2-link" href="index.html">Panel Admin</a>
+        </div>
+        <div class="metrics-v2-status" id="metrics-status" aria-live="polite"></div>
+      </div>
+    </header>
+    <div class="metrics-v2-alerts" id="metrics-alerts"></div>
+    <div class="card-section" id="replenishment-feedback-section" style="display:none;">
+      <h2>Feedback de Reposición</h2>
+      <div id="replenishment-feedback-list" class="empty">Sin feedback disponible.</div>
+    </div>
+    <div class="card-section" id="learning-system-section" style="display:none;">
+      <h2>Aprendizaje del sistema</h2>
+      <div id="learning-system-list" class="empty">Sin ajustes sugeridos.</div>
+    </div>
+    <div class="card-section" id="weekly-purchase-plan-section" style="display:none;">
+      <h2>Plan de compra semanal</h2>
+      <p class="weekly-plan-hint" id="weekly-plan-hint"></p>
+      <div id="weekly-plan-resumen" class="weekly-plan-resumen"></div>
+      <div id="weekly-plan-urgente" class="weekly-plan-block"></div>
+      <div id="weekly-plan-recomendada" class="weekly-plan-block"></div>
+      <div id="weekly-plan-no-comprar" class="weekly-plan-block"></div>
+    </div>
+    <div class="card-section" id="suggested-supplier-orders-section" style="display:none;">
+      <h2>Órdenes de compra sugeridas</h2>
+      <p class="weekly-plan-hint" id="suggested-supplier-hint"></p>
+      <div id="suggested-supplier-orders-list"></div>
+    </div>
+
+    <nav class="metrics-v2-tabs" aria-label="Secciones de métricas">
+      <button class="metrics-v2-tab active" data-panel="negocio">Negocio</button>
+      <button class="metrics-v2-tab" data-panel="operacion">Operación</button>
+      <button class="metrics-v2-tab" data-panel="producto">Producto</button>
+      <button class="metrics-v2-tab" data-panel="comportamiento">Comportamiento</button>
+    </nav>
+
+    <section id="panel-negocio" class="metrics-v2-panel active">
+      <div class="kpi-grid" id="kpi-negocio"></div>
+    </section>
+
+    <section id="panel-operacion" class="metrics-v2-panel">
+      <div class="kpi-grid" id="kpi-operacion"></div>
+    </section>
+
+    <section id="panel-producto" class="metrics-v2-panel">
+      <div class="card-section">
+        <h2>Top Productos</h2>
+        <div class="table-wrap" id="table-top-productos"></div>
+      </div>
+      <div class="card-section">
+        <h2>Top Variantes</h2>
+        <div class="table-wrap" id="table-top-variantes"></div>
+      </div>
+      <div class="card-section">
+        <h2>Top Talles</h2>
+        <div class="table-wrap" id="table-top-talles"></div>
+      </div>
+    </section>
+
+    <section id="panel-comportamiento" class="metrics-v2-panel">
+      <div class="kpi-grid" id="kpi-comportamiento"></div>
+    </section>
+  </div>
+
+  <script type="module" src="../scripts/supabase-client.js"></script>
+  <script type="module" src="admin-auth.js"></script>
+  <script type="module" src="metrics_v2.js"></script>
+</body>
+</html>

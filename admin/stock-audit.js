@@ -35,6 +35,9 @@ const state = {
   deadStock: [],        // P1: productos sin movimiento ≥ 90 días
   fastSellers: [],      // B1/B2/B3: productos con ventas activas (fast sellers + nuevos + acumulado)
   pubInefficiency: [],  // B4: publicados sin conversión a ventas
+  lastPubPerformance: [], // B5: ventas 24/72/7d tras última publicación (solo last_published_at)
+  publicationEventsPerformance: [], // B6: ventas 24/72/7d por evento (FASE 2)
+  publicationPerformanceSource: "last_published_at", // publication_events | last_published_at
   tagSummary: [],       // AI: agregados por tag para preguntas comerciales
   productFlags: new Map(), // clasificación: is_own_manufacturing, supplier_code, supplier_name
   superAdmin: false,
@@ -340,6 +343,30 @@ async function loadTagSummary() {
   return data || [];
 }
 
+// B5: rendimiento post-última publicación (ventanas 0–24h, 24–72h, 7d) — ver meta.notas
+async function loadLastPubPerformance() {
+  const { data, error } = await supabase
+    .from("vw_stock_publication_last_pub_performance")
+    .select(
+      "product_id, nombre, category, last_published_at, variants_published, dias_desde_publicacion, u_0_24h, u_24_72h, u_0_7d, ventas_totales_post_ultima_pub, stock_total"
+    )
+    .order("u_0_7d", { ascending: false })
+    .limit(MAX_ROWS);
+  if (error) throw error;
+  return data || [];
+}
+
+// B6: rendimiento por evento real de publicación (FASE 2)
+async function loadPublicationEventsPerformance() {
+  const { data, error } = await supabase
+    .from("vw_publication_events_performance")
+    .select("id, product_id, product_name, category, variant_id, variant_color, channel, price_at_publish, published_at, weekday_name, weekday_iso, month_stage, product_event_rank, product_publication_count, sales_24h, sales_72h, sales_7d")
+    .order("published_at", { ascending: false })
+    .limit(MAX_ROWS);
+  if (error) throw error;
+  return data || [];
+}
+
 // B4: productos publicados en redes sin conversión a ventas
 async function loadPubInefficiency() {
   const { data, error } = await supabase
@@ -382,6 +409,8 @@ async function loadAll() {
     loadFastSellers(),
     loadPubInefficiency(),
     loadTagSummary(),
+    loadLastPubPerformance(),
+    loadPublicationEventsPerformance(),
   ]);
 
   state.gate = gateResult.status === "fulfilled" ? gateResult.value : null;
@@ -415,6 +444,14 @@ async function loadAll() {
   state.fastSellers      = dataResults[9].status === "fulfilled" ? dataResults[9].value : [];
   state.pubInefficiency  = dataResults[10].status === "fulfilled" ? dataResults[10].value : [];
   state.tagSummary       = dataResults[11].status === "fulfilled" ? dataResults[11].value : [];
+  state.lastPubPerformance =
+    dataResults[12].status === "fulfilled" ? dataResults[12].value : [];
+  state.publicationEventsPerformance =
+    dataResults[13].status === "fulfilled" ? dataResults[13].value : [];
+  state.publicationPerformanceSource =
+    state.publicationEventsPerformance.length >= MIN_EVENTS_FOR_HISTORY
+      ? "publication_events"
+      : "last_published_at";
 
   // Enriquecer con flags de proveedor (fabricación propia) — query post-paralelo
   const allProductIds = [
@@ -1273,11 +1310,22 @@ function bindActionButtons() {
 // ─────────────────────────────────────────────────────────────────
 
 const AI_TIMEOUT_MS = 90_000;
+const LAST_PUB_WORST_MIN_DAYS = 10;
+const LAST_PUB_WORST_MAX_U7D = 1;
+const MIN_EVENTS_FOR_HISTORY = 3;
+
+/** Limitaciones estructurales del dato de publicación (FASE 1 / sin publication_events). */
+const PUBLICATION_META_NOTAS = [
+  "No existe historial de publicaciones múltiples. Métricas basadas en última publicación (last_published_at).",
+  "No se puede medir frecuencia de publicación ni rendimiento por campaña hasta registrar publication_events (FASE 2).",
+];
 
 // Construye payload compacto (máx 5 items/categoría) para la Edge Function.
 // No envía UUIDs. Solo nombres, números y días.
 function buildStockReportPayload() {
   const TOP = 5;
+  const hasHistory = state.publicationEventsPerformance.length >= MIN_EVENTS_FOR_HISTORY;
+  const publicationRows = hasHistory ? state.publicationEventsPerformance : state.lastPubPerformance;
 
   const stockAcumulado = state.fastSellers
     .filter((p) => p.dias_stock_restante !== null && p.dias_stock_restante > 180)
@@ -1289,6 +1337,31 @@ function buildStockReportPayload() {
       stock_total: p.stock_total,
       velocidad: p.unidades_por_dia,
     }));
+
+  const worstLastPubPerformance = publicationRows
+    .filter((p) => {
+      const u7d = Number(p.u_0_7d ?? p.sales_7d) || 0;
+      const dias = Number(
+        p.dias_desde_publicacion ??
+        (p.published_at ? Math.floor((Date.now() - new Date(p.published_at).getTime()) / 86400000) : 0)
+      ) || 0;
+      return u7d <= LAST_PUB_WORST_MAX_U7D && dias > LAST_PUB_WORST_MIN_DAYS;
+    })
+    .sort((a, b) => {
+      const aU7d = Number(a.u_0_7d ?? a.sales_7d) || 0;
+      const bU7d = Number(b.u_0_7d ?? b.sales_7d) || 0;
+      if (aU7d !== bU7d) return aU7d - bU7d;
+      const bDays = Number(
+        b.dias_desde_publicacion ??
+        (b.published_at ? Math.floor((Date.now() - new Date(b.published_at).getTime()) / 86400000) : 0)
+      ) || 0;
+      const aDays = Number(
+        a.dias_desde_publicacion ??
+        (a.published_at ? Math.floor((Date.now() - new Date(a.published_at).getTime()) / 86400000) : 0)
+      ) || 0;
+      return bDays - aDays;
+    })
+    .slice(0, TOP);
 
   return {
     fecha: new Date().toLocaleDateString("es-AR"),
@@ -1337,6 +1410,50 @@ function buildStockReportPayload() {
       stock_total: p.total_stock || 0,
     })),
     tags_resumen: state.tagSummary.slice(0, 30),
+    last_pub_performance: state.lastPubPerformance.slice(0, TOP).map((p) => ({
+      nombre: p.nombre,
+      categoria: p.category,
+      dias_desde_pub: p.dias_desde_publicacion,
+      u_0_24h: Number(p.u_0_24h) || 0,
+      u_24_72h: Number(p.u_24_72h) || 0,
+      u_0_7d: Number(p.u_0_7d) || 0,
+      ventas_totales_post_ultima_pub: Number(p.ventas_totales_post_ultima_pub) || 0,
+      stock_total: p.stock_total,
+    })),
+    publication_events_performance: state.publicationEventsPerformance.slice(0, TOP).map((p) => ({
+      nombre: p.product_name,
+      categoria: p.category,
+      canal: p.channel || "sin_canal",
+      dia_semana: (p.weekday_name || "").trim().toLowerCase(),
+      etapa_mes: p.month_stage || null,
+      horas_24: Number(p.sales_24h) || 0,
+      horas_72: Number(p.sales_72h) || 0,
+      dias_7: Number(p.sales_7d) || 0,
+      dias_desde_pub: p.published_at ? Math.floor((Date.now() - new Date(p.published_at).getTime()) / 86400000) : 0,
+      publicaciones_producto: Number(p.product_publication_count) || 0,
+    })),
+    worst_last_pub_performance: worstLastPubPerformance.map((p) => ({
+      nombre: p.nombre || p.product_name,
+      categoria: p.category,
+      dias_desde_pub: Number(
+        p.dias_desde_publicacion ??
+        (p.published_at ? Math.floor((Date.now() - new Date(p.published_at).getTime()) / 86400000) : 0)
+      ) || 0,
+      u_0_7d: Number(p.u_0_7d ?? p.sales_7d) || 0,
+      ventas_totales_post_ultima_pub: Number(p.ventas_totales_post_ultima_pub ?? p.sales_7d) || 0,
+      stock_total: p.stock_total ?? 0,
+    })),
+    meta: {
+      publication_data_source: hasHistory ? "publication_events" : "last_published_at",
+      notas: hasHistory
+        ? ["Se usa historial de publication_events. Si falta muestra, se complementa con agregados actuales."]
+        : [...PUBLICATION_META_NOTAS],
+      worst_last_pub_threshold: {
+        min_dias_desde_publicacion: LAST_PUB_WORST_MIN_DAYS,
+        max_u_0_7d: LAST_PUB_WORST_MAX_U7D,
+      },
+      min_events_for_history: MIN_EVENTS_FOR_HISTORY,
+    },
   };
 }
 

@@ -1,24 +1,7 @@
 // scripts/pwa-install.js — Service worker + PWA install prompt (post-pedido, UX no invasiva)
 
-// =============================================================================
-// PHASE A (TEMPORAL) — bug iPhone/Safari "no_client"
-// =============================================================================
-// Motivo: iPhones con un Service Worker anterior a la migración de dominio
-// interceptaban /scripts/vendor/supabase-js.bundle.min.js y /config.prod.js con
-// lógica de caché obsoleta, haciendo fallar la carga de @supabase/supabase-js.
-//
-// Durante Phase A:
-//   - NO se registra ningún Service Worker nuevo.
-//   - Se desregistra de forma explícita cualquier SW previo en cada visita.
-//   - El archivo sw.js del sitio es una "tombstone" (ver sw.js) que, si un
-//     cliente todavía lo pide, se unregistra y recarga una vez.
-//
-// Rollback (Phase B):
-//   - Restaurar este bloque al contenido previo (register + listeners de
-//     update/controllerchange/visibilitychange/pageshow).
-//   - Bumpear SW_VERSION (por ejemplo m260420 → m260421).
-//   - Restaurar sw.js al SW normal.
-// =============================================================================
+// Service Worker: registro temprano en scripts/config.js (network-only para
+// bundle Supabase y config.prod.js). Este archivo solo gestiona el prompt PWA.
 
 const __LOCAL_HOSTS = ["localhost", "127.0.0.1", "::1"];
 
@@ -41,23 +24,6 @@ const __IS_DEV_PORT =
 const __IS_LOCAL =
   __LOCAL_HOSTS.includes(location.hostname) ||
   (__isLanIpv4(location.hostname) && (__IS_DEV_PORT || true));
-
-// Mantenido para compatibilidad con referencias futuras (p. ej. Phase B al
-// restaurar). No se usa durante Phase A.
-const SW_VERSION = "m260420";
-void SW_VERSION;
-
-if ("serviceWorker" in navigator) {
-  // Phase A: desregistrar TODO SW previo, sin volver a registrar.
-  // Idéntico comportamiento en producción y en local.
-  navigator.serviceWorker.getRegistrations?.().then((regs) => {
-    regs.forEach((r) => {
-      try {
-        r.unregister();
-      } catch (_e) {}
-    });
-  });
-}
 
 // --- localStorage (nuevo flujo post-pedido) ---
 const LS_DISMISSED = "fyl_pwa_prompt_dismissed_order_cycle";

@@ -31,6 +31,12 @@ loadEnvLocalFile();
 let url = process.env.SUPABASE_URL;
 let anon = process.env.SUPABASE_ANON_KEY;
 let qzSecret = process.env.QZ_SIGN_SECRET || "";
+let fylErrorLogUrl = process.env.FYL_ERROR_LOG_URL
+  ? String(process.env.FYL_ERROR_LOG_URL).trim().replace(/^["']|["']$/g, "")
+  : "";
+let fylRuntimeFlagsUrl = process.env.FYL_RUNTIME_FLAGS_URL
+  ? String(process.env.FYL_RUNTIME_FLAGS_URL).trim().replace(/^["']|["']$/g, "")
+  : "";
 
 // Remover comillas dobles o simples del inicio y final si existen
 if (url) {
@@ -96,7 +102,7 @@ window.USE_SUPABASE = true;
 window.USE_OPEN_SHEET_FALLBACK = false;
 window.__FYL_CONFIG_PROD_LOADED__ = true;
 window.__FYL_CONFIG_PROD_AT__ = ${JSON.stringify(new Date().toISOString())};
-`;
+${fylErrorLogUrl ? `window.FYL_ERROR_LOG_URL = ${JSON.stringify(fylErrorLogUrl)};\n` : ""}${fylRuntimeFlagsUrl ? `window.FYL_RUNTIME_FLAGS_URL = ${JSON.stringify(fylRuntimeFlagsUrl)};\n` : ""}`;
 
   fs.writeFileSync(prodConfigPath, prodConfigContent, "utf8");
   console.log(`✅ OK: config.prod.js generado en ${prodConfigPath}`);

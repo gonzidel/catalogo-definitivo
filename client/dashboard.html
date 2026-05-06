@@ -5,6 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="app-version" content="m260420">
     <title>Dashboard - Catálogo FYL</title>
+    <!-- Área cliente (pedidos) deshabilitada en hosts públicos hasta habilitarla: quitar redirects en firebase.json y este bloque. -->
+    <script>
+      (function () {
+        try {
+          var h = String(location.hostname || "").toLowerCase();
+          if (h === "localhost" || h === "127.0.0.1") return;
+          var q = String(location.search || "");
+          if (/[?&]fyl_dashboard_dev=1(?:&|$)/.test(q)) return;
+          location.replace(location.origin + "/catalogo#/");
+        } catch (_e) {}
+      })();
+    </script>
     <script>document.documentElement.classList.add("client-area");</script>
     <script>window.__DASHBOARD__ = true;</script>
 

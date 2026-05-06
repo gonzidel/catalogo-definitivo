@@ -1820,6 +1820,57 @@ function updateVariantStatus(row, status) {
 }
 
 /**
+ * Tags1 y Tags2 guardados en producto (misma regla que publicación / estado active).
+ * El botón de imágenes sigue habilitado; si faltan tags se avisa al usarlo.
+ */
+async function assertProductHasTagsForImageUpload() {
+  const productId = currentProductId;
+  const tag1El = document.getElementById("tag1-select");
+  const tag2El = document.getElementById("tag2-select");
+  const ui1 = tag1El?.value?.trim();
+  const ui2 = tag2El?.value?.trim();
+
+  if (!productId) {
+    if (ui1 && ui2) {
+      alert(
+        "Guardá el producto primero para aplicar los tags antes de subir imágenes."
+      );
+    } else {
+      alert(
+        "Completá Tags1 y Tags2 del producto y guardalo antes de subir imágenes."
+      );
+    }
+    return false;
+  }
+
+  const { data: productTags, error } = await supabase
+    .from("product_tags")
+    .select("tag1_id, tag2_id")
+    .eq("product_id", productId)
+    .maybeSingle();
+
+  if (error && error.code !== "PGRST116") {
+    console.warn("assertProductHasTagsForImageUpload:", error);
+  }
+
+  const hasTags1 = productTags?.tag1_id != null;
+  const hasTags2 = productTags?.tag2_id != null;
+  if (hasTags1 && hasTags2) return true;
+
+  if (ui1 && ui2) {
+    alert(
+      "Los tags están seleccionados pero aún no están guardados en el producto. Usá el botón Guardar del producto y volvé a intentar subir la imagen."
+    );
+    return false;
+  }
+
+  alert(
+    "Tenés que cargar y guardar Tags1 y Tags2 del producto antes de subir imágenes."
+  );
+  return false;
+}
+
+/**
  * Sube imágenes a Cloudinary usando Edge Function
  * @param {HTMLTableRowElement} row - Fila de la tabla de variantes
  * @param {FileList} files - Archivos a subir
@@ -1831,6 +1882,10 @@ async function uploadImagesToCloudinary(row, files) {
     "Debes estar autenticado para subir imágenes. Por favor, inicia sesión."
   );
   if (!canProceed) {
+    return false;
+  }
+
+  if (!(await assertProductHasTagsForImageUpload())) {
     return false;
   }
 
@@ -2326,7 +2381,12 @@ async function loadImagesFromUrls(row, urls = null) {
 
   // Si no se proporcionan URLs, abrir el modal
   if (!urls || urls.length === 0) {
+    if (!(await assertProductHasTagsForImageUpload())) return false;
     showUrlModalForRow(row);
+    return false;
+  }
+
+  if (!(await assertProductHasTagsForImageUpload())) {
     return false;
   }
 
@@ -3583,7 +3643,8 @@ function addVariantRow(prefill = {}) {
     fileInput.style.display = "none";
     document.body.appendChild(fileInput);
 
-    uploadBtn.addEventListener("click", () => {
+    uploadBtn.addEventListener("click", async () => {
+      if (!(await assertProductHasTagsForImageUpload())) return;
       fileInput.click();
     });
 
@@ -3599,7 +3660,8 @@ function addVariantRow(prefill = {}) {
   // Botón Cargar URL de Cloudinary
   const loadUrlBtn = tr.querySelector(".load-url-images-btn");
   if (loadUrlBtn) {
-    loadUrlBtn.addEventListener("click", () => {
+    loadUrlBtn.addEventListener("click", async () => {
+      if (!(await assertProductHasTagsForImageUpload())) return;
       showUrlModalForRow(tr);
     });
   }

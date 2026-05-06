@@ -100,7 +100,19 @@ Estas RPCs existen en el repo y posiblemente en Supabase, pero **no son llamadas
 | `is_super_admin` | Permisos |
 | `create_collaborator_with_account`, `add_collaborator_to_admins`, `add_collaborator_by_email` | Colaboradores |
 | `purchase_create_rule_version`, `purchase_register_receipt` | Compras/proveedores |
-| `get_dashboard_kpis`, `get_customer_kpis`, `get_sales_timeseries`, `get_top_*` | Estadisticas |
+| `get_dashboard_kpis`, `get_customer_kpis`, `get_sales_timeseries`, `get_top_*` | Estadisticas (legacy `admin/statistics.js`) |
+| `metrics_dashboard`, `metrics_dashboard_compare` | Metrics v2 — KPIs y comparativa |
+| `metrics_product_alerts` | Metrics v2 — alertas stock/talles/rotacion/tendencia |
+| `metrics_replenishment` | Metrics v2 — reposicion urgente/media/sobrestock |
+| `metrics_replenishment_effectiveness` | Metrics v2 — efectividad + `ajustes_modelo` + persistencia learning |
+| `metrics_weekly_purchase_plan` | Metrics v2 — plan compra semanal (wrapper sobre replenishment) |
+| `metrics_purchase_by_supplier` | Metrics v2 — ordenes sugeridas por `suppliers` + MOQ `products.pack_size` |
+
+Consumidor admin:
+
+- `admin/metrics_v2.js` (RPCs anteriores + comparativa + alertas + compras)
+
+Detalle y supuestos: [[26-AUDITORIA-MODULO-ESTADISTICAS-2026-05-05]].
 
 ## Enlaces
 

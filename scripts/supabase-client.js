@@ -11,6 +11,8 @@ import {
   fylDevLog,
   fylDevInfo,
 } from "./config.js";
+import { FYL_VERSION } from "./fyl-version.js";
+import { fylReportClientError } from "./fyl-runtime-resilience.js";
 
 let supabase = null;
 
@@ -86,15 +88,79 @@ function importWithTimeout(moduleUrl, ms) {
   ]);
 }
 
+/** Sesión: una recarga si el bundle llegó como HTML (SW/hosting). */
+const FYL_BUNDLE_HTML_RECOVER_KEY = "__fyl_bundle_html_recover_v1";
+
+function fylAppendUrlQueryParam(absUrl, key, value) {
+  try {
+    const u = new URL(absUrl);
+    u.searchParams.set(key, String(value));
+    return u.href;
+  } catch {
+    const join = absUrl.includes("?") ? "&" : "?";
+    return `${absUrl}${join}${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`;
+  }
+}
+
+/** HEAD best-effort (algunos hosts no soportan HEAD en estáticos). */
+async function fylBundleHeadLooksLikeHtml(absUrl) {
+  try {
+    const r = await fetch(absUrl, { method: "HEAD", cache: "no-store", redirect: "follow" });
+    const ct = (r.headers.get("content-type") || "").toLowerCase();
+    if (/text\/html/i.test(ct)) return true;
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
 /**
- * Versión del bundle local. Debe coincidir con el app-version del HTML
- * para que el cache del browser se invalide cuando cambie el bundle.
- * Al subir esta versión el browser descarga el nuevo bundle y lo cachea
- * como immutable (firebase.json: Cache-Control: public, max-age=31536000).
- * TODO (Phase B): cuando se reactive el SW, el sw.js también debe versionar
- * el precache de este bundle con la misma clave.
+ * GET Range + no-store: detecta HTML sin ejecutar import() del cuerpo corrupto.
  */
-const __SUPABASE_BUNDLE_VERSION = "m260503";
+async function fylBundleFetchAppearsHtml(absUrl) {
+  try {
+    const r = await fetch(absUrl, {
+      method: "GET",
+      cache: "no-store",
+      redirect: "follow",
+      headers: { Range: "bytes=0-2047" },
+    });
+    const ct = (r.headers.get("content-type") || "").toLowerCase();
+    if (/text\/html/i.test(ct)) return true;
+    if (!r.ok) return false;
+    const ab = await r.arrayBuffer();
+    const u8 = new Uint8Array(ab);
+    const n = Math.min(u8.length, 256);
+    let ascii = "";
+    for (let i = 0; i < n; i++) ascii += String.fromCharCode(u8[i]);
+    const t = ascii.trimStart();
+    return t.startsWith("<!") || t.toLowerCase().startsWith("<html");
+  } catch {
+    return false;
+  }
+}
+
+/** @returns {boolean} true si disparó reload (detener await en esta pestaña). */
+function fylScheduleReloadOnceAfterHtmlBundle() {
+  try {
+    if (typeof sessionStorage === "undefined") return false;
+    if (sessionStorage.getItem(FYL_BUNDLE_HTML_RECOVER_KEY)) return false;
+    sessionStorage.setItem(FYL_BUNDLE_HTML_RECOVER_KEY, "1");
+    globalThis.markBootStage?.("supabase.runtime.html_recover_reload", {});
+    window.location.reload();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function fylClearBundleHtmlRecoverFlag() {
+  try {
+    if (typeof sessionStorage !== "undefined") {
+      sessionStorage.removeItem(FYL_BUNDLE_HTML_RECOVER_KEY);
+    }
+  } catch (_) {}
+}
 
 /** Bundle ~400KB: en 3G/móvil real con señal débil puede superar 35s; 60s da margen. */
 const SUPABASE_LOCAL_IMPORT_MS = 60000;
@@ -103,13 +169,20 @@ const SUPABASE_CDN_IMPORT_MS = 28000;
 
 const SUPABASE_LOCAL_BUNDLE =
   new URL("./vendor/supabase-js.bundle.min.js", import.meta.url).href +
-  "?v=" + __SUPABASE_BUNDLE_VERSION;
+  "?v=" +
+  FYL_VERSION;
 
 const SUPABASE_CDN_URLS = [
   "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.0/+esm",
   "https://unpkg.com/@supabase/supabase-js@2.39.0/dist/esm/index.js",
   "https://esm.sh/@supabase/supabase-js@2.39.0",
 ];
+
+async function tryImportSupabaseModule(absUrl) {
+  const mod = await importWithTimeout(absUrl, SUPABASE_LOCAL_IMPORT_MS);
+  if (mod && typeof mod.createClient === "function") return mod;
+  return null;
+}
 
 function describeError(e) {
   if (e == null) return { name: "Unknown", message: String(e) };
@@ -183,61 +256,97 @@ async function loadCreateClient() {
   fylDevInfo(`${LOG} Carga de @supabase/supabase-js: primero bundle local, luego CDN.`);
   fylDevInfo(`${LOG} Bundle local URL:`, SUPABASE_LOCAL_BUNDLE);
 
-  // Exponer la URL del bundle para el panel de diagnóstico (?debug_boot=1).
   globalThis.markBootStage?.("supabase.runtime.bundle_url", {
     url: SUPABASE_LOCAL_BUNDLE,
-    version: __SUPABASE_BUNDLE_VERSION,
+    version: FYL_VERSION,
   });
 
-  // Probe de MIME type concurrente (solo debug_boot=1; no bloquea el import).
   const _probeP = probeBundleForDebug(SUPABASE_LOCAL_BUNDLE);
   void _probeP;
 
-  const t0local = typeof performance !== "undefined" ? performance.now() : Date.now();
+  const t0local =
+    typeof performance !== "undefined" ? performance.now() : Date.now();
 
   try {
-    fylDevInfo(`${LOG} Intento 1/local (${SUPABASE_LOCAL_IMPORT_MS}ms):`, SUPABASE_LOCAL_BUNDLE);
-    const mod = await importWithTimeout(
-      SUPABASE_LOCAL_BUNDLE,
-      SUPABASE_LOCAL_IMPORT_MS
-    );
-    if (mod?.createClient) {
-      const elapsedMs = Math.round(
-        (typeof performance !== "undefined" ? performance.now() : Date.now()) - t0local
-      );
-      fylDevInfo(`${LOG} OK: createClient desde bundle local (mismo origen) en ${elapsedMs}ms.`);
-      globalThis.markBootStage?.("supabase.runtime.loaded", {
-        source: "local",
-        elapsedMs,
-      });
-      return { createClient: mod.createClient, source: "local" };
+    if (await fylBundleHeadLooksLikeHtml(SUPABASE_LOCAL_BUNDLE)) {
+      fylDevInfo(`${LOG} HEAD del bundle sugiere text/html; se continúa con import y validación.`);
+      globalThis.markBootStage?.("supabase.runtime.local_head_html_hint", {});
     }
-    lastErr = new Error("supabase_local_import_failed: módulo sin export createClient");
-    const d = describeError(lastErr);
-    console.warn(`${LOG} Local: ${d.name} — ${d.message}`);
-    globalThis.markBootStage?.("supabase.runtime.local_failed", {
-      kind: "supabase_local_import_failed",
-      name: d.name,
-      message: d.message,
-    });
+  } catch {
+    /* no-op */
+  }
+
+  let localUrl = SUPABASE_LOCAL_BUNDLE;
+  let mod = null;
+
+  try {
+    fylDevInfo(`${LOG} Intento 1/local (${SUPABASE_LOCAL_IMPORT_MS}ms):`, localUrl);
+    mod = await tryImportSupabaseModule(localUrl);
   } catch (e) {
     lastErr = e;
-    const d = describeError(e);
-    const kind = d.isTimeout ? "supabase_local_timeout" : "supabase_local_import_failed";
+  }
+
+  if (!mod) {
+    if (!lastErr) {
+      lastErr = new Error("supabase_local_import_failed: sin createClient en módulo");
+    }
+    const htmlish = await fylBundleFetchAppearsHtml(SUPABASE_LOCAL_BUNDLE);
+    if (htmlish) {
+      globalThis.markBootStage?.("supabase.runtime.local_body_html", {
+        url: SUPABASE_LOCAL_BUNDLE,
+      });
+      console.error(
+        `${LOG} El bundle local responde como HTML (SW/hosting). Recuperación controlada.`
+      );
+      if (fylScheduleReloadOnceAfterHtmlBundle()) {
+        await new Promise(() => {});
+      }
+      localUrl = fylAppendUrlQueryParam(SUPABASE_LOCAL_BUNDLE, "_fylcb", Date.now());
+      try {
+        fylDevInfo(`${LOG} Reintento local tras HTML (cache-bust):`, localUrl);
+        mod = await tryImportSupabaseModule(localUrl);
+      } catch (e2) {
+        lastErr = e2;
+      }
+    } else {
+      localUrl = fylAppendUrlQueryParam(SUPABASE_LOCAL_BUNDLE, "_fylcb", Date.now());
+      try {
+        fylDevInfo(`${LOG} Reintento local con cache-bust:`, localUrl);
+        mod = await tryImportSupabaseModule(localUrl);
+      } catch (e2) {
+        lastErr = e2;
+      }
+    }
+  }
+
+  if (mod?.createClient) {
     const elapsedMs = Math.round(
       (typeof performance !== "undefined" ? performance.now() : Date.now()) - t0local
     );
-    console.warn(
-      `${LOG} [${kind}] Falló bundle local → fallback CDN. ` +
-      `Tipo: ${d.name} | ${d.message} | elapsed: ${elapsedMs}ms`
-    );
-    globalThis.markBootStage?.("supabase.runtime.local_failed", {
-      kind,
-      name: d.name,
-      message: d.message,
+    fylClearBundleHtmlRecoverFlag();
+    fylDevInfo(`${LOG} OK: createClient desde bundle local en ${elapsedMs}ms.`);
+    globalThis.markBootStage?.("supabase.runtime.loaded", {
+      source: "local",
       elapsedMs,
     });
+    return { createClient: mod.createClient, source: "local" };
   }
+
+  const d0 = describeError(lastErr);
+  const kind0 = d0.isTimeout ? "supabase_local_timeout" : "supabase_local_import_failed";
+  const elapsedMs0 = Math.round(
+    (typeof performance !== "undefined" ? performance.now() : Date.now()) - t0local
+  );
+  console.warn(
+    `${LOG} [${kind0}] Falló bundle local → fallback CDN. ` +
+      `Tipo: ${d0.name} | ${d0.message} | elapsed: ${elapsedMs0}ms`
+  );
+  globalThis.markBootStage?.("supabase.runtime.local_failed", {
+    kind: kind0,
+    name: d0.name,
+    message: d0.message,
+    elapsedMs: elapsedMs0,
+  });
 
   for (let i = 0; i < SUPABASE_CDN_URLS.length; i++) {
     const url = SUPABASE_CDN_URLS[i];
@@ -293,6 +402,13 @@ async function loadCreateClient() {
     name: finalD.name,
     message: finalD.message,
   });
+  try {
+    fylReportClientError({
+      kind: "supabase.runtime.all_failed",
+      name: finalD.name,
+      message: finalD.message,
+    });
+  } catch (_) {}
   throw new Error(
     `No se pudo cargar @supabase/supabase-js (local ni CDN). Último: ${finalD.name}: ${finalD.message}`
   );

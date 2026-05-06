@@ -30,6 +30,28 @@ interface TagSummaryRow {
   unidades_por_dia: number;
 }
 
+/** Limitaciones del dato de publicación (solo last_published_at hasta FASE 2). */
+interface StockPayloadMeta {
+  publication_data_source?: string;
+  notas?: string[];
+  min_events_for_history?: number;
+  worst_last_pub_threshold?: {
+    min_dias_desde_publicacion?: number;
+    max_u_0_7d?: number;
+  };
+}
+
+interface LastPubPerformanceRow {
+  nombre: string;
+  categoria: string;
+  dias_desde_pub: number;
+  u_0_24h: number;
+  u_24_72h: number;
+  u_0_7d: number;
+  ventas_totales_post_ultima_pub: number;
+  stock_total: number;
+}
+
 interface StockPayload {
   fecha: string;
   catalogo: Record<string, number | boolean>;
@@ -40,6 +62,28 @@ interface StockPayload {
   sin_imagenes:     Array<{ nombre: string; stock_total: number }>;
   alta_incompleta:  Array<{ nombre: string; status: string; stock_total: number }>;
   tags_resumen:     TagSummaryRow[];
+  publication_events_performance?: Array<{
+    nombre: string;
+    categoria: string;
+    canal: string;
+    dia_semana: string;
+    etapa_mes: string | null;
+    horas_24: number;
+    horas_72: number;
+    dias_7: number;
+    dias_desde_pub: number;
+    publicaciones_producto: number;
+  }>;
+  last_pub_performance?: LastPubPerformanceRow[];
+  worst_last_pub_performance?: Array<{
+    nombre: string;
+    categoria: string;
+    dias_desde_pub: number;
+    u_0_7d: number;
+    ventas_totales_post_ultima_pub: number;
+    stock_total: number;
+  }>;
+  meta?: StockPayloadMeta;
 }
 
 interface StockReportRequest {
@@ -123,9 +167,55 @@ function formatTagSummary(rows: TagSummaryRow[]): string {
     }).join("\n");
 }
 
+function formatPublicationLimitations(p: StockPayload): string {
+  const m = p.meta;
+  if (!m?.notas?.length) return "";
+  const lines = m.notas.map(n => `  · ${n}`).join("\n");
+  const src = m.publication_data_source
+    ? `\nFuente temporal de publicación: ${m.publication_data_source}.`
+    : "";
+  return `LIMITACIONES — DATO DE PUBLICACIÓN:${src}\n${lines}`;
+}
+
+function formatLastPubPerformance(rows: LastPubPerformanceRow[] | undefined): string {
+  if (!rows?.length) return "  (sin muestra en payload o vista sin datos)";
+  return rows.map(r =>
+    `  · ${r.nombre} [${r.categoria}]: 7d tras última pub=${r.u_0_7d}u, 24h=${r.u_0_24h}u, 24–72h=${r.u_24_72h}u, total desde última pub=${r.ventas_totales_post_ultima_pub}u, publicado hace ${r.dias_desde_pub}d`
+  ).join("\n");
+}
+
+function formatPublicationEventsPerformance(p: StockPayload): string {
+  const rows = p.publication_events_performance;
+  if (!rows?.length) return "  (sin datos de publication_events en payload)";
+  return rows.map(r =>
+    `  · ${r.nombre} [${r.categoria}] canal=${r.canal}: 24h=${r.horas_24}u, 72h=${r.horas_72}u, 7d=${r.dias_7}u, ${r.dias_desde_pub}d desde pub, día=${r.dia_semana}, etapa_mes=${r.etapa_mes ?? "sin_dato"}, publicaciones_producto=${r.publicaciones_producto}`
+  ).join("\n");
+}
+
+function formatWorstLastPubPerformance(p: StockPayload): string {
+  const rows = p.worst_last_pub_performance;
+  const minDays = p.meta?.worst_last_pub_threshold?.min_dias_desde_publicacion;
+  const maxU7d = p.meta?.worst_last_pub_threshold?.max_u_0_7d;
+  const criteria = [
+    typeof maxU7d === "number" ? `u_0_7d <= ${maxU7d}` : null,
+    typeof minDays === "number" ? `dias_desde_pub > ${minDays}` : null,
+  ].filter(Boolean).join(" y ");
+
+  if (!rows?.length) {
+    return criteria
+      ? `  (sin casos para criterio: ${criteria})`
+      : "  (sin casos en payload)";
+  }
+  return rows.map(r =>
+    `  · ${r.nombre} [${r.categoria}]: 7d=${r.u_0_7d}u, total post última pub=${r.ventas_totales_post_ultima_pub}u, ${r.dias_desde_pub}d desde publicación, stock ${r.stock_total}u`
+  ).join("\n");
+}
+
 function buildContextBlock(p: StockPayload): string {
-  return `
-ESTADO DEL CATÁLOGO — ${p.fecha}
+  const limitations = formatPublicationLimitations(p);
+  const prefix = limitations ? `${limitations}\n\n` : "";
+
+  return `${prefix}ESTADO DEL CATÁLOGO — ${p.fecha}
 
 RESUMEN:
 ${formatCatalogSummary(p)}
@@ -141,6 +231,15 @@ ${formatDeadStock(p.dead_stock)}
 
 PUBLICADOS SIN VENTAS (publicados pero sin conversión):
 ${formatPubIneficiente(p.pub_ineficiente)}
+
+RESPUESTA POST ÚLTIMA PUBLICACIÓN (top por u_0_7d; respeta LIMITACIONES arriba — una sola fecha por producto):
+${formatLastPubPerformance(p.last_pub_performance)}
+
+RENDIMIENTO POR EVENTO REAL DE PUBLICACIÓN (FASE 2; usar este bloque primero cuando publication_data_source=publication_events):
+${formatPublicationEventsPerformance(p)}
+
+PUBLICACIONES SIN RESPUESTA (peor desempeño tras última publicación; usar para decidir no republicar, revisar precio/foto o liquidar):
+${formatWorstLastPubPerformance(p)}
 
 SIN IMÁGENES CON STOCK: ${p.sin_imagenes.map(i => i.nombre).join(", ") || "ninguno"}
 ALTA INCOMPLETA: ${p.alta_incompleta.map(i => `${i.nombre} (${i.status})`).join(", ") || "ninguna"}
@@ -163,6 +262,11 @@ REGLAS ESTRICTAS:
 - Cada alerta, oportunidad y recomendación DEBE incluir datos concretos (unidades, días, nombres de productos).
 - PROHIBIDO usar frases genéricas como "revisar el inventario", "analizar la situación", "considerar opciones".
 - Si un dato no está en el contexto, indicá "sin datos suficientes" en esa sección, no lo inventes.
+- NO inferir republicaciones/frecuencia/campañas cuando publication_data_source=last_published_at (sin historial suficiente).
+- Si publication_data_source=publication_events, priorizá el bloque de "RENDIMIENTO POR EVENTO REAL DE PUBLICACIÓN" para conclusiones de frecuencia/canal/día.
+- Si publication_data_source=last_published_at, NO responder sobre frecuencia/campañas; indicá limitación explícita.
+- Si hay datos en "PUBLICACIONES SIN RESPUESTA", usalos para recomendaciones concretas de:
+  1) no republicar por ahora, 2) ajustar precio/foto, 3) evaluar liquidación.
 - La confianza del análisis es:
     "alta"  → hay datos concretos de ventas reales para sustentar las conclusiones
     "media" → hay datos parciales (solo stock, sin historial de ventas reciente)
@@ -187,7 +291,9 @@ Generá un análisis operativo completo. Respondé con este JSON exacto:
     "Próxima acción concreta ordenada por urgencia. Máximo 5."
   ],
   "confianza": "alta" | "media" | "baja"
-}`;
+}
+
+Si existe el bloque "PUBLICACIONES SIN RESPUESTA", incluí al menos 1 recomendación accionable basada en esos productos.`;
 }
 
 function buildQuestionPrompt(context: string, pregunta: string): string {
@@ -196,6 +302,7 @@ function buildQuestionPrompt(context: string, pregunta: string): string {
 PREGUNTA DEL OPERADOR: "${pregunta}"
 
 Respondé usando SOLO los datos del contexto. Si no hay datos suficientes, decilo explícitamente.
+Si la pregunta trata sobre publicaciones que no funcionaron, priorizá el bloque "PUBLICACIONES SIN RESPUESTA".
 Respondé con este JSON exacto:
 {
   "respuesta": "Respuesta directa y concreta en 4-8 líneas. Incluir números, nombres y días reales. Sin introducción.",

@@ -185,17 +185,15 @@ if (typeof window !== "undefined") {
     return false;
   };
 
-  window.addEventListener("unhandledrejection", (ev) => {
-    const r = ev.reason;
-    pushGlobalError("unhandledrejection", {
-      message: r?.message != null ? String(r.message) : String(r),
-      name: r?.name,
-      stack: r?.stack,
-    });
-  });
 }
 
 markBootStage("boot.telemetry.ready", { debug });
+
+import("./fyl-runtime-resilience.js")
+  .then((m) => m.initFylRuntimeResilience())
+  .catch((e) => {
+    markBootStage("resilience.init_failed", { message: String(e && e.message ? e.message : e) });
+  });
 
 // Emitir snapshot de entorno apenas el DOM esté listo (da tiempo a que
 // config.prod.js haya ejecutado y window.SUPABASE_URL esté definida).

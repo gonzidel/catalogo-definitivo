@@ -829,9 +829,9 @@ header h1 { margin: 0; font-size: 1.5rem; }
   visibility: visible;
 }
 
-/* Pantalla de arranque: evita interacción hasta que el catálogo esté listo (index2) */
+/* Pantalla de arranque: feedback visual de carga sin bloquear interacción (FASE 1A · T2) */
 body.catalog-boot-active {
-  overflow: hidden;
+  overflow: auto;
 }
 
 .catalog-boot-overlay {
@@ -843,6 +843,7 @@ body.catalog-boot-active {
   justify-content: center;
   background: rgba(245, 243, 240, 0.97);
   transition: opacity 0.28s ease, visibility 0.28s ease;
+  pointer-events: none;
 }
 
 .catalog-boot-overlay.catalog-boot-overlay--hidden {
@@ -856,6 +857,8 @@ body.catalog-boot-active {
   display: flex;
   align-items: center;
   gap: 10px;
+  /* FASE 1A · T2: el overlay es pointer-events:none; los dots conservan tap por si se les ata acción a futuro. */
+  pointer-events: auto;
 }
 
 .catalog-boot-dots span {

@@ -1180,14 +1180,17 @@
       __fylDeferredLoaded = true;
       // Auth del header tiene prioridad para no afectar CTA de login.
       import("./scripts/auth-status.js?v=m260420");
+      // [FASE 1A · T3] Handlers críticos UX (FAB WhatsApp y campana de notificaciones)
+      // se mueven al batch inmediato para que respondan apenas se atan, evitando dead clicks.
+      import("./scripts/whatsapp.js?v=m260420");
+      import("./scripts/notifications.js?v=m260420");
       __fylSchedulePostBootTask(function () {
         import("./scripts/scroll.js?v=m260420");
         import("./scripts/product-alternatives.js?v=m260420");
       }, 300);
       __fylSchedulePostBootTask(function () {
-        import("./scripts/notifications.js?v=m260420");
+        // [FASE 1A · T3] whatsapp.js y notifications.js movidos al batch inmediato.
         import("./scripts/catalog-onboarding.js?v=m260420");
-        import("./scripts/whatsapp.js?v=m260420");
       }, 1300);
       __fylSchedulePostBootTask(function () {
         var s = document.createElement("script");

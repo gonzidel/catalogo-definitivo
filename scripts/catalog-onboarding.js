@@ -7,7 +7,9 @@ import { fylAnalytics } from "./analytics.js";
 
 const STORAGE_KEY = "fyl-catalog-onboarding-hide";
 const SEEN_KEY = "fyl-catalog-onboarding-seen";
-const OPEN_DELAY_MS = 3000;
+// FASE 1A · T4: subido de 3000 a 6000ms y se aborta si la usuaria interactúa antes.
+const OPEN_DELAY_MS = 6000;
+const ABORT_EVENTS = ["pointerdown", "touchstart", "scroll", "hashchange"];
 const TOTAL = 3;
 
 const root = document.getElementById("catalog-onboarding");
@@ -24,6 +26,20 @@ let step = 0;
 let opened = false;
 let tryLock = false;
 let openTimer = null;
+let abortHandler = null;
+
+function clearOpenTimer() {
+  if (openTimer) {
+    clearTimeout(openTimer);
+    openTimer = null;
+  }
+  if (abortHandler) {
+    ABORT_EVENTS.forEach((ev) =>
+      window.removeEventListener(ev, abortHandler, true)
+    );
+    abortHandler = null;
+  }
+}
 
 function setStep(n) {
   step = Math.max(0, Math.min(TOTAL - 1, n));
@@ -52,10 +68,7 @@ function closeOnboarding(markAsSeen = true) {
   root.setAttribute("aria-hidden", "true");
   document.body.classList.remove("modal-open");
   opened = false;
-  if (openTimer) {
-    clearTimeout(openTimer);
-    openTimer = null;
-  }
+  clearOpenTimer();
   if (markAsSeen) {
     localStorage.setItem(SEEN_KEY, "1");
   }
@@ -106,9 +119,22 @@ async function tryShowOnboarding() {
     }
     if (session) return;
 
+    // FASE 1A · T4: si la usuaria interactúa antes de los OPEN_DELAY_MS, abortamos
+    // sin marcar SEEN_KEY → vuelve a intentar la próxima sesión, sin robar el primer tap.
+    clearOpenTimer();
+    abortHandler = function () {
+      clearOpenTimer();
+    };
+    ABORT_EVENTS.forEach((ev) =>
+      window.addEventListener(ev, abortHandler, {
+        once: true,
+        passive: true,
+        capture: true,
+      })
+    );
     openTimer = setTimeout(() => {
+      clearOpenTimer();
       openOnboarding();
-      openTimer = null;
     }, OPEN_DELAY_MS);
   } finally {
     tryLock = false;

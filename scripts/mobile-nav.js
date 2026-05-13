@@ -109,14 +109,10 @@ function setupNavHandlers() {
         window.clearSearch({ skipCatalogReset: true });
       }
       if (typeof window.cambiarCategoria === "function") {
-        if (typeof window.showCatalogBootOverlay === "function") {
-          window.showCatalogBootOverlay();
-        }
-        Promise.resolve(window.cambiarCategoria("all")).finally(() => {
-          if (typeof window.hideCatalogBootOverlay === "function") {
-            window.hideCatalogBootOverlay();
-          }
-        });
+        // [FASE 1B-A · T3] Feedback (pressed state + top progress bar) gestionado
+        // por cambiarCategoria. No reusamos showCatalogBootOverlay para
+        // transiciones de categoría (ver Roadmap/FASE-1B-A-Feedback-Categoria.md).
+        Promise.resolve(window.cambiarCategoria("all"));
       } else {
         window.location.hash = "";
         // Scroll al inicio
@@ -193,14 +189,10 @@ function setupNavHandlers() {
         window.clearSearch({ skipCatalogReset: true });
       }
       if (typeof window.cambiarCategoria === "function") {
-        if (typeof window.showCatalogBootOverlay === "function") {
-          window.showCatalogBootOverlay();
-        }
-        Promise.resolve(window.cambiarCategoria("all")).finally(() => {
-          if (typeof window.hideCatalogBootOverlay === "function") {
-            window.hideCatalogBootOverlay();
-          }
-        });
+        // [FASE 1B-A · T3] Feedback (pressed state + top progress bar) gestionado
+        // por cambiarCategoria. No reusamos showCatalogBootOverlay para
+        // transiciones de categoría (ver Roadmap/FASE-1B-A-Feedback-Categoria.md).
+        Promise.resolve(window.cambiarCategoria("all"));
       } else {
         window.location.hash = "";
         // Scroll al inicio

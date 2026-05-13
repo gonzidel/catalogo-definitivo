@@ -220,16 +220,11 @@ async function handleQuickAction(action) {
       window.clearSearch({ skipCatalogReset: true });
     }
     if (typeof window.cambiarCategoria === "function") {
-      if (typeof window.showCatalogBootOverlay === "function") {
-        window.showCatalogBootOverlay();
-      }
-      try {
-        await window.cambiarCategoria("all");
-      } finally {
-        if (typeof window.hideCatalogBootOverlay === "function") {
-          window.hideCatalogBootOverlay();
-        }
-      }
+      // [FASE 1B-A · T3] El feedback visual (pressed state + top progress bar)
+      // lo gestiona cambiarCategoria internamente. El overlay full de boot ya
+      // no se reusa para transiciones de categoría (genera flash y bloqueo
+      // innecesarios). Ver Roadmap/FASE-1B-A-Feedback-Categoria.md.
+      await window.cambiarCategoria("all");
     } else {
       // Si no hay función global, recargar todos los productos
       window.location.hash = "";

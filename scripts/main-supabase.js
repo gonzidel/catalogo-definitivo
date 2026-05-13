@@ -5528,64 +5528,179 @@ function configurarEventos() {
   }
 }
 
+// =====================================================================
+// [FASE 1B-A · T1+T3] Feedback inmediato al cambiar categoría
+//
+// `cambiarCategoria()` es la única fuente de verdad del feedback visual:
+// los callers (quick-actions, mobile-nav, banner, .menu) NO deben envolver
+// con loaders propios; basta con llamar a `cambiarCategoria(cat)`.
+//
+// Capa 1: pressed/loading state en el botón target (.cat-btn--loading).
+// Capa 2: top progress bar app-like, slim, no bloquea taps.
+//
+// Diseño en docs/FYL-Obsidian/FYL-Product/Roadmap/FASE-1B-A-Feedback-Categoria.md
+// =====================================================================
+
+let _categoryProgressBarEl = null;
+let _categoryProgressHideTimer = null;
+
+function _matchesCategoryButton(buttonText, cat) {
+  if (!cat || cat === "all") return false;
+  if (cat === "Lenceria" && buttonText === "Lencería") return true;
+  if (cat === "Marroquineria" && buttonText === "Accesorios") return true;
+  return buttonText.includes(cat);
+}
+
+function _markCategoryButtonsLoading(cat) {
+  if (typeof document === "undefined") return;
+  // Limpiar previos (defensa: por si quedó un loading huérfano de un cambio anterior).
+  document.querySelectorAll(".cat-btn--loading").forEach((b) => b.classList.remove("cat-btn--loading"));
+
+  // .menu button: matching por texto (replica algoritmo de selección activa).
+  document.querySelectorAll(".menu button").forEach((btn) => {
+    const txt = (btn.textContent || "").trim();
+    if (_matchesCategoryButton(txt, cat)) {
+      btn.classList.add("cat-btn--loading");
+    }
+  });
+
+  // .quick-action-btn: matching por data-action-value / data-action-type.
+  document.querySelectorAll(".quick-action-btn").forEach((btn) => {
+    const val = btn.dataset ? btn.dataset.actionValue : btn.getAttribute("data-action-value");
+    const type = btn.dataset ? btn.dataset.actionType : btn.getAttribute("data-action-type");
+    let match = false;
+    if (cat === "all" && (type === "inicio" || val === "all")) match = true;
+    else if (val && val === cat) match = true;
+    if (match) btn.classList.add("cat-btn--loading");
+  });
+}
+
+function _unmarkCategoryButtonsLoading() {
+  if (typeof document === "undefined") return;
+  document.querySelectorAll(".cat-btn--loading").forEach((b) => b.classList.remove("cat-btn--loading"));
+}
+
+function _ensureCategoryProgressBarEl() {
+  if (typeof document === "undefined") return null;
+  if (_categoryProgressBarEl && document.body && document.body.contains(_categoryProgressBarEl)) {
+    return _categoryProgressBarEl;
+  }
+  const el = document.createElement("div");
+  el.id = "category-progress-bar";
+  el.className = "category-progress-bar";
+  el.setAttribute("role", "progressbar");
+  el.setAttribute("aria-hidden", "true");
+  document.body.appendChild(el);
+  _categoryProgressBarEl = el;
+  return el;
+}
+
+function _showCategoryProgressBar() {
+  const el = _ensureCategoryProgressBarEl();
+  if (!el) return;
+  clearTimeout(_categoryProgressHideTimer);
+  el.classList.remove("category-progress-bar--done");
+  el.style.transform = "scaleX(0)";
+  // Forzar reflow mínimo para que la transición arranque desde 0.
+  // eslint-disable-next-line no-unused-expressions
+  void el.offsetWidth;
+  el.classList.add("category-progress-bar--active");
+  el.setAttribute("aria-hidden", "false");
+  requestAnimationFrame(() => {
+    el.style.transform = "scaleX(0.8)";
+  });
+}
+
+function _hideCategoryProgressBar() {
+  const el = _categoryProgressBarEl;
+  if (!el) return;
+  el.style.transform = "scaleX(1)";
+  el.setAttribute("aria-hidden", "true");
+  clearTimeout(_categoryProgressHideTimer);
+  _categoryProgressHideTimer = setTimeout(() => {
+    el.classList.remove("category-progress-bar--active");
+    el.classList.add("category-progress-bar--done");
+  }, 180);
+}
+
+function showCategoryFeedback(cat) {
+  _markCategoryButtonsLoading(cat);
+  _showCategoryProgressBar();
+}
+
+function hideCategoryFeedback() {
+  _unmarkCategoryButtonsLoading();
+  _hideCategoryProgressBar();
+}
+
 // Función para cambiar categoría
 async function cambiarCategoria(cat) {
-  fylCatalogDbg("🔄 Cambiando a categoría:", cat);
-  persistCurrentScrollInHistory();
+  // [FASE 1B-A · T1+T3] Feedback inmediato síncrono ANTES de cualquier await.
+  // Esto garantiza pressed state + barra de progreso visibles en el primer frame
+  // tras el tap, sin importar qué caller invocó cambiarCategoria.
+  showCategoryFeedback(cat);
+
   try {
-    if (fylAnalytics.isReady()) {
-      fylAnalytics.event("catalog_category_select", {
-        category: String(cat || "all"),
-        source: "catalog_ui",
-      });
-    }
-  } catch (_e) {}
-  trackMetaCustom("CatalogCategorySelect", {
-    category: String(cat || "all"),
-    source: "catalog_ui",
-  });
+    fylCatalogDbg("🔄 Cambiando a categoría:", cat);
+    persistCurrentScrollInHistory();
+    try {
+      if (fylAnalytics.isReady()) {
+        fylAnalytics.event("catalog_category_select", {
+          category: String(cat || "all"),
+          source: "catalog_ui",
+        });
+      }
+    } catch (_e) {}
+    trackMetaCustom("CatalogCategorySelect", {
+      category: String(cat || "all"),
+      source: "catalog_ui",
+    });
 
-  if (typeof window.clearSearch === "function") {
-    await window.clearSearch({ skipCatalogReset: true });
-  } else {
-    const inputDesktop = document.getElementById("searchInput");
-    const inputMobile = document.getElementById("search-bar-mobile");
-    if (inputDesktop) inputDesktop.value = "";
-    if (inputMobile) inputMobile.value = "";
-    window.__fylSearchDerivedCategory = null;
-    refreshCatalogFilterBar();
+    if (typeof window.clearSearch === "function") {
+      await window.clearSearch({ skipCatalogReset: true });
+    } else {
+      const inputDesktop = document.getElementById("searchInput");
+      const inputMobile = document.getElementById("search-bar-mobile");
+      if (inputDesktop) inputDesktop.value = "";
+      if (inputMobile) inputMobile.value = "";
+      window.__fylSearchDerivedCategory = null;
+      refreshCatalogFilterBar();
+    }
+
+    // Inicio (all): la barra móvil usa .quick-action-btn + .category-chip--active, no .menu; limpiar selección visual.
+    if (cat === "all") {
+      document.querySelectorAll(".quick-action-btn").forEach((btn) => btn.classList.remove("category-chip--active"));
+    }
+
+    // Actualizar botón activo
+    document.querySelectorAll(".menu button").forEach((btn) => {
+      btn.classList.remove("active");
+      const buttonText = btn.textContent.trim();
+      let shouldActivate = false;
+
+      if (cat === "Lenceria" && buttonText === "Lencería") {
+        shouldActivate = true;
+      } else if (cat === "Marroquineria" && buttonText === "Accesorios") {
+        shouldActivate = true;
+      } else if (buttonText.includes(cat)) {
+        shouldActivate = true;
+      }
+
+      if (shouldActivate) {
+        btn.classList.add("active");
+      }
+    });
+
+    // SIEMPRE actualizar el grid a la nueva categoría (aunque el modal esté abierto)
+    await runWithViewTransition(() => cargarCategoria(cat));
+
+    // Actualizar URL con slug, preservando sku existente
+    // NO cerrar modal si está abierto (productoActualEnModal ya se mantiene)
+    updateURL({ tab: cat, sku: undefined }, { mode: 'replace' });
+  } finally {
+    // [FASE 1B-A · T1+T3] Limpieza de feedback siempre, incluso si algo lanzó.
+    hideCategoryFeedback();
   }
-
-  // Inicio (all): la barra móvil usa .quick-action-btn + .category-chip--active, no .menu; limpiar selección visual.
-  if (cat === "all") {
-    document.querySelectorAll(".quick-action-btn").forEach((btn) => btn.classList.remove("category-chip--active"));
-  }
-
-  // Actualizar botón activo
-  document.querySelectorAll(".menu button").forEach((btn) => {
-    btn.classList.remove("active");
-    const buttonText = btn.textContent.trim();
-    let shouldActivate = false;
-
-    if (cat === "Lenceria" && buttonText === "Lencería") {
-      shouldActivate = true;
-    } else if (cat === "Marroquineria" && buttonText === "Accesorios") {
-      shouldActivate = true;
-    } else if (buttonText.includes(cat)) {
-      shouldActivate = true;
-    }
-
-    if (shouldActivate) {
-      btn.classList.add("active");
-    }
-  });
-
-  // SIEMPRE actualizar el grid a la nueva categoría (aunque el modal esté abierto)
-  await runWithViewTransition(() => cargarCategoria(cat));
-  
-  // Actualizar URL con slug, preservando sku existente
-  // NO cerrar modal si está abierto (productoActualEnModal ya se mantiene)
-  updateURL({ tab: cat, sku: undefined }, { mode: 'replace' });
 }
 
 // Descargar imagen desde URL (reutilizable desde card o modal)

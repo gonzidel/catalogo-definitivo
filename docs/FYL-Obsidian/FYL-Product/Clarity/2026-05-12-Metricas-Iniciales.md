@@ -10,13 +10,15 @@
 
 Microsoft Clarity reporta sobre el catálogo público:
 
-| Métrica | Valor | Target Google | Estado |
-|---|---|---|---|
-| LCP | ~10s | < 2.5s | crítico |
-| INP | ~1300ms | < 200ms | crítico |
-| CLS | ~0.61 | < 0.1 | crítico |
-| Dead clicks | alto (sin cifra exacta) | bajo | crítico |
-| Rage clicks | alto (sin cifra exacta) | bajo | crítico |
+
+| Métrica     | Valor                   | Target Google | Estado  |
+| ----------- | ----------------------- | ------------- | ------- |
+| LCP         | ~10s                    | < 2.5s        | crítico |
+| INP         | ~1300ms                 | < 200ms       | crítico |
+| CLS         | ~0.61                   | < 0.1         | crítico |
+| Dead clicks | alto (sin cifra exacta) | bajo          | crítico |
+| Rage clicks | alto (sin cifra exacta) | bajo          | crítico |
+
 
 Las tres Core Web Vitals están en **rojo simultáneamente**, lo que sugiere causa de boot, no de pantalla específica.
 
@@ -39,11 +41,11 @@ Ver auditoría completa [[../Performance/2026-05-12-Auditoria-Inicial]]. Resumen
 
 - Confirmado en código fuente (ver auditoría).
 - Falta confirmar en sesiones reales:
-  - [ ] Heatmap de dead clicks → ¿se concentra en header? ¿en cards?
-  - [ ] Heatmap de rage → ¿en swatches? ¿en filtro de talles? ¿en onboarding?
-  - [ ] Browser breakdown → ¿Safari iOS empeora INP?
-  - [ ] Sesiones con LCP > 15s → ¿qué red? ¿qué país?
-  - [ ] LCP element identification → ¿la primera imagen del producto o el banner?
+  - Heatmap de dead clicks → ¿se concentra en header? ¿en cards?
+  - Heatmap de rage → ¿en swatches? ¿en filtro de talles? ¿en onboarding?
+  - Browser breakdown → ¿Safari iOS empeora INP?
+  - Sesiones con LCP > 15s → ¿qué red? ¿qué país?
+  - LCP element identification → ¿la primera imagen del producto o el banner?
 
 ## Impacto estimado
 
@@ -52,11 +54,11 @@ Ver auditoría completa [[../Performance/2026-05-12-Auditoria-Inicial]]. Resumen
 
 ## Acción
 
-- [x] Documentar hallazgos técnicos: [[../Performance/2026-05-12-Auditoria-Inicial]]
-- [x] Crear notas por causa raíz (PERF-001..007, UX-001..004)
-- [ ] Confirmar heatmaps Clarity con datos reales (necesita acceso a panel)
-- [ ] Priorizar fixes en [[../Roadmap/00-Roadmap-Performance-Q2-2026]]
-- [ ] Re-medir Web Vitals 7 días post primeros fixes
+- Documentar hallazgos técnicos: [[../Performance/2026-05-12-Auditoria-Inicial]]
+- Crear notas por causa raíz (PERF-001..007, UX-001..004)
+- Confirmar heatmaps Clarity con datos reales (necesita acceso a panel)
+- Priorizar fixes en [[../Roadmap/00-Roadmap-Performance-Q2-2026]]
+- Re-medir Web Vitals 7 días post primeros fixes
 
 ## Próximas lecturas Clarity programadas
 

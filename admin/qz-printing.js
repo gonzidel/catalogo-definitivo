@@ -1,6 +1,7 @@
 // admin/qz-printing.js
 // Módulo compartido: única fuente de carga, firma y conexión QZ Tray
-import { SUPABASE_URL, QZ_SIGN_SECRET } from "../scripts/config.js";
+import { SUPABASE_URL } from "../scripts/config.js";
+import { supabase } from "../scripts/supabase-client.js";
 
 const QZ_CERT_URL = "/certs/qz-site.crt";
 const QZ_TRAY_SCRIPT_SRC = "https://cdn.jsdelivr.net/npm/qz-tray@2.2.5/qz-tray.js";
@@ -376,14 +377,14 @@ export async function setupQZSignature() {
         throw new Error("toSign inválido o vacío");
       }
 
-      const secret =
-        (typeof QZ_SIGN_SECRET !== "undefined" ? QZ_SIGN_SECRET : "") ||
-        (typeof window !== "undefined" ? window.QZ_SIGN_SECRET : "") ||
-        "";
-      if (!secret) {
-        throw new Error(
-          "QZ_SIGN_SECRET no configurado. Agrega QZ_SIGN_SECRET en scripts/config.local.js"
-        );
+      if (!supabase || !supabase.auth) {
+        throw new Error("Cliente Supabase no disponible para firmar con QZ");
+      }
+
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token || "";
+      if (sessionError || !accessToken) {
+        throw new Error("Sesión Supabase requerida para firmar con QZ");
       }
 
       console.log("[QZ] sign request sent");
@@ -393,8 +394,8 @@ export async function setupQZSignature() {
         res = await fetch(`${SUPABASE_URL}/functions/v1/qz-sign`, {
           method: "POST",
           headers: {
+            "Authorization": `Bearer ${accessToken}`,
             "Content-Type": "text/plain;charset=utf-8",
-            "x-qz-secret": secret,
           },
           body: toSign,
         });

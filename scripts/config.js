@@ -49,10 +49,9 @@ let SUPABASE_ANON_KEY =
   typeof window !== "undefined" && window.SUPABASE_ANON_KEY
     ? cleanWindowValue(window.SUPABASE_ANON_KEY)
     : "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR0ZnpuZXd3dnNhZGtvcnh3emZ0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjA1MTIyNzUsImV4cCI6MjA3NjA4ODI3NX0.vJguBGhezUKtJbRA6GUkBxH8IltfdbMiPKWX9vHTlOo";
-let QZ_SIGN_SECRET =
-  typeof window !== "undefined" && window.QZ_SIGN_SECRET
-    ? cleanWindowValue(window.QZ_SIGN_SECRET)
-    : "";
+// No exponer secretos de firma en el navegador. La firma QZ se autoriza con JWT
+// contra la Edge Function y el secreto privado vive solo en Supabase.
+let QZ_SIGN_SECRET = "";
 
 // Configuración optimizada: Supabase habilitado con fallback a Google Sheets
 let USE_SUPABASE = true; // HABILITADO: Usar Supabase como fuente principal
@@ -193,7 +192,7 @@ const configReady = (async () => {
 
     // Solo intentar cargar config.local.js si SUPABASE_ANON_KEY está vacío
     // En producción, config.js ya tiene las credenciales directamente
-    // CAMBIO: Siempre intentamos cargar config.local.js si estamos en entorno local para buscar secretos como QZ_SIGN_SECRET
+    // En local se permiten overrides no sensibles, manteniendo secretos fuera del navegador.
     if (local || !SUPABASE_ANON_KEY || SUPABASE_ANON_KEY === "") {
       try {
         const loc = await import("./config.local.js");
@@ -202,11 +201,6 @@ const configReady = (async () => {
             SUPABASE_URL = loc.SUPABASE_URL;
           if (typeof loc.SUPABASE_ANON_KEY === "string" && loc.SUPABASE_ANON_KEY)
             SUPABASE_ANON_KEY = loc.SUPABASE_ANON_KEY;
-          if (typeof loc.QZ_SIGN_SECRET === "string" && loc.QZ_SIGN_SECRET) {
-            QZ_SIGN_SECRET = loc.QZ_SIGN_SECRET;
-            if (typeof window !== "undefined") window.QZ_SIGN_SECRET = QZ_SIGN_SECRET;
-          }
-
           if (typeof loc.USE_SUPABASE !== "undefined") USE_SUPABASE = loc.USE_SUPABASE;
           if (typeof loc.USE_OPEN_SHEET_FALLBACK !== "undefined")
             USE_OPEN_SHEET_FALLBACK = loc.USE_OPEN_SHEET_FALLBACK;

@@ -99,8 +99,12 @@ FYL-Product/
 ### Roadmap
 
 - [[00-Roadmap-Performance-Q2-2026]] — orden propuesto de fixes derivados de la auditoría
-- [[FASE-1A-Estabilizacion-UX-2026-05-12]] — **fase en curso** · estabilización UX · T1+T2+T3+T4 aplicados en ambos entrypoints · pendiente `npm run build` + smoke + deploy
+- [[FASE-1A-Estabilizacion-UX-2026-05-12]] — **fase en curso** · estabilización UX · T1+T2+T3+T4 aplicados en ambos entrypoints · build/smoke post-build validados · pendiente push/deploy + medición
 - [[FASE-1B-Render-Feedback]] — placeholder · feedback de cambio de categoría (gatillado por hallazgo UX-005 en smoke 1A)
+
+### Deploys / predeploy
+
+- [[Deploys/DEP-2026-05-12-v01-FASE-1A-Predeploy]] — bitácora de lo hecho, reparado y validado antes de push/deploy (`m260514`).
 
 ### Métricas
 

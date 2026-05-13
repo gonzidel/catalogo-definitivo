@@ -1,0 +1,38 @@
+---
+description: Supabase production safety protocol for FYL
+alwaysApply: true
+---
+
+# FYL Supabase Production Safety
+
+For the live Supabase project, read-only checks are allowed without extra approval:
+
+- `SELECT`
+- `EXPLAIN`
+- policy/grant/RLS inspection
+- logs/advisors
+- REST/RPC probes that do not mutate data
+
+Before executing any production change, the agent must show the exact SQL/command and wait for explicit user approval.
+
+This applies to:
+
+- `ALTER`, `DROP`, `DELETE`, `UPDATE`, `INSERT`, `TRUNCATE`
+- `REVOKE`, `GRANT`
+- `CREATE POLICY`, `ALTER POLICY`, `DROP POLICY`
+- `CREATE OR REPLACE FUNCTION`, `ALTER FUNCTION`
+- `CREATE INDEX`, including `CREATE INDEX CONCURRENTLY`
+- Edge Function deploys
+- Supabase secrets changes
+- Storage policy changes
+- any checkout, stock, order, cart, customer, RLS or auth mutation
+
+For proposed production changes, include:
+
+- exact SQL or command
+- affected objects
+- risk level
+- rollback plan
+- post-change verification
+
+Never run destructive or stock/checkout-affecting SQL in production without explicit approval and a staging/fixture plan.

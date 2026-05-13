@@ -11,10 +11,9 @@ export const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 export const SUPABASE_SERVICE_ROLE_KEY = ""; // Coloca aquí tu service_role key
 export const USE_SUPABASE = true;
 
-// Secreto compartido para firma QZ Tray (impresión de etiquetas)
-// Obténlo en: Supabase Dashboard → Edge Functions → qz-sign → Secrets → QZ_SIGN_SECRET
-// ⚠️ NUNCA compartas este valor - permite firmar solicitudes de impresión
-export const QZ_SIGN_SECRET = ""; // Coloca aquí tu QZ_SIGN_SECRET
+// La firma QZ usa JWT del usuario contra la Edge Function.
+// No coloques QZ_SIGN_SECRET en archivos del navegador.
+export const QZ_SIGN_SECRET = "";
 export const USE_OPEN_SHEET_FALLBACK = false;
 
 // Configuración de WhatsApp

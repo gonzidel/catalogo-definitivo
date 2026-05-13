@@ -1,2 +1,2 @@
 [functions.qz-sign]
-verify_jwt = false
+verify_jwt = true

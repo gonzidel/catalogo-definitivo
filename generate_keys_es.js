@@ -51,7 +51,7 @@ CN = QZ Tray Certificate
     // Verify matching
     console.log("Keys generated fresh. They are guaranteed to match.");
     console.log("Use this command to update supabase:");
-    console.log(`npx supabase secrets set QZ_PRIVATE_KEY_B64=${privateKeyB64} QZ_SIGN_SECRET=a8cc79b81b8552702d7deccbef31c1eea7a30043b032d136a8eb4671614b5b75`);
+    console.log(`npx supabase secrets set QZ_PRIVATE_KEY_B64=${privateKeyB64}`);
 
 } catch (error) {
     console.error("❌ OpenSSL failed or not found:", error.message);

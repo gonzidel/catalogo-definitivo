@@ -2,11 +2,12 @@
 
 - **Fecha inicio:** 2026-05-12
 - **Owner:** dev
-- **Estado:** ✅ T1 · T2 · T3 · T4 aplicados en ambos entrypoints · ⏳ pendiente `npm run build` + smoke post-build + deploy + medición
+- **Estado:** ✅ T1 · T2 · T3 · T4 aplicados en ambos entrypoints · ✅ `npm run build` + smoke post-build validados · ⏳ pendiente push/deploy + medición
 - **Alcance:** sólo dead clicks, rage clicks y percepción mobile. **No** se toca render, scroll, Supabase ni filtros.
 - **Origen:** [[../Performance/2026-05-12-Auditoria-Inicial]]
 - **Branch:** `main` (commits locales no pusheados)
 - **Regla arquitectónica derivada:** [[../Decisiones/DEC-001-Paridad-Catalogo-Index]] — descubierta mientras se cerraba FASE 1A. Toda mejora UX/perf debe aplicarse a `index.html` Y `catalogo.html` (los dos entrypoints del catálogo).
+- **Bitácora predeploy:** [[../Deploys/DEP-2026-05-12-v01-FASE-1A-Predeploy]]
 
 > Regla: cambios mínimos, aislados, reversibles. Un solo deploy por tarea idealmente. Si una tarea se complica más de su esfuerzo estimado, parar y reabrir plan.
 
@@ -15,12 +16,13 @@
 ## Tareas
 
 
-| ID                                    | Doc origen                                                 | Esfuerzo | Riesgo | Estado                                                  |
-| ------------------------------------- | ---------------------------------------------------------- | -------- | ------ | ------------------------------------------------------- |
-| T1 — `styles-desktop.css` con `media` | [[../Performance/PERF-006-Styles-Desktop-Render-Blocking]] | XS       | bajo   | 🟡 en disco en ambos archivos · sin commit · ver nota T1 abajo |
-| T2 — Overlay boot no-bloqueante       | [[../UX/UX-001-Overlay-Boot-Bloquea-Interaccion]]          | S        | medio  | ✅ commit `d2c6ab5` · vía `styles.css` compartido · llega a ambos entrypoints |
-| T3 — Handlers críticos no diferidos   | [[../UX/UX-002-Handlers-Diferidos-Header-FAB]]             | S        | medio  | ✅ `index.html` commit `3cb7f70` · `catalogo.html` cumplido por construcción (ver nota paridad) |
+| ID                                    | Doc origen                                                 | Esfuerzo | Riesgo | Estado                                                                                                              |
+| ------------------------------------- | ---------------------------------------------------------- | -------- | ------ | ------------------------------------------------------------------------------------------------------------------- |
+| T1 — `styles-desktop.css` con `media` | [[../Performance/PERF-006-Styles-Desktop-Render-Blocking]] | XS       | bajo   | 🟡 en disco en ambos archivos · sin commit · ver nota T1 abajo                                                      |
+| T2 — Overlay boot no-bloqueante       | [[../UX/UX-001-Overlay-Boot-Bloquea-Interaccion]]          | S        | medio  | ✅ commit `d2c6ab5` · vía `styles.css` compartido · llega a ambos entrypoints                                        |
+| T3 — Handlers críticos no diferidos   | [[../UX/UX-002-Handlers-Diferidos-Header-FAB]]             | S        | medio  | ✅ `index.html` commit `3cb7f70` · `catalogo.html` cumplido por construcción (ver nota paridad)                      |
 | T4 — Onboarding respeta interacción   | [[../UX/UX-003-Onboarding-Roba-Tap]]                       | XS       | bajo   | ✅ `scripts/catalog-onboarding.js` commit `ea494c9` · `catalogo.html` cumplido por construcción (no carga el script) |
+
 
 ## Paridad index.html ↔ catalogo.html (FASE 1A)
 
@@ -28,12 +30,14 @@
 
 Estado real de FASE 1A en cada entrypoint, validado contra el código al 2026-05-12:
 
-| Tarea | `index.html` (dev / futuro) | `catalogo.html` (producción actual) | Estado de paridad |
-|---|---|---|---|
-| **T1** styles-desktop `media=` | 🟡 línea 15 con `media="(min-width: 1024px)"` (en disco, sin commit, ver nota T1) | 🟡 línea 15 con `media="(min-width: 1024px)"` (en disco, sin commit, comentario marcando FASE 1A · T1) | ✅ paridad lograda |
-| **T2** overlay no bloqueante | ✅ vía `styles.css` (`body.catalog-boot-active { overflow: auto }`, overlay `pointer-events: none`, dots `pointer-events: auto`) | ✅ vía `styles.css` (archivo compartido) | ✅ paridad por archivo compartido |
-| **T3** handlers críticos inmediatos | ✅ commit `3cb7f70`: `whatsapp.js` y `notifications.js` movidos del batch +1300ms al batch inmediato del `__fylLoadDeferred` | ✅ por construcción: `whatsapp.js` ya carga como `<script defer>` clásico fuera del `__fylLoadDeferred` (línea 1121, ejecuta apenas DOM parseado, más temprano aún). `notifications.js` y `auth-status.js` **no se importan** (la versión pública no tiene esos componentes — diferencia permitida por DEC-001). | ✅ paridad de efecto (handlers responden ≤ momento equivalente) |
-| **T4** onboarding menos invasivo | ✅ commit `ea494c9`: `OPEN_DELAY_MS` 3000→6000, abort en `pointerdown / touchstart / scroll / hashchange` | ✅ por construcción: `catalog-onboarding.js` **no se importa** en `catalogo.html` (no hay `#catalog-onboarding` ni el script). La forma más extrema de "menos invasivo" = no aparecer. Diferencia permitida por DEC-001. | ✅ paridad de efecto (no roba taps en ninguno) |
+
+| Tarea                               | `index.html` (dev / futuro)                                                                                                     | `catalogo.html` (producción actual)                                                                                                                                                                                                                                                                             | Estado de paridad                                              |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| **T1** styles-desktop `media=`      | 🟡 línea 15 con `media="(min-width: 1024px)"` (en disco, sin commit, ver nota T1)                                               | 🟡 línea 15 con `media="(min-width: 1024px)"` (en disco, sin commit, comentario marcando FASE 1A · T1)                                                                                                                                                                                                          | ✅ paridad lograda                                              |
+| **T2** overlay no bloqueante        | ✅ vía `styles.css` (`body.catalog-boot-active { overflow: auto }`, overlay `pointer-events: none`, dots `pointer-events: auto`) | ✅ vía `styles.css` (archivo compartido)                                                                                                                                                                                                                                                                         | ✅ paridad por archivo compartido                               |
+| **T3** handlers críticos inmediatos | ✅ commit `3cb7f70`: `whatsapp.js` y `notifications.js` movidos del batch +1300ms al batch inmediato del `__fylLoadDeferred`     | ✅ por construcción: `whatsapp.js` ya carga como `<script defer>` clásico fuera del `__fylLoadDeferred` (línea 1121, ejecuta apenas DOM parseado, más temprano aún). `notifications.js` y `auth-status.js` **no se importan** (la versión pública no tiene esos componentes — diferencia permitida por DEC-001). | ✅ paridad de efecto (handlers responden ≤ momento equivalente) |
+| **T4** onboarding menos invasivo    | ✅ commit `ea494c9`: `OPEN_DELAY_MS` 3000→6000, abort en `pointerdown / touchstart / scroll / hashchange`                        | ✅ por construcción: `catalog-onboarding.js` **no se importa** en `catalogo.html` (no hay `#catalog-onboarding` ni el script). La forma más extrema de "menos invasivo" = no aparecer. Diferencia permitida por DEC-001.                                                                                         | ✅ paridad de efecto (no roba taps en ninguno)                  |
+
 
 **Decisión sobre T3 y T4 en `catalogo.html`:** **NO se portan literalmente** porque los scripts implicados (`notifications.js`, `auth-status.js`, `catalog-onboarding.js`) **no existen** en `catalogo.html` por diseño consciente (DEC-001 los lista como "diferencias permitidas"). El efecto de FASE 1A (no robar interacción durante boot) está cumplido en `catalogo.html` por construcción.
 
@@ -49,7 +53,6 @@ Por eso T1 **no se puede commitear como FASE 1A puro** sin arrastrar tu WIP prev
 - **Opción B — dos commits separados**: primero `chore: add styles-desktop experimental layer` (sin `media=`), después `[FASE 1A][T1] styles-desktop async mobile-safe` (agregando `media=`). Implica deployar styles-desktop bloqueante por un momento — no recomendado.
 
 Para el smoke ya validado, T1 está activo localmente: en mobile, `styles-desktop.css` se descarga con prioridad lowest y no bloquea render. La diferencia entre commitear vs no commitear sólo afecta el historial git, no el comportamiento actual.
-
 
 ---
 
@@ -335,12 +338,12 @@ Cada deploy debe:
 ## Tracking de progreso
 
 
-| Tarea | Commit                                         | Aplicado en                                | Deploy    | LCP antes / después | INP antes / después | Dead clicks antes / después | Notas                                                                                                          |
-| ----- | ---------------------------------------------- | ------------------------------------------ | --------- | ------------------- | ------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| T1    | 🟡 sin commit · en disco en ambos             | `index.html` + `catalogo.html`             | pendiente | ~10s / —            | ~1300ms / —         | alto / —                    | `media="(min-width: 1024px)"` agregado al link en ambos. Commit pendiente porque la línea base estaba en WIP previo |
-| T2    | ✅ `d2c6ab5` · 2026-05-12                       | `styles.css` (compartido) → ambos          | pendiente | —                   | —                   | —                           | `body.catalog-boot-active { overflow:auto }` + `pointer-events:none` en overlay; `pointer-events:auto` en dots |
-| T3    | ✅ `3cb7f70` · 2026-05-12                       | `index.html` · `catalogo.html` por construcción | pendiente | —                   | —                   | —                           | `whatsapp.js` y `notifications.js` al batch inmediato. `catalogo.html` ya tenía `whatsapp.js` como `<script defer>` clásico |
-| T4    | ✅ `ea494c9` · 2026-05-12                       | `scripts/catalog-onboarding.js` (solo `index.html` lo carga) | pendiente | —                   | —                   | —                           | `OPEN_DELAY_MS` 3000→6000; abort en `pointerdown/touchstart/scroll/hashchange`. `catalogo.html` no carga el script |
+| Tarea | Commit                            | Aplicado en                                                  | Deploy    | LCP antes / después | INP antes / después | Dead clicks antes / después | Notas                                                                                                                       |
+| ----- | --------------------------------- | ------------------------------------------------------------ | --------- | ------------------- | ------------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| T1    | 🟡 sin commit · en disco en ambos | `index.html` + `catalogo.html`                               | pendiente | ~10s / —            | ~1300ms / —         | alto / —                    | `media="(min-width: 1024px)"` agregado al link en ambos. Commit pendiente porque la línea base estaba en WIP previo         |
+| T2    | ✅ `d2c6ab5` · 2026-05-12          | `styles.css` (compartido) → ambos                            | pendiente | —                   | —                   | —                           | `body.catalog-boot-active { overflow:auto }` + `pointer-events:none` en overlay; `pointer-events:auto` en dots              |
+| T3    | ✅ `3cb7f70` · 2026-05-12          | `index.html` · `catalogo.html` por construcción              | pendiente | —                   | —                   | —                           | `whatsapp.js` y `notifications.js` al batch inmediato. `catalogo.html` ya tenía `whatsapp.js` como `<script defer>` clásico |
+| T4    | ✅ `ea494c9` · 2026-05-12          | `scripts/catalog-onboarding.js` (solo `index.html` lo carga) | pendiente | —                   | —                   | —                           | `OPEN_DELAY_MS` 3000→6000; abort en `pointerdown/touchstart/scroll/hashchange`. `catalogo.html` no carga el script          |
 
 
 Actualizar este bloque tras cada deploy. Métricas → ver [[../Metricas/00-KPIs-Catalogo]].
@@ -380,15 +383,17 @@ Actualizar este bloque tras cada deploy. Métricas → ver [[../Metricas/00-KPIs
   - `/catalogo` → 200, body de `catalogo.html` (48377 bytes, mismo ETag que `/catalogo.html`).
   - ⚠️ Firebase emulator local no aplica los `redirects` 301 (`/` → `/catalogo`) ni los `headers` Cache-Control de `firebase.json`. Es limitación conocida del emulator, **en producción Firebase Hosting sí los aplica**.
 
-**Conclusión smoke post-build**: FASE 1A sobre `catalogo.html` funciona como esperado. Cache-bust limpio, sin imports rotos. Listo para push/deploy (cuando el usuario decida).
+**Conclusión smoke post-build**: FASE 1A sobre `catalogo.html` funciona como esperado. Cache-bust limpio, sin imports rotos. Listo para push/deploy (cuando el usuario decida). Ver bitácora resumida en [[../Deploys/DEP-2026-05-12-v01-FASE-1A-Predeploy]].
 
 ---
 
 ## Hallazgos del smoke (registrados, no resueltos en 1A)
 
-| Fecha | Hallazgo | Severidad | Doc |
-|---|---|---|---|
-| 2026-05-12 | Cambio de categoría sin feedback inmediato → doble tap percibido | alto | [[../UX/UX-005-Cambio-Categoria-Sin-Feedback]] → asociado a [[FASE-1B-Render-Feedback]] |
+
+| Fecha      | Hallazgo                                                         | Severidad | Doc                                                                                     |
+| ---------- | ---------------------------------------------------------------- | --------- | --------------------------------------------------------------------------------------- |
+| 2026-05-12 | Cambio de categoría sin feedback inmediato → doble tap percibido | alto      | [[../UX/UX-005-Cambio-Categoria-Sin-Feedback]] → asociado a [[FASE-1B-Render-Feedback]] |
+
 
 > Los hallazgos detectados durante el smoke **no se atacan en 1A**. Se documentan y se asocian a la fase correspondiente para no perder contexto.
 

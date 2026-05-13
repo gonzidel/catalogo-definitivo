@@ -22,6 +22,10 @@ Bitácora de deploys a producción. Usar [[../_Templates/Template-Deploy]]. **Un
 - [ ] Smoke producción mobile real en 5 minutos
 - [ ] Clarity sin spike 30 minutos post-deploy
 
+## Bitácoras
+
+- [[DEP-2026-05-12-v01-FASE-1A-Predeploy]] — FASE 1A UX/performance validada localmente con build real `m260514`; pendiente push/deploy.
+
 ## Vínculos
 
 - Plantilla: [[../_Templates/Template-Deploy]]

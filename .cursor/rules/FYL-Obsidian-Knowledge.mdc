@@ -1,0 +1,33 @@
+---
+description: Use FYL Obsidian documentation as project memory
+alwaysApply: true
+---
+
+# FYL Obsidian Knowledge
+
+Use project documentation as a memory layer when auditing, debugging, planning or changing FYL.
+
+Primary documentation locations:
+
+- `docs/FYL-Obsidian/`
+- `doc/`
+
+Before major audits or changes, search/read relevant Obsidian notes for context:
+
+- architecture, stock, orders, cart, public sales, admin, Supabase/RPCs
+- prior audits, decisions, runbooks, release gates, bugs, performance notes
+
+Treat Obsidian as useful context, not absolute truth:
+
+- if docs conflict with code, live Supabase evidence, migrations or current tests, trust current evidence
+- mention the drift internally in the work
+- update documentation when a fix changes real behavior, contracts, risks, flows or operating procedures
+
+When updating docs:
+
+- prefer editing the most relevant existing note instead of creating duplicates
+- create a new dated note only for new audits, hardening records, postmortems or runbooks
+- include what changed, why, evidence, verification, rollback/risk and remaining debt
+- keep docs useful for future agents and humans, not just a changelog
+
+For Supabase/security work, also keep `doc/hardening-supabase-2026-05-13.md` and the related `docs/FYL-Obsidian/*` audit/runbook notes in sync when relevant.

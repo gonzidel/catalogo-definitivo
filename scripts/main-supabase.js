@@ -25,6 +25,21 @@ import {
 
 await configReady;
 
+const CATALOG_AVAILABLE_VIEW = "catalog_public_available_view";
+const CATALOG_PUBLIC_SNAPSHOT = "catalog_public_snapshot";
+const CATALOG_PUBLIC_SELECT = '"Categoria", "Articulo", "Descripcion", "Color", "Numeracion", "FechaIngreso", "Mostrar", "Oferta", "Precio", "Imagen Principal", "Imagen 1", "Imagen 2", "Imagen 3", "Filtro1", "Filtro2", "Filtro3", "OfertaActiva", "PrecioOferta", "PromoActiva", "OfferCampaignId", "OfferImageUrl", "OfferTitle", "ColorHex", "ColorDisplayNumber", "SupplierCode"';
+
+function getCatalogAvailableSource() {
+  try {
+    const localOverride = typeof localStorage !== "undefined"
+      ? localStorage.getItem("FYL_USE_CATALOG_SNAPSHOT")
+      : null;
+    if (localOverride === "0" || localOverride === "false") return CATALOG_AVAILABLE_VIEW;
+    if (typeof window !== "undefined" && window.FYL_USE_CATALOG_SNAPSHOT === false) return CATALOG_AVAILABLE_VIEW;
+  } catch (_e) {}
+  return CATALOG_PUBLIC_SNAPSHOT;
+}
+
 function fylCatalogTrackViewItemList(contextKey, groupedProducts, itemListName) {
   try {
     if (!fylAnalytics.isReady()) return;
@@ -585,7 +600,7 @@ async function cargarDesdeSupabase(cat) {
 
     // [PERF] Query de validacion de categorias eliminada (era solo diagnostico).
 
-    const createCatalogQuery = () => supabase.from("catalog_public_available_view").select("*");
+    const createCatalogQuery = () => supabase.from(getCatalogAvailableSource()).select(CATALOG_PUBLIC_SELECT);
 
     if (cat === "Novedades" || cat === "Ofertas" || cat === "all") {
       // Para categorías especiales o 'all', cargar todas las categorías
@@ -653,7 +668,7 @@ async function cargarDesdeSupabase(cat) {
         // Obtener todos los tags únicos de "Otros" (Filtro1, Filtro2, Filtro3)
         try {
           const { data: otrosTags, error: tagsError } = await supabase
-            .from("catalog_public_available_view")
+            .from(getCatalogAvailableSource())
             .select("Filtro1, Filtro2, Filtro3")
             .eq("Categoria", "Otros");
           
@@ -3095,14 +3110,14 @@ async function buscarPorSKUEnSupabase(sku, { signal } = {}) {
       try {
         let catRows = null;
         const rCat = await wrapSupabase(
-          () => supabase.from("catalog_public_available_view").select("*").eq("Articulo", articulo),
+          () => supabase.from(getCatalogAvailableSource()).select(CATALOG_PUBLIC_SELECT).eq("Articulo", articulo),
           { retries: 1, signal, label: "pdp.catalog_view_exact" }
         );
         if (!rCat.aborted && !rCat.error && rCat.data?.length) {
           catRows = rCat.data;
         } else if (!rCat.aborted && !rCat.error) {
           const rCatI = await wrapSupabase(
-            () => supabase.from("catalog_public_available_view").select("*").ilike("Articulo", articulo),
+            () => supabase.from(getCatalogAvailableSource()).select(CATALOG_PUBLIC_SELECT).ilike("Articulo", articulo),
             { signal, label: "pdp.catalog_view_ilike" }
           );
           if (!rCatI.aborted && !rCatI.error && rCatI.data?.length) catRows = rCatI.data;
@@ -3888,7 +3903,7 @@ async function getRecoCandidates(productoActual, limit = 8) {
       if (f2) parts.push(`Filtro2.eq.${JSON.stringify(f2)}`);
       const { data, error } = await supabase
         .from('catalog_public_view')
-        .select('*')
+        .select(CATALOG_PUBLIC_SELECT)
         .or(parts.join(','))
         .limit(20);
       if (!error && data) candidates = data;
@@ -6381,8 +6396,8 @@ async function existeNovedades() {
     // La vista devuelve Mostrar como booleano true, no como string "TRUE"
     // Por eso no usamos .eq() aquí, sino que filtramos después
     const { data, error } = await supabase
-      .from("catalog_public_available_view")
-      .select("*");
+      .from(getCatalogAvailableSource())
+      .select(CATALOG_PUBLIC_SELECT);
 
     if (error) throw error;
 
@@ -6409,7 +6424,7 @@ async function existeOfertas() {
     }
 
     const { data, error } = await supabase
-      .from("catalog_public_available_view")
+      .from(getCatalogAvailableSource())
       .select("Oferta, Mostrar")
       .limit(4000);
 
@@ -6538,7 +6553,7 @@ async function inicializarCatalogo() {
     if (similaresParam === '1' && articuloParam && articuloParam.trim()) {
       try {
         const { data: productoData } = await supabase
-          .from("catalog_public_available_view")
+          .from(getCatalogAvailableSource())
           .select("Filtro1, Filtro2, Filtro3")
           .eq("Articulo", articuloParam.trim())
           .maybeSingle();
@@ -6562,7 +6577,7 @@ async function inicializarCatalogo() {
       // Verificar si es un tag de "Otros" (buscar en Filtro1, Filtro2, Filtro3)
       try {
         const { data: otrosTags, error: tagsError } = await supabase
-          .from("catalog_public_available_view")
+          .from(getCatalogAvailableSource())
           .select("Filtro1, Filtro2, Filtro3")
           .eq("Categoria", "Otros");
         

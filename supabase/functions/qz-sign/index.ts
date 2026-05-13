@@ -1,10 +1,11 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "", // Dynamic
   "Vary": "Origin",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "content-type, x-qz-secret",
+  "Access-Control-Allow-Headers": "authorization, content-type, x-client-info, apikey",
   "Access-Control-Max-Age": "86400",
 };
 
@@ -24,6 +25,39 @@ function getCorsHeaders(req: Request) {
     ...corsHeaders,
     "Access-Control-Allow-Origin": allowOrigin,
   };
+}
+
+async function assertAdmin(req: Request) {
+  const authHeader = req.headers.get("authorization") || "";
+  if (!authHeader.toLowerCase().startsWith("bearer ")) {
+    throw new Response("Unauthorized: missing bearer token", { status: 401 });
+  }
+
+  const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
+  if (!supabaseUrl || !anonKey) {
+    throw new Response("Server misconfigured: missing Supabase auth env", { status: 500 });
+  }
+
+  const supabaseAuth = createClient(supabaseUrl, anonKey, {
+    global: { headers: { Authorization: authHeader } },
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+
+  const { data: { user }, error: userError } = await supabaseAuth.auth.getUser();
+  if (userError || !user) {
+    throw new Response("Unauthorized: invalid token", { status: 401 });
+  }
+
+  const { data: adminRow, error: adminError } = await supabaseAuth
+    .from("admins")
+    .select("id")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (adminError || !adminRow) {
+    throw new Response("Forbidden: admin required", { status: 403 });
+  }
 }
 
 // Robust Key Normalization
@@ -86,15 +120,17 @@ serve(async (req) => {
   }
 
   try {
-    // 1. Authentication (Shared Secret) - NO JWT
-    const QZ_SIGN_SECRET = Deno.env.get("QZ_SIGN_SECRET");
-    if (QZ_SIGN_SECRET) {
-      const xSecret = req.headers.get("x-qz-secret");
-      if (!xSecret || xSecret !== QZ_SIGN_SECRET) {
-        return new Response("Unauthorized: Missing or invalid x-qz-secret", { status: 401, headers });
+    // 1. Authentication: JWT + admin row. No shared secret in browser.
+    try {
+      await assertAdmin(req);
+    } catch (authResponse) {
+      if (authResponse instanceof Response) {
+        return new Response(await authResponse.text(), {
+          status: authResponse.status,
+          headers,
+        });
       }
-    } else {
-      console.warn("QZ_SIGN_SECRET is not set in environment.");
+      throw authResponse;
     }
 
     // 2. Parse Body

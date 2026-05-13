@@ -4,6 +4,7 @@
 
 | Tema | Archivo |
 |------|---------|
+| Registro de vulnerabilidades, fixes Supabase y evidencia post-hardening | `doc/hardening-supabase-2026-05-13.md` |
 | Visibilidad del index, vista nueva, checklist, queries | `doc/catalogo/catalogo-visibilidad.md` |
 | Fuente canonica de stock, derivadas, riesgos | `doc/stock/stock-arquitectura.md` |
 | Este resumen y flujo extremo a extremo | `doc/arquitectura-general.md` |
@@ -13,14 +14,15 @@
 Flujo correcto actual:
 
 1. DB (stock canonico y reservas)
-2. Vista publica de disponibilidad (`catalog_public_available_view`)
+2. Snapshot publico preferido (`catalog_public_snapshot`) con fallback temporal a `catalog_public_available_view`
 3. Frontend (`scripts/main-supabase.js`)
 4. Enriquecimiento UI de stock por talle (`enrichProductsWithStock`)
 
 ## Punto clave
 
 - `catalog_public_view` NO debe considerarse fuente valida de disponibilidad real.
-- `catalog_public_available_view` es la vista destinada a visibilidad publica basada en stock real.
+- `catalog_public_snapshot` es la fuente publica preferida post-hardening.
+- `catalog_public_available_view` queda como compatibilidad temporal basada en stock real.
 
 ## Reglas de negocio de publicacion (index)
 

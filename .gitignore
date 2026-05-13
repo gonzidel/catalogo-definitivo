@@ -101,3 +101,6 @@ supabase/.temp/
 # Config local de herramientas (no versionar)
 .claude/
 .obsidian/
+
+# Salidas locales de auditorías / probes (pueden incluir metadatos sensibles)
+audit-output/

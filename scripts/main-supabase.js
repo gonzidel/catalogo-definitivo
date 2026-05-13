@@ -5685,6 +5685,13 @@ async function cambiarCategoria(cat) {
       refreshCatalogFilterBar();
     }
 
+    // [FASE 1B-A · T2] Guard de obsolescencia tras clearSearch: si otra cat tomó
+    // el lock mientras esperábamos, abandonar antes de pintar nada del flujo viejo.
+    if (_categoryRequestSeq !== mySeq) {
+      fylCatalogDbg("⛔ cambiarCategoria: abandonada por request más reciente (pre-render):", cat);
+      return;
+    }
+
     // Inicio (all): la barra móvil usa .quick-action-btn + .category-chip--active, no .menu; limpiar selección visual.
     if (cat === "all") {
       document.querySelectorAll(".quick-action-btn").forEach((btn) => btn.classList.remove("category-chip--active"));
@@ -5711,6 +5718,15 @@ async function cambiarCategoria(cat) {
 
     // SIEMPRE actualizar el grid a la nueva categoría (aunque el modal esté abierto)
     await runWithViewTransition(() => cargarCategoria(cat));
+
+    // [FASE 1B-A · T2] Guard de obsolescencia tras render: si llegó otra cat
+    // mientras pintábamos, NO escribimos URL ni cerramos feedback (el flujo
+    // más reciente lo hará por nosotros). Evita "categoría escribió URL vieja"
+    // cuando el usuario cambia de Calzado→Ropa antes de que Calzado termine.
+    if (_categoryRequestSeq !== mySeq) {
+      fylCatalogDbg("⛔ cambiarCategoria: abandonada por request más reciente (post-render):", cat);
+      return;
+    }
 
     // Actualizar URL con slug, preservando sku existente
     // NO cerrar modal si está abierto (productoActualEnModal ya se mantiene)

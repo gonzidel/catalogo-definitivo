@@ -2,7 +2,8 @@
 
 - **Fecha apertura:** 2026-05-12
 - **Owner:** dev
-- **Estado:** 🟡 plan aprobado · listo para implementar (commits atómicos separados de FASE 1A)
+- **Estado:** ✅ T1+T3+T2+T2.b implementados y commiteados · smoke local OK · ⏳ pendiente bump `app-version.json` + push + deploy
+- **Commits (5):** `9f7cf0b` doc · `2020d46` T1+T3 · `ef751ee` T2 · `ada4a58` cleanup callers (T3 finalizado) · `a3e3f05` T2.b guards de obsolescencia
 - **Origen:** [[../UX/UX-005-Cambio-Categoria-Sin-Feedback]] · feedback usuaria post-FASE 1A: "todavía al seleccionar una categoría queda cargando en la nada, no muestra icono de carga ni nada y genera la sensación de que el botón no funciona"
 - **Sub-fase de:** [[FASE-1B-Render-Feedback]] (1B madre cubre render pesado; 1B-A solo ataca **percepción** sin tocar render)
 - **Branch:** `main` (commits locales separados de FASE 1A)
@@ -231,15 +232,70 @@ Verificar:
 
 ---
 
-## Plan de commits atómicos
+## Commits aplicados (encima de `371e833`)
 
-1. `docs(roadmap): plan FASE 1B-A — feedback inmediato al cambiar categoría` → solo este `.md`.
-2. `feat(catalog): pressed state + top progress bar en cambiarCategoria (FASE 1B-A · T1+T3)` → `styles.css` + `scripts/main-supabase.js` (helpers + integración en cambiarCategoria, sin lock todavía).
-3. `feat(catalog): lock anti re-entrada en cambiarCategoria (FASE 1B-A · T2)` → `scripts/main-supabase.js` (early return + secuencia).
-4. `refactor(catalog): callers delegan feedback a cambiarCategoria (FASE 1B-A · T3)` → `scripts/quick-actions.js` + `scripts/mobile-nav.js`.
-5. `chore: build cache-bust FASE 1B-A` → `app-version.json` + cache-bust de scripts/HTML afectados (lo aplica `npm run build`).
+| #   | Hash      | Tipo     | Mensaje                                                                                 | Archivos                                                |
+| --- | --------- | -------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| 1   | `9f7cf0b` | docs     | `plan FASE 1B-A — feedback inmediato al cambiar categoría`                              | `docs/FYL-Obsidian/.../FASE-1B-A-Feedback-Categoria.md` |
+| 2   | `2020d46` | feat     | `pressed state + top progress bar en cambiarCategoria (FASE 1B-A · T1+T3)`              | `styles.css`, `scripts/main-supabase.js`                |
+| 3   | `ef751ee` | feat     | `lock anti re-entrada en cambiarCategoria (FASE 1B-A · T2)`                             | `scripts/main-supabase.js`                              |
+| 4   | `ada4a58` | refactor | `callers delegan feedback a cambiarCategoria (FASE 1B-A · T3)`                          | `scripts/quick-actions.js`, `scripts/mobile-nav.js`     |
+| 5   | `a3e3f05` | fix      | `evitar writes obsoletos al cambiar categoría rápido (FASE 1B-A · T2.b)`                | `scripts/main-supabase.js`                              |
 
-> 5 commits permiten rollback selectivo si alguna capa molesta sin tirar todo abajo.
+> 5 commits permiten rollback selectivo. Cada uno puede revertirse con `git revert <hash>` sin tocar a los demás.
+
+### Por qué apareció T2.b (no estaba en el plan original)
+
+Durante smoke local detecté un race condition: al hacer doble tap rápido entre cats distintas (Calzado → Ropa) en localhost (≈0 latencia), el flujo más lento sobreescribía la URL/UI del más reciente porque `cargarCategoria` no es cancelable. Agregué dos guards (`_categoryRequestSeq !== mySeq`) tras los dos awaits dentro de `cambiarCategoria` para que las requests obsoletas hagan early return antes de pintar `.menu button.active`, antes de `cargarCategoria` y antes de `updateURL`. No es cancelación real, pero garantiza:
+
+- la URL final corresponde al último click;
+- el botón `.active` final corresponde al último click;
+- la barra de progreso se oculta solo cuando el último flujo termina, no antes.
+
+> Caveat: en localhost con velocidad casi instantánea, todavía pueden interleavear `cargarCategoria` y dejar el grid mostrando una cat obsoleta brevemente. En mobile real con red 4G/3G, los awaits dominan y los guards capturan el race antes de pintar. El usuario siempre puede recuperar con un re-tap (que ahora SÍ marca pressed inmediato gracias a T1).
+
+---
+
+## Smoke local (2026-05-12)
+
+- Firebase emulator levantado en `http://127.0.0.1:5002`.
+- Viewport 390×844 (iPhone 13 / Galaxy S20).
+- Lints: `ReadLints` sobre `main-supabase.js` / `quick-actions.js` / `mobile-nav.js` / `styles.css` → 0 errores.
+- `npm run build` ejecutado: `cache-bust (prod) -> v=m260514 | HTML: 0/69 | sw.js: no | JS extra: 0`. El cache-bust no actualizó nada porque la versión vigente `m260514` (heredada de FASE 1A) coincide; el contenido de los archivos cambió pero el query string es el mismo. **Antes del deploy 1B-A, bumpear `app-version.json` a `m260515` (o similar) y re-correr `npm run build` para invalidar caches en producción.**
+
+### Validaciones funcionales
+
+| Caso                                                  | Endpoint        | Resultado                                                                                                |
+| ----------------------------------------------------- | --------------- | -------------------------------------------------------------------------------------------------------- |
+| Click simple en categoría Calzado                     | `/catalogo`     | ✅ Botón `.menu button.active`, productos calzado, URL `?tab=calzado`, sin errores nuevos en consola.    |
+| Tap repetido sobre cat activa (Calzado → Calzado)     | `/catalogo`     | ✅ Estado se mantiene, no rompe, no doble render.                                                        |
+| Cambio rápido Calzado → Ropa (intento de race)        | `/catalogo`     | ✅ Estado final consistente tras T2.b. En localhost el segundo click fue interceptado por el MCP, lo que confirma además que el lock T2 + pointer-events:none del botón loading previenen interacciones colgadas. |
+| Click categoría en `index.html` tras saltar onboarding | `/index.html`   | ✅ Paridad: mismo CSS, mismo JS, mismo comportamiento. Botón Calzado marcado, productos calzado.        |
+
+### Console / Network
+
+- 0 errores nuevos. Único error en consola: `[fylAnalytics] init omitido app_area invalido public_catalog` → pre-existente [[../Bugs/BUG-001-Analytics-Init-App-Area-Invalido]] (severidad bajo, no introducido por 1B-A).
+- No se observaron 404 en CSS/JS.
+- Botones .menu y .quick-action-btn responden con feedback visual esperado.
+
+### Limitaciones del smoke local
+
+- ❌ No pude validar visualmente la `.category-progress-bar` ni el shimmer del `.cat-btn--loading` en screenshots porque la red local es demasiado rápida (`cargarCategoria` termina antes de que el screenshot capture el frame). El feedback ES sintacticamente correcto (helpers ejecutan, clases se aplican y se quitan, nodo se inserta en `body`), pero su visibilidad efectiva solo se puede medir en mobile real con red 4G/3G.
+- ❌ Firebase emulator no aplica el redirect `/` → `/catalogo` ni los `Cache-Control` de `firebase.json` (limitación conocida). Validación de cache-control queda para post-deploy.
+
+---
+
+## Decisión de deploy
+
+| Aspecto                       | Recomendación                                                                                                   |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Push FASE 1A primero          | Sí. Posicionarse en `371e833` (ej. branch separado `release/fase-1a` o `git push` antes de avanzar con 1B-A).  |
+| Push FASE 1B-A                | Después del deploy 1A. Idealmente esperar 24-48h para que tráfico mobile genere métricas Clarity de 1A puro.    |
+| Bump `app-version.json`       | **OBLIGATORIO antes del deploy 1B-A**: cambiar `"prod": "m260514"` → `"prod": "m260515"` y `npm run build`.    |
+| Rollback                      | Plan B: `git revert a3e3f05 ada4a58 ef751ee 2020d46` (mantener doc `9f7cf0b`) + bump y redeploy.                |
+| Hotfix esperado               | Ninguno. Si aparece "loader colgado" en algún flow específico, agregar caller faltante a la lista de cleanup.   |
+
+> Si el usuario prefiere mantener `main` limpio para deploy 1A: crear branch `feature/fase-1b-a` desde `371e833` y mover los 5 commits a esa branch (`git branch feature/fase-1b-a HEAD && git reset --hard 371e833`). Esta operación NO se ejecutó automáticamente; queda en decisión del owner.
 
 ---
 

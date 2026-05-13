@@ -25,6 +25,29 @@ const PRODUCTS_PER_PAGE = 10; // Cantidad de productos a cargar por página
 let scrollListenerAttached = false; // Flag para evitar múltiples listeners
 let currentScrollHandler = null; // Referencia al handler de scroll actual
 
+function trackBannerProductClick({ banner, articulo, sku }) {
+  const payload = {
+    banner: String(banner || "unknown"),
+    articulo: String(articulo || ""),
+    sku: String(sku || ""),
+  };
+  try {
+    if (window.fylAnalytics?.isReady?.()) {
+      window.fylAnalytics.event("banner_product_click", payload);
+    }
+  } catch (_e) {}
+
+  const sendMeta = () => {
+    if (typeof fbq !== "function") return false;
+    fbq("trackCustom", "BannerProductClick", payload);
+    return true;
+  };
+  if (sendMeta()) return;
+  setTimeout(() => {
+    sendMeta();
+  }, 300);
+}
+
 // Cargar configuración del banner desde Supabase
 export async function loadCustomBannerConfig() {
   try {
@@ -545,6 +568,7 @@ function setupCustomBannerCardListeners(scrollContainer, startIndex = 0, endInde
         (p.Articulo || "").trim() === (articulo || "").trim()
       );
       const skuSeguro = getSafePdpSku(productoEncontrado);
+      trackBannerProductClick({ banner: "custom_dynamic", articulo, sku: skuSeguro || "" });
       
       if (skuSeguro && typeof window.abrirModalPorSKU === 'function') {
         const abierto = window.abrirModalPorSKU(skuSeguro, { pushState: true });

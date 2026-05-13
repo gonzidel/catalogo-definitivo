@@ -1,6 +1,7 @@
 // scripts/cart.js
 import { supabase } from "./supabase-client.js";
 import { normalizeSize } from "./utils/size-normalizer.js";
+import { showFylToastError } from "./fyl-error-state.js";
 
 const countEl = document.getElementById("cart-count");
 const submitBtn = document.getElementById("cart-submit");
@@ -85,10 +86,15 @@ async function submitCart() {
   const cid = await getCartId();
   const { error } = await supabase.rpc("rpc_submit_cart", { cid });
   if (error) {
-    alert(error.message);
+    showFylToastError({
+      message: "No pudimos enviar el pedido. Intentá nuevamente en unos segundos.",
+    });
     return;
   }
-  alert("Pedido enviado. Te avisaremos cuando confirmemos disponibilidad.");
+  showFylToastError({
+    tone: "neutral",
+    message: "Pedido enviado. Te avisaremos cuando confirmemos disponibilidad.",
+  });
   // Redirigir al dashboard del cliente
   window.location.href = "/client/dashboard.html";
 }

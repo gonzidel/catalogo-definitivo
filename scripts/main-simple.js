@@ -41,6 +41,19 @@ function parseARSPrice(raw) {
   return n > 0 && n < 1000 && n % 1 !== 0 ? n * 1000 : n;
 }
 
+function fylLegacyToast(message, tone) {
+  try {
+    if (typeof window.showFylToastError === "function") {
+      window.showFylToastError({
+        message: String(message || ""),
+        tone: tone === "neutral" ? "neutral" : "error",
+      });
+      return;
+    }
+  } catch (_) {}
+  console.warn("[FYL]", message);
+}
+
 // Función principal de carga de categoría
 async function cargarCategoria(cat) {
   console.log("🔄 Cargando categoría:", cat);
@@ -364,7 +377,7 @@ function configurarEventos() {
           this.style.background = "";
         }, 1200);
       } else {
-        alert("Sistema de carrito no disponible");
+        fylLegacyToast("El carrito no está disponible en este momento.");
       }
     });
   });
@@ -395,7 +408,7 @@ function configurarEventos() {
           console.log("Compartir cancelado");
         }
       } else {
-        alert("La función de compartir no está disponible en este dispositivo");
+        fylLegacyToast("Compartir no está disponible en este dispositivo.");
       }
     });
   });

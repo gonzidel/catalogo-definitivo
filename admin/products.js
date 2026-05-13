@@ -165,6 +165,7 @@ const pNew = document.getElementById("p-new");
 const productsDatalist = document.getElementById("products-datalist");
 const pDelete = document.getElementById("p-delete");
 const pDeleteHard = document.getElementById("p-delete-hard");
+const cloneProductBtn = document.getElementById("clone-product-btn");
 
 // Autocompletar para buscador de productos
 let lastProductSuggestions = [];
@@ -190,6 +191,11 @@ function updateDeleteHardButtonVisibility(statusValue) {
   if (!pDeleteHard) return;
   const s = String(statusValue || "").trim();
   pDeleteHard.style.display = s === "archived" ? "block" : "none";
+}
+
+function updateCloneProductButtonVisibility() {
+  if (!cloneProductBtn) return;
+  cloneProductBtn.style.display = currentProductId ? "inline-block" : "none";
 }
 
 // Helpers: slug & SKU base
@@ -1145,6 +1151,7 @@ async function ensureVariantId(row) {
     
     prodId = prod.id;
     currentProductId = prodId;
+    updateCloneProductButtonVisibility();
     console.log(`✅ Producto creado con ID: ${prodId}, estado inicial: ${initialStatus}`);
   }
 
@@ -3951,6 +3958,7 @@ function updateEditButtonVisibility() {
 
 // Inicializar visibilidad del botón de editar
 updateEditButtonVisibility();
+updateCloneProductButtonVisibility();
 
 // Event listener para mostrar/ocultar botón de editar cuando cambia la selección
 if (supplierSelect) {
@@ -5594,6 +5602,7 @@ async function loadProductById(id) {
 
   currentProductId = prod.id;
   statusEl.textContent = `Producto cargado: ${prod.name}`;
+  updateCloneProductButtonVisibility();
 }
 
 pSearchBtn.addEventListener("click", searchProducts);
@@ -5664,6 +5673,94 @@ pNew.addEventListener("click", async () => {
   updatePercentageByCategory(true);
   ensureDefaultVariant(); // Usar la función que asegura al menos una variante
   statusEl.textContent = "Nuevo producto";
+  updateCloneProductButtonVisibility();
+});
+
+async function cloneCurrentProductAsDraft() {
+  if (!currentProductId) {
+    statusEl.textContent = "Primero carga un producto para clonar.";
+    statusEl.style.color = "#c00";
+    return;
+  }
+
+  const sourceRows = Array.from(variantsTable.querySelectorAll("tr"));
+  const supplierEl = document.getElementById("supplier");
+  const sourceSupplierId = supplierEl?.value || "";
+  const reusableVariants = sourceRows
+    .map((row) => {
+      const color = row.querySelector(".v-color")?.value?.trim() || "";
+      const sizesText = row.querySelector(".v-sizes")?.value?.trim() || "";
+      const cost = row.querySelector(".v-cost")?.value || "";
+      const price = row.querySelector(".v-price")?.value || "0";
+      const active = row.querySelector(".v-active")?.checked ?? true;
+      if (!color) return null;
+      return { color, sizesText, cost, price, active };
+    })
+    .filter(Boolean);
+
+  currentProductId = null;
+  originalVariantIds = new Set();
+  removedVariantIds = new Set();
+
+  // No copiar identificadores únicos del producto original.
+  const nameInput = document.getElementById("name");
+  const handleInput = document.getElementById("handle");
+  const prevName = String(nameInput?.value || "").trim();
+  const clonedName = prevName && !/\bcopia\b/i.test(prevName) ? `${prevName} COPIA` : prevName;
+  if (nameInput) nameInput.value = clonedName;
+  if (handleInput) {
+    handleInput.value = slugify(clonedName || "");
+    handleInput.dataset.dirty = "0";
+  }
+  handleDirty = false;
+
+  const statusSelect = document.getElementById("status");
+  if (statusSelect) statusSelect.value = "draft";
+  if (supplierEl) supplierEl.value = sourceSupplierId;
+  updateDeleteHardButtonVisibility("draft");
+
+  variantsTable.innerHTML = "";
+  reusableVariants.forEach((variantData) => {
+    const row = addVariantRow({
+      color: variantData.color,
+      cost: variantData.cost,
+      price: variantData.price,
+      active: variantData.active,
+      skuBase: "",
+      sku: "",
+      images: [],
+    });
+
+    const sizesInput = row.querySelector(".v-sizes");
+    const generateBtn = row.querySelector(".sizes-generate");
+    if (sizesInput) sizesInput.value = variantData.sizesText;
+    generateBtn?.click(); // Genera talles con stock 0 por defecto.
+
+    const skuBaseInput = row.querySelector(".v-skuBase");
+    if (skuBaseInput) {
+      skuBaseInput.value = "";
+      delete skuBaseInput.dataset.dirty;
+    }
+    row.querySelectorAll(".size-stock").forEach((stockInput) => {
+      stockInput.value = "0";
+    });
+    const imagesList = row.querySelector(".variant-images-list");
+    if (imagesList) imagesList.innerHTML = "";
+  });
+
+  // Regenerar SKU base con la lógica estándar (handle + color + proveedor).
+  await recalculateAllSkuBases();
+  ensureDefaultVariant();
+  updateEditButtonVisibility();
+  updateCloneProductButtonVisibility();
+
+  statusEl.textContent =
+    "Producto clonado como borrador. Revisá nombre, SKU, imágenes y stock antes de guardar.";
+  statusEl.style.color = "#0a7a3f";
+}
+
+cloneProductBtn?.addEventListener("click", () => {
+  runProductsTask("clone_product", cloneCurrentProductAsDraft);
 });
 
 // Función reutilizable para guardar producto (con opción de limpiar o no)
@@ -6145,6 +6242,7 @@ async function saveProduct(shouldReset = true) {
   // Actualizar originalVariantIds con los IDs de las variantes que se acaban de guardar
   originalVariantIds = new Set(savedVariantIds);
   removedVariantIds = new Set();
+  updateCloneProductButtonVisibility();
 
   // Verificar que las variantes se guardaron correctamente
   console.log("🔧 Verificando variantes guardadas...");
@@ -6250,6 +6348,7 @@ async function saveProduct(shouldReset = true) {
     
     // Agregar variante vacía por defecto
     ensureDefaultVariant();
+    updateCloneProductButtonVisibility();
   } else {
     // Pre-guardado: solo actualizar el mensaje y recargar el producto para refrescar datos
     if (currentProductId) {
@@ -6344,6 +6443,7 @@ pDelete?.addEventListener("click", async () => {
     await renderDetailsList();
     ensureDefaultVariant();
     updateDeleteHardButtonVisibility(document.getElementById("status").value);
+    updateCloneProductButtonVisibility();
   } catch (error) {
     console.error("❌ Error archivando producto:", error);
     statusEl.textContent = `❌ Error al archivar: ${error.message}`;
@@ -6399,6 +6499,7 @@ pDeleteHard?.addEventListener("click", async () => {
     await renderDetailsList();
     ensureDefaultVariant();
     updateDeleteHardButtonVisibility(document.getElementById("status").value);
+    updateCloneProductButtonVisibility();
   } catch (error) {
     console.error("❌ Error eliminando producto:", error);
     statusEl.textContent = `❌ Error al eliminar: ${error.message || "desconocido"}`;

@@ -5,6 +5,29 @@ let __routeRetryCount = 0;
 const ROUTE_RETRY_MAX = 8;
 const ROUTE_RETRY_MS = 100;
 
+function trackMetaCustom(eventName, payload = {}) {
+  if (!eventName) return;
+  const send = () => {
+    if (typeof fbq === "function") {
+      fbq("trackCustom", eventName, payload);
+      return true;
+    }
+    return false;
+  };
+  if (send()) return;
+  setTimeout(() => {
+    send();
+  }, 300);
+}
+
+function trackGaEvent(eventName, payload = {}) {
+  try {
+    if (window.fylAnalytics?.isReady?.()) {
+      window.fylAnalytics.event(eventName, payload);
+    }
+  } catch (_e) {}
+}
+
 /** Router: togglea #catalog-view / #howto-page y maneja ruta de colección FYL.
  *  #/coleccion/fyl-originals: vista compartible con header compacto, sin card redundante.
  *  Deep link: funciona al cargar directamente con el hash.
@@ -28,6 +51,8 @@ async function applyHashRoute() {
     if (!catalogView || !howtoPage || !aboutPage) return;
 
     if (isComoComprar) {
+      trackMetaCustom("InfoPageView", { page: "como-comprar" });
+      trackGaEvent("info_page_view", { page: "como-comprar" });
       await runTransition(() => {
         catalogView.classList.add("is-hidden");
         howtoPage.classList.remove("is-hidden");
@@ -40,6 +65,8 @@ async function applyHashRoute() {
         window.scrollTo(0, 0);
       });
     } else if (isQuienesSomos) {
+      trackMetaCustom("InfoPageView", { page: "quienes-somos" });
+      trackGaEvent("info_page_view", { page: "quienes-somos" });
       await runTransition(() => {
         catalogView.classList.add("is-hidden");
         howtoPage.classList.add("is-hidden");
@@ -183,6 +210,14 @@ function initFAQ() {
       btn.setAttribute("aria-expanded", String(!expanded));
       answer.hidden = expanded;
       icon.textContent = expanded ? "+" : "–";
+      if (!expanded) {
+        trackGaEvent("info_faq_open", {
+          question: String(btn.textContent || "").trim().slice(0, 120),
+        });
+        trackMetaCustom("InfoFaqOpen", {
+          question: String(btn.textContent || "").trim().slice(0, 120),
+        });
+      }
     });
   });
 }

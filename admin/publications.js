@@ -71,12 +71,29 @@ let selectedForPublication = []; // Array de { productId, color }
 /** Catálogo público en producción. PDP: …/catalogo#/pdp/<SKU> */
 const FYL_CATALOG_PUBLIC_WEB_BASE = "https://fylmoda.com.ar/catalogo#";
 
+function extractPdpSkuFromPublicationItem(item) {
+  const variants = Array.isArray(item?.variants) ? item.variants : [];
+
+  // 1) SKU base de la variante (calzado y casos legacy).
+  const variantSku = variants
+    .map(v => String(v?.sku || "").trim())
+    .find(Boolean);
+  if (variantSku) return variantSku;
+
+  // 2) Fallback: SKU por talle desde variant_sizes (ropa/otros).
+  for (const variant of variants) {
+    const sizeSku = (Array.isArray(variant?.sizes) ? variant.sizes : [])
+      .map(s => String(s?.sku || "").trim())
+      .find(Boolean);
+    if (sizeSku) return sizeSku;
+  }
+
+  return "";
+}
+
 /** URL al PDP del primer SKU de la variante (color) para pegar en Sheets como hipervínculo. */
 function buildFylCatalogPdpUrlFromPublicationItem(item) {
-  const variants = item?.variants;
-  if (!Array.isArray(variants)) return "";
-  const v = variants.find(x => x && String(x.sku || "").trim());
-  const sku = v ? String(v.sku).trim() : "";
+  const sku = extractPdpSkuFromPublicationItem(item);
   if (!sku) return "";
   return `${FYL_CATALOG_PUBLIC_WEB_BASE}/pdp/${encodeURIComponent(sku)}`;
 }
@@ -193,7 +210,7 @@ async function getPublicationVariantSizes(variantIds) {
   const stockRows = await getGeneralSizeStockByVariantIds(variantIds);
   const { data: sizeMetaRows, error: sizeMetaError } = await supabase
     .from("variant_sizes")
-    .select("variant_id, size")
+    .select("variant_id, size, sku")
     .in("variant_id", variantIds);
 
   if (sizeMetaError) {
@@ -216,6 +233,7 @@ async function getPublicationVariantSizes(variantIds) {
     mergedByKey.set(key, {
       variant_id: row.variant_id,
       size,
+      sku: row.sku || null,
       stock_qty: stockByKey.get(key) || 0,
     });
   });
@@ -229,6 +247,7 @@ async function getPublicationVariantSizes(variantIds) {
       mergedByKey.set(key, {
         variant_id: row.variant_id,
         size,
+        sku: null,
         stock_qty: Number(row.stock_qty) || 0,
       });
     }
@@ -442,7 +461,11 @@ async function getProductColorData(productId, color) {
       ...v,
       sizes: variantSizesWithStock
         .filter(vs => vs.variant_id === v.id)
-        .map(vs => ({ size: normalizeSize(vs.size), stock: vs.stock_qty }))
+        .map(vs => ({
+          size: normalizeSize(vs.size),
+          stock: vs.stock_qty,
+          sku: vs.sku || v.sku || null,
+        }))
     })),
     sizes,
     imageUrls: uniqueImageUrls,
@@ -1258,7 +1281,11 @@ async function getProductColorDataLowStock(productId, color) {
       ...v,
       sizes: variantSizes
         .filter(vs => vs.variant_id === v.id)
-        .map(vs => ({ size: normalizeSize(vs.size), stock: vs.stock_qty }))
+        .map(vs => ({
+          size: normalizeSize(vs.size),
+          stock: vs.stock_qty,
+          sku: vs.sku || v.sku || null,
+        }))
     })),
     sizes,
     imageUrls: uniqueImageUrls,

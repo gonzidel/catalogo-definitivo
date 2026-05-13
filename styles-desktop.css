@@ -1,0 +1,457 @@
+/*
+ * Capa desktop experimental y reversible.
+ * No contiene lógica; solo presentación.
+ * Solo aplica desde 1024px de ancho de viewport.
+ * Desactivar: quitar el <link rel="stylesheet" href="styles-desktop.css"> del HTML.
+ */
+
+@media (min-width: 1024px) {
+  :root {
+    --fyl-desktop-max: min(1720px, calc(100vw - 32px));
+    --fyl-desktop-pad-x: clamp(20px, 2.4vw, 40px);
+  }
+
+  @media (min-width: 1280px) {
+    :root {
+      --fyl-desktop-max: min(1840px, calc(100vw - 40px));
+    }
+  }
+
+  @media (min-width: 1536px) {
+    :root {
+      --fyl-desktop-max: min(1920px, calc(100vw - 48px));
+    }
+  }
+
+  /* ——— Layout general: bloque centrado, menos bandas vacías laterales ——— */
+  .container {
+    width: 100% !important;
+    max-width: var(--fyl-desktop-max) !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+    box-sizing: border-box !important;
+  }
+
+  #catalog-view {
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  /* ——— Header: grid logo | buscador (protagonista) | acciones ——— */
+  header {
+    display: grid !important;
+    grid-template-columns: auto minmax(200px, 1fr) auto !important;
+    align-items: center !important;
+    gap: 16px 20px !important;
+    padding: 12px var(--fyl-desktop-pad-x) !important;
+    width: 100% !important;
+    max-width: var(--fyl-desktop-max) !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+    box-sizing: border-box !important;
+    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.06), 0 10px 28px rgba(0, 0, 0, 0.04) !important;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05) !important;
+    background: rgba(255, 255, 255, 0.98) !important;
+  }
+
+  .header-left {
+    grid-column: 1 !important;
+    justify-self: start !important;
+  }
+
+  .search-bar-wrapper {
+    grid-column: 2 !important;
+    justify-self: stretch !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 10px !important;
+    width: 100% !important;
+    max-width: min(720px, 100%) !important;
+    margin: 0 auto !important;
+    padding: 10px 16px !important;
+    box-sizing: border-box !important;
+    background: #f4f1ed !important;
+    border: 1px solid rgba(0, 0, 0, 0.08) !important;
+    border-radius: 14px !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75) !important;
+  }
+
+  .search-bar-wrapper .search-icon {
+    color: #7a6a5e !important;
+    flex-shrink: 0 !important;
+  }
+
+  .search-bar-mobile {
+    display: block !important;
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+    width: 100% !important;
+    font-size: 16px !important;
+    line-height: 1.35 !important;
+    padding: 4px 0 !important;
+  }
+
+  .header-right {
+    grid-column: 3 !important;
+    justify-self: end !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 10px !important;
+  }
+
+  .header-logo {
+    height: 44px !important;
+    width: auto !important;
+  }
+
+  /* ——— Menú categorías desktop ——— */
+  .menu.menu-desktop {
+    gap: 8px !important;
+    padding: 10px var(--fyl-desktop-pad-x) !important;
+    width: 100% !important;
+    max-width: var(--fyl-desktop-max) !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+    box-sizing: border-box !important;
+    border-radius: 0 0 14px 14px !important;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.06) !important;
+    border: 1px solid rgba(0, 0, 0, 0.04) !important;
+    border-top: none !important;
+    background: #fff !important;
+    justify-content: center !important;
+  }
+
+  .menu.menu-desktop button {
+    border-radius: 999px !important;
+    padding: 0.48rem 1rem !important;
+    font-size: 0.9rem !important;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05) !important;
+  }
+
+  /* ——— Barra filtros: izq (Filtros + Talles) | centro (buscador compacto) | der ——— */
+  #filter-container {
+    display: grid !important;
+    align-items: center !important;
+    column-gap: 10px !important;
+    row-gap: 10px !important;
+    width: 100% !important;
+    max-width: var(--fyl-desktop-max) !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+    margin-top: 8px !important;
+    padding: 10px var(--fyl-desktop-pad-x) !important;
+    border-radius: 12px !important;
+    box-sizing: border-box !important;
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.05), 0 4px 18px rgba(0, 0, 0, 0.04) !important;
+  }
+
+  #filter-container:not(:has(#cart-bar)) {
+    grid-template-columns: max-content max-content 1fr max-content max-content !important;
+  }
+
+  #filter-container:has(#cart-bar) {
+    grid-template-columns: max-content max-content 1fr max-content max-content auto !important;
+  }
+
+  #filter-container #toggleFiltros {
+    grid-column: 1 !important;
+    grid-row: 1 !important;
+    margin: 0 !important;
+  }
+
+  #filter-container .desktop-only-talles.size-filter-chip {
+    grid-column: 2 !important;
+    grid-row: 1 !important;
+    margin: 0 !important;
+    border-radius: 10px !important;
+  }
+
+  #filter-container #searchInput {
+    grid-column: 3 !important;
+    grid-row: 1 !important;
+    justify-self: center !important;
+    width: 100% !important;
+    max-width: 280px !important;
+    min-width: 160px !important;
+    padding: 8px 12px !important;
+    font-size: 13px !important;
+    border-radius: 10px !important;
+    margin: 0 !important;
+  }
+
+  #filter-container #clear-search {
+    grid-column: 4 !important;
+    grid-row: 1 !important;
+    margin: 0 !important;
+  }
+
+  #filter-container #view-toggle {
+    grid-column: 5 !important;
+    grid-row: 1 !important;
+    margin: 0 !important;
+  }
+
+  #filter-container #cart-bar {
+    grid-column: 6 !important;
+    grid-row: 1 !important;
+    margin-left: 0 !important;
+    justify-self: end !important;
+  }
+
+  #filter-container #filtroMenu {
+    grid-column: 1 / -1 !important;
+    grid-row: 2 !important;
+    width: 100% !important;
+    margin-top: 2px !important;
+  }
+
+  #filter-container #toggleFiltros,
+  #filter-container #clear-search,
+  #filter-container #view-toggle {
+    border-radius: 10px !important;
+    padding: 0.48rem 0.95rem !important;
+    font-size: 0.88rem !important;
+  }
+
+  #filter-container #cart-button {
+    border-radius: 10px !important;
+    padding: 9px 16px !important;
+    font-size: 14px !important;
+    box-shadow: 0 2px 10px rgba(205, 132, 77, 0.22) !important;
+  }
+
+  #filter-container #cart-submit {
+    border-radius: 10px !important;
+    padding: 9px 14px !important;
+  }
+
+  /* ——— Grid catálogo ——— */
+  #catalogo {
+    width: 100% !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 1.1rem !important;
+    padding: 1rem var(--fyl-desktop-pad-x) 2.5rem !important;
+    max-width: var(--fyl-desktop-max) !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+    box-sizing: border-box !important;
+  }
+
+  @media (min-width: 1280px) {
+    #catalogo {
+      grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+      gap: 1.2rem !important;
+    }
+  }
+
+  @media (min-width: 1536px) {
+    #catalogo {
+      grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
+      gap: 1.25rem !important;
+    }
+  }
+
+  /* Carruseles / campañas de oferta: fila completa, no como celda del grid de productos */
+  #catalogo .card.offer-card {
+    grid-column: 1 / -1 !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 14px 0 !important;
+    border-radius: 18px !important;
+    box-shadow:
+      0 12px 40px rgba(255, 152, 0, 0.16),
+      0 2px 0 rgba(0, 0, 0, 0.03) inset !important;
+  }
+
+  #catalogo .card.offer-card:first-child {
+    margin-top: 6px !important;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    #catalogo .card.producto,
+    #catalogo .card.offer-card {
+      transition: transform 0.2s ease, box-shadow 0.2s ease !important;
+    }
+
+    #catalogo .card.producto:hover {
+      transform: translateY(-3px) !important;
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.1) !important;
+    }
+
+    #catalogo .card.offer-card:hover {
+      transform: translateY(-2px) !important;
+      box-shadow:
+        0 16px 44px rgba(255, 152, 0, 0.22),
+        0 2px 0 rgba(0, 0, 0, 0.03) inset !important;
+    }
+  }
+
+  /* ——— Banners superiores: hero compacto (sin tocar HTML ni textos) ——— */
+  .home-top-dynamic-slot {
+    width: 100% !important;
+    max-width: var(--fyl-desktop-max) !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+    padding: 12px var(--fyl-desktop-pad-x) 8px !important;
+    box-sizing: border-box !important;
+  }
+
+  #info-banner-top-container,
+  #fyl-originals-banner {
+    max-width: none !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+  }
+
+  #info-banner-top-container .info-banner-top {
+    min-height: 104px !important;
+    padding: 20px 26px !important;
+    box-sizing: border-box !important;
+    border-radius: 16px !important;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08) !important;
+  }
+
+  #info-banner-top-container .info-banner-top__inner {
+    align-items: center !important;
+  }
+
+  #info-banner-top-container .info-banner-top__title-main {
+    font-size: clamp(17px, 1.35vw, 20px) !important;
+    line-height: 1.2 !important;
+  }
+
+  #info-banner-top-container .info-banner-top__line {
+    font-size: 14px !important;
+    margin-top: 6px !important;
+    opacity: 0.92 !important;
+  }
+
+  #info-banner-top-container .info-banner-top__cta {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    margin-top: 12px !important;
+    padding: 10px 18px !important;
+    border-radius: 999px !important;
+    font-weight: 700 !important;
+    font-size: 14px !important;
+    letter-spacing: 0.02em !important;
+    background: #c4753f !important;
+    color: #fff !important;
+    box-shadow: 0 4px 14px rgba(205, 132, 77, 0.45) !important;
+  }
+
+  #info-banner-top-container .info-banner-top__cta-arrow {
+    font-weight: 800 !important;
+  }
+
+  .fyl-originals-banner.orig-block {
+    padding: 14px var(--fyl-desktop-pad-x) 18px !important;
+    border-radius: 16px !important;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.07) !important;
+    margin-bottom: 6px !important;
+  }
+
+  .fyl-originals-banner .orig-head {
+    margin-bottom: 10px !important;
+  }
+
+  .fyl-originals-banner .orig-title {
+    font-size: clamp(1.1rem, 1.2vw, 1.35rem) !important;
+  }
+
+  .promotional-banner-container {
+    margin-top: 10px !important;
+  }
+
+  /* Catálogo público: banner compacto del inline ——— refuerzo desktop */
+  html.public-catalog #info-banner-top-container .info-banner-top.info-banner-top--visual {
+    min-height: 112px !important;
+    padding: 22px 28px !important;
+  }
+
+  html.public-catalog #info-banner-top-container .info-banner-top__title-main {
+    font-size: clamp(18px, 1.4vw, 21px) !important;
+  }
+
+  html.public-catalog #info-banner-top-container .info-banner-top__line {
+    font-size: 14px !important;
+    margin-top: 8px !important;
+  }
+
+  html.public-catalog #info-banner-top-container .info-banner-top__cta {
+    margin-top: 14px !important;
+  }
+
+  /* Banner personalizado destacados */
+  #custom-banner-container {
+    width: 100% !important;
+    max-width: var(--fyl-desktop-max) !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+    padding-left: var(--fyl-desktop-pad-x) !important;
+    padding-right: var(--fyl-desktop-pad-x) !important;
+    box-sizing: border-box !important;
+    margin-top: 8px !important;
+    margin-bottom: 8px !important;
+    border-radius: 14px !important;
+    background: rgba(255, 255, 255, 0.65) !important;
+    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.04) !important;
+  }
+
+  .custom-banner-header {
+    padding: 10px 6px 8px !important;
+  }
+
+  .custom-banner-title {
+    font-size: 1.3rem !important;
+  }
+
+  .collection-head {
+    width: 100% !important;
+    max-width: var(--fyl-desktop-max) !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+    padding-left: var(--fyl-desktop-pad-x) !important;
+    padding-right: var(--fyl-desktop-pad-x) !important;
+    box-sizing: border-box !important;
+  }
+
+  main#howto-page.howto {
+    max-width: 920px !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+    padding: 28px var(--fyl-desktop-pad-x) 40px !important;
+    box-sizing: border-box !important;
+  }
+
+  #product-modal-body.product-modal-body,
+  .product-modal-body {
+    padding: 20px 28px calc(20px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  #btn-scroll-top {
+    right: max(24px, env(safe-area-inset-right, 0px)) !important;
+    bottom: 28px !important;
+  }
+
+  html.public-catalog .public-catalog-header-actions {
+    gap: 10px !important;
+  }
+
+  html.public-catalog .public-catalog-wa-link {
+    min-height: 44px !important;
+    padding: 0 18px !important;
+    font-size: 15px !important;
+    font-weight: 600 !important;
+    border-radius: 12px !important;
+    box-shadow: 0 3px 14px rgba(37, 211, 102, 0.35) !important;
+    letter-spacing: 0.01em !important;
+  }
+
+  /* Flotante WhatsApp visible también en catálogo público desktop (antes estaba oculto). */
+  html.public-catalog #wa-popup {
+    bottom: 28px !important;
+    right: max(24px, env(safe-area-inset-right, 0px)) !important;
+  }
+}

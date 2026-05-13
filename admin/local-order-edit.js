@@ -1,8 +1,8 @@
 // admin/local-order-edit.js — Ventana de edición de pedido local
 import { requireAuth } from "./admin-auth.js";
 import { supabase } from "../scripts/supabase-client.js";
-import { SUPABASE_URL, QZ_SIGN_SECRET } from "../scripts/config.js";
 import { normalizeSize } from "../scripts/utils/size-normalizer.js";
+import { loadQZTray, qzConnect, qzGetPrinterConfigDefault } from "./qz-printing.js";
 
 function generateOperationId() {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -90,71 +90,9 @@ function buildEscposTicket(saleDetails, customer, finalTotal) {
   return ticket.join("\n");
 }
 
-async function setupQZSignature() {
-  if (typeof qz === "undefined" || !qz?.security) return;
-  try {
-    const certResponse = await fetch("/certs/qz-site.crt", { cache: "no-store" });
-    const certText = await certResponse.text();
-    qz.security.setCertificatePromise((resolve, reject) => {
-      const match = certText.match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/);
-      resolve(match ? match[0] : certText);
-    });
-    qz.security.setSignatureAlgorithm("SHA512");
-    qz.security.setSignaturePromise(async (toSign) => {
-      const secret = QZ_SIGN_SECRET || window.QZ_SIGN_SECRET || "";
-      const res = await fetch(`${SUPABASE_URL}/functions/v1/qz-sign`, {
-        method: "POST",
-        headers: { "Content-Type": "text/plain;charset=utf-8", "x-qz-secret": secret },
-        body: toSign,
-      });
-      if (!res.ok) throw new Error(`Firma: ${res.status}`);
-      return (await res.text()).trim();
-    });
-  } catch (e) {
-    console.warn("QZ firma:", e);
-  }
-}
-
-async function qzConnect() {
-  if (typeof qz === "undefined" || !qz?.websocket) throw new Error("QZ no disponible");
-  await setupQZSignature();
-  if (!qz.websocket.isActive()) await qz.websocket.connect();
-}
-
-async function qzGetPrinterConfig() {
-  const printerName = await qz.printers.getDefault();
-  return qz.configs.create(printerName);
-}
-
-async function loadQZTray() {
-  if (typeof qz !== "undefined" && qz) {
-    await setupQZSignature();
-    return;
-  }
-  if (document.querySelector('script[src*="qz-tray.js"]')) {
-    for (let i = 0; i < 30; i++) {
-      await new Promise((r) => setTimeout(r, 100));
-      if (typeof qz !== "undefined" && qz) {
-        await setupQZSignature();
-        return;
-      }
-    }
-    throw new Error("QZ no cargó");
-  }
-  return new Promise((resolve, reject) => {
-    const script = document.createElement("script");
-    script.src = "https://cdn.jsdelivr.net/npm/qz-tray@2.2.5/qz-tray.js";
-    script.async = true;
-    script.onload = () => setTimeout(() => (typeof qz !== "undefined" && qz ? setupQZSignature().then(resolve) : reject(new Error("QZ no disponible"))), 500);
-    script.onerror = () => reject(new Error("Error cargando QZ"));
-    document.head.appendChild(script);
-  });
-}
-
 async function printSaleWithQZ(saleDetails, customer, finalTotal) {
-  if (typeof qz === "undefined" || !qz) throw new Error("QZ no disponible");
   await qzConnect();
-  const config = await qzGetPrinterConfig();
+  const config = await qzGetPrinterConfigDefault();
   const ticketText = buildEscposTicket(saleDetails, customer, finalTotal);
   const data = ["\x1B\x40", ticketText + "\n\n"];
   if (customer?.qr_code) {
@@ -166,6 +104,7 @@ async function printSaleWithQZ(saleDetails, customer, finalTotal) {
     data.push("\x1B\x61\x00");
   }
   data.push("\x1D\x56\x42\x00");
+  console.log("[QZ] print requested");
   await qz.print(config, data);
 }
 

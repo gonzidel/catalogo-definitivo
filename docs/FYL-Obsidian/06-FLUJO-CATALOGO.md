@@ -4,6 +4,10 @@ Esta nota resume catalogo, PDP y carrito. Para el detalle real de carrito/checko
 
 **Hardening 2026-04 (overlay, primer paint, slot superior del home, red/abort, PDP):** ver [[21-CONTEXTO-AGENTE-HARDENING-2026-04]].
 
+**Catálogo público (`catalogo.html`, `html.public-catalog`):** FAB WhatsApp `#wa-popup` / `#wa-toggle` — comportamiento y reparo 2026-05-07 en [[10-BUGS-RESUELTOS]] (FAB sin JS que bloquee el `<a>`, carga `defer` de `whatsapp.js`, CSS anti-solapamiento con scroll-top).
+
+**Boot crítico Supabase 2026-05-08:** `<script defer src="scripts/vendor/supabase-js.bundle.min.js?v=...">` (IIFE same-origin) cargado **antes** de cualquier `<script type="module">`. `scripts/supabase-client.js` lee `window.fylSupabase.createClient` de forma síncrona — sin `import()` dinámico, sin CDN cross-origin. Servicio Worker en modo tombstone network-only para `/scripts/vendor/*` y `/config.prod.js`. Detalle y motivación en [[10-BUGS-RESUELTOS]] §2026-05-08 y [[11-DECISIONES-TECNICAS]] §B.13–16.
+
 ## Carga de productos
 
 - Entrada principal: `index.html`.

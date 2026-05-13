@@ -8,13 +8,20 @@ import {
   USE_OPEN_SHEET_FALLBACK as CONFIG_USE_OPEN_SHEET_FALLBACK,
   configReady,
 } from "./config.js";
-import { supabase as supabaseClient } from "./supabase-client.js?v=m260420";
+import { supabase as supabaseClient } from "./supabase-client.js?v=m260514";
 import { normalizeSize } from "./utils/size-normalizer.js";
 import { fylAnalytics } from "./analytics.js";
 import { formatARS as formatARSValue, parseARSNumber } from "./utils/price.js";
 import { createScreenScope } from "./net/screen-scope.js";
 import { wrapSupabase, createAbortScope, FYL_ERROR_KIND, classifyError } from "./net/fyl-fetch.js";
-import { ensureCatalogSupabaseHealthy } from "./fyl-runtime-resilience.js";
+import {
+  showFylErrorState,
+  hideFylErrorState,
+  renderFylInlineError,
+  showFylToastError,
+  isFylOfflineDeepCheck,
+  watchFylConnectivity,
+} from "./fyl-error-state.js";
 
 await configReady;
 
@@ -73,6 +80,73 @@ function trackMetaViewContent(producto, skuHint) {
       fbq("track", "ViewContent", payload);
     }
   }, 300);
+}
+
+function trackMetaCustom(eventName, payload = {}) {
+  if (!eventName) return;
+  const send = () => {
+    if (typeof fbq === "function") {
+      fbq("trackCustom", eventName, payload);
+      return true;
+    }
+    return false;
+  };
+  if (send()) return;
+  setTimeout(() => {
+    send();
+  }, 300);
+}
+
+let _lastPdpEntryKey = "";
+let _lastPdpEntryTs = 0;
+
+function getPdpSkuFromLocation() {
+  const hash = String(location.hash || "");
+  const hashMatch = hash.match(/^#\/pdp\/(.+)$/);
+  if (hashMatch?.[1]) {
+    try {
+      return decodeURIComponent(hashMatch[1]).trim();
+    } catch (_e) {
+      return String(hashMatch[1] || "").trim();
+    }
+  }
+  return String(new URLSearchParams(location.search).get("sku") || "").trim();
+}
+
+function resolvePdpEntrySource(sku, pushState) {
+  if (pushState) return "internal_navigation";
+  const requestedSku = getPdpSkuFromLocation();
+  if (requestedSku && requestedSku === String(sku || "").trim()) return "deep_link";
+  return "restore_or_programmatic";
+}
+
+function trackPdpEntry(producto, sku, { pushState = true } = {}) {
+  const safeSku = String(sku || "").trim();
+  if (!safeSku) return;
+  const source = resolvePdpEntrySource(safeSku, pushState);
+  const articulo = String(producto?.Articulo || producto?.Descripcion || "").trim();
+  const dedupeKey = `${safeSku}|${source}`;
+  const now = Date.now();
+  if (dedupeKey === _lastPdpEntryKey && now - _lastPdpEntryTs < 1200) return;
+  _lastPdpEntryKey = dedupeKey;
+  _lastPdpEntryTs = now;
+
+  try {
+    if (fylAnalytics.isReady()) {
+      fylAnalytics.event("pdp_entry", {
+        sku: safeSku,
+        articulo,
+        source,
+      });
+    }
+  } catch (_e) {}
+
+  trackMetaCustom("PdpEntry", {
+    content_ids: [safeSku],
+    content_type: "product",
+    articulo,
+    source,
+  });
 }
 
 function fylCatalogPdpSurface() {
@@ -449,8 +523,7 @@ async function inicializarSupabase() {
       FALLBACK: USE_OPEN_SHEET_FALLBACK,
     });
 
-    const healthy = await ensureCatalogSupabaseHealthy(() => supabase);
-    if (!healthy || !supabase || typeof supabase.from !== "function") {
+    if (!supabase || typeof supabase.from !== "function") {
       console.error(
         "❌ Cliente de Supabase no disponible (p. ej. Safari bloqueó la carga del script o falló la red). Revisá [FYL supabase] en consola."
       );
@@ -1380,26 +1453,24 @@ async function cargarCategoria(cat) {
       stack: error.stack,
       categoria: cat,
     });
-    
-    if (cont) {
-      const errorDetails = error.message || "Error desconocido";
-      cont.innerHTML = `
-        <div class="error-message" style="text-align: center; padding: 40px; color: #666; background: #f8f9fa; border-radius: 8px; margin: 20px;">
-          <h3>⚠️ Error al cargar productos desde Supabase</h3>
-          <p style="color: #c0392b; font-weight: bold; margin: 15px 0;">${errorDetails}</p>
-          <p>No se pudieron cargar los productos desde la base de datos. Verifica:</p>
-          <ul style="text-align: left; margin: 20px 0; max-width: 600px; margin-left: auto; margin-right: auto;">
-            <li>Que tu configuración de Supabase sea correcta (config.js o config.local.js)</li>
-            <li>Que la vista 'catalog_public_view' exista y tenga datos</li>
-            <li>Que los permisos RLS estén configurados correctamente</li>
-            <li>Que la categoría "${cat}" exista en la base de datos</li>
-          </ul>
-          <p style="margin-top: 20px; font-size: 12px; color: #999;">Revisa la consola del navegador para más detalles.</p>
-          <button onclick="location.reload()" style="background: #CD844D; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; margin-top: 15px;">Reintentar</button>
-        </div>
-      `;
-    }
-    // El mensaje de error ya es visible y accionable: destapamos la home.
+
+    void (async () => {
+      let offline = false;
+      try {
+        offline = await isFylOfflineDeepCheck();
+      } catch (_) {}
+      const kind = error?.kind || classifyError(error);
+      const preset =
+        offline || kind === FYL_ERROR_KIND.NETWORK ? "offline" : "catalog";
+      const retryCat = cat;
+      showFylErrorState({
+        preset,
+        retry: () => {
+          hideFylErrorState();
+          void cargarCategoria(retryCat);
+        },
+      });
+    })();
     releaseBootOverlayOnFirstPaint("category_error");
   } finally {
     if (loader) loader.classList.remove("show");
@@ -1944,7 +2015,7 @@ function ensureLoadMoreButtonAtEnd() {
         <span aria-hidden="true">·</span>
         <a href="https://www.facebook.com/FyLcalzados1" target="_blank" rel="noopener">Facebook</a>
         <span aria-hidden="true">·</span>
-        <a href="https://wa.me/5493624118637" target="_blank" rel="noopener">WhatsApp</a>
+        <a href="https://wa.me/5493625172874" target="_blank" rel="noopener">WhatsApp</a>
       </p>
     `;
     wrap.appendChild(contactInfo);
@@ -2338,34 +2409,52 @@ function renderizarGaleria(producto, mainImageSrc) {
  * Obtiene la galería HTML y la URL de la imagen principal para el PDP.
  * Retorna { gal, mainImgUrl } donde mainImgUrl es la URL 1200px de la imagen a mostrar.
  * Fallback mainImgUrl: (1) full del color seleccionado, (2) primera full válida, (3) VariantePrincipal.
+ *
+ * IMPORTANTE: cada miniatura lleva data-color y data-color-norm con el color al
+ * que pertenece. Esto habilita la sincronización "la imagen visible manda"
+ * (syncPdpColorFromImage) desde thumbnails y lightbox. La iteración es por
+ * DetalleColor (no flatMap) para preservar la relación imagen↔color.
  */
 function obtenerGaleriaYImagenPrincipal(producto, colorSeleccionado) {
-  const images = producto.DetalleColor?.flatMap((v) => v.images) || [];
-  let mainImgUrl = '';
-  const detalleColor = producto.DetalleColor?.find(d =>
+  const detalleColorSel = producto.DetalleColor?.find(d =>
     (d.color || "").trim().toLowerCase() === (colorSeleccionado || "").trim().toLowerCase()
   ) || producto.DetalleColor?.[0];
-  const preferida = detalleColor?.images?.[0];
+  const preferida = detalleColorSel?.images?.[0];
 
-  const gal = images
-    .map((img, i) => {
+  let mainImgUrl = '';
+  const parts = [];
+  let activeMarked = false;
+  let firstFull = '';
+
+  (producto.DetalleColor || []).forEach((detalle) => {
+    const colorName = detalle.color || '';
+    const colorNorm = colorName.trim().toLowerCase();
+    const colorAttr = colorName.replace(/"/g, '&quot;');
+    (detalle.images || []).forEach((img) => {
       const thumb = getImgUrl(img, 200);
-      if (!thumb) return '';
-
+      if (!thumb) return;
       const full = getImgUrl(img, 1200);
-      const isActive = preferida ? (img === preferida) : i === 0;
+      if (full && !firstFull) firstFull = full;
 
-      if (full) {
-        if (!mainImgUrl) mainImgUrl = full;
-        if (isActive) mainImgUrl = full;
+      const isActive = preferida
+        ? (img === preferida && !activeMarked)
+        : (!activeMarked);
+      if (isActive) {
+        activeMarked = true;
+        if (full) mainImgUrl = full;
       }
 
-      return `<img loading="lazy" src="${thumb}" data-full="${full || thumb}" alt="Miniatura" class="miniatura pdp-thumb${isActive ? ' active' : ''}">`;
-    })
-    .join("");
+      const altText = colorName ? `Miniatura ${colorAttr}` : 'Miniatura';
+      parts.push(
+        `<img loading="lazy" src="${thumb}" data-full="${full || thumb}" ` +
+        `data-color="${colorAttr}" data-color-norm="${colorNorm}" ` +
+        `alt="${altText}" class="miniatura pdp-thumb${isActive ? ' active' : ''}">`
+      );
+    });
+  });
 
-  if (!mainImgUrl) mainImgUrl = getImgUrl(producto.VariantePrincipal || '', 1200);
-  return { gal, mainImgUrl };
+  if (!mainImgUrl) mainImgUrl = firstFull || getImgUrl(producto.VariantePrincipal || '', 1200);
+  return { gal: parts.join(''), mainImgUrl };
 }
 
 async function enrichProductsWithStock(productos = [], { mergeSkuIndex = false } = {}) {
@@ -2868,31 +2957,36 @@ function _renderPdpError(kind, sku) {
   const modalBody = document.getElementById("product-modal-body");
   if (!modalBody) return;
 
-  let mensaje, accion;
-  if (kind === FYL_ERROR_KIND.NETWORK) {
-    mensaje = "Sin conexión. Verificá tu red e intentá de nuevo.";
-    accion  = sku
-      ? `<button onclick="window._pdpRetry('${sku.replace(/'/g, "\\'")}')" style="margin-top:12px;padding:10px 20px;background:#CD844D;color:#fff;border:none;border-radius:8px;font-size:14px;cursor:pointer;">Reintentar</button>`
-      : "";
-  } else if (kind === FYL_ERROR_KIND.PERMISSION) {
-    mensaje = "Este producto no está disponible.";
-    accion  = "";
-  } else if (kind === FYL_ERROR_KIND.SERVER) {
-    mensaje = "Error temporal del servidor. Intentá más tarde.";
-    accion  = sku
-      ? `<button onclick="window._pdpRetry('${sku.replace(/'/g, "\\'")}')" style="margin-top:12px;padding:10px 20px;background:#CD844D;color:#fff;border:none;border-radius:8px;font-size:14px;cursor:pointer;">Reintentar</button>`
-      : "";
-  } else {
-    mensaje = "No se pudo cargar el producto.";
-    accion  = "";
+  const safeSku = sku ? String(sku).trim() : "";
+  const retryPdp = () => {
+    if (safeSku && typeof window._pdpRetry === "function") window._pdpRetry(safeSku);
+  };
+
+  if (kind === FYL_ERROR_KIND.PERMISSION) {
+    renderFylInlineError(modalBody, {
+      preset: "product",
+      buttonLabel: "Cerrar",
+      retry: () => {
+        try {
+          cerrarModal();
+        } catch (_) {}
+      },
+    });
+    return;
   }
 
-  modalBody.innerHTML = `
-    <div style="padding:40px 20px;text-align:center;">
-      <button class="pdp-back product-modal-back" aria-label="Volver" style="display:block;margin-bottom:20px;background:none;border:none;font-size:22px;cursor:pointer;">←</button>
-      <p style="color:#555;font-size:15px;margin:0;">${mensaje}</p>
-      ${accion}
-    </div>`;
+  if (kind === FYL_ERROR_KIND.NETWORK) {
+    renderFylInlineError(modalBody, {
+      preset: "offline",
+      retry: retryPdp,
+    });
+    return;
+  }
+
+  renderFylInlineError(modalBody, {
+    preset: "api",
+    retry: safeSku ? retryPdp : undefined,
+  });
 }
 
 // Retry público: lo invoca el botón de "Reintentar" dentro del modal.
@@ -3242,6 +3336,12 @@ function runWithViewTransition(callback) {
     return Promise.resolve(callback());
   }
   const transition = document.startViewTransition(() => callback());
+  // View Transitions API expone 3 promises rechazables (ready, updateCallbackDone, finished).
+  // Chrome reporta cada una como unhandledrejection por separado: hay que silenciar las 3
+  // para evitar AbortError ("Transition was skipped") y TimeoutError ("Transition was aborted
+  // because of timeout in DOM update") cuando el usuario toca rápido o la animación se interrumpe.
+  try { transition.ready && transition.ready.catch(() => {}); } catch (_) {}
+  try { transition.updateCallbackDone && transition.updateCallbackDone.catch(() => {}); } catch (_) {}
   return transition.finished.catch(() => {});
 }
 
@@ -3574,6 +3674,7 @@ function abrirModalPorSKU(sku, { pushState = true } = {}) {
   if (typeof window.updateFloatingCartCta === 'function') window.updateFloatingCartCta();
   fylCatalogViewItemForProducto(resultado.producto, sku);
   trackMetaViewContent(resultado.producto, sku);
+  trackPdpEntry(resultado.producto, sku, { pushState });
   fylCatalogPdpSurface();
   return true;
 }
@@ -3617,6 +3718,7 @@ function abrirModalConResultado(resultado, { pushState = true } = {}) {
   if (typeof window.updateFloatingCartCta === 'function') window.updateFloatingCartCta();
   fylCatalogViewItemForProducto(resultado.producto, sku);
   trackMetaViewContent(resultado.producto, sku);
+  trackPdpEntry(resultado.producto, sku, { pushState });
   fylCatalogPdpSurface();
   return true;
 }
@@ -3661,6 +3763,7 @@ async function abrirPdpPorSkuIfPossible(sku, { pushState = true, hint = {} } = {
       if (typeof window.updateFloatingCartCta === "function") window.updateFloatingCartCta();
       fylCatalogViewItemForProducto(resultado.producto, sku);
       trackMetaViewContent(resultado.producto, sku);
+      trackPdpEntry(resultado.producto, sku, { pushState });
       fylCatalogPdpSurface();
       pdpScope.markReady("data_loaded");
     } else {
@@ -3699,6 +3802,7 @@ function cerrarModal(skipHistory = false) {
   }
 
   const modal = document.getElementById('product-modal');
+  const closingSku = String(modal?.dataset?.sku || "").trim();
   if (modal) {
     modal.classList.remove('active');
     modal.classList.remove('pdp-checkout-bar-visible');
@@ -3712,6 +3816,13 @@ function cerrarModal(skipHistory = false) {
   try {
     if (fylAnalytics.isReady()) fylAnalytics.syncCatalogSurface({ emit: true });
   } catch (_e) {}
+  if (closingSku) {
+    trackMetaCustom("PdpClose", {
+      content_ids: [closingSku],
+      content_type: "product",
+      source: "catalog_modal",
+    });
+  }
 
   if (skipHistory) return;
   if (history.state?.pdp) {
@@ -3724,42 +3835,11 @@ function cerrarModal(skipHistory = false) {
   }
 }
 
-// Función helper para mostrar toast
-function showToast(message, type = 'error') {
-  const toast = document.createElement('div');
-  toast.className = `toast toast-${type}`;
-  toast.style.cssText = `
-    position: fixed;
-    top: 20px;
-    right: 20px;
-    background: ${type === 'error' ? '#dc3545' : '#17a2b8'};
-    color: white;
-    padding: 12px 20px;
-    border-radius: 6px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-    z-index: 10001;
-    font-weight: 500;
-    max-width: 300px;
-    word-wrap: break-word;
-    transform: translateX(100%);
-    transition: transform 0.3s ease;
-  `;
-  toast.textContent = message;
-  
-  document.body.appendChild(toast);
-  
-  setTimeout(() => {
-    toast.style.transform = 'translateX(0)';
-  }, 100);
-  
-  setTimeout(() => {
-    toast.style.transform = 'translateX(100%)';
-    setTimeout(() => {
-      if (toast.parentNode) {
-        toast.parentNode.removeChild(toast);
-      }
-    }, 300);
-  }, 3000);
+function showToast(message, type = "error") {
+  showFylToastError({
+    message: String(message || ""),
+    durationMs: type === "error" ? 3400 : 2600,
+  });
 }
 
 async function inicializarModalDesdeURL() {
@@ -3769,30 +3849,22 @@ async function inicializarModalDesdeURL() {
   const opened = await abrirPdpPorSkuIfPossible(sku, { pushState: false });
   if (opened) return;
 
-  // Mostrar mensaje en modal en lugar de alert
-  const modal = document.getElementById('product-modal');
-  const modalBody = document.getElementById('product-modal-body');
+  const modal = document.getElementById("product-modal");
+  const modalBody = document.getElementById("product-modal-body");
   if (modal && modalBody) {
-    modalBody.innerHTML = `
-      <div style="padding: 40px; text-align: center;">
-        <h3 style="color: #dc3545; margin-bottom: 16px;">⚠️ Producto no disponible</h3>
-        <p style="color: #666; margin-bottom: 20px;">El producto solicitado no está disponible en este momento.</p>
-        <button onclick="window.cerrarModal()" style="
-          background: #CD844D;
-          color: white;
-          border: none;
-          padding: 10px 20px;
-          border-radius: 5px;
-          cursor: pointer;
-          font-size: 14px;
-        ">Cerrar</button>
-      </div>
-    `;
-    modal.classList.add('active');
-    document.body.classList.add('modal-open');
+    renderFylInlineError(modalBody, {
+      preset: "product",
+      buttonLabel: "Cerrar",
+      retry: () => {
+        try {
+          window.cerrarModal?.();
+        } catch (_) {}
+      },
+    });
+    modal.classList.add("active");
+    document.body.classList.add("modal-open");
   } else {
-    // Fallback a toast si no hay modal disponible
-    showToast('Producto no disponible', 'error');
+    showFylToastError({ preset: "product" });
   }
 }
 
@@ -3957,13 +4029,15 @@ function renderizarModalProducto(producto, colorSeleccionado, talleSeleccionado)
 
   if (modalFooter) {
     if (window.__CATALOG_ONLY__) {
+      modal.classList.add("catalog-only-pdp");
       modalFooter.classList.remove("pdp-footer-bar-hidden");
       modal.classList.remove("pdp-checkout-bar-visible");
       const waText = encodeURIComponent(`Hola, consulto por: ${producto.Articulo || ''}${detalleColor?.color ? ' - ' + detalleColor.color : ''}`);
-      const waUrl = `https://wa.me/5493624118637?text=${waText}`;
+      const waUrl = `https://wa.me/5493625172874?text=${waText}`;
       modalFooter.innerHTML = `
         <a class="pdp-whatsapp-cta" href="${waUrl}" target="_blank" rel="noopener" data-action="wa">Consultar por WhatsApp</a>`;
     } else {
+      modal.classList.remove("catalog-only-pdp");
       modalFooter.innerHTML = `
         <div class="product-modal-cta" data-precio-unidad="${precioUnidad}">
           <div class="product-modal-cta-summary">
@@ -4048,33 +4122,44 @@ function renderizarModalProducto(producto, colorSeleccionado, talleSeleccionado)
 
 function renderizarColoresModal(producto, colorSeleccionado) {
   if (!producto.DetalleColor) return '';
-  
+
   return producto.DetalleColor.map((detalle) => {
     const resultado = obtenerPrimerSkuConStock(producto, detalle.color);
     const sku = resultado?.sku || null;
     const imagen = detalle.images?.[0] || '';
-    const selected = (detalle.color || "").trim().toLowerCase() === (colorSeleccionado || "").trim().toLowerCase() ? 'selected' : '';
-    const hexColor = detalle.hex_color || "#CD844D"; // Color por defecto si no hay hex_color
+    const isSelected = (detalle.color || "").trim().toLowerCase() === (colorSeleccionado || "").trim().toLowerCase();
+    const selectedClass = isSelected ? 'selected' : '';
+    const hexColor = detalle.hex_color || "#CD844D";
     const displayNumber = detalle.ColorDisplayNumber || detalle.display_number;
-    // Calcular si el color es claro u oscuro para ajustar el color del texto
     const rgb = hexToRgb(hexColor);
     const brightness = rgb ? (rgb.r * 299 + rgb.g * 587 + rgb.b * 114) / 1000 : 128;
     const textColor = brightness > 128 ? "#000000" : "#FFFFFF";
-    const borderColor = selected ? "#fff" : hexColor;
-    const borderWidth = selected ? "2px" : "1px";
-    
-    // Agregar el número si existe
-    const numberHtml = displayNumber 
-      ? `<span class="color-number" style="color: ${textColor}; font-weight: bold; font-size: 0.85em; pointer-events: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);">${displayNumber}</span>` 
+
+    const numberHtml = displayNumber
+      ? `<span class="color-number">${displayNumber}</span>`
       : "";
-    
+
     const imgUrl = getImgUrl(imagen, 1200);
-    return `<button class="color-btn ${selected}" 
-                    data-color="${detalle.color}" 
-                    data-src="${imgUrl}" 
+    const colorName = String(detalle.color || '').replace(/"/g, '&quot;');
+    const aria = displayNumber
+      ? `Color ${colorName} (${displayNumber})`
+      : `Color ${colorName}`;
+
+    // Estructura mobile-first robusta:
+    //  - <button> 44x44 = hit area COMPLETA, sin clip-path ni overlays muertos.
+    //  - <span.color-swatch-fill> = círculo visible 28x28 con pointer-events:none.
+    //  - <span.color-number> = número opcional, también pointer-events:none.
+    //  - --swatch-color y --swatch-text = colores vía CSS variable.
+    //  - aria-label/aria-pressed para accesibilidad.
+    return `<button type="button"
+                    class="color-btn ${selectedClass}"
+                    data-color="${detalle.color}"
+                    data-src="${imgUrl}"
                     data-sku="${sku || ''}"
                     data-number="${displayNumber || ''}"
-                    style="background-color: ${hexColor}; color: ${textColor}; border: ${borderWidth} solid ${borderColor}; position: relative; display: flex; align-items: center; justify-content: center;">${numberHtml}</button>`;
+                    aria-label="${aria}"
+                    aria-pressed="${isSelected ? 'true' : 'false'}"
+                    style="--swatch-color: ${hexColor}; --swatch-text: ${textColor};"><span class="color-swatch-fill" aria-hidden="true"></span>${numberHtml}</button>`;
   }).join('');
 }
 
@@ -4582,18 +4667,18 @@ function initModalEvents() {
   // CTA WhatsApp en modo catálogo: interceptar en capture para no disparar carrito/bottom-sheet
   if (!window.__pdpWaClickInit) {
     window.__pdpWaClickInit = true;
+    // Tracking interno (fylAnalytics) sin tocar el flujo de navegación.
+    // El <a target="_blank" href="wa.me/..."> abre solo de forma nativa.
+    // Meta Lead se dispara en catalogo-publico.js (público) o en whatsapp.js
+    // (resto), con deduplicación por el flag event.__fylWaLeadTracked para
+    // evitar inflar CPL en Meta Ads Manager.
     document.addEventListener('click', (e) => {
       const wa = e.target.closest('.pdp-whatsapp-cta');
-      if (wa) {
-        e.preventDefault();
-        e.stopPropagation();
-        e.stopImmediatePropagation();
-        try {
-          if (fylAnalytics.isReady()) fylAnalytics.event("whatsapp_click", { surface: "pdp" });
-        } catch (_e) {}
-        window.open(wa.href, '_blank', 'noopener');
-        return;
-      }
+      if (!wa) return;
+      try {
+        if (fylAnalytics.isReady()) fylAnalytics.event("whatsapp_click", { surface: "pdp" });
+      } catch (_e) {}
+      // Sin preventDefault / stopPropagation: el navegador navega solo.
     }, true);
   }
   
@@ -4678,6 +4763,32 @@ function initModalEvents() {
       return;
     }
 
+    // Tap sobre la imagen principal del PDP -> abrir lightbox fullscreen.
+    // Fix: Clarity detectó >1000 dead clicks en .product-modal-main-image.
+    // Recolectamos la galería completa desde las miniaturas para navegación swipe.
+    const mainImageTap = e.target.closest('.product-modal-main-image');
+    if (mainImageTap) {
+      e.preventDefault();
+      const src = mainImageTap.currentSrc || mainImageTap.src;
+      if (src) {
+        const alt = mainImageTap.getAttribute('alt') || '';
+        // Tomar todas las URLs de las miniaturas (data-full o src), conservando
+        // orden de la galería del PDP. Dedup para evitar duplicados.
+        const seen = new Set();
+        const galleryUrls = [];
+        modal.querySelectorAll('.pdp-thumbs .miniatura').forEach((m) => {
+          const url = m.getAttribute('data-full') || m.getAttribute('src') || '';
+          if (url && !seen.has(url)) { seen.add(url); galleryUrls.push(url); }
+        });
+        // Asegurar que la imagen actual esté en la lista (si no, prepend).
+        if (src && !seen.has(src)) { galleryUrls.unshift(src); }
+        const startIdx = Math.max(0, galleryUrls.indexOf(src));
+        try { if (fylAnalytics.isReady()) fylAnalytics.event("view_product_image_fullscreen", { surface: "pdp", gallery_size: galleryUrls.length }); } catch (_e) {}
+        openPdpLightbox(galleryUrls.length ? galleryUrls : [src], startIdx, alt);
+      }
+      return;
+    }
+
     // Botones descargar/compartir (delegación con data-action, fallback)
     const actionBtn = e.target.closest('.pm-action-btn');
     if (actionBtn) {
@@ -4697,51 +4808,15 @@ function initModalEvents() {
       }
     }
     
-    // Click en botón de color
-    if (e.target.classList.contains('color-btn')) {
-      const btn = e.target;
+    // Click en botón de color del PDP.
+    // closest() robusto: matchea aunque el target sea un hijo decorativo
+    // (.color-swatch-fill o .color-number). Scope a .product-modal-colors
+    // para no chocar con .card .color-btn de los recomendados.
+    const btn = e.target.closest('.product-modal-colors .color-btn');
+    if (btn) {
       const color = btn.dataset.color;
-      if (!productoActualEnModal || !color) return;
-      
-      const resultado = obtenerPrimerSkuConStock(productoActualEnModal, color);
-      const sku = resultado?.sku || '';
-      
-      const mainImage = modal.querySelector('.product-modal-main-image');
-      if (mainImage && btn.dataset.src) {
-        mainImage.src = btn.dataset.src;
-      }
-      
-      const detalleColor = productoActualEnModal.DetalleColor?.find(d =>
-        (d.color || "").trim().toLowerCase() === (color || "").trim().toLowerCase()
-      );
-      if (detalleColor) {
-        try {
-          if (fylAnalytics.isReady() && productoActualEnModal && color) {
-            fylAnalytics.event("select_item_variant", {
-              item_id: String(productoActualEnModal.Articulo || ""),
-              item_variant: String(color),
-            });
-          }
-        } catch (_e) {}
-        const variantesHTML = renderizarVariantesModalPDP(productoActualEnModal, color, color);
-        const variantsContainer = modal.querySelector('.product-modal-variants');
-        if (variantsContainer) variantsContainer.innerHTML = variantesHTML;
-        const colorLabelEl = modal.querySelector('.product-modal-color-label strong');
-        if (colorLabelEl) colorLabelEl.textContent = color;
-        const addBtn = modal.querySelector('.pdp-add-btn');
-        if (addBtn) addBtn.dataset.color = color;
-        clearPdpAddAddedState(modal);
-        updateModalPDPTotal(modal);
-      }
-      
-      // Si no encontramos SKU con stock, igual mostramos talles para que el usuario pueda elegir.
-      // Solo tocamos URL/dataset si tenemos un SKU válido.
-      if (sku) {
-        updateSKUEnURL(sku);
-        modal.dataset.sku = sku;
-      }
-      modal.querySelectorAll('.color-btn').forEach(b => b.classList.remove('selected'));
-      btn.classList.add('selected');
+      if (!color) return;
+      applyPdpColorSelection(color, { updateMainImage: true, source: 'swatch' });
       return;
     }
     
@@ -4837,16 +4912,18 @@ function initModalEvents() {
       return;
     }
     
-    // Click en miniatura
-    if (e.target.classList.contains('miniatura')) {
-      const img = e.target;
-      const fullSrc = img.getAttribute('data-full') || img.src;
+    // Click en miniatura del PDP. closest() robusto + scope a .pdp-thumbs
+    // para no chocar con .gallery .miniatura de cards de recomendados.
+    const thumbEl = e.target.closest('.pdp-thumbs .miniatura');
+    if (thumbEl) {
+      const fullSrc = thumbEl.getAttribute('data-full') || thumbEl.src;
       const mainImage = modal.querySelector('.product-modal-main-image');
-      if (mainImage) {
-        mainImage.src = fullSrc;
-      }
+      if (mainImage) mainImage.src = fullSrc;
       modal.querySelectorAll('.pdp-thumbs .miniatura').forEach(m => m.classList.remove('active'));
-      img.classList.add('active');
+      thumbEl.classList.add('active');
+      // Regla "la imagen visible manda": si la thumb pertenece a otro color,
+      // sincronizamos swatch/label/talles/SKU. Silencioso si ya está sync.
+      syncPdpColorFromImage(thumbEl, 'thumbnail');
       return;
     }
     
@@ -5024,8 +5101,11 @@ function initGridEvents() {
       navigator.vibrate?.(10);
       return;
     }
-    // Ignorar clicks en botones, controles de reserva, botones de color
-    if (e.target.tagName === 'BUTTON' || 
+    // Ignorar clicks en botones, controles de reserva, botones de color,
+    // o cualquier enlace interno (ej: .public-consult-btn que ahora es <a>
+    // target=_blank para navegar nativo a wa.me sin abrir el PDP).
+    if (e.target.tagName === 'BUTTON' ||
+        e.target.closest('a[href]') ||
         e.target.closest('.reserve-controls') ||
         e.target.closest('.color-btn')) {
       return;
@@ -5113,7 +5193,17 @@ function initEscClose() {
   escInit = true;
   
   document.addEventListener('keydown', (e) => {
+    // Navegación gallery dentro del lightbox: flechas izquierda/derecha.
+    if (typeof isPdpLightboxOpen === 'function' && isPdpLightboxOpen()) {
+      if (e.key === 'ArrowLeft') { e.preventDefault(); pdpLightboxGo(-1); return; }
+      if (e.key === 'ArrowRight') { e.preventDefault(); pdpLightboxGo(1); return; }
+    }
     if (e.key === 'Escape') {
+      // Si el lightbox está abierto, cerrarlo primero (no tocar el PDP padre).
+      if (typeof isPdpLightboxOpen === 'function' && isPdpLightboxOpen()) {
+        closePdpLightbox();
+        return;
+      }
       const modal = document.getElementById('product-modal');
       if (modal && modal.classList.contains('active')) {
         cerrarModal();
@@ -5160,6 +5250,19 @@ async function resetHomeState() {
 }
 
 async function onNavChange() {
+  // 1) Si nosotros disparamos history.back() para consumir nuestra propia
+  //    entrada del lightbox, ignorar este popstate (no tocar el PDP padre).
+  if (__pdpLightboxConsumingHistory) {
+    __pdpLightboxConsumingHistory = false;
+    return;
+  }
+  // 2) Back nativo con lightbox abierto: cerrar SOLO el lightbox y mantener
+  //    el PDP. fromPopstate=true para no llamar history.back() recursivo.
+  if (typeof isPdpLightboxOpen === 'function' && isPdpLightboxOpen()) {
+    closePdpLightbox({ fromPopstate: true });
+    return;
+  }
+
   const modal = document.getElementById('product-modal');
   const isPdpOpen = modal?.classList.contains('active');
 
@@ -5429,6 +5532,18 @@ function configurarEventos() {
 async function cambiarCategoria(cat) {
   fylCatalogDbg("🔄 Cambiando a categoría:", cat);
   persistCurrentScrollInHistory();
+  try {
+    if (fylAnalytics.isReady()) {
+      fylAnalytics.event("catalog_category_select", {
+        category: String(cat || "all"),
+        source: "catalog_ui",
+      });
+    }
+  } catch (_e) {}
+  trackMetaCustom("CatalogCategorySelect", {
+    category: String(cat || "all"),
+    source: "catalog_ui",
+  });
 
   if (typeof window.clearSearch === "function") {
     await window.clearSearch({ skipCatalogReset: true });
@@ -5541,12 +5656,547 @@ async function shareImageUrl(imgUrl) {
   }
   try {
     await navigator.clipboard.writeText(imgUrl);
-    if (typeof showToast === 'function') showToast('Link de imagen copiado', 'success');
-    else alert('Link copiado');
+    showFylToastError({ message: "Link de imagen copiado" });
   } catch (e) {
-    alert('Copiá este link: ' + imgUrl);
+    showFylToastError({
+      message: "No pudimos copiar el link. Intentá de nuevo.",
+    });
   }
 }
+
+/* ============================================================
+ * PDP Lightbox — Visor fullscreen de la imagen principal del PDP.
+ * Razón: Clarity detectó >1000 dead clicks sobre .product-modal-main-image
+ * porque los usuarios esperan poder ampliar la foto.
+ * Singleton DOM, reutiliza shareImageUrl()/downloadImageFromUrl(),
+ * sin librerías externas, mobile-first.
+ * ============================================================ */
+let __pdpLightboxOpener = null;
+let __pdpLightboxPrevOverflow = "";
+let __pdpLightboxPushedState = false;
+// Flag: cuando NOSOTROS llamamos history.back() para consumir nuestra propia
+// entrada, evita que onNavChange interprete ese popstate como navegación real
+// y termine cerrando el PDP padre.
+let __pdpLightboxConsumingHistory = false;
+/* ============================================================
+ * Sincronización Imagen ↔ Color del PDP
+ * Regla UX: "la imagen visible manda". Cuando el usuario cambia la
+ * imagen por thumbnail, lightbox swipe o cualquier otro medio, el
+ * color seleccionado se sincroniza automáticamente (sin loops).
+ * ============================================================ */
+
+// Guard anti-loop: true mientras un sync desde imagen está en curso, para
+// evitar que applyPdpColorSelection re-dispare cambios de imagen circulares.
+let __pdpSyncingColorFromImage = false;
+
+/**
+ * Aplica el cambio de color seleccionado en el PDP de forma centralizada.
+ * Reusable desde el listener del swatch (updateMainImage:true) y desde
+ * syncPdpColorFromImage (updateMainImage:false, porque la imagen ya cambió).
+ *
+ * @param {string} color  Nombre del color a seleccionar.
+ * @param {object} opts
+ *   - updateMainImage {boolean=true}  Si true, también cambia .product-modal-main-image
+ *     y la thumbnail activa al primer src del color (modo swatch). Si false, asume
+ *     que la imagen visible ya pertenece al nuevo color (modo image-driven).
+ *   - source {string='swatch'} 'swatch' | 'thumbnail' | 'lightbox_swipe' | 'lightbox_close'
+ * @returns {boolean} true si el color cambió, false si era igual o falló.
+ */
+function applyPdpColorSelection(color, opts = {}) {
+  const { updateMainImage = true, source = 'swatch' } = opts;
+  const modal = document.getElementById('product-modal');
+  if (!modal || !productoActualEnModal || !color) return false;
+
+  const colorNorm = String(color).trim().toLowerCase();
+  if (!colorNorm) return false;
+
+  // Detectar color actual desde el label visible (fuente de verdad).
+  const currentColorEl = modal.querySelector('.product-modal-color-label strong');
+  const previousColor = (currentColorEl?.textContent || '').trim();
+  if (previousColor && previousColor.toLowerCase() === colorNorm) return false;
+
+  // Encontrar el button del color (iteración robusta ante caracteres raros).
+  const allBtns = modal.querySelectorAll('.product-modal-colors .color-btn');
+  let btn = null;
+  for (const b of allBtns) {
+    if ((b.dataset.color || '').trim().toLowerCase() === colorNorm) { btn = b; break; }
+  }
+
+  const detalleColor = productoActualEnModal.DetalleColor?.find(d =>
+    (d.color || '').trim().toLowerCase() === colorNorm
+  );
+  if (!detalleColor) return false;
+
+  // 1) Imagen principal + thumbnail activa (solo si el cambio nace del swatch).
+  if (updateMainImage && btn) {
+    const mainImage = modal.querySelector('.product-modal-main-image');
+    const targetSrc = btn.dataset.src;
+    if (mainImage && targetSrc) mainImage.src = targetSrc;
+    const thumbs = modal.querySelectorAll('.pdp-thumbs .miniatura');
+    let matched = false;
+    thumbs.forEach((t) => {
+      const full = t.getAttribute('data-full') || t.getAttribute('src') || '';
+      if (!matched && targetSrc && full === targetSrc) {
+        thumbs.forEach((x) => x.classList.remove('active'));
+        t.classList.add('active');
+        matched = true;
+      }
+    });
+    // Fallback: si no hay match exacto de URL, activar la primera thumb del
+    // color (iteración para evitar dependencia de CSS.escape en WebViews viejos).
+    if (!matched) {
+      for (const t of thumbs) {
+        if ((t.getAttribute('data-color-norm') || '') === colorNorm) {
+          thumbs.forEach((x) => x.classList.remove('active'));
+          t.classList.add('active');
+          break;
+        }
+      }
+    }
+  }
+
+  // 2) Variantes (talles) + label + addBtn + total.
+  const variantesHTML = renderizarVariantesModalPDP(productoActualEnModal, color, color);
+  const variantsContainer = modal.querySelector('.product-modal-variants');
+  if (variantsContainer) variantsContainer.innerHTML = variantesHTML;
+  if (currentColorEl) currentColorEl.textContent = color;
+  const addBtn = modal.querySelector('.pdp-add-btn');
+  if (addBtn) addBtn.dataset.color = color;
+  try { clearPdpAddAddedState(modal); } catch (_) {}
+  try { updateModalPDPTotal(modal); } catch (_) {}
+
+  // 3) SKU en URL + dataset (solo si hay SKU con stock).
+  const resultado = obtenerPrimerSkuConStock(productoActualEnModal, color);
+  const sku = resultado?.sku || '';
+  if (sku) {
+    try { updateSKUEnURL(sku); } catch (_) {}
+    modal.dataset.sku = sku;
+  }
+
+  // 4) Swatch selection (clases + aria-pressed).
+  allBtns.forEach((b) => {
+    b.classList.remove('selected');
+    b.setAttribute('aria-pressed', 'false');
+  });
+  if (btn) {
+    btn.classList.add('selected');
+    btn.setAttribute('aria-pressed', 'true');
+  }
+
+  // 5) Analytics.
+  try {
+    if (fylAnalytics.isReady()) {
+      const allColors = productoActualEnModal.DetalleColor || [];
+      const itemId = String(productoActualEnModal.Articulo || '');
+      fylAnalytics.event('select_item_variant', { item_id: itemId, item_variant: String(color) });
+      fylAnalytics.event('change_product_color', {
+        surface: 'pdp', item_id: itemId, color: String(color),
+        color_count: allColors.length, source: source,
+      });
+      if (source !== 'swatch') {
+        fylAnalytics.event('image_driven_color_change', {
+          source: source, previous_color: String(previousColor || ''),
+          new_color: String(color), item_id: itemId,
+        });
+      }
+    }
+  } catch (_) {}
+
+  return true;
+}
+
+/**
+ * Resuelve el color asociado a una imagen visible y sincroniza la UI del PDP
+ * si difiere del color actual. Acepta:
+ *   - HTMLImageElement con atributo data-color
+ *   - URL string (busca la thumbnail correspondiente en .pdp-thumbs)
+ *
+ * Si la imagen no tiene color asociado (legacy o no encontrada), no cambia
+ * nada (regla CASO D del usuario).
+ *
+ * @returns {boolean} true si el color cambió, false en caso contrario.
+ */
+function syncPdpColorFromImage(input, source = 'image') {
+  if (__pdpSyncingColorFromImage) return false;
+  const modal = document.getElementById('product-modal');
+  if (!modal || !productoActualEnModal) return false;
+  // Producto con un solo color: nada para sincronizar.
+  if (!productoActualEnModal.DetalleColor || productoActualEnModal.DetalleColor.length <= 1) return false;
+
+  let color = '';
+  if (input && typeof input === 'object' && input.getAttribute) {
+    color = input.getAttribute('data-color') || '';
+  } else if (typeof input === 'string' && input) {
+    const thumbs = modal.querySelectorAll('.pdp-thumbs .miniatura[data-color]');
+    for (const m of thumbs) {
+      const full = m.getAttribute('data-full') || m.getAttribute('src') || '';
+      if (full === input || m.src === input) {
+        color = m.getAttribute('data-color') || '';
+        break;
+      }
+    }
+  }
+  if (!color) return false;
+
+  __pdpSyncingColorFromImage = true;
+  try {
+    return applyPdpColorSelection(color, { updateMainImage: false, source });
+  } finally {
+    __pdpSyncingColorFromImage = false;
+  }
+}
+
+// Estado de galería para navegación entre imágenes dentro del lightbox.
+let __pdpLightboxImages = [];
+let __pdpLightboxIndex = 0;
+const __pdpLightboxPreloaded = new Set();
+// Refs para listeners touch del swipe.
+let __pdpLightboxTouchX0 = null;
+let __pdpLightboxTouchY0 = null;
+let __pdpLightboxTouchT0 = 0;
+
+function ensurePdpLightboxRoot() {
+  let root = document.getElementById('pdp-lightbox-root');
+  if (root) return root;
+
+  root = document.createElement('div');
+  root.id = 'pdp-lightbox-root';
+  root.className = 'pdp-lightbox';
+  root.setAttribute('role', 'dialog');
+  root.setAttribute('aria-modal', 'true');
+  root.setAttribute('aria-label', 'Imagen ampliada del producto');
+  root.setAttribute('aria-hidden', 'true');
+  root.innerHTML = `
+    <div class="pdp-lightbox__backdrop" aria-hidden="true"></div>
+    <div class="pdp-lightbox__toolbar" role="toolbar" aria-label="Acciones de imagen">
+      <button type="button" class="pdp-lightbox-btn pdp-lightbox-btn--share" data-action="pdp-lightbox-share" aria-label="Compartir foto">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+      </button>
+      <button type="button" class="pdp-lightbox-btn pdp-lightbox-btn--download" data-action="pdp-lightbox-download" aria-label="Descargar foto">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      </button>
+      <button type="button" class="pdp-lightbox-btn pdp-lightbox-btn--close" data-action="pdp-lightbox-close" aria-label="Cerrar imagen">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <button type="button" class="pdp-lightbox-nav pdp-lightbox-nav--prev" data-action="pdp-lightbox-prev" aria-label="Imagen anterior" tabindex="-1" hidden>
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
+    </button>
+    <button type="button" class="pdp-lightbox-nav pdp-lightbox-nav--next" data-action="pdp-lightbox-next" aria-label="Imagen siguiente" tabindex="-1" hidden>
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
+    </button>
+    <div class="pdp-lightbox-stage">
+      <img class="pdp-lightbox-image" alt="" decoding="async" draggable="false" />
+    </div>
+    <div class="pdp-lightbox-counter" aria-live="polite" hidden></div>
+  `;
+  document.body.appendChild(root);
+
+  // ====== Listeners propios del overlay ======
+  root.addEventListener('click', (ev) => {
+    const target = ev.target;
+    // Tap en la imagen: NO cerrar (requisito UX).
+    if (target.closest('.pdp-lightbox-image')) {
+      ev.stopPropagation();
+      return;
+    }
+    const actionEl = target.closest('[data-action]');
+    const action = actionEl ? actionEl.dataset.action : null;
+    if (action === 'pdp-lightbox-close') {
+      ev.preventDefault();
+      closePdpLightbox();
+      return;
+    }
+    if (action === 'pdp-lightbox-prev') {
+      ev.preventDefault();
+      ev.stopPropagation();
+      pdpLightboxGo(-1);
+      return;
+    }
+    if (action === 'pdp-lightbox-next') {
+      ev.preventDefault();
+      ev.stopPropagation();
+      pdpLightboxGo(1);
+      return;
+    }
+    if (action === 'pdp-lightbox-share') {
+      ev.preventDefault();
+      const src = root.querySelector('.pdp-lightbox-image')?.src;
+      if (src) {
+        try { if (fylAnalytics?.isReady?.()) fylAnalytics.event("share_product", { surface: "pdp_lightbox" }); } catch (_) {}
+        shareImageUrl(src);
+      }
+      return;
+    }
+    if (action === 'pdp-lightbox-download') {
+      ev.preventDefault();
+      const src = root.querySelector('.pdp-lightbox-image')?.src;
+      if (src) {
+        try { if (fylAnalytics?.isReady?.()) fylAnalytics.event("download_product_image", { surface: "pdp_lightbox" }); } catch (_) {}
+        downloadImageFromUrl(src);
+      }
+      return;
+    }
+    // Backdrop o cualquier área fuera (imagen/toolbar/nav/counter) -> cerrar.
+    closePdpLightbox();
+  });
+
+  // ====== Swipe horizontal (mobile) sobre el stage ======
+  const stage = root.querySelector('.pdp-lightbox-stage');
+  if (stage) {
+    stage.addEventListener('touchstart', (e) => {
+      const t = e.touches && e.touches[0];
+      if (!t) return;
+      __pdpLightboxTouchX0 = t.clientX;
+      __pdpLightboxTouchY0 = t.clientY;
+      __pdpLightboxTouchT0 = Date.now();
+    }, { passive: true });
+    stage.addEventListener('touchend', (e) => {
+      if (__pdpLightboxTouchX0 == null) return;
+      const t = e.changedTouches && e.changedTouches[0];
+      const x0 = __pdpLightboxTouchX0;
+      const y0 = __pdpLightboxTouchY0;
+      const t0 = __pdpLightboxTouchT0;
+      __pdpLightboxTouchX0 = null;
+      __pdpLightboxTouchY0 = null;
+      if (!t) return;
+      const dx = t.clientX - x0;
+      const dy = t.clientY - y0;
+      const dt = Date.now() - t0;
+      // Swipe horizontal claro: distancia > 50px, eje horizontal dominante, en <600ms.
+      if (Math.abs(dx) > 50 && Math.abs(dy) < 60 && dt < 600) {
+        pdpLightboxGo(dx < 0 ? 1 : -1);
+      }
+    }, { passive: true });
+    stage.addEventListener('touchcancel', () => {
+      __pdpLightboxTouchX0 = null;
+      __pdpLightboxTouchY0 = null;
+    }, { passive: true });
+  }
+
+  return root;
+}
+
+/** Renderiza la imagen del índice actual + indicadores + precarga vecinos. */
+function renderPdpLightboxCurrent() {
+  const root = document.getElementById('pdp-lightbox-root');
+  if (!root) return;
+  const total = __pdpLightboxImages.length;
+  const idx = __pdpLightboxIndex;
+  const img = root.querySelector('.pdp-lightbox-image');
+  const counter = root.querySelector('.pdp-lightbox-counter');
+  const prevBtn = root.querySelector('.pdp-lightbox-nav--prev');
+  const nextBtn = root.querySelector('.pdp-lightbox-nav--next');
+
+  const url = __pdpLightboxImages[idx] || '';
+  const isAlreadyOpen = root.classList.contains('pdp-lightbox--open');
+  if (img && url && img.src !== url) {
+    // Anim sutil de fade SOLO si ya estaba abierto (navegación entre imágenes).
+    // En la primera apertura, dejamos que la animación base de entrada se ocupe.
+    if (isAlreadyOpen) {
+      img.classList.add('is-swapping');
+      img.onload = () => img.classList.remove('is-swapping');
+      img.onerror = () => img.classList.remove('is-swapping');
+    } else {
+      img.onload = null;
+      img.onerror = null;
+    }
+    img.src = url;
+  }
+  // Sync color del PDP padre con la imagen actual del lightbox.
+  // SOLO al navegar dentro del lightbox (ya abierto); en el initial open el
+  // PDP padre ya está sincronizado con el color de la imagen inicial.
+  if (isAlreadyOpen && url) {
+    try { syncPdpColorFromImage(url, 'lightbox_swipe'); } catch (_) {}
+  }
+  if (counter) {
+    if (total > 1) {
+      counter.textContent = `${idx + 1} / ${total}`;
+      counter.hidden = false;
+    } else {
+      counter.hidden = true;
+    }
+  }
+  const showNav = total > 1;
+  if (prevBtn) {
+    prevBtn.hidden = !showNav;
+    prevBtn.tabIndex = showNav ? 0 : -1;
+  }
+  if (nextBtn) {
+    nextBtn.hidden = !showNav;
+    nextBtn.tabIndex = showNav ? 0 : -1;
+  }
+  preloadPdpLightboxNeighbors();
+}
+
+function pdpLightboxGo(delta) {
+  const total = __pdpLightboxImages.length;
+  if (total <= 1) return;
+  __pdpLightboxIndex = (__pdpLightboxIndex + delta + total) % total;
+  try { if (fylAnalytics?.isReady?.()) fylAnalytics.event("view_product_image_gallery", { surface: "pdp_lightbox", index: __pdpLightboxIndex }); } catch (_) {}
+  renderPdpLightboxCurrent();
+}
+
+function preloadPdpLightboxNeighbors() {
+  const total = __pdpLightboxImages.length;
+  if (total <= 1) return;
+  const i = __pdpLightboxIndex;
+  const nextI = (i + 1) % total;
+  const prevI = (i - 1 + total) % total;
+  [nextI, prevI].forEach((k) => {
+    const src = __pdpLightboxImages[k];
+    if (!src || __pdpLightboxPreloaded.has(src)) return;
+    const im = new Image();
+    im.decoding = 'async';
+    im.src = src;
+    __pdpLightboxPreloaded.add(src);
+  });
+}
+
+/** Sincroniza la imagen principal del PDP padre con la última imagen vista en
+ *  el lightbox y activa la miniatura correspondiente. Llamado al cerrar. */
+function syncPdpMainImageFromLightbox() {
+  if (!__pdpLightboxImages.length) return;
+  const modal = document.getElementById('product-modal');
+  if (!modal) return;
+  const finalUrl = __pdpLightboxImages[__pdpLightboxIndex];
+  if (!finalUrl) return;
+  const mainImage = modal.querySelector('.product-modal-main-image');
+  if (mainImage && mainImage.src !== finalUrl) {
+    mainImage.src = finalUrl;
+  }
+  // Marcar la miniatura activa que corresponda (si existe la URL en thumbs).
+  const thumbs = modal.querySelectorAll('.pdp-thumbs .miniatura');
+  let matched = false;
+  thumbs.forEach((m) => {
+    const full = m.getAttribute('data-full') || m.getAttribute('src') || '';
+    if (!matched && full === finalUrl) {
+      thumbs.forEach((x) => x.classList.remove('active'));
+      m.classList.add('active');
+      matched = true;
+    }
+  });
+  // Defensa: si por algún motivo el sync no ocurrió durante el swipe (p.ej.
+  // lightbox cerrado sin tocar siguiente/anterior), asegurarnos de que el
+  // color del PDP refleje la imagen final. Idempotente: early return si ya
+  // estaba sincronizado.
+  try { syncPdpColorFromImage(finalUrl, 'lightbox_close'); } catch (_) {}
+}
+
+/**
+ * Abre el lightbox.
+ * Firma compatible:
+ *  - openPdpLightbox(urlString, altText?)             -> 1 sola imagen
+ *  - openPdpLightbox(urlsArray, startIndex, altText?) -> galería navegable
+ */
+function openPdpLightbox(arg1, arg2, arg3) {
+  let images, startIndex, altText;
+  if (Array.isArray(arg1)) {
+    images = arg1.filter(Boolean);
+    startIndex = (typeof arg2 === 'number' && isFinite(arg2)) ? arg2 : 0;
+    altText = arg3 || '';
+  } else {
+    images = arg1 ? [String(arg1)] : [];
+    startIndex = 0;
+    altText = (typeof arg2 === 'string') ? arg2 : '';
+  }
+  if (!images.length) return false;
+
+  const root = ensurePdpLightboxRoot();
+  const img = root.querySelector('.pdp-lightbox-image');
+  __pdpLightboxImages = images;
+  __pdpLightboxIndex = Math.max(0, Math.min(startIndex, images.length - 1));
+  if (img) {
+    img.alt = altText || '';
+  }
+  renderPdpLightboxCurrent();
+
+  try { __pdpLightboxOpener = document.activeElement; } catch (_) { __pdpLightboxOpener = null; }
+  try {
+    __pdpLightboxPrevOverflow = document.body.style.overflow || '';
+    document.body.style.overflow = 'hidden';
+  } catch (_) {}
+  document.body.classList.add('pdp-lightbox-open');
+  // Pushear entrada de historial para que el back nativo del browser/Android cierre
+  // SOLO el lightbox sin descalzar el PDP padre. onNavChange detecta el lightbox
+  // abierto y consume el popstate antes de tocar el modal.
+  try {
+    if (!__pdpLightboxPushedState) {
+      const baseState = (history.state && typeof history.state === 'object') ? history.state : {};
+      history.pushState({ ...baseState, pdpLightbox: true }, '', location.href);
+      __pdpLightboxPushedState = true;
+    }
+  } catch (_) {}
+  // Marcar hint como visto (oculta el chip "Tocar para ampliar" en siguientes PDPs).
+  try {
+    if (!localStorage.getItem('fyl_pdp_lightbox_hint_seen')) {
+      localStorage.setItem('fyl_pdp_lightbox_hint_seen', '1');
+    }
+    document.body.dataset.pdpLightboxSeen = '1';
+  } catch (_) {}
+  root.classList.remove('pdp-lightbox--leave');
+  // Doble RAF para garantizar que el navegador aplique el estado base antes de animar.
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    root.classList.add('pdp-lightbox--open');
+  }));
+  root.setAttribute('aria-hidden', 'false');
+  try { root.querySelector('.pdp-lightbox-btn--close')?.focus({ preventScroll: true }); } catch (_) {}
+  return true;
+}
+
+function closePdpLightbox(opts) {
+  const fromPopstate = !!(opts && opts.fromPopstate);
+  const root = document.getElementById('pdp-lightbox-root');
+  if (!root || !root.classList.contains('pdp-lightbox--open')) return false;
+  // Sincronizar la imagen principal del PDP con la última imagen vista en el
+  // lightbox (UX premium: el PDP refleja el resultado de la navegación).
+  syncPdpMainImageFromLightbox();
+  root.classList.remove('pdp-lightbox--open');
+  root.classList.add('pdp-lightbox--leave');
+  root.setAttribute('aria-hidden', 'true');
+  try { document.body.style.overflow = __pdpLightboxPrevOverflow || ''; } catch (_) {}
+  document.body.classList.remove('pdp-lightbox-open');
+  // Consumir entrada de historial si nosotros la pusheamos y el cierre NO
+  // viene de popstate (en ese caso el browser ya consumió la entrada).
+  // CRÍTICO: marcar __pdpLightboxConsumingHistory para que el popstate que
+  // disparará nuestro history.back() NO sea interpretado por onNavChange
+  // como un back real (que terminaría cerrando el PDP padre).
+  if (__pdpLightboxPushedState && !fromPopstate) {
+    __pdpLightboxPushedState = false;
+    __pdpLightboxConsumingHistory = true;
+    try {
+      history.back();
+    } catch (_) {
+      __pdpLightboxConsumingHistory = false;
+    }
+    // Safety: si por algún edge case raro el popstate no llega a dispararse,
+    // liberamos el flag tras 1.2s para no dejar la navegación en estado pegado.
+    // En el caso normal, onNavChange consume el flag antes que este timeout.
+    setTimeout(() => { __pdpLightboxConsumingHistory = false; }, 1200);
+  } else if (fromPopstate) {
+    __pdpLightboxPushedState = false;
+  }
+  try {
+    if (__pdpLightboxOpener && typeof __pdpLightboxOpener.focus === 'function') {
+      __pdpLightboxOpener.focus({ preventScroll: true });
+    }
+  } catch (_) {}
+  __pdpLightboxOpener = null;
+  return true;
+}
+
+function isPdpLightboxOpen() {
+  const root = document.getElementById('pdp-lightbox-root');
+  return !!(root && root.classList.contains('pdp-lightbox--open'));
+}
+
+// Init temprano: si el usuario ya vio el hint en otra sesión, ocultarlo de entrada
+// (evita el chip "Tocar para ampliar" en clientes recurrentes).
+try {
+  if (typeof localStorage !== 'undefined' && localStorage.getItem('fyl_pdp_lightbox_hint_seen')) {
+    document.body.dataset.pdpLightboxSeen = '1';
+  }
+} catch (_) {}
 
 // Función legacy para card (mantener por si se usa desde otro lado)
 async function downloadImage(btn) {
@@ -5686,33 +6336,13 @@ async function inicializarCatalogo() {
 
     if (!supabaseInicializado) {
       console.error("❌ No se pudo inicializar Supabase. El catálogo no funcionará correctamente.");
-      const fail = globalThis.__FYL_SUPABASE_INIT_FAIL__ || {};
-      const code = fail.code || "unknown";
-      const hint = fail.hint
-        ? String(fail.hint).replace(/</g, "&lt;").replace(/>/g, "&gt;")
-        : "";
-      const cont = document.getElementById("catalogo");
-      if (cont) {
-        cont.innerHTML = `
-        <div class="error-message" style="text-align: center; padding: 40px; color: #666; background: #f8f9fa; border-radius: 8px; margin: 20px;">
-          <h3>❌ No se pudo iniciar el catálogo</h3>
-          <p style="margin-bottom: 12px;">No pudimos conectar con la base de datos. Esto no suele deberse a un archivo en tu teléfono.</p>
-          ${
-            hint
-              ? `<p style="color:#555;font-size:14px;margin:12px 0;"><strong>Detalle:</strong> ${hint}</p>`
-              : ""
-          }
-          <p style="font-size:12px;color:#888;margin-bottom:8px;">Código: <code>${code}</code></p>
-          <ul style="text-align: left; margin: 20px 0; max-width: 600px; margin-left: auto; margin-right: auto; font-size: 14px;">
-            <li>Proba <strong>Recargar</strong>, usar <strong>otra red</strong> (Wi‑Fi o datos) o una <strong>ventana privada</strong> (especialmente en Safari/iPhone).</li>
-            <li>En el sitio publicado debe existir <code>/config.prod.js</code> (deploy con variables de entorno). Si falta, el servidor puede devolver HTML en su lugar.</li>
-            <li>Si sos desarrollador en tu PC: entonces sí podés usar <code>scripts/config.local.js</code> como override.</li>
-            <li>En consola buscá mensajes <code>[FYL boot]</code>, <code>[FYL config]</code> y <code>[FYL supabase]</code>. Con <code>?debug_boot=1</code> en la URL ves un panel de diagnóstico.</li>
-          </ul>
-          <button onclick="location.reload()" style="background: #CD844D; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; margin-top: 15px;">Reintentar</button>
-        </div>
-      `;
-      }
+      showFylErrorState({
+        preset: "api",
+        retry: () => {
+          hideFylErrorState();
+          void inicializarCatalogo();
+        },
+      });
       globalThis.markBootStage?.("catalog.aborted", { reason: "supabase_verify_failed" });
       hideCatalogBootOverlay();
       return;
@@ -5983,6 +6613,24 @@ async function inicializarCatalogo() {
     fylCatalogDbg("📊 Fuente de datos: Supabase (ÚNICA FUENTE)");
     fylCatalogDbg("🚫 Google Sheets: DESHABILITADO");
     globalThis.markBootStage?.("catalog.ready", { ok: true });
+
+    if (!window.__FYL_CONN_WATCH__) {
+      window.__FYL_CONN_WATCH__ = true;
+      watchFylConnectivity((offline) => {
+        if (!offline) return;
+        showFylErrorState({
+          preset: "offline",
+          retry: () => {
+            hideFylErrorState();
+            const cat =
+              typeof categoriaActual !== "undefined" && categoriaActual
+                ? categoriaActual
+                : "all";
+            void cargarCategoria(cat);
+          },
+        });
+      });
+    }
     } catch (error) {
       console.error("❌ Error inicializando catálogo:", error);
       console.error("Stack:", error.stack);
@@ -5990,20 +6638,22 @@ async function inicializarCatalogo() {
         name: error?.name,
         message: error?.message ? String(error.message).slice(0, 240) : String(error),
       });
-      const cont = document.getElementById("catalogo");
-      const safeMsg = (error?.message ? String(error.message) : String(error))
-        .slice(0, 220)
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;");
-      if (cont && !cont.querySelector(".error-message")) {
-        cont.innerHTML = `
-          <div class="error-message" style="text-align:center;padding:40px 20px;color:#666;background:#f8f9fa;border-radius:8px;margin:20px;">
-            <h3>No se pudo completar la carga</h3>
-            <p style="color:#c0392b;font-weight:bold;margin:12px 0;">${safeMsg}</p>
-            <p style="font-size:14px;">Si estás en el celular, probá recargar o cambiar entre Wi‑Fi y datos.</p>
-            <button type="button" onclick="location.reload()" style="background:#CD844D;color:#fff;border:none;padding:10px 20px;border-radius:5px;margin-top:16px;cursor:pointer;">Reintentar</button>
-          </div>`;
-      }
+      void (async () => {
+        let offline = false;
+        try {
+          offline = await isFylOfflineDeepCheck();
+        } catch (_) {}
+        const kind = error?.kind || classifyError(error);
+        const preset =
+          offline || kind === FYL_ERROR_KIND.NETWORK ? "offline" : "catalog";
+        showFylErrorState({
+          preset,
+          retry: () => {
+            hideFylErrorState();
+            void inicializarCatalogo();
+          },
+        });
+      })();
     }
   } finally {
     // markReady garantiza: (1) que first paint ocurrió, (2) safety net de overlay,
@@ -6060,9 +6710,10 @@ window.fylRunViewTransition = runWithViewTransition;
 async function mostrarAlternativasParaTalleSinStock(producto) {
   try {
     if (!window.buscarProductosAlternativos || !window.mostrarModalAlternativas) {
-      alert(
-        `Este producto no tiene stock en el talle ${producto.talle}. Por favor selecciona otro talle.`
-      );
+      showFylToastError({
+        message:
+          "Este producto no tiene stock en ese talle. Elegí otro talle o otro producto.",
+      });
       return;
     }
 
@@ -6075,7 +6726,7 @@ async function mostrarAlternativasParaTalleSinStock(producto) {
       modalInicial.innerHTML = `
         <div class="alternativas-modal-content" style="max-width: 500px;">
           <div class="alternativas-modal-header">
-            <h2>⚠️ Sin Stock</h2>
+            <h2>Sin stock</h2>
             <button class="alternativas-modal-close" onclick="window.__verAlternativasResolve(false)">×</button>
           </div>
           <div class="alternativas-modal-body">
@@ -6138,7 +6789,9 @@ async function mostrarAlternativasParaTalleSinStock(producto) {
           };
           
           await window.addToCart(productData);
-          alert(`✅ ${productoSeleccionado.articulo} agregado al carrito`);
+          showFylToastError({
+            message: `${productoSeleccionado.articulo} se agregó a tu bolsa`,
+          });
         }
       },
       onCerrar: () => {
@@ -6147,9 +6800,10 @@ async function mostrarAlternativasParaTalleSinStock(producto) {
     });
   } catch (error) {
     console.error("❌ Error mostrando alternativas:", error);
-    alert(
-      `Este producto no tiene stock en el talle ${producto.talle}. Por favor selecciona otro talle.`
-    );
+    showFylToastError({
+      message:
+        "No pudimos mostrar alternativas ahora. Intentá de nuevo en unos segundos.",
+    });
   }
 }
 
@@ -6564,6 +7218,9 @@ window.cargarDesdeSupabase = cargarDesdeSupabase;
 window.downloadImage = downloadImage;
 window.downloadImageFromUrl = downloadImageFromUrl;
 window.shareImageUrl = shareImageUrl;
+window.openPdpLightbox = openPdpLightbox;
+window.closePdpLightbox = closePdpLightbox;
+window.isPdpLightboxOpen = isPdpLightboxOpen;
 window.existeNovedades = existeNovedades;
 window.existeOfertas = existeOfertas;
 window.parseFecha = parseFecha;

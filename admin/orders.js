@@ -2936,7 +2936,6 @@ async function findVariantId(productName, color, size) {
       .eq('product_id', productData.id)
       .eq('color', color)
       .eq('size', size)
-      .eq('active', true)
       .limit(1)
       .maybeSingle();
     

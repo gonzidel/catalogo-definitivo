@@ -1,3 +1,5 @@
+import { FYL_VERSION } from "./fyl-version.js?v=m260514";
+
 // scripts/config.js
 // Valores por defecto (no sensibles). Para valores sensibles, copia
 // `scripts/config.local.example.js` a `scripts/config.local.js` y completa los campos.
@@ -271,7 +273,12 @@ export {
   const h = window.location.hostname;
   if (h === "localhost" || h === "127.0.0.1" || h === "") return;
   queueMicrotask(() => {
-    const swUrl = new URL("/sw.js", window.location.origin).href;
+    const swUrlObj = new URL("/sw.js", window.location.origin);
+    swUrlObj.searchParams.set(
+      "v",
+      String(FYL_VERSION || "").trim() || String(Date.now())
+    );
+    const swUrl = swUrlObj.href;
     navigator.serviceWorker
       .register(swUrl, { scope: "/", updateViaCache: "none" })
       .then(() => {
@@ -280,7 +287,7 @@ export {
       .catch((e) => {
         const msg = e && e.message ? String(e.message).slice(0, 200) : String(e);
         globalThis.markBootStage?.("sw.register_failed", { message: msg });
-        import("./fyl-runtime-resilience.js")
+        import("./fyl-runtime-resilience.js?v=m260514")
           .then((m) =>
             m.fylReportClientError({ kind: "sw.register_failed", message: msg })
           )

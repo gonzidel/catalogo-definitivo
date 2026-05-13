@@ -1359,11 +1359,11 @@ async function searchProducts(query) {
       return;
     }
     
-    // Obtener todos los variant_ids
+    // Obtener todos los variant_ids (incl. inactivas: puede haber stock histórico)
     const variantIds = [];
     (products || []).forEach(product => {
       (product.product_variants || []).forEach(v => {
-        if (v && v.active) variantIds.push(v.id);
+        if (v?.id) variantIds.push(v.id);
       });
     });
     
@@ -1387,15 +1387,10 @@ async function searchProducts(query) {
       }
     }
     
-    // Filtrar variantes activas (incluyendo las sin stock), luego obtener imágenes y talles
+    // Todas las variantes del producto (activas e inactivas), luego imágenes y talles
     const productsWithStock = await Promise.all(
       (products || []).flatMap(async (product) => {
-        const variantsWithStock = (product.product_variants || [])
-          .filter(v => {
-            if (!v || !v.active) return false;
-            // Incluir todas las variantes activas, incluso sin stock
-            return true;
-          });
+        const variantsWithStock = (product.product_variants || []).filter((v) => Boolean(v));
         
         // Obtener imágenes y talles para cada variante
         const variantsWithImages = await Promise.all(
@@ -1603,9 +1598,8 @@ async function processQrCodeForOrder(qrCode) {
       .eq("qr_code", qrNormalized);
   
   try {
-    // 1) Buscar solo productos activos y con estado visible
+    // 1) Buscar por QR (variante activa o no; puede haber existencia a liquidar)
     let { data: sizeData, error: sizeError } = await baseQuery()
-      .eq("product_variants.active", true)
       .in("product_variants.products.status", ["active", "pending_stock", "draft"])
       .maybeSingle();
     

@@ -3,6 +3,16 @@
  * Gestión del carrito de compras con persistencia local y sincronización con Supabase
  */
 
+function fylToastCartManager(message) {
+  try {
+    if (typeof window.showFylToastError === "function") {
+      window.showFylToastError({ message: String(message || "") });
+      return;
+    }
+  } catch (_) {}
+  console.warn("[carrito]", message);
+}
+
 // Estado del carrito
 let cartItems = [];
 let cartCount = 0;
@@ -152,7 +162,7 @@ function submitCart() {
     console.log("📤 Enviando carrito...");
 
     if (cartItems.length === 0) {
-      alert("El carrito está vacío");
+      fylToastCartManager("Tu carrito está vacío. Agregá productos antes de enviar.");
       return;
     }
 

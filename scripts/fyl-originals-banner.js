@@ -18,6 +18,29 @@ const PRODUCTS_PER_PAGE = 10; // Cantidad de productos a cargar por página
 let scrollListenerAttached = false; // Flag para evitar múltiples listeners
 let currentScrollHandler = null; // Referencia al handler de scroll actual
 
+function trackBannerProductClick({ banner, articulo, sku }) {
+  const payload = {
+    banner: String(banner || "unknown"),
+    articulo: String(articulo || ""),
+    sku: String(sku || ""),
+  };
+  try {
+    if (window.fylAnalytics?.isReady?.()) {
+      window.fylAnalytics.event("banner_product_click", payload);
+    }
+  } catch (_e) {}
+
+  const sendMeta = () => {
+    if (typeof fbq !== "function") return false;
+    fbq("trackCustom", "BannerProductClick", payload);
+    return true;
+  };
+  if (sendMeta()) return;
+  setTimeout(() => {
+    sendMeta();
+  }, 300);
+}
+
 function buildLocalDateKey(date = new Date()) {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, "0");
@@ -840,6 +863,7 @@ function setupFYLCardListeners(scrollContainer, startIndex = 0, endIndex = null)
       e.preventDefault();
       const sku = card.dataset.sku;
       const articulo = card.dataset.articulo;
+      trackBannerProductClick({ banner: "fyl_originals", articulo, sku });
 
       if (tryOpenPdpFromSku(sku)) return;
 

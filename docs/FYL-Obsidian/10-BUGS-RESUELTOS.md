@@ -4,6 +4,199 @@
 
 ---
 
+## 2026-05-08 — Safari iPhone: error `no_client` al iniciar el catálogo (Supabase no se inicializaba)
+
+### Síntoma
+
+- En **iPhone real con Safari** (no en BrowserStack ni en Chrome/Android), al cargar `index.html` o `catalogo.html` aparecía el modal:
+
+  > ❌ No se pudo iniciar el catálogo  
+  > Detalle: El navegador no pudo cargar la librería de Supabase. Probá recargar, otra red Wi-Fi/datos, o ventana privada.  
+  > Código: `no_client`
+
+- Safari mostraba además el cartel **"Reducir protecciones"** y el panel de **"Rastreadores bloqueados"** con `facebook.net`, `googletagmanager.com`, `bing.com` (Microsoft Clarity).
+- El usuario quedaba atascado: recargar varias veces no recuperaba; cambiar de red tampoco. En BrowserStack y otros navegadores funcionaba sin problemas.
+
+### Causa raíz (auditoría iterativa)
+
+La causa NO era un único bug sino **una cadena de fragilidades acumuladas** que se manifestaba específicamente en Safari iOS real con **iCloud Private Relay + ITP** activos:
+
+1. **Service Workers legacy (cache-first)** podían servir HTML stale en respuesta a requests del bundle de Supabase, rompiendo el `import()` dinámico.
+2. **Recovery automático demasiado agresivo** (`fylNuclearClearSwAndCaches` ⇒ `unregister()` del SW + reload) consumía el único slot de recuperación por sesión en el primer fallo transitorio (timeout de red), dejando un terminal `no_client` cuando un retry normal habría funcionado.
+3. **Dynamic `import()` ESM del bundle Supabase** (`scripts/vendor/supabase-js.bundle.min.js`) dentro de **top-level await** encadenado:
+   - `main-supabase.js` (TLA) → `supabase-client.js` (TLA × 2) → `loadCreateClient()` → `import(local, 60s)` → cae a 3 CDNs cross-origin (jsdelivr/unpkg/esm.sh, cada una 28s) → 144s totales antes de fallar.
+   - Safari iOS bloquea o ralentiza CDNs cross-origin por **iCloud Private Relay** y **ITP**.
+   - El grafo de modules con TLA encadenado a un `import()` que se cuelga = `main-supabase.js` nunca evalúa = catálogo no inicializa.
+4. **Imports versionados parciales:** los archivos críticos (`fyl-version.js`, `fyl-runtime-resilience.js`) NO tenían `?v=` en sus imports estáticos internos, lo que dejaba que Safari sirviera versiones cacheadas como `immutable, max-age=1y` aún después de un deploy nuevo.
+5. **Trackers bloqueados** (Meta Pixel, GTM, Microsoft Clarity) eran un FALSO positivo: Safari los bloquea pero no rompen el boot (todos los stubs son síncronos y seguros). Auditoría detallada confirmó aislamiento (sólo encolan en queue, sin red durante boot).
+
+### Solución (5 cambios en cascada, todos vivos)
+
+#### 1. Service Worker como **tombstone network-only** (`sw.js`)
+
+- `activate`: borra **todos** los caches (`caches.keys()` + `caches.delete()`).
+- `fetch`: solo intercepta GET/HEAD same-origin de **rutas críticas** (`/scripts/vendor/*`, `/config.prod.js`) y responde con `fetch(req, { cache: "no-store" })` (network-only, sin Cache API).
+- `SW_BUILD_TAG = "<FYL_VERSION>"` (reescrito por `cache-bust-html.mjs`) garantiza byte-diff en cada deploy ⇒ Safari detecta nuevo SW y reemplaza legacy.
+
+#### 2. Recovery **soft clear** vs **hard nuclear** separados (`scripts/fyl-runtime-resilience.js`)
+
+- `fylClearCachesOnly()` — borra Cache API; **preserva** el SW en producción.
+- `fylNuclearClearSwAndCaches()` — borra caches **y** desregistra SW; **solo** lo dispara el kill switch remoto (`fyl-flags.json` con `FORCE_RESET=true`).
+- `ensureCatalogSupabaseHealthy()` queda **exportado pero NO se invoca en boot inicial**. Ya no se gatilla recovery automático por timeout transitorio.
+
+#### 3. Bundle Supabase en **formato IIFE same-origin** (refactor estructural)
+
+**Antes:** `--format=esm` cargado por `import()` dinámico desde `loadCreateClient()` con 4 reintentos (1 local + 3 CDNs cross-origin).
+
+**Ahora:** `--format=iife --global-name=fylSupabase`, cargado como `<script defer src="scripts/vendor/supabase-js.bundle.min.js?v=<FYL_VERSION>">` antes de los `<script type="module">`. Expone `window.fylSupabase.createClient`. El módulo `supabase-client.js` lo lee de forma síncrona.
+
+Eliminados de `scripts/supabase-client.js`: `loadCreateClient`, `importWithTimeout`, `tryImportSupabaseModule`, `probeBundleForDebug`, `fylBundleHeadLooksLikeHtml`, `fylBundleFetchAppearsHtml`, `fylScheduleReloadOnceAfterHtmlBundle`, `fylClearBundleHtmlRecoverFlag`, `SUPABASE_CDN_URLS`, `SUPABASE_LOCAL_BUNDLE`. **–58 % LoC** en el archivo, **0 dynamic imports** en boot crítico, **0 dependencias cross-origin**.
+
+`scripts/cache-bust-html.mjs` ganó `ensureVendorSupabaseScript()` que inyecta de forma idempotente el `<script defer>` del bundle vendor antes del primer `<script type="module" src=".../supabase-client.js">` en cada HTML que lo necesite (catálogo + admin + client).
+
+#### 4. Versionado **global** y **defensivo** (cache-bust)
+
+- `app-version.json` → `FYL_VERSION` (única fuente).
+- `scripts/cache-bust-html.mjs` reescribe **todos** los `?v=` en HTMLs **y** en JS críticos (`EXTRA_VERSIONED_FILES`: `main-supabase.js`, `supabase-client.js`, `config.js`, `boot-telemetry.js`, `fyl-runtime-resilience.js`).
+- `scripts/fyl-version.js` exporta `FYL_VERSION` (también reescrito por `cache-bust`).
+- Imports estáticos internos versionados (`./fyl-version.js?v=...`, `./fyl-runtime-resilience.js?v=...`) ⇒ Safari no puede servir caché viejo de archivos sin query.
+- `firebase.json`:
+  - `/index.html`, `/*.html`, `/client/**/*.html`, `/manifest.json`, `/sw.js` → `no-cache, no-store, must-revalidate`.
+  - `/config.prod.js`, `/fyl-flags.json`, `scripts/config.js`, `scripts/boot-telemetry.js`, `scripts/fyl-version.js`, `scripts/fyl-runtime-resilience.js`, `scripts/config.local.js` → `no-cache`.
+  - `scripts/vendor/supabase-js.bundle.min.js` → `must-revalidate, max-age=86400` (NO `immutable`) + `Content-Type: application/javascript`.
+
+#### 5. Kill switch remoto (`fyl-flags.json`)
+
+JSON estático servido con `no-cache`. `{ "FORCE_RESET": true, "rev": N }` dispara `fylNuclearClearSwAndCaches` + reload en todos los clientes (poll cada 120s + en `visibilitychange`). Permite arreglar producción sin redeploy. Una vez aplicado, volver a `false` con `rev` superior.
+
+### Archivos (cambios principales)
+
+- `scripts/supabase-client.js` — reescrito (–10 718 B, –58 %); `await configReady` queda como único TLA.
+- `scripts/supabase-vendor-entry.js` — comentarios sobre IIFE.
+- `scripts/vendor/supabase-js.bundle.min.js` — re-bundleado IIFE (~168 KB).
+- `scripts/fyl-runtime-resilience.js` — soft/hard separados; kill switch + error reporting.
+- `scripts/fyl-version.js` — única fuente de `FYL_VERSION`, reescrita en cada `cache-bust`.
+- `scripts/cache-bust-html.mjs` — `ensureVendorSupabaseScript`, `patchFylVersionExport`, `patchServiceWorker` con `SW_BUILD_TAG`, `EXTRA_VERSIONED_FILES` ampliado.
+- `scripts/main-supabase.js` — eliminada la llamada a `ensureCatalogSupabaseHealthy()` durante boot inicial; check de `supabase` directo.
+- `scripts/config.js`, `scripts/boot-telemetry.js` — imports internos versionados (`?v=...`).
+- `sw.js` — tombstone network-only + `SW_BUILD_TAG`.
+- `index.html`, `catalogo.html`, `admin/*.html`, `client/*.html` — `<script defer src=".../scripts/vendor/supabase-js.bundle.min.js?v=...">` antes de cualquier module crítico (57 archivos inyectados por `cache-bust-html.mjs`).
+- `firebase.json` — headers (no-cache HTML/críticos, must-revalidate bundle vendor).
+- `package.json` — `bundle:supabase` con `--format=iife --global-name=fylSupabase`.
+- `fyl-flags.json` — flags de runtime para kill switch (`FORCE_RESET`, `rev`).
+
+### Cómo funciona ahora (boot crítico simplificado)
+
+```
+HTML (no-cache)
+│
+├─ <script src="/config.prod.js">                                       [clásico, sync]
+│        └─ window.SUPABASE_URL, SUPABASE_ANON_KEY, __FYL_CONFIG_PROD_LOADED__
+│
+├─ <script defer src="scripts/vendor/supabase-js.bundle.min.js?v=...">  [clásico, defer same-origin]
+│        └─ var fylSupabase = (() => { ... return { createClient }; })()
+│        └─ window.fylSupabase.createClient queda listo ANTES que cualquier <script type="module">
+│
+├─ <script type="module" src="boot-telemetry.js?v=...">                 [defer]
+├─ <script type="module" src="config.js?v=...">                         [defer; configReady IIFE no bloquea modules]
+├─ <script type="module" src="supabase-client.js?v=...">                [defer]
+│        ├─ await configReady                                           ← único TLA, resuelve en ms
+│        ├─ getCreateClient() lee window.fylSupabase.createClient       ← SYNC
+│        ├─ createClient(URL, KEY, opts)                                ← SYNC
+│        └─ supabase queda exportado y en window.supabase
+│
+├─ <script type="module" src="analytics.js?v=...">
+└─ <script type="module" src="main-supabase.js?v=...">                  [defer]
+         └─ usa supabase ya inicializado; sin retries automáticos en boot
+```
+
+**Características clave del nuevo boot:**
+
+- **0 dynamic imports** en la cadena crítica de Supabase.
+- **0 CDNs cross-origin** (`jsdelivr`, `unpkg`, `esm.sh` ya no se usan).
+- **1 solo TLA** en supabase-client (`await configReady`, IIFE local).
+- **Bundle vendor** se descarga en paralelo con el HTML gracias a `defer`; está listo antes de los modules.
+- **Safari iOS Private Relay/ITP** ya no impactan el boot (todo same-origin).
+- Si por alguna razón el bundle vendor falla, `supabase-client.js` lanza `supabase_vendor_missing` con error claro, sin colgarse 144 s ni gastar slots de recovery.
+- **Recovery automático eliminado en boot**: un timeout transitorio ya no genera un terminal `no_client`. El usuario ve el modal con hint y puede recargar manualmente o cambiar red.
+- **Kill switch remoto disponible** para casos donde se necesite hard reset sin redeploy (`fyl-flags.json` con `FORCE_RESET=true`).
+
+### Cómo verificar
+
+1. **iPhone real (Safari) — feliz path:**
+   - Abrir `https://<dominio>/?nocache=1`
+   - DevTools (Mac → iPhone) → **Network**:
+     - `index.html` 200 (sin from-cache), `Cache-Control: no-cache`
+     - `scripts/vendor/supabase-js.bundle.min.js?v=<FYL_VERSION>` 200, `Content-Type: application/javascript`, ~168 KB
+     - `config.prod.js` 200, `no-cache`
+     - **Cero requests** a `cdn.jsdelivr.net`, `unpkg.com`, `esm.sh`
+   - DevTools → **Storage → Service Workers**: una sola SW activa, scope `/`, script `sw.js?v=<FYL_VERSION>`.
+   - **Console**:
+     - sin warnings `[FYL supabase] [sw_cache_suspect] Bundle URL devuelve HTML`.
+     - sin `[supabase_local_timeout]` ni `[supabase_cdn_*]`.
+     - boot-telemetry stage `supabase.client.ready` con `source: "vendor-iife"`.
+   - **UI**: catálogo carga normal en <2 s.
+
+2. **iPhone real (Safari) — caso degradado intencional:**
+   - Bloquear `scripts/vendor/supabase-js.bundle.min.js` desde DevTools.
+   - Recargar.
+   - Esperado: modal "no_client" inmediato (sin esperar 144 s); `markBootStage` → `supabase.client.failed` con `name: "Error", message: "supabase_vendor_missing"`.
+   - Recargar manualmente con bundle desbloqueado: catálogo carga normal (slot de recovery intacto).
+
+3. **Kill switch remoto (cuando haga falta):**
+   - Editar `fyl-flags.json`: `{ "FORCE_RESET": true, "rev": <N+1> }`.
+   - `firebase deploy --only hosting` (solo este archivo cambia).
+   - Clientes detectan en <2 min: `fylNuclearClearSwAndCaches` + `location.reload()`.
+   - Volver `FORCE_RESET=false` con `rev` superior cuando estén limpios.
+
+### Riesgo futuro / cosas a recordar
+
+- **Si `@supabase/supabase-js` cambia de major** y necesita override de IIFE: revisar `package.json` `bundle:supabase` y `scripts/supabase-vendor-entry.js`.
+- **Imports sin `?v=` desde otros módulos**: 17 archivos importan `./supabase-client.js` SIN query. Esto NO rompe (existe deduplicación por `existingWindowClient`) pero duplica evaluación del módulo. Si en el futuro se quiere eliminar la duplicación: search & replace en bloque, no urgente.
+- **`ensureCatalogSupabaseHealthy` y `fylNuclearClearSwAndCaches`** siguen exportados para uso manual desde panel de soporte. NO invocarlos automáticamente en boot.
+- **`fyl-flags.json`**: tratar como infra crítica. Cambiar `rev` siempre al modificar `FORCE_RESET`.
+- **Trackers** (Meta Pixel, GTM, Clarity): siguen diferidos hasta primera interacción / `fyl-catalog-boot-done` / 15 s. Si Safari los bloquea, NO afectan boot. Si en el futuro alguien agregue un tracker síncrono que sí use red en boot, ese sí podría romper Safari → mantener el patrón "stub sync, carga real diferida".
+- **Refs cruzados**: ver [[11-DECISIONES-TECNICAS]] para el principio "boot crítico same-origin sin dynamic import" y [[09-RUNBOOK-OPERATIVO]] (si se documenta el procedimiento de kill switch).
+
+---
+
+## 2026-05-07 — Catálogo público (`catalogo.html`): FAB WhatsApp (`#wa-popup`) no abría al tocar
+
+### Síntoma
+
+- El botón flotante verde de WhatsApp parecía visible pero **no hacía nada** al pulsarlo (especialmente en móvil / Safari).
+- En escritorio ancho, en algún momento el FAB estaba oculto por CSS (`styles-desktop.css`).
+
+### Causa (auditoría)
+
+1. **`scripts/whatsapp.js`** registraba `click` en `#wa-toggle` con **`stopPropagation()`** sobre un `<a href="https://wa.me/…">`. En **Safari iOS** eso puede interferir con la **navegación nativa** del enlace.
+2. **Solapamiento táctil** con **`#btn-scroll-top`** (misma esquina inferior derecha en móvil): aunque el FAB tenía `z-index` mayor, el área útil del dedo a veces caía en el botón blanco.
+3. **`whatsapp.js`** cargaba muy tarde vía **import dinámico** post-boot; el FAB ya era `<a>` con `href`, pero el JS redundante seguía siendo riesgo en otros navegadores.
+4. Listener en **captura** en `scripts/catalogo-publico.js` sobre `document` — no interceptaba el FAB por selectores, pero se añadió **salida explícita** si el evento viene de `#wa-popup`.
+
+### Solución
+
+- **Catálogo público**: sin listeners JS en `#wa-toggle`; solo el `<a>` nativo. Lead Meta: listener **delegado** en `whatsapp.js` con `content_category: "public_catalog"` cuando `link.id === "wa-toggle"`.
+- **`catalogo.html`**: `<script defer src="scripts/whatsapp.js">`; se quitó el import diferido tardío de ese archivo.
+- **`styles.css`** (móvil ≤768px, `html.public-catalog`): `#wa-popup` con `z-index` más alto + `isolation`; `#btn-scroll-top.visible` desplazado para no tapar el FAB; `touch-action: manipulation` en `#wa-toggle`.
+- **`catalogo-publico.js`**: `if (event.target.closest("#wa-popup")) return` al inicio del handler en captura.
+- **`styles-desktop.css`**: el FAB en catálogo público ya no se oculta en desktop (solo ajuste de posición).
+
+### Archivos
+
+- `catalogo.html`
+- `scripts/whatsapp.js`
+- `scripts/catalogo-publico.js`
+- `styles.css`
+- `styles-desktop.css`
+
+### Cómo verificar
+
+- Abrir `catalogo.html` en iPhone/Safari y en Chrome Android: un toque en el FAB abre WhatsApp (mismo número que el botón del header).
+- Con scroll largo (visible `#btn-scroll-top`): el FAB sigue respondiendo; el scroll-top no queda encima del FAB.
+
+---
+
 ## 2026-05-04 — Producción: drift `reserved_qty` al marcar pedido enviado (migración 188)
 
 ### Síntoma

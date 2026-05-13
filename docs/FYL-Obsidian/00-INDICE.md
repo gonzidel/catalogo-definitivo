@@ -98,3 +98,5 @@ Ver [[10-BACKLOG-NO-CRITICO]]: columnas legacy, RLS fino, helpers duplicados, `r
 | FASE 9 | Inteligencia operativa stock-audit | COMPLETADO 2026-05-04 — ver [[27-MODULO-COMPORTAMIENTO-PRODUCTOS]] (verificación operativa OK 2026-05-04) |
 
 *Última actualización: 2026-05-04 — 188 producción + cierre histórico `reserved_qty` documentado en [[06-RESERVED-QTY-Y-RECONCILE]]; FASE 9 verificada en [[27-MODULO-COMPORTAMIENTO-PRODUCTOS]].*
+
+*Actualización 2026-05-08 — boot crítico de Supabase blindado contra Safari iOS: bundle IIFE same-origin, eliminación de `import()` dinámico, SW tombstone network-only, kill switch remoto. Detalle en [[10-BUGS-RESUELTOS]] §2026-05-08 y nuevas decisiones 13–16 en [[11-DECISIONES-TECNICAS]] §B.*

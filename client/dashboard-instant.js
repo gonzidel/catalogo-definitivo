@@ -10,6 +10,13 @@ import {
 } from "./transportes-data.js";
 import { fylAnalytics } from "../scripts/analytics.js";
 import { canonicalizeTransportName } from "../scripts/transport-canonical.js";
+import {
+  showFylErrorState,
+  hideFylErrorState,
+  renderFylInlineError,
+  showFylToastError,
+  isFylOfflineDeepCheck,
+} from "../scripts/fyl-error-state.js";
 
 let fylDashboardViewOnce = false;
 if (typeof window !== "undefined") {
@@ -581,7 +588,7 @@ function showReadOnlyOrderBlockedMessage() {
     window.showToast(message, "info");
     return;
   }
-  alert(message);
+  showFylToastError({ message });
 }
 
 function guardReadOnlyOrderAction({ triggerEl = null, orderId = "" } = {}) {
@@ -1514,7 +1521,9 @@ function attachRemoveHandlers(userId) {
       const success = await removeItemFromSupabase(itemId);
       if (!success) {
         await loadCart(userId);
-        alert("No se pudo eliminar el producto. Intenta nuevamente.");
+        showFylToastError({
+          message: "No pudimos quitar el producto. Intentá nuevamente.",
+        });
       }
     };
   });
@@ -1568,7 +1577,9 @@ async function attachAlternativasHandlers(userId) {
       const agotadoItemId = event.currentTarget.dataset.itemId; // capturar antes del modal
       
       if (!articulo || !talle) {
-        alert("No se pudo obtener la informaciÃ³n del producto.");
+        showFylToastError({
+          message: "No pudimos obtener la información del producto.",
+        });
         return;
       }
 
@@ -1590,7 +1601,10 @@ async function attachAlternativasHandlers(userId) {
 
         // Buscar productos alternativos
         if (!window.buscarProductosAlternativos || !window.mostrarModalAlternativas) {
-          alert("El sistema de alternativas no estÃ¡ disponible. Por favor, elimina este producto del carrito.");
+          showFylToastError({
+            message:
+              "Las alternativas no están disponibles ahora. Quitá este producto de la bolsa e intentá más tarde.",
+          });
           return;
         }
 
@@ -1634,17 +1648,23 @@ async function attachAlternativasHandlers(userId) {
                   }
                 }
                 
-                alert(`âœ… ${productoSeleccionado.articulo} agregado al carrito`);
+                showFylToastError({
+                  message: `${productoSeleccionado.articulo} se agregó a tu bolsa`,
+                });
                 // Recargar el carrito y pedidos para reflejar cambios
                 if (currentUserId) {
                   await loadCart(currentUserId);
                   await loadOrders(currentUserId);
                 }
               } else {
-                alert(`No se pudo agregar ${productoSeleccionado.articulo} al carrito.`);
+                showFylToastError({
+                  message: `No pudimos agregar ${productoSeleccionado.articulo}. Intentá nuevamente.`,
+                });
               }
             } else {
-              alert("No se pudo agregar el producto al carrito. Por favor, recarga la pÃ¡gina.");
+              showFylToastError({
+                message: "No pudimos agregar el producto. Actualizá la página e intentá de nuevo.",
+              });
             }
           },
           onCerrar: () => {
@@ -1653,7 +1673,9 @@ async function attachAlternativasHandlers(userId) {
         });
       } catch (error) {
         console.error("âŒ Error mostrando alternativas:", error);
-        alert("No se pudieron cargar productos alternativos. Por favor, intenta nuevamente.");
+        showFylToastError({
+          message: "No pudimos cargar alternativas. Intentá nuevamente en unos segundos.",
+        });
       }
     };
   });
@@ -1777,18 +1799,24 @@ function attachQuantityHandlers(userId) {
 
         let qty = Math.floor(Number(raw) || 0);
         if (qty < 5) {
-          alert("Para cantidades de 1 a 4 usá el desplegable.");
+          showFylToastError({
+            message: "Para cantidades de 1 a 4 usá el desplegable.",
+          });
           return;
         }
         if (max != null && qty > max) {
-          alert(`Solo hay ${max} unidades disponibles para este producto.`);
+          showFylToastError({
+            message: `Solo hay ${max} unidades disponibles para este producto.`,
+          });
           qty = max;
         }
 
         const ok = await updateCartItemQuantity(itemId, qty);
         if (!ok) {
           await loadCart(userId);
-          alert("No se pudo actualizar la cantidad. Verifica el stock disponible.");
+          showFylToastError({
+            message: "No pudimos actualizar la cantidad. Revisá el stock disponible.",
+          });
         } else {
           await loadCart(userId);
         }
@@ -1803,7 +1831,9 @@ function attachQuantityHandlers(userId) {
           await loadCart(userId);
         } else {
           await loadCart(userId);
-          alert("No se pudo eliminar el producto. Intenta nuevamente.");
+          showFylToastError({
+            message: "No pudimos quitar el producto. Intentá nuevamente.",
+          });
         }
         return;
       }
@@ -1812,7 +1842,9 @@ function attachQuantityHandlers(userId) {
       const ok = await updateCartItemQuantity(itemId, finalQty);
       if (!ok) {
         await loadCart(userId);
-        alert("No se pudo actualizar la cantidad. Verifica el stock disponible.");
+        showFylToastError({
+          message: "No pudimos actualizar la cantidad. Revisá el stock disponible.",
+        });
       } else {
         await loadCart(userId);
       }
@@ -2691,14 +2723,18 @@ async function clearCurrentCart() {
       }
       const { error } = await supabase.from("cart_items").delete().in("id", cartIds);
       if (error) {
-        alert("No se pudo limpiar el carrito. Intenta nuevamente.");
+        showFylToastError({
+          message: "No pudimos vaciar la bolsa. Intentá nuevamente.",
+        });
         if (clearBtn) clearBtn.disabled = false;
         return;
       }
     } else {
       const { error } = await supabase.from("cart_items").delete().eq("cart_id", currentCartId);
       if (error) {
-        alert("No se pudo limpiar el carrito. Intenta nuevamente.");
+        showFylToastError({
+          message: "No pudimos vaciar la bolsa. Intentá nuevamente.",
+        });
         if (clearBtn) clearBtn.disabled = false;
         return;
       }
@@ -2727,9 +2763,11 @@ async function submitCurrentCart() {
     // Verificar si hay productos agotados antes de enviar
     const hasOutOfStockItems = currentCartItems && currentCartItems.some(item => item.isOutOfStock);
     if (hasOutOfStockItems) {
-      alert(
-        "No podés enviar el pedido: hay productos que superan el stock disponible (marcados en rosa). Ajustá las cantidades o quitá esos productos."
-      );
+      void showDashboardMessageModal({
+        title: "Revisá tu bolsa",
+        bodyHtml:
+          "<p class=\"dash-app-message-modal__text\">Hay productos que superan el stock disponible (marcados en rosa). Ajustá las cantidades o quitá esos productos.</p>",
+      });
       return;
     }
 
@@ -2737,9 +2775,11 @@ async function submitCurrentCart() {
       (it) => it.variant_id == null || it.variant_id === ""
     );
     if (hasMissingVariantId) {
-      alert(
-        "Hay un producto del carrito que ya no está disponible o necesita actualizarse. Eliminá ese producto y volvé a intentar."
-      );
+      void showDashboardMessageModal({
+        title: "Actualizá tu bolsa",
+        bodyHtml:
+          "<p class=\"dash-app-message-modal__text\">Hay un producto que ya no está disponible o necesita actualizarse. Eliminá ese producto y volvé a intentar.</p>",
+      });
       return;
     }
 
@@ -2749,7 +2789,11 @@ async function submitCurrentCart() {
       0
     );
     if (!totalUnits) {
-      alert("Tu carrito está vacío. Agrega productos antes de hacer un pedido.");
+      void showDashboardMessageModal({
+        title: "Bolsa vacía",
+        bodyHtml:
+          "<p class=\"dash-app-message-modal__text\">Agregá productos antes de hacer un pedido.</p>",
+      });
       return;
     }
 
@@ -2765,7 +2809,7 @@ async function submitCurrentCart() {
       if (typeof window.showToast === "function") {
         window.showToast(msg, "info");
       } else {
-        alert(msg);
+        showFylToastError({ message: msg });
       }
       return;
     }
@@ -2857,13 +2901,20 @@ async function submitCurrentCart() {
         : 0;
       const total = Number.isFinite(totalRaw) ? totalRaw : 0;
 
-      if (typeof fbq === "function") {
+      const sendInitiateCheckout = () => {
+        if (typeof fbq !== "function") return false;
         fbq("track", "InitiateCheckout", {
           content_ids: skusArray,
           content_type: "product",
           value: total,
           currency: "ARS",
         });
+        return true;
+      };
+      if (!sendInitiateCheckout()) {
+        setTimeout(() => {
+          sendInitiateCheckout();
+        }, 300);
       }
     } catch (_e) {}
 
@@ -2893,18 +2944,32 @@ async function submitCurrentCart() {
       const errMsg = error?.message || "";
       if (errMsg.includes("conflict_in_progress")) {
         console.warn("⏳ [checkout] conflict_in_progress — otra operación en curso. operation_id=", checkoutOpId);
-        alert("Hay un pedido en proceso. Esperá unos segundos e intentá nuevamente.");
+        showFylToastError({
+          message: "Hay un pedido en proceso. Esperá unos segundos e intentá nuevamente.",
+        });
       } else if (errMsg.includes("operation_id_conflict")) {
         console.warn("🚫 [checkout] operation_id_conflict — carrito modificado entre intentos. Reseteando operation_id.");
         _checkoutOperationId = null;
-        alert("El carrito cambió entre intentos. Por favor, intentá nuevamente.");
+        showFylToastError({
+          message: "El carrito cambió entre intentos. Intentá nuevamente.",
+        });
       } else if (/no tiene variante asociada/i.test(errMsg)) {
-        alert(
-          "Hay un producto del carrito que ya no está disponible o necesita actualizarse. Eliminá ese producto y volvé a intentar."
-        );
+        showFylToastError({
+          message:
+            "Hay un producto que ya no está disponible. Eliminá ese producto y volvé a intentar.",
+        });
       } else {
         console.error("❌ [checkout] Error enviando pedido:", error);
-        alert(error.message || "No se pudo enviar el pedido. Intenta nuevamente.");
+        void (async () => {
+          const off = await isFylOfflineDeepCheck();
+          showFylErrorState({
+            preset: off ? "offline" : "api",
+            retry: () => {
+              hideFylErrorState();
+              void submitCurrentCart();
+            },
+          });
+        })();
       }
       clearCartTransientState();
       return;
@@ -2951,7 +3016,16 @@ async function submitCurrentCart() {
     }
   } catch (error) {
     console.error("âŒ Error enviando pedido:", error);
-    alert("OcurriÃ³ un error inesperado al enviar el pedido.");
+    void (async () => {
+      const off = await isFylOfflineDeepCheck();
+      showFylErrorState({
+        preset: off ? "offline" : "api",
+        retry: () => {
+          hideFylErrorState();
+          void submitCurrentCart();
+        },
+      });
+    })();
   } finally {
     clearCartTransientState();
     releaseSubmitBtnLoading();
@@ -3189,7 +3263,7 @@ async function cancelOrderItem(itemId) {
 
     if (itemErr || !itemRow) {
       console.error("âŒ No se pudo obtener el item del pedido:", itemErr);
-      alert("No se encontrÃ³ el producto a cancelar.");
+      showFylToastError({ message: "No encontramos ese producto en tu pedido." });
       return;
     }
 
@@ -3207,7 +3281,9 @@ async function cancelOrderItem(itemId) {
         .eq("id", itemId);
       if (delErr) {
         console.error("âŒ Error eliminando item faltante:", delErr);
-        alert("No se pudo eliminar el producto faltante.");
+        showFylToastError({
+          message: "No pudimos quitar el producto faltante. Intentá nuevamente.",
+        });
         return;
       }
 
@@ -3234,7 +3310,9 @@ async function cancelOrderItem(itemId) {
         await loadOrders(currentUserId);
       }
 
-      alert("âœ… Producto faltante eliminado correctamente del pedido.");
+      showFylToastError({
+        message: "Listo: quitamos el producto faltante de tu pedido.",
+      });
       return;
     }
 
@@ -3245,7 +3323,9 @@ async function cancelOrderItem(itemId) {
 
     if (error) {
       console.error("âŒ Error cancelando producto:", error);
-      alert(error.message || "No se pudo cancelar el producto.");
+      showFylToastError({
+        message: "No pudimos cancelar el producto. Intentá nuevamente.",
+      });
       return;
     }
 
@@ -3259,15 +3339,19 @@ async function cancelOrderItem(itemId) {
       await loadOrders(currentUserId);
     }
 
-    // Mostrar mensaje segÃºn el estado del producto
     if (data?.was_picked) {
-      alert("âœ… Producto cancelado correctamente. Se ha enviado una notificaciÃ³n al administrador ya que este producto estaba apartado.");
+      showFylToastError({
+        message:
+          "Producto cancelado. Si estaba apartado, ya avisamos al equipo.",
+      });
     } else {
-      alert("âœ… Producto cancelado correctamente.");
+      showFylToastError({ message: "Producto cancelado correctamente." });
     }
   } catch (error) {
     console.error("âŒ Error cancelando producto:", error);
-    alert("OcurriÃ³ un error al cancelar el producto.");
+    showFylToastError({
+      message: "No pudimos cancelar el producto. Intentá nuevamente.",
+    });
   }
 }
 
@@ -3307,9 +3391,11 @@ async function closeOrder(orderId, opts = {}) {
   try {
     const customerRow = await fetchCustomerShippingRow();
     if (!customerRow) {
-      alert(
-        "No se pudieron cargar tus datos. Verificá tu conexión e intentá de nuevo."
-      );
+      void showDashboardMessageModal({
+        title: "No pudimos cargar tus datos",
+        bodyHtml:
+          '<p class="dash-app-message-modal__text">Verificá tu conexión e intentá de nuevo.</p>',
+      });
       return;
     }
 
@@ -3410,9 +3496,9 @@ async function closeOrder(orderId, opts = {}) {
           }
         } else {
           console.error("Error guardando transporte:", trErr);
-          alert(
-            trErr.message || "No se pudo guardar el transporte. Intentá de nuevo."
-          );
+          showFylToastError({
+            message: "No pudimos guardar el envío. Intentá de nuevo.",
+          });
           return;
         }
       } else {
@@ -3432,7 +3518,16 @@ async function closeOrder(orderId, opts = {}) {
 
     if (error) {
       console.error("âŒ Error cerrando pedido:", error);
-      alert(error.message || "No se pudo cerrar el pedido.");
+      void (async () => {
+        const off = await isFylOfflineDeepCheck();
+        showFylErrorState({
+          preset: off ? "offline" : "api",
+          retry: () => {
+            hideFylErrorState();
+            void closeOrder(orderId, { triggerBtn });
+          },
+        });
+      })();
       return;
     }
 
@@ -3462,7 +3557,16 @@ async function closeOrder(orderId, opts = {}) {
     });
   } catch (error) {
     console.error("âŒ Error cerrando pedido:", error);
-    alert("Ocurrió un error al cerrar el pedido.");
+    void (async () => {
+      const off = await isFylOfflineDeepCheck();
+      showFylErrorState({
+        preset: off ? "offline" : "api",
+        retry: () => {
+          hideFylErrorState();
+          void closeOrder(orderId, { triggerBtn });
+        },
+      });
+    })();
     clearOrderVisualTransientState();
   } finally {
     releaseCloseBtnLoading();
@@ -3498,25 +3602,25 @@ async function updateCartItemQuantity(itemId, desiredQuantity) {
     );
 
     if (!variantInfo) {
-      alert(
-        `No se pudo verificar el stock de ${item.product_name} (${item.color} • ${item.size}).`
-      );
+      showFylToastError({
+        message: `No pudimos verificar el stock de ${item.product_name}. Intentá nuevamente.`,
+      });
       return false;
     }
 
     const maxAllowed = Math.max(0, Math.floor(Number(variantInfo.available ?? 0) || 0));
 
     if (maxAllowed <= 0) {
-      alert(
-        `No hay stock disponible para ${item.product_name} (${item.color} • ${item.size}).`
-      );
+      showFylToastError({
+        message: `No hay stock disponible para ${item.product_name} (${item.color} • ${item.size}).`,
+      });
       return false;
     }
 
     if (newQuantity > maxAllowed) {
-      alert(
-        `Solo puedes reservar hasta ${maxAllowed} unidades de ${item.product_name} (${item.color} • ${item.size}).`
-      );
+      showFylToastError({
+        message: `Solo podés reservar hasta ${maxAllowed} unidades de ${item.product_name} (${item.color} • ${item.size}).`,
+      });
       newQuantity = maxAllowed;
     }
 
@@ -4750,7 +4854,7 @@ async function loadOrders(userId, options = {}) {
               tooltip.setAttribute("aria-hidden", "true");
             }, 5000);
           } else {
-            alert(text);
+            showFylToastError({ message: text });
           }
           return;
         }
@@ -4769,7 +4873,7 @@ async function loadOrders(userId, options = {}) {
               tooltip.setAttribute("aria-hidden", "true");
             }, 5000);
           } else {
-            alert(text);
+            showFylToastError({ message: text });
           }
           return;
         }
@@ -4791,7 +4895,7 @@ async function loadOrders(userId, options = {}) {
               tooltip.setAttribute("aria-hidden", "true");
             }, 4000);
           } else {
-            alert(text);
+            showFylToastError({ message: text });
           }
           return;
         }
@@ -4823,7 +4927,9 @@ async function loadOrders(userId, options = {}) {
         try {
           const { error } = await supabase.rpc("rpc_reopen_order", { p_order_id: orderId });
           if (error) {
-            alert(error.message || "No se pudo modificar el pedido.");
+            showFylToastError({
+              message: "No pudimos habilitar la modificación del pedido. Intentá nuevamente.",
+            });
             return;
           }
           await loadOrders(currentUserId);
@@ -4834,7 +4940,9 @@ async function loadOrders(userId, options = {}) {
             confirmLabel: "Aceptar",
           });
         } catch (e) {
-          alert(e?.message || "Error al reabrir el pedido.");
+          showFylToastError({
+            message: "No pudimos reabrir el pedido. Intentá nuevamente.",
+          });
         } finally {
           btn.disabled = false;
         }
@@ -4978,7 +5086,9 @@ async function loadOrders(userId, options = {}) {
             popover.setAttribute("aria-hidden", "true");
             wrap?.querySelector(".item-row__kebab")?.setAttribute("aria-expanded", "false");
           }
-          alert("Para quitar productos del pedido primero debes presionar \"Modificar pedido\".");
+          showFylToastError({
+            message: 'Para quitar productos primero tocá "Modificar pedido".',
+          });
           return;
         }
         const idsStr = btn.dataset.orderItemIds || "";
@@ -4998,7 +5108,9 @@ async function loadOrders(userId, options = {}) {
           .in("id", ids);
         if (rowsErr || !rows || rows.length === 0) {
           console.error("No se pudieron cargar cantidades de order_items:", rowsErr);
-          alert("No se pudo obtener la cantidad de este producto.");
+          showFylToastError({
+            message: "No pudimos obtener la cantidad de este producto.",
+          });
           return;
         }
 
@@ -5072,7 +5184,9 @@ async function loadOrders(userId, options = {}) {
           });
           if (rpcErr) {
             console.error("Error quitando unidades del pedido:", rpcErr);
-            alert(rpcErr.message || "No se pudo quitar el producto del pedido.");
+            showFylToastError({
+              message: "No pudimos quitar el producto del pedido. Intentá nuevamente.",
+            });
             return;
           }
 
@@ -5195,7 +5309,9 @@ async function loadOrders(userId, options = {}) {
         const itemId = btn.dataset.itemId;
         
         if (!articulo || !talle) {
-          alert("No se pudo obtener la informaciÃ³n del producto faltante.");
+          showFylToastError({
+            message: "No pudimos obtener la información del producto faltante.",
+          });
           return;
         }
         
@@ -5511,7 +5627,9 @@ async function loadClosedOrders(userId) {
               p_order_id: oid,
             });
             if (reopenErr) {
-              alert(reopenErr.message || "No se pudo modificar el pedido.");
+              showFylToastError({
+                message: "No pudimos habilitar la modificación del pedido. Intentá nuevamente.",
+              });
               return;
             }
             await loadClosedOrders(userId);
@@ -5523,7 +5641,9 @@ async function loadClosedOrders(userId) {
               confirmLabel: "Entendido",
             });
           } catch (err) {
-            alert(err?.message || "Error al reabrir el pedido.");
+            showFylToastError({
+              message: "No pudimos reabrir el pedido. Intentá nuevamente.",
+            });
           } finally {
             btn.disabled = false;
           }
@@ -5533,7 +5653,7 @@ async function loadClosedOrders(userId) {
   } catch (error) {
     console.warn("âš ï¸ Error cargando pedidos anteriores:", error.message);
     historyContainer.innerHTML = `
-      <p style="text-align: center; color: #dc3545; padding: 40px;">Error cargando pedidos anteriores.</p>
+      <p style="text-align: center; color: #5c534a; padding: 40px;">No pudimos cargar el historial. Intentá nuevamente más tarde.</p>
     `;
   }
 }
@@ -5999,9 +6119,10 @@ async function setupOrdersRealtimeSubscription(userId) {
 async function mostrarAlternativasParaProductoFaltante({ articulo, color, talle, itemId }) {
   try {
     if (!window.buscarProductosAlternativos || !window.mostrarModalAlternativas) {
-      alert(
-        `Este producto no estÃ¡ disponible en el talle ${talle}. Por favor selecciona otro talle o producto.`
-      );
+      showFylToastError({
+        message:
+          "Este producto no está disponible en ese talle. Elegí otro talle o producto.",
+      });
       return;
     }
 
@@ -6032,7 +6153,7 @@ async function mostrarAlternativasParaProductoFaltante({ articulo, color, talle,
       modalInicial.innerHTML = `
         <div class="alternativas-modal-content" style="max-width: 500px;">
           <div class="alternativas-modal-header">
-            <h2>âš ï¸ Producto Faltante</h2>
+            <h2>Producto faltante</h2>
             <button class="alternativas-modal-close" onclick="window.__verAlternativasFaltanteResolve(false)">Ã—</button>
           </div>
           <div class="alternativas-modal-body">
@@ -6076,7 +6197,9 @@ async function mostrarAlternativasParaProductoFaltante({ articulo, color, talle,
     });
 
     if (!productos || productos.length === 0) {
-      alert(`No se encontraron productos alternativos disponibles en talle ${talle}.`);
+      showFylToastError({
+        message: `No hay alternativas en talle ${talle} por ahora.`,
+      });
       return;
     }
 
@@ -6112,17 +6235,23 @@ async function mostrarAlternativasParaProductoFaltante({ articulo, color, talle,
               }
             }
             
-            alert(`âœ… ${productoSeleccionado.articulo} agregado al carrito`);
+            showFylToastError({
+              message: `${productoSeleccionado.articulo} se agregó a tu bolsa`,
+            });
             // Recargar el carrito y pedidos para reflejar cambios
             if (currentUserId) {
               await loadCart(currentUserId);
               await loadOrders(currentUserId);
             }
           } else {
-            alert(`No se pudo agregar ${productoSeleccionado.articulo} al carrito.`);
+            showFylToastError({
+              message: `No pudimos agregar ${productoSeleccionado.articulo}. Intentá nuevamente.`,
+            });
           }
         } else {
-          alert("No se pudo agregar el producto al carrito. Por favor, recarga la pÃ¡gina.");
+          showFylToastError({
+            message: "No pudimos agregar el producto. Actualizá la página e intentá de nuevo.",
+          });
         }
       },
       onCerrar: () => {
@@ -6131,9 +6260,9 @@ async function mostrarAlternativasParaProductoFaltante({ articulo, color, talle,
     });
   } catch (error) {
     console.error("âŒ Error mostrando alternativas para producto faltante:", error);
-    alert(
-      `No se pudieron cargar alternativas para el producto. Por favor intenta de nuevo.`
-    );
+    showFylToastError({
+      message: "No pudimos cargar alternativas. Intentá nuevamente en unos segundos.",
+    });
   }
 }
 
@@ -6181,7 +6310,9 @@ async function cancelEntireOrder(orderId) {
       .eq("order_id", orderId);
 
     if (error) {
-      alert("No se pudieron obtener los productos del pedido.");
+      showFylToastError({
+        message: "No pudimos obtener los productos del pedido.",
+      });
       console.error("âŒ Error listando items:", error);
       return;
     }
@@ -6240,7 +6371,16 @@ async function cancelEntireOrder(orderId) {
     await loadOrders(currentUserId);
   } catch (e) {
     console.error("âŒ Error cancelando pedido completo:", e);
-    alert("No se pudo cancelar el pedido.");
+    void (async () => {
+      const off = await isFylOfflineDeepCheck();
+      showFylErrorState({
+        preset: off ? "offline" : "api",
+        retry: () => {
+          hideFylErrorState();
+          void cancelEntireOrder(orderId);
+        },
+      });
+    })();
   }
 }
 

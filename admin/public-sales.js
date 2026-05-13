@@ -1,9 +1,10 @@
 // admin/public-sales.js
 import { requireAuth } from "./admin-auth.js";
 import { supabase } from "../scripts/supabase-client.js";
-import { SUPABASE_URL, QZ_SIGN_SECRET, fylDevLog } from "../scripts/config.js";
+import { fylDevLog } from "../scripts/config.js";
 import { normalizeSize } from "../scripts/utils/size-normalizer.js";
 import { parseARSNumber, resolveOrderItemUnitPrice } from "../scripts/utils/price.js";
+import { loadQZTray, qzConnect, qzGetPrinterConfigDefault } from "./qz-printing.js";
 
 const TIMEZONE_BUENOS_AIRES = "America/Argentina/Buenos_Aires";
 
@@ -59,141 +60,12 @@ function decrementStockSourceLifo(source) {
 }
 
 // ============================================================================
-// QZ TRAY - Funciones helper para impresión térmica ESC/POS
+// QZ TRAY - impresión térmica ESC/POS (conexión vía qz-printing.js)
 // ============================================================================
 
 // Ancho del ticket en caracteres (80mm ≈ 42 caracteres con fuente estándar)
 const TICKET_WIDTH = 42;
 const editOrderVariantPriceMap = new Map(); // variant_id -> price de catálogo (raw)
-
-// Función helper para configurar firma remota de QZ Tray
-async function setupQZSignature() {
-  if (typeof qz === 'undefined' || !qz || !qz.security) {
-    console.warn("⚠️ QZ Tray no disponible");
-    return;
-  }
-
-  try {
-    console.log("🔧 Configurando certificado y firma remota de QZ Tray...");
-
-    // PASO 1: Precargar y configurar certificado público (ANTES de la firma)
-    console.log("📜 setCertificatePromise: cargando /certs/qz-site.crt");
-    const certResponse = await fetch("/certs/qz-site.crt", { cache: "no-store" });
-    const certText = await certResponse.text();
-    console.log("✅ cert cargado, len=", certText.length, "begin=", certText.includes("BEGIN CERTIFICATE"));
-
-    qz.security.setCertificatePromise((resolve, reject) => {
-      console.log("📜 setCertificatePromise: resolviendo certificado precargado");
-      if (certText) {
-        const match = certText.match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/);
-        if (match) {
-          console.log("✅ Certificado sanitizado encontrado");
-          resolve(match[0]);
-        } else {
-          console.warn("⚠️ No se pudo extraer bloque limpio, usando texto original");
-          resolve(certText);
-        }
-      } else {
-        reject(new Error("Certificado vacío"));
-      }
-    });
-
-    console.log("✅ Certificado público configurado");
-
-    // IMPORTANTE: Configurar algoritmo SHA-512 (requerido por QZ Tray 2.1+)
-    qz.security.setSignatureAlgorithm("SHA512");
-    console.log("✅ Algoritmo de firma configurado: SHA512");
-
-    // PASO 2: Configurar firma remota (DESPUÉS del certificado)
-    qz.security.setSignaturePromise(async (toSign) => {
-      console.log("🔐 QZ Tray solicitó firma. Longitud:", toSign?.length || 0);
-
-      if (!toSign || typeof toSign !== 'string') {
-        throw new Error("toSign inválido o vacío");
-      }
-
-      // Obtener secret desde config (requiere QZ_SIGN_SECRET en config.local.js)
-      const secret = QZ_SIGN_SECRET ||
-        (typeof window !== 'undefined' ? window.QZ_SIGN_SECRET : "");
-      if (!secret) {
-        throw new Error("QZ_SIGN_SECRET no configurado. Agrega QZ_SIGN_SECRET en scripts/config.local.js");
-      }
-
-      console.log("📡 Enviando request de firma a Edge Function...");
-      console.log("📤 toSign a enviar (len=" + toSign.length + "):", toSign.substring(0, 50) + "...");
-
-      // IMPORTANTE: Enviar toSign como text/plain (no JSON) para evitar alteraciones
-      // QZ Tray requiere que el string llegue exactamente igual, sin JSON.stringify
-      const res = await fetch(`${SUPABASE_URL}/functions/v1/qz-sign`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "text/plain;charset=utf-8",
-          "x-qz-secret": secret
-        },
-        body: toSign // Enviar directamente, sin JSON.stringify
-      });
-
-      console.log("📥 Respuesta recibida. Status:", res.status);
-
-      if (!res.ok) {
-        const errorText = await res.text();
-        console.error("❌ Error HTTP:", res.status, errorText);
-        throw new Error(`Error en firma: ${res.status} - ${errorText}`);
-      }
-
-      const signature = (await res.text()).trim();
-      console.log("✅ Firma generada correctamente. Longitud:", signature.length);
-      return signature;
-    });
-
-    console.log("✅ Certificado y firma remota configurados para QZ Tray");
-  } catch (e) {
-    console.error("❌ Error setupQZSignature:", e);
-  }
-}
-
-// NO configurar firma aquí - se configurará cuando QZ esté disponible en qzConnect() o loadQZTray()
-
-/**
- * Conecta al websocket de QZ Tray si no está activo
- * @returns {Promise<void>}
- */
-async function qzConnect() {
-  // Verificar si QZ está disponible
-  if (typeof qz === 'undefined' || !qz || !qz.websocket) {
-    throw new Error("QZ Tray no está disponible");
-  }
-
-  // Asegurar que la firma esté configurada antes de conectar
-  setupQZSignature();
-
-  if (!qz.websocket.isActive()) {
-    try {
-      await qz.websocket.connect();
-      console.log("✅ QZ Tray conectado");
-    } catch (error) {
-      // No mostrar errores de conexión en consola si QZ no está disponible
-      // Solo lanzar el error para que el fallback funcione
-      throw error;
-    }
-  }
-}
-
-/**
- * Obtiene la configuración de la impresora por defecto
- * @returns {Promise<Object>} Configuración de QZ para la impresora
- */
-async function qzGetPrinterConfig() {
-  try {
-    const printerName = await qz.printers.getDefault();
-    console.log("✅ Impresora por defecto:", printerName);
-    const config = qz.configs.create(printerName);
-    return config;
-  } catch (error) {
-    console.error("❌ Error obteniendo impresora:", error);
-    throw error;
-  }
-}
 
 /**
  * Convierte un valor a string de forma segura
@@ -394,17 +266,10 @@ function buildEscposTicket(saleDetails, customer, finalTotal) {
  * @returns {Promise<void>}
  */
 async function printSaleWithQZ(saleDetails, customer, finalTotal) {
-  // Verificar si QZ está disponible antes de intentar
-  if (typeof qz === 'undefined' || !qz) {
-    throw new Error("QZ Tray no está disponible");
-  }
-
   try {
-    // Conectar a QZ
     await qzConnect();
 
-    // Obtener configuración de impresora
-    const config = await qzGetPrinterConfig();
+    const config = await qzGetPrinterConfigDefault();
 
     // Construir ticket de texto
     const ticketText = buildEscposTicket(saleDetails, customer, finalTotal);
@@ -447,7 +312,7 @@ async function printSaleWithQZ(saleDetails, customer, finalTotal) {
     // Corte total
     data.push("\x1D\x56\x42\x00");   // GS V 66 0
 
-    // Imprimir
+    console.log("[QZ] print requested");
     await qz.print(config, data);
     console.log("✅ Ticket enviado a impresora");
 
@@ -1528,13 +1393,12 @@ async function loadManualProductVariants(productId) {
         )
       `)
       .eq("product_id", productId)
-      .eq("active", true)
       .in("products.status", ["active", "pending_stock", "draft"]); // Incluir productos activos, con stock pendiente y en borrador
 
     if (error) throw error;
 
     if (!variants || variants.length === 0) {
-      showMessage("No se encontraron variantes activas para este producto. Verifica que el producto esté activo y las variantes tengan el checkbox 'Activa' marcado.", "error");
+      showMessage("No se encontraron variantes para este producto. Verificá el estado del producto.", "error");
       return;
     }
 
@@ -1769,9 +1633,12 @@ async function renderManualColorButtons() {
   manualColorButtons.innerHTML = "";
 
   colors.forEach(color => {
+    const variantsForColor = manualCurrentVariants.filter((v) => v.color === color);
+    const labelSuffix = variantsForColor.some((v) => v.active === false) ? " (inact.)" : "";
     const btn = document.createElement("button");
     btn.className = "color-btn";
-    btn.textContent = color;
+    btn.dataset.color = color;
+    btn.textContent = color + labelSuffix;
     btn.style.padding = "10px 20px";
     btn.style.fontSize = "14px";
     btn.style.minWidth = "88px";
@@ -1812,7 +1679,7 @@ async function renderManualColorButtons() {
       manualSelectedColor = colors[0];
     }
     document.querySelectorAll("#manual-color-buttons .color-btn").forEach((b) => {
-      b.classList.toggle("active", b.textContent === manualSelectedColor);
+      b.classList.toggle("active", b.dataset.color === manualSelectedColor);
     });
 
     const variantsByColor = manualCurrentVariants.filter((v) => v.color === manualSelectedColor);
@@ -2678,7 +2545,6 @@ async function processQrCodeFast(qrCode) {
       )
     `)
     .eq("qr_code", qrCode)
-    .eq("product_variants.active", true)
     .in("product_variants.products.status", ["active", "pending_stock", "draft"])
     .maybeSingle();
   
@@ -3072,7 +2938,6 @@ async function searchBySku(sku) {
         .from("variant_sizes")
         .select(variantSizesSelect)
         .in("sku", skuList)
-        .eq("product_variants.active", true)
         .in("product_variants.products.status", ["active", "pending_stock", "draft"]);
 
       sizeError = sizeBatchErr;
@@ -3134,7 +2999,6 @@ async function searchBySku(sku) {
             )
           `)
           .in("sku", baseSkuList)
-          .eq("active", true)
           .in("products.status", ["active", "pending_stock", "draft"]);
 
         errorBase = batchBaseErr;
@@ -3186,7 +3050,6 @@ async function searchBySku(sku) {
             .from("variant_sizes")
             .select(variantSizesSelect)
             .ilike("sku", skuClean)
-            .eq("product_variants.active", true)
             .in("product_variants.products.status", ["active", "pending_stock", "draft"])
             .maybeSingle();
           return { idx, sizeDataResult, sizeErrorResult };
@@ -3218,7 +3081,6 @@ async function searchBySku(sku) {
           .from("variant_sizes")
           .select("sku, size, product_variants!inner(id, sku, color, active, products!inner(id, name, status))")
           .ilike("sku", `${skuPrefix}%`)
-          .eq("product_variants.active", true)
           .in("product_variants.products.status", ["active", "pending_stock", "draft"])
           .limit(10);
         
@@ -3226,7 +3088,7 @@ async function searchBySku(sku) {
           fylDevLog("SKUs similares encontrados:", similarSkus.map(s => s.sku));
           showMessage(`No se encontró el producto con el SKU "${sku}".\n\nSKUs similares encontrados:\n${similarSkus.slice(0, 5).map(s => `- ${s.sku}`).join('\n')}\n\nVerifica que el SKU sea correcto.`, "error");
         } else {
-          showMessage(`No se encontró el producto con el SKU "${sku}". Verifica que:\n- El SKU sea correcto\n- El producto esté activo\n- La variante tenga el checkbox 'Activa' marcado`, "error");
+          showMessage(`No se encontró el producto con el SKU "${sku}". Verificá el SKU y que el producto no esté archivado.`, "error");
         }
         return;
       }
@@ -3421,13 +3283,12 @@ async function loadProductVariants(productId) {
         )
       `)
       .eq("product_id", productId)
-      .eq("active", true)
       .in("products.status", ["active", "pending_stock", "draft"]); // Incluir productos activos, con stock pendiente y en borrador
 
     if (error) throw error;
 
     if (!variants || variants.length === 0) {
-      showMessage("No se encontraron variantes activas para este producto. Verifica que el producto esté activo y las variantes tengan el checkbox 'Activa' marcado.", "error");
+      showMessage("No se encontraron variantes para este producto. Verificá el estado del producto.", "error");
       return;
     }
 
@@ -3659,9 +3520,12 @@ function renderColorButtons() {
   colorButtons.innerHTML = "";
 
   colors.forEach(color => {
+    const variantsForColor = currentVariants.filter((v) => v.color === color);
+    const labelSuffix = variantsForColor.some((v) => v.active === false) ? " (inact.)" : "";
     const btn = document.createElement("button");
     btn.className = "color-btn";
-    btn.textContent = color;
+    btn.dataset.color = color;
+    btn.textContent = color + labelSuffix;
     btn.addEventListener("click", () => {
       document.querySelectorAll(".color-btn").forEach(b => {
         b.classList.remove("active");
@@ -6164,75 +6028,6 @@ if (closePrintModal) {
   });
 }
 
-// Función para cargar QZ Tray solo cuando se necesite
-function loadQZTray() {
-  return new Promise((resolve, reject) => {
-    // Si ya está cargado, configurar firma y resolver inmediatamente
-    if (typeof qz !== 'undefined' && qz) {
-      setupQZSignature().then(resolve);
-      return;
-    }
-
-    // Verificar si el script ya se está cargando
-    if (document.querySelector('script[src*="qz-tray.js"]')) {
-      // Esperar a que se cargue
-      const checkInterval = setInterval(() => {
-        if (typeof qz !== 'undefined' && qz) {
-          clearInterval(checkInterval);
-          // Configurar firma remota cuando QZ se carga
-          setupQZSignature().then(resolve);
-        }
-      }, 100);
-
-      // Timeout después de 3 segundos
-      setTimeout(() => {
-        clearInterval(checkInterval);
-        reject(new Error('QZ Tray no se pudo cargar'));
-      }, 3000);
-      return;
-    }
-
-    // Cargar el script
-    // NOTA: Mantener demo.qz.io hasta que el certificado esté completamente configurado
-    const script = document.createElement('script');
-    script.src = 'https://cdn.jsdelivr.net/npm/qz-tray@2.2.5/qz-tray.js';
-    script.async = true;
-
-    script.onload = () => {
-      // Esperar un momento para que QZ se inicialice
-      setTimeout(() => {
-        if (typeof qz !== 'undefined' && qz) {
-          // Configurar firma remota cuando QZ se carga
-          setupQZSignature().then(resolve);
-        } else {
-          reject(new Error('QZ Tray no está disponible'));
-        }
-      }, 500);
-    };
-
-    script.onerror = () => {
-      reject(new Error('Error cargando QZ Tray'));
-    };
-
-    // Suprimir errores de WebSocket en la consola
-    const originalError = console.error;
-    console.error = function (...args) {
-      if (args[0] && typeof args[0] === 'string' && args[0].includes('WebSocket')) {
-        // No mostrar errores de WebSocket de QZ
-        return;
-      }
-      originalError.apply(console, args);
-    };
-
-    document.head.appendChild(script);
-
-    // Restaurar console.error después de 2 segundos
-    setTimeout(() => {
-      console.error = originalError;
-    }, 2000);
-  });
-}
-
 if (printBtn) {
   printBtn.addEventListener("click", async () => {
     if (currentSaleData) {
@@ -8022,11 +7817,10 @@ async function paintOrderEditManualSizesForColor(color) {
 async function loadEditOrderProductVariants(productId) {
   const { data: variants, error } = await supabase
     .from("product_variants")
-    .select("id, sku, color, price, products!inner(id, name)")
-    .eq("product_id", productId)
-    .eq("active", true);
+    .select("id, sku, color, price, active, products!inner(id, name)")
+    .eq("product_id", productId);
   if (error || !variants?.length) {
-    showOrderEditMessage("No hay variantes activas", "error");
+    showOrderEditMessage("No hay variantes para este producto", "error");
     return;
   }
   const variantIds = variants.map((v) => v.id);
@@ -8075,7 +7869,8 @@ async function loadEditOrderProductVariants(productId) {
     btn.type = "button";
     btn.className = "color-btn edit-manual-color";
     btn.dataset.color = c;
-    btn.textContent = c;
+    const inactive = editManualVariants.some((v) => v.color === c && v.active === false);
+    btn.textContent = inactive ? `${c} (inact.)` : c;
     btn.addEventListener("click", async (e) => {
       e.preventDefault();
       e.stopPropagation();

@@ -1,0 +1,41 @@
+# Plantilla OpenSSL: certificado QZ Tray con Subject Alternative Names (FYL).
+# Usada por: scripts/generate-qz-tray-cert-bundle.ps1
+#
+# Editar [ alt_names ] si agregás dominios (preview Firebase, otro custom domain).
+# Regenerar siempre key + cert + p12 + QZ_PRIVATE_KEY_B64 juntos.
+
+[ req ]
+default_bits       = 2048
+prompt             = no
+default_md         = sha256
+distinguished_name = dn
+req_extensions     = v3_req
+
+[ dn ]
+CN = QZ Tray Certificate
+O  = Catalogo FYL
+C  = AR
+
+# Cabecera X.509 v3 (autofirmado)
+[ v3_req ]
+subjectAltName = @alt_names
+basicConstraints = CA:FALSE
+keyUsage = critical, digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth, clientAuth
+
+[ alt_names ]
+# Desarrollo local (admin / Live Server)
+DNS.1  = localhost
+DNS.2  = *.localhost
+IP.1   = 127.0.0.1
+# Firebase Hosting — producción y test (hostnames explícitos)
+DNS.3  = catalogo-fyl.web.app
+DNS.4  = catalogo-fyl.firebaseapp.com
+DNS.5  = catalogo-fyl-test.web.app
+DNS.6  = catalogo-fyl-test.firebaseapp.com
+# Dominio custom FYL
+DNS.7  = fylmoda.com.ar
+DNS.8  = www.fylmoda.com.ar
+# Cobertura amplia (otros sitios *.web.app / *.firebaseapp.com del mismo proyecto o previews)
+DNS.9  = *.web.app
+DNS.10 = *.firebaseapp.com

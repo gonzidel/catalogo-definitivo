@@ -4,19 +4,23 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <!-- Cache bust: subí la versión en app-version.json y ejecutá npm run build (o deploy con predeploy). -->
-  <meta name="app-version" content="m260420">
+  <meta name="app-version" content="m260514">
   <title>Catálogo público FYL</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" media="print" onload="this.media='all'">
   <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap"></noscript>
-  <link rel="manifest" href="manifest.json?v=m260420">
-  <link rel="stylesheet" href="styles.css?v=m260420">
+  <link rel="manifest" href="manifest.json?v=m260514">
+  <link rel="stylesheet" href="styles.css?v=m260514">
+  <!-- [FASE 1A · T1] styles-desktop solo aplica >=1024px; con media= deja de bloquear render en mobile (paridad con index.html, ver DEC-001). -->
+  <link rel="stylesheet" href="styles-desktop.css?v=m260514" media="(min-width: 1024px)">
   <link rel="icon" href="icons/icon-192x192.png" type="image/png">
   <meta name="theme-color" content="#CD844D">
   <script>
     window.__CATALOG_ONLY__ = true;
     window.__FYL_PUBLIC_CATALOG__ = true;
+    // Modo inmediato Meta Pixel (solo debug): desactivado = pixel diferido normal.
+    // window.__FYL_FORCE_META_IMMEDIATE = true;
   </script>
   <style>
     /* Estilos inline para header y elementos críticos */
@@ -94,6 +98,42 @@
       font: 600 13px/1 Poppins, system-ui, sans-serif;
       text-decoration: none;
       cursor: pointer;
+      box-sizing: border-box;
+      /* Robustez touch en WebView Meta/Samsung/iOS:
+       * elimina delay de 300ms, flash gris, selección accidental,
+       * arrastre del enlace y callout iOS. */
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+      -webkit-touch-callout: none;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-user-drag: none;
+      transition: transform 0.12s ease, background 0.18s ease, box-shadow 0.18s ease;
+    }
+
+    /* CTA "Consultar" en la card: hit target garantizado de 44px (mínimo
+     * recomendado por Apple HIG y Material Design). */
+    .public-consult-btn {
+      min-height: 44px;
+    }
+
+    /* Hijos decorativos no deben interceptar el tap. */
+    .public-catalog-wa-link > *,
+    .public-consult-btn > * {
+      pointer-events: none;
+    }
+
+    /* Feedback táctil inmediato app-like. */
+    .public-catalog-wa-link:active,
+    .public-consult-btn:active {
+      transform: scale(0.97);
+      background: #1faa50;
+    }
+
+    .public-catalog-wa-link:focus-visible,
+    .public-consult-btn:focus-visible {
+      outline: 2px solid #fff;
+      outline-offset: 2px;
     }
 
     .public-catalog-wa-link {
@@ -348,18 +388,48 @@
       f.__FYL_insertFbPixel = function () {
         if (f.__FYL_fbPixelLoaded) return;
         f.__FYL_fbPixelLoaded = true;
+        t.onload = function () {
+          try {
+            if (typeof localStorage !== "undefined" && localStorage.getItem("fyl_debug_pixel") === "1") {
+              console.info("[FYL Pixel] pixel initialized", { fbq: typeof f.fbq });
+            }
+          } catch (_) {}
+        };
+        try {
+          if (window.__FYL_FORCE_META_IMMEDIATE === true) {
+            console.info("[FYL Pixel] fbevents.js inserted immediately");
+          }
+        } catch (_) {}
         s.parentNode.insertBefore(t, s);
       };
     })(window, document, "script", "https://connect.facebook.net/en_US/fbevents.js");
-    fbq("init", "566182527509606");
+    fbq("init", "988002930324230");
     fbq("track", "PageView");
+    (function () {
+      try {
+        if (typeof localStorage !== "undefined" && localStorage.getItem("fyl_debug_pixel") === "1") {
+          console.info("[FYL Pixel] PageView tracked", { phase: "initial", pixelId: "988002930324230" });
+        }
+      } catch (_) {}
+    })();
+  </script>
+  <script>
+    (function () {
+      if (window.__FYL_FORCE_META_IMMEDIATE !== true) return;
+      try {
+        console.info("[FYL Pixel] immediate mode enabled");
+      } catch (_) {}
+      if (typeof window.__FYL_insertFbPixel === "function") {
+        window.__FYL_insertFbPixel();
+      }
+    })();
   </script>
   <noscript>
     <img
       height="1"
       width="1"
       style="display:none"
-      src="https://www.facebook.com/tr?id=566182527509606&ev=PageView&noscript=1"
+      src="https://www.facebook.com/tr?id=988002930324230&ev=PageView&noscript=1"
       alt=""
     />
   </noscript>
@@ -455,6 +525,51 @@
       trackHashRouteInClarity();
     })();
   </script>
+  <!-- Meta Pixel: PageView en navegación SPA (hash / historial); dedupe por URL completa -->
+  <script>
+    (function () {
+      function routeKey() {
+        return location.pathname + location.search + location.hash;
+      }
+      function pixelDebug() {
+        try {
+          return localStorage.getItem("fyl_debug_pixel") === "1";
+        } catch (_) {
+          return false;
+        }
+      }
+      window.__FYL_lastFbPageViewKey = routeKey();
+      function trackMetaPageViewSPA() {
+        if (typeof fbq !== "function") return;
+        var key = routeKey();
+        if (key === window.__FYL_lastFbPageViewKey) {
+          if (pixelDebug()) console.info("[FYL Pixel] duplicate prevented", key);
+          return;
+        }
+        window.__FYL_lastFbPageViewKey = key;
+        fbq("track", "PageView");
+        if (pixelDebug()) console.info("[FYL Pixel] SPA route tracked", key);
+      }
+      window.__FYL_trackMetaPageViewSPA = trackMetaPageViewSPA;
+      function notifyRoute() {
+        clearTimeout(window.__FYL_metaPixelRouteT);
+        window.__FYL_metaPixelRouteT = setTimeout(trackMetaPageViewSPA, 0);
+      }
+      if (!window.__FYL_historyHookedForMetaPixel) {
+        window.__FYL_historyHookedForMetaPixel = true;
+        ["pushState", "replaceState"].forEach(function (method) {
+          var orig = history[method];
+          history[method] = function () {
+            var r = orig.apply(history, arguments);
+            notifyRoute();
+            return r;
+          };
+        });
+      }
+      window.addEventListener("hashchange", notifyRoute);
+      window.addEventListener("popstate", notifyRoute);
+    })();
+  </script>
 </head>
 <body class="catalog-boot-active">
   <!-- Bloqueo hasta que el catálogo termine de inicializar (main-supabase.js) -->
@@ -548,7 +663,7 @@
       <input type="search" class="search-bar-mobile" id="search-bar-mobile" placeholder="¿Qué buscás? Ej: Zapatillas..." autocomplete="off" enterkeyhint="search">
     </div>
     <div class="header-right public-catalog-header-actions">
-      <a class="public-catalog-wa-link" href="https://wa.me/5493624118637" target="_blank" rel="noopener">WhatsApp</a>
+      <a class="public-catalog-wa-link" href="https://wa.me/5493625172874" target="_blank" rel="noopener">WhatsApp</a>
     </div>
   </header>
 
@@ -929,12 +1044,12 @@
 
   <!-- WhatsApp popup -->
   <div id="wa-popup">
-    <button id="wa-toggle" title="Chat WhatsApp">
-      <img src="./icons/whatsapp.svg" alt="WhatsApp" />
-    </button>
+    <a id="wa-toggle" href="https://wa.me/5493625172874" target="_blank" rel="noopener noreferrer" title="Chat WhatsApp" aria-label="Abrir WhatsApp">
+      <img src="./icons/whatsapp.svg" alt="" />
+    </a>
     <div id="wa-menu">
-      <a href="https://wa.me/5493624118637" target="_blank">Envíos</a>
-      <a href="https://wa.me/5493624118637" target="_blank">Local</a> 
+      <a href="https://wa.me/5493625172874" target="_blank">Envíos</a>
+      <a href="https://wa.me/5493625172874" target="_blank">Local</a> 
     </div>
   </div>
 
@@ -979,27 +1094,32 @@
 
   <!-- Scripts esenciales -->
   <script src="/config.prod.js"></script>
-  <script type="module" src="scripts/boot-telemetry.js?v=m260420"></script>
-  <script type="module" src="scripts/config.js?v=m260420"></script>
-  <script type="module" src="scripts/supabase-client.js?v=m260420"></script>
-  <script type="module" src="scripts/analytics.js?v=m260420"></script>
+  <!-- Vendor Supabase (IIFE same-origin: window.fylSupabase.createClient). defer => corre antes que los modules. -->
+  <script defer src="scripts/vendor/supabase-js.bundle.min.js?v=m260514"></script>
+  <script type="module" src="scripts/fyl-error-state.js?v=m260514"></script>
+  <script type="module" src="scripts/boot-telemetry.js?v=m260514"></script>
+  <script type="module" src="scripts/config.js?v=m260514"></script>
+  <script type="module" src="scripts/supabase-client.js?v=m260514"></script>
+  <script type="module" src="scripts/analytics.js?v=m260514"></script>
   <script type="module">
-    import { fylAnalytics } from "./scripts/analytics.js?v=m260420";
+    import { fylAnalytics } from "./scripts/analytics.js?v=m260514";
     fylAnalytics.init({ app_area: "public_catalog", page_type: "home", user_role: "guest" });
   </script>
-  <script type="module" src="scripts/catalogo-publico.js?v=m260420"></script>
-  <script type="module" src="scripts/main-supabase.js?v=m260420"></script>
-  <script type="module" src="scripts/ui/toast.js?v=m260420"></script>
-  <script type="module" src="scripts/search-manager.js?v=m260420"></script>
-  <script src="scripts/filtros.js?v=m260420"></script>
-  <script type="module" src="scripts/quick-actions.js?v=m260420"></script>
-  <script type="module" src="scripts/mobile-nav.js?v=m260420"></script>
-  <script type="module" src="scripts/banner.js?v=m260420"></script>
-  <script type="module" src="scripts/size-filter.js?v=m260420"></script>
-  <script type="module" src="scripts/fyl-originals-banner.js?v=m260420"></script>
-  <script type="module" src="scripts/custom-banner.js?v=m260420"></script>
-  <script type="module" src="scripts/como-comprar.js?v=m260420"></script>
+  <script type="module" src="scripts/catalogo-publico.js?v=m260514"></script>
+  <script type="module" src="scripts/main-supabase.js?v=m260514"></script>
+  <script type="module" src="scripts/ui/toast.js?v=m260514"></script>
+  <script type="module" src="scripts/search-manager.js?v=m260514"></script>
+  <script src="scripts/filtros.js?v=m260514"></script>
+  <script type="module" src="scripts/quick-actions.js?v=m260514"></script>
+  <script type="module" src="scripts/mobile-nav.js?v=m260514"></script>
+  <script type="module" src="scripts/banner.js?v=m260514"></script>
+  <script type="module" src="scripts/size-filter.js?v=m260514"></script>
+  <script type="module" src="scripts/fyl-originals-banner.js?v=m260514"></script>
+  <script type="module" src="scripts/custom-banner.js?v=m260514"></script>
+  <script type="module" src="scripts/como-comprar.js?v=m260514"></script>
   <!-- [PERF] Scripts diferidos: se cargan despues del primer render del catalogo -->
+  <!-- WhatsApp FAB: script clásico diferido (sin import dinámico tardío); listeners mínimos -->
+  <script defer src="scripts/whatsapp.js?v=m260514"></script>
   <script type="module">
     var __fylDeferredLoaded = false;
     function __fylSchedulePostBootTask(fn, timeoutMs) {
@@ -1014,12 +1134,9 @@
       if (__fylDeferredLoaded) return;
       __fylDeferredLoaded = true;
       __fylSchedulePostBootTask(function () {
-        import("./scripts/scroll.js?v=m260420");
-        import("./scripts/product-alternatives.js?v=m260420");
+        import("./scripts/scroll.js?v=m260514");
+        import("./scripts/product-alternatives.js?v=m260514");
       }, 300);
-      __fylSchedulePostBootTask(function () {
-        import("./scripts/whatsapp.js?v=m260420");
-      }, 1300);
     }
     window.addEventListener("fyl-catalog-boot-done", __fylLoadDeferred, { once: true });
     setTimeout(__fylLoadDeferred, 8000);

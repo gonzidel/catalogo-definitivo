@@ -2,6 +2,7 @@ import { supabase } from "./supabase-client.js";
 import { normalizeSize } from "./utils/size-normalizer.js";
 import { fylAnalytics } from "./analytics.js";
 import { parseARSNumber, formatARS as formatARSValue } from "./utils/price.js";
+import { showFylToastError } from "./fyl-error-state.js";
 
 function fylDevLog(...args) {
   if (
@@ -1300,9 +1301,9 @@ async function ensureCartItemInDatabase(productData, authUser = null, options = 
     }
 
     if (!variantInfo) {
-      alert(
-        `⚠️ No se encontró stock para ${articulo} (${color} • ${size}). Revisa la disponibilidad.`
-      );
+      showFylToastError({
+        message: `No encontramos stock para ${articulo} (${color} • ${size}). Revisá la disponibilidad.`,
+      });
       return false;
     }
 
@@ -1311,9 +1312,9 @@ async function ensureCartItemInDatabase(productData, authUser = null, options = 
     const stockRealDisponible = variantInfo.available ?? 0;
     
     if (stockRealDisponible <= 0) {
-      alert(
-        `⚠️ Este producto está agotado. No hay unidades disponibles de ${articulo} (${color} • ${size}).`
-      );
+      showFylToastError({
+        message: `Este producto está agotado (${articulo}, ${color} • ${size}). Elegí otro talle o producto.`,
+      });
       return false;
     }
 
@@ -1362,9 +1363,9 @@ async function ensureCartItemInDatabase(productData, authUser = null, options = 
     // Verificar que la cantidad deseada no exceda el stock real disponible
     const cantidadDeseada = quantity;
     if (cantidadDeseada > stockRealDisponible) {
-      alert(
-        `⚠️ Solo hay ${stockRealDisponible} unidad(es) disponible(s) de ${articulo} (${color} • ${size}). No se puede agregar ${cantidadDeseada} unidad(es).`
-      );
+      showFylToastError({
+        message: `Solo hay ${stockRealDisponible} unidad(es) disponibles de ${articulo} (${color} • ${size}).`,
+      });
       return false;
     }
 
@@ -1376,9 +1377,9 @@ async function ensureCartItemInDatabase(productData, authUser = null, options = 
     const maxAllowed = currentQuantity + remainingStock;
 
     if (maxAllowed <= currentQuantity) {
-      alert(
-        `⚠️ No queda stock disponible para ${articulo} (${color} • ${size}). Ya tienes ${currentQuantity} unidad(es) en tu carrito y no hay más disponibles.`
-      );
+      showFylToastError({
+        message: `Ya tenés la bolsa al máximo para ${articulo} (${color} • ${size}).`,
+      });
       return false;
     }
 
@@ -1387,16 +1388,16 @@ async function ensureCartItemInDatabase(productData, authUser = null, options = 
     const quantityToAdd = finalTotal - currentQuantity;
 
     if (quantityToAdd <= 0) {
-      alert(
-        `Solo puedes reservar ${maxAllowed} unidades de ${articulo} (${color} • ${size}).`
-      );
+      showFylToastError({
+        message: `Solo podés reservar hasta ${maxAllowed} unidades de ${articulo} (${color} • ${size}).`,
+      });
       return false;
     }
 
     if (quantityToAdd < quantity) {
-      alert(
-        `Stock limitado: se agregaron ${quantityToAdd} unidades (máximo disponible ${maxAllowed}).`
-      );
+      showFylToastError({
+        message: `Stock limitado: agregamos ${quantityToAdd} unidades (máximo ${maxAllowed}).`,
+      });
     }
 
     const primary = candidateRows?.[0] ?? null;
@@ -1573,7 +1574,9 @@ async function addToCart(productData, options = {}) {
         await window.mostrarAlternativasParaTalleSinStock(producto);
         return;
       }
-      alert(`⚠️ No se encontró información de stock para ${articulo} (${color} • ${talle}). Por favor verifica la disponibilidad.`);
+      showFylToastError({
+        message: `No encontramos stock para ${articulo} (${color} • ${talle}). Revisá la disponibilidad.`,
+      });
       return;
     }
     
@@ -1617,12 +1620,16 @@ async function addToCart(productData, options = {}) {
         await window.mostrarAlternativasParaTalleSinStock(producto);
         return;
       }
-      alert(`⚠️ Este producto está agotado. No hay unidades disponibles de ${articulo} (${color} • ${talle}). Por favor selecciona otro tamaño o producto.`);
+      showFylToastError({
+        message: `Este producto está agotado (${articulo}, ${color} • ${talle}). Elegí otro talle o producto.`,
+      });
       return;
     }
     
     if (cantidadDeseada > stockRealDisponible) {
-      alert(`⚠️ Solo hay ${stockRealDisponible} unidad(es) disponible(s) de ${articulo} (${color} • ${talle}). Por favor ajusta la cantidad.`);
+      showFylToastError({
+        message: `Solo hay ${stockRealDisponible} unidad(es) disponibles de ${articulo} (${color} • ${talle}).`,
+      });
       return;
     }
     

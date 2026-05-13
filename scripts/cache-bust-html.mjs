@@ -78,7 +78,38 @@ function patchHtmlContents(html, version) {
     `$1${version}$2`
   );
 
+  next = ensureVendorSupabaseScript(next, version);
+
   return next;
+}
+
+/**
+ * Inserta `<script defer src="(...)scripts/vendor/supabase-js.bundle.min.js?v=...">`
+ * justo antes del primer `<script type="module" src=".../supabase-client.js?...">`
+ * cuando todavía no existe esa línea. El path relativo (scripts/... vs ../scripts/...)
+ * se infiere del src del módulo de supabase-client. Idempotente: si ya está, no hace nada.
+ */
+function ensureVendorSupabaseScript(html, version) {
+  if (html.includes("scripts/vendor/supabase-js.bundle.min.js")) {
+    return html.replace(
+      /(<script[^>]*src=["'])([^"']*scripts\/vendor\/supabase-js\.bundle\.min\.js)(\?[^"']*)?(["'][^>]*>)/g,
+      (_m, pre, base, _q, post) => `${pre}${base}?v=${version}${post}`
+    );
+  }
+  const moduleRe = /<script\s+type=["']module["']\s+src=["']([^"']*scripts\/supabase-client\.js[^"']*)["'][^>]*><\/script>/i;
+  const match = html.match(moduleRe);
+  if (!match) return html;
+  const moduleSrc = match[1];
+  const prefix = moduleSrc.startsWith("../") ? "../" : "";
+  const vendorSrc = `${prefix}scripts/vendor/supabase-js.bundle.min.js?v=${version}`;
+  const indent = (() => {
+    const idx = html.indexOf(match[0]);
+    if (idx < 0) return "";
+    const lineStart = html.lastIndexOf("\n", idx - 1);
+    return html.slice(lineStart + 1, idx).match(/^[ \t]*/)[0] || "";
+  })();
+  const inject = `<script defer src="${vendorSrc}"></script>\n${indent}`;
+  return html.replace(moduleRe, inject + match[0]);
 }
 
 function patchServiceWorker(sw, version) {
@@ -94,6 +125,12 @@ function patchServiceWorker(sw, version) {
   next = next.replace(
     /\.get\("v"\)\s*\|\|\s*"[^"]*"/,
     `.get("v") || "${version}"`
+  );
+
+  // Tombstone SW: byte-diff garantizado para que Safari detecte update.
+  next = next.replace(
+    /const\s+SW_BUILD_TAG\s*=\s*"[^"]*"\s*;/,
+    `const SW_BUILD_TAG = "${version}";`
   );
 
   return next;
@@ -121,6 +158,9 @@ function patchFylVersionExport(contents, version) {
 const EXTRA_VERSIONED_FILES = [
   "scripts/main-supabase.js",
   "scripts/fyl-runtime-resilience.js",
+  "scripts/config.js",
+  "scripts/supabase-client.js",
+  "scripts/boot-telemetry.js",
 ];
 
 function main() {

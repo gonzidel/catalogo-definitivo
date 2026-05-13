@@ -553,31 +553,57 @@ async function handleMoveQrPendingAll() {
 
   await refreshPendingMovesStock();
 
+  const skippedZero = [];
+  let partialPlanned = false;
   const movesToProcess = [];
+
   for (const line of pendingMoves.values()) {
     const quantity = line.quantity;
     if (!quantity || quantity <= 0) continue;
     const maxStock = Math.max(0, line.sourceStock || 0);
-    if (quantity > maxStock) {
-      showMessage(
-        `Revisá la línea "${line.productName}" talle ${line.size}: pedís ${quantity} y hay ${maxStock} en origen.`,
-        "error"
-      );
-      renderQrPendingList();
-      return;
+    if (maxStock <= 0) {
+      skippedZero.push(line);
+      continue;
     }
-    movesToProcess.push({ ...line, quantity });
+    const moveQty = Math.min(quantity, maxStock);
+    if (moveQty < quantity) partialPlanned = true;
+    movesToProcess.push({
+      variantId: line.variantId,
+      size: line.size,
+      quantity: moveQty,
+      key: pendingLineKey(line.variantId, line.size),
+    });
   }
 
   if (movesToProcess.length === 0) {
-    showMessage("No hay líneas con cantidad válida para mover", "error");
+    if (skippedZero.length > 0) {
+      const maxList = 8;
+      const lines = skippedZero
+        .slice(0, maxList)
+        .map(
+          (l) =>
+            `• ${l.productName} — ${l.color || "—"} — talle ${l.size}`
+        )
+        .join("\n");
+      const more =
+        skippedZero.length > maxList
+          ? `\n…y ${skippedZero.length - maxList} más`
+          : "";
+      showMessage(
+        `No hay stock disponible en origen para estas líneas. Revisá el inventario o hacé un rearqueo:\n\n${lines}${more}`,
+        "info"
+      );
+    } else {
+      showMessage("No hay líneas con cantidad válida para mover", "error");
+    }
+    renderQrPendingList();
     return;
   }
 
   if (moveAllBtn) moveAllBtn.disabled = true;
   if (moveAllBtn) moveAllBtn.textContent = "Moviendo...";
   if (moveAllStatus) {
-    moveAllStatus.textContent = `Procesando ${movesToProcess.length} línea(s)...`;
+    moveAllStatus.textContent = `Procesando ${movesToProcess.length} tramo(s)...`;
   }
 
   let successCount = 0;
@@ -619,8 +645,11 @@ async function handleMoveQrPendingAll() {
         const item = batch[index];
         if (result.status === "fulfilled") {
           successCount++;
-          const k = pendingLineKey(item.variantId, item.size);
-          pendingMoves.delete(k);
+          const line = pendingMoves.get(item.key);
+          if (line) {
+            line.quantity -= item.quantity;
+            if (line.quantity <= 0) pendingMoves.delete(item.key);
+          }
           invalidateVariantStockCache(item.variantId);
         } else {
           errorCount++;
@@ -636,16 +665,55 @@ async function handleMoveQrPendingAll() {
       }
     }
 
+    const parts = [];
+    if (successCount > 0) {
+      parts.push(`✅ Se movieron ${successCount} tramo(s) de stock.`);
+    }
+    if (skippedZero.length > 0) {
+      const maxList = 8;
+      const lines = skippedZero
+        .slice(0, maxList)
+        .map(
+          (l) =>
+            `• ${l.productName} — ${l.color || "—"} — talle ${l.size}`
+        )
+        .join("\n");
+      const more =
+        skippedZero.length > maxList
+          ? `\n…y ${skippedZero.length - maxList} más`
+          : "";
+      parts.push(
+        `Sin stock en origen (siguen en la lista; revisá inventario o rearqueo):\n${lines}${more}`
+      );
+    }
+    if (partialPlanned && successCount > 0) {
+      parts.push(
+        "En una o más líneas solo se envió el stock disponible en origen; las unidades que faltan siguen en la lista."
+      );
+    }
+    if (errorCount > 0) {
+      parts.push(
+        `⚠️ ${errorCount} movimiento(s) fallaron; esas líneas siguen en la lista.`
+      );
+    }
+
     if (successCount > 0) {
       if (errorCount === 0) {
         qrMetaCache.clear();
       }
+      const hasNotes =
+        skippedZero.length > 0 || partialPlanned || errorCount > 0;
       showMessage(
-        `✅ Se movieron ${successCount} línea(s)${errorCount > 0 ? ` (${errorCount} error(es))` : ""}`,
-        errorCount > 0 ? "error" : "success"
+        parts.join("\n\n"),
+        hasNotes ? "info" : "success"
       );
     } else {
-      showMessage("No se pudo mover ninguna línea", "error");
+      showMessage(
+        parts.length > 0
+          ? parts.join("\n\n")
+          : "No se pudo mover ninguna línea",
+        "error"
+      );
     }
 
     await refreshPendingMovesStock();

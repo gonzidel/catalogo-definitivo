@@ -1586,8 +1586,20 @@ body.catalog-boot-active {
   #wa-popup {
     bottom: calc(var(--bottom-nav-h, 56px) + 10px + env(safe-area-inset-bottom, 0px));
     right: 14px;
-    z-index: 10003;
+    z-index: 10090;
+    isolation: isolate;
   }
+
+  /* Catálogo público: scroll-top suele solaparse con el FAB (misma esquina); lo corremos para que no robe el toque */
+  html.public-catalog #btn-scroll-top.visible {
+    right: calc(14px + 48px + 14px);
+  }
+
+  html.public-catalog #wa-toggle {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+
   /* Estado CON carrito -> subir por encima del sticky-cart */
   body.has-cart-bar #wa-popup {
     bottom: calc(
@@ -1725,11 +1737,75 @@ body.has-cart-bar #catalogo {
   padding-bottom: calc(var(--bottom-nav-h, 56px) + var(--sticky-cart-h, 48px) + 16px);
 }
 
-#wa-toggle { width: 45px; height: 45px; border: none; border-radius: 50%; background: #25D366; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 2px 6px rgba(0,0,0,0.3); }
+#wa-toggle {
+  position: relative;
+  width: 45px;
+  height: 45px;
+  border: none;
+  border-radius: 50%;
+  background: #25D366;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+  text-decoration: none;
+  color: inherit;
+  box-sizing: border-box;
+  /* Robustez para WebView Meta / Samsung Internet / Safari iOS:
+   * touch-action manipulation evita el delay de 300ms y elimina pinch zoom.
+   * tap-highlight transparente evita el flash gris que confunde al usuario.
+   * user-select/drag none evita que el touch se interprete como gesture. */
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  user-select: none;
+  transition: transform 0.12s ease, box-shadow 0.18s ease;
+  /* Hint cross-browser: tratar el contenido como un solo target visual. */
+  isolation: isolate;
+}
 
-#wa-toggle svg { width: 36px; height: 36px; fill: #fff; }
+/* Hit area expandida invisible alrededor del FAB. El click sobre los 8px
+ * extra alrededor sigue resolviéndose sobre el <a>, sin cambiar el tamaño
+ * visual del círculo. Esto sube el touch target efectivo a ~61×61px. */
+#wa-toggle::before {
+  content: "";
+  position: absolute;
+  inset: -8px;
+  border-radius: 50%;
+  background: transparent;
+  /* Capturar taps que caen en el aro invisible. */
+  pointer-events: auto;
+  z-index: 0;
+}
 
-#wa-toggle img { width: 36px; height: 36px; }
+/* Feedback táctil app-like: pequeño scale al apretar (mobile y desktop). */
+#wa-toggle:active {
+  transform: scale(0.94);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+}
+
+#wa-toggle:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 3px;
+}
+
+#wa-toggle svg { width: 36px; height: 36px; fill: #fff; pointer-events: none; }
+
+/* Crítico: el <img> interno NO debe interceptar el touch. En WebViews de
+ * Meta/Samsung, un <img> sin pointer-events:none captura el toque como
+ * gesture de arrastre y cancela el click sobre el <a> padre.
+ * Resultado de Clarity: 131 dead clicks. */
+#wa-toggle img {
+  width: 36px;
+  height: 36px;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
+  -webkit-touch-callout: none;
+  position: relative;
+  z-index: 1;
+}
 
 #wa-menu {
   display: none;
@@ -3453,7 +3529,10 @@ body.modal-open {
 .product-modal-colors {
   display: flex;
   align-items: center;
-  gap: 4px;
+  /* gap 0: con clip-path eliminado, cada swatch 44x44 queda border-to-border
+   * y NO hay zona muerta entre ellos. El padding interno del fill (8px) provee
+   * la separación visual entre círculos. Fix Clarity: 129 dead clicks. */
+  gap: 0;
   overflow-x: auto;
   overflow-y: hidden;
   padding: 0 22px 0 0;
@@ -3461,6 +3540,10 @@ body.modal-open {
   flex-wrap: nowrap;
   flex: 1 1 auto;
   min-width: 0;
+  /* Robustez touch en WebView Meta/Samsung/iOS. */
+  touch-action: pan-x;
+  -webkit-overflow-scrolling: touch;
+  -webkit-tap-highlight-color: transparent;
   scroll-snap-type: x mandatory;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
@@ -3477,7 +3560,10 @@ body.modal-open {
   content: none !important;
 }
 
-/* Swatch PDP: 44x44 hit-area, círculo 28px vía clip-path, snap por swatch */
+/* Swatch PDP: 44x44 hit-area COMPLETA. El círculo visible de 28px ahora vive
+ * en .color-swatch-fill (no clip-path) para que TODOS los píxeles 44x44 sean
+ * hit-testeables. Fix Clarity: el clip-path recortaba el hit-test al círculo
+ * interior ⇒ 129 dead clicks entre swatches. */
 .product-modal-colors .color-btn {
   width: 44px;
   height: 44px;
@@ -3505,22 +3591,21 @@ body.modal-open {
   width: 44px;
   height: 44px;
   padding: 0;
-  border: 1px solid rgba(0, 0, 0, 0.08) !important;
-  border-radius: 999px;
-  clip-path: circle(14px at 50% 50%);
-  box-shadow: 0 0 0 1px rgba(205, 132, 77, 0.2);
-}
-
-#product-modal .product-modal-colors .color-btn.selected,
-#product-modal .product-modal-colors .color-btn[aria-pressed="true"],
-#product-modal .product-modal-colors .color-btn.selected:focus-visible,
-#product-modal .product-modal-colors .color-btn[aria-pressed="true"]:focus-visible {
+  border: 0 !important;
+  background: transparent !important;
+  border-radius: 0;
   box-shadow: none;
+  /* Robustez touch: evita delay, flash gris, callout y selección accidental. */
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  user-select: none;
+  transition: transform 0.12s ease;
 }
 
-/* ::after = contorno dorado sutil + ring selección */
-#product-modal .product-modal-colors .color-btn::after {
-  content: "";
+/* Círculo visible: 28x28 centrado, color via CSS variable. pointer-events:none
+ * para que TODOS los taps caigan en el <button> padre (44x44). */
+#product-modal .product-modal-colors .color-swatch-fill {
   position: absolute;
   width: 28px;
   height: 28px;
@@ -3528,18 +3613,54 @@ body.modal-open {
   top: 50%;
   margin-left: -14px;
   margin-top: -14px;
-  border-radius: 999px;
+  border-radius: 50%;
+  background: var(--swatch-color, #CD844D);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: 0 0 0 1px rgba(205, 132, 77, 0.18);
   pointer-events: none;
-  box-shadow: inset 0 0 0 1px rgba(205, 132, 77, 0.25);
+  transition: transform 0.14s ease, box-shadow 0.18s ease;
 }
 
-#product-modal .product-modal-colors .color-btn.selected::after,
-#product-modal .product-modal-colors .color-btn[aria-pressed="true"]::after {
-  box-shadow: inset 0 0 0 2px rgba(205, 132, 77, 0.95);
+/* Feedback táctil app-like al apretar: solo el círculo se contrae, el hit
+ * area del button sigue intacto. */
+#product-modal .product-modal-colors .color-btn:active .color-swatch-fill {
+  transform: scale(0.88);
 }
 
-#product-modal .product-modal-colors .color-btn:focus-visible:not(.selected):not([aria-pressed="true"])::after {
-  box-shadow: inset 0 0 0 2px rgba(205, 132, 77, 0.55);
+/* Selected: ring dorado nítido + leve agrandado del fill. */
+#product-modal .product-modal-colors .color-btn.selected .color-swatch-fill,
+#product-modal .product-modal-colors .color-btn[aria-pressed="true"] .color-swatch-fill {
+  box-shadow: 0 0 0 2px rgba(205, 132, 77, 0.95);
+  border-color: transparent;
+}
+
+/* Número (display number) centrado encima del círculo. */
+#product-modal .product-modal-colors .color-number {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--swatch-text, #000);
+  font-weight: bold;
+  font-size: 11px;
+  line-height: 1;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Pseudo ::after legacy: anulado. Toda la presentación visual la hace
+ * .color-swatch-fill. Mantenemos la regla por si quedan estilos en cascada
+ * de versiones anteriores. */
+#product-modal .product-modal-colors .color-btn::after {
+  content: none;
+}
+
+/* Focus visible para accesibilidad desktop: ring punteado dorado externo
+ * sobre el button (no afecta el círculo). */
+#product-modal .product-modal-colors .color-btn:focus-visible {
+  outline: 2px dashed rgba(205, 132, 77, 0.75);
+  outline-offset: -3px;
+  border-radius: 12px;
 }
 
 #product-modal .product-modal-colors .color-btn:focus {
@@ -5805,7 +5926,7 @@ body.modal-open {
   max-height: none !important; /* Permitir que la barra tenga su altura natural */
 }
 
-/* Variables para stacking: orden (abajo↑arriba) bottom-nav(10000) < sticky-cart(10001) < wa-popup(10003).
+/* Variables para stacking: orden (abajo↑arriba) bottom-nav(10000) < sticky-cart(10001) < wa-popup(móvil ~10090).
    Ver más modelos: inline, no fixed; load-more-wrap margin evita solaparse con bottom-nav. */
 :root {
   --floating-gap: 8px;
@@ -7709,7 +7830,7 @@ body.modal-open {
   }
 
   /* Sin barra de checkout (aún no eligió cantidad): menos padding, footer colapsado */
-  #product-modal.active:not(.pdp-checkout-bar-visible) #product-modal-footer.product-modal-footer {
+  #product-modal.active:not(.pdp-checkout-bar-visible):not(.catalog-only-pdp) #product-modal-footer.product-modal-footer {
     height: 0 !important;
     min-height: 0 !important;
     padding: 0 !important;
@@ -7940,11 +8061,14 @@ html.catalog-only .header-profile {
   display: none !important;
 }
 
-/* CTA "Consultar por WhatsApp" en PDP (modo solo catálogo) */
+/* CTA "Consultar por WhatsApp" en PDP (modo solo catálogo).
+ * Toda la pieza es UN solo target táctil (sin hijos que intercepten).
+ * Fix Clarity (258 dead clicks): robustez para WebView Meta/Samsung/iOS. */
 #product-modal-footer .pdp-whatsapp-cta {
   display: block;
   width: 100%;
   max-width: 100%;
+  min-height: 48px;
   box-sizing: border-box;
   padding: 14px 16px;
   border-radius: 12px;
@@ -7955,6 +8079,14 @@ html.catalog-only .header-profile {
   color: #fff;
   border: none;
   cursor: pointer;
+  /* Robustez touch: evita 300ms delay, flash gris y selección accidental. */
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  user-select: none;
+  transition: transform 0.12s ease, background 0.18s ease, box-shadow 0.18s ease;
+  will-change: transform;
+  cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -7963,6 +8095,18 @@ html.catalog-only .header-profile {
 #product-modal-footer .pdp-whatsapp-cta:hover {
   background: #20bd5a;
   color: #fff;
+}
+
+/* Feedback táctil inmediato app-like al apretar (mobile y desktop). */
+#product-modal-footer .pdp-whatsapp-cta:active {
+  transform: scale(0.98);
+  background: #1faa50;
+  box-shadow: 0 0 0 rgba(0,0,0,0);
+}
+
+#product-modal-footer .pdp-whatsapp-cta:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
 }
 #product-modal-footer {
   max-width: 100%;
@@ -8793,4 +8937,557 @@ html.client-area body {
     margin-top: 2px;
     min-height: 42px;
   }
+}
+
+/* ── FYL error states (fullscreen / inline / toast) mobile-first ── */
+.fyl-error-state {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: max(16px, env(safe-area-inset-top)) 16px max(20px, env(safe-area-inset-bottom));
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.28s ease, visibility 0.28s ease;
+}
+
+.fyl-error-state.fyl-error-state--visible {
+  pointer-events: auto;
+  opacity: 1;
+  visibility: visible;
+}
+
+.fyl-error-state.fyl-error-state--leave {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.fyl-error-state__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(250, 246, 240, 0.92);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.fyl-error-state__panel {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 400px;
+  margin: 0 auto;
+  padding: 28px 22px 26px;
+  border-radius: 16px;
+  background: #fffaf4;
+  box-shadow: 0 12px 40px rgba(75, 64, 55, 0.12);
+  text-align: center;
+  font-family: Poppins, system-ui, sans-serif;
+  transform: translateY(8px);
+  transition: transform 0.28s ease;
+}
+
+.fyl-error-state.fyl-error-state--visible .fyl-error-state__panel {
+  transform: translateY(0);
+}
+
+.fyl-error-state__image-wrap {
+  margin: 0 auto 16px;
+  max-width: min(100%, 320px);
+  min-height: 0;
+}
+
+.fyl-error-state__image-wrap--empty {
+  min-height: 0;
+  margin-bottom: 8px;
+}
+
+.fyl-error-state__img {
+  display: block;
+  width: 100%;
+  max-width: 300px;
+  height: auto;
+  margin: 0 auto;
+  object-fit: contain;
+}
+
+.fyl-error-state__title {
+  margin: 0 0 10px;
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: #3d342c;
+  line-height: 1.35;
+}
+
+.fyl-error-state__message {
+  margin: 0 0 22px;
+  font-size: 0.9375rem;
+  font-weight: 400;
+  color: #5c534a;
+  line-height: 1.5;
+}
+
+.fyl-error-state__btn {
+  min-height: 46px;
+  padding: 0 22px;
+  border: none;
+  border-radius: 12px;
+  font-family: inherit;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.18s ease, transform 0.12s ease;
+}
+
+.fyl-error-state__btn--primary {
+  width: 100%;
+  max-width: 280px;
+  background: #cd844d;
+  color: #fff;
+}
+
+.fyl-error-state__btn--primary:hover {
+  background: #b86f3d;
+}
+
+.fyl-error-state__btn--primary:active {
+  transform: scale(0.98);
+}
+
+@media (max-width: 430px) {
+  .fyl-error-state__img {
+    max-width: 280px;
+  }
+
+  .fyl-error-state__panel {
+    padding: 22px 18px 22px;
+  }
+}
+
+/* Inline card */
+.fyl-inline-error {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.fyl-inline-error__card {
+  margin: 12px auto;
+  padding: 20px 16px 18px;
+  max-width: 100%;
+  border-radius: 14px;
+  background: #fffaf4;
+  border: 1px solid #ebe4dc;
+  box-shadow: 0 4px 18px rgba(75, 64, 55, 0.06);
+  text-align: center;
+  font-family: Poppins, system-ui, sans-serif;
+}
+
+.fyl-inline-error__image-wrap {
+  margin: 0 auto 12px;
+  max-width: min(100%, 280px);
+}
+
+.fyl-inline-error__image-wrap.fyl-error-state__image-wrap--empty {
+  margin-bottom: 4px;
+}
+
+.fyl-inline-error__image-wrap .fyl-error-state__img {
+  max-width: 260px;
+}
+
+.fyl-inline-error__title {
+  margin: 0 0 8px;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #3d342c;
+}
+
+.fyl-inline-error__message {
+  margin: 0 0 16px;
+  font-size: 0.875rem;
+  color: #5c534a;
+  line-height: 1.45;
+}
+
+.fyl-inline-error__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: stretch;
+}
+
+.fyl-inline-error__btn {
+  min-height: 44px;
+  padding: 0 16px;
+  border-radius: 12px;
+  font-family: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.18s ease, transform 0.12s ease;
+}
+
+.fyl-inline-error__btn--primary {
+  background: #cd844d;
+  color: #fff;
+}
+
+.fyl-inline-error__btn--primary:hover {
+  background: #b86f3d;
+}
+
+.fyl-inline-error__btn--ghost {
+  background: transparent;
+  color: #6b5e54;
+  border: 1px solid #ddd5cc;
+}
+
+.fyl-inline-error__btn:active {
+  transform: scale(0.98);
+}
+
+/* Toast */
+.fyl-toast-error-host {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: max(16px, env(safe-area-inset-bottom));
+  z-index: 2147482000;
+  pointer-events: none;
+  display: flex;
+  justify-content: center;
+}
+
+.fyl-toast-error {
+  max-width: 420px;
+  width: 100%;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: #fffaf4;
+  border: 1px solid #ebe4dc;
+  box-shadow: 0 8px 28px rgba(75, 64, 55, 0.14);
+  font-family: Poppins, system-ui, sans-serif;
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity 0.26s ease, transform 0.26s ease;
+}
+
+.fyl-toast-error.fyl-toast-error--show {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.fyl-toast-error.fyl-toast-error--leave {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+.fyl-toast-error--neutral {
+  border-color: #d4e8dc;
+  background: #f6faf7;
+}
+
+.fyl-toast-error__text {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #4b4037;
+  line-height: 1.4;
+  text-align: center;
+}
+
+/* ============================================================
+ * PDP Lightbox — Visor fullscreen de la imagen principal del PDP.
+ * Mobile-first. Sin librerías. Glassmorphism sutil en toolbar.
+ * Resuelve >1000 dead clicks detectados por Clarity sobre
+ * .product-modal-main-image (usuarios esperaban ampliar la foto).
+ * ============================================================ */
+
+/* Cursor zoom-in solo en dispositivos con hover real (desktop). */
+@media (hover: hover) and (pointer: fine) {
+  .product-modal-main-image {
+    cursor: zoom-in;
+    transition: transform 0.25s ease;
+  }
+  .pdp-main-image-wrap:hover .product-modal-main-image {
+    transform: scale(1.015);
+  }
+}
+
+/* Hint visual "Tocar para ampliar" — sólo mobile, sólo la 1ª vez. */
+@media (hover: none) and (pointer: coarse) {
+  .pdp-main-image-wrap {
+    position: relative;
+  }
+  .pdp-main-image-wrap::after {
+    content: "Tocar para ampliar";
+    position: absolute;
+    right: 10px;
+    bottom: 10px;
+    padding: 5px 10px;
+    border-radius: 999px;
+    font: 600 11px/1 Poppins, system-ui, sans-serif;
+    color: #fff;
+    background: rgba(20, 20, 20, 0.55);
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+    pointer-events: none;
+    z-index: 2;
+    opacity: 0;
+    animation: pdpHintIn 0.35s ease 0.4s forwards, pdpHintOut 0.45s ease 4.5s forwards;
+  }
+  body[data-pdp-lightbox-seen="1"] .pdp-main-image-wrap::after {
+    display: none;
+  }
+}
+
+@keyframes pdpHintIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pdpHintOut {
+  to { opacity: 0; transform: translateY(2px); }
+}
+
+/* Overlay base: presente en DOM pero invisible/no interactivo. */
+.pdp-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.24s ease, visibility 0s linear 0.24s;
+  touch-action: none;
+  background: transparent;
+}
+
+.pdp-lightbox--open {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition: opacity 0.24s ease;
+}
+
+.pdp-lightbox--leave {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.22s ease, visibility 0s linear 0.22s;
+}
+
+.pdp-lightbox__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(20, 20, 20, 0.92);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+}
+
+/* Stage: contenedor real de la imagen. Ocupa todo el viewport para captar swipes
+ * incluso en los bordes laterales, donde antes "no pasaba nada" (zonas muertas). */
+.pdp-lightbox-stage {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* touch-action: pan-y permite que se note el swipe horizontal y se cancele
+   * el pull-to-refresh vertical sin bloquear gestos del sistema. */
+  touch-action: pan-y;
+}
+
+.pdp-lightbox-image {
+  max-width: 96vw;
+  max-height: 92vh;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  display: block;
+  user-select: none;
+  -webkit-user-drag: none;
+  pointer-events: auto;
+  transform: scale(0.96);
+  opacity: 0;
+  transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.2s ease;
+}
+
+.pdp-lightbox--open .pdp-lightbox-image {
+  transform: scale(1);
+  opacity: 1;
+}
+
+/* Mini-fade durante el swap entre imágenes de la galería. */
+.pdp-lightbox-image.is-swapping {
+  opacity: 0.35;
+  transition: opacity 0.12s ease;
+}
+
+/* Toolbar flotante superior (compacta). */
+.pdp-lightbox__toolbar {
+  position: absolute;
+  top: max(6px, env(safe-area-inset-top, 0px));
+  right: 8px;
+  left: auto;
+  z-index: 3;
+  display: flex;
+  gap: 6px;
+  padding: 0;
+  pointer-events: auto;
+}
+
+.pdp-lightbox-btn {
+  /* Hit area 44px (Apple HIG); círculo visual 40px. */
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  cursor: pointer;
+  -webkit-backdrop-filter: blur(10px) saturate(140%);
+  backdrop-filter: blur(10px) saturate(140%);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+  transition: transform 0.18s ease, background 0.2s ease, border-color 0.2s ease;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+
+.pdp-lightbox-btn:hover {
+  background: rgba(255, 255, 255, 0.22);
+  border-color: rgba(255, 255, 255, 0.28);
+}
+
+.pdp-lightbox-btn:active {
+  transform: scale(0.94);
+}
+
+.pdp-lightbox-btn:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
+.pdp-lightbox-btn svg { display: block; }
+
+/* Botones de navegación lateral — mobile: ocultos visualmente (se usa swipe).
+ * Desktop con hover real: visibles, centrados verticalmente. */
+.pdp-lightbox-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 3;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  cursor: pointer;
+  -webkit-backdrop-filter: blur(10px) saturate(140%);
+  backdrop-filter: blur(10px) saturate(140%);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+  transition: transform 0.18s ease, background 0.2s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.pdp-lightbox-nav[hidden] { display: none !important; }
+
+.pdp-lightbox-nav--prev { left: 14px; }
+.pdp-lightbox-nav--next { right: 14px; }
+
+.pdp-lightbox-nav:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.pdp-lightbox-nav:active {
+  transform: translateY(-50%) scale(0.94);
+}
+
+.pdp-lightbox-nav:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
+/* Solo mostrar flechas en dispositivos con hover/pointer fino (desktop). */
+@media (hover: hover) and (pointer: fine) {
+  .pdp-lightbox-nav:not([hidden]) {
+    display: inline-flex;
+  }
+}
+
+/* Contador "1 / 5" discreto en la parte inferior. */
+.pdp-lightbox-counter {
+  position: absolute;
+  left: 50%;
+  bottom: max(14px, env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  z-index: 3;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: rgba(20, 20, 20, 0.55);
+  color: #fff;
+  font: 600 12px/1 Poppins, system-ui, sans-serif;
+  letter-spacing: 0.2px;
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+  user-select: none;
+}
+
+.pdp-lightbox-counter[hidden] { display: none !important; }
+
+/* Scroll lock cuando el lightbox está abierto. */
+body.pdp-lightbox-open {
+  overflow: hidden !important;
+  touch-action: none;
+}
+
+/* Ajustes para mobile pequeño (≤ 360px). */
+@media (max-width: 360px) {
+  .pdp-lightbox__toolbar { right: 6px; gap: 4px; }
+  .pdp-lightbox-btn { width: 42px; height: 42px; min-width: 42px; min-height: 42px; }
+  .pdp-lightbox-image { max-width: 98vw; max-height: 92vh; }
+}
+
+/* Tablets/desktop: imagen aún más generosa. */
+@media (min-width: 768px) {
+  .pdp-lightbox-image { max-width: 90vw; max-height: 92vh; }
+  .pdp-lightbox__toolbar { top: 12px; right: 14px; gap: 8px; }
+  .pdp-lightbox-counter { bottom: 22px; padding: 6px 14px; font-size: 13px; }
+}
+
+/* Accesibilidad: respetar reduced motion. */
+@media (prefers-reduced-motion: reduce) {
+  .pdp-lightbox,
+  .pdp-lightbox-image,
+  .pdp-lightbox-btn,
+  .pdp-lightbox-nav,
+  .pdp-main-image-wrap::after,
+  .product-modal-main-image {
+    transition: none !important;
+    animation: none !important;
+  }
+  .pdp-lightbox-image { transform: none; }
 }

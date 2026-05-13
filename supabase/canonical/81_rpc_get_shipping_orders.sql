@@ -56,6 +56,12 @@ begin
   from public.orders o
   left join public.customers c on c.id = o.customer_id
   where o.status = 'sent'
+    and not exists (
+      select 1
+      from public.local_orders lo
+      where lo.source_order_id = o.id
+        and lo.status <> 'cancelled'
+    )
     and (
       (o.sent_at is not null and (o.sent_at at time zone 'UTC' at time zone 'America/Argentina/Buenos_Aires')::date = p_date)
       or (o.sent_at is null and o.closed_at is not null and (o.closed_at at time zone 'UTC' at time zone 'America/Argentina/Buenos_Aires')::date = p_date)
@@ -102,6 +108,12 @@ begin
   left join public.customers c on c.id = o.customer_id
   left join public.transports t on t.id = coalesce(o.transport_id, c.transport_id)
   where o.status = 'sent'
+    and not exists (
+      select 1
+      from public.local_orders lo
+      where lo.source_order_id = o.id
+        and lo.status <> 'cancelled'
+    )
     and (
       (o.sent_at is not null and (o.sent_at at time zone 'UTC' at time zone 'America/Argentina/Buenos_Aires')::date between p_start_date and p_end_date)
       or (o.sent_at is null and o.closed_at is not null and (o.closed_at at time zone 'UTC' at time zone 'America/Argentina/Buenos_Aires')::date between p_start_date and p_end_date)

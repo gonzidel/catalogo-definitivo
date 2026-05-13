@@ -28,6 +28,44 @@ function parseARSPrice(raw) {
   return n > 0 && n < 1000 && n % 1 !== 0 ? n * 1000 : n;
 }
 
+function fylLegacyToast(message, tone) {
+  try {
+    if (typeof window.showFylToastError === "function") {
+      window.showFylToastError({
+        message: String(message || ""),
+        tone: tone === "neutral" ? "neutral" : "error",
+      });
+      return;
+    }
+  } catch (_) {}
+  console.warn("[FYL]", message);
+}
+
+function fylLegacyCatalogBlocked(message) {
+  try {
+    console.error("[catalog]", message);
+  } catch (_) {}
+  try {
+    if (typeof window.showFylErrorState === "function") {
+      window.showFylErrorState({
+        preset: "catalog",
+        retry: () => {
+          try {
+            location.reload();
+          } catch (_) {}
+        },
+      });
+      return;
+    }
+  } catch (_) {}
+  const container = document.getElementById("catalogo");
+  if (!container) return;
+  container.innerHTML =
+    '<div style="text-align:center;padding:32px 16px;font-family:Poppins,sans-serif;color:#4b4037;background:#fffaf4;border-radius:12px;margin:16px">' +
+    '<p style="margin:0 0 16px">No pudimos cargar el catálogo. Intentá de nuevo.</p>' +
+    '<button type="button" onclick="location.reload()" style="background:#CD844D;color:#fff;border:none;padding:10px 20px;border-radius:8px;cursor:pointer;font-family:inherit">Reintentar</button></div>';
+}
+
 // Sistema de manejo de errores centralizado
 class ErrorHandler {
   static log(error, context = "") {
@@ -40,31 +78,7 @@ class ErrorHandler {
   }
 
   static showUserError(message) {
-    const container = document.getElementById("catalogo");
-    if (container) {
-      container.innerHTML = `
-        <div class="error-message" style="
-          text-align: center; 
-          padding: 40px; 
-          color: #666; 
-          background: #f8f9fa; 
-          border-radius: 8px;
-          margin: 20px;
-        ">
-          <h3>⚠️ Error al cargar productos</h3>
-          <p>${message}</p>
-          <button onclick="location.reload()" style="
-            background: #CD844D; 
-            color: white; 
-            border: none; 
-            padding: 10px 20px; 
-            border-radius: 5px; 
-            cursor: pointer;
-            margin-top: 15px;
-          ">Reintentar</button>
-        </div>
-      `;
-    }
+    fylLegacyCatalogBlocked(message);
   }
 }
 
@@ -536,11 +550,11 @@ class CatalogController {
           event.target.style.background = "";
         }, 1200);
       } else {
-        alert("Sistema de carrito no disponible");
+        fylLegacyToast("El carrito no está disponible en este momento.");
       }
     } catch (error) {
       ErrorHandler.log(error, "handleReserveClick");
-      alert("No se pudo agregar al carrito");
+      fylLegacyToast("No pudimos agregar al carrito. Intentá de nuevo.");
     }
   }
 
@@ -583,15 +597,13 @@ class CatalogController {
       } else if (navigator.share) {
         navigator.share({ url: imgUrl });
       } else {
-        alert(
-          "La función de compartir solo está disponible en dispositivos móviles compatibles."
+        fylLegacyToast(
+          "Compartir no está disponible en este dispositivo. Podés usar descargar imagen si aparece la opción."
         );
       }
     } catch (error) {
       ErrorHandler.log(error, "handleShareClick");
-      alert(
-        "No se pudo compartir la imagen directamente. Intenta de nuevo o usa el botón de descarga."
-      );
+      fylLegacyToast("No pudimos compartir. Intentá de nuevo o descargá la imagen.");
     }
   }
 

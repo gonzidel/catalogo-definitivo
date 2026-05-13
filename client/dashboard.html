@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="app-version" content="m260420">
+    <meta name="app-version" content="m260514">
     <title>Dashboard - Catálogo FYL</title>
     <!-- Área cliente (pedidos) deshabilitada en hosts públicos hasta habilitarla: quitar redirects en firebase.json y este bloque. -->
     <script>
@@ -45,7 +45,7 @@
         s = b.getElementsByTagName(e)[0];
         s.parentNode.insertBefore(t, s);
       })(window, document, "script", "https://connect.facebook.net/en_US/fbevents.js");
-      fbq("init", "566182527509606");
+      fbq("init", "988002930324230");
       fbq("track", "PageView");
     </script>
     <noscript>
@@ -53,14 +53,14 @@
         height="1"
         width="1"
         style="display:none"
-        src="https://www.facebook.com/tr?id=566182527509606&ev=PageView&noscript=1"
+        src="https://www.facebook.com/tr?id=988002930324230&ev=PageView&noscript=1"
         alt=""
       />
     </noscript>
     <!-- End Meta Pixel Code -->
 
-    <link rel="stylesheet" href="../styles.css?v=m260420">
-    <link rel="stylesheet" href="./dashboard.css?v=m260420">
+    <link rel="stylesheet" href="../styles.css?v=m260514">
+    <link rel="stylesheet" href="./dashboard.css?v=m260514">
     <style>
         /* Misma familia visual que index2: fondo claro, cards blancas, sombras suaves, #CD844D */
         .dashboard-container {
@@ -699,19 +699,21 @@
         </a>
     </nav>
 
-    <script type="module" src="../scripts/supabase-client.js?v=m260420"></script>
+    <script defer src="../scripts/vendor/supabase-js.bundle.min.js?v=m260514"></script>
+    <script type="module" src="../scripts/fyl-error-state.js?v=m260514"></script>
+    <script type="module" src="../scripts/supabase-client.js?v=m260514"></script>
     <script type="module">
-      import { fylAnalytics } from "../scripts/analytics.js?v=m260420";
-      import { attachClientAnalyticsAuthListener } from "../scripts/analytics-auth-hook.js?v=m260420";
+      import { fylAnalytics } from "../scripts/analytics.js?v=m260514";
+      import { attachClientAnalyticsAuthListener } from "../scripts/analytics-auth-hook.js?v=m260514";
       fylAnalytics.init({ app_area: "client", page_type: "dashboard", user_role: "guest" });
       attachClientAnalyticsAuthListener();
     </script>
-    <script type="module" src="../scripts/auth-wait.js?v=m260420"></script>
-    <script type="module" src="auth-helper.js?v=m260420"></script>
-    <script type="module" src="../scripts/passkeys.js?v=m260420"></script>
-    <script type="module" src="../scripts/cart-persistent.js?v=m260420"></script>
-    <script type="module" src="dashboard-instant.js?v=m260420"></script>
-    <script type="module" src="dashboard.js?v=m260420"></script>
+    <script type="module" src="../scripts/auth-wait.js?v=m260514"></script>
+    <script type="module" src="auth-helper.js?v=m260514"></script>
+    <script type="module" src="../scripts/passkeys.js?v=m260514"></script>
+    <script type="module" src="../scripts/cart-persistent.js?v=m260514"></script>
+    <script type="module" src="dashboard-instant.js?v=m260514"></script>
+    <script type="module" src="dashboard.js?v=m260514"></script>
     <script type="module">
       let __fylDashboardDeferredLoaded = false;
       function __fylScheduleDashboardPostBoot(fn, timeoutMs) {
@@ -726,15 +728,15 @@
         if (__fylDashboardDeferredLoaded) return;
         __fylDashboardDeferredLoaded = true;
         __fylScheduleDashboardPostBoot(() => {
-          import("../scripts/product-alternatives.js?v=m260420");
+          import("../scripts/product-alternatives.js?v=m260514");
         }, 400);
         __fylScheduleDashboardPostBoot(() => {
-          import("../scripts/notifications.js?v=m260420");
-          import("./dashboard-onboarding.js?v=m260420");
+          import("../scripts/notifications.js?v=m260514");
+          import("./dashboard-onboarding.js?v=m260514");
         }, 1100);
         __fylScheduleDashboardPostBoot(() => {
           const s = document.createElement("script");
-          s.src = "../scripts/pwa-install.js?v=m260420";
+          s.src = "../scripts/pwa-install.js?v=m260514";
           document.body.appendChild(s);
         }, 1700);
       }

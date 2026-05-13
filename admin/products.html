@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="robots" content="noindex" />
-  <title>Artículos | Admin</title>
+  <title>👟 Artículos | Admin</title>
   <link rel="stylesheet" href="../styles.css" />
   <style>
     /* Mejora de UX para creación/edición de productos - Optimizado para 1366x768 */
@@ -36,6 +36,7 @@
     #variants-table select{width:100%;box-sizing:border-box;padding:4px;font-size:11px}
     .btn{padding:6px 10px;border:1px solid #ddd;border-radius:6px;background:#fff;cursor:pointer;font-size:12px;white-space:nowrap}
     .btn.primary{background:#3a6df0;border-color:#2f5fe0;color:#fff}
+    .btn.success{background:#16a34a;border-color:#15803d;color:#fff}
     .btn.danger{border-color:#c33;color:#c33;background:#fff}
     .actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
     h1{font-size:20px;margin:8px 0}
@@ -298,6 +299,9 @@
         <button type="button" id="pre-save-btn" class="btn" style="background:#f59e0b;color:#fff;border-color:#d97706">
           💾 Pre-guardar
         </button>
+        <button type="button" id="clone-product-btn" class="btn success" style="display:none">
+          Clonar producto
+        </button>
         <button type="submit" class="btn primary">Guardar producto</button>
         <span class="spacer"></span>
         <button type="button" id="p-delete" class="btn danger">Archivar producto</button>
@@ -342,6 +346,7 @@
   </script>
   <script src="./suppress-extension-errors.js"></script>
   <script type="module" src="../scripts/config.js"></script>
+  <script defer src="../scripts/vendor/supabase-js.bundle.min.js?v=m260514"></script>
   <script type="module" src="../scripts/supabase-client.js"></script>
   <script type="module" src="./products.js"></script>
   <datalist id="colors-datalist"></datalist>

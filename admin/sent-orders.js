@@ -1,6 +1,5 @@
 // Importar dinámicamente para asegurar que se cargue después
-// Importar configuración de Supabase y QZ
-import { SUPABASE_URL, QZ_SIGN_SECRET } from "../scripts/config.js";
+import { qzConnect } from "./qz-printing.js";
 import { parseARSNumber, resolveOrderItemUnitPrice } from "../scripts/utils/price.js";
 
 function generateOperationId() {
@@ -955,195 +954,7 @@ window.loadSentOrders = async function () {
   }
 };
 
-// ============================================================================
-// QZ Tray - Funciones helper para TSC
-// ============================================================================
-
-// Función helper para configurar firma remota de QZ Tray
-async function setupQZSignature() {
-  if (typeof qz === 'undefined' || !qz || !qz.security) {
-    console.warn("⚠️ QZ Tray no disponible");
-    return;
-  }
-
-  try {
-    console.log("🔧 Configurando certificado y firma remota de QZ Tray...");
-
-    // PASO 1: Precargar y configurar certificado público (ANTES de la firma)
-    console.log("📜 setCertificatePromise: cargando /certs/qz-site.crt");
-    let certText = null;
-    try {
-      const certResponse = await fetch("/certs/qz-site.crt", { cache: "no-store" });
-      if (!certResponse.ok) {
-        throw new Error(`HTTP ${certResponse.status}: ${certResponse.statusText}`);
-      }
-      
-      // Verificar Content-Type para detectar si se está sirviendo HTML
-      const contentType = certResponse.headers.get("content-type") || "";
-      if (contentType.includes("text/html")) {
-        throw new Error("El servidor está sirviendo HTML en lugar del certificado. Verifica que /certs/qz-site.crt esté desplegado correctamente en Firebase Hosting.");
-      }
-      
-      certText = await certResponse.text();
-      
-      // Verificar que no sea HTML antes de procesar
-      if (certText.trim().startsWith("<!DOCTYPE") || certText.trim().startsWith("<html")) {
-        throw new Error("Se recibió HTML en lugar del certificado. El archivo /certs/qz-site.crt no está disponible o Firebase está sirviendo index.html en su lugar.");
-      }
-      
-      console.log("✅ cert cargado, len=", certText.length, "begin=", certText.includes("BEGIN CERTIFICATE"));
-    } catch (certError) {
-      console.error("❌ Error cargando certificado desde /certs/qz-site.crt:", certError);
-      console.warn("⚠️ Intentando cargar certificado desde ruta alternativa...");
-      
-      // Intentar rutas alternativas
-      const alternativePaths = [
-        "/qz-site.crt",
-        "./qz-site.crt",
-        "../qz-site.crt",
-        "qz-site.crt"
-      ];
-      
-      for (const path of alternativePaths) {
-        try {
-          const altResponse = await fetch(path, { cache: "no-store" });
-          if (altResponse.ok) {
-            certText = await altResponse.text();
-            // Verificar que no sea HTML
-            if (!certText.trim().startsWith("<!DOCTYPE") && !certText.trim().startsWith("<html")) {
-              console.log(`✅ Certificado cargado desde ruta alternativa: ${path}`);
-              break;
-            }
-          }
-        } catch (e) {
-          console.warn(`⚠️ No se pudo cargar desde ${path}:`, e.message);
-        }
-      }
-      
-      if (!certText) {
-        console.error("❌ No se pudo cargar el certificado desde ninguna ruta");
-        throw new Error(`No se pudo cargar el certificado. Error original: ${certError.message}`);
-      }
-    }
-
-    qz.security.setCertificatePromise((resolve, reject) => {
-      console.log("📜 setCertificatePromise: resolviendo certificado precargado");
-      if (certText) {
-        const match = certText.match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/);
-        if (match) {
-          console.log("✅ Certificado sanitizado encontrado");
-          resolve(match[0]);
-        } else {
-          console.warn("⚠️ No se pudo extraer bloque limpio, usando texto original");
-          resolve(certText);
-        }
-      } else {
-        reject(new Error("Certificado vacío"));
-      }
-    });
-
-    console.log("✅ Certificado público configurado");
-
-    // IMPORTANTE: Configurar algoritmo SHA-512 (requerido por QZ Tray 2.1+)
-    qz.security.setSignatureAlgorithm("SHA512");
-    console.log("✅ Algoritmo de firma configurado: SHA512");
-
-    // PASO 2: Configurar firma remota (DESPUÉS del certificado)
-    qz.security.setSignaturePromise(async (toSign) => {
-      console.log("🔐 QZ Tray solicitó firma. Longitud:", toSign?.length || 0);
-
-      if (!toSign || typeof toSign !== 'string') {
-        throw new Error("toSign inválido o vacío");
-      }
-
-      // Obtener secret y URL desde config (requiere QZ_SIGN_SECRET en config.local.js)
-      const secret = QZ_SIGN_SECRET ||
-        (typeof window !== 'undefined' ? window.QZ_SIGN_SECRET : "");
-      if (!secret) {
-        throw new Error("QZ_SIGN_SECRET no configurado. Agrega QZ_SIGN_SECRET en scripts/config.local.js");
-      }
-
-      const supabaseUrl = SUPABASE_URL || 
-        (typeof window !== 'undefined' ? window.SUPABASE_URL : "");
-
-      if (!supabaseUrl) {
-        console.error("❌ SUPABASE_URL no definido");
-        throw new Error("SUPABASE_URL no definido");
-      }
-
-      console.log("📡 Enviando request de firma a Edge Function...");
-      console.log("📤 toSign a enviar (len=" + toSign.length + "):", toSign.substring(0, 50) + "...");
-
-      // IMPORTANTE: Enviar toSign como text/plain (no JSON) para evitar alteraciones
-      // QZ Tray requiere que el string llegue exactamente igual, sin JSON.stringify
-      const res = await fetch(`${supabaseUrl}/functions/v1/qz-sign`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "text/plain;charset=utf-8",
-          "x-qz-secret": secret
-        },
-        body: toSign // Enviar directamente, sin JSON.stringify
-      });
-
-      console.log("📥 Respuesta recibida. Status:", res.status);
-
-      if (!res.ok) {
-        const errorText = await res.text();
-        console.error("❌ Error HTTP:", res.status, errorText);
-        throw new Error(`Error en firma: ${res.status} - ${errorText}`);
-      }
-
-      const signature = (await res.text()).trim();
-      console.log("✅ Firma generada correctamente. Longitud:", signature.length);
-      return signature;
-    });
-
-    console.log("✅ Certificado y firma remota configurados para QZ Tray");
-    console.log("✅ QZ Security Configured");
-  } catch (e) {
-    console.error("❌ Error setupQZSignature:", e);
-  }
-}
-
-async function qzConnect() {
-  if (typeof qz === 'undefined' || !qz || !qz.websocket) {
-    throw new Error("QZ Tray no está disponible");
-  }
-
-  // Asegurar que el certificado y la firma estén configurados ANTES de conectar
-  await setupQZSignature();
-
-  if (!qz.websocket.isActive()) {
-    try {
-      console.log("🚀 conectando QZ...");
-      await qz.websocket.connect();
-      console.log("✅ QZ Tray conectado");
-    } catch (error) {
-      console.error("❌ Error conectando QZ Tray:", error);
-      
-      // Mejorar mensaje de error para "Connection blocked"
-      if (error.message && error.message.includes("Connection blocked")) {
-        const improvedError = new Error("No se pudo establecer conexión con QZ Tray.\n\n" +
-          "El sitio web está bloqueado por QZ Tray.\n\n" +
-          "Para solucionarlo:\n" +
-          "1. Abrí QZ Tray (buscalo en la bandeja del sistema)\n" +
-          "2. Click derecho en el ícono de QZ Tray\n" +
-          "3. Seleccioná 'Site Manager' o 'Administrador de Sitios'\n" +
-          "4. Agregá esta URL a la lista de sitios permitidos:\n" +
-          `   ${window.location.origin}\n\n` +
-          "5. Guardá los cambios y recargá esta página\n\n" +
-          "Si el problema persiste, verificá que:\n" +
-          "- QZ Tray esté instalado y corriendo\n" +
-          "- El certificado /certs/qz-site.crt esté disponible en el servidor\n" +
-          "- No haya firewall o antivirus bloqueando la conexión");
-        improvedError.stack = error.stack;
-        throw improvedError;
-      }
-      
-      throw error;
-    }
-  }
-}
+// QZ Tray: conexión vía qz-printing.js
 
 async function qzGetPrinterConfigTsc() {
   await qzConnect();
@@ -1421,6 +1232,7 @@ async function printTscShippingLabel(shippingLabel, copies = 1) {
     }
 
     console.log(`🖨️ Enviando ${copies} trabajo(s) de impresión a TSC...`);
+    console.log("[QZ] print requested");
     await qz.print(cfg, jobs);
     console.log(`✅ ${copies} rótulo(s) enviado(s) a la impresora TSC`);
     return true;
@@ -2507,7 +2319,7 @@ async function printOrderTicketWithQZ(order) {
     // Corte total
     data.push("\x1D\x56\x42\x00");   // GS V 66 0
 
-    // Imprimir
+    console.log("[QZ] print requested");
     await qz.print(config, data);
     console.log("✅ Ticket del pedido enviado a impresora");
 

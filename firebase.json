@@ -274,7 +274,24 @@
           }
         ]
       },
-      
+      {
+        "source": "scripts/fyl-version.js",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, no-store, must-revalidate"
+          }
+        ]
+      },
+      {
+        "source": "scripts/fyl-runtime-resilience.js",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, no-store, must-revalidate"
+          }
+        ]
+      },
       {
         "source": "scripts/config.local.js",
         "headers": [

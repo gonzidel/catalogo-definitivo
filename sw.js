@@ -6,7 +6,12 @@
  *   fetch(..., { cache: "no-store" }) sin usar Cache API (network-only efectivo).
  * - No se precachea scripts/vendor/* ni /config.prod.js; no hay cache-first.
  * - El resto de requests no llama a respondWith (navegador decide; sin SW cache).
+ *
+ * SW_BUILD_TAG cambia en cada deploy (lo reescribe scripts/cache-bust-html.mjs)
+ * para que Safari detecte byte-diff y reinstale el SW reemplazando legacy.
  */
+
+const SW_BUILD_TAG = "m260514";
 
 const CRITICAL_VENDOR_PREFIX = "/scripts/vendor/";
 const CRITICAL_CONFIG = "/config.prod.js";

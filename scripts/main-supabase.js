@@ -5544,6 +5544,12 @@ function configurarEventos() {
 let _categoryProgressBarEl = null;
 let _categoryProgressHideTimer = null;
 
+// [FASE 1B-A · T2] Lock anti re-entrada en cambiarCategoria.
+// _categoryInFlight: string de la cat actualmente en vuelo (null si nada).
+// _categoryRequestSeq: contador para last-wins en cambios rápidos a OTRA cat.
+let _categoryInFlight = null;
+let _categoryRequestSeq = 0;
+
 function _matchesCategoryButton(buttonText, cat) {
   if (!cat || cat === "all") return false;
   if (cat === "Lenceria" && buttonText === "Lencería") return true;
@@ -5635,6 +5641,18 @@ function hideCategoryFeedback() {
 
 // Función para cambiar categoría
 async function cambiarCategoria(cat) {
+  // [FASE 1B-A · T2] Lock anti re-entrada.
+  // Si llega un tap exactamente sobre la MISMA cat ya en vuelo → se ignora
+  // (evita doble render y dobles requests cuando la usuaria toca dos veces
+  // por la sensación de "no respondió"). Si llega un tap sobre OTRA cat
+  // distinta, se permite y last-wins: solo el más reciente limpia el feedback.
+  if (_categoryInFlight === cat) {
+    fylCatalogDbg("⛔ cambiarCategoria: tap repetido sobre cat en vuelo, ignorado:", cat);
+    return;
+  }
+  const mySeq = ++_categoryRequestSeq;
+  _categoryInFlight = cat;
+
   // [FASE 1B-A · T1+T3] Feedback inmediato síncrono ANTES de cualquier await.
   // Esto garantiza pressed state + barra de progreso visibles en el primer frame
   // tras el tap, sin importar qué caller invocó cambiarCategoria.
@@ -5698,8 +5716,14 @@ async function cambiarCategoria(cat) {
     // NO cerrar modal si está abierto (productoActualEnModal ya se mantiene)
     updateURL({ tab: cat, sku: undefined }, { mode: 'replace' });
   } finally {
-    // [FASE 1B-A · T1+T3] Limpieza de feedback siempre, incluso si algo lanzó.
-    hideCategoryFeedback();
+    // [FASE 1B-A · T2] Solo limpiamos si seguimos siendo la última request.
+    // Si otra cat distinta tomó el lock mientras estábamos awaiteando, dejamos
+    // que ese flujo (más reciente) sea el responsable de mostrar/ocultar feedback.
+    if (_categoryRequestSeq === mySeq) {
+      _categoryInFlight = null;
+      // [FASE 1B-A · T1+T3] Limpieza de feedback siempre, incluso si algo lanzó.
+      hideCategoryFeedback();
+    }
   }
 }
 

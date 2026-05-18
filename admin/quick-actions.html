@@ -219,6 +219,207 @@
     .message.show {
       display: block;
     }
+
+    /* Curated Banner Admin (Fase 2) */
+    .cba-panel { margin-top: 40px; }
+    .cba-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: flex-start;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+    .cba-lead {
+      margin: 0;
+      flex: 1 1 240px;
+      font-size: 13px;
+      color: #555;
+      line-height: 1.45;
+    }
+    .cba-banner-list { display: flex; flex-direction: column; gap: 10px; }
+    .cba-card {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      background: #fafafa;
+    }
+    .cba-card-title { margin: 0 0 4px; font-size: 15px; }
+    .cba-card-meta { margin: 0; display: flex; gap: 6px; flex-wrap: wrap; }
+    .cba-pill {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #e8f5e9;
+      color: #2e7d32;
+      font-weight: 600;
+    }
+    .cba-pill-muted { background: #eee; color: #666; }
+    .cba-card-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .cba-icon-btn { min-width: 36px; padding: 4px 8px !important; }
+    .cba-muted { color: #777; font-size: 13px; margin: 0; }
+    .cba-error { color: #c62828; font-size: 13px; }
+    .cba-legacy-note { margin-top: 12px; font-size: 12px; }
+
+    .cba-editor-modal .cba-editor-content {
+      max-width: min(960px, 96vw);
+      width: 96vw;
+      padding: 16px;
+    }
+    .cba-editor-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 20px;
+    }
+    @media (min-width: 900px) {
+      .cba-editor-grid {
+        grid-template-columns: 1fr 1fr;
+      }
+      .cba-preview-section { grid-column: 1 / -1; }
+    }
+    .cba-section-title {
+      margin: 0 0 12px;
+      font-size: 15px;
+      color: #333;
+    }
+    .cba-count { font-weight: 400; color: #888; font-size: 13px; }
+    .cba-hint { display: block; margin-top: 4px; color: #888; font-size: 12px; }
+    .cba-slug-error {
+      display: block;
+      margin-top: 4px;
+      color: #c62828;
+      font-size: 12px;
+      font-weight: 500;
+    }
+    .cba-slug-error[hidden] { display: none !important; }
+    .cba-slug-suggest {
+      display: block;
+      margin-top: 2px;
+      padding: 0;
+      border: none;
+      background: none;
+      color: #CD844D;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      text-decoration: underline;
+      text-align: left;
+    }
+    .cba-slug-suggest[hidden] { display: none !important; }
+    #cba-slug[aria-invalid="true"] {
+      border-color: #c62828;
+      box-shadow: 0 0 0 1px rgba(198, 40, 40, 0.2);
+    }
+    #cba-editor-submit:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+    .cba-row-fields {
+      display: flex;
+      gap: 16px;
+      align-items: flex-end;
+      flex-wrap: wrap;
+    }
+    .cba-check {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      margin-bottom: 8px;
+    }
+    .cba-search-results,
+    .cba-items-list {
+      list-style: none;
+      margin: 0 0 12px;
+      padding: 0;
+      max-height: 220px;
+      overflow-y: auto;
+      border: 1px solid #e8e8e8;
+      border-radius: 8px;
+    }
+    .cba-search-row,
+    .cba-item-row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      padding: 8px 10px;
+      border-bottom: 1px solid #f0f0f0;
+    }
+    .cba-search-row.is-disabled { opacity: 0.55; }
+    .cba-item-row.is-dragging { opacity: 0.45; }
+    .cba-item-row.is-drag-over { background: #fff8f0; }
+    .cba-search-thumb,
+    .cba-item-thumb {
+      width: 48px;
+      height: 60px;
+      object-fit: cover;
+      border-radius: 6px;
+      background: #f0f0f0;
+      flex-shrink: 0;
+    }
+    .cba-search-body,
+    .cba-item-body {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      font-size: 13px;
+    }
+    .cba-search-sub { font-size: 11px; color: #777; }
+    .cba-search-desc { font-size: 11px; color: #999; }
+    .cba-add-btn { flex-shrink: 0; font-size: 12px !important; padding: 6px 10px !important; }
+    .cba-drag-handle {
+      cursor: grab;
+      user-select: none;
+      color: #999;
+      font-size: 18px;
+      padding: 0 4px;
+    }
+    .cba-item-pos {
+      font-size: 12px;
+      font-weight: 700;
+      color: #CD844D;
+      min-width: 18px;
+      text-align: center;
+    }
+    .cba-item-move { display: flex; gap: 4px; }
+    .cba-phone-frame {
+      max-width: 430px;
+      margin: 0 auto;
+      border: 1px solid #ddd;
+      border-radius: 12px;
+      overflow: hidden;
+      background: #fff;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+    }
+    .cba-preview-host { min-height: 140px; }
+    .cba-preview-banner { margin: 0 !important; }
+    .cba-preview-ver-todo {
+      color: #CD844D;
+      font-size: 0.9rem;
+      font-weight: 500;
+    }
+    .cba-editor-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 20px;
+      padding-top: 16px;
+      border-top: 1px solid #eee;
+    }
+    .cba-editor-actions-right {
+      display: flex;
+      gap: 8px;
+      margin-left: auto;
+    }
   </style>
 </head>
 <body>
@@ -230,6 +431,21 @@
     </div>
 
     <div id="message" class="message"></div>
+
+    <h2 style="margin-top: 32px; margin-bottom: 16px; font-size: 20px; color: #333;">Catálogo público</h2>
+    <div style="background: #f8f9fa; padding: 16px; border-radius: 8px; margin-bottom: 24px; border: 1px solid #e0e0e0;">
+      <p style="margin: 0 0 12px; font-size: 13px; color: #444; line-height: 1.45;">
+        La web muestra productos desde una copia (<code>catalog_public_snapshot</code>). Los artículos nuevos o cambios grandes no se ven hasta actualizar esa copia.
+        Esto afecta <strong>todo el catálogo</strong> y el <strong>banner por tags</strong>, porque ambos usan los mismos datos.
+      </p>
+      <div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: center;">
+        <button type="button" id="btn-refresh-catalog-snapshot" class="btn btn-primary" style="font-size: 13px;">
+          Actualizar catálogo público
+        </button>
+        <span id="catalog-snapshot-meta" style="font-size: 12px; color: #666;">Cargando estado…</span>
+      </div>
+      <div id="catalog-snapshot-message" class="message" style="margin-top: 12px;"></div>
+    </div>
 
     <h2 style="margin-top: 32px; margin-bottom: 16px; font-size: 20px; color: #333;">Acciones Rápidas</h2>
     <table class="actions-table">
@@ -278,7 +494,7 @@
           <strong>Nombre:</strong> <span id="custom-banner-name-preview">No configurado</span>
         </div>
         <div style="margin-bottom: 8px;">
-          <strong>Tag seleccionado:</strong> <span id="custom-banner-value-preview">-</span>
+          <strong>Tags seleccionados:</strong> <span id="custom-banner-value-preview">-</span>
         </div>
         <div>
           <strong>Estado:</strong> 
@@ -288,6 +504,9 @@
     </div>
 
     <div id="custom-banner-message" class="message"></div>
+    <h2 style="margin-top: 40px; margin-bottom: 8px; font-size: 20px; color: #333;">Banner curado (por variante)</h2>
+    <div id="curated-banner-admin-root"></div>
+    <div id="curated-banner-message" class="message"></div>
   </div>
 
   <!-- Modal para crear/editar -->
@@ -350,14 +569,22 @@
         <div class="form-group">
           <label for="custom-banner-name">Nombre del Banner *</label>
           <input type="text" id="custom-banner-name" required placeholder="Ej: Colegiales" maxlength="50">
+          <small style="color: #666; font-size: 12px; margin-top: 4px; display: block;">
+            Solo el título que ve el cliente arriba del carrusel (ej. «Especiales para el frio»). No influye en qué productos entran: eso lo definen los tags de abajo.
+          </small>
         </div>
         <div class="form-group">
-          <label for="custom-banner-tag-value">Tag *</label>
-          <select id="custom-banner-tag-value" required>
-            <option value="">Cargando tags...</option>
-          </select>
+          <label>Tags comerciales * (OR)</label>
+          <div
+            id="custom-banner-tags-list"
+            style="max-height: 200px; overflow-y: auto; border: 1px solid #ddd; border-radius: 6px; padding: 8px; background: #fafafa;"
+          >
+            <div style="color: #666; font-size: 12px; text-align: center; padding: 8px;">
+              Cargando tags...
+            </div>
+          </div>
           <small style="color: #666; font-size: 12px; margin-top: 4px; display: block;">
-            Selecciona un tag. Se buscará en Filtro1, Filtro2 y Filtro3 automáticamente.
+            Marcá cada tag con su casilla (uno por línea). El banner lista productos que tengan ese tag en Detalles (similitud) y/o en Tags3 (Filtro3), con imagen y stock.
           </small>
         </div>
         <div class="form-group">
@@ -415,6 +642,10 @@
     </div>
   </div>
 
+  <script type="module" src="../scripts/config.js"></script>
+  <script defer src="../scripts/vendor/supabase-js.bundle.min.js?v=m260514"></script>
+  <script type="module" src="../scripts/supabase-client.js"></script>
+  <script type="module" src="./admin-auth.js"></script>
   <script type="module" src="./quick-actions.js"></script>
 </body>
 </html>

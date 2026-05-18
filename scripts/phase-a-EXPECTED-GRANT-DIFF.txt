@@ -1,0 +1,22 @@
+Diff lógico de grants (Fase A) — tres vistas
+============================================
+
+ANTES (deriva observada en producción; filas típicas en information_schema.role_table_grants)
+- anon en purchase_order_line_fulfillment: SELECT, INSERT, UPDATE, DELETE, REFERENCES, TRIGGER, TRUNCATE (u otro paquete ALL heredado)
+- anon en purchase_spend_by_season: idem
+- anon en vw_publication_events_performance: idem
+- PUBLIC: a veces aparece con privilegios implícitos según default privileges del schema
+
+DESPUÉS (objetivo 214; alineado con 181 / 192)
+- anon: sin privilegios en las tres vistas (has_table_privilege(..., 'SELECT') = false)
+- PUBLIC: sin privilegios en las tres vistas
+- authenticated: SELECT en cada vista
+- service_role: SELECT en cada vista
+
+Sin cambios
+- catalog_public_available_view, catalog_public_snapshot, catalog_public_view
+- vw_stock_*, rpc_*, Edge Functions
+
+Validación honesta (fuera de alcance de Fase A)
+- Un usuario JWT "authenticated" que no sea admin puede seguir teniendo SELECT
+  en vistas analíticas globales si el proyecto aún les otorga GRANT; 214 no lo cambia.

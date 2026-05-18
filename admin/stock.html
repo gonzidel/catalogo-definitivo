@@ -78,6 +78,13 @@
     .stock-metric-value{font-size:20px;font-weight:700;color:#1f2937;line-height:1.1;margin-top:3px}
     .stock-history-btn{font-size:12px;padding:3px 6px;border:1px solid var(--line-strong);border-radius:6px;background:#f8f8f8;cursor:pointer;line-height:1}
     .stock-history-btn:hover{background:#ececeb}
+    .stock-image-preview-btn{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;padding:0;border:1px solid var(--line-strong);border-radius:8px;background:#fff;color:var(--ink);flex-shrink:0;cursor:pointer}
+    .stock-image-preview-btn:hover{background:#f5f4f1}
+    .stock-image-preview-btn svg{width:16px;height:16px;pointer-events:none}
+    .stock-image-preview-popover{display:none;position:fixed;z-index:1200;padding:8px;border:1px solid var(--line-strong);border-radius:12px;background:#fff;box-shadow:0 8px 24px rgba(0,0,0,.15);max-width:min(200px,72vw)}
+    .stock-image-preview-popover.show{display:block}
+    .stock-image-preview-popover img{display:block;width:180px;height:auto;max-height:240px;object-fit:contain;border-radius:8px;background:#f5f5f3}
+    .stock-image-preview-empty{margin:0;padding:12px 8px;font-size:12px;color:var(--muted);text-align:center;width:160px}
     .low-stock{border-left:4px solid #e97a7a}
 
     /* Variantes (colores) expandidas */
@@ -550,6 +557,10 @@
     </section>
 
     <div id="products-container"></div>
+    <div id="stock-image-preview-popover" class="stock-image-preview-popover" aria-hidden="true" role="dialog" aria-label="Vista previa de imagen">
+      <img id="stock-image-preview-img" alt="" hidden />
+      <p id="stock-image-preview-empty" class="stock-image-preview-empty" hidden>Sin imagen principal</p>
+    </div>
     <div id="no-results" class="no-results-state">
       <p>No se encontraron productos. Escribe el nombre y busca para ver resultados.</p>
     </div>

@@ -26,7 +26,8 @@ function _inferCatalogPageType() {
   if (modal && modal.classList.contains("active")) return "pdp";
   const hash = location.hash || "";
   if (hash.indexOf("#/pdp/") === 0) return "pdp";
-  if (hash.indexOf("#/tag/") === 0) return "tag_filter";
+  if (hash.indexOf("#/tag/") === 0 || hash.indexOf("#/tags/") === 0) return "tag_filter";
+  if (hash.indexOf("#/banner/") === 0) return "curated_banner";
   if (hash.indexOf("coleccion") >= 0 || hash.indexOf("#/coleccion/") === 0) return "collection";
   const bar = document.getElementById("tag-filter-bar");
   if (bar && bar.dataset && bar.dataset.filterType === "search") return "search_results";

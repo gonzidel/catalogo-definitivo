@@ -115,8 +115,9 @@ function handleBannerClick() {
       window.cambiarCategoria(currentBanner.link);
     }
   } else if (currentBanner.link_type === "tag") {
-    // Filtrar por tag (implementar si es necesario)
-    console.log("Filtrar por tag:", currentBanner.link);
+    if (typeof window.navigateToTagsHash === "function") {
+      window.navigateToTagsHash(currentBanner.link, { source: "promotional_banner" });
+    }
   } else if (currentBanner.link_type === "url") {
     // Redirigir a URL
     if (currentBanner.link.startsWith("http")) {

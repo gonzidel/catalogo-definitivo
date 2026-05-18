@@ -248,10 +248,12 @@ async function handleQuickAction(action) {
       window.cambiarCategoria("Ofertas");
     }
   } else if (action.type === "tag") {
-    // Filtrar por tag en categoría "Otros"
-    console.log("Filtrar por tag:", action.value);
-    
-    // Si existe la función global, usarla
+    if (typeof window.navigateToTagsHash === "function") {
+      window.navigateToTagsHash(action.value, { source: "quick_action" });
+      return;
+    }
+
+    // Fallback legacy
     if (typeof window.filterByTagEnOtros === "function") {
       window.filterByTagEnOtros(action.value);
     } else {

@@ -64,6 +64,7 @@ variant_available_sizes as (
 base as (
   select
     p.id as product_id,
+    pv.id as variant_id,
     p.category as "Categoria",
     p.name as "Articulo",
     coalesce(p.description, '') as "Descripcion",
@@ -140,7 +141,7 @@ promos_data as (
     od."Categoria", od."Articulo", od."Descripcion", od."Color", od."Numeracion",
     od."FechaIngreso", od."Mostrar", od."Oferta", od."Precio",
     od."Imagen Principal", od."Imagen 1", od."Imagen 2", od."Imagen 3",
-    od.product_id, od.tag1_id, od.tag2_id, od.tag3_ids,
+    od.product_id, od.variant_id, od.tag1_id, od.tag2_id, od.tag3_ids,
     od."OfertaActiva", od."PrecioOferta",
     od."OfferCampaignId", od."OfferImageUrl", od."OfferTitle",
     od."ColorHex", od."ColorDisplayNumber", od."SupplierCode",
@@ -165,7 +166,7 @@ promos_data as (
   group by od."Categoria", od."Articulo", od."Descripcion", od."Color", od."Numeracion",
            od."FechaIngreso", od."Mostrar", od."Oferta", od."Precio",
            od."Imagen Principal", od."Imagen 1", od."Imagen 2", od."Imagen 3",
-           od.product_id, od.tag1_id, od.tag2_id, od.tag3_ids,
+           od.product_id, od.variant_id, od.tag1_id, od.tag2_id, od.tag3_ids,
            od."OfertaActiva", od."PrecioOferta",
            od."OfferCampaignId", od."OfferImageUrl", od."OfferTitle", od."ColorHex", od."ColorDisplayNumber", od."SupplierCode"
 ),
@@ -174,7 +175,13 @@ tags_data as (
     pd.*,
     t1.name as tag1_name,
     t2.name as tag2_name,
-    array_agg(t3.name order by t3.name) filter (where t3.id is not null) as tag3_names
+    array_agg(t3.name order by t3.name) filter (where t3.id is not null) as tag3_names,
+    coalesce((
+      select string_agg(distinct t.name, ',' order by t.name)
+      from public.product_tag_details ptd
+      join public.tags t on t.id = ptd.tag3_id
+      where ptd.product_id = pd.product_id
+    ), '') as detalles_similitud
   from promos_data pd
   left join public.tags t1 on t1.id = pd.tag1_id
   left join public.tags t2 on t2.id = pd.tag2_id
@@ -184,7 +191,7 @@ tags_data as (
            pd."FechaIngreso", pd."Mostrar", pd."Oferta", pd."Precio",
            pd."Imagen Principal", pd."Imagen 1", pd."Imagen 2", pd."Imagen 3",
            pd.tag1_id, pd.tag2_id, pd.tag3_ids, t1.name, t2.name,
-           pd."OfertaActiva", pd."PrecioOferta", pd."PromoActiva", pd.product_id,
+           pd."OfertaActiva", pd."PrecioOferta", pd."PromoActiva", pd.product_id, pd.variant_id,
            pd."OfferCampaignId", pd."OfferImageUrl", pd."OfferTitle", pd."ColorHex", pd."ColorDisplayNumber", pd."SupplierCode"
 )
 select
@@ -199,6 +206,7 @@ select
     end,
     ''
   ) as "Filtro3",
+  coalesce(detalles_similitud, '') as "DetallesSimilitud",
   "OfertaActiva",
   coalesce("PrecioOferta", '') as "PrecioOferta",
   coalesce("PromoActiva", '') as "PromoActiva",
@@ -207,7 +215,8 @@ select
   coalesce("OfferTitle", '') as "OfferTitle",
   coalesce("ColorHex", '') as "ColorHex",
   "ColorDisplayNumber",
-  coalesce("SupplierCode", '') as "SupplierCode"
+  coalesce("SupplierCode", '') as "SupplierCode",
+  variant_id
 from tags_data;
 
 grant select on public.catalog_public_available_view to anon;

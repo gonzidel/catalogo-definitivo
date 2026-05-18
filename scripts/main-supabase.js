@@ -13,7 +13,13 @@ import { normalizeSize } from "./utils/size-normalizer.js";
 import { fylAnalytics } from "./analytics.js";
 import { formatARS as formatARSValue, parseARSNumber } from "./utils/price.js";
 import { createScreenScope } from "./net/screen-scope.js";
-import { wrapSupabase, createAbortScope, FYL_ERROR_KIND, classifyError } from "./net/fyl-fetch.js";
+import {
+  wrapSupabase,
+  createAbortScope,
+  FYL_ERROR_KIND,
+  classifyError,
+  isPostgrestSchemaColumnError,
+} from "./net/fyl-fetch.js?v=m260514";
 import {
   showFylErrorState,
   hideFylErrorState,
@@ -22,22 +28,84 @@ import {
   isFylOfflineDeepCheck,
   watchFylConnectivity,
 } from "./fyl-error-state.js";
+import { getCatalogAvailableSource } from "./catalog-source.js";
+import { enrichCatalogRowsWithDetallesSimilitud } from "./commercial-tags.js";
+import { fylPerf } from "./fyl-perf.js";
+import {
+  canonicalTagKey,
+  groupedProductMatchesAnyCommercialTag,
+  groupedProductMatchesCommercialTag,
+  mergeProductRowCommercialTags,
+  mergeProductRowFilterTags,
+  parseTagSelectorValues,
+  productRowMatchesAnyCommercialTag,
+  productRowMatchesCommercialTag,
+} from "./tag-normalize.js";
+import {
+  buildTagComboAnalyticsKey,
+  buildTagsHash,
+  dedupeTagsByCanonical,
+  navigateToTagsHash,
+  parseHashTags,
+  trackTagFilterConversion,
+  trackTagsFilterOpen,
+} from "./tag-routing.js";
 
 await configReady;
 
-const CATALOG_AVAILABLE_VIEW = "catalog_public_available_view";
-const CATALOG_PUBLIC_SNAPSHOT = "catalog_public_snapshot";
+function fylIsCuratedBannerEnabled() {
+  return typeof window !== "undefined" && window.FYL_CURATED_BANNER_V1 === true;
+}
+
+function fylParseHashBannerSlug(hash) {
+  if (typeof window.parseHashBannerSlug === "function") {
+    return window.parseHashBannerSlug(hash);
+  }
+  const h = hash || (typeof location !== "undefined" ? location.hash : "") || "";
+  const match = h.match(/^#\/banner\/([^/?#]+)$/i);
+  if (!match) return "";
+  try {
+    return decodeURIComponent(match[1]).trim().toLowerCase();
+  } catch {
+    return String(match[1] || "").trim().toLowerCase();
+  }
+}
+
+async function fylLoadHomeProductBanner(options = {}) {
+  if (fylIsCuratedBannerEnabled()) {
+    if (typeof window.loadAndShowCuratedBanner === "function") {
+      return window.loadAndShowCuratedBanner({
+        preferInline: options.preferInline,
+        waitForInline: options.waitForInline,
+      });
+    }
+    return;
+  }
+  if (typeof window.loadAndShowCustomBanner === "function") {
+    return window.loadAndShowCustomBanner();
+  }
+}
+
+function fylHideProductBanner() {
+  if (fylIsCuratedBannerEnabled()) {
+    if (typeof window.destroyCuratedBanner === "function") {
+      window.destroyCuratedBanner();
+    }
+    return;
+  }
+  if (typeof window.hideCustomBanner === "function") {
+    window.hideCustomBanner();
+  }
+}
+
+/** Sin DetallesSimilitud hasta migración 219 en prod — bridge en commercial-tags.js */
 const CATALOG_PUBLIC_SELECT = '"Categoria", "Articulo", "Descripcion", "Color", "Numeracion", "FechaIngreso", "Mostrar", "Oferta", "Precio", "Imagen Principal", "Imagen 1", "Imagen 2", "Imagen 3", "Filtro1", "Filtro2", "Filtro3", "OfertaActiva", "PrecioOferta", "PromoActiva", "OfferCampaignId", "OfferImageUrl", "OfferTitle", "ColorHex", "ColorDisplayNumber", "SupplierCode"';
 
-function getCatalogAvailableSource() {
-  try {
-    const localOverride = typeof localStorage !== "undefined"
-      ? localStorage.getItem("FYL_USE_CATALOG_SNAPSHOT")
-      : null;
-    if (localOverride === "0" || localOverride === "false") return CATALOG_AVAILABLE_VIEW;
-    if (typeof window !== "undefined" && window.FYL_USE_CATALOG_SNAPSHOT === false) return CATALOG_AVAILABLE_VIEW;
-  } catch (_e) {}
-  return CATALOG_PUBLIC_SNAPSHOT;
+function resolveCatalogFailurePreset(error, offline) {
+  if (isPostgrestSchemaColumnError(error)) return "catalog";
+  const kind = error?.kind || classifyError(error);
+  if (offline || kind === FYL_ERROR_KIND.NETWORK) return "offline";
+  return "catalog";
 }
 
 function fylCatalogTrackViewItemList(contextKey, groupedProducts, itemListName) {
@@ -573,8 +641,10 @@ async function inicializarSupabase() {
 async function fetchAllCatalogPublicRows(createQuery, pageSize = 1000) {
   const allRows = [];
   let from = 0;
+  let catalogRequests = 0;
 
   while (true) {
+    catalogRequests += 1;
     const to = from + pageSize - 1;
     const { data, error } = await createQuery().range(from, to);
     if (error) return { data: null, error };
@@ -586,7 +656,63 @@ async function fetchAllCatalogPublicRows(createQuery, pageSize = 1000) {
     from += pageSize;
   }
 
-  return { data: allRows, error: null };
+  fylPerf("catalog_requests", {
+    requests: catalogRequests,
+    rows: allRows.length,
+    source: getCatalogAvailableSource(),
+  });
+
+  const enriched = await enrichCatalogRowsWithDetallesSimilitud(allRows);
+  return { data: enriched, error: null };
+}
+
+/** Carga full-catalog (all / Novedades / Ofertas). */
+async function cargarDesdeSupabaseAllLike(cat, createCatalogQuery) {
+  fylCatalogDbg(`📦 Cargando todas las categorías para: ${cat}`);
+  const { data, error } = await fetchAllCatalogPublicRows(createCatalogQuery);
+  if (error) {
+    console.error("❌ Error en consulta:", error);
+    throw error;
+  }
+
+  fylCatalogDbg(`📊 Total de registros obtenidos: ${data?.length || 0}`);
+  let items = data || [];
+
+  if (cat === "Novedades") {
+    const hoy = new Date();
+    const hace7 = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate() - 7);
+    items = items.filter((i) => {
+      const mostrar = i.Mostrar;
+      const mostrarOk =
+        mostrar === "TRUE" || mostrar === true || mostrar === "true" || mostrar === 1;
+      return mostrarOk && i.FechaIngreso && parseFecha(i.FechaIngreso) >= hace7;
+    });
+    fylCatalogDbg(`🆕 Productos de novedades (últimos 7 días): ${items.length}`);
+  }
+
+  if (cat === "Ofertas") {
+    items = items.filter((i) => {
+      const mostrar = i.Mostrar;
+      const oferta = i.Oferta;
+      const mostrarOk =
+        mostrar === "TRUE" || mostrar === true || mostrar === "true" || mostrar === 1;
+      const ofertaOk =
+        oferta === "TRUE" || oferta === true || oferta === "true" || oferta === 1;
+      return mostrarOk && ofertaOk;
+    });
+    fylCatalogDbg(`🔥 Productos en ofertas: ${items.length}`);
+  }
+
+  if (cat === "all") {
+    items = items.filter((i) => {
+      const mostrar = i.Mostrar;
+      return mostrar === "TRUE" || mostrar === true || mostrar === "true" || mostrar === 1;
+    });
+    fylCatalogDbg(`📦 Productos en "all" (filtrados por Mostrar): ${items.length}`);
+    window.__allCatalogRawRows = items;
+  }
+
+  return items;
 }
 
 // Cargar datos desde Supabase
@@ -602,59 +728,23 @@ async function cargarDesdeSupabase(cat) {
 
     const createCatalogQuery = () => supabase.from(getCatalogAvailableSource()).select(CATALOG_PUBLIC_SELECT);
 
-    if (cat === "Novedades" || cat === "Ofertas" || cat === "all") {
-      // Para categorías especiales o 'all', cargar todas las categorías
-      fylCatalogDbg(`📦 Cargando todas las categorías para: ${cat}`);
-      // NOTA: antes se limitaba "all" a 100 filas por performance, pero eso
-      // dejaba al buscador sin dataset completo (ej. buscar "bota" devolvía 1).
-      // La paginación real del catálogo ya es cliente-side (PRODUCTOS_INICIALES
-      // + "Ver más"), así que traer todo acá no aumenta el trabajo de DOM.
-      const { data, error } = await fetchAllCatalogPublicRows(createCatalogQuery);
-      if (error) {
-        console.error("❌ Error en consulta:", error);
-        throw error;
+    if (cat === "all") {
+      if (window.__FYL_CATALOG_ALL_INFLIGHT) {
+        return window.__FYL_CATALOG_ALL_INFLIGHT;
       }
+      window.__FYL_CATALOG_ALL_INFLIGHT = cargarDesdeSupabaseAllLike(cat, createCatalogQuery).finally(
+        () => {
+          window.__FYL_CATALOG_ALL_INFLIGHT = null;
+        }
+      );
+      return window.__FYL_CATALOG_ALL_INFLIGHT;
+    }
 
-      fylCatalogDbg(`📊 Total de registros obtenidos: ${data?.length || 0}`);
-      let items = data || [];
+    if (cat === "Novedades" || cat === "Ofertas") {
+      return cargarDesdeSupabaseAllLike(cat, createCatalogQuery);
+    }
 
-      if (cat === "Novedades") {
-        const hoy = new Date();
-        const hace7 = new Date(
-          hoy.getFullYear(),
-          hoy.getMonth(),
-          hoy.getDate() - 7
-        );
-        items = items.filter((i) => {
-          const mostrar = i.Mostrar;
-          const mostrarOk = mostrar === "TRUE" || mostrar === true || mostrar === "true" || mostrar === 1;
-          return mostrarOk && i.FechaIngreso && parseFecha(i.FechaIngreso) >= hace7;
-        });
-        fylCatalogDbg(`🆕 Productos de novedades (últimos 7 días): ${items.length}`);
-      }
-
-      if (cat === "Ofertas") {
-        items = items.filter((i) => {
-          const mostrar = i.Mostrar;
-          const oferta = i.Oferta;
-          const mostrarOk = mostrar === "TRUE" || mostrar === true || mostrar === "true" || mostrar === 1;
-          const ofertaOk = oferta === "TRUE" || oferta === true || oferta === "true" || oferta === 1;
-          return mostrarOk && ofertaOk;
-        });
-        fylCatalogDbg(`🔥 Productos en ofertas: ${items.length}`);
-      }
-
-      if (cat === "all") {
-        // Filtrar por Mostrar también para "all"
-        items = items.filter((i) => {
-          const mostrar = i.Mostrar;
-          return mostrar === "TRUE" || mostrar === true || mostrar === "true" || mostrar === 1;
-        });
-        fylCatalogDbg(`📦 Productos en "all" (filtrados por Mostrar): ${items.length}`);
-      }
-
-      return items;
-    } else {
+    {
       // Caso especial: "Lenceria" y otros tags de "Otros" deben mostrar productos de "Otros" con Filtro1 correspondiente
       // Primero, verificar si es un tag de "Otros" obteniendo todos los tags únicos
       let isOtrosTag = false;
@@ -744,24 +834,17 @@ async function cargarDesdeSupabase(cat) {
           })));
         }
         
+        const tagFilters = parseTagSelectorValues(tagValue);
         const dataFiltrada = (todosProductos || []).filter((i) => {
-          // Normalizar tags para comparación
-          const filtro1 = (i.Filtro1 || '').toLowerCase().trim();
-          const filtro2 = (i.Filtro2 || '').toLowerCase().trim();
-          const filtro3Tags = (i.Filtro3 || '')
-            .split(',')
-            .map(tag => tag.trim().toLowerCase())
-            .filter(tag => tag.length > 0);
-          
-          // Buscar coincidencia en cualquiera de los filtros
-          const match = filtro1.includes(tagValueNormalized) ||
-                        filtro2.includes(tagValueNormalized) ||
-                        filtro3Tags.some(tag => tag.includes(tagValueNormalized));
-          
+          const match =
+            tagFilters.length <= 1
+              ? productRowMatchesCommercialTag(i, tagFilters[0])
+              : productRowMatchesAnyCommercialTag(i, tagFilters);
           if (match) {
-            fylCatalogDbg(`✓ INCLUIDO: ${i.Articulo} - F1:"${i.Filtro1}" F2:"${i.Filtro2}" F3:"${i.Filtro3}"`);
+            fylCatalogDbg(
+              `✓ INCLUIDO: ${i.Articulo} - detalles:"${i.DetallesSimilitud || ""}" F3 técnico:"${i.Filtro3 || ""}"`
+            );
           }
-          
           return match;
         });
         
@@ -1074,6 +1157,7 @@ function agruparProductos(rows) {
         Filtro1: i.Filtro1 || "",
         Filtro2: i.Filtro2 || "",
         Filtro3: i.Filtro3 || "",
+        DetallesSimilitud: i.DetallesSimilitud || "",
         OfertaActiva: false,
         PrecioOferta: '',
         PromoActiva: '',
@@ -1111,6 +1195,8 @@ function agruparProductos(rows) {
     } else {
       acc[art].DetalleColor.push(detalleColor);
     }
+    mergeProductRowFilterTags(acc[art], i);
+    mergeProductRowCommercialTags(acc[art], i);
     return acc;
   }, {});
   return Object.values(grupos);
@@ -1158,8 +1244,8 @@ async function cargarCategoria(cat) {
   renderCatalogSkeletonCards();
   
   // Ocultar banner dinámico si no estamos en inicio (solo se muestra en index puro)
-  if (cat !== "all" && typeof window.hideCustomBanner === 'function') {
-    window.hideCustomBanner();
+  if (cat !== "all") {
+    fylHideProductBanner();
   }
 
   try {
@@ -1369,6 +1455,8 @@ async function cargarCategoria(cat) {
 
       const runHomeExtras = async ({ includeFylBanner = true } = {}) => {
         try {
+          const hashHasTagFilter = parseHashTags(location.hash || "").length > 0;
+          const hashHasBannerRoute = !!fylParseHashBannerSlug(location.hash || "");
           const paralelos = [];
           if (includeFylBanner && typeof window.loadAndShowFYLBanner === "function") {
             paralelos.push(Promise.resolve(window.loadAndShowFYLBanner()));
@@ -1377,11 +1465,15 @@ async function cargarCategoria(cat) {
             hashOk &&
             !hayBusquedaActiva &&
             !hayFiltroActivo &&
-            fylPendingHomeCustomBanner &&
-            typeof window.loadAndShowCustomBanner === "function"
+            !hashHasTagFilter &&
+            !hashHasBannerRoute
           ) {
-            fylPendingHomeCustomBanner = false;
-            paralelos.push(Promise.resolve(window.loadAndShowCustomBanner()));
+            if (fylIsCuratedBannerEnabled()) {
+              fylPendingHomeCustomBanner = true;
+            } else {
+              fylPendingHomeCustomBanner = false;
+              paralelos.push(Promise.resolve(fylLoadHomeProductBanner()));
+            }
           } else {
             fylPendingHomeCustomBanner = false;
           }
@@ -1474,9 +1566,7 @@ async function cargarCategoria(cat) {
       try {
         offline = await isFylOfflineDeepCheck();
       } catch (_) {}
-      const kind = error?.kind || classifyError(error);
-      const preset =
-        offline || kind === FYL_ERROR_KIND.NETWORK ? "offline" : "catalog";
+      const preset = resolveCatalogFailurePreset(error, offline);
       const retryCat = cat;
       showFylErrorState({
         preset,
@@ -1583,10 +1673,15 @@ window.__fylCategoriaActual = 'all';
 
 /** Mostrar/ocultar #info-banner-top-container según categoriaActual === "all".
  *  Expuesto en window para que como-comprar.js lo llame al volver de #/como-comprar. */
+function fylIsCuratedBannerHashActive() {
+  if (!fylIsCuratedBannerEnabled()) return false;
+  return Boolean(fylParseHashBannerSlug(location.hash || ""));
+}
+
 function syncInfoBannerVisibility() {
   const el = document.getElementById("info-banner-top-container");
   if (!el) return;
-  if (categoriaActual === "all") {
+  if (categoriaActual === "all" && !fylIsCuratedBannerHashActive()) {
     el.classList.remove("is-hidden");
   } else {
     el.classList.add("is-hidden");
@@ -1745,7 +1840,7 @@ async function renderizarProductosPagina(productos, container, offersCards = [],
       const debeOmitirBanner = options.skipBanner || hayBusquedaActiva || hayFiltroActivo;
       if (location.hash === "#/coleccion/fyl-originals") {
         // No insertar banners editables en vista colección
-      } else if (!debeOmitirBanner && categoriaActual === "all" && startIndex === 0 && productosRenderizadosEnEstaPagina === 4 && !bannerInsertado && typeof window.loadAndShowCustomBanner === 'function') {
+      } else if (!debeOmitirBanner && categoriaActual === "all" && startIndex === 0 && productosRenderizadosEnEstaPagina === 4 && !bannerInsertado && (typeof window.loadAndShowCustomBanner === 'function' || fylIsCuratedBannerEnabled())) {
         bannerInsertado = true;
         // Insertar el banner después del cuarto producto dentro del contenedor del catálogo
         const productosCards = container.querySelectorAll('.card.producto');
@@ -1770,6 +1865,11 @@ async function renderizarProductosPagina(productos, container, offersCards = [],
           }
         }
         fylPendingHomeCustomBanner = true;
+        Promise.resolve(
+          fylLoadHomeProductBanner({ preferInline: true, waitForInline: false })
+        ).catch((err) => {
+          console.warn("[FYL Banner Debug] Error al cargar banner inline:", err?.message || err);
+        });
       }
     }
   });
@@ -2096,7 +2196,7 @@ async function filterByOffer(campaignId) {
   
   if (loader) loader.classList.add("show");
   if (cont) cont.innerHTML = "";
-  if (typeof window.hideCustomBanner === 'function') window.hideCustomBanner();
+  fylHideProductBanner();
   
   try {
     // Cargar todos los productos con ofertas activas
@@ -2237,7 +2337,7 @@ async function filterBySupplierFYL(options = {}) {
   
   if (loader) loader.classList.add("show");
   if (cont) cont.innerHTML = "";
-  if (typeof window.hideCustomBanner === 'function') window.hideCustomBanner();
+  fylHideProductBanner();
   
   try {
     // Ocultar banners (incl. info-banner: en vista FYL no mostramos el banner mayorista)
@@ -3434,17 +3534,32 @@ async function ensureAllCacheLoadedGrouped() {
   return productosOrdenados;
 }
 
-/** Filtrar productos agrupados por tag (Filtro1, Filtro2, Filtro3). F1/F2: includes. F3: exacto por tag. */
+/** Filtrar productos agrupados por tag(s) comercial(es) — OR (DetallesSimilitud). */
 function filterProductsByTag(allGrouped, tagValue) {
-  const q = (tagValue || '').toLowerCase().trim();
-  if (!q) return allGrouped;
-  return allGrouped.filter((p) => {
-    const f1 = (p.Filtro1 || '').toLowerCase().trim();
-    const f2 = (p.Filtro2 || '').toLowerCase().trim();
-    const f3 = (p.Filtro3 || '').toLowerCase();
-    const f3Tags = f3.split(',').map((t) => t.trim().toLowerCase()).filter(Boolean);
-    return (f1 && f1.includes(q)) || (f2 && f2.includes(q)) || f3Tags.includes(q);
-  });
+  const tags = Array.isArray(tagValue)
+    ? dedupeTagsByCanonical(tagValue)
+    : dedupeTagsByCanonical(parseTagSelectorValues(tagValue));
+  if (!tags.length) return allGrouped;
+  if (tags.length === 1) {
+    return allGrouped.filter((p) => groupedProductMatchesCommercialTag(p, tags[0]));
+  }
+  return allGrouped.filter((p) => groupedProductMatchesAnyCommercialTag(p, tags));
+}
+
+function escapeTagFilterHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/"/g, "&quot;");
+}
+
+function renderTagFilterChipsHtml(tags) {
+  return tags
+    .map((tag) => {
+      const safe = escapeTagFilterHtml(tag);
+      return `<button type="button" class="tag-filter-chip" data-tag="${safe}" aria-label="Quitar tag ${safe}">${safe}<span class="tag-filter-chip__remove" aria-hidden="true">×</span></button>`;
+    })
+    .join("");
 }
 
 /** Mostrar barra de filtro arriba del grid. type: 'tag' (hash) o 'search' (buscador). */
@@ -3456,51 +3571,82 @@ function renderTagFilterBar(tagValue, { type = 'tag', sizeFilters = [] } = {}) {
     .map((s) => String(s || "").trim())
     .filter(Boolean);
   const hasSizeFilter = safeSizes.length > 0;
-  const label = type === 'search' ? 'Buscando' : type === 'size' ? 'Talles' : 'Filtrado';
-  const safeVal = (tagValue || '').replace(/</g, '&lt;').replace(/"/g, '&quot;');
-  const safeSizesText = safeSizes.join(", ").replace(/</g, '&lt;').replace(/"/g, '&quot;');
-  let textHtml = '';
-  if (type === 'search') {
-    textHtml = `Buscando: <strong class="tag-filter-value">${safeVal}</strong>`;
+  const safeSizesText = safeSizes.join(", ").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+  let innerHtml = "";
+  if (type === "search") {
+    const safeVal = escapeTagFilterHtml(tagValue);
+    let textHtml = `Buscando: <strong class="tag-filter-value">${safeVal}</strong>`;
     if (hasSizeFilter) {
       textHtml += ` <span class="tag-filter-sep">•</span> Talles: <strong class="tag-filter-size-value">${safeSizesText}</strong>`;
     }
-  } else if (type === 'size') {
-    textHtml = `Talles: <strong class="tag-filter-size-value">${safeSizesText}</strong>`;
+    innerHtml = `<span class="tag-filter-text">${textHtml}</span>`;
+  } else if (type === "size") {
+    innerHtml = `<span class="tag-filter-text">Talles: <strong class="tag-filter-size-value">${safeSizesText}</strong></span>`;
   } else {
-    textHtml = `${label}: <strong class="tag-filter-value">${safeVal}</strong>`;
+    const tags = Array.isArray(tagValue)
+      ? dedupeTagsByCanonical(tagValue)
+      : dedupeTagsByCanonical(parseTagSelectorValues(tagValue));
+    window.__fylActiveTagFilters = tags;
+    innerHtml = `
+      <div class="tag-filter-chips-wrap">
+        <span class="tag-filter-chips-label">Tags:</span>
+        <div class="tag-filter-chips">${renderTagFilterChipsHtml(tags)}</div>
+      </div>`;
   }
   if (bar) {
-    const textEl = bar.querySelector('.tag-filter-text');
-    const valEl = bar.querySelector('.tag-filter-value');
-    if (textEl) textEl.innerHTML = textHtml;
-    else if (valEl) valEl.textContent = tagValue || '';
+    const body = bar.querySelector(".tag-filter-body");
+    if (body) body.innerHTML = innerHtml;
+    else {
+      const textEl = bar.querySelector(".tag-filter-text");
+      if (textEl) textEl.outerHTML = `<div class="tag-filter-body">${innerHtml}</div>`;
+    }
     bar.dataset.filterType = type;
-    bar.dataset.hasSizeFilter = hasSizeFilter ? 'true' : 'false';
+    bar.dataset.hasSizeFilter = hasSizeFilter ? "true" : "false";
     return;
   }
   const html = `
     <div id="tag-filter-bar" class="tag-filter-bar" data-filter-type="${type}">
-      <span class="tag-filter-text">${textHtml}</span>
-      <button type="button" class="tag-filter-clear" aria-label="Quitar filtros">✕</button>
+      <div class="tag-filter-body">${innerHtml}</div>
+      <button type="button" class="tag-filter-clear" aria-label="Quitar todos los filtros">✕</button>
     </div>
   `;
-  cont.insertAdjacentHTML('afterbegin', html);
-  bar = document.getElementById('tag-filter-bar');
-  if (bar) bar.dataset.hasSizeFilter = hasSizeFilter ? 'true' : 'false';
+  cont.insertAdjacentHTML("afterbegin", html);
+  bar = document.getElementById("tag-filter-bar");
+  if (bar) bar.dataset.hasSizeFilter = hasSizeFilter ? "true" : "false";
+}
+
+function removeOneActiveTagFilter(tag) {
+  const active = Array.isArray(window.__fylActiveTagFilters)
+    ? window.__fylActiveTagFilters
+    : [];
+  const key = canonicalTagKey(tag);
+  const remaining = active.filter((t) => canonicalTagKey(t) !== key);
+  if (!remaining.length) {
+    location.hash = "#/";
+    return;
+  }
+  navigateToTagsHash(remaining, { source: "chip_remove" });
 }
 
 /** Ocultar barra de filtro por tag. */
 function clearTagFilterBar() {
-  const bar = document.getElementById('tag-filter-bar');
+  const bar = document.getElementById("tag-filter-bar");
   if (bar) bar.remove();
+  window.__fylActiveTagFilters = [];
 }
 
 function initTagFilterClearDelegation() {
   if (window.__tagFilterDelegationInit) return;
   window.__tagFilterDelegationInit = true;
-  document.addEventListener('click', (e) => {
-    const btn = e.target.closest('.tag-filter-clear');
+  document.addEventListener("click", (e) => {
+    const chipBtn = e.target.closest(".tag-filter-chip");
+    if (chipBtn) {
+      e.preventDefault();
+      removeOneActiveTagFilter(chipBtn.dataset.tag || chipBtn.textContent || "");
+      return;
+    }
+
+    const btn = e.target.closest(".tag-filter-clear");
     if (!btn) return;
     const bar = document.getElementById('tag-filter-bar');
     const isSearch = bar?.dataset?.filterType === 'search';
@@ -3535,10 +3681,13 @@ function getActiveSizeFilters() {
 function refreshCatalogFilterBar() {
   const searchTerm = getCurrentSearchTerm();
   const sizeFilters = getActiveSizeFilters();
+  const tagsFromHash = parseHashTags(location.hash || "");
   if (searchTerm) {
-    renderTagFilterBar(searchTerm, { type: 'search', sizeFilters });
+    renderTagFilterBar(searchTerm, { type: "search", sizeFilters });
   } else if (sizeFilters.length > 0) {
-    renderTagFilterBar(sizeFilters.join(", "), { type: 'size', sizeFilters });
+    renderTagFilterBar(sizeFilters.join(", "), { type: "size", sizeFilters });
+  } else if (tagsFromHash.length) {
+    renderTagFilterBar(tagsFromHash, { type: "tag" });
   } else {
     clearTagFilterBar();
   }
@@ -3561,55 +3710,53 @@ async function clearAllCatalogFilters() {
   }
 }
 
-/** Click en .tag-chip o .pdp-tag-chip: llenar buscador y filtrar como si tipearas (sin cambiar hash). */
+/** Click en .tag-chip o .pdp-tag-chip → filtro por hash multi-tag. */
 function initTagToSearch() {
   if (window.__tagToSearchInit) return;
   window.__tagToSearchInit = true;
-  document.addEventListener('click', (e) => {
-    const chip = e.target.closest('.tag-chip, .pdp-tag-chip');
+  document.addEventListener("click", (e) => {
+    const chip = e.target.closest(".tag-chip, .pdp-tag-chip");
     if (!chip) return;
     e.preventDefault();
     e.stopPropagation();
-    const tag = (chip.dataset.tag || chip.textContent || '').trim();
+    const tag = (chip.dataset.tag || chip.textContent || "").trim();
     if (!tag) return;
-    const fromPdp = chip.classList.contains('pdp-tag-chip');
-    if (fromPdp) {
-      window.__tagSearchFromPdp = true;
-      cerrarModal(true);
-    }
-    const inputDesktop = document.getElementById('searchInput');
-    const inputMobile = document.getElementById('search-bar-mobile');
-    const input = inputDesktop || inputMobile;
-    if (inputDesktop) inputDesktop.value = tag;
-    if (inputMobile) inputMobile.value = tag;
-    if (typeof window.buscarProductosEnTodos === 'function') {
-      window.buscarProductosEnTodos(tag);
-    } else if (input) {
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-    }
-    if (fromPdp) {
-      const u = new URL(location.href);
-      if (u.hash.match(/^#\/pdp\//)) {
-        u.hash = '#/';
-        history.replaceState(history.state || {}, '', u);
-      }
-    }
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    const fromPdp = chip.classList.contains("pdp-tag-chip");
+    if (fromPdp) cerrarModal(true);
+    navigateToTagsHash([tag], {
+      source: fromPdp ? "pdp_tag_chip" : "catalog_tag_chip",
+    });
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }, true);
 }
 
-/** Aplicar filtro por tag y renderizar catálogo. Oculta banners de Home. */
-async function applyTagFilterAndRender(tagValue, { pushHash = true } = {}) {
-  const cont = document.getElementById('catalogo');
+/** Aplicar filtro por tag(s) y renderizar catálogo. Oculta banners de Home. */
+async function applyTagFilterAndRender(tagValue, { pushHash = true, navSource = "" } = {}) {
+  const tags = Array.isArray(tagValue)
+    ? dedupeTagsByCanonical(tagValue)
+    : dedupeTagsByCanonical(parseTagSelectorValues(tagValue));
+  if (!tags.length) return;
+
+  if (pushHash) {
+    const target = buildTagsHash(tags);
+    if ((location.hash || "") !== target) {
+      navigateToTagsHash(tags, {
+        source: navSource || window.__fylTagNavSource || "push",
+      });
+      return;
+    }
+  }
+
+  const cont = document.getElementById("catalogo");
   if (!cont) return;
   const all = await ensureAllCacheLoadedGrouped();
-  const filtrados = filterProductsByTag(all, tagValue);
+  const filtrados = filterProductsByTag(all, tags);
   setProductosPendientes(filtrados);
   productosRenderizados = 0;
   offersCardsPendientes = [];
   setCatalogLoadMode("paged");
   if (typeof window.hideFYLOriginalsBanner === 'function') window.hideFYLOriginalsBanner();
-  if (typeof window.hideCustomBanner === 'function') window.hideCustomBanner();
+  fylHideProductBanner();
   if (typeof window.hidePromotionalBanner === 'function') window.hidePromotionalBanner();
   document.querySelectorAll('#filtroMenu input[type="checkbox"]').forEach((cb) => { cb.checked = false; });
   if (typeof window.clearSearch === "function") {
@@ -3623,13 +3770,16 @@ async function applyTagFilterAndRender(tagValue, { pushHash = true } = {}) {
   }
   cont.innerHTML = '';
   initTagFilterClearDelegation();
-  renderTagFilterBar(tagValue);
+  renderTagFilterBar(tags, { type: "tag" });
+  const navSourceResolved = navSource || window.__fylTagNavSource || "direct";
+  trackTagsFilterOpen(tags, {
+    productCount: filtrados.length,
+    source: navSourceResolved,
+  });
+  window.__fylTagNavSource = "";
   if (filtrados.length === 0) {
-    cont.insertAdjacentHTML('beforeend', '<div class="no-data" style="text-align:center;padding:2rem;color:#666;">No hay productos con el tag seleccionado</div>');
+    cont.insertAdjacentHTML('beforeend', '<div class="no-data" style="text-align:center;padding:2rem;color:#666;">No hay productos con los tags seleccionados</div>');
     ocultarBotonVerMas();
-    if (pushHash) {
-      try { location.hash = '#/tag/' + encodeURIComponent(tagValue); } catch (_) {}
-    }
     return;
   }
   const firstChunkRendered = await renderizarProductosPagina(
@@ -3644,18 +3794,22 @@ async function applyTagFilterAndRender(tagValue, { pushHash = true } = {}) {
   configurarEventos();
   mostrarBotonVerMas();
   iniciarVerificacionCargaImagenes();
-  fylCatalogTrackViewItemList("tag:" + tagValue, productosPendientes, "tag_filter");
-  if (pushHash) {
-    try { location.hash = '#/tag/' + encodeURIComponent(tagValue); } catch (_) {}
-  }
+  fylCatalogTrackViewItemList(
+    "tags:" + buildTagComboAnalyticsKey(tags),
+    productosPendientes,
+    "tag_filter"
+  );
 }
 
-// Tags clickeables: navegar a #/tag/<value> para que onNavChange dispare el render
-window.setQuickFilter = function(level, value) {
+window.__fylOnTagsHashNav = (tags, opts) =>
+  applyTagFilterAndRender(tags, { pushHash: false, navSource: window.__fylTagNavSource || "hash_replace" });
+
+// Tags clickeables: navegar a hash multi-tag
+window.setQuickFilter = function (level, value) {
   if (!value) return;
   persistCurrentScrollInHistory();
   window.__quickFilter = { level, value };
-  try { location.hash = '#/tag/' + encodeURIComponent(value); } catch (_) {}
+  navigateToTagsHash(value, { source: "quick_filter" });
 };
 
 function abrirModalPorSKU(sku, { pushState = true } = {}) {
@@ -5015,6 +5169,7 @@ function initModalEvents() {
               const gaItems = fylAnalytics.buildCartItemsFromLines(lineItems);
               const val = gaItems.reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.quantity) || 0), 0);
               fylAnalytics.ecommerceEvent("add_to_cart", { currency: "ARS", value: val, items: gaItems });
+              trackTagFilterConversion({ surface: "pdp", articulo });
             }
           } catch (_e) {}
           btn.textContent = 'Agregado';
@@ -5229,6 +5384,9 @@ function initEscClose() {
 
 // Handler popstate + hashchange: back nativo cierra PDP sin salir de la web
 async function resetHomeState() {
+  const hadCuratedCatalogOverride = window.__fylCuratedBannerCatalogOverride === true;
+
+  fylHideProductBanner();
   if (typeof window.clearSearch === "function") {
     await window.clearSearch({ skipCatalogReset: true });
   } else {
@@ -5247,21 +5405,31 @@ async function resetHomeState() {
 
   // Siempre limpiar filtros visibles/flags (aunque ya estemos en all)
   window.__quickFilter = null;
+  window.__fylActiveTagFilters = [];
   clearTagFilterBar();
   // Desmarcar acciones rápidas (si el usuario venía desde una categoría/tag)
   document.querySelectorAll(".quick-action-btn").forEach((btn) => btn.classList.remove("category-chip--active"));
 
-  // Evitar recargar desde Supabase si ya estamos en "all" y no había filtros activos
-  if (!isAlreadyAll) {
-    await cambiarCategoria('all');
+  // Ver todo del banner curado deja productos filtrados en #catalogo aunque categoriaActual siga en "all".
+  if (!isAlreadyAll || hadCuratedCatalogOverride) {
+    await cambiarCategoria("all");
   } else {
-    // Asegurar que el menú desktop no marque ninguna categoría específica
     document.querySelectorAll(".menu button").forEach((btn) => btn.classList.remove("active"));
   }
 
-  // Forzar URL limpia para que no se "reaplique" categoría al volver a buscar/filtar
-  updateURL({ tab: '', sku: '' }, { mode: 'replace' });
+  if (hadCuratedCatalogOverride) {
+    syncInfoBannerVisibility();
+    if (fylIsCuratedBannerEnabled()) {
+      await fylLoadHomeProductBanner({ preferInline: true });
+    }
+  }
+
+  updateURL({ tab: "", sku: "" }, { mode: "replace" });
   restoreScrollFromHistoryState();
+}
+
+if (typeof window !== "undefined") {
+  window.fylResetHomeState = resetHomeState;
 }
 
 async function onNavChange() {
@@ -5286,11 +5454,30 @@ async function onNavChange() {
     return;
   }
 
-  const hash = location.hash || '#/';
-  const tagMatch = hash.match(/^#\/tag\/(.+)$/);
-  if (tagMatch) {
-    const tagValue = decodeURIComponent(tagMatch[1]);
-    await applyTagFilterAndRender(tagValue, { pushHash: false });
+  const hash = location.hash || "#/";
+  const bannerSlug = fylParseHashBannerSlug(hash);
+  if (bannerSlug && fylIsCuratedBannerEnabled()) {
+    window.__fylTagNavSource = "";
+    window.__fylActiveTagFilters = [];
+    clearTagFilterBar();
+    fylHideProductBanner();
+    if (typeof window.hidePromotionalBanner === "function") {
+      window.hidePromotionalBanner();
+    }
+    document.getElementById("info-banner-top-container")?.classList.add("is-hidden");
+    if (typeof window.applyCuratedBannerHashRoute === "function") {
+      await window.applyCuratedBannerHashRoute(bannerSlug);
+    }
+    return;
+  }
+
+  const tagsFromHash = parseHashTags(hash);
+  if (tagsFromHash.length) {
+    await applyTagFilterAndRender(tagsFromHash, {
+      pushHash: false,
+      navSource: window.__fylTagNavSource || "hash",
+    });
+    window.__fylTagNavSource = "";
     return;
   }
 
@@ -6569,60 +6756,8 @@ async function inicializarCatalogo() {
       }
     }
 
-    // Si hay parámetro banner, cargar productos de "Otros" filtrados por ese tag
     if (bannerParam) {
-      const bannerTag = bannerParam.trim().toLowerCase();
-      fylCatalogDbg(`📋 Detectado parámetro banner: "${bannerTag}"`);
-      
-      // Verificar si es un tag de "Otros" (buscar en Filtro1, Filtro2, Filtro3)
-      try {
-        const { data: otrosTags, error: tagsError } = await supabase
-          .from(getCatalogAvailableSource())
-          .select("Filtro1, Filtro2, Filtro3")
-          .eq("Categoria", "Otros");
-        
-        if (!tagsError && otrosTags && otrosTags.length > 0) {
-          // Recolectar todos los tags únicos de todos los filtros
-          const allTags = new Set();
-          otrosTags.forEach(item => {
-            if (item.Filtro1) allTags.add(item.Filtro1.trim().toLowerCase());
-            if (item.Filtro2) allTags.add(item.Filtro2.trim().toLowerCase());
-            if (item.Filtro3) {
-              item.Filtro3.split(',').forEach(tag => {
-                const trimmedTag = tag.trim().toLowerCase();
-                if (trimmedTag) allTags.add(trimmedTag);
-              });
-            }
-          });
-          
-          const uniqueTags = Array.from(allTags);
-          fylCatalogDbg(`📋 Tags únicos encontrados en "Otros":`, uniqueTags);
-          
-          // Buscar el tag que coincida
-          const matchingTag = uniqueTags.find(tag => 
-            tag === bannerTag || 
-            tag.replace(/\s+/g, '-') === bannerTag ||
-            tag.replace(/\s+/g, '') === bannerTag
-          );
-          
-          if (matchingTag) {
-            // Usar el tag como categoría (el sistema ya lo maneja en cargarDesdeSupabase)
-            categoriaInicial = matchingTag.charAt(0).toUpperCase() + matchingTag.slice(1);
-            fylCatalogDbg(`✅ Cargando productos de "Otros" con tag: ${matchingTag}`);
-            fylCatalogDbg(`🎯 Tag seleccionado: "${matchingTag}" -> categoriaInicial: "${categoriaInicial}"`);
-          } else {
-            categoriaInicial = "all";
-            fylCatalogDbg(`⚠️ Tag no encontrado en "Otros", usando "all" (Inicio)`);
-            fylCatalogDbg(`📋 Tags disponibles:`, uniqueTags);
-            fylCatalogDbg(`🔍 Tag buscado: "${bannerTag}"`);
-          }
-        } else {
-          categoriaInicial = "all";
-        }
-      } catch (error) {
-        console.error("❌ Error verificando tags de Otros:", error);
-        categoriaInicial = "all";
-      }
+      categoriaInicial = null;
     } else if (tabSlug) {
       const categoria = slugToCategoria(tabSlug);
       if (categoria) {
@@ -6643,6 +6778,13 @@ async function inicializarCatalogo() {
     if (isCollectionFYL) {
       fylCatalogDbg(`📂 Deep link a colección FYL detectado: no cargar categoría inicial`);
       // Saltar cargarCategoria; applyHashRoute (como-comprar) aplicará filterBySupplierFYL
+    } else if (bannerParam) {
+      const tagFromBanner = decodeURIComponent(bannerParam.trim());
+      fylCatalogDbg(`📋 ?banner= → filtro por tag(s): "${tagFromBanner}"`);
+      await applyTagFilterAndRender(tagFromBanner, {
+        pushHash: true,
+        navSource: "url_banner_param",
+      });
     } else if (similaresParam === '1' && articuloParam?.trim()) {
       if (similaresFirstTag) {
         fylCatalogDbg(`📋 Ver similares: filtrando por tag "${similaresFirstTag}"`);
@@ -6655,11 +6797,19 @@ async function inicializarCatalogo() {
         setTimeout(() => window.applySizeFilterFromURL(talleParam), 200);
       }
     } else {
-      const tagMatch = (location.hash || '').match(/^#\/tag\/(.+)$/);
-      if (tagMatch) {
-        const tagValue = decodeURIComponent(tagMatch[1]);
-        fylCatalogDbg(`📋 Deep link a filtro por tag: "${tagValue}"`);
-        await applyTagFilterAndRender(tagValue, { pushHash: false });
+      const bannerSlugBoot = fylParseHashBannerSlug(location.hash || "");
+      const tagsFromHash = parseHashTags(location.hash || "");
+      if (bannerSlugBoot && fylIsCuratedBannerEnabled()) {
+        fylCatalogDbg(`📋 Deep link a banner curado: ${bannerSlugBoot}`);
+        window.__fylActiveTagFilters = [];
+        clearTagFilterBar();
+        fylHideProductBanner();
+        if (typeof window.applyCuratedBannerHashRoute === "function") {
+          await window.applyCuratedBannerHashRoute(bannerSlugBoot);
+        }
+      } else if (tagsFromHash.length) {
+        fylCatalogDbg(`📋 Deep link a filtro por tag(s):`, tagsFromHash);
+        await applyTagFilterAndRender(tagsFromHash, { pushHash: false, navSource: "boot_hash" });
       } else {
         fylCatalogDbg(`📦 Cargando categoría inicial: ${categoriaInicial}`);
         await cargarCategoria(categoriaInicial);
@@ -6683,9 +6833,7 @@ async function inicializarCatalogo() {
     
     // Si estamos filtrando por banner, ocultar el banner dinámico para evitar redundancia
     if (bannerParam) {
-      if (typeof window.hideCustomBanner === "function") {
-        window.hideCustomBanner();
-      }
+      fylHideProductBanner();
     }
     
     // Actualizar botón activo en menú desktop (si existe)
@@ -6813,9 +6961,7 @@ async function inicializarCatalogo() {
         try {
           offline = await isFylOfflineDeepCheck();
         } catch (_) {}
-        const kind = error?.kind || classifyError(error);
-        const preset =
-          offline || kind === FYL_ERROR_KIND.NETWORK ? "offline" : "catalog";
+        const preset = resolveCatalogFailurePreset(error, offline);
         showFylErrorState({
           preset,
           retry: () => {
@@ -7118,7 +7264,7 @@ async function renderSearchResults(productos, cont, requestId) {
   // Limpiar contenedor y ocultar banners cuando hay filtro de búsqueda
   cont.innerHTML = "";
   if (typeof window.hideFYLOriginalsBanner === 'function') window.hideFYLOriginalsBanner();
-  if (typeof window.hideCustomBanner === 'function') window.hideCustomBanner();
+  fylHideProductBanner();
   if (typeof window.hidePromotionalBanner === 'function') window.hidePromotionalBanner();
   document.getElementById("info-banner-top-container")?.classList.add("is-hidden");
 
@@ -7340,11 +7486,22 @@ async function buscarProductosEnTodos(term) {
         const paralelos = [];
         if (typeof window.loadAndShowFYLBanner === 'function') paralelos.push(window.loadAndShowFYLBanner());
         if (
-          fylPendingHomeCustomBanner &&
-          typeof window.loadAndShowCustomBanner === 'function'
+          !parseHashTags(location.hash || "").length &&
+          !fylParseHashBannerSlug(location.hash || "")
         ) {
-          fylPendingHomeCustomBanner = false;
-          paralelos.push(window.loadAndShowCustomBanner());
+          const hasInline = Boolean(document.getElementById("custom-banner-container-inline"));
+          if (fylIsCuratedBannerEnabled()) {
+            fylPendingHomeCustomBanner = !hasInline;
+            paralelos.push(
+              fylLoadHomeProductBanner({
+                preferInline: true,
+                waitForInline: !hasInline,
+              })
+            );
+          } else {
+            fylPendingHomeCustomBanner = false;
+            paralelos.push(fylLoadHomeProductBanner());
+          }
         } else {
           fylPendingHomeCustomBanner = false;
         }
@@ -7410,7 +7567,50 @@ window.refreshCatalogFilterBar = refreshCatalogFilterBar;
 window.clearAllCatalogFilters = clearAllCatalogFilters;
 window.showCatalogBootOverlay = showCatalogBootOverlay;
 window.hideCatalogBootOverlay = hideCatalogBootOverlay;
+/** Productos agrupados por Articulo (orden preservado) para banner curado «Ver todo». */
+async function fylResolveGroupedProductsByArticulos(articulosOrdered) {
+  const uniqueOrdered = [];
+  const seen = new Set();
+  for (const raw of articulosOrdered || []) {
+    const art = String(raw || "").trim();
+    if (!art || seen.has(art)) continue;
+    seen.add(art);
+    uniqueOrdered.push(art);
+  }
+  if (!uniqueOrdered.length) return [];
+
+  const byArt = new Map();
+  const missing = [];
+  const cache = window.__allProductsCache;
+
+  for (const art of uniqueOrdered) {
+    const hit = Array.isArray(cache)
+      ? cache.find((p) => String(p.Articulo || "").trim() === art)
+      : null;
+    if (hit) byArt.set(art, hit);
+    else missing.push(art);
+  }
+
+  if (missing.length) {
+    const { data: rows, error } = await supabase
+      .from(getCatalogAvailableSource())
+      .select(CATALOG_PUBLIC_SELECT)
+      .in("Articulo", missing);
+    if (error) throw error;
+    const grouped = agruparProductos(rows || []);
+    if (grouped.length) {
+      await enrichProductsWithStock(grouped);
+    }
+    for (const p of grouped) {
+      byArt.set(String(p.Articulo || "").trim(), p);
+    }
+  }
+
+  return uniqueOrdered.map((art) => byArt.get(art)).filter(Boolean);
+}
+
 window.renderizarProductosPagina = renderizarProductosPagina;
+window.fylResolveGroupedProductsByArticulos = fylResolveGroupedProductsByArticulos;
 window.configurarEventos = configurarEventos;
 window.mainImageFallback = mainImageFallback;
 

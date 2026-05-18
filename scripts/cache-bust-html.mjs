@@ -161,6 +161,8 @@ const EXTRA_VERSIONED_FILES = [
   "scripts/config.js",
   "scripts/supabase-client.js",
   "scripts/boot-telemetry.js",
+  "scripts/net/fyl-fetch.js",
+  "scripts/curated-banner.js",
 ];
 
 function main() {

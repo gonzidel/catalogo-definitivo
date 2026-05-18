@@ -1,6 +1,34 @@
 // scripts/custom-banner.js - Banner de productos personalizable
 
 import { supabase } from "./supabase-client.js";
+import {
+  applyLatestVariantMainImage,
+  enrichGroupedProductsWithVariantRecency,
+  parseDateMs,
+} from "./fyl-originals-banner.js";
+import {
+  loadCommercialTagNamesForAdmin,
+  syncGroupedProductsDetallesSimilitud,
+} from "./commercial-tags.js";
+import { fylPerf } from "./fyl-perf.js";
+import {
+  buildCommercialTagMatchComparison,
+  collectFiltro3CommercialMatchParts,
+  evaluateCommercialTagExactMatch,
+  groupedProductMatchesAnyCommercialTag,
+  groupedProductMatchesCommercialTag,
+  mergeProductRowCommercialTags,
+  mergeProductRowFilterTags,
+  normalizeCommercialTag,
+  parseTagSelectorValues,
+  productRowMatchesAnyCommercialTag,
+  productRowMatchesCommercialTag,
+  splitCommercialTags,
+} from "./tag-normalize.js";
+import { buildTagsHash } from "./tag-routing.js";
+
+/** Banners curated en DB; este módulo no los usa (carga condicional vía fyl-legacy-banner-loader.js). */
+const CURATED_TAG_PLACEHOLDER = "__curated__";
 
 /** Logs verbosos del banner/catálogo. Activar: `window.FYL_DEBUG_CATALOG = true` antes de cargar, o `?debug=catalog` en la URL. */
 function fylCatalogDebugEnabled() {
@@ -17,6 +45,34 @@ function fylCatalogDbg(...args) {
 }
 function fylCatalogWarn(...args) {
   if (fylCatalogDebugEnabled()) console.warn.apply(console, args);
+}
+
+/** Auditoría del banner: `window.FYL_BANNER_AUDIT = true` o `?debug=banner` en la URL. */
+function fylBannerAuditEnabled() {
+  if (typeof window !== "undefined" && window.FYL_BANNER_AUDIT === true) return true;
+  try {
+    return /(?:^|[&?])debug=banner(?:&|$)/.test(window.location.search || "");
+  } catch (_) {
+    return false;
+  }
+}
+
+function logBannerAudit(summary, detail = null) {
+  if (!fylBannerAuditEnabled()) return;
+  if (detail != null) {
+    console.warn("[FYL Banner Audit]", summary, detail);
+  } else {
+    console.warn("[FYL Banner Audit]", summary);
+  }
+}
+
+/** Logs de estabilización del banner (siempre visibles en consola). */
+function logBannerDebug(step, detail = null) {
+  if (detail != null) {
+    console.warn("[FYL Banner Debug]", step, detail);
+  } else {
+    console.warn("[FYL Banner Debug]", step);
+  }
 }
 
 let customBannerProducts = [];
@@ -55,72 +111,31 @@ export async function loadCustomBannerConfig() {
       .from("custom_product_banners")
       .select("*")
       .eq("enabled", true)
+      .neq("tag_value", CURATED_TAG_PLACEHOLDER)
+      .order("created_at", { ascending: false })
       .limit(1)
-      .single();
+      .maybeSingle();
 
     if (error) {
-      if (error.code === 'PGRST116') {
-        // No hay banner configurado
+      if (error.code === "PGRST116") {
         return null;
       }
       console.error("❌ Error cargando configuración del banner:", error);
       return null;
     }
 
-    return data;
+    return data ?? null;
   } catch (error) {
     console.error("❌ Error en loadCustomBannerConfig:", error);
     return null;
   }
 }
 
-// Obtener todos los tags únicos de Filtro1, Filtro2 y Filtro3
+// Tags comerciales (Detalles para similitud / product_tag_details)
 export async function getAllUniqueTags() {
   try {
-    const { data, error } = await supabase
-      .from("catalog_public_view")
-      .select("Filtro1, Filtro2, Filtro3")
-      .eq("Mostrar", true);
-
-    if (error) {
-      console.error("❌ Error cargando tags:", error);
-      return [];
-    }
-
-    if (!data || data.length === 0) {
-      return [];
-    }
-
-    // Recolectar todos los tags únicos (mantener formato original para mostrar, pero normalizar para deduplicar)
-    const tagsMap = new Map(); // Map: lowercase -> original
-    
-    data.forEach(item => {
-      const processTag = (tagValue) => {
-        if (!tagValue) return;
-        // Eliminar espacios extra y normalizar para deduplicar
-        const tagTrimmed = tagValue.trim().replace(/\s+/g, ' ');
-        if (!tagTrimmed) return;
-        
-        // Normalizar para deduplicar (case-insensitive)
-        const tagNormalized = tagTrimmed.toLowerCase();
-        
-        // Mantener el formato original del tag (la primera vez que aparece)
-        if (!tagsMap.has(tagNormalized)) {
-          tagsMap.set(tagNormalized, tagTrimmed);
-        }
-      };
-      
-      processTag(item.Filtro1);
-      processTag(item.Filtro2);
-      if (item.Filtro3) item.Filtro3.split(/[,;]/).forEach(part => processTag(part));
-    });
-
-    // Convertir a array de valores originales y ordenar alfabéticamente (case-insensitive)
-    const tags = Array.from(tagsMap.values()).sort((a, b) => 
-      a.localeCompare(b, 'es', { sensitivity: 'base' })
-    );
-
-    fylCatalogDbg(`✅ Tags únicos encontrados: ${tags.length}`, tags.slice(0, 10));
+    const tags = await loadCommercialTagNamesForAdmin();
+    fylCatalogDbg(`✅ Tags comerciales (detalles similitud): ${tags.length}`, tags.slice(0, 10));
     return tags;
   } catch (error) {
     console.error("❌ Error en getAllUniqueTags:", error);
@@ -128,23 +143,349 @@ export async function getAllUniqueTags() {
   }
 }
 
-// Cargar productos filtrados según el tag especificado (busca en Filtro1, Filtro2 y Filtro3)
-// IMPORTANTE: Este banner muestra productos de TODAS las categorías (Calzado, Ropa, Lencería, Accesorios, etc.)
+/** Reutiliza catálogo ya cargado en main (0 requests extra en Home). */
+async function obtainCatalogForBanner() {
+  if (
+    typeof window !== "undefined" &&
+    Array.isArray(window.__allProductsCache) &&
+    window.__allProductsCache.length > 0
+  ) {
+    fylPerf("banner_catalog_reuse", {
+      source: "__allProductsCache",
+      grouped: window.__allProductsCache.length,
+    });
+    return { mode: "grouped", data: window.__allProductsCache };
+  }
+
+  if (typeof window !== "undefined" && window.__FYL_CATALOG_ALL_INFLIGHT) {
+    await window.__FYL_CATALOG_ALL_INFLIGHT;
+    if (Array.isArray(window.__allProductsCache) && window.__allProductsCache.length > 0) {
+      fylPerf("banner_catalog_reuse", {
+        source: "__allProductsCache_after_inflight",
+        grouped: window.__allProductsCache.length,
+      });
+      return { mode: "grouped", data: window.__allProductsCache };
+    }
+  }
+
+  if (
+    typeof window !== "undefined" &&
+    Array.isArray(window.__allCatalogRawRows) &&
+    window.__allCatalogRawRows.length > 0
+  ) {
+    fylPerf("banner_catalog_reuse", {
+      source: "__allCatalogRawRows",
+      rows: window.__allCatalogRawRows.length,
+    });
+    return { mode: "raw", data: window.__allCatalogRawRows };
+  }
+
+  if (typeof window.cargarDesdeSupabase === "function") {
+    fylPerf("banner_catalog_reuse", { source: "cargarDesdeSupabase_all", fetch: true });
+    const rows = await window.cargarDesdeSupabase("all");
+    return { mode: "raw", data: Array.isArray(rows) ? rows : [] };
+  }
+
+  logBannerDebug("Sin catálogo compartido disponible para banner", {});
+  return { mode: "raw", data: [] };
+}
+
+/**
+ * Artículos que matchean el tag en filas crudas (DetallesSimilitud por variante) o en grupo.
+ * Las filas crudas suelen tener detalles más completos que el cache agrupado.
+ */
+function buildArticulosSetMatchingCommercialTags(grouped, rawRows, selectedTags) {
+  const matched = new Set();
+  for (const row of rawRows || []) {
+    const art = String(row?.Articulo ?? "").trim();
+    if (!art) continue;
+    const ok =
+      selectedTags.length === 1
+        ? productRowMatchesCommercialTag(row, selectedTags[0])
+        : productRowMatchesAnyCommercialTag(row, selectedTags);
+    if (ok) matched.add(art);
+  }
+  for (const p of grouped || []) {
+    const art = String(p?.Articulo ?? "").trim();
+    if (!art || matched.has(art)) continue;
+    const ok =
+      selectedTags.length === 1
+        ? groupedProductMatchesCommercialTag(p, selectedTags[0])
+        : groupedProductMatchesAnyCommercialTag(p, selectedTags);
+    if (ok) matched.add(art);
+  }
+  return matched;
+}
+
+function filterGroupedByCommercialTags(grouped, selectedTags, rawRows = null) {
+  if (!selectedTags.length) return [];
+  const rows =
+    rawRows ||
+    (typeof window !== "undefined" ? window.__allCatalogRawRows : null) ||
+    [];
+  const matchedArts = buildArticulosSetMatchingCommercialTags(
+    grouped,
+    rows,
+    selectedTags
+  );
+  return (grouped || []).filter((p) =>
+    matchedArts.has(String(p?.Articulo ?? "").trim())
+  );
+}
+
+/** Cuántos artículos tienen el tag en Detalles vs solo en Filtro3 (Tags jerárquicos). */
+function buildBannerTagGapReport(grouped, selectedTags) {
+  if (!selectedTags?.length || !Array.isArray(grouped)) {
+    return { por_tag: [], nota: "sin_tags_o_catalogo" };
+  }
+  const porTag = selectedTags.map((tag) => {
+    const key = normalizeCommercialTag(tag);
+    const enDetalles = [];
+    const soloFiltro3 = [];
+    const enAmbos = [];
+    for (const p of grouped) {
+      const art = String(p?.Articulo ?? "").trim();
+      if (!art) continue;
+      const detailKeys = new Set(
+        splitCommercialTags(p?.DetallesSimilitud, { silent: true }).tags
+          .map((t) => normalizeCommercialTag(t))
+          .filter(Boolean)
+      );
+      const f3KeySet = new Set(collectFiltro3CommercialMatchParts(p?.Filtro3).keys);
+      const matchDetalles = Boolean(key && detailKeys.has(key));
+      const matchF3 = Boolean(key && f3KeySet.has(key));
+      if (matchDetalles && matchF3) enAmbos.push(art);
+      else if (matchDetalles) enDetalles.push(art);
+      else if (matchF3) soloFiltro3.push(art);
+    }
+    return {
+      tag,
+      en_detalles_comerciales: enDetalles.length + enAmbos.length,
+      solo_en_filtro3_tags3: soloFiltro3.length,
+      en_ambos: enAmbos.length,
+      muestra_solo_filtro3: soloFiltro3.slice(0, 25),
+      nota:
+        soloFiltro3.length > 0
+          ? "Tienen el tag solo en Filtro3 (Tags3), no en Detalles comerciales — el banner los incluye por Filtro3."
+          : null,
+    };
+  });
+  return { por_tag: porTag };
+}
+
+/** Resumen legible de por qué el banner muestra N productos (siempre en consola). */
+export function logBannerPipelineSummary({
+  tagValue,
+  selectedTags,
+  totalGrouped,
+  matchedTag,
+  afterStockImage,
+  descartados = [],
+}) {
+  const grouped =
+    typeof window !== "undefined" && Array.isArray(window.__allProductsCache)
+      ? window.__allProductsCache
+      : [];
+  const brechaDatos = buildBannerTagGapReport(grouped, selectedTags);
+
+  console.info("[Banner] Resumen pipeline", {
+    tag_configurado: tagValue,
+    tags_parseados: selectedTags,
+    productos_en_catalogo: totalGrouped,
+    coinciden_tag_comercial: matchedTag,
+    se_muestran_en_banner: afterStockImage,
+    brecha_datos_detalles_vs_filtro3: brechaDatos,
+    descartados_total: Math.max(0, matchedTag - afterStockImage),
+    motivos_descarte: {
+      sin_tag_en_detalles_ni_filtro3:
+        "Sin el tag en Detalles comerciales ni en Filtro3 (Tags3)",
+      sin_stock: "Stock 0 en todos los talles (tras enrich)",
+      sin_imagen: "Sin VariantePrincipal ni imagen de color",
+    },
+    muestra_descartados: descartados.slice(0, 20),
+    ver_todo_en_catalogo: selectedTags?.length
+      ? buildTagsHash(selectedTags)
+      : "#/",
+  });
+}
+
+/** Auditoría directa: quick-action vs detalles comerciales por SKU. */
+function auditBannerCommercialTagMatch(tagValue, catalog, selectedTags, renderedProducts) {
+  console.log("[Banner] quick-action raw tag", tagValue);
+  console.log("[Banner] quick-action parsed tags", selectedTags);
+  console.log("[Banner] quick-action normalized keys", selectedTags.map(normalizeCommercialTag));
+
+  const source =
+    catalog.mode === "grouped"
+      ? catalog.data.map((p) => ({
+          Articulo: p.Articulo,
+          DetallesSimilitud: p.DetallesSimilitud,
+        }))
+      : catalog.data;
+
+  const detallesPorSku = source
+    .filter((r) => String(r?.DetallesSimilitud ?? "").trim())
+    .map((r) => ({ sku: r.Articulo, detalles: r.DetallesSimilitud }));
+  console.log("[Banner] tags comerciales por producto", detallesPorSku.slice(0, 80));
+
+  const expectedSet = new Set();
+  const comparisonLogs = [];
+  for (const row of source) {
+    for (const tag of selectedTags) {
+      const ev = evaluateCommercialTagExactMatch(row, tag);
+      comparisonLogs.push({ sku: row.Articulo, ...ev });
+      if (ev.matched_exact && row.Articulo) expectedSet.add(row.Articulo);
+    }
+  }
+  const expected = [...expectedSet];
+  console.log("[Banner] comparacion exacta (token)", comparisonLogs.slice(0, 80));
+
+  const matchedSkus = expectedSet;
+  const renderedSkus = new Set(
+    (renderedProducts || []).map((p) => String(p?.Articulo ?? "").trim()).filter(Boolean)
+  );
+
+  const rendered = [...renderedSkus];
+  const missingInBanner = expected.filter((sku) => !renderedSkus.has(sku));
+  const discarded = [];
+
+  for (const sku of missingInBanner) {
+    const row = source.find((r) => r.Articulo === sku);
+    discarded.push({
+      sku,
+      motivo: "tag_match_pero_no_en_banner_render",
+      detalles: row?.DetallesSimilitud || "",
+      comparison: buildCommercialTagMatchComparison(row || {}, selectedTags),
+    });
+  }
+
+  for (const row of source) {
+    const report = buildCommercialTagMatchComparison(row, selectedTags);
+    if (!report.matched && report.detalles) {
+      discarded.push({
+        sku: report.sku,
+        motivo: "detalles_sin_match_tag_configurado",
+        detalles: report.detalles,
+        comparison: report,
+      });
+      if (discarded.length >= 30) break;
+    }
+  }
+
+  console.log("[Banner] resumen matcher", {
+    catalogMode: catalog.mode,
+    totalFuente: source.length,
+    conMatchTag: matchedSkus.size,
+    renderizados: rendered.length,
+    faltanEnBanner: missingInBanner.length,
+  });
+  console.log("[Banner] productos esperados (match tag)", expected);
+  console.log("[Banner] productos renderizados", rendered);
+
+  const falsosPositivos = [];
+  for (const p of renderedProducts || []) {
+    const row = { Articulo: p.Articulo, DetallesSimilitud: p.DetallesSimilitud };
+    const report = buildCommercialTagMatchComparison(row, selectedTags);
+    if (!report.matched) {
+      falsosPositivos.push({
+        sku: p.Articulo,
+        motivo: "renderizado_sin_match_exacto",
+        detalles: p.DetallesSimilitud,
+        comparisons: report.comparisons,
+      });
+    }
+  }
+  if (falsosPositivos.length) {
+    console.warn("[Banner] posibles falsos positivos en render", falsosPositivos);
+  }
+
+  console.log("[Banner] descartados / faltantes", discarded.slice(0, 40));
+}
+
+function sortCustomBannerProductsByRecency(products) {
+  return [...products].sort((a, b) => {
+    const aMs =
+      parseDateMs(a?.FechaIngreso) ||
+      Number(a?.DetalleColor?.[0]?.__variantRecencyMs) ||
+      0;
+    const bMs =
+      parseDateMs(b?.FechaIngreso) ||
+      Number(b?.DetalleColor?.[0]?.__variantRecencyMs) ||
+      0;
+    return bMs - aMs;
+  });
+}
+
+// Cargar productos filtrados por tag(s) — OR en DetallesSimilitud (comercial).
 export async function loadCustomBannerProducts(tagValue) {
   try {
-    fylCatalogDbg(`🔍 loadCustomBannerProducts llamado con tagValue: "${tagValue}"`);
-    
-    // Cargar TODOS los productos visibles de TODAS las categorías
-    // No se filtra por categoría, solo por el tag especificado
-    let query = supabase
-      .from("catalog_public_view")
-      .select("*")
-      .eq("Mostrar", true);
-      // NOTA: No agregamos filtro por Categoria para incluir productos de todas las categorías
+    console.log("[Banner] quick-action raw tag", tagValue);
+    const selectedTags = parseTagSelectorValues(tagValue);
+    fylCatalogDbg(
+      `🔍 loadCustomBannerProducts — tags (${selectedTags.length}):`,
+      selectedTags
+    );
+    logBannerAudit("Tags seleccionados", {
+      raw: tagValue,
+      parsed: selectedTags,
+      canonical: selectedTags.map((t) => normalizeCommercialTag(t)),
+    });
 
-    const { data: allData, error: queryError } = await query.order("FechaIngreso", { ascending: false });
-    
-    fylCatalogDbg(`📊 Productos cargados (Mostrar=true): ${allData?.length || 0}`);
+    if (!selectedTags.length) {
+      logBannerDebug("Sin tags válidos en tag_value", { raw: tagValue });
+      logBannerAudit("Sin tags válidos en configuración; 0 productos");
+      return [];
+    }
+
+    const catalog = await obtainCatalogForBanner();
+
+    if (catalog.mode === "grouped") {
+      let groupedData = catalog.data;
+      if (
+        typeof window !== "undefined" &&
+        Array.isArray(window.__allCatalogRawRows) &&
+        window.__allCatalogRawRows.length
+      ) {
+        groupedData = syncGroupedProductsDetallesSimilitud(
+          groupedData,
+          window.__allCatalogRawRows
+        );
+      }
+      const filteredGrouped = filterGroupedByCommercialTags(
+        groupedData,
+        selectedTags,
+        window.__allCatalogRawRows
+      );
+      fylCatalogDbg(
+        `📊 Banner (tag en filas crudas + agrupado): ${filteredGrouped.length} de ${catalog.data.length}`
+      );
+      if (filteredGrouped.length === 0) {
+        logBannerDebug("0 productos tras matcher en cache agrupado", { tags: selectedTags });
+        auditBannerCommercialTagMatch(
+          tagValue,
+          { mode: "grouped", data: groupedData },
+          selectedTags,
+          []
+        );
+        return [];
+      }
+      customBannerProducts = await enrichGroupedProductsWithVariantRecency(
+        sortCustomBannerProductsByRecency(filteredGrouped)
+      );
+      logBannerAudit("Tras filtro comercial (cache agrupado)", {
+        productosAgrupados: customBannerProducts.length,
+      });
+      auditBannerCommercialTagMatch(
+        tagValue,
+        { mode: "grouped", data: groupedData },
+        selectedTags,
+        customBannerProducts
+      );
+      return customBannerProducts;
+    }
+
+    const allData = catalog.data;
+    fylCatalogDbg(`📊 Productos cargados (reuse raw): ${allData?.length || 0}`);
     
     // Log para confirmar que se cargan productos de todas las categorías
     if (allData && allData.length > 0) {
@@ -197,104 +538,42 @@ export async function loadCustomBannerProducts(tagValue) {
       }
     }
 
-    if (queryError) {
-      console.error("❌ Error cargando productos del banner:", queryError);
-      return [];
-    }
-
     if (!allData || allData.length === 0) {
       fylCatalogDbg(`ℹ️ No hay productos visibles`);
       return [];
     }
 
-    // Filtrar en memoria: buscar el tag en Filtro1, Filtro2 o Filtro3
-    // Normalizar el tag buscado para comparación case-insensitive
-    // Eliminar espacios extra y normalizar
-    const tagValueNormalized = (tagValue || "").trim().replace(/\s+/g, ' ').toLowerCase();
-    
-    fylCatalogDbg(`🔍 Filtrando productos con tag: "${tagValue}" (normalizado: "${tagValueNormalized}")`);
+    fylCatalogDbg(
+      `🔍 Filtrando por OR de ${selectedTags.length} tag(s) comercial(es) — todas las categorías`
+    );
     fylCatalogDbg(`📦 Total de productos a filtrar: ${allData.length}`);
 
-    // Función helper para normalizar tags para comparación
-    // Elimina espacios extra y normaliza a minúsculas
-    const normalizeTag = (tag) => {
-      if (!tag) return "";
-      return tag.toString().trim().replace(/\s+/g, ' ').toLowerCase();
-    };
-
-    if (fylCatalogDebugEnabled()) {
-      const productosF314 = allData.filter(i => {
-        const art = (i.Articulo || "").toString().trim().toUpperCase();
-        const desc = (i.Descripcion || "").toString().trim().toUpperCase();
-        return art.includes("F314") || desc.includes("F314") || art === "F314";
-      });
-
-      if (productosF314.length > 0) {
-        fylCatalogDbg(`🔍 Productos F314 encontrados (${productosF314.length}):`);
-        productosF314.forEach(prod => {
-          fylCatalogDbg(`  - Articulo: "${prod.Articulo}", Descripcion: "${prod.Descripcion}"`, {
-            Filtro1: prod.Filtro1,
-            Filtro2: prod.Filtro2,
-            Filtro3: prod.Filtro3,
-            Mostrar: prod.Mostrar,
-            Filtro1_normalized: normalizeTag(prod.Filtro1),
-            Filtro2_normalized: normalizeTag(prod.Filtro2),
-            Filtro3_normalized: normalizeTag(prod.Filtro3),
-            tagBuscado: tagValueNormalized,
-            coincide: normalizeTag(prod.Filtro1) === tagValueNormalized ||
-                     normalizeTag(prod.Filtro2) === tagValueNormalized ||
-                     normalizeTag(prod.Filtro3) === tagValueNormalized
-          });
+    const discardNoTag = [];
+    const filteredData = allData.filter((row) => {
+      const match =
+        selectedTags.length === 1
+          ? productRowMatchesCommercialTag(row, selectedTags[0])
+          : productRowMatchesAnyCommercialTag(row, selectedTags);
+      if (match && (fylCatalogDebugEnabled() || fylBannerAuditEnabled())) {
+        logBannerDebug("match_comercial", buildCommercialTagMatchComparison(row, selectedTags));
+      } else if (!match && fylBannerAuditEnabled() && discardNoTag.length < 40) {
+        discardNoTag.push({
+          ...buildCommercialTagMatchComparison(row, selectedTags),
+          categoria: row.Categoria,
+          motivo: "sin_coincidencia_tag_comercial",
         });
-      } else {
-        console.warn(`⚠️ Producto F314 NO encontrado en los productos visibles`);
-        console.warn(`   Esto puede indicar que:`);
-        console.warn(`   1. El producto no tiene Mostrar=true en la base de datos`);
-        console.warn(`   2. El artículo no se llama exactamente "F314" (puede tener espacios o formato diferente)`);
-        console.warn(`   3. El producto no está en la vista catalog_public_view`);
-        fylCatalogDbg(`🔍 Intentando buscar F314 en TODOS los productos (sin filtro Mostrar)...`);
       }
-    }
-
-    fylCatalogDbg(`🔍 Filtrando productos por tag normalizado: "${tagValueNormalized}"`);
-    
-    // Usar la misma lógica que el buscador: buscar con includes() en lugar de comparación exacta
-    // IMPORTANTE: Filtro3 puede contener múltiples tags separados por comas (ej: "Colegio, Lona")
-    // Cada tag debe tratarse como independiente
-    const filteredData = allData.filter(i => {
-      // Normalizar todos los campos a minúsculas para búsqueda
-      const art = (i.Articulo || '').toLowerCase();
-      const descripcion = (i.Descripcion || '').toLowerCase();
-      const nombre = ((i.name || i.Articulo) || '').toLowerCase();
-      
-      // Filtro1 y Filtro2 son tags únicos
-      const filtro1 = (i.Filtro1 || '').toLowerCase();
-      const filtro2 = (i.Filtro2 || '').toLowerCase();
-      
-      // Filtro3 puede tener múltiples tags separados por comas - dividir y normalizar cada uno
-      const filtro3Tags = (i.Filtro3 || '')
-        .split(',')
-        .map(tag => tag.trim().toLowerCase())
-        .filter(tag => tag.length > 0);
-      
-      // Buscar el tag en cada campo
-      // Para Filtro3, verificar cada tag individualmente
-      const match = art.includes(tagValueNormalized) || 
-                   descripcion.includes(tagValueNormalized) || 
-                   nombre.includes(tagValueNormalized) ||
-                   filtro1.includes(tagValueNormalized) ||
-                   filtro2.includes(tagValueNormalized) ||
-                   filtro3Tags.some(tag => tag === tagValueNormalized || tag.includes(tagValueNormalized));
-      
-      if (match) {
-        const categoria = i.Categoria || 'Sin categoría';
-        fylCatalogDbg(`✅ Producto ${i.Articulo} (${categoria}) coincide: Filtro1="${i.Filtro1 || ''}", Filtro2="${i.Filtro2 || ''}", Filtro3="${i.Filtro3 || ''}"`);
-      }
-      
       return match;
     });
 
     fylCatalogDbg(`📊 Productos filtrados: ${filteredData.length} de ${allData.length} totales`);
+    logBannerAudit("Coincidencia por tag comercial (filas variantes)", {
+      filasVisibles: allData.length,
+      filasConTag: filteredData.length,
+      articulosUnicos: new Set(filteredData.map((r) => r.Articulo?.trim()).filter(Boolean)).size,
+      descartadosSinTag: discardNoTag.length,
+      muestraDescartados: discardNoTag.slice(0, 15),
+    });
     
     // Log específico para productos de categoría "Otros"
     const productosOtrosFiltrados = filteredData.filter(p => (p.Categoria || "").trim().toLowerCase() === "otros");
@@ -314,18 +593,29 @@ export async function loadCustomBannerProducts(tagValue) {
     }
 
     if (filteredData.length === 0) {
-      fylCatalogDbg(`ℹ️ No hay productos con el tag "${tagValue}"`);
+      fylCatalogDbg(`ℹ️ No hay productos con los tags configurados`);
+      logBannerDebug("0 filas tras matcher OR", {
+        tags: selectedTags,
+        filasVisibles: allData.length,
+      });
+      logBannerAudit("0 filas tras filtro OR de tags comerciales");
       return [];
     }
 
     // Usar los datos filtrados para continuar
     const data = filteredData;
 
-    // Agrupar productos por artículo (similar a cargarCategoria)
-    // El filtrado inicial ya garantiza que todos los productos tienen el tag correcto
+    const getRowRecencyMs = (row) =>
+      parseDateMs(row?.updated_at) ||
+      parseDateMs(row?.created_at) ||
+      parseDateMs(row?.FechaIngreso) ||
+      0;
+
+    // Agrupar productos por artículo (misma base que FYL Originals)
     const grupos = data.reduce((acc, i) => {
       const art = i.Articulo?.trim();
       if (!art) return acc;
+      const rowRecencyMs = getRowRecencyMs(i);
 
       if (!acc[art]) {
         acc[art] = {
@@ -338,6 +628,7 @@ export async function loadCustomBannerProducts(tagValue) {
           Filtro1: i.Filtro1 || "",
           Filtro2: i.Filtro2 || "",
           Filtro3: i.Filtro3 || "",
+          DetallesSimilitud: i.DetallesSimilitud || "",
           OfertaActiva: false,
           PrecioOferta: '',
           PromoActiva: '',
@@ -345,7 +636,6 @@ export async function loadCustomBannerProducts(tagValue) {
         };
       }
 
-      // Actualizar información de ofertas
       if (i.OfertaActiva === true || i.OfertaActiva === 'true') {
         acc[art].OfertaActiva = true;
         if (!acc[art].PrecioOferta) {
@@ -357,30 +647,62 @@ export async function loadCustomBannerProducts(tagValue) {
         acc[art].PromoActiva = i.PromoActiva;
       }
 
-      // Agregar color si no existe - SOLO si este producto tiene el tag correcto
-      const colorExists = acc[art].DetalleColor.find(c => 
+      const colorExists = acc[art].DetalleColor.find(c =>
         (c.color || "").trim().toLowerCase() === (i.Color || "").trim().toLowerCase()
       );
 
       if (!colorExists) {
+        const talles = String(i.Numeracion || "")
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean);
         acc[art].DetalleColor.push({
           color: i.Color || "Sin color",
           hex_color: i.ColorHex || null,
-          talles: i.Numeracion?.split(",").map((t) => t.trim()) || ["Único"],
+          talles: talles.length > 0 ? talles : ["Único"],
           images: [
             i["Imagen Principal"],
             i["Imagen 1"],
             i["Imagen 2"],
             i["Imagen 3"],
           ].filter(Boolean),
+          __recencyMs: rowRecencyMs,
         });
+      } else {
+        const existingRecency = Number(colorExists.__recencyMs) || 0;
+        if (rowRecencyMs > existingRecency) {
+          const incomingImages = [
+            i["Imagen Principal"],
+            i["Imagen 1"],
+            i["Imagen 2"],
+            i["Imagen 3"],
+          ].filter(Boolean);
+          if (incomingImages.length > 0) {
+            colorExists.images = incomingImages;
+          }
+          colorExists.__recencyMs = rowRecencyMs;
+        }
       }
 
+      mergeProductRowFilterTags(acc[art], i);
+      mergeProductRowCommercialTags(acc[art], i);
       return acc;
     }, {});
 
-    customBannerProducts = Object.values(grupos);
+    customBannerProducts = await enrichGroupedProductsWithVariantRecency(
+      Object.values(grupos)
+    );
     fylCatalogDbg(`✅ Productos del banner personalizado cargados: ${customBannerProducts.length}`);
+    logBannerAudit("Tras agrupar por artículo", {
+      productosAgrupados: customBannerProducts.length,
+    });
+
+    auditBannerCommercialTagMatch(
+      tagValue,
+      { mode: "grouped", data: Object.values(grupos) },
+      selectedTags,
+      customBannerProducts
+    );
 
     return customBannerProducts;
   } catch (error) {
@@ -511,10 +833,7 @@ function hasAtLeastOneVariantWithRealStock(producto) {
 function isCustomBannerEligible(producto) {
   if (!producto) return false;
   if (!hasUsableImage(producto)) return false;
-  const skuSeguro = getSafePdpSku(producto);
-  if (!skuSeguro) return false;
-  if (!hasAtLeastOneVariantWithRealStock(producto)) return false;
-  return true;
+  return hasAtLeastOneVariantWithRealStock(producto);
 }
 
 // Función helper para cloudinaryOptimized (reutilizar si está disponible)
@@ -644,7 +963,10 @@ export function renderCustomBanner(products, bannerName, tagValue) {
   }
   
   if (!banner || !scrollContainer) {
-    console.warn("⚠️ Contenedor de banner personalizado no encontrado");
+    logBannerDebug("Contenedor DOM no encontrado", {
+      inline: !!document.getElementById("custom-banner-container-inline"),
+      root: !!document.getElementById("custom-banner-container"),
+    });
     return;
   }
 
@@ -662,16 +984,25 @@ export function renderCustomBanner(products, bannerName, tagValue) {
   if (headerContainer) {
     let verTodoBtn = headerContainer.querySelector('.custom-banner-ver-todo-btn');
     if (!verTodoBtn && tagValue) {
-      const tagNormalized = encodeURIComponent(tagValue.trim().toLowerCase());
-      verTodoBtn = document.createElement('a');
-      verTodoBtn.href = `banner.html?banner=${tagNormalized}`;
-      verTodoBtn.className = 'custom-banner-ver-todo-btn';
-      verTodoBtn.style.cssText = 'display: flex; align-items: center; gap: 4px; color: #CD844D; text-decoration: none; font-size: 0.9rem; font-weight: 500;';
-      verTodoBtn.innerHTML = 'Ver todo <svg class="custom-banner-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px;"><polyline points="9 18 15 12 9 6"></polyline></svg>';
+      const tagHref = buildTagsHash(tagValue);
+      verTodoBtn = document.createElement("a");
+      verTodoBtn.href = tagHref;
+      verTodoBtn.className = "custom-banner-ver-todo-btn";
+      verTodoBtn.style.cssText =
+        "display: flex; align-items: center; gap: 4px; color: #CD844D; text-decoration: none; font-size: 0.9rem; font-weight: 500;";
+      verTodoBtn.innerHTML =
+        'Ver todo <svg class="custom-banner-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 16px; height: 16px;"><polyline points="9 18 15 12 9 6"></polyline></svg>';
+      verTodoBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        if (typeof window.navigateToTagsHash === "function") {
+          window.navigateToTagsHash(tagValue, { source: "banner_ver_todo" });
+        } else {
+          location.hash = buildTagsHash(tagValue);
+        }
+      });
       headerContainer.appendChild(verTodoBtn);
     } else if (verTodoBtn && tagValue) {
-      const tagNormalized = encodeURIComponent(tagValue.trim().toLowerCase());
-      verTodoBtn.href = `banner.html?banner=${tagNormalized}`;
+      verTodoBtn.href = buildTagsHash(tagValue);
     }
   }
 
@@ -728,8 +1059,13 @@ function getArticulosYaMostradosEnCatalogo() {
 // Función principal para cargar y mostrar banner
 export async function loadAndShowCustomBanner() {
   try {
+    logBannerDebug("loadAndShowCustomBanner inicio", {
+      hash: location.hash,
+      categoria: typeof window.categoriaActual !== "undefined" ? window.categoriaActual : null,
+    });
     // No mostrar en vista colección FYL
     if (location.hash === "#/coleccion/fyl-originals") {
+      logBannerDebug("Oculto: colección FYL Originals");
       hideCustomBanner();
       return;
     }
@@ -751,6 +1087,7 @@ export async function loadAndShowCustomBanner() {
       const config = await loadCustomBannerConfig();
       
       if (!config || !config.enabled) {
+        logBannerDebug("Sin config habilitada en Supabase", { config });
         fylCatalogDbg("ℹ️ Banner personalizado no está habilitado o no hay configuración");
         hideCustomBanner();
         return;
@@ -758,6 +1095,11 @@ export async function loadAndShowCustomBanner() {
       
       tagValue = config.tag_value;
       bannerName = config.name;
+      logBannerDebug("Config banner encontrada", {
+        name: bannerName,
+        tag_value: tagValue,
+        tagsParseados: parseTagSelectorValues(tagValue),
+      });
       
       fylCatalogDbg(`📋 Configuración del banner:`, {
         name: config.name,
@@ -770,19 +1112,24 @@ export async function loadAndShowCustomBanner() {
     let products = await loadCustomBannerProducts(tagValue);
     
     fylCatalogDbg(`📦 Productos cargados para banner: ${products.length}`);
+    logBannerDebug("Productos agrupados por tag", { count: products.length });
 
-    // Excluir productos que ya están visibles arriba en el catálogo (evitar duplicados)
-    const yaMostrados = getArticulosYaMostradosEnCatalogo();
-    if (yaMostrados.size > 0) {
-      const antes = products.length;
-      products = products.filter((p) => !yaMostrados.has((p.Articulo || "").trim()));
-      if (antes !== products.length) {
-        fylCatalogDbg(`📌 Excluidos ${antes - products.length} productos ya mostrados en el catálogo`);
-      }
-    }
-    
     if (products.length === 0) {
-      fylCatalogDbg("⚠️ No se encontraron productos para el banner (o todos ya están arriba)");
+      logBannerPipelineSummary({
+        tagValue,
+        selectedTags: parseTagSelectorValues(tagValue),
+        totalGrouped:
+          typeof window !== "undefined" && window.__allProductsCache
+            ? window.__allProductsCache.length
+            : 0,
+        matchedTag: 0,
+        afterStockImage: 0,
+        descartados: [],
+      });
+      logBannerDebug("Oculto: 0 productos tras matcher/agrupación");
+      fylCatalogDbg(
+        "⚠️ Ningún producto tiene el tag en Detalles comerciales ni en Filtro3 (Tags3)."
+      );
       hideCustomBanner();
       return;
     }
@@ -793,29 +1140,85 @@ export async function loadAndShowCustomBanner() {
       await window.enrichProductsWithStock(products);
     }
 
-    products = products.filter(isCustomBannerEligible);
-    fylCatalogDbg(`📉 Productos elegibles para custom banner (stock real > 0): ${products.length}`);
+    const matchedByTagCount = products.length;
+    const beforeEligible = products.length;
+    const discarded = [];
+    products = products.filter((producto) => {
+      const hasImage = hasUsableImage(producto);
+      const hasStock = hasAtLeastOneVariantWithRealStock(producto);
+      const ok = hasImage && hasStock;
+      if (!ok && discarded.length < 50) {
+        discarded.push({
+          articulo: producto.Articulo,
+          motivo: !hasImage
+            ? "sin_imagen_usable"
+            : !hasStock
+              ? "sin_stock_disponible"
+              : "no_elegible",
+        });
+      }
+      return ok;
+    });
+    fylCatalogDbg(
+      `📉 Banner: ${products.length} con imagen y stock > 0 (de ${beforeEligible} por tag)`
+    );
+    logBannerPipelineSummary({
+      tagValue,
+      selectedTags: parseTagSelectorValues(tagValue),
+      totalGrouped:
+        typeof window !== "undefined" && window.__allProductsCache
+          ? window.__allProductsCache.length
+          : matchedByTagCount,
+      matchedTag: matchedByTagCount,
+      afterStockImage: products.length,
+      descartados: discarded,
+    });
+    logBannerAudit("Tras filtro imagen + stock", {
+      antes: beforeEligible,
+      despues: products.length,
+      descartados: beforeEligible - products.length,
+      muestraDescartados: discarded.slice(0, 15),
+    });
 
     if (products.length === 0) {
-      fylCatalogWarn("⚠️ Custom banner oculto: no hay productos elegibles con stock real positivo.");
+      logBannerDebug("Oculto: ningún producto con imagen y stock", {
+        antesFiltro: beforeEligible,
+      });
+      fylCatalogWarn(
+        "⚠️ Custom banner oculto: ningún producto del tag tiene imagen y stock disponible."
+      );
       hideCustomBanner();
       return;
     }
-    
+
+    applyLatestVariantMainImage(products);
+    products = sortCustomBannerProductsByRecency(products);
+
     if (location.hash === "#/coleccion/fyl-originals") {
+      logBannerDebug("Oculto: colección FYL (post-filtro imagen)");
       hideCustomBanner();
       return;
     }
     renderCustomBanner(products, bannerName, tagValue);
+    logBannerDebug("Banner renderizado", {
+      productosEnCarrusel: products.length,
+      target:
+        document.getElementById("custom-banner-container-inline")?.id ||
+        "custom-banner-container",
+    });
     fylCatalogDbg("✅ Banner personalizado renderizado exitosamente");
   } catch (error) {
+    logBannerDebug("Excepción en loadAndShowCustomBanner", {
+      message: error?.message,
+      stack: error?.stack,
+    });
     console.error("❌ Error en loadAndShowCustomBanner:", error);
     hideCustomBanner();
   }
 }
 
 // Exportar funciones globalmente
-if (typeof window !== 'undefined') {
+if (typeof window !== "undefined") {
   window.loadAndShowCustomBanner = loadAndShowCustomBanner;
   window.hideCustomBanner = hideCustomBanner;
   window.getAllUniqueTags = getAllUniqueTags;

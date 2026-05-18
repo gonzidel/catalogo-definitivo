@@ -86,6 +86,20 @@ export const FYL_ERROR_KIND = Object.freeze({
   UNKNOWN:    "unknown",
 });
 
+/** PostgREST / Postgres: columna inexistente (ej. 42703) — no es offline. */
+export function isPostgrestSchemaColumnError(err) {
+  if (!err) return false;
+  const code = String(err.code ?? "");
+  const message = String(err.message ?? "");
+  const details = String(err.details ?? "");
+  const hint = String(err.hint ?? "");
+  const blob = `${message} ${details} ${hint}`;
+  if (code === "42703") return true;
+  if (/column/i.test(blob) && /does not exist/i.test(blob)) return true;
+  if (/DetallesSimilitud/i.test(blob) && /does not exist/i.test(blob)) return true;
+  return false;
+}
+
 // ── Backoff ───────────────────────────────────────────────────────────────────
 
 // Ventana de espera por intento: 600 ms, 1 500 ms, 3 000 ms + jitter ±20 %.
@@ -163,6 +177,9 @@ export function classifyError(err, httpStatus) {
 
   // ── Server ────────────────────────────────────────────────────────────────
   if (status >= 500 && status < 600) return FYL_ERROR_KIND.SERVER;
+
+  // ── Schema / query (400 + columna o SQL inválido — no es red) ─────────────
+  if (isPostgrestSchemaColumnError(err)) return FYL_ERROR_KIND.UNKNOWN;
 
   return FYL_ERROR_KIND.UNKNOWN;
 }

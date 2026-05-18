@@ -126,7 +126,13 @@ tags_data as (
     pd.*,
     t1.name as tag1_name,
     t2.name as tag2_name,
-    array_agg(t3.name order by t3.name) filter (where t3.id is not null) as tag3_names
+    array_agg(t3.name order by t3.name) filter (where t3.id is not null) as tag3_names,
+    coalesce((
+      select string_agg(distinct t.name, ',' order by t.name)
+      from public.product_tag_details ptd
+      join public.tags t on t.id = ptd.tag3_id
+      where ptd.product_id = pd.product_id
+    ), '') as detalles_similitud
   from promos_data pd
   left join public.tags t1 on t1.id = pd.tag1_id
   left join public.tags t2 on t2.id = pd.tag2_id
@@ -151,6 +157,7 @@ select
     end,
     ''
   ) as "Filtro3",
+  coalesce(detalles_similitud, '') as "DetallesSimilitud",
   "OfertaActiva",
   coalesce("PrecioOferta", '') as "PrecioOferta",
   coalesce("PromoActiva", '') as "PromoActiva",

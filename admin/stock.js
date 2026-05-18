@@ -108,7 +108,10 @@ const fCategory = document.getElementById("f-category");
 const fColor = document.getElementById("f-color");
 const fSize = document.getElementById("f-size");
 const fActive = document.getElementById("f-active");
+const fSupplier = document.getElementById("f-supplier");
 const fLow = document.getElementById("f-low");
+const SUPPLIER_FILTER_NONE = "__none__";
+const SUPPLIER_LOAD_LIMIT = 200;
 const saveAllBtn = document.getElementById("save-all");
 const discardAllBtn = document.getElementById("discard-all");
 const pendingCount = document.getElementById("pending-count");
@@ -167,6 +170,8 @@ const mobileStockTotalCounter = document.getElementById("mobile-stock-total-coun
 const mobileStockTotalCounterValue = document.getElementById("mobile-stock-total-counter-value");
 
 let allData = [];
+const productMainImageUrls = new Map();
+const STOCK_CLOUDINARY_CLOUD = "dnuedzuzm";
 const pendingChanges = new Map(); // id -> { stock_general, stock_venta_publico, price, active }
 const MIN_SEARCH_CHARS = 2;
 let currentProductIds = [];
@@ -254,7 +259,7 @@ function withTimeout(promise, timeoutMs, timeoutMessage) {
 }
 
 async function requireAuthWithTimeout() {
-  const defaultMessage = `Escribe al menos ${MIN_SEARCH_CHARS} letras para buscar productos.`;
+  const defaultMessage = stockLoadHintMessage();
   const slowMessage = "Conexión lenta: validando sesión en segundo plano.";
   let slowNoticeTimer = setTimeout(() => {
     if (msg) msg.textContent = slowMessage;
@@ -522,6 +527,98 @@ async function searchProductsByName(term, { signal } = {}) {
   return (res.data || []).map((p) => p.id).filter(Boolean);
 }
 
+async function searchProductsBySupplier(supplierValue, { signal } = {}) {
+  if (!supplierValue) return [];
+
+  let query = supabase
+    .from("products")
+    .select("id, name")
+    .neq("status", "archived")
+    .order("name", { ascending: true })
+    .limit(SUPPLIER_LOAD_LIMIT);
+
+  if (supplierValue === SUPPLIER_FILTER_NONE) {
+    query = query.is("supplier_id", null);
+  } else {
+    query = query.eq("supplier_id", supplierValue);
+  }
+
+  const res = await wrapSupabase(() => query, { signal, label: "stock.search.supplier" });
+  if (res.aborted) return [];
+
+  if (res.error) {
+    const kind = res.kind;
+    if (kind === FYL_ERROR_KIND.NETWORK || kind === FYL_ERROR_KIND.SERVER) {
+      throw Object.assign(new Error(res.error.message || "network"), { kind });
+    }
+    console.error("Error buscando productos por proveedor:", res.error, "kind:", kind);
+    msg.textContent = "Error al filtrar por proveedor.";
+    return [];
+  }
+
+  return (res.data || []).map((p) => p.id).filter(Boolean);
+}
+
+async function resolveProductIdsForStockLoad({ signal } = {}) {
+  const term = String(q?.value || "").trim();
+  const supplier = fSupplier?.value || "";
+  const hasTerm = term.length >= MIN_SEARCH_CHARS;
+  const hasSupplier = Boolean(supplier);
+
+  if (!hasTerm && !hasSupplier) {
+    return { productIds: [], hasCriteria: false };
+  }
+
+  let idsByTerm = null;
+  let idsBySupplier = null;
+
+  if (hasTerm) idsByTerm = await searchProductsByName(term, { signal });
+  if (hasSupplier) idsBySupplier = await searchProductsBySupplier(supplier, { signal });
+
+  if (hasTerm && hasSupplier) {
+    const supplierSet = new Set(idsBySupplier);
+    return { productIds: idsByTerm.filter((id) => supplierSet.has(id)), hasCriteria: true };
+  }
+  if (hasTerm) return { productIds: idsByTerm, hasCriteria: true };
+  return { productIds: idsBySupplier, hasCriteria: true };
+}
+
+function stockLoadHintMessage() {
+  return `Escribe al menos ${MIN_SEARCH_CHARS} letras o elegí un proveedor para ver productos.`;
+}
+
+function fillSupplierSelectOptions(select, suppliers) {
+  if (!select) return;
+  const current = select.value;
+  const base =
+    select.id === "f-supplier"
+      ? `<option value="">Proveedor: todos</option><option value="${SUPPLIER_FILTER_NONE}">Sin proveedor</option>`
+      : `<option value="">Sin proveedor</option>`;
+  select.innerHTML =
+    base +
+    suppliers
+      .map((s) => `<option value="${s.id}">${String(s.name || s.code || s.id)}</option>`)
+      .join("");
+  if (current && [...select.options].some((o) => o.value === current)) {
+    select.value = current;
+  }
+}
+
+async function loadSuppliersForFilter() {
+  try {
+    const { data, error } = await supabase.from("suppliers").select("id, name, code").order("name");
+    if (error) {
+      console.warn("No se pudieron cargar proveedores para stock:", error.message);
+      return;
+    }
+    const suppliers = Array.isArray(data) ? data : [];
+    fillSupplierSelectOptions(fSupplier, suppliers);
+    fillSupplierSelectOptions(document.getElementById("supplier-select"), suppliers);
+  } catch (e) {
+    console.warn("Error cargando proveedores para stock:", e);
+  }
+}
+
 function isBadRequestError(error) {
   const message = String(error?.message || "").toLowerCase();
   const status = String(error?.status || "");
@@ -569,7 +666,7 @@ async function load(productIds = [], { signal } = {}) {
     pendingChanges.clear();
     setPendingCount();
     render();
-    msg.textContent = `Escribe al menos ${MIN_SEARCH_CHARS} letras para buscar productos.`;
+    msg.textContent = stockLoadHintMessage();
     return true;
   }
 
@@ -585,7 +682,7 @@ async function load(productIds = [], { signal } = {}) {
   const variantsRes = await wrapSupabase(
     () => supabase
       .from("product_variants")
-      .select("id, product_id, sku, color, price, active, products(id, name, category, status, created_at, handle)")
+      .select("id, product_id, sku, color, price, active, products(id, name, category, status, created_at, handle, supplier_id)")
       .in("product_id", ids)
       .order("sku", { ascending: true }),
     { retries: 1, signal, label: "stock.load.variants" }
@@ -618,6 +715,7 @@ async function load(productIds = [], { signal } = {}) {
   console.log(`✅ Variantes válidas (excluyendo archivados): ${validVariants.length}`);
   if (validVariants.length === 0) {
     allData = [];
+    productMainImageUrls.clear();
     render();
     msg.textContent = "No se encontraron variantes para los productos buscados.";
     updateLowAlertBadge();
@@ -881,6 +979,8 @@ async function load(productIds = [], { signal } = {}) {
   
   // Log resumido
   console.log(`📊 ${allData.length} filas creadas (${validVariants.length} variantes)`);
+
+  await loadProductMainImages(validVariants, { signal });
   
   populateFilters(allData);
   render();
@@ -894,6 +994,94 @@ async function load(productIds = [], { signal } = {}) {
     console.warn("No se pudo cargar contador de incompletos:", err);
   });
   return true;
+}
+
+function stockImageThumbUrl(img) {
+  if (!img) return "";
+  if (img.public_id?.trim()) {
+    return `https://res.cloudinary.com/${STOCK_CLOUDINARY_CLOUD}/image/upload/f_auto,q_auto,c_scale,w_200/${img.public_id.trim()}`;
+  }
+  const url = img.secure_url || img.url || "";
+  if (!url) return "";
+  if (url.includes("res.cloudinary.com") && url.includes("/image/upload/")) {
+    if (url.includes("/upload/f_") || url.includes("/upload/v")) {
+      if (!url.includes("w_200") && !url.includes("w_")) {
+        return url.replace("/upload/", "/upload/f_auto,q_auto,c_scale,w_200/");
+      }
+      return url.replace(/w_\d+/, "w_200");
+    }
+    return url.replace("/upload/", "/upload/f_auto,q_auto,c_scale,w_200/");
+  }
+  return url;
+}
+
+async function loadProductMainImages(validVariants, { signal } = {}) {
+  productMainImageUrls.clear();
+  const variantIds = validVariants.map((v) => v.id).filter(Boolean);
+  if (variantIds.length === 0) return;
+
+  const variantToProduct = new Map();
+  validVariants.forEach((v) => {
+    if (v.id && v.product_id) variantToProduct.set(v.id, v.product_id);
+  });
+
+  const allImages = [];
+  const batchSize = 100;
+  for (let i = 0; i < variantIds.length; i += batchSize) {
+    if (signal?.aborted) return;
+    const batch = variantIds.slice(i, i + batchSize);
+    const { data, error } = await supabase
+      .from("variant_images")
+      .select("variant_id, url, secure_url, public_id, position, is_main")
+      .in("variant_id", batch)
+      .order("position", { ascending: true });
+    if (error) {
+      console.warn("Error cargando imágenes de stock:", error.message);
+      continue;
+    }
+    if (data?.length) allImages.push(...data);
+  }
+
+  const byProduct = new Map();
+  allImages.forEach((img) => {
+    const productId = variantToProduct.get(img.variant_id);
+    if (!productId) return;
+    if (!byProduct.has(productId)) byProduct.set(productId, []);
+    byProduct.get(productId).push(img);
+  });
+
+  byProduct.forEach((images, productId) => {
+    const sorted = [...images].sort((a, b) => {
+      const aMain = a.is_main ? 0 : 1;
+      const bMain = b.is_main ? 0 : 1;
+      if (aMain !== bMain) return aMain - bMain;
+      return (a.position || 999) - (b.position || 999);
+    });
+    const thumb = stockImageThumbUrl(sorted[0]);
+    if (thumb) productMainImageUrls.set(String(productId), thumb);
+  });
+}
+
+function closeStockImagePreview() {
+  const popover = document.getElementById("stock-image-preview-popover");
+  if (!popover) return;
+  popover.classList.remove("show");
+  popover.setAttribute("aria-hidden", "true");
+  popover.removeAttribute("data-product-id");
+  document.removeEventListener("click", onStockImagePreviewOutsideClick, true);
+  document.removeEventListener("keydown", onStockImagePreviewEsc, true);
+}
+
+function onStockImagePreviewOutsideClick(e) {
+  const popover = document.getElementById("stock-image-preview-popover");
+  if (!popover) return;
+  if (popover.contains(e.target)) return;
+  if (e.target.closest?.(".stock-image-preview-btn")) return;
+  closeStockImagePreview();
+}
+
+function onStockImagePreviewEsc(e) {
+  if (e.key === "Escape") closeStockImagePreview();
 }
 
 function populateFilters(rows) {
@@ -922,26 +1110,36 @@ function populateFilters(rows) {
 
 function applyFilters(rows) {
   const term = (q.value || "").toLowerCase().trim();
-  const cat = fCategory.value || "";
-  const color = fColor.value || "";
-  const size = fSize.value || "";
-  const active = fActive.value;
-  const onlyLow = fLow.checked;
-  
-  // Si no hay ningún filtro activo, no mostrar nada
-  const hasAnyFilter = term || cat || color || size || active || onlyLow;
-  if (!hasAnyFilter) {
+  const cat = fCategory?.value || "";
+  const color = fColor?.value || "";
+  const size = fSize?.value || "";
+  const active = fActive?.value;
+  const supplier = fSupplier?.value || "";
+  const onlyLow = fLow?.checked;
+  const hasTerm = term.length >= MIN_SEARCH_CHARS;
+  const hasLoadCriteria = hasTerm || Boolean(supplier);
+  const hasSecondaryFilter = cat || color || size || active || onlyLow;
+
+  if (!hasLoadCriteria && !hasSecondaryFilter) {
     return [];
   }
-  
+
   // IMPORTANTE: Incluir TODOS los talles, incluso con stock 0
   // El filtro solo debe excluir filas que no coincidan con los criterios de búsqueda,
   // NO debe excluir filas por tener stock 0 (excepto cuando se activa el filtro "Solo bajo stock")
   return rows.filter((r) => {
     // Filtro por término de búsqueda (solo nombre de producto)
-    if (term) {
+    if (hasTerm) {
       const productName = r.products?.name;
       if (!productName || !String(productName).toLowerCase().includes(term)) {
+        return false;
+      }
+    }
+    if (supplier) {
+      const productSupplierId = r.products?.supplier_id ?? null;
+      if (supplier === SUPPLIER_FILTER_NONE) {
+        if (productSupplierId != null) return false;
+      } else if (String(productSupplierId) !== String(supplier)) {
         return false;
       }
     }
@@ -1084,6 +1282,7 @@ function groupByProduct(rows) {
 }
 
 function render() {
+  closeStockImagePreview();
   if (tbody) tbody.innerHTML = "";
   if (!productsContainer) return;
   
@@ -1091,21 +1290,25 @@ function render() {
   const rows = applyFilters(allData);
   
   // Verificar si hay filtros activos
-  const term = (q.value || "").toLowerCase().trim();
-  const cat = fCategory.value || "";
-  const color = fColor.value || "";
-  const size = fSize.value || "";
-  const active = fActive.value;
-  const onlyLow = fLow.checked;
-  const hasAnyFilter = term || cat || color || size || active || onlyLow;
-  
+  const term = (q?.value || "").toLowerCase().trim();
+  const cat = fCategory?.value || "";
+  const color = fColor?.value || "";
+  const size = fSize?.value || "";
+  const active = fActive?.value;
+  const supplier = fSupplier?.value || "";
+  const onlyLow = fLow?.checked;
+  const hasTerm = term.length >= MIN_SEARCH_CHARS;
+  const hasLoadCriteria = hasTerm || Boolean(supplier);
+  const hasSecondaryFilter = cat || color || size || active || onlyLow;
+  const hasAnyFilter = hasLoadCriteria || hasSecondaryFilter;
+
   if (rows.length === 0) {
     if (noResults) {
       noResults.style.display = "block";
       if (hasAnyFilter) {
         noResults.innerHTML = "<p>No se encontraron productos con los filtros aplicados.</p>";
       } else {
-        noResults.innerHTML = "<p>Ingresa un término de búsqueda o aplica un filtro para ver los productos.</p>";
+        noResults.innerHTML = "<p>Ingresa un término de búsqueda o elegí un proveedor para ver los productos.</p>";
       }
     }
     return;
@@ -1129,6 +1332,12 @@ function render() {
         <div class="product-card-info">
           <div class="product-card-title">
             <span>${productData.product.name || "Sin nombre"}</span>
+            <button type="button" class="stock-image-preview-btn" title="Ver imagen principal" aria-label="Ver imagen principal del producto" onclick="event.stopPropagation(); toggleStockImagePreview('${productData.product.id}', this)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <circle cx="11" cy="11" r="7"></circle>
+                <line x1="16.5" y1="16.5" x2="21" y2="21"></line>
+              </svg>
+            </button>
             <button class="stock-history-btn" onclick="event.stopPropagation(); showStockHistory('${productData.product.id}', '${productData.product.name || "Sin nombre"}')" title="Ver historial de stock">
               Historial
             </button>
@@ -1342,7 +1551,7 @@ function setStockLoadingState(isLoading) {
       if (!isStockUiReady) {
         isStockUiReady = true;
         if (msg) {
-          msg.textContent = `Escribe al menos ${MIN_SEARCH_CHARS} letras para buscar productos.`;
+          msg.textContent = stockLoadHintMessage();
         }
         if (stockLoadingOverlay) {
           stockLoadingOverlay.classList.add("hidden");
@@ -1936,6 +2145,43 @@ async function applyMobileWizardAndSave() {
 }
 
 // Funciones globales para toggle
+window.toggleStockImagePreview = function (productId, anchorBtn) {
+  const popover = document.getElementById("stock-image-preview-popover");
+  const img = document.getElementById("stock-image-preview-img");
+  const empty = document.getElementById("stock-image-preview-empty");
+  if (!popover || !img || !anchorBtn) return;
+
+  const productKey = String(productId);
+  const wasOpen = popover.classList.contains("show") && popover.dataset.productId === productKey;
+  closeStockImagePreview();
+  if (wasOpen) return;
+
+  const url = productMainImageUrls.get(productKey);
+  popover.dataset.productId = productKey;
+  if (url) {
+    img.src = url;
+    img.alt = "Imagen principal del producto";
+    img.hidden = false;
+    if (empty) empty.hidden = true;
+  } else {
+    img.removeAttribute("src");
+    img.hidden = true;
+    if (empty) empty.hidden = false;
+  }
+
+  const rect = anchorBtn.getBoundingClientRect();
+  const popoverWidth = 196;
+  popover.style.top = `${Math.min(rect.bottom + 6, window.innerHeight - 280)}px`;
+  popover.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - popoverWidth - 8))}px`;
+  popover.classList.add("show");
+  popover.setAttribute("aria-hidden", "false");
+
+  setTimeout(() => {
+    document.addEventListener("click", onStockImagePreviewOutsideClick, true);
+    document.addEventListener("keydown", onStockImagePreviewEsc, true);
+  }, 0);
+};
+
 window.toggleProductCard = function(productId) {
   const card = document.querySelector(`[data-product-id="${productId}"]`);
   const variantsContainer = document.getElementById(`variants-${productId}`);
@@ -3184,8 +3430,7 @@ function discardAll() {
   render();
 }
 
-async function runSearchByTerm(term) {
-  const trimmedTerm = String(term || "").trim();
+async function runStockLoad() {
   const requestId = ++activeSearchRequest;
 
   // — Abort de la búsqueda anterior, scope propio para esta invocación —
@@ -3194,14 +3439,17 @@ async function runSearchByTerm(term) {
   _stockSearchAbortScope = myScope;
   const signal = myScope.signal;
 
-  if (trimmedTerm.length < MIN_SEARCH_CHARS) {
+  const { productIds, hasCriteria } = await resolveProductIdsForStockLoad({ signal });
+  if (requestId !== activeSearchRequest || signal.aborted) return;
+
+  if (!hasCriteria) {
     currentProductIds = [];
     dataLoaded = false;
     allData = [];
     pendingChanges.clear();
     setPendingCount();
     render();
-    msg.textContent = `Escribe al menos ${MIN_SEARCH_CHARS} letras para buscar productos.`;
+    msg.textContent = stockLoadHintMessage();
     return;
   }
 
@@ -3209,10 +3457,20 @@ async function runSearchByTerm(term) {
   loadInProgress = true;
 
   try {
-    const productIds = await searchProductsByName(trimmedTerm, { signal });
     if (requestId !== activeSearchRequest || signal.aborted) return;
 
     currentProductIds = productIds;
+    if (productIds.length === 0) {
+      dataLoaded = true;
+      allData = [];
+      pendingChanges.clear();
+      setPendingCount();
+      populateFilters([]);
+      render();
+      msg.textContent = "No se encontraron productos con los criterios seleccionados.";
+      return;
+    }
+
     const ok = await withTimeout(
       load(productIds, { signal }),
       SEARCH_LOAD_TIMEOUT_MS,
@@ -3224,10 +3482,8 @@ async function runSearchByTerm(term) {
     if (requestId !== activeSearchRequest) return; // resultado de búsqueda vieja — ignorar
     const kind = searchError?.kind || classifyError(searchError);
     if (kind === FYL_ERROR_KIND.NETWORK || kind === FYL_ERROR_KIND.SERVER) {
-      // Error de red: banner informativo, sin pisar la lista con "sin resultados".
       msg.textContent = "Sin conexión. Verificá tu red y toca Recargar.";
     } else {
-      // Timeout del withTimeout u otro error: mostrar el mensaje del error.
       msg.textContent = searchError?.message || "Error al cargar resultados de búsqueda.";
     }
     console.error("Error en búsqueda de stock:", searchError, "kind:", kind);
@@ -3236,11 +3492,17 @@ async function runSearchByTerm(term) {
   }
 }
 
+async function runSearchByTerm(term) {
+  void term;
+  await runStockLoad();
+}
+
 reloadBtn.addEventListener("click", async () => {
   if (!isStockUiReady) return;
-  const term = (q.value || "").trim();
-  if (term.length >= MIN_SEARCH_CHARS) {
-    await runSearchByTerm(term);
+  const term = (q?.value || "").trim();
+  const supplier = fSupplier?.value || "";
+  if (term.length >= MIN_SEARCH_CHARS || supplier) {
+    await runStockLoad();
     return;
   }
 
@@ -3250,7 +3512,7 @@ reloadBtn.addEventListener("click", async () => {
   pendingChanges.clear();
   setPendingCount();
   render();
-  msg.textContent = `Escribe al menos ${MIN_SEARCH_CHARS} letras para buscar productos.`;
+  msg.textContent = stockLoadHintMessage();
 });
 
 q.addEventListener("input", () => {
@@ -3285,11 +3547,15 @@ const handleFilterChange = () => {
   }, 120);
 };
 
-fCategory.addEventListener("change", handleFilterChange);
-fColor.addEventListener("change", handleFilterChange);
-fSize.addEventListener("change", handleFilterChange);
-fActive.addEventListener("change", handleFilterChange);
-fLow.addEventListener("change", handleFilterChange);
+fCategory?.addEventListener("change", handleFilterChange);
+fColor?.addEventListener("change", handleFilterChange);
+fSize?.addEventListener("change", handleFilterChange);
+fActive?.addEventListener("change", handleFilterChange);
+fLow?.addEventListener("change", handleFilterChange);
+fSupplier?.addEventListener("change", () => {
+  if (!isStockUiReady && q?.disabled) return;
+  runStockLoad();
+});
 // REMOVIDOS: Event listeners duplicados que causaban múltiples renders
 // fColor.addEventListener("change", render);
 // fSize.addEventListener("change", render);
@@ -3468,7 +3734,8 @@ async function bootstrapStockUi() {
     // Verificar permisos en paralelo, sin bloquear el arranque inicial
     applyStockPermissions().catch((err) => console.warn("applyStockPermissions async:", err));
     await loadProductNames();
-    msg.textContent = `Escribe al menos ${MIN_SEARCH_CHARS} letras para buscar productos.`;
+    await loadSuppliersForFilter();
+    msg.textContent = stockLoadHintMessage();
     isStockUiReady = true;
   } catch (initError) {
     console.error("Error inicializando stock UI:", initError);

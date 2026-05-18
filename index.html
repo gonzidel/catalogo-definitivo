@@ -1224,6 +1224,18 @@
 
   <!-- Scripts esenciales -->
   <script src="/config.prod.js"></script>
+  <script>
+    (function () {
+      try {
+        if (/(?:^|[&?])curated_banner=1(?:&|$)/.test(location.search || "")) {
+          window.FYL_CURATED_BANNER_V1 = true;
+          localStorage.setItem("FYL_CURATED_BANNER_V1", "1");
+        } else if (localStorage.getItem("FYL_CURATED_BANNER_V1") === "1") {
+          window.FYL_CURATED_BANNER_V1 = true;
+        }
+      } catch (_e) {}
+    })();
+  </script>
   <!-- Vendor Supabase (IIFE same-origin: window.fylSupabase.createClient). defer => corre antes que los modules. -->
   <script defer src="scripts/vendor/supabase-js.bundle.min.js?v=m260514"></script>
   <script type="module" src="scripts/boot-telemetry.js?v=m260514"></script>
@@ -1244,7 +1256,9 @@
   <script type="module" src="scripts/banner.js?v=m260514"></script>
   <script type="module" src="scripts/size-filter.js?v=m260514"></script>
   <script type="module" src="scripts/fyl-originals-banner.js?v=m260514"></script>
-  <script type="module" src="scripts/custom-banner.js?v=m260514"></script>
+  <!-- Legacy tag-banner: solo si FYL_CURATED_BANNER_V1 !== true (ver inline bootstrap) -->
+  <script type="module" src="scripts/fyl-legacy-banner-loader.js?v=m260514"></script>
+  <script type="module" src="scripts/curated-banner.js?v=m260514"></script>
   <script type="module" src="scripts/como-comprar.js?v=m260514"></script>
   <script type="module" src="scripts/ui/bottom-sheet.js?v=m260514"></script>
   <!-- [PERF] Scripts diferidos: se cargan despues del primer render del catalogo -->

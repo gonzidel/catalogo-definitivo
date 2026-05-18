@@ -2,6 +2,11 @@
 import { supabase } from "../scripts/supabase-client.js";
 import { preloadAuthState, can, isAdminUser } from "./auth-state.js";
 import { isSuperAdmin } from "./permissions-helper.js";
+import {
+  logCommercialTagsCleanup,
+  splitCommercialTags,
+  warnDetallesSimilitudFromTagNames,
+} from "../scripts/tag-normalize.js";
 
 console.log("🔧 products.js cargado");
 
@@ -4192,25 +4197,122 @@ async function loadTags2(tag1Id) {
   return error ? [] : (data || []);
 }
 
-// Cargar tags3 de todos los tags2 que pertenecen al tags1 seleccionado
+// Cargar tags3 de todos los tags2 que pertenecen al tags1 seleccionado (legacy)
 async function loadTags3(tag1Id) {
   if (!tag1Id) return [];
-  // Primero obtener todos los tags2 del tags1
   const { data: tags2, error: err2 } = await supabase
     .from("tags")
     .select("id")
     .eq("parent_id", tag1Id)
     .eq("level", 2);
   if (err2 || !tags2 || tags2.length === 0) return [];
-  const tag2Ids = tags2.map(t => t.id);
-  // Luego obtener todos los tags3 de esos tags2
+  const tag2Ids = tags2.map((t) => t.id);
   const { data, error } = await supabase
     .from("tags")
     .select("id, name")
     .in("parent_id", tag2Ids)
     .eq("level", 3)
     .order("name");
-  return error ? [] : (data || []);
+  return error ? [] : data || [];
+}
+
+/** Todos los Tags3 de la categoría del producto (banner/similitud pueden usar cualquiera). */
+async function loadTags3ByCategory(category) {
+  const cat = category || getProductCategory();
+  const { data, error } = await supabase
+    .from("tags")
+    .select("id, name")
+    .eq("level", 3)
+    .eq("category", cat)
+    .order("name");
+  return error ? [] : data || [];
+}
+
+/**
+ * Parent_id para crear Tags3: Tags2 elegido → primer Tags2 del Tags1 → cualquier Tags2 de la categoría.
+ */
+async function resolveParentIdForNewTag3() {
+  if (selectedTag2Id) return selectedTag2Id;
+  if (selectedTag1Id) {
+    const tags2 = await loadTags2(selectedTag1Id);
+    if (tags2.length) return tags2[0].id;
+  }
+  const category = getProductCategory();
+  const { data, error } = await supabase
+    .from("tags")
+    .select("id")
+    .eq("level", 2)
+    .eq("category", category)
+    .order("name")
+    .limit(1);
+  if (error) console.warn("resolveParentIdForNewTag3:", error);
+  return data?.[0]?.id || null;
+}
+
+/** Crea Tags3 (o reutiliza duplicado) y lo asigna a detalles y/o jerarquía (máx 2). */
+async function createTag3AndAssign(
+  name,
+  { addToProductTags = true, addToDetails = true } = {}
+) {
+  const trimmed = String(name ?? "").trim();
+  if (!trimmed) {
+    alert("Escribí un nombre para el tag");
+    return null;
+  }
+  const category = getProductCategory();
+  const parentId = await resolveParentIdForNewTag3();
+  if (!parentId) {
+    alert(
+      "Para crear un Tags3 hace falta al menos un Tags2 en esta categoría.\n\n" +
+        "Creá Tags1 y Tags2 en la sección de arriba."
+    );
+    return null;
+  }
+
+  const duplicate = await checkDuplicateTag(trimmed, 3, category, parentId);
+  const tag =
+    duplicate ||
+    (await createTag(trimmed, 3, category, parentId));
+
+  if (!tag) return null;
+
+  if (addToDetails && !selectedDetailsIds.includes(tag.id)) {
+    selectedDetailsIds.push(tag.id);
+  }
+  if (
+    addToProductTags &&
+    !selectedTag3Ids.includes(tag.id) &&
+    selectedTag3Ids.length < 2
+  ) {
+    selectedTag3Ids.push(tag.id);
+  } else if (addToProductTags && selectedTag3Ids.length >= 2) {
+    alert(
+      `El tag "${tag.name}" se agregó a Detalles. En la jerarquía solo caben 2 Tags3; quitá uno arriba si querés asignarlo también ahí.`
+    );
+  }
+
+  await renderTags3();
+  await renderDetailsList();
+  return tag;
+}
+
+async function refreshTag3CreatePlaceholder() {
+  if (!tag3New) return;
+  const parentId = await resolveParentIdForNewTag3();
+  tag3New.placeholder = parentId
+    ? "Nuevo Tags3 (ej. Frio)"
+    : "Creá Tags2 en la categoría primero";
+}
+
+function restoreTag3MultiSelect() {
+  if (!tag3Select) return;
+  Array.from(tag3Select.options).forEach((opt) => {
+    if (!opt.value || opt.value.startsWith("DELETE:")) {
+      opt.selected = false;
+      return;
+    }
+    opt.selected = selectedTag3Ids.includes(opt.value);
+  });
 }
 
 // Normalizar nombre para comparación (case-insensitive, sin espacios extra)
@@ -4472,8 +4574,21 @@ async function renderTags3() {
     renderTag3Chips();
     return;
   }
-  // Cargar todos los tags3 de todos los tags2 del tags1
-  const tags3 = await loadTags3(selectedTag1Id);
+  const category = getProductCategory();
+  let tags3 = await loadTags3ByCategory(category);
+  const knownIds = new Set(tags3.map((t) => t.id));
+  const missingSelected = selectedTag3Ids.filter((id) => !knownIds.has(id));
+  if (missingSelected.length) {
+    const { data: extra } = await supabase
+      .from("tags")
+      .select("id, name")
+      .in("id", missingSelected);
+    if (extra?.length) {
+      tags3 = [...tags3, ...extra].sort((a, b) =>
+        a.name.localeCompare(b.name, "es", { sensitivity: "base" })
+      );
+    }
+  }
   tag3Select.innerHTML = "";
   tags3.forEach(tag => {
     const opt = document.createElement("option");
@@ -4500,10 +4615,11 @@ async function renderTags3() {
   }
   
   tag3Select.disabled = false;
-  // Mostrar inputs de creación si hay tags2 seleccionado y menos de 2 tags3
-  if (selectedTag2Id && selectedTag3Ids.length < 2) {
+  restoreTag3MultiSelect();
+  if (selectedTag1Id && selectedTag3Ids.length < 2) {
     tag3New.style.display = "block";
     tag3Create.style.display = "block";
+    refreshTag3CreatePlaceholder();
   } else {
     tag3New.style.display = "none";
     tag3Create.style.display = "none";
@@ -4699,6 +4815,7 @@ async function renderDetailsList() {
   
   // Re-renderizar highlights después de actualizar details
   renderHighlights();
+  auditDetallesSimilitudSelection();
 }
 
 // Renderizar highlights como chips (una sola query)
@@ -4767,6 +4884,7 @@ function handleDetailToggle(tag3Id, isChecked) {
     }
   }
   renderDetailsList(); // Re-render para actualizar botones ⭐
+  auditDetallesSimilitudSelection();
 }
 
 // Handler para toggle de highlight (botón ⭐)
@@ -4795,96 +4913,192 @@ function handleHighlightToggle(tag3Id) {
   renderHighlights(); // Re-render highlights
 }
 
-// Guardar details y highlights
-async function saveDetailsAndHighlights(productId) {
+/** Observabilidad: límite DetallesSimilitud en catálogo (no bloquea guardado). */
+function auditDetallesSimilitudSelection() {
   const statusEl = document.getElementById("details-highlights-status");
-  
-  if (!productId) {
-    statusEl.textContent = "Error: No hay producto cargado";
-    statusEl.style.color = "#c00";
+  if (!statusEl || !Array.isArray(availableTags3Cache)) return;
+
+  const names = selectedDetailsIds
+    .map((id) => availableTags3Cache.find((t) => t.id === id)?.name)
+    .filter(Boolean);
+  const sku = (document.getElementById("name")?.value || "").trim();
+
+  const result = warnDetallesSimilitudFromTagNames(names, {
+    context: "admin_products",
+    sku,
+    productId: currentProductId,
+  });
+
+  if (result.warn) {
+    statusEl.textContent = `⚠ ${result.message}`;
+    statusEl.style.color = "#b45309";
     return;
   }
-  
-  // Validar highlights (máx 2)
+
+  if (statusEl.textContent?.startsWith("⚠")) {
+    statusEl.textContent = "";
+    statusEl.style.color = "inherit";
+  }
+}
+
+/** Valida detalles/destacados antes de persistir. */
+function validateDetailsAndHighlightsSelection() {
   if (selectedHighlightsIds.length > 2) {
-    statusEl.textContent = "Error: Máximo 2 highlights permitidos";
-    statusEl.style.color = "#c00";
-    return;
+    return { ok: false, error: "Máximo 2 highlights permitidos" };
   }
-  
-  // Validar que highlights estén en details
-  const invalidHighlights = selectedHighlightsIds.filter(id => !selectedDetailsIds.includes(id));
+  const invalidHighlights = selectedHighlightsIds.filter(
+    (id) => !selectedDetailsIds.includes(id)
+  );
   if (invalidHighlights.length > 0) {
-    statusEl.textContent = "Error: Los highlights deben estar en la lista de details";
-    statusEl.style.color = "#c00";
-    return;
+    return {
+      ok: false,
+      error: "Los highlights deben estar en la lista de details",
+    };
   }
-  
-  statusEl.textContent = "Guardando...";
-  statusEl.style.color = "inherit";
-  
+  return { ok: true };
+}
+
+/** Persiste product_tag_details (detalles comerciales / similitud). */
+async function syncProductCommercialDetails(productId) {
+  const validation = validateDetailsAndHighlightsSelection();
+  if (!validation.ok) {
+    return { ok: false, error: validation.error };
+  }
+
+  auditDetallesSimilitudSelection();
+
+  const detailNamesForAudit = selectedDetailsIds
+    .map((id) => availableTags3Cache.find((t) => t.id === id)?.name)
+    .filter(Boolean);
+  for (const name of detailNamesForAudit) {
+    const split = splitCommercialTags(name, {
+      context: "admin_products_save",
+      sku: (document.getElementById("name")?.value || "").trim(),
+    });
+    if (
+      split.tags.length > 1 ||
+      split.duplicatesRemoved.length ||
+      /[,;|]/.test(String(name))
+    ) {
+      logCommercialTagsCleanup({
+        context: "admin_products_tag_name_contaminado",
+        productId,
+        tags_originales: name,
+        tags_limpiados: split.tags,
+        tags_descartados: split.discarded,
+        duplicates_removed: split.duplicatesRemoved,
+        nota: "El nombre en tabla tags parece CSV compuesto; guardar solo tag3_id individuales",
+      });
+    }
+  }
+
   try {
-    // 1. Guardar Details (sincronización exacta)
     const { data: currentDetails, error: detailsError } = await supabase
       .from("product_tag_details")
       .select("tag3_id")
       .eq("product_id", productId);
-    
+
     if (detailsError) {
       throw new Error(`Error cargando details: ${detailsError.message}`);
     }
-    
-    const currentIds = new Set((currentDetails || []).map(d => d.tag3_id));
+
+    const currentIds = new Set((currentDetails || []).map((d) => d.tag3_id));
     const newIds = new Set(selectedDetailsIds);
-    
-    // Insertar nuevos
-    const toInsert = selectedDetailsIds.filter(id => !currentIds.has(id));
+
+    const toInsert = selectedDetailsIds.filter((id) => !currentIds.has(id));
     if (toInsert.length > 0) {
       const { error: insertError } = await supabase
         .from("product_tag_details")
-        .insert(toInsert.map(tag3_id => ({ product_id: productId, tag3_id })));
-      
+        .insert(toInsert.map((tag3_id) => ({ product_id: productId, tag3_id })));
+
       if (insertError) {
         throw new Error(`Error insertando details: ${insertError.message}`);
       }
     }
-    
-    // Eliminar removidos
-    const toDelete = Array.from(currentIds).filter(id => !newIds.has(id));
+
+    const toDelete = Array.from(currentIds).filter((id) => !newIds.has(id));
     if (toDelete.length > 0) {
       const { error: deleteError } = await supabase
         .from("product_tag_details")
         .delete()
         .eq("product_id", productId)
         .in("tag3_id", toDelete);
-      
+
       if (deleteError) {
         throw new Error(`Error eliminando details: ${deleteError.message}`);
       }
     }
-    
-    // 2. Guardar Highlights
+
+    return { ok: true };
+  } catch (error) {
+    console.error("Error sincronizando detalles comerciales:", error);
+    return { ok: false, error: error.message || String(error) };
+  }
+}
+
+/** tag3_ids en product_tags: chips jerárquicos + destacados (máx 2 en UI). */
+function mergedProductTag3IdsForSave() {
+  return [...new Set([...selectedTag3Ids, ...selectedHighlightsIds])].filter(Boolean);
+}
+
+// Guardar details y highlights (botón dedicado o saveProduct)
+async function saveDetailsAndHighlights(productId, { quiet = false } = {}) {
+  const statusEl = document.getElementById("details-highlights-status");
+
+  if (!productId) {
+    const msg = "Error: No hay producto cargado";
+    if (!quiet && statusEl) {
+      statusEl.textContent = msg;
+      statusEl.style.color = "#c00";
+    }
+    return { ok: false, error: msg };
+  }
+
+  if (!quiet && statusEl) {
+    statusEl.textContent = "Guardando...";
+    statusEl.style.color = "inherit";
+  }
+
+  const detailsResult = await syncProductCommercialDetails(productId);
+  if (!detailsResult.ok) {
+    if (!quiet && statusEl) {
+      statusEl.textContent = `Error: ${detailsResult.error}`;
+      statusEl.style.color = "#c00";
+    }
+    return detailsResult;
+  }
+
+  try {
+    const mergedTag3Ids = mergedProductTag3IdsForSave();
     const { error: highlightsError } = await supabase
       .from("product_tags")
-      .update({ 
-        tag3_ids: selectedHighlightsIds.length > 0 ? selectedHighlightsIds : null 
+      .update({
+        tag3_ids: mergedTag3Ids.length > 0 ? mergedTag3Ids : null,
       })
       .eq("product_id", productId);
-    
+
     if (highlightsError) {
       throw new Error(`Error guardando highlights: ${highlightsError.message}`);
     }
-    
-    statusEl.textContent = "✓ Guardado correctamente";
-    statusEl.style.color = "#090";
-    setTimeout(() => {
-      statusEl.textContent = "";
-    }, 3000);
-    
+
+    if (!quiet && statusEl) {
+      statusEl.textContent = "✓ Guardado correctamente";
+      statusEl.style.color = "#090";
+      setTimeout(() => {
+        if (statusEl.textContent === "✓ Guardado correctamente") {
+          statusEl.textContent = "";
+        }
+      }, 3000);
+    }
+
+    return { ok: true };
   } catch (error) {
-    console.error("Error guardando details/highlights:", error);
-    statusEl.textContent = `Error: ${error.message}`;
-    statusEl.style.color = "#c00";
+    console.error("Error guardando highlights:", error);
+    if (!quiet && statusEl) {
+      statusEl.textContent = `Error: ${error.message}`;
+      statusEl.style.color = "#c00";
+    }
+    return { ok: false, error: error.message || String(error) };
   }
 }
 
@@ -4999,41 +5213,43 @@ tag2Create?.addEventListener("click", async () => {
 });
 
 tag3Select?.addEventListener("change", async (e) => {
-  const selected = Array.from(e.target.selectedOptions).map(opt => opt.value).filter(Boolean);
-  
-  // Verificar si hay alguna opción de eliminación seleccionada
-  const deleteOption = selected.find(v => v && v.startsWith("DELETE:"));
+  const selected = Array.from(e.target.selectedOptions)
+    .map((opt) => opt.value)
+    .filter((v) => v && !v.startsWith("DELETE:"));
+
+  const deleteOption = Array.from(e.target.selectedOptions).find((opt) =>
+    opt.value.startsWith("DELETE:")
+  );
   if (deleteOption) {
-    const tagId = deleteOption.replace("DELETE:", "");
-    const selectedOption = Array.from(e.target.selectedOptions).find(opt => opt.value === deleteOption);
-    const tagName = selectedOption?.dataset?.tagName || "este tag";
+    const tagId = deleteOption.value.replace("DELETE:", "");
+    const tagName = deleteOption.dataset?.tagName || "este tag";
     const deleted = await deleteTag(tagId, tagName);
     if (deleted) {
-      // Si el tag eliminado estaba seleccionado, quitarlo de la selección
-      selectedTag3Ids = selectedTag3Ids.filter(id => id !== tagId);
+      selectedTag3Ids = selectedTag3Ids.filter((id) => id !== tagId);
       await renderTags3();
       await renderDetailsList();
     }
-    // Restaurar selección anterior
-    e.target.value = "";
-    selectedTag3Ids.forEach(id => {
-      const option = Array.from(e.target.options).find(opt => opt.value === id);
-      if (option) option.selected = true;
-    });
+    restoreTag3MultiSelect();
     return;
   }
-  
+
   if (selected.length > 2) {
     alert("Solo podés seleccionar hasta 2 Tags3");
-    e.target.value = selectedTag3Ids[0] || "";
+    restoreTag3MultiSelect();
     return;
   }
   selectedTag3Ids = selected;
+  for (const id of selected) {
+    if (!selectedDetailsIds.includes(id)) {
+      selectedDetailsIds.push(id);
+    }
+  }
   renderTag3Chips();
-  // Mostrar inputs solo si hay tags2 seleccionado y menos de 2 tags3
-  if (selectedTag2Id && selected.length < 2) {
+  renderDetailsList();
+  if (selectedTag1Id && selected.length < 2) {
     tag3New.style.display = "block";
     tag3Create.style.display = "block";
+    refreshTag3CreatePlaceholder();
   } else {
     tag3New.style.display = "none";
     tag3Create.style.display = "none";
@@ -5042,16 +5258,22 @@ tag3Select?.addEventListener("change", async (e) => {
 
 tag3Create?.addEventListener("click", async () => {
   const name = tag3New.value.trim();
-  if (!name || !selectedTag2Id || selectedTag3Ids.length >= 2) return;
-  const category = getProductCategory();
-  const tag = await createTag(name, 3, category, selectedTag2Id);
-  if (tag) {
-    selectedTag3Ids.push(tag.id);
-    tag3New.value = "";
-    tag3New.style.display = selectedTag3Ids.length >= 2 ? "none" : "block";
-    tag3Create.style.display = selectedTag3Ids.length >= 2 ? "none" : "block";
-    await renderTags3();
+  if (!name) return;
+  if (!selectedTag1Id) {
+    alert("Seleccioná Tags1 antes de crear un Tags3 en la jerarquía");
+    return;
   }
+  if (selectedTag3Ids.length >= 2) {
+    alert(
+      "Solo podés elegir hasta 2 Tags3 arriba. Para más tags usá la sección «Detalles» de abajo."
+    );
+    return;
+  }
+  const tag = await createTag3AndAssign(name, {
+    addToProductTags: true,
+    addToDetails: true,
+  });
+  if (tag) tag3New.value = "";
 });
 
 // Función para aplicar/remover prefijo "R " según la categoría
@@ -6192,12 +6414,14 @@ async function saveProduct(shouldReset = true) {
   // mediante uploadImagesToCloudinary() que guarda directamente en variant_images
 
   // 4) Sincronizar tags jerárquicos del producto (product_tags)
+  let detailsSaveWarning = "";
   try {
+    const mergedTag3Ids = mergedProductTag3IdsForSave();
     const tagPayload = {
       product_id: prodId,
       tag1_id: selectedTag1Id || null,
       tag2_id: selectedTag2Id || null,
-      tag3_ids: selectedTag3Ids.length > 0 ? selectedTag3Ids : null
+      tag3_ids: mergedTag3Ids.length > 0 ? mergedTag3Ids : null,
     };
     
     // Verificar si ya existe un registro
@@ -6236,6 +6460,13 @@ async function saveProduct(shouldReset = true) {
     }
   } catch (e) {
     console.warn("No se pudieron sincronizar tags jerárquicos", e);
+  }
+
+  // 4b) Detalles comerciales (product_tag_details) — mismo flujo que el botón dedicado
+  const detailsSave = await syncProductCommercialDetails(prodId);
+  if (!detailsSave.ok) {
+    detailsSaveWarning = ` Detalles comerciales: ${detailsSave.error}`;
+    console.warn("Detalles comerciales no guardados:", detailsSave.error);
   }
 
   currentProductId = prodId;
@@ -6298,10 +6529,13 @@ async function saveProduct(shouldReset = true) {
   if (archivedVariantsCount > 0) {
     deletionNotes.push(`${archivedVariantsCount} variante(s) archivada(s) por historial`);
   }
-  statusEl.textContent = deletionNotes.length
+  const baseSavedMsg = deletionNotes.length
     ? `Producto guardado. ${deletionNotes.join(". ")}.`
     : "Producto y variantes guardados";
-  statusEl.style.color = "#090";
+  statusEl.textContent = detailsSaveWarning
+    ? `${baseSavedMsg}${detailsSaveWarning}`
+    : baseSavedMsg;
+  statusEl.style.color = detailsSaveWarning ? "#b45309" : "#090";
   
   // Solo resetear si shouldReset es true
   if (shouldReset) {
@@ -6548,11 +6782,33 @@ highlightsContainer?.addEventListener("click", (e) => {
 const detailsSearch = document.getElementById("details-search");
 detailsSearch?.addEventListener("input", () => renderDetailsList());
 
+const detailsNew = document.getElementById("details-new");
+const detailsCreate = document.getElementById("details-create");
+detailsCreate?.addEventListener("click", async () => {
+  const name = detailsNew?.value?.trim();
+  if (!name) return;
+  const tag = await createTag3AndAssign(name, {
+    addToProductTags: selectedTag3Ids.length < 2,
+    addToDetails: true,
+  });
+  if (tag && detailsNew) {
+    detailsNew.value = "";
+    if (currentProductId) {
+      await saveDetailsAndHighlights(currentProductId, { quiet: true });
+      const statusEl = document.getElementById("details-highlights-status");
+      if (statusEl) {
+        statusEl.textContent = `✓ Detalle "${tag.name}" creado y guardado`;
+        statusEl.style.color = "#090";
+      }
+    }
+  }
+});
+
 // Botón guardar details/highlights
 const saveDetailsHighlightsBtn = document.getElementById("save-details-highlights-btn");
-saveDetailsHighlightsBtn?.addEventListener("click", () => {
+saveDetailsHighlightsBtn?.addEventListener("click", async () => {
   if (currentProductId) {
-    saveDetailsAndHighlights(currentProductId);
+    await saveDetailsAndHighlights(currentProductId);
   } else {
     alert("Primero carga o crea un producto");
   }

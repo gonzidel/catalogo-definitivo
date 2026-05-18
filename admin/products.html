@@ -192,14 +192,14 @@
               <div>
                 <label style="font-size:11px;color:#666;margin-bottom:2px;">Tags3 (Nivel 3) - Máx 2</label>
                 <select id="tag3-select" style="width:100%;padding:5px;font-size:11px" disabled multiple>
-                  <option value="">-- Primero selecciona Tags2 --</option>
+                  <option value="">-- Primero selecciona Tags1 --</option>
                 </select>
                 <input type="text" id="tag3-new" placeholder="O crear nuevo..." style="width:100%;margin-top:3px;display:none;padding:4px;font-size:11px" />
                 <button type="button" id="tag3-create" class="btn" style="margin-top:3px;display:none;width:100%;padding:4px 8px;font-size:11px">Crear Tags3</button>
                 <div id="tag3-chips" style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px;"></div>
               </div>
             </div>
-            <small class="hint">Seleccioná Tags1, luego Tags2, y finalmente hasta 2 Tags3. Los Tags3 se pueden compartir entre diferentes Tags2 del mismo Tags1.</small>
+            <small class="hint">Tags1 y Tags2 definen la jerarquía. Hasta 2 Tags3 arriba (catálogo/Filtro3). Para crear «Frio» u otro tag nuevo sin elegir Tags2, usá «Crear detalle» en la sección de abajo.</small>
           </label>
           <div style="margin-top:8px;padding:8px;background:#f0f7ff;border:1px solid #3a6df0;border-radius:4px;">
             <button type="button" id="auto-tags-btn" class="btn primary" style="width:100%;padding:8px;font-size:12px;">
@@ -218,13 +218,22 @@
           <label style="font-weight:600;font-size:12px;display:block;margin-bottom:6px;">
             Detalles (para similitud) - Ilimitados
           </label>
-          <div style="display:flex;gap:8px;margin-bottom:8px;">
+          <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
             <input 
               type="text" 
               id="details-search" 
               placeholder="Buscar detalles..." 
-              style="flex:1;padding:6px;font-size:12px;border:1px solid #ddd;border-radius:4px;"
+              style="flex:1;min-width:140px;padding:6px;font-size:12px;border:1px solid #ddd;border-radius:4px;"
             />
+            <input
+              type="text"
+              id="details-new"
+              placeholder="Crear detalle (ej. Frio)"
+              style="flex:1;min-width:140px;padding:6px;font-size:12px;border:1px solid #ddd;border-radius:4px;"
+            />
+            <button type="button" id="details-create" class="btn" style="padding:6px 12px;font-size:12px;white-space:nowrap;">
+              Crear detalle
+            </button>
           </div>
           <div 
             id="details-list" 
@@ -235,7 +244,7 @@
             </div>
           </div>
           <small class="hint" style="display:block;margin-top:4px;">
-            Estos detalles se usan para calcular similitud entre productos. Puedes seleccionar todos los que apliquen.
+            Marcá los que apliquen o creá uno nuevo (ej. Frio). Ilimitados; el banner usa Detalles y/o Tags3 del producto.
           </small>
         </div>
 

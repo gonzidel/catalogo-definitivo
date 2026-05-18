@@ -41,6 +41,11 @@ Documentos relacionados:
 - `docs/FYL-Obsidian/30-SECURITY-DEFINER-INVENTORY.md`
 - `docs/FYL-Obsidian/31-CHECKOUT-CONCURRENCY-RUNBOOK.md`
 - `docs/FYL-Obsidian/32-TECH-DEBT-RPC-SOFT-DELETE-SCHEMAS.md`
+- `doc/phase-a-reporte-deploy-2026-05-15.md` — reporte ejecutivo Fase A (PostgREST + grants).
+- `doc/hardening-fase-a-grants-2026-05-15.md` — bitácora técnica (errores, reparaciones, checklist).
+- `doc/admin-writes-audit-stock-orders-2026-05-15.md` — auditoría escrituras admin / stock / pedidos (2026-05-15).
+- `docs/FYL-Obsidian/33-FASE-A-GRANTS-COMPRAS-PUBLICACION-2026-05-15.md` — entrada Obsidian enlazada.
+- `docs/FYL-Obsidian/34-ADMIN-WRITES-STOCK-ORDERS-AUDIT-2026-05-15.md` — índice Obsidian auditoría escrituras admin.
 
 SQL/scripts creados o ajustados:
 
@@ -49,8 +54,10 @@ SQL/scripts creados o ajustados:
 - `supabase/canonical/211_anon_attack_surface_hardening.sql`
 - `supabase/canonical/212_security_definer_grants_batch1.sql`
 - `supabase/canonical/213_catalog_public_snapshot.sql`
+- `supabase/canonical/214_phase_a_revoke_anon_purchase_publication_views.sql` — Fase A: revokes anon/PUBLIC en vistas compras + publicación (2026-05-15; ver `doc/hardening-fase-a-grants-2026-05-15.md`).
 - `scripts/supabase-readonly-audit.sql`
 - `scripts/audit-edge-public-surface.mjs`
+- `scripts/phase-a-pre-grants-snapshot.sql`, `scripts/phase-a-verify-post-migration.sql`, `scripts/phase-a-verify-postgrest.mjs`, `scripts/phase-a-EXPECTED-GRANT-DIFF.txt` — Fase A grants (2026-05-15).
 - `scripts/checkout-concurrency-smoke.mjs`
 
 ## Estado Final Verificado
@@ -522,6 +529,8 @@ Refresh manual del snapshot, como admin:
 select public.rpc_refresh_catalog_public_snapshot();
 ```
 
+**UI (2026-05-15):** botón **Actualizar catálogo público** en `admin/quick-actions.html` (sesión Supabase con usuario en `public.admins`). Plan operativo: `doc/plan-catalogo-publico-snapshot-banner-2026-05-15.md`.
+
 Verificar paridad:
 
 ```sql
@@ -557,6 +566,19 @@ order by 1;
 6. Reducir `select("*")` en admin de alto payload.
 7. Diseñar soft delete antes de tocar cascades.
 8. Separar schemas: `public` mínimo, `internal/private` para lógica operativa.
+
+## Seguimiento incremental: Fase A grants (2026-05-15)
+
+Registro separado para no mezclar con el batch de 2026-05-13:
+
+- **Qué:** cierre de exposición **anon/PUBLIC** sobre `purchase_order_line_fulfillment`, `purchase_spend_by_season`, `vw_publication_events_performance`; `pg_notify` PostgREST.
+- **Bitácora (errores, TLS, orden BEFORE/AFTER, deuda authenticated):** `doc/hardening-fase-a-grants-2026-05-15.md`
+- **Reporte ejecutivo:** `doc/phase-a-reporte-deploy-2026-05-15.md`
+- **Obsidian:** `docs/FYL-Obsidian/33-FASE-A-GRANTS-COMPRAS-PUBLICACION-2026-05-15.md`
+
+**Qué queda fuera de esta fase:** analytics globales con `GRANT` a `authenticated`, RPC admin-only, cambios a `catalog_public_available_view`, Fase B `security_invoker` automática.
+
+---
 
 ## Resultado Operativo
 

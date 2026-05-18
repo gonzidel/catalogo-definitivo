@@ -335,11 +335,13 @@ export async function requirePermission(permissionKey, action = 'view', redirect
 }
 
 // Limpiar caché cuando el usuario cierra/abre sesión
-supabase.auth.onAuthStateChange((event) => {
-  if (event === 'SIGNED_OUT' || event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-    clearPermissionsCache();
-  }
-});
+if (supabase?.auth?.onAuthStateChange) {
+  supabase.auth.onAuthStateChange((event) => {
+    if (event === 'SIGNED_OUT' || event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+      clearPermissionsCache();
+    }
+  });
+}
 
 // Hacer disponible globalmente para que admin-auth.js pueda usarlo
 if (typeof window !== 'undefined') {

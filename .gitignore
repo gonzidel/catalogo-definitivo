@@ -104,3 +104,7 @@ supabase/.temp/
 
 # Salidas locales de auditorías / probes (pueden incluir metadatos sensibles)
 audit-output/
+
+# Artefactos locales de scripts (evidencia MCP, payloads, smokes)
+scripts/outputs/*
+!scripts/outputs/.gitkeep

@@ -381,6 +381,55 @@ header h1 { margin: 0; font-size: 1.5rem; }
   border-color: #CD844D;
 }
 
+.tag-filter-chips-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.tag-filter-chips-label {
+  font-size: 13px;
+  color: #666;
+  flex-shrink: 0;
+}
+
+.tag-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.tag-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px 4px 12px;
+  border-radius: 999px;
+  border: 1px solid #CD844D;
+  background: #fff;
+  color: #8a5b36;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  max-width: 100%;
+  line-height: 1.2;
+}
+
+.tag-filter-chip__remove {
+  font-size: 15px;
+  line-height: 1;
+  opacity: 0.75;
+}
+
+.tag-filter-chip:hover {
+  background: rgba(205, 132, 77, 0.15);
+}
+
 /* Evitar que las tarjetas crezcan */
 #catalogo .card {
   min-width: 0;
@@ -7620,6 +7669,26 @@ body.modal-open {
   scrollbar-width: none;
   padding: 0;
   scroll-behavior: smooth;
+  scroll-snap-type: x proximity;
+  touch-action: pan-x;
+  overscroll-behavior-x: contain;
+}
+
+.custom-banner-card--skeleton {
+  pointer-events: none;
+  cursor: default;
+  box-shadow: none;
+}
+
+.custom-banner-card--skeleton .custom-banner-card-image {
+  background: linear-gradient(90deg, #eee 0%, #f5f5f5 50%, #eee 100%);
+  background-size: 200% 100%;
+  animation: skeletonShimmer 1.2s linear infinite;
+}
+
+.custom-banner-card--disabled {
+  opacity: 0.55;
+  pointer-events: none;
 }
 
 .custom-banner-scroll::-webkit-scrollbar {
@@ -7628,6 +7697,7 @@ body.modal-open {
 
 .custom-banner-card {
   flex: 0 0 110px;
+  scroll-snap-align: start;
   background: #fff;
   border-radius: 8px;
   overflow: hidden;

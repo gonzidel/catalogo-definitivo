@@ -1,6 +1,14 @@
 // admin/quick-actions.js - Gestión de acciones rápidas
 import { requireAuth } from "./admin-auth.js";
 import { supabase } from "../scripts/supabase-client.js";
+import { initCuratedBannerAdmin } from "./curated-banner-admin.js";
+import {
+  joinCommercialTags,
+  normalizeCommercialTag,
+  normalizeTagDisplay,
+  parseTagSelectorValues,
+  splitCommercialTags,
+} from "../scripts/tag-normalize.js";
 
 await requireAuth();
 
@@ -222,9 +230,9 @@ async function loadBanner() {
       .eq("enabled", true)
       .order("order", { ascending: true })
       .limit(1)
-      .single();
+      .maybeSingle();
 
-    if (error && error.code !== 'PGRST116') {
+    if (error && error.code !== "PGRST116") {
       console.error("Error cargando banner:", error);
       bannerPreview.textContent = "Error al cargar";
       return;
@@ -386,52 +394,95 @@ async function loadCustomBanner() {
   }
 }
 
-// Cargar todos los tags únicos disponibles
-async function loadAllTags() {
-  try {
-    const { data, error } = await supabase
-      .from("catalog_public_view")
-      .select("Filtro1, Filtro2, Filtro3")
-      .eq("Mostrar", true);
+function escapeBannerTagHtml(text) {
+  return String(text ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/"/g, "&quot;");
+}
 
-    if (error) {
-      console.error("Error cargando tags:", error);
-      return [];
-    }
+/** Tags nivel 3 individuales (tabla tags), sin strings CSV compuestos. */
+async function loadBannerCommercialTagOptions() {
+  const { data, error } = await supabase
+    .from("tags")
+    .select("id, name")
+    .eq("level", 3)
+    .order("name");
 
-    if (!data || data.length === 0) {
-      return [];
-    }
-
-    // Recolectar todos los tags únicos
-    const tagsSet = new Set();
-    
-    data.forEach(item => {
-      const addTag = (t) => { if (t?.trim()) tagsSet.add(t.trim()); };
-      if (item.Filtro1) addTag(item.Filtro1);
-      if (item.Filtro2) addTag(item.Filtro2);
-      if (item.Filtro3) {
-        item.Filtro3.split(/[,;]/).forEach(part => addTag(part));
-      }
-    });
-
-    // Convertir a array y ordenar alfabéticamente
-    const tags = Array.from(tagsSet).sort((a, b) => 
-      a.localeCompare(b, 'es', { sensitivity: 'base' })
-    );
-
-    return tags;
-  } catch (error) {
-    console.error("Error en loadAllTags:", error);
+  if (error) {
+    console.error("Error cargando tags nivel 3:", error);
     return [];
   }
+
+  const seen = new Set();
+  const out = [];
+  for (const row of data || []) {
+    const rawName = String(row?.name ?? "").trim();
+    if (!rawName || /[,;|]/.test(rawName)) continue;
+    for (const display of splitCommercialTags(rawName, { silent: true }).tags) {
+      const key = normalizeCommercialTag(display);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push({ id: row.id, display });
+    }
+  }
+
+  return out.sort((a, b) =>
+    a.display.localeCompare(b.display, "es", { sensitivity: "base" })
+  );
+}
+
+function formatBannerTagsPreview(tagValue) {
+  const tags = parseTagSelectorValues(tagValue || "");
+  return tags.length ? tags.join(", ") : "-";
+}
+
+async function renderBannerTagCheckboxList(savedTagValue = "") {
+  const container = document.getElementById("custom-banner-tags-list");
+  if (!container) return;
+
+  container.innerHTML =
+    '<div style="color:#666;font-size:12px;text-align:center;padding:8px;">Cargando tags...</div>';
+
+  const savedKeys = new Set(
+    parseTagSelectorValues(savedTagValue).map((t) => normalizeCommercialTag(t))
+  );
+  const tags = await loadBannerCommercialTagOptions();
+
+  if (!tags.length) {
+    container.innerHTML =
+      '<div style="color:#666;font-size:12px;text-align:center;padding:8px;">No hay tags disponibles</div>';
+    return;
+  }
+
+  container.innerHTML = tags
+    .map((tag) => {
+      const checked = savedKeys.has(normalizeCommercialTag(tag.display))
+        ? " checked"
+        : "";
+      return `<label style="display:flex;align-items:center;gap:8px;margin:4px 0;font-size:13px;cursor:pointer;">
+        <input type="checkbox" class="banner-tag-cb" value="${escapeBannerTagHtml(tag.display)}"${checked} />
+        <span>${escapeBannerTagHtml(tag.display)}</span>
+      </label>`;
+    })
+    .join("");
+}
+
+function getSelectedBannerTagsFromUI() {
+  return parseTagSelectorValues(
+    Array.from(document.querySelectorAll(".banner-tag-cb:checked")).map(
+      (el) => el.value
+    )
+  );
 }
 
 // Actualizar preview del banner personalizado
 function updateCustomBannerPreview(banner) {
   if (banner) {
     customBannerNamePreview.textContent = banner.name || "Sin nombre";
-    customBannerValuePreview.textContent = banner.tag_value || "-";
+    customBannerValuePreview.textContent = formatBannerTagsPreview(
+      banner.tag_value || ""
+    );
     
     if (banner.enabled) {
       customBannerStatusPreview.textContent = "Habilitado";
@@ -461,37 +512,7 @@ if (btnEditCustomBanner) {
     document.getElementById("custom-banner-name").value = banner?.name || "";
     document.getElementById("custom-banner-enabled").checked = banner?.enabled !== false;
 
-    // Cargar tags y poblar el select
-    const tagSelect = document.getElementById("custom-banner-tag-value");
-    tagSelect.innerHTML = '<option value="">Cargando tags...</option>';
-    tagSelect.disabled = true;
-    
-    try {
-      const tags = await loadAllTags();
-      tagSelect.innerHTML = '<option value="">Seleccionar tag</option>';
-      
-      if (tags.length === 0) {
-        tagSelect.innerHTML = '<option value="">No hay tags disponibles</option>';
-      } else {
-        tags.forEach(tag => {
-          const option = document.createElement("option");
-          option.value = tag;
-          option.textContent = tag;
-          // Comparar normalizado para evitar problemas de mayúsculas/minúsculas
-          if (banner && banner.tag_value && 
-              banner.tag_value.trim().toLowerCase() === tag.trim().toLowerCase()) {
-            option.selected = true;
-          }
-          tagSelect.appendChild(option);
-        });
-      }
-      tagSelect.disabled = false;
-    } catch (error) {
-      console.error("Error cargando tags:", error);
-      tagSelect.innerHTML = '<option value="">Error al cargar tags</option>';
-      tagSelect.disabled = false;
-    }
-
+    await renderBannerTagCheckboxList(banner?.tag_value || "");
     customBannerModal.classList.add("active");
   });
 }
@@ -519,9 +540,23 @@ if (customBannerForm) {
   customBannerForm.addEventListener("submit", async (e) => {
     e.preventDefault();
 
+    const selectedTags = getSelectedBannerTagsFromUI();
+
+    if (selectedTags.length === 0) {
+      showCustomBannerMessage("Selecciona al menos un tag", "error");
+      return;
+    }
+
+    const tagValueToSave = joinCommercialTags(selectedTags);
+    console.log("[QuickActions] guardando banner tag_value", {
+      parsed: selectedTags,
+      normalized: selectedTags.map(normalizeCommercialTag),
+      tag_value: tagValueToSave,
+    });
+
     const bannerData = {
       name: document.getElementById("custom-banner-name").value.trim(),
-      tag_value: document.getElementById("custom-banner-tag-value").value.trim(),
+      tag_value: tagValueToSave,
       enabled: document.getElementById("custom-banner-enabled").checked,
     };
     
@@ -572,7 +607,122 @@ function showCustomBannerMessage(text, type = "success") {
   }, 3000);
 }
 
+// ========== CATÁLOGO PÚBLICO (snapshot) ==========
+const catalogSnapshotMetaEl = document.getElementById("catalog-snapshot-meta");
+const catalogSnapshotMsgEl = document.getElementById("catalog-snapshot-message");
+const btnRefreshCatalogSnapshot = document.getElementById("btn-refresh-catalog-snapshot");
+
+function showCatalogSnapshotMessage(text, type = "success") {
+  if (!catalogSnapshotMsgEl) return;
+  catalogSnapshotMsgEl.textContent = text;
+  catalogSnapshotMsgEl.className = `message ${type} show`;
+  setTimeout(() => catalogSnapshotMsgEl.classList.remove("show"), 6000);
+}
+
+async function loadCatalogSnapshotMeta() {
+  if (!catalogSnapshotMetaEl || !btnRefreshCatalogSnapshot) return;
+
+  try {
+    const { data: isAdmin, error: adminErr } = await supabase.rpc("is_admin");
+    if (adminErr) {
+      catalogSnapshotMetaEl.textContent =
+        "No se pudo verificar permisos de administrador.";
+      console.warn("[QuickActions] is_admin RPC:", adminErr);
+      return;
+    }
+    if (!isAdmin) {
+      catalogSnapshotMetaEl.textContent =
+        "Tu usuario no está en la lista de administradores (tabla admins): no podés refrescar el catálogo desde acá.";
+      btnRefreshCatalogSnapshot.disabled = true;
+      btnRefreshCatalogSnapshot.title =
+        "Solo usuarios en public.admins pueden ejecutar el refresh.";
+      return;
+    }
+
+    btnRefreshCatalogSnapshot.disabled = false;
+    btnRefreshCatalogSnapshot.title = "";
+
+    const { data: meta, error: metaErr } = await supabase
+      .from("catalog_public_snapshot_meta")
+      .select("refreshed_at, row_count")
+      .eq("id", true)
+      .maybeSingle();
+
+    if (metaErr || !meta) {
+      catalogSnapshotMetaEl.textContent =
+        metaErr?.message || "Sin datos de última actualización.";
+      return;
+    }
+
+    const when = meta.refreshed_at
+      ? new Date(meta.refreshed_at).toLocaleString("es-AR", {
+          dateStyle: "short",
+          timeStyle: "short",
+        })
+      : "—";
+    catalogSnapshotMetaEl.textContent = `Última copia: ${when} · ${meta.row_count ?? "?" } artículos-fila`;
+  } catch (e) {
+    catalogSnapshotMetaEl.textContent =
+      "Error cargando estado del catálogo público.";
+    console.warn("[QuickActions] loadCatalogSnapshotMeta:", e);
+  }
+}
+
+function parseRefreshSnapshotRpcPayload(data) {
+  if (data != null && typeof data === "object" && "row_count" in data) {
+    return { row_count: data.row_count };
+  }
+  if (typeof data === "string") {
+    try {
+      const o = JSON.parse(data);
+      if (o && typeof o.row_count === "number") return { row_count: o.row_count };
+    } catch (_) {
+      /* PostgREST a veces devuelve json ya parseado; a veces string */
+    }
+  }
+  return { row_count: null };
+}
+
+if (btnRefreshCatalogSnapshot) {
+  btnRefreshCatalogSnapshot.addEventListener("click", async () => {
+    btnRefreshCatalogSnapshot.disabled = true;
+    showCatalogSnapshotMessage("Actualizando catálogo público…", "success");
+    try {
+      const { data, error } = await supabase.rpc(
+        "rpc_refresh_catalog_public_snapshot"
+      );
+      if (error) throw error;
+      const { row_count } = parseRefreshSnapshotRpcPayload(data);
+      const rowsLabel = row_count != null ? row_count : "?";
+      showCatalogSnapshotMessage(
+        `Listo. Copia regenerada (${rowsLabel} filas). Recargá el catálogo en otra pestaña para ver cambios.`,
+        "success"
+      );
+      await loadCatalogSnapshotMeta();
+    } catch (err) {
+      console.error("[QuickActions] refresh snapshot:", err);
+      showCatalogSnapshotMessage(
+        err?.message ||
+          "No se pudo actualizar. ¿Tu usuario está en public.admins?",
+        "error"
+      );
+    } finally {
+      btnRefreshCatalogSnapshot.disabled = false;
+    }
+  });
+}
+
 // Inicializar
 loadActions();
 loadBanner();
 loadCustomBanner();
+loadCatalogSnapshotMeta();
+
+const curatedRoot = document.getElementById("curated-banner-admin-root");
+if (curatedRoot) {
+  initCuratedBannerAdmin({
+    supabase,
+    root: curatedRoot,
+    messageEl: document.getElementById("curated-banner-message"),
+  });
+}

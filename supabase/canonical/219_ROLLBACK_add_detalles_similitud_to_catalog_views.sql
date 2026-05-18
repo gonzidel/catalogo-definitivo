@@ -1,0 +1,4 @@
+-- 219_ROLLBACK: quitar DetallesSimilitud — re-aplicar versiones previas de 04 y 193 sin la columna.
+-- En producción: restaurar catalog_public_view y catalog_public_available_view desde git anterior a 219.
+-- Opcional snapshot:
+-- ALTER TABLE public.catalog_public_snapshot DROP COLUMN IF EXISTS "DetallesSimilitud";

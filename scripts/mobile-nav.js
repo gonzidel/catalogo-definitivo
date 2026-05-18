@@ -18,6 +18,42 @@ function setPedidosBadge(count) {
   }
 }
 
+function isCuratedOrBannerHashRoute() {
+  const hash = location.hash || "";
+  if (/^#\/banner\//i.test(hash)) return true;
+  if (typeof window.parseHashBannerSlug === "function" && window.parseHashBannerSlug(hash)) {
+    return true;
+  }
+  return false;
+}
+
+/** Rutas que deben volver a Home limpiando el hash (dispara onNavChange / resetHomeState). */
+function shouldGoHomeViaHashOnly() {
+  const hash = location.hash || "";
+  if (hash.startsWith("#/como-comprar") || hash.startsWith("#/quienes-somos")) return true;
+  if (hash === "#/coleccion/fyl-originals") return true;
+  if (isCuratedOrBannerHashRoute()) return true;
+  return false;
+}
+
+function goHomeViaHash() {
+  const prevHash = location.hash || "";
+  const mustReset = shouldGoHomeViaHashOnly();
+  location.hash = "#/";
+  updateActiveNav();
+  const navInicio = document.getElementById("nav-inicio");
+  const navCategorias = document.getElementById("nav-categorias");
+  if (navInicio) navInicio.classList.add("active");
+  if (navCategorias) navCategorias.classList.add("active");
+  window.scrollTo({ top: 0, behavior: "smooth" });
+
+  const hashUnchanged =
+    prevHash === "#/" || prevHash === "#/all" || prevHash === "";
+  if (mustReset && hashUnchanged && typeof window.fylResetHomeState === "function") {
+    window.fylResetHomeState().catch((err) => console.error("fylResetHomeState:", err));
+  }
+}
+
 // Obtener página actual
 function getCurrentPage() {
   const path = window.location.pathname;
@@ -48,6 +84,60 @@ function updateActiveNav() {
   });
 }
 
+/** Inicio (bottom nav), logo header y cualquier atajo a home. */
+function navigateToHome() {
+  const navInicio = document.getElementById("nav-inicio");
+  const navCategorias = document.getElementById("nav-categorias");
+
+  const productModal = document.getElementById("product-modal");
+  if (productModal?.classList.contains("active") && typeof window.cerrarModal === "function") {
+    window.cerrarModal(true);
+  }
+
+  if (!window.__CATALOG_ONLY__ && window.location.pathname.includes("banner.html")) {
+    window.location.href = "index.html";
+    return;
+  }
+
+  if (shouldGoHomeViaHashOnly()) {
+    goHomeViaHash();
+    return;
+  }
+
+  if (typeof window.clearSearch === "function") {
+    window.clearSearch({ skipCatalogReset: true });
+  }
+  if (typeof window.cambiarCategoria === "function") {
+    Promise.resolve(window.cambiarCategoria("all"));
+  } else {
+    location.hash = "#/";
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  if (typeof window.updateURL === "function") {
+    window.updateURL({ tab: "", sku: undefined }, { mode: "replace" });
+    const url = new URL(window.location);
+    if (url.searchParams.has("banner")) {
+      url.searchParams.delete("banner");
+      window.history.replaceState({}, "", url);
+    }
+  } else {
+    const url = new URL(window.location);
+    url.searchParams.delete("tab");
+    url.searchParams.delete("sku");
+    url.searchParams.delete("banner");
+    window.history.replaceState({}, "", url);
+  }
+
+  updateActiveNav();
+  if (navInicio) navInicio.classList.add("active");
+  if (navCategorias) navCategorias.classList.add("active");
+}
+
+if (typeof window !== "undefined") {
+  window.fylNavigateToHome = navigateToHome;
+}
+
 // Manejar clicks en navegación
 function setupNavHandlers() {
   const navInicio = document.getElementById("nav-inicio");
@@ -56,93 +146,17 @@ function setupNavHandlers() {
   const navPerfil = document.getElementById("nav-perfil");
   const headerLogoHome = document.getElementById("header-logo-home");
 
-  // Logo en header: reutiliza la misma lógica de Inicio.
   if (headerLogoHome) {
     headerLogoHome.addEventListener("click", (e) => {
       e.preventDefault();
-      if (navInicio) {
-        navInicio.click();
-      } else {
-        location.hash = "#/";
-        window.scrollTo({ top: 0, behavior: "smooth" });
-      }
+      navigateToHome();
     });
   }
 
-  // Inicio (primer botón)
   if (navInicio) {
     navInicio.addEventListener("click", (e) => {
       e.preventDefault();
-
-      // Si hay PDP abierto, cerrarlo antes de volver al inicio.
-      const productModal = document.getElementById("product-modal");
-      if (productModal?.classList.contains("active") && typeof window.cerrarModal === "function") {
-        window.cerrarModal(true);
-      }
-      
-      // Legacy: en banner.html redirigía a index, pero en /catalogo nunca debemos salir a index.
-      if (!window.__CATALOG_ONLY__ && window.location.pathname.includes('banner.html')) {
-        window.location.href = 'index.html';
-        return;
-      }
-
-      // Si estamos en "Cómo comprar", volver al inicio por hash (cerrar vista informativa)
-      if ((location.hash || "").startsWith("#/como-comprar") || (location.hash || "").startsWith("#/quienes-somos")) {
-        location.hash = "#/";
-        updateActiveNav();
-        navInicio.classList.add("active");
-        if (navCategorias) navCategorias.classList.add("active");
-        return;
-      }
-      
-      // Si estamos en colección FYL, ir a Home vía hash (el router aplicará cargarCategoria)
-      if (location.hash === "#/coleccion/fyl-originals") {
-        location.hash = "#/";
-        updateActiveNav();
-        navInicio.classList.add("active");
-        if (navCategorias) navCategorias.classList.add("active");
-        return;
-      }
-      
-      // Resetear filtros y mostrar todo
-      if (typeof window.clearSearch === "function") {
-        window.clearSearch({ skipCatalogReset: true });
-      }
-      if (typeof window.cambiarCategoria === "function") {
-        // [FASE 1B-A · T3] Feedback (pressed state + top progress bar) gestionado
-        // por cambiarCategoria. No reusamos showCatalogBootOverlay para
-        // transiciones de categoría (ver Roadmap/FASE-1B-A-Feedback-Categoria.md).
-        Promise.resolve(window.cambiarCategoria("all"));
-      } else {
-        window.location.hash = "";
-        // Scroll al inicio
-        window.scrollTo({ top: 0, behavior: "smooth" });
-      }
-      
-      // Limpiar URL (remover parámetros tab, sku y banner)
-      if (typeof window.updateURL === "function") {
-        window.updateURL({ tab: '', sku: undefined }, { mode: 'replace' });
-        // También limpiar banner manualmente si existe
-        const url = new URL(window.location);
-        if (url.searchParams.has('banner')) {
-          url.searchParams.delete('banner');
-          window.history.replaceState({}, '', url);
-        }
-      } else {
-        // Fallback: limpiar manualmente
-        const url = new URL(window.location);
-        url.searchParams.delete('tab');
-        url.searchParams.delete('sku');
-        url.searchParams.delete('banner');
-        window.history.replaceState({}, '', url);
-      }
-      
-      updateActiveNav();
-      navInicio.classList.add("active");
-      // También activar el segundo botón de inicio (antes categorías)
-      if (navCategorias) {
-        navCategorias.classList.add("active");
-      }
+      navigateToHome();
     });
   }
 
@@ -175,54 +189,7 @@ function setupNavHandlers() {
         return;
       }
 
-      // Si estamos en "Cómo comprar", volver al inicio por hash (cerrar vista informativa)
-      if ((location.hash || "").startsWith("#/como-comprar") || (location.hash || "").startsWith("#/quienes-somos")) {
-        location.hash = "#/";
-        updateActiveNav();
-        navCategorias.classList.add("active");
-        if (navInicio) navInicio.classList.add("active");
-        return;
-      }
-      
-      // Navegar al inicio igual que el botón de inicio
-      if (typeof window.clearSearch === "function") {
-        window.clearSearch({ skipCatalogReset: true });
-      }
-      if (typeof window.cambiarCategoria === "function") {
-        // [FASE 1B-A · T3] Feedback (pressed state + top progress bar) gestionado
-        // por cambiarCategoria. No reusamos showCatalogBootOverlay para
-        // transiciones de categoría (ver Roadmap/FASE-1B-A-Feedback-Categoria.md).
-        Promise.resolve(window.cambiarCategoria("all"));
-      } else {
-        window.location.hash = "";
-        // Scroll al inicio
-        window.scrollTo({ top: 0, behavior: "smooth" });
-      }
-      
-      // Limpiar URL (remover parámetros tab, sku y banner)
-      if (typeof window.updateURL === "function") {
-        window.updateURL({ tab: '', sku: undefined }, { mode: 'replace' });
-        // También limpiar banner manualmente si existe
-        const url = new URL(window.location);
-        if (url.searchParams.has('banner')) {
-          url.searchParams.delete('banner');
-          window.history.replaceState({}, '', url);
-        }
-      } else {
-        // Fallback: limpiar manualmente
-        const url = new URL(window.location);
-        url.searchParams.delete('tab');
-        url.searchParams.delete('sku');
-        url.searchParams.delete('banner');
-        window.history.replaceState({}, '', url);
-      }
-      
-      updateActiveNav();
-      navCategorias.classList.add("active");
-      // También activar el botón de inicio principal
-      if (navInicio) {
-        navInicio.classList.add("active");
-      }
+      navigateToHome();
     });
   }
 

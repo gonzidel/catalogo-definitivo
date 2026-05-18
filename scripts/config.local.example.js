@@ -14,7 +14,17 @@ export const USE_SUPABASE = true;
 // La firma QZ usa JWT del usuario contra la Edge Function.
 // No coloques QZ_SIGN_SECRET en archivos del navegador.
 export const QZ_SIGN_SECRET = "";
+// PostgREST — prueba Fase A (scripts/phase-a-verify-postgrest.mjs): variables en el shell, por ejemplo:
+//   $env:SUPABASE_ANON_KEY="..."
+//   $env:FYL_POSTGREST_ADMIN_ACCESS_TOKEN="eyJ..."    # access_token sesión admin
+//   $env:FYL_POSTGREST_CUSTOMER_ACCESS_TOKEN="eyJ..." # access_token usuario sin admin
+
 export const USE_OPEN_SHEET_FALLBACK = false;
+
+// Banner curado Fase 3 (QA/staging; no prod sin rollout):
+// localStorage.setItem("FYL_CURATED_BANNER_V1", "1"); location.reload();
+// o URL: ?curated_banner=1
+// Consola: await fylAuditCuratedBanner()
 
 // Configuración de WhatsApp
 export const WHATSAPP_NUMBERS = {

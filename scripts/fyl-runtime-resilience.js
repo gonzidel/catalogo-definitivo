@@ -214,6 +214,10 @@ export async function ensureCatalogSupabaseHealthy(getSupabase) {
 
 let __fylFlagsTimer = null;
 
+/** Módulos opcionales (banner): un fallo de carga no debe bloquear el catálogo entero. */
+const FYL_OPTIONAL_MODULE_RE =
+  /(?:^|\/)(?:curated-banner|fyl-originals-banner|fyl-legacy-banner-loader|custom-banner|banner)\.js(?:\?|$)/i;
+
 /**
  * Fallos que no deben tapar el catálogo con fullscreen "unexpected"
  * (View Transitions, cancelaciones, extensiones, mensajes de libs inyectadas).
@@ -258,10 +262,41 @@ function fylWindowOnerrorBenign(message, source) {
   const s = String(source || "");
   if (m === "Script error." || m === "Script error") return true;
   if (/chrome-extension:|moz-extension:|safari-web-extension:|edgeextension:/i.test(s)) return true;
+  if (/fbevents\.js|connect\.facebook\.net|google-analytics|googletagmanager/i.test(s)) return true;
+  if (/vendors-async\.js/i.test(s) && /apollo/i.test(m)) return true;
   return false;
 }
 
-function fylMaybeShowUnexpected(reason) {
+function fylIsOptionalModuleSource(source) {
+  return FYL_OPTIONAL_MODULE_RE.test(String(source || ""));
+}
+
+function fylIsEsModuleLoadFailure(reason) {
+  const { name, message } = fylNormalizeFailureReason(reason);
+  const lower = message.toLowerCase();
+  if (name === "SyntaxError") {
+    if (lower.includes("does not provide an export")) return true;
+    if (lower.includes("unexpected token")) return true;
+  }
+  if (name === "TypeError" && lower.includes("failed to fetch dynamically imported module")) return true;
+  if (lower.includes("error loading dynamically imported module")) return true;
+  if (lower.includes("importing a module script failed")) return true;
+  return false;
+}
+
+function fylShouldSuppressUnexpectedOverlay(reason, source) {
+  if (fylIsBenignForUnexpectedOverlay(reason)) return true;
+  const { message } = fylNormalizeFailureReason(reason);
+  const s = String(source || "");
+  if (fylWindowOnerrorBenign(message, s)) return true;
+  if (fylIsOptionalModuleSource(s) && fylIsEsModuleLoadFailure(reason)) return true;
+  const stack =
+    reason && typeof reason === "object" && reason.stack != null ? String(reason.stack) : "";
+  if (stack && fylIsOptionalModuleSource(stack) && fylIsEsModuleLoadFailure(reason)) return true;
+  return false;
+}
+
+function fylMaybeShowUnexpected(reason, source) {
   try {
     if (
       typeof window !== "undefined" &&
@@ -271,7 +306,7 @@ function fylMaybeShowUnexpected(reason) {
       return;
     }
   } catch (_) {}
-  if (fylIsBenignForUnexpectedOverlay(reason)) return;
+  if (fylShouldSuppressUnexpectedOverlay(reason, source)) return;
   try {
     showFylErrorState({
       preset: "unexpected",
@@ -300,7 +335,7 @@ function fylInstallGlobalHandlers() {
       stack: error && error.stack ? String(error.stack).slice(0, 4000) : "",
     });
     if (!fylWindowOnerrorBenign(message, source)) {
-      fylMaybeShowUnexpected(error || { message: String(message) });
+      fylMaybeShowUnexpected(error || { message: String(message) }, source);
     }
     if (typeof prevOnError === "function") {
       return prevOnError.apply(this, arguments);
@@ -328,7 +363,8 @@ function fylInstallGlobalHandlers() {
         message: r && r.message != null ? String(r.message) : String(r),
         stack: r && r.stack ? String(r.stack).slice(0, 4000) : "",
       });
-      fylMaybeShowUnexpected(r);
+      const stack = r && r.stack != null ? String(r.stack) : "";
+      fylMaybeShowUnexpected(r, stack);
     },
     { capture: true }
   );

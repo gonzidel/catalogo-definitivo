@@ -509,6 +509,25 @@ window.addEventListener(
   "fyl-catalog-boot-done",
   () => {
     ensureCardConsultButtons(document.getElementById("catalogo") || document);
+    handlePublicCuratedBannerHash();
   },
   { once: true }
 );
+
+function handlePublicCuratedBannerHash() {
+  if (typeof window.isCuratedBannerV1Enabled !== "function" || !window.isCuratedBannerV1Enabled()) {
+    return;
+  }
+  const slug =
+    typeof window.parseHashBannerSlug === "function"
+      ? window.parseHashBannerSlug(location.hash || "")
+      : "";
+  if (!slug) return;
+  if (typeof window.applyCuratedBannerHashRoute === "function") {
+    window.applyCuratedBannerHashRoute(slug);
+  }
+}
+
+window.addEventListener("hashchange", () => {
+  handlePublicCuratedBannerHash();
+});

@@ -31,6 +31,27 @@ const checks = [
     expect: (status) => status === 401 || status === 403 || status === 404,
     skipWithoutAnon: true,
   },
+  {
+    name: "phase A purchase_spend_by_season anon closed",
+    url: `${SUPABASE_URL}/rest/v1/purchase_spend_by_season?select=season_id&limit=1`,
+    options: { headers: { apikey: SUPABASE_ANON_KEY, authorization: `Bearer ${SUPABASE_ANON_KEY}` } },
+    expect: (status) => status === 401 || status === 403 || status === 404,
+    skipWithoutAnon: true,
+  },
+  {
+    name: "phase A purchase_order_line_fulfillment anon closed",
+    url: `${SUPABASE_URL}/rest/v1/purchase_order_line_fulfillment?select=order_line_id&limit=1`,
+    options: { headers: { apikey: SUPABASE_ANON_KEY, authorization: `Bearer ${SUPABASE_ANON_KEY}` } },
+    expect: (status) => status === 401 || status === 403 || status === 404,
+    skipWithoutAnon: true,
+  },
+  {
+    name: "phase A vw_publication_events_performance anon closed",
+    url: `${SUPABASE_URL}/rest/v1/vw_publication_events_performance?select=id&limit=1`,
+    options: { headers: { apikey: SUPABASE_ANON_KEY, authorization: `Bearer ${SUPABASE_ANON_KEY}` } },
+    expect: (status) => status === 401 || status === 403 || status === 404,
+    skipWithoutAnon: true,
+  },
 ];
 
 let failed = 0;

@@ -17,23 +17,12 @@ function isOfferAction(action) {
 
 async function hasActiveOffersForQuickActions() {
   try {
-    const { data, error } = await supabase
-      .from("catalog_public_view")
-      .select("Oferta, Mostrar")
-      .limit(4000);
-
+    const { data, error } = await supabase.rpc("get_active_offers_with_images");
     if (error) {
       console.error("Error verificando ofertas para quick actions:", error);
       return false;
     }
-
-    return (data || []).some((item) => {
-      const mostrar = item?.Mostrar;
-      const oferta = item?.Oferta;
-      const mostrarOk = mostrar === "TRUE" || mostrar === true || mostrar === "true" || mostrar === 1;
-      const ofertaOk = oferta === "TRUE" || oferta === true || oferta === "true" || oferta === 1;
-      return mostrarOk && ofertaOk;
-    });
+    return Array.isArray(data) && data.length > 0;
   } catch (error) {
     console.error("Error en hasActiveOffersForQuickActions:", error);
     return false;

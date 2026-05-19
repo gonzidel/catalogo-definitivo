@@ -2,7 +2,7 @@
 import { requireAuth } from "./admin-auth.js";
 import { supabase } from "../scripts/supabase-client.js";
 import { can, preloadAuthState } from "./auth-state.js";
-import { normalizeSize, compareCatalogSizes } from "../scripts/utils/size-normalizer.js?v=m260420";
+import { normalizeSize, compareCatalogSizes } from "../scripts/utils/size-normalizer.js?v=m260518";
 import { printProductLabelsZebra } from "./qz-printing.js";
 import { wrapSupabase, createAbortScope, FYL_ERROR_KIND, classifyError } from "../scripts/net/fyl-fetch.js";
 

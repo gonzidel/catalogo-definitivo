@@ -49,7 +49,12 @@ function initWhatsappPopup() {
   // Catálogo público: el FAB es <a href="wa.me"> sin listeners JS.
   // Evitamos stopPropagation en el click (en Safari iOS puede bloquear la navegación del enlace).
   // Lead Meta: listener delegado arriba con content_category si id === wa-toggle.
-  if (waToggle && waMenu && !document.documentElement.classList.contains("public-catalog")) {
+  if (
+    waToggle &&
+    waMenu &&
+    !document.documentElement.classList.contains("public-catalog") &&
+    !window.__fylHeaderEarlyInit
+  ) {
     waToggle.addEventListener("click", (e) => {
       e.preventDefault();
       waMenu.classList.toggle("open");

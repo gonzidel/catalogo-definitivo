@@ -593,7 +593,7 @@ header h1 { margin: 0; font-size: 1.5rem; }
   display: block;
   width: 100%;
   border-radius: 6px;
-  aspect-ratio: 6/7;
+  aspect-ratio: 4 / 5;
   object-fit: cover;
 }
 
@@ -2093,12 +2093,6 @@ body.pwa-install-modal-open {
 .download-btn:focus {
   outline: 2px solid #CD844D;
   outline-offset: 2px;
-}
-
-/* Mejoras de rendimiento */
-.main-image {
-  will-change: transform;
-  backface-visibility: hidden;
 }
 
 /* Mejoras de feedback visual */
@@ -6752,6 +6746,25 @@ body.modal-open {
   width: 100%;
 }
 
+.home-top-dynamic-slot--home {
+  min-height: 240px;
+}
+
+#catalogo .home-custom-banner-slot {
+  grid-column: 1 / -1;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+#catalogo .home-custom-banner-slot:not([hidden]) {
+  min-height: 180px;
+}
+
+#catalogo .card.producto {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 420px;
+}
+
 .home-top-dynamic-slot--pending {
   min-height: 220px;
 }
@@ -6787,6 +6800,10 @@ body.modal-open {
 }
 
 @media (max-width: 480px) {
+  .home-top-dynamic-slot--home {
+    min-height: 208px;
+  }
+
   .home-top-dynamic-slot--pending {
     min-height: 196px;
   }
@@ -8106,7 +8123,7 @@ body.modal-open {
     overflow: visible;
   }
   .main-image {
-    aspect-ratio: 4 / 4.7;
+    aspect-ratio: 4 / 5;
     object-fit: cover;
     object-position: center;
   }

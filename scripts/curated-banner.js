@@ -6,7 +6,7 @@ import {
   CATALOG_AVAILABLE_VIEW,
   getCatalogAvailableSource,
 } from "./catalog-source.js";
-import { isPostgrestSchemaColumnError } from "./net/fyl-fetch.js?v=m260514";
+import { isPostgrestSchemaColumnError } from "./net/fyl-fetch.js?v=m260518";
 
 const LEGACY_TAG_PLACEHOLDER = "__curated__";
 const CURATED_CATALOG_SELECT =
@@ -375,7 +375,13 @@ export function destroyCuratedBanner() {
   const inline = document.getElementById("custom-banner-container-inline");
   if (inline) inline.style.display = "none";
   const wrapper = document.getElementById("custom-banner-wrapper");
-  if (wrapper) wrapper.remove();
+  const homeSlot = document.getElementById("home-custom-banner-slot");
+  if (wrapper && !(homeSlot && homeSlot.contains(wrapper))) {
+    wrapper.remove();
+  } else if (homeSlot) {
+    homeSlot.hidden = true;
+    homeSlot.setAttribute("aria-hidden", "true");
+  }
 
   const fullpage = document.getElementById("curated-banner-fullpage");
   if (fullpage) fullpage.remove();

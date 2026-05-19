@@ -3,8 +3,16 @@
  * Cargar después de boot-telemetry (via dynamic import) para encadenar window.onerror.
  */
 
-import { FYL_VERSION } from "./fyl-version.js?v=m260514";
+import { FYL_VERSION } from "./fyl-version.js?v=m260518";
 import { showFylErrorState } from "./fyl-error-state.js";
+import {
+  fylClassifyClientError,
+  fylIsBenignErrorClass,
+  fylIsExtensionSource,
+  fylIsGenericScriptError,
+  fylIsKnownThirdPartySource,
+  fylIsMetaWebViewBridgeMessage,
+} from "./fyl-error-classify.js?v=m260518";
 
 const SS_NUCLEAR = "__fyl_ss_nuclear_v2";
 /** Compartido entre pestañas (misma origin) para no repetir kill switch en cada tab. */
@@ -216,7 +224,7 @@ let __fylFlagsTimer = null;
 
 /** Módulos opcionales (banner): un fallo de carga no debe bloquear el catálogo entero. */
 const FYL_OPTIONAL_MODULE_RE =
-  /(?:^|\/)(?:curated-banner|fyl-originals-banner|fyl-legacy-banner-loader|custom-banner|banner)\.js(?:\?|$)/i;
+  /(?:^|\/)(?:curated-banner|fyl-curated-banner-loader|fyl-originals-banner|fyl-legacy-banner-loader|custom-banner|banner)\.js(?:\?|$)/i;
 
 /**
  * Fallos que no deben tapar el catálogo con fullscreen "unexpected"
@@ -260,11 +268,12 @@ function fylIsBenignForUnexpectedOverlay(reason) {
 function fylWindowOnerrorBenign(message, source) {
   const m = String(message || "");
   const s = String(source || "");
-  if (m === "Script error." || m === "Script error") return true;
-  if (/chrome-extension:|moz-extension:|safari-web-extension:|edgeextension:/i.test(s)) return true;
-  if (/fbevents\.js|connect\.facebook\.net|google-analytics|googletagmanager/i.test(s)) return true;
+  if (fylIsGenericScriptError(m)) return true;
+  if (fylIsExtensionSource(s)) return true;
+  if (fylIsKnownThirdPartySource(s)) return true;
+  if (fylIsMetaWebViewBridgeMessage(m)) return true;
   if (/vendors-async\.js/i.test(s) && /apollo/i.test(m)) return true;
-  return false;
+  return fylIsBenignErrorClass(fylClassifyClientError({ message: m, source: s }));
 }
 
 function fylIsOptionalModuleSource(source) {
@@ -326,10 +335,14 @@ function fylInstallGlobalHandlers() {
 
   const prevOnError = window.onerror;
   window.onerror = function (message, source, lineno, colno, error) {
+    const msg = String(message);
+    const src = String(source || "");
+    const errorClass = fylClassifyClientError({ message: msg, source: src });
     fylReportClientError({
       kind: "window.onerror",
-      message: String(message),
-      source: String(source || ""),
+      error_class: errorClass,
+      message: msg,
+      source: src,
       lineno,
       colno,
       stack: error && error.stack ? String(error.stack).slice(0, 4000) : "",
@@ -358,12 +371,16 @@ function fylInstallGlobalHandlers() {
           });
         }
       } catch (_) {}
+      const rejMsg = r && r.message != null ? String(r.message) : String(r);
+      const stack = r && r.stack != null ? String(r.stack) : "";
+      const errorClass = fylClassifyClientError({ message: rejMsg, source: stack });
       fylReportClientError({
         kind: "unhandledrejection",
-        message: r && r.message != null ? String(r.message) : String(r),
-        stack: r && r.stack ? String(r.stack).slice(0, 4000) : "",
+        error_class: errorClass,
+        message: rejMsg,
+        stack: stack.slice(0, 4000),
       });
-      const stack = r && r.stack != null ? String(r.stack) : "";
+      if (fylIsBenignErrorClass(errorClass) || fylIsMetaWebViewBridgeMessage(rejMsg)) return;
       fylMaybeShowUnexpected(r, stack);
     },
     { capture: true }

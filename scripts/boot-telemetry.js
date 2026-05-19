@@ -191,7 +191,15 @@ if (typeof window !== "undefined") {
 
 markBootStage("boot.telemetry.ready", { debug });
 
-import("./fyl-runtime-resilience.js?v=m260514")
+import("./fyl-resource-error-diagnostics.js?v=m260518")
+  .then((m) => m.installFylResourceErrorDiagnostics?.())
+  .catch((e) => {
+    markBootStage("resource_diag.init_failed", {
+      message: String(e && e.message ? e.message : e),
+    });
+  });
+
+import("./fyl-runtime-resilience.js?v=m260518")
   .then((m) => m.initFylRuntimeResilience())
   .catch((e) => {
     markBootStage("resilience.init_failed", { message: String(e && e.message ? e.message : e) });

@@ -11,6 +11,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const customBanner = readFileSync(join(root, "scripts/custom-banner.js"), "utf8");
 const curatedBanner = readFileSync(join(root, "scripts/curated-banner.js"), "utf8");
 const loader = readFileSync(join(root, "scripts/fyl-legacy-banner-loader.js"), "utf8");
+const curatedLoader = readFileSync(join(root, "scripts/fyl-curated-banner-loader.js"), "utf8");
 const indexHtml = readFileSync(join(root, "index.html"), "utf8");
 const catalogoHtml = readFileSync(join(root, "catalogo.html"), "utf8");
 const mainSupabase = readFileSync(join(root, "scripts/main-supabase.js"), "utf8");
@@ -38,6 +39,29 @@ const checks = [
       /FYL_CURATED_BANNER_V1 !== true/.test(loader) &&
       /import\(/.test(loader) &&
       /custom-banner\.js/.test(loader),
+  },
+  {
+    name: "index.html: sin script directo curated-banner.js",
+    ok: !/src="scripts\/curated-banner\.js/.test(indexHtml),
+  },
+  {
+    name: "index.html: usa fyl-curated-banner-loader.js",
+    ok: /fyl-curated-banner-loader\.js/.test(indexHtml),
+  },
+  {
+    name: "catalogo.html: sin script directo curated-banner.js",
+    ok: !/src="scripts\/curated-banner\.js/.test(catalogoHtml),
+  },
+  {
+    name: "catalogo.html: usa fyl-curated-banner-loader.js",
+    ok: /fyl-curated-banner-loader\.js/.test(catalogoHtml),
+  },
+  {
+    name: "curated-loader: import dinámico solo si flag ON",
+    ok:
+      /FYL_CURATED_BANNER_V1 === true/.test(curatedLoader) &&
+      /import\(/.test(curatedLoader) &&
+      /curated-banner\.js/.test(curatedLoader),
   },
   {
     name: "custom-banner: sin guards runtime curated",

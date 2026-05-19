@@ -1,6 +1,10 @@
 // scripts/fyl-originals-banner.js - Banner de productos FYL Originals
 
 import { supabase } from "./supabase-client.js";
+import { getCatalogAvailableSource } from "./catalog-source.js";
+
+const FYL_ORIGINALS_CATALOG_SELECT =
+  '"Articulo", "Descripcion", "Color", "Numeracion", "FechaIngreso", "FechaPublicacion", "Precio", "Imagen Principal", "Imagen 1", "Imagen 2", "Imagen 3", "Filtro1", "Filtro2", "Filtro3", "OfertaActiva", "PrecioOferta", "PromoActiva", "ColorHex", "ColorDisplayNumber", "SupplierCode"';
 
 function fylDevLog(...args) {
   if (
@@ -217,7 +221,39 @@ export function parseDateMs(value) {
   return Number.isNaN(ms) ? 0 : ms;
 }
 
+/** Prioridad: publicación admin (catálogo) → variantes → ingreso/updated. */
+export function getPublicationRecencyMs(producto) {
+  if (!producto) return 0;
+
+  const catalogPub = parseDateMs(producto.FechaPublicacion);
+  if (catalogPub > 0) return catalogPub;
+
+  let colorPubMax = 0;
+  for (const detalleColor of producto?.DetalleColor || []) {
+    if (detalleColor?.__variantRecencySource === "last_published_at") {
+      const ms = Number(detalleColor?.__variantRecencyMs) || 0;
+      if (ms > colorPubMax) colorPubMax = ms;
+    }
+  }
+  if (colorPubMax > 0) return colorPubMax;
+
+  return getBestRecencyMs(producto);
+}
+
 function getBestRecencyMs(producto) {
+  const pubMs = parseDateMs(producto?.FechaPublicacion);
+  if (pubMs > 0) return pubMs;
+
+  let colorMax = 0;
+  for (const detalleColor of producto?.DetalleColor || []) {
+    const ms =
+      Number(detalleColor?.__variantRecencyMs) ||
+      Number(detalleColor?.__recencyMs) ||
+      0;
+    if (ms > colorMax) colorMax = ms;
+  }
+  if (colorMax > 0) return colorMax;
+
   const candidates = [
     producto?.FechaIngreso,
     producto?.updated_at,
@@ -231,16 +267,6 @@ function getBestRecencyMs(producto) {
     if (ms > 0) return ms;
   }
 
-  let colorMax = 0;
-  for (const detalleColor of producto?.DetalleColor || []) {
-    const ms =
-      Number(detalleColor?.__variantRecencyMs) ||
-      Number(detalleColor?.__recencyMs) ||
-      0;
-    if (ms > colorMax) colorMax = ms;
-  }
-  if (colorMax > 0) return colorMax;
-
   return 0;
 }
 
@@ -251,6 +277,7 @@ function getVariantRecency(row) {
   if (!row || typeof row !== "object") return { ms: 0, source: "" };
 
   const candidates = [
+    ["FechaPublicacion", row.FechaPublicacion],
     ["republished_at", row.republished_at],
     ["republished_at", row.republishedAt],
     ["last_published_at", row.last_published_at],
@@ -305,7 +332,9 @@ function fallbackBasicOrdering(products) {
     .filter((item) => item.ms > 0);
 
   if (dated.length > 0) {
-    return [...products].sort((a, b) => parseDateMs(b?.FechaIngreso) - parseDateMs(a?.FechaIngreso));
+    return [...products].sort(
+      (a, b) => getPublicationRecencyMs(b) - getPublicationRecencyMs(a)
+    );
   }
 
   console.warn("[FYL] Fallback sin fecha válida: se mantiene orden original", {
@@ -332,8 +361,9 @@ function sumKnownStock(producto) {
   return sum;
 }
 
-function scoreRecentProduct(producto) {
-  return getBestRecencyMs(producto);
+/** Slot 1: el artículo con publicación más reciente (admin) gana y reemplaza al anterior. */
+function scoreSlot1Publication(producto) {
+  return getPublicationRecencyMs(producto);
 }
 
 function scoreStrongProduct(producto) {
@@ -380,7 +410,7 @@ export function curateFylOriginalsSlots(products, now = new Date()) {
     return fallbackBasicOrdering(products);
   }
 
-  const slot1 = pickBestCandidate(eligible, scoreRecentProduct);
+  const slot1 = pickBestCandidate(eligible, scoreSlot1Publication);
   const poolAfter1 = excludeProducts(eligible, [slot1]);
   const slot2 = pickBestCandidate(poolAfter1, scoreStrongProduct);
   const poolAfter2 = excludeProducts(poolAfter1, [slot2]);
@@ -520,6 +550,11 @@ export async function enrichGroupedProductsWithVariantRecency(productosAgrupados
       }
     }
 
+    const pubMs = getPublicationRecencyMs(producto);
+    if (pubMs > parseDateMs(producto.FechaPublicacion)) {
+      producto.FechaPublicacion = new Date(pubMs).toISOString();
+    }
+
     return producto;
   });
 }
@@ -540,12 +575,11 @@ export async function loadFYLOriginals() {
       return [];
     }
 
-    // Obtener productos del proveedor FYL desde catalog_public_view
+    const catalogSource = getCatalogAvailableSource();
     const { data, error } = await supabase
-      .from("catalog_public_view")
-      .select("*")
-      .eq("SupplierCode", "FYL")
-      .order("FechaIngreso", { ascending: false });
+      .from(catalogSource)
+      .select(FYL_ORIGINALS_CATALOG_SELECT)
+      .eq("SupplierCode", "FYL");
 
     if (error) {
       console.error("❌ Error cargando productos FYL:", error);
@@ -559,6 +593,7 @@ export async function loadFYLOriginals() {
 
     const getRowRecencyMs = (row) => {
       return (
+        parseDateMs(row?.FechaPublicacion) ||
         parseDateMs(row?.updated_at) ||
         parseDateMs(row?.created_at) ||
         parseDateMs(row?.FechaIngreso) ||
@@ -580,6 +615,7 @@ export async function loadFYLOriginals() {
           VariantePrincipal: i["Imagen Principal"],
           Oferta: i.Oferta || "",
           FechaIngreso: i.FechaIngreso || "",
+          FechaPublicacion: i.FechaPublicacion || "",
           Filtro1: i.Filtro1 || "",
           Filtro2: i.Filtro2 || "",
           Filtro3: i.Filtro3 || "",
@@ -606,6 +642,12 @@ export async function loadFYLOriginals() {
       const colorExists = acc[art].DetalleColor.find(c =>
         (c.color || "").trim().toLowerCase() === (i.Color || "").trim().toLowerCase()
       );
+
+      const incomingPubMs = parseDateMs(i.FechaPublicacion);
+      const currentPubMs = parseDateMs(acc[art].FechaPublicacion);
+      if (incomingPubMs > currentPubMs) {
+        acc[art].FechaPublicacion = i.FechaPublicacion;
+      }
 
       if (!colorExists) {
         const talles = String(i.Numeracion || "")
@@ -643,7 +685,32 @@ export async function loadFYLOriginals() {
       return acc;
     }, {});
 
-    fylProducts = await enrichGroupedProductsWithVariantRecency(Object.values(grupos));
+    Object.values(grupos).forEach((g) => {
+      const colorMs = (g.DetalleColor || []).map((c) => Number(c.__recencyMs) || 0);
+      const maxColor = colorMs.length ? Math.max(...colorMs) : 0;
+      const productPub = parseDateMs(g.FechaPublicacion);
+      if (maxColor > productPub) {
+        const bestColor = (g.DetalleColor || []).find(
+          (c) => (Number(c.__recencyMs) || 0) === maxColor
+        );
+        if (bestColor) {
+          g.FechaPublicacion = new Date(maxColor).toISOString();
+        }
+      }
+    });
+
+    let grouped = Object.values(grupos);
+    grouped.sort((a, b) => getPublicationRecencyMs(b) - getPublicationRecencyMs(a));
+    fylProducts = await enrichGroupedProductsWithVariantRecency(grouped);
+
+    const slot1Preview = fylProducts[0];
+    if (slot1Preview) {
+      fylDevLog("[FYL] Slot 1 candidato tras carga", {
+        articulo: slot1Preview.Articulo,
+        fechaPublicacion: slot1Preview.FechaPublicacion || null,
+        recencyMs: getPublicationRecencyMs(slot1Preview),
+      });
+    }
 
     fylDevLog(`✅ Productos FYL cargados: ${fylProducts.length}`);
 
@@ -1076,6 +1143,14 @@ export async function loadAndShowFYLBanner() {
   }
   
   const curatedProducts = curateFylOriginalsSlots(products, new Date());
+  const slot1 = curatedProducts[0];
+  if (slot1) {
+    fylDevLog("[FYL] Slot 1 curado (publicación)", {
+      articulo: slot1.Articulo,
+      fechaPublicacion: slot1.FechaPublicacion || null,
+      recencyMs: getPublicationRecencyMs(slot1),
+    });
+  }
   renderFYLOriginalsBanner(curatedProducts);
   await waitForFirstFYLImage();
 }

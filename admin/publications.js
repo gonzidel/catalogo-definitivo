@@ -2358,6 +2358,26 @@ async function copyToSheet() {
   }
 }
 
+function parseRefreshSnapshotRpcPayload(data) {
+  if (data != null && typeof data === "object" && "row_count" in data) {
+    return { row_count: data.row_count };
+  }
+  if (typeof data === "string") {
+    try {
+      const o = JSON.parse(data);
+      if (o && typeof o.row_count === "number") return { row_count: o.row_count };
+    } catch (_) {}
+  }
+  return { row_count: null };
+}
+
+/** Misma RPC que Acciones rápidas → Actualizar catálogo público. */
+async function refreshCatalogPublicSnapshot() {
+  const { data, error } = await supabase.rpc("rpc_refresh_catalog_public_snapshot");
+  if (error) throw error;
+  return parseRefreshSnapshotRpcPayload(data);
+}
+
 // Publicar productos seleccionados
 async function publishSelected() {
   if (selectedForPublication.length === 0) {
@@ -2486,7 +2506,27 @@ async function publishSelected() {
       console.warn(`${logPrefix} eventsToInsert vacío: no se insertará publication_events`);
     }
     
-    showMessage(`✅ ${selectedForPublication.length} variante(s)/color(es) publicado(s) exitosamente`, "ok");
+    const publishedCount = selectedForPublication.length;
+    showMessage(
+      `✅ ${publishedCount} variante(s)/color(es) publicado(s). Actualizando catálogo público…`,
+      "ok"
+    );
+
+    void refreshCatalogPublicSnapshot()
+      .then(({ row_count }) => {
+        const rowsLabel = row_count != null ? row_count : "?";
+        showMessage(
+          `✅ Publicado y catálogo actualizado (${rowsLabel} filas). Recargá el index en otra pestaña si ya estaba abierto.`,
+          "ok"
+        );
+      })
+      .catch((refreshErr) => {
+        console.warn("[publications] refresh snapshot:", refreshErr);
+        showMessage(
+          `✅ Publicado, pero no se pudo actualizar el catálogo: ${refreshErr?.message || "error"}. Usá Acciones rápidas → Actualizar catálogo público.`,
+          "err"
+        );
+      });
     
     // Actualizar datos en memoria (remover solo colores publicados de la lista "nuevos")
     newProducts = newProducts.filter(item => !selectedColorKeys.has(`${item.productId}|${item.color}`));

@@ -158,11 +158,16 @@ function patchFylVersionExport(contents, version) {
 const EXTRA_VERSIONED_FILES = [
   "scripts/main-supabase.js",
   "scripts/fyl-runtime-resilience.js",
+  "scripts/fyl-error-classify.js",
+  "scripts/fyl-env-tags.js",
+  "scripts/fyl-resource-error-diagnostics.js",
   "scripts/config.js",
   "scripts/supabase-client.js",
   "scripts/boot-telemetry.js",
   "scripts/net/fyl-fetch.js",
   "scripts/curated-banner.js",
+  "scripts/fyl-curated-banner-loader.js",
+  "admin/stock.js",
 ];
 
 function main() {

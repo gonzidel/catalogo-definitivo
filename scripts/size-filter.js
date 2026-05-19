@@ -1165,8 +1165,18 @@ async function applySizeFilter() {
       continue;
     }
     
-    // Consultar si este producto tiene alguno de los talles seleccionados
-    const hasSelectedSize = await checkProductHasSizes(articulo, selectedSizes, category);
+    let hasSelectedSize = false;
+    const fromMemory =
+      typeof window.fylProductHasSizesInMemory === "function"
+        ? window.fylProductHasSizesInMemory(articulo, selectedSizes)
+        : null;
+    if (fromMemory === true) {
+      hasSelectedSize = true;
+    } else if (fromMemory === false) {
+      hasSelectedSize = false;
+    } else {
+      hasSelectedSize = await checkProductHasSizes(articulo, selectedSizes, category);
+    }
     
     if (hasSelectedSize) {
       card.style.display = '';

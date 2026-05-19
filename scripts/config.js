@@ -1,4 +1,4 @@
-import { FYL_VERSION } from "./fyl-version.js?v=m260514";
+import { FYL_VERSION } from "./fyl-version.js?v=m260518";
 
 // scripts/config.js
 // Valores por defecto (no sensibles). Para valores sensibles, copia
@@ -183,10 +183,18 @@ const configReady = (async () => {
           `${logPrefix} config.prod.js: sin marca de carga (normal en local si no generaste config.prod.js en la raíz)`
         );
       } else {
-        // [PERF] Probe fetch eliminado: solo loguear warning sin hacer roundtrip de red.
         console.warn(
           `${logPrefix} config.prod.js: marca no detectada. Si el cat\u00e1logo funciona, ignorar este aviso.`
         );
+        if (!local && typeof fetch === "function") {
+          fylConfigDiagnostics.configProdFetchProbe = await probeConfigProdJsResponse();
+          if (fylConfigDiagnostics.configProdFetchProbe?.looksLikeHtml) {
+            console.error(`${logPrefix} /config.prod.js parece HTML, no JavaScript`);
+            globalThis.markBootStage?.("config.prod.html_not_js", {
+              ...fylConfigDiagnostics.configProdFetchProbe,
+            });
+          }
+        }
       }
     }
 
@@ -281,7 +289,7 @@ export {
       .catch((e) => {
         const msg = e && e.message ? String(e.message).slice(0, 200) : String(e);
         globalThis.markBootStage?.("sw.register_failed", { message: msg });
-        import("./fyl-runtime-resilience.js?v=m260514")
+        import("./fyl-runtime-resilience.js?v=m260518")
           .then((m) =>
             m.fylReportClientError({ kind: "sw.register_failed", message: msg })
           )

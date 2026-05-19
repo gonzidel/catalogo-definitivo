@@ -817,6 +817,7 @@ function createFloatingCartButton() {
   btn.type = "button";
   btn.className = "sticky-cart";
   btn.setAttribute("aria-label", "Ver carrito");
+  document.documentElement.style.setProperty("--sticky-cart-h", "48px");
   btn.innerHTML = `
     <span class="sticky-cart__left">
       <span class="sticky-cart__icon-wrap">
@@ -904,6 +905,8 @@ function updateFloatingCartCta() {
   if (count > 0 && btn) {
     const h = btn.getBoundingClientRect().height;
     root.style.setProperty("--sticky-cart-h", h > 0 ? `${Math.round(h)}px` : "48px");
+  } else if (btn) {
+    root.style.setProperty("--sticky-cart-h", "48px");
   } else {
     root.style.setProperty("--sticky-cart-h", "0px");
   }

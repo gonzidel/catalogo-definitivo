@@ -509,12 +509,24 @@ window.addEventListener(
   "fyl-catalog-boot-done",
   () => {
     ensureCardConsultButtons(document.getElementById("catalogo") || document);
-    handlePublicCuratedBannerHash();
+    void handlePublicCuratedBannerHash();
   },
   { once: true }
 );
 
-function handlePublicCuratedBannerHash() {
+async function handlePublicCuratedBannerHash() {
+  if (typeof window === "undefined" || window.FYL_CURATED_BANNER_V1 !== true) {
+    return;
+  }
+  try {
+    const ready = window.__fylCuratedBannerReady;
+    if (ready && typeof ready.then === "function") {
+      const ok = await ready;
+      if (ok === false) return;
+    }
+  } catch (_) {
+    return;
+  }
   if (typeof window.isCuratedBannerV1Enabled !== "function" || !window.isCuratedBannerV1Enabled()) {
     return;
   }
@@ -529,5 +541,5 @@ function handlePublicCuratedBannerHash() {
 }
 
 window.addEventListener("hashchange", () => {
-  handlePublicCuratedBannerHash();
+  void handlePublicCuratedBannerHash();
 });

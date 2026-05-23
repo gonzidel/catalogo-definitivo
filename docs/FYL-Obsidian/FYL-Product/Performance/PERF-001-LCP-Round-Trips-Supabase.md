@@ -59,6 +59,23 @@ Opciones, sin reestructurar:
 - Network panel: ≤ 2 queries Supabase críticas en el camino del LCP.
 - Clarity 7 días: caída de dead clicks en zona "header" durante boot.
 
+## Estado parcial en código (2026-05-23)
+
+Re-auditoría [[2026-05-23-Auditoria-LCP-Catalogo-Clarity]] — Clarity LCP **7.9s** (mejor que ~10s baseline, sigue crítico):
+
+| Mitigación ya en `main-supabase.js` | Referencia |
+|---|---|
+| Boot Home acotado a 120 filas + full catalog en background | L298, L728–756, L781–790 |
+| Primer render 14 cards con `deferEnrich: true` (stock post-paint idle) | L1528–1535, L2116–2122 |
+| `releaseBootOverlayOnFirstPaint` tras primer chunk | L1538–1541 |
+
+**Sigue abierto:**
+
+- RPC `get_active_offers_with_images` **antes** del render → [[PERF-009-Offers-RPC-Before-First-Paint]]
+- Bridge `DetallesSimilitud` si SELECT incompleto → [[PERF-008-DetallesSimilitud-Bridge-Boot]]
+- ~600 KB JS CSR antes de cualquier fetch → [[PERF-010-CSR-JS-Critical-Path-Catalogo]]
+- Overlay tapa LCP hasta fin de boot → [[../UX/UX-001-Overlay-Boot-Bloquea-Interaccion]]
+
 ## Cruces
 
 - [[PERF-007-Render-Card-A-Card]] (efecto multiplicador del coste de render)

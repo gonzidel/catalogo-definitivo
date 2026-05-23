@@ -1,0 +1,112 @@
+{
+  "name": "n8n-publicar-definitivo-base-only",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "a3421ff3-105e-4728-b757-2fddbb8a1ea2",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "1xT1nHwzF-_Pp3utuj0Sli3Q4eJhHZTU4rst2nfv9Qhw",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Publicacion Definitivo",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "9207fee7-e9e6-460c-bef3-984cc81c8c39",
+      "name": "Google Sheets Read Rows",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const row = $input.item.json;\n\nconst clean = (value) => String(value ?? '').trim();\nconst isYes = (value) => clean(value).toLowerCase() === 'si';\nconst urlKeys = Array.from({ length: 12 }, (_, i) => 'URLs ' + (i + 1));\nconst photoUrls = urlKeys.map((key) => clean(row[key])).filter(Boolean);\n\nconst product = clean(row.Producto);\nconst description = clean(row['Descripci?n'] ?? row['Descripcion']);\nconst sizes = clean(row['Talles Disponibles']);\nconst price = clean(row.Precio);\nconst color = clean(row.Color);\nconst isOferta = isYes(row.Oferta);\n\nconst igCaption = [\n  'Art. ' + product,\n  description,\n  'Numeracion: ~' + sizes + '~',\n  price + ' Precio por Mayor',\n  '',\n  'Mas modelos disponibles en el catalogo',\n  'https://fylmoda.com.ar/'\n].join('\\n');\n\nconst fbCaptionNormal = [\n  'Art. ' + product,\n  description,\n  'Numeracion: ~' + sizes + '~',\n  price + ' Precio por Mayor',\n  '',\n  'Modelo ya disponible en nuestro catalogo',\n  'https://fylmoda.com.ar/'\n].join('\\n');\n\nconst fbCaptionOferta = [\n  'OFERTA',\n  'Art. ' + product,\n  'Colores: ' + color,\n  description,\n  'Numeracion: ~' + sizes + '~',\n  price + ' Precio por Mayor',\n  '',\n  'Modelo ya disponible en nuestro catalogo',\n  'https://fylmoda.com.ar/'\n].join('\\n');\n\nreturn {\n  json: {\n    ...row,\n    Producto: product,\n    Color: color,\n    Talles: sizes,\n    Precio: price,\n    Descripcion: description,\n    photoUrls,\n    photoCount: photoUrls.length,\n    igCaption,\n    fbCaption: isOferta ? fbCaptionOferta : fbCaptionNormal,\n    igUserId: '17841405282710550',\n    fbPageId: '1064608640244020',\n    postToInstagram: isYes(row.Instagram) && photoUrls.length > 0,\n    postToFacebook: isYes(row.Facebook) && photoUrls.length > 0\n  }\n};"
+      },
+      "id": "943add56-9288-49bc-8d93-d210ae7f0d8d",
+      "name": "Prepare Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json[\"Producto\"]}}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      },
+      "id": "715bd5d3-6923-48ce-836f-9741f74618fc",
+      "name": "IF Has Product",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        660,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets Read Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Sheets Read Rows": {
+      "main": [
+        [
+          {
+            "node": "Prepare Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Data": {
+      "main": [
+        [
+          {
+            "node": "IF Has Product",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

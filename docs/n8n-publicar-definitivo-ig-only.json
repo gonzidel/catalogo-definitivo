@@ -1,0 +1,429 @@
+{
+  "name": "n8n-publicar-definitivo-ig-only",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "578c79a6-646c-4f66-9813-7bc6ea13750c",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "1xT1nHwzF-_Pp3utuj0Sli3Q4eJhHZTU4rst2nfv9Qhw",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Publicacion Definitivo",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "69552140-7c40-4246-bb99-c9554fca7aad",
+      "name": "Google Sheets Read Rows",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const row = $input.item.json;\n\nconst clean = (value) => String(value ?? '').trim();\nconst isYes = (value) => clean(value).toLowerCase() === 'si';\nconst urlKeys = Array.from({ length: 12 }, (_, i) => 'URLs ' + (i + 1));\nconst photoUrls = urlKeys.map((key) => clean(row[key])).filter(Boolean);\n\nconst product = clean(row.Producto);\nconst description = clean(row['Descripci?n'] ?? row['Descripcion']);\nconst sizes = clean(row['Talles Disponibles']);\nconst price = clean(row.Precio);\nconst color = clean(row.Color);\nconst isOferta = isYes(row.Oferta);\n\nconst igCaption = [\n  'Art. ' + product,\n  description,\n  'Numeracion: ~' + sizes + '~',\n  price + ' Precio por Mayor',\n  '',\n  'Mas modelos disponibles en el catalogo',\n  'https://fylmoda.com.ar/'\n].join('\\n');\n\nconst fbCaptionNormal = [\n  'Art. ' + product,\n  description,\n  'Numeracion: ~' + sizes + '~',\n  price + ' Precio por Mayor',\n  '',\n  'Modelo ya disponible en nuestro catalogo',\n  'https://fylmoda.com.ar/'\n].join('\\n');\n\nconst fbCaptionOferta = [\n  'OFERTA',\n  'Art. ' + product,\n  'Colores: ' + color,\n  description,\n  'Numeracion: ~' + sizes + '~',\n  price + ' Precio por Mayor',\n  '',\n  'Modelo ya disponible en nuestro catalogo',\n  'https://fylmoda.com.ar/'\n].join('\\n');\n\nreturn {\n  json: {\n    ...row,\n    Producto: product,\n    Color: color,\n    Talles: sizes,\n    Precio: price,\n    Descripcion: description,\n    photoUrls,\n    photoCount: photoUrls.length,\n    igCaption,\n    fbCaption: isOferta ? fbCaptionOferta : fbCaptionNormal,\n    igUserId: '17841405282710550',\n    fbPageId: '1064608640244020',\n    postToInstagram: isYes(row.Instagram) && photoUrls.length > 0,\n    postToFacebook: isYes(row.Facebook) && photoUrls.length > 0\n  }\n};"
+      },
+      "id": "2cccc044-13ea-412c-b119-feac351dd3a4",
+      "name": "Prepare Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json[\"Producto\"]}}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      },
+      "id": "49af223a-0e1d-4fbb-a2d1-17285d4f41e7",
+      "name": "IF Has Product",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json[\"postToInstagram\"]}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "08d601a7-0b03-447a-bc56-ff50b1c2cf63",
+      "name": "IF Instagram",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        880,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{$json[\"photoCount\"]}}",
+              "operation": "equal",
+              "value2": 1
+            }
+          ]
+        }
+      },
+      "id": "b972b9d2-8acc-44b5-b914-86ae232c00ea",
+      "name": "IF IG Single",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "requestMethod": "POST",
+        "url": "=https://graph.facebook.com/v20.0/{{$json[\"igUserId\"]}}/media",
+        "options": {},
+        "bodyParametersUi": {
+          "parameter": [
+            {
+              "name": "image_url",
+              "value": "={{$json[\"photoUrls\"][0]}}"
+            },
+            {
+              "name": "caption",
+              "value": "={{$json[\"igCaption\"]}}"
+            },
+            {
+              "name": "access_token",
+              "value": "REEMPLAZAR_CON_IG_PAGE_ACCESS_TOKEN"
+            }
+          ]
+        }
+      },
+      "id": "eb4ce9eb-5eed-4010-b49e-8edfcf7fb15e",
+      "name": "IG Create Single Container",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        1320,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "requestMethod": "POST",
+        "url": "=https://graph.facebook.com/v20.0/{{$node[\"Prepare Data\"].json[\"igUserId\"]}}/media_publish",
+        "options": {},
+        "bodyParametersUi": {
+          "parameter": [
+            {
+              "name": "creation_id",
+              "value": "={{$json[\"id\"]}}"
+            },
+            {
+              "name": "access_token",
+              "value": "REEMPLAZAR_CON_IG_PAGE_ACCESS_TOKEN"
+            }
+          ]
+        }
+      },
+      "id": "43be57ab-21d0-491d-96af-71767b4078bf",
+      "name": "IG Publish Single",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        1540,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const data = $input.item.json;\nreturn data.photoUrls.map((url) => ({ json: { ...data, url } }));"
+      },
+      "id": "e3928984-9c7b-4974-8770-876f15a85b3b",
+      "name": "IG Split URLs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "requestMethod": "POST",
+        "url": "=https://graph.facebook.com/v20.0/{{$json[\"igUserId\"]}}/media",
+        "options": {},
+        "bodyParametersUi": {
+          "parameter": [
+            {
+              "name": "image_url",
+              "value": "={{$json[\"url\"]}}"
+            },
+            {
+              "name": "is_carousel_item",
+              "value": "true"
+            },
+            {
+              "name": "access_token",
+              "value": "REEMPLAZAR_CON_IG_PAGE_ACCESS_TOKEN"
+            }
+          ]
+        }
+      },
+      "id": "a1d068cb-2f1f-43a0-861c-aa6dccc78c1a",
+      "name": "IG Create Carousel Item",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        1540,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const inputItems = $input.all();\nconst base = inputItems[0]?.json || {};\nconst ids = inputItems.map((item) => item.json.id).filter(Boolean);\nreturn [{ json: { ...base, creationIds: ids, children: ids.join(',') } }];"
+      },
+      "id": "b87b1950-84f9-498e-a315-2f6fe3d50ccd",
+      "name": "IG Build Carousel",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "requestMethod": "POST",
+        "url": "=https://graph.facebook.com/v20.0/{{$json[\"igUserId\"]}}/media",
+        "options": {},
+        "bodyParametersUi": {
+          "parameter": [
+            {
+              "name": "media_type",
+              "value": "CAROUSEL"
+            },
+            {
+              "name": "children",
+              "value": "={{$json[\"children\"]}}"
+            },
+            {
+              "name": "caption",
+              "value": "={{$json[\"igCaption\"]}}"
+            },
+            {
+              "name": "access_token",
+              "value": "REEMPLAZAR_CON_IG_PAGE_ACCESS_TOKEN"
+            }
+          ]
+        }
+      },
+      "id": "75b2536d-8c5c-4292-9993-4c78afe20662",
+      "name": "IG Create Carousel Container",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        1980,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "requestMethod": "POST",
+        "url": "=https://graph.facebook.com/v20.0/{{$node[\"Prepare Data\"].json[\"igUserId\"]}}/media_publish",
+        "options": {},
+        "bodyParametersUi": {
+          "parameter": [
+            {
+              "name": "creation_id",
+              "value": "={{$json[\"id\"]}}"
+            },
+            {
+              "name": "access_token",
+              "value": "REEMPLAZAR_CON_IG_PAGE_ACCESS_TOKEN"
+            }
+          ]
+        }
+      },
+      "id": "1b5d54f2-a414-45db-b1ed-9b87b203f8f0",
+      "name": "IG Publish Carousel",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        2200,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets Read Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Sheets Read Rows": {
+      "main": [
+        [
+          {
+            "node": "Prepare Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Data": {
+      "main": [
+        [
+          {
+            "node": "IF Has Product",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Has Product": {
+      "main": [
+        [
+          {
+            "node": "IF Instagram",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "IF Instagram": {
+      "main": [
+        [
+          {
+            "node": "IF IG Single",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "IF IG Single": {
+      "main": [
+        [
+          {
+            "node": "IG Create Single Container",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IG Split URLs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IG Create Single Container": {
+      "main": [
+        [
+          {
+            "node": "IG Publish Single",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IG Split URLs": {
+      "main": [
+        [
+          {
+            "node": "IG Create Carousel Item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IG Create Carousel Item": {
+      "main": [
+        [
+          {
+            "node": "IG Build Carousel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IG Build Carousel": {
+      "main": [
+        [
+          {
+            "node": "IG Create Carousel Container",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IG Create Carousel Container": {
+      "main": [
+        [
+          {
+            "node": "IG Publish Carousel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

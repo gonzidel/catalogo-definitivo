@@ -8,7 +8,7 @@ import {
   USE_OPEN_SHEET_FALLBACK as CONFIG_USE_OPEN_SHEET_FALLBACK,
   configReady,
 } from "./config.js";
-import { supabase as supabaseClient } from "./supabase-client.js?v=m260518";
+import { supabase as supabaseClient } from "./supabase-client.js?v=m260523";
 import { normalizeSize } from "./utils/size-normalizer.js";
 import { fylAnalytics } from "./analytics.js";
 import { formatARS as formatARSValue, parseARSNumber } from "./utils/price.js";
@@ -19,7 +19,7 @@ import {
   FYL_ERROR_KIND,
   classifyError,
   isPostgrestSchemaColumnError,
-} from "./net/fyl-fetch.js?v=m260518";
+} from "./net/fyl-fetch.js?v=m260523";
 import {
   showFylErrorState,
   hideFylErrorState,
@@ -329,30 +329,85 @@ function fylCatalogDbg(...args) {
 // de página, aunque hideCatalogBootOverlay sea llamado por el scope (first paint)
 // y luego de nuevo por el finally de inicializarCatalogo como safety net.
 let _bootDoneDispatched = false;
+/** Solo transiciones internas (showCatalogBootOverlay); cold load = 0. */
 const CATALOG_BOOT_MIN_VISIBLE_MS = 380;
+const CATALOG_BOOT_SPINNER_DELAY_MS = 1500;
+let _bootSpinnerTimeoutId = null;
 const _catalogBootShownAt =
   typeof performance !== "undefined" && typeof performance.now === "function"
     ? performance.now()
     : Date.now();
 
+function fylEnsureCatalogContainer() {
+  const catalogo = document.getElementById("catalogo");
+  if (!catalogo) return null;
+  let grid = document.getElementById("catalog-container");
+  if (!grid) {
+    grid = document.createElement("div");
+    grid.id = "catalog-container";
+    catalogo.appendChild(grid);
+  }
+  return grid;
+}
+
+/** Grid donde se pintan skeletons y cards (siempre #catalog-container). */
+function fylGetCatalogRenderRoot() {
+  return fylEnsureCatalogContainer();
+}
+
+function scheduleCatalogBootSpinner() {
+  if (_bootSpinnerTimeoutId != null) {
+    clearTimeout(_bootSpinnerTimeoutId);
+    _bootSpinnerTimeoutId = null;
+  }
+  const el = document.getElementById("catalog-boot-overlay");
+  if (!el || el.classList.contains("catalog-boot-overlay--hidden")) return;
+  _bootSpinnerTimeoutId = setTimeout(() => {
+    _bootSpinnerTimeoutId = null;
+    const ov = document.getElementById("catalog-boot-overlay");
+    if (!ov || ov.classList.contains("catalog-boot-overlay--hidden")) return;
+    ov.classList.add("catalog-boot-overlay--visible");
+    ov.setAttribute("aria-busy", "true");
+    ov.setAttribute("aria-hidden", "false");
+  }, CATALOG_BOOT_SPINNER_DELAY_MS);
+}
+
+function clearCatalogBootSpinnerSchedule() {
+  if (_bootSpinnerTimeoutId != null) {
+    clearTimeout(_bootSpinnerTimeoutId);
+    _bootSpinnerTimeoutId = null;
+  }
+  const el = document.getElementById("catalog-boot-overlay");
+  if (el) {
+    el.classList.remove("catalog-boot-overlay--visible");
+    el.setAttribute("aria-busy", "false");
+    el.setAttribute("aria-hidden", "true");
+  }
+}
+
 /** Oculta el overlay de arranque (index2) y restaura scroll del body. */
 function hideCatalogBootOverlay() {
+  clearCatalogBootSpinnerSchedule();
+  const minVisibleMs =
+    typeof window !== "undefined" && window.__FYL_BOOT_SUPPRESS_ROUTE === true
+      ? 0
+      : CATALOG_BOOT_MIN_VISIBLE_MS;
   const now =
     typeof performance !== "undefined" && typeof performance.now === "function"
       ? performance.now()
       : Date.now();
   const visibleFor = now - _catalogBootShownAt;
-  if (visibleFor < CATALOG_BOOT_MIN_VISIBLE_MS) {
-    setTimeout(hideCatalogBootOverlay, Math.ceil(CATALOG_BOOT_MIN_VISIBLE_MS - visibleFor));
+  if (visibleFor < minVisibleMs) {
+    setTimeout(hideCatalogBootOverlay, Math.ceil(minVisibleMs - visibleFor));
     return;
   }
 
   const el = document.getElementById("catalog-boot-overlay");
   if (el) {
+    el.classList.remove("catalog-boot-overlay--visible");
     el.classList.add("catalog-boot-overlay--hidden");
     el.setAttribute("aria-busy", "false");
     el.setAttribute("aria-hidden", "true");
-    // Android/WebView: visibility/opacity a veces dejan la capa o el scroll bloqueado
     el.style.display = "none";
   }
   document.body.classList.remove("catalog-boot-active");
@@ -404,12 +459,14 @@ function releaseBootOverlayOnFirstPaint(reason) {
   catalogScope.markFirstPaint(reason || "first_chunk_rendered");
 }
 
-/** Muestra nuevamente el overlay para transiciones pesadas (ej. volver a Inicio). */
+/** Transiciones pesadas: spinner visible de inmediato (no aplica al cold load inicial). */
 function showCatalogBootOverlay() {
+  clearCatalogBootSpinnerSchedule();
   const el = document.getElementById("catalog-boot-overlay");
   if (el) {
     el.style.display = "";
     el.classList.remove("catalog-boot-overlay--hidden");
+    el.classList.add("catalog-boot-overlay--visible");
     el.setAttribute("aria-busy", "true");
     el.setAttribute("aria-hidden", "false");
   }
@@ -463,11 +520,11 @@ function parseFechaPublicacion(value) {
   return Number.isFinite(t) ? t : 0;
 }
 
-/** Orden catálogo: publicación en admin; si nunca se publicó, FechaIngreso. */
+/** Orden catálogo: lo más reciente entre publicación (admin) y alta del producto activo. */
 function fylCatalogRecencyMs(item) {
   const pub = parseFechaPublicacion(item?.FechaPublicacion);
-  if (pub > 0) return pub;
-  return parseFecha(item?.FechaIngreso || "").getTime();
+  const created = parseFecha(item?.FechaIngreso || "").getTime();
+  return Math.max(pub, created);
 }
 
 function compareCatalogRecency(a, b) {
@@ -1305,33 +1362,41 @@ function agruparProductos(rows) {
     if (incomingPub > currentPub) {
       acc[art].FechaPublicacion = i.FechaPublicacion;
     }
+    const incomingIngreso = parseFecha(i.FechaIngreso || "").getTime();
+    const currentIngreso = parseFecha(acc[art].FechaIngreso || "").getTime();
+    if (incomingIngreso > currentIngreso) {
+      acc[art].FechaIngreso = i.FechaIngreso;
+    }
     return acc;
   }, {});
   return Object.values(grupos);
 }
 
-function renderCatalogSkeletonCards(count = 8) {
-  const cont = document.getElementById("catalogo");
-  if (!cont) return;
-  const safeCount = Math.max(4, Number(count) || 8);
-  cont.innerHTML = "";
-  const skeletons = Array.from({ length: safeCount }, () => `
-    <article class="card card-skeleton" aria-hidden="true">
-      <div class="card-skeleton__image"></div>
-      <div class="card-skeleton__line card-skeleton__line--title"></div>
-      <div class="card-skeleton__line card-skeleton__line--meta"></div>
-      <div class="card-skeleton__chips">
-        <span class="card-skeleton__chip"></span>
-        <span class="card-skeleton__chip"></span>
+const CATALOG_BOOT_SKELETON_COUNT = 4;
+
+function renderCatalogSkeletonCards(count = CATALOG_BOOT_SKELETON_COUNT) {
+  const grid = fylGetCatalogRenderRoot();
+  if (!grid) return;
+  const safeCount = Math.max(4, Math.min(8, Number(count) || CATALOG_BOOT_SKELETON_COUNT));
+  grid.innerHTML = Array.from(
+    { length: safeCount },
+    () => `
+    <article class="card producto card--skeleton" aria-hidden="true">
+      <div class="main-image-wrapper skeleton-shimmer"></div>
+      <div class="card-info">
+        <div class="skeleton-line skeleton-shimmer" style="width:60%;height:14px"></div>
+        <div class="skeleton-line skeleton-shimmer" style="width:40%;height:18px;margin-top:6px"></div>
       </div>
     </article>
-  `).join("");
-  cont.insertAdjacentHTML("beforeend", skeletons);
+  `
+  ).join("");
 }
 
 // Función principal de carga de categoría
 async function cargarCategoria(cat) {
   fylCatalogDbg("🔄 Cargando categoría:", cat);
+
+  fylOfferCardsLoadGen += 1;
 
   // Actualizar categoría actual
   categoriaActual = cat || 'all';
@@ -1339,7 +1404,8 @@ async function cargarCategoria(cat) {
   window.__fylCategoriaActual = categoriaActual;
 
   const loader = document.getElementById("loader");
-  const cont = document.getElementById("catalogo");
+  const cont = fylGetCatalogRenderRoot();
+  if (!cont) return;
 
   // Ocultar indicador de scroll infinito al cambiar de categoría
   ocultarIndicadorCarga();
@@ -1478,27 +1544,7 @@ async function cargarCategoria(cat) {
     */
     fylCatalogDbg(`📦 Productos agrupados: ${gruposArray.length}`);
 
-    // Obtener ofertas activas con imágenes
-    let offersCards = [];
-    try {
-      const { data: offers, error: offersError } = await supabase
-        .rpc('get_active_offers_with_images');
-      
-      if (!offersError && offers && offers.length > 0) {
-        fylCatalogDbg(`🔥 Se encontraron ${offers.length} campañas de ofertas con imágenes`);
-        offersCards = offers.map(offer => ({
-          type: 'offer',
-          campaignId: offer.offer_campaign_id,
-          imageUrl: offer.offer_image_url,
-          title: offer.offer_title,
-          productCount: offer.product_count,
-          startDate: offer.start_date,
-          endDate: offer.end_date
-        }));
-      }
-    } catch (error) {
-      console.warn('Error obteniendo ofertas con imágenes:', error);
-    }
+    // PERF-009: ofertas se cargan tras el primer paint (fylLoadOfferCardsAfterFirstPaint).
 
     // Ordenar productos por fecha de publicación (admin) o ingreso
     let productosOrdenados = Object.values(grupos).sort(compareCatalogRecency);
@@ -1512,7 +1558,7 @@ async function cargarCategoria(cat) {
     setProductosPendientes(productosOrdenados);
     window.__allProductsCache = productosOrdenados;
     productosRenderizados = 0;
-    offersCardsPendientes = offersCards;
+    offersCardsPendientes = [];
     setCatalogLoadMode("paged");
     
     // Limpiar contenedor
@@ -1523,7 +1569,7 @@ async function cargarCategoria(cat) {
     const firstChunkRendered = await renderizarProductosPagina(
       productosPendientes,
       cont,
-      offersCardsPendientes,
+      [],
       0,
       PRODUCTOS_INICIALES,
       { deferEnrich: true }
@@ -1534,6 +1580,7 @@ async function cargarCategoria(cat) {
     // sigue (configurarEventos, FYL banner, banners auxiliares, modal desde URL,
     // lazy-load de imágenes) corre en background y no debe tapar la home.
     releaseBootOverlayOnFirstPaint("first_chunk_rendered");
+    void fylLoadOfferCardsAfterFirstPaint(cat, cont);
 
     initCatalogCardDelegation();
     configurarEventos();
@@ -1746,10 +1793,63 @@ function renderPriceWithOffer(producto) {
 }
 
 // Función para renderizar card de oferta
+/** Evita insertar ofertas obsoletas si el usuario cambió de categoría durante el fetch. */
+let fylOfferCardsLoadGen = 0;
+
+function mapActiveOffersRpcToCards(offers) {
+  return (offers || []).map((offer) => ({
+    campaignId: offer.offer_campaign_id,
+    imageUrl: offer.offer_image_url,
+    title: offer.offer_title,
+    productCount: offer.product_count,
+    startDate: offer.start_date,
+    endDate: offer.end_date,
+  }));
+}
+
+function fylBindOfferCardListeners(container) {
+  if (!container) return;
+  container.querySelectorAll(".offer-card").forEach((card) => {
+    if (card.dataset.listenerAdded) return;
+    card.dataset.listenerAdded = "true";
+    card.addEventListener("click", () => {
+      const campaignId = card.dataset.offerCampaignId;
+      if (campaignId) filterByOffer(campaignId);
+    });
+  });
+}
+
+/** PERF-009: RPC de ofertas después del primer paint (no bloquea LCP). */
+async function fylLoadOfferCardsAfterFirstPaint(cat, container) {
+  if (!supabase || !container) return;
+  const gen = ++fylOfferCardsLoadGen;
+
+  try {
+    const { data: offers, error: offersError } = await supabase.rpc(
+      "get_active_offers_with_images"
+    );
+    if (gen !== fylOfferCardsLoadGen) return;
+    if (categoriaActual !== cat) return;
+    if (offersError || !offers?.length) return;
+    if (container.querySelector(".offer-card")) return;
+
+    const offersCards = mapActiveOffersRpcToCards(offers);
+    offersCardsPendientes = offersCards;
+    fylCatalogDbg(`🔥 Ofertas post-paint: ${offersCards.length} campañas`);
+
+    const tpl = document.createElement("template");
+    tpl.innerHTML = offersCards.map((offer) => renderOfferCard(offer)).join("");
+    container.insertBefore(tpl.content, container.firstChild);
+    fylBindOfferCardListeners(container);
+  } catch (error) {
+    console.warn("Error obteniendo ofertas con imágenes (post-paint):", error);
+  }
+}
+
 function renderOfferCard(offer) {
   const title = offer.title || 'Oferta Especial';
   const productCount = offer.productCount || 0;
-  
+
   return `
     <div class="card offer-card" data-offer-campaign-id="${offer.campaignId}" style="cursor: pointer; border: 3px solid #ff9800; position: relative; overflow: hidden;">
       <div style="position: relative; width: 100%; padding-top: 100%; background: #fff;">
@@ -1794,8 +1894,9 @@ function syncHomeTopSlotState({ pending = false } = {}) {
   const slot = document.getElementById("home-top-dynamic-slot");
   if (!slot) return;
   const activeHome = categoriaActual === "all";
-  slot.classList.toggle("home-top-dynamic-slot--home", activeHome);
   const shouldShow = activeHome && pending;
+  /* Reservar altura solo mientras carga; si no, queda un bloque vacío ~240px. */
+  slot.classList.toggle("home-top-dynamic-slot--home", shouldShow);
   slot.classList.toggle("home-top-dynamic-slot--pending", shouldShow);
   const localLoader = document.getElementById("home-top-dynamic-loader");
   if (localLoader) {
@@ -2118,19 +2219,8 @@ async function renderizarProductosPagina(productos, container, offersCards = [],
     fylRebuildCatalogSizeIndex();
   }
 
-  // Agregar event listeners a los cards de oferta (solo para los nuevos)
-  if (startIndex === 0 || allItems.some(item => item.type === 'offer')) {
-    container.querySelectorAll('.offer-card').forEach(card => {
-      if (!card.dataset.listenerAdded) {
-        card.dataset.listenerAdded = 'true';
-        card.addEventListener('click', () => {
-          const campaignId = card.dataset.offerCampaignId;
-          if (campaignId) {
-            filterByOffer(campaignId);
-          }
-        });
-      }
-    });
+  if (startIndex === 0 || allItems.some((item) => item.type === "offer")) {
+    fylBindOfferCardListeners(container);
   }
 
   fylBindLazyMainImageListeners(container);
@@ -2636,6 +2726,11 @@ async function filterBySupplierFYL(options = {}) {
       const currentPubFyl = parseFechaPublicacion(acc[art].FechaPublicacion);
       if (incomingPubFyl > currentPubFyl) {
         acc[art].FechaPublicacion = i.FechaPublicacion;
+      }
+      const incomingIngresoFyl = parseFecha(i.FechaIngreso || "").getTime();
+      const currentIngresoFyl = parseFecha(acc[art].FechaIngreso || "").getTime();
+      if (incomingIngresoFyl > currentIngresoFyl) {
+        acc[art].FechaIngreso = i.FechaIngreso;
       }
 
       // Actualizar información de ofertas
@@ -6900,6 +6995,8 @@ function ejecutarDiagnostico() {
 async function inicializarCatalogo() {
   window.__FYL_BOOT_SUPPRESS_ROUTE = true;
   globalThis.markBootStage?.("catalog.init.start");
+  renderCatalogSkeletonCards(CATALOG_BOOT_SKELETON_COUNT);
+  scheduleCatalogBootSpinner();
   try {
     fylCatalogDbg("🚀 Inicializando catálogo con Supabase...");
 

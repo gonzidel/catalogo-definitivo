@@ -150,6 +150,54 @@
       border-color: #CD844D;
       box-shadow: 0 0 0 3px rgba(205, 132, 77, 0.1);
     }
+    .all-filters-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px 24px;
+      align-items: center;
+      margin-bottom: 20px;
+      padding: 14px 16px;
+      background: #f8f9fa;
+      border-radius: 10px;
+      border: 1px solid #e9ecef;
+    }
+    .filter-checkbox {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      color: #495057;
+      cursor: pointer;
+      user-select: none;
+    }
+    .filter-checkbox input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      accent-color: #CD844D;
+      cursor: pointer;
+    }
+    .all-filters-row .supplier-filter-wrap {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .all-filters-row .supplier-filter-wrap label {
+      font-size: 14px;
+      font-weight: 600;
+      color: #495057;
+    }
+    .all-filters-row .supplier-filter-wrap select {
+      padding: 10px 14px;
+      border: 2px solid #e9ecef;
+      border-radius: 10px;
+      font-family: 'Poppins', sans-serif;
+      font-size: 14px;
+      background: white;
+      cursor: pointer;
+      min-width: 200px;
+    }
     .products-grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
@@ -177,8 +225,22 @@
       height: 200px;
       object-fit: cover;
       border-radius: 8px;
-      margin-bottom: 12px;
+      margin-bottom: 8px;
       background: #f0f0f0;
+    }
+    .product-image--placeholder {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #999;
+    }
+    .product-stock-warning {
+      margin: 0 0 12px 0;
+      text-align: center;
+      color: #dc3545;
+      font-weight: 600;
+      font-size: 13px;
+      line-height: 1.3;
     }
     .product-info h3 {
       margin: 0 0 8px 0;
@@ -210,15 +272,49 @@
       color: #495057;
     }
     .checkbox-wrapper {
+      position: static;
+    }
+    .card-checkboxes {
       position: absolute;
       top: 12px;
       right: 12px;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 6px;
+      z-index: 2;
     }
     .checkbox-wrapper input[type="checkbox"] {
       width: 20px;
       height: 20px;
       cursor: pointer;
       accent-color: #CD844D;
+    }
+    .checkbox-wrapper--offer {
+      background: rgba(255, 255, 255, 0.92);
+      border-radius: 8px;
+      padding: 4px 6px;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+    }
+    .checkbox-offer-label {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      margin: 0;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 600;
+      color: #495057;
+      user-select: none;
+    }
+    .checkbox-offer-label input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      accent-color: #dc3545;
+    }
+    .checkbox-offer-label input[type="checkbox"]:disabled {
+      cursor: not-allowed;
+      opacity: 0.45;
     }
     .publication-table {
       width: 100%;
@@ -452,6 +548,22 @@
           <select id="category-filter-all">
             <option value="">Todas las categorías</option>
           </select>
+        </div>
+        <div class="all-filters-row" id="all-extra-filters">
+          <label class="filter-checkbox">
+            <input type="checkbox" id="filter-never-published" />
+            <span>Nunca publicados</span>
+          </label>
+          <label class="filter-checkbox">
+            <input type="checkbox" id="filter-days-30-plus" />
+            <span>Más de 30 días sin publicar</span>
+          </label>
+          <div class="supplier-filter-wrap">
+            <label for="supplier-filter-all">Proveedor</label>
+            <select id="supplier-filter-all">
+              <option value="">Todos los proveedores</option>
+            </select>
+          </div>
         </div>
         <div id="all-products-container" class="products-grid"></div>
         <div id="loading-all" class="loading-indicator">

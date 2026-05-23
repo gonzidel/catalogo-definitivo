@@ -11,7 +11,7 @@
  * para que Safari detecte byte-diff y reinstale el SW reemplazando legacy.
  */
 
-const SW_BUILD_TAG = "m260518";
+const SW_BUILD_TAG = "m260523";
 
 const CRITICAL_VENDOR_PREFIX = "/scripts/vendor/";
 const CRITICAL_CONFIG = "/config.prod.js";

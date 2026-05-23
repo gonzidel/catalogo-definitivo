@@ -67,6 +67,60 @@ let recommendedProducts = [];
 let lowStockProducts = [];
 let allProducts = [];
 let selectedForPublication = []; // Array de { productId, color }
+let selectedForOffer = []; // Array de { productId, color } — requiere también publicación seleccionada
+
+function publicationSelectionKey(productId, color) {
+  return `${String(productId)}|${String(color ?? "")}`;
+}
+
+function isPublicationSelected(productId, color) {
+  const key = publicationSelectionKey(productId, color);
+  return selectedForPublication.some(s => publicationSelectionKey(s.productId, s.color) === key);
+}
+
+function isOfferSelected(productId, color) {
+  const key = publicationSelectionKey(productId, color);
+  return selectedForOffer.some(s => publicationSelectionKey(s.productId, s.color) === key);
+}
+
+function buildManualOfferKeySet(publicationSelection = selectedForPublication, offerSelection = selectedForOffer) {
+  const pubKeys = new Set(publicationSelection.map(s => publicationSelectionKey(s.productId, s.color)));
+  return new Set(
+    offerSelection
+      .filter(s => pubKeys.has(publicationSelectionKey(s.productId, s.color)))
+      .map(s => publicationSelectionKey(s.productId, s.color))
+  );
+}
+
+function removeOfferSelection(productId, color) {
+  const key = publicationSelectionKey(productId, color);
+  selectedForOffer = selectedForOffer.filter(
+    s => publicationSelectionKey(s.productId, s.color) !== key
+  );
+}
+
+function renderCardCheckboxes(productId, color) {
+  const productIdEscaped = String(productId).replace(/'/g, "&#39;");
+  const colorEscaped = String(color ?? "").replace(/'/g, "&#39;");
+  const pubSelected = isPublicationSelected(productId, color);
+  const offerSelected = isOfferSelected(productId, color);
+
+  return `
+    <div class="card-checkboxes">
+      <div class="checkbox-wrapper" title="Agregar a publicación">
+        <input type="checkbox" ${pubSelected ? "checked" : ""}
+               onchange="togglePublication('${productIdEscaped}', '${colorEscaped}')" />
+      </div>
+      <div class="checkbox-wrapper checkbox-wrapper--offer" title="Marcar como oferta">
+        <label class="checkbox-offer-label">
+          <input type="checkbox" ${offerSelected ? "checked" : ""} ${pubSelected ? "" : "disabled"}
+                 onchange="toggleOffer('${productIdEscaped}', '${colorEscaped}')" />
+          <span>Oferta</span>
+        </label>
+      </div>
+    </div>
+  `;
+}
 
 /** Catálogo público en producción. PDP: …/catalogo#/pdp/<SKU> */
 const FYL_CATALOG_PUBLIC_WEB_BASE = "https://fylmoda.com.ar/catalogo#";
@@ -126,6 +180,11 @@ const categoryFilterNew = document.getElementById("category-filter-new");
 const categoryFilterRecommended = document.getElementById("category-filter-recommended");
 const categoryFilterLowStock = document.getElementById("category-filter-low-stock");
 const categoryFilterAll = document.getElementById("category-filter-all");
+const filterNeverPublished = document.getElementById("filter-never-published");
+const filterDays30Plus = document.getElementById("filter-days-30-plus");
+const supplierFilterAll = document.getElementById("supplier-filter-all");
+
+const STALE_PUBLICATION_DAYS = 30;
 const newContainer = document.getElementById("new-products-container");
 const recommendedContainer = document.getElementById("recommended-products-container");
 const lowStockContainer = document.getElementById("low-stock-products-container");
@@ -288,8 +347,7 @@ function setupInfiniteScroll(containerId, tabName, loadFunction) {
     // Para la pestaña "all", NO cargar más productos cuando hay búsqueda activa
     // porque la búsqueda directa ya devuelve todos los resultados filtrados
     if (tabName === "all") {
-      const hasSearch = searchAll?.value?.trim() || categoryFilterAll?.value;
-      if (hasSearch) return; // No cargar más si hay búsqueda activa (búsqueda directa ya tiene todos los resultados)
+      if (hasActiveAllTabFilters()) return; // Búsqueda directa ya trae todos los resultados filtrados
     }
     
     // Calcular si estamos cerca del final (100px antes del final)
@@ -347,13 +405,11 @@ tabs.forEach(tab => {
         await loadLowStockProducts(true);
       });
     } else if (targetTab === "all") {
-      // No cargar automáticamente - solo buscar si hay búsqueda activa
-      const hasSearch = searchAll?.value?.trim() || categoryFilterAll?.value;
-      if (hasSearch) {
-        // Usar búsqueda directa en lugar de cargar todos los productos
+      // No cargar automáticamente - solo buscar si hay filtros activos
+      if (hasActiveAllTabFilters()) {
         runPublicationsTask("tab:all_search", async () => {
           if (!(await ensurePublicationsAuth())) return;
-          await searchAllProductsDirect(searchAll?.value?.trim() || "", categoryFilterAll?.value || "");
+          await searchAllProductsDirect();
         });
       } else {
         renderAllProducts();
@@ -379,13 +435,38 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (document.getElementById('tab-new')?.classList.contains('active')) {
     runPublicationsTask("boot:new", () => loadNewProducts(true));
   }
-  // La pestaña "Todo" es la activa por defecto, pero no carga productos automáticamente
-  // Solo muestra el mensaje de búsqueda hasta que el usuario busque
+  await loadPublicationSuppliers();
+  // La pestaña "Todo" es la activa por defecto; muestra ayuda hasta activar un filtro
 });
+
+async function fetchVariantImageUrls(variantIds) {
+  if (!variantIds?.length) return [];
+  const { data: images, error } = await supabase
+    .from("variant_images")
+    .select("url, public_id, secure_url, position")
+    .in("variant_id", variantIds)
+    .order("position");
+  if (error) {
+    console.warn("⚠️ Error obteniendo imágenes de variantes:", error);
+    return [];
+  }
+  const urls = (images || [])
+    .map(img => img.url || img.secure_url)
+    .filter(Boolean);
+  return [...new Set(urls)];
+}
+
+function buildColorPublicationMeta(variants) {
+  const price = variants[0]?.price ? parseFloat(variants[0].price) : null;
+  const colorLastPublishedAt = variants
+    .map(v => v.last_published_at)
+    .filter(Boolean)
+    .sort((a, b) => new Date(b) - new Date(a))[0] || null;
+  return { price, last_published_at: colorLastPublishedAt };
+}
 
 // Obtener datos de producto+color (variantes, talles, imágenes)
 async function getProductColorData(productId, color) {
-  // Obtener variantes del color específico (size/stock se resuelven aparte).
   const { data: variants, error } = await supabase
     .from("product_variants")
     .select("id, sku, price, last_published_at")
@@ -403,58 +484,50 @@ async function getProductColorData(productId, color) {
   }
   
   const variantIds = variants.map(v => v.id);
-  
-  // Misma lógica que products/stock:
-  // - variant_sizes: metadato de talles
-  // - variant_size_warehouse_stock (general): stock operativo
+  const uniqueImageUrls = await fetchVariantImageUrls(variantIds);
+  const { price, last_published_at: colorLastPublishedAt } = buildColorPublicationMeta(variants);
+  const imagePayload = {
+    imageUrls: uniqueImageUrls,
+    firstImage: uniqueImageUrls[0] || null,
+    price,
+    last_published_at: colorLastPublishedAt,
+  };
+
   const variantSizes = await getPublicationVariantSizes(variantIds);
   
   if (!variantSizes || variantSizes.length === 0) {
-    // No hay talles definidos para estas variantes.
-    return null;
+    return {
+      variants: variants.map(v => ({ ...v, sizes: [] })),
+      sizes: [],
+      hasStock: false,
+      ...imagePayload,
+    };
   }
   
   const variantSizesWithStock = variantSizes.filter(vs => Number(vs.stock_qty || 0) > 0);
 
-  // Mantener comportamiento original: solo publicar colores con al menos un talle con stock.
   if (variantSizesWithStock.length === 0) {
-    return null;
+    return {
+      variants: variants.map(v => ({ ...v, sizes: [] })),
+      sizes: [],
+      hasStock: false,
+      ...imagePayload,
+    };
   }
 
-  // Variantes que tienen al menos un talle con stock (gating de publicación).
   const variantIdsWithStock = [...new Set(variantSizesWithStock.map(vs => vs.variant_id))];
   const availableVariants = variants.filter(v => variantIdsWithStock.includes(v.id));
   
   if (availableVariants.length === 0) {
-    return null;
+    return {
+      variants: variants.map(v => ({ ...v, sizes: [] })),
+      sizes: [],
+      hasStock: false,
+      ...imagePayload,
+    };
   }
   
-  // Mostrar solo talles que realmente tengan stock > 0.
   const sizes = normalizeUniqueSortedSizes(variantSizesWithStock.map(vs => vs.size));
-  
-  // Obtener imágenes de las variantes (url, public_id para optimización)
-  const { data: images } = await supabase
-    .from("variant_images")
-    .select("url, public_id, secure_url, position")
-    .in("variant_id", variantIds)
-    .order("position");
-  
-  // Obtener URLs únicas (priorizar url o secure_url)
-  const allImageUrls = (images || [])
-    .map(img => img.url || img.secure_url)
-    .filter(Boolean);
-  
-  // Eliminar duplicados usando Set (mantiene orden de primera aparición)
-  const uniqueImageUrls = [...new Set(allImageUrls)];
-  
-  // Obtener precio (tomar el precio de la primera variante disponible, normalmente todas tienen el mismo precio)
-  const price = availableVariants.length > 0 && availableVariants[0].price 
-    ? parseFloat(availableVariants[0].price) 
-    : null;
-  const colorLastPublishedAt = availableVariants
-    .map(v => v.last_published_at)
-    .filter(Boolean)
-    .sort((a, b) => new Date(b) - new Date(a))[0] || null;
   
   return {
     variants: availableVariants.map(v => ({
@@ -468,10 +541,8 @@ async function getProductColorData(productId, color) {
         }))
     })),
     sizes,
-    imageUrls: uniqueImageUrls,
-    firstImage: uniqueImageUrls[0] || null,
-    price,
-    last_published_at: colorLastPublishedAt,
+    hasStock: true,
+    ...imagePayload,
   };
 }
 
@@ -542,37 +613,25 @@ async function groupProductsByColor(products, batchSize = 10) {
           try {
             const colorData = await getProductColorData(product.id, color);
             
-            // Incluir productos incluso si no tienen talles disponibles (para la pestaña "Todo")
-            if (colorData) {
-              return {
-                productId: product.id,
-                productName: product.name,
-                category: product.category,
-                description: product.description || "",
-                color,
-                created_at: product.created_at,
-                last_published_at: resolveColorPublishedAt(product.last_published_at, colorData),
-                publication_status: product.publication_status || 'nuevo',
-                ...colorData,
-              };
-            } else {
-              // Si no hay colorData, crear un objeto básico para que el producto aparezca
-              return {
-                productId: product.id,
-                productName: product.name,
-                category: product.category,
-                description: product.description || "",
-                color,
-                created_at: product.created_at,
-                last_published_at: resolveColorPublishedAt(product.last_published_at, colorData),
-                publication_status: product.publication_status || 'nuevo',
-                sizes: [],
-                imageUrls: [],
-                firstImage: null,
-                price: null,
-                stockInfo: "Sin stock",
-              };
+            if (!colorData) {
+              return null;
             }
+
+            if (colorData.hasStock === false) {
+              colorsWithoutStock++;
+            }
+
+            return {
+              productId: product.id,
+              productName: product.name,
+              category: product.category,
+              description: product.description || "",
+              color,
+              created_at: product.created_at,
+              last_published_at: resolveColorPublishedAt(product.last_published_at, colorData),
+              publication_status: product.publication_status || 'nuevo',
+              ...colorData,
+            };
           } catch (colorError) {
             console.warn(`⚠️ Error obteniendo datos de color ${color} para producto ${product.id}:`, colorError);
             return null;
@@ -615,6 +674,81 @@ function daysSincePublished(date) {
   const diffTime = Math.abs(now - published);
   const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
   return diffDays;
+}
+
+function getAllTabFilterState() {
+  return {
+    searchQuery: searchAll?.value?.trim() || "",
+    categoryValue: categoryFilterAll?.value || "",
+    neverPublished: filterNeverPublished?.checked === true,
+    days30Plus: filterDays30Plus?.checked === true,
+    supplierId: supplierFilterAll?.value || "",
+  };
+}
+
+function hasActiveAllTabFilters(state = getAllTabFilterState()) {
+  return !!(
+    state.searchQuery ||
+    state.categoryValue ||
+    state.neverPublished ||
+    state.days30Plus ||
+    state.supplierId
+  );
+}
+
+function applyAllTabClientFilters(items, state = getAllTabFilterState()) {
+  let filtered = items;
+  if (state.neverPublished) {
+    filtered = filtered.filter(item => !item.last_published_at);
+  }
+  if (state.days30Plus) {
+    filtered = filtered.filter(item => {
+      if (!item.last_published_at) return false;
+      const days = daysSincePublished(item.last_published_at);
+      return days !== null && days > STALE_PUBLICATION_DAYS;
+    });
+  }
+  return filtered;
+}
+
+function applyServerFiltersToAllProductsQuery(query, state = getAllTabFilterState()) {
+  if (state.neverPublished) {
+    query = query.is("last_published_at", null);
+  }
+  if (state.days30Plus) {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - STALE_PUBLICATION_DAYS);
+    query = query.not("last_published_at", "is", null).lt("last_published_at", cutoff.toISOString());
+  }
+  if (state.supplierId) {
+    query = query.eq("supplier_id", state.supplierId);
+  }
+  return query;
+}
+
+async function loadPublicationSuppliers() {
+  if (!supplierFilterAll) return;
+  try {
+    const { data, error } = await supabase
+      .from("suppliers")
+      .select("id, name, code")
+      .order("name");
+    if (error) {
+      console.warn("[publications] No se pudieron cargar proveedores:", error.message);
+      return;
+    }
+    const currentValue = supplierFilterAll.value;
+    supplierFilterAll.innerHTML = '<option value="">Todos los proveedores</option>' +
+      (data || []).map(s => {
+        const label = s.code ? `${s.name} (${s.code})` : s.name;
+        return `<option value="${s.id}">${label}</option>`;
+      }).join("");
+    if (currentValue && [...supplierFilterAll.options].some(o => o.value === currentValue)) {
+      supplierFilterAll.value = currentValue;
+    }
+  } catch (e) {
+    console.warn("[publications] Error cargando proveedores", e);
+  }
 }
 
 // Cargar productos nuevos (con paginación optimizada)
@@ -1325,7 +1459,8 @@ function isSafeServerSearchQuery(value) {
 }
 
 // Búsqueda directa en la base de datos sin cargar todos los productos
-async function searchAllProductsDirect(searchQuery, categoryValue) {
+async function searchAllProductsDirect(filterState = getAllTabFilterState()) {
+  const { searchQuery, categoryValue } = filterState;
   const state = paginationState.all;
   
   // Cancelar búsqueda anterior si existe
@@ -1344,13 +1479,15 @@ async function searchAllProductsDirect(searchQuery, categoryValue) {
     // Construir consulta base - TODOS los productos sin importar estado
     let query = supabase
       .from("products")
-      .select("id, name, category, description, created_at, last_published_at, publication_status, status")
+      .select("id, name, category, description, created_at, last_published_at, publication_status, status, supplier_id")
       .order("created_at", { ascending: false });
 
     // Cancelar request HTTP si el usuario cambia la búsqueda mientras está en vuelo
     if (typeof query.abortSignal === "function") {
       query = query.abortSignal(currentSearchAbortController.signal);
     }
+
+    query = applyServerFiltersToAllProductsQuery(query, filterState);
     
     // Aplicar filtro de categoría si existe
     if (categoryValue && categoryValue.trim()) {
@@ -1403,6 +1540,7 @@ async function searchAllProductsDirect(searchQuery, categoryValue) {
       const searchLower = normalizeSearchText(searchQuery);
       filtered = initialGrouped.filter(item => matchesProductSearch(item, searchLower));
     }
+    filtered = applyAllTabClientFilters(filtered, filterState);
     
     // Guardar productos en el estado para que estén disponibles cuando se seleccionen
     state.allLoaded = initialGrouped; // Guardar todos los productos agrupados (sin filtrar)
@@ -1428,6 +1566,7 @@ async function searchAllProductsDirect(searchQuery, categoryValue) {
           const searchLower = normalizeSearchText(searchQuery);
           remainingFiltered = remainingGrouped.filter(item => matchesProductSearch(item, searchLower));
         }
+        remainingFiltered = applyAllTabClientFilters(remainingFiltered, filterState);
         // Combinar y guardar todos los resultados en el estado
         const allGrouped = [...initialGrouped, ...remainingGrouped];
         const allFiltered = [...filtered, ...remainingFiltered];
@@ -1515,10 +1654,10 @@ async function loadAllProducts(reset = false) {
       state.offset = state.limit;
       
       // Aplicar filtros actuales inmediatamente para mostrar resultados de búsqueda
-      const hasActiveSearch = searchAll?.value?.trim() || categoryFilterAll?.value;
-      if (hasActiveSearch) {
-        // Si hay búsqueda activa, filtrar y mostrar resultados inmediatamente
-        const filtered = searchProducts(searchAll?.value?.trim() || "", initialGrouped, categoryFilterAll?.value || "");
+      if (hasActiveAllTabFilters()) {
+        const fs = getAllTabFilterState();
+        let filtered = searchProducts(fs.searchQuery, initialGrouped, fs.categoryValue);
+        filtered = applyAllTabClientFilters(filtered, fs);
         renderAllProducts(filtered);
       } else {
         // Si no hay búsqueda, mostrar primeros productos
@@ -1539,8 +1678,7 @@ async function loadAllProducts(reset = false) {
           console.log(`✅ Todos los productos agrupados: ${state.allLoaded.length}`);
           populateCategoryFilters();
           // Aplicar filtros actuales después de cargar el resto para actualizar resultados
-          const hasSearch = searchAll?.value?.trim() || categoryFilterAll?.value;
-          if (hasSearch) {
+          if (hasActiveAllTabFilters()) {
             applyFilters("all", searchAll, categoryFilterAll, renderAllProducts);
           }
           hideLoadingIndicator('all');
@@ -1607,6 +1745,29 @@ function renderNewProducts(filtered = null) {
   container.innerHTML = products.map(item => createProductCard(item)).join('');
 }
 
+function isProductOutOfStock(item) {
+  return item?.hasStock === false;
+}
+
+function renderProductCardMedia(item, productNameEscaped) {
+  const imgSrc = item.firstImage ? cloudinaryOptimized(item.firstImage, 400) : "";
+  const imageUrlEscaped = imgSrc ? String(imgSrc).replace(/"/g, "&quot;") : "";
+  const imageBlock = item.firstImage
+    ? `<img src="${imageUrlEscaped}" alt="${productNameEscaped}" class="product-image" loading="lazy" onerror="this.style.display='none'">`
+    : '<div class="product-image product-image--placeholder">Sin imagen</div>';
+  const stockWarning = isProductOutOfStock(item)
+    ? '<p class="product-stock-warning">Sin stock</p>'
+    : "";
+  return imageBlock + stockWarning;
+}
+
+function formatCardSizesLabel(item) {
+  if (isProductOutOfStock(item) && (!item.sizes || item.sizes.length === 0)) {
+    return "—";
+  }
+  return formatSizes(item.sizes);
+}
+
 // Función auxiliar para crear una tarjeta de producto
 function createProductCard(item) {
   const isSelected = selectedForPublication.some(
@@ -1614,8 +1775,6 @@ function createProductCard(item) {
   );
   const productIdEscaped = String(item.productId).replace(/'/g, "&#39;");
   const colorEscaped = String(item.color).replace(/'/g, "&#39;");
-  const imgSrc = item.firstImage ? cloudinaryOptimized(item.firstImage, 400) : "";
-  const imageUrlEscaped = imgSrc ? String(imgSrc).replace(/"/g, "&quot;") : "";
   const productNameEscaped = String(item.productName).replace(/"/g, "&quot;");
   const numericPrice = getNumericPrice(item.price);
   const formattedPrice = numericPrice !== null ? formatCurrency(numericPrice) : null;
@@ -1623,18 +1782,15 @@ function createProductCard(item) {
   
   return `
     <div class="product-color-card ${isSelected ? 'selected' : ''}" data-product-id="${productIdEscaped}" data-color="${colorEscaped}">
-      <div class="checkbox-wrapper">
-        <input type="checkbox" ${isSelected ? 'checked' : ''} 
-               onchange="togglePublication('${productIdEscaped}', '${colorEscaped}')" />
-      </div>
-      ${item.firstImage ? `<img src="${imageUrlEscaped}" alt="${productNameEscaped}" class="product-image" loading="lazy" onerror="this.style.display='none'">` : '<div class="product-image" style="background:#f0f0f0;display:flex;align-items:center;justify-content:center;color:#999;">Sin imagen</div>'}
+      ${renderCardCheckboxes(item.productId, item.color)}
+      ${renderProductCardMedia(item, productNameEscaped)}
       <div class="product-info">
         <span class="product-color-badge">${colorEscaped}</span>
         <h3>${productNameEscaped}</h3>
         <p><strong>Categoría:</strong> ${item.category || 'N/A'}</p>
         ${formattedPrice ? `<p><strong>Precio:</strong> ${formattedPrice}</p>` : '<p><strong>Precio:</strong> N/A</p>'}
         <p><strong>Creado:</strong> ${new Date(item.created_at).toLocaleDateString('es-AR')}</p>
-        <div class="sizes-info">Talles: ${formatSizes(item.sizes)}</div>
+        <div class="sizes-info">Talles: ${formatCardSizesLabel(item)}</div>
         <div class="card-actions">
           <button class="btn-small btn-primary" onclick="editVariantPrice('${productIdEscaped}', '${colorEscaped}', ${editPriceArg})">
             ✏️ Editar precio
@@ -1668,8 +1824,6 @@ function renderRecommendedProducts(filtered = null) {
     const days = daysSincePublished(item.last_published_at);
     const productIdEscaped = String(item.productId).replace(/'/g, "&#39;");
     const colorEscaped = String(item.color).replace(/'/g, "&#39;");
-    const imgSrc = item.firstImage ? cloudinaryOptimized(item.firstImage, 400) : "";
-    const imageUrlEscaped = imgSrc ? String(imgSrc).replace(/"/g, "&quot;") : "";
     const productNameEscaped = String(item.productName).replace(/"/g, "&quot;");
     const numericPrice = getNumericPrice(item.price);
     const formattedPrice = numericPrice !== null ? formatCurrency(numericPrice) : null;
@@ -1677,18 +1831,15 @@ function renderRecommendedProducts(filtered = null) {
     
     return `
       <div class="product-color-card ${isSelected ? 'selected' : ''}" data-product-id="${productIdEscaped}" data-color="${colorEscaped}">
-        <div class="checkbox-wrapper">
-          <input type="checkbox" ${isSelected ? 'checked' : ''} 
-                 onchange="togglePublication('${productIdEscaped}', '${colorEscaped}')" />
-        </div>
-        ${item.firstImage ? `<img src="${imageUrlEscaped}" alt="${productNameEscaped}" class="product-image" loading="lazy" onerror="this.style.display='none'">` : '<div class="product-image" style="background:#f0f0f0;display:flex;align-items:center;justify-content:center;color:#999;">Sin imagen</div>'}
+        ${renderCardCheckboxes(item.productId, item.color)}
+        ${renderProductCardMedia(item, productNameEscaped)}
         <div class="product-info">
           <span class="product-color-badge">${colorEscaped}</span>
           <h3>${productNameEscaped}</h3>
           <p><strong>Categoría:</strong> ${item.category || 'N/A'}</p>
           ${formattedPrice ? `<p><strong>Precio:</strong> ${formattedPrice}</p>` : '<p><strong>Precio:</strong> N/A</p>'}
           <p><strong>Última publicación:</strong> Hace ${days} días</p>
-          <div class="sizes-info">Talles: ${formatSizes(item.sizes)}</div>
+          <div class="sizes-info">Talles: ${formatCardSizesLabel(item)}</div>
           <div class="card-actions">
             <button class="btn-small btn-primary" onclick="editVariantPrice('${productIdEscaped}', '${colorEscaped}', ${editPriceArg})">
               ✏️ Editar precio
@@ -1709,11 +1860,8 @@ function renderAllProducts(filtered = null) {
     return;
   }
   
-  const hasSearch = searchAll?.value?.trim() || categoryFilterAll?.value;
-  
-  // Si no hay búsqueda activa, siempre mostrar mensaje de búsqueda
-  if (!hasSearch) {
-    container.innerHTML = '<div class="empty-state" style="text-align: center; padding: 40px; color: #6c757d;"><p style="font-size: 18px; margin-bottom: 12px;">🔍 Buscá productos para ver resultados</p><p style="font-size: 14px;">Usá el campo de búsqueda o seleccioná una categoría para comenzar</p></div>';
+  if (!hasActiveAllTabFilters()) {
+    container.innerHTML = '<div class="empty-state" style="text-align: center; padding: 40px; color: #6c757d;"><p style="font-size: 18px; margin-bottom: 12px;">🔍 Buscá o filtrá productos para ver resultados</p><p style="font-size: 14px;">Usá el buscador, una categoría, los checkboxes o un proveedor para comenzar</p></div>';
     return;
   }
   
@@ -1732,8 +1880,6 @@ function renderAllProducts(filtered = null) {
     const days = item.last_published_at ? daysSincePublished(item.last_published_at) : null;
     const productIdEscaped = String(item.productId).replace(/'/g, "&#39;");
     const colorEscaped = String(item.color).replace(/'/g, "&#39;");
-    const imgSrc = item.firstImage ? cloudinaryOptimized(item.firstImage, 400) : "";
-    const imageUrlEscaped = imgSrc ? String(imgSrc).replace(/"/g, "&quot;") : "";
     const productNameEscaped = String(item.productName).replace(/"/g, "&quot;");
     const numericPrice = getNumericPrice(item.price);
     const formattedPrice = numericPrice !== null ? formatCurrency(numericPrice) : null;
@@ -1748,11 +1894,8 @@ function renderAllProducts(filtered = null) {
     
     return `
       <div class="product-color-card ${isSelected ? 'selected' : ''}" data-product-id="${productIdEscaped}" data-color="${colorEscaped}">
-        <div class="checkbox-wrapper">
-          <input type="checkbox" ${isSelected ? 'checked' : ''} 
-                 onchange="togglePublication('${productIdEscaped}', '${colorEscaped}')" />
-        </div>
-        ${item.firstImage ? `<img src="${imageUrlEscaped}" alt="${productNameEscaped}" class="product-image" loading="lazy" onerror="this.style.display='none'">` : '<div class="product-image" style="background:#f0f0f0;display:flex;align-items:center;justify-content:center;color:#999;">Sin imagen</div>'}
+        ${renderCardCheckboxes(item.productId, item.color)}
+        ${renderProductCardMedia(item, productNameEscaped)}
         <div class="product-info">
           <span class="product-color-badge">${colorEscaped}</span>
           <h3>${productNameEscaped}</h3>
@@ -1760,7 +1903,7 @@ function renderAllProducts(filtered = null) {
           ${formattedPrice ? `<p><strong>Precio:</strong> ${formattedPrice}</p>` : '<p><strong>Precio:</strong> N/A</p>'}
           <p><strong>Creado:</strong> ${new Date(item.created_at).toLocaleDateString('es-AR')}</p>
           ${publicationInfo}
-          <div class="sizes-info">Talles: ${formatSizes(item.sizes)}</div>
+          <div class="sizes-info">Talles: ${formatCardSizesLabel(item)}</div>
           <div class="card-actions">
             <button class="btn-small btn-primary" onclick="editVariantPrice('${productIdEscaped}', '${colorEscaped}', ${editPriceArg})">
               ✏️ Editar precio
@@ -1797,8 +1940,6 @@ function renderLowStockProducts(filtered = null) {
     );
     const productIdEscaped = String(item.productId).replace(/'/g, "&#39;");
     const colorEscaped = String(item.color).replace(/'/g, "&#39;");
-    const imgSrc = item.firstImage ? cloudinaryOptimized(item.firstImage, 400) : "";
-    const imageUrlEscaped = imgSrc ? String(imgSrc).replace(/"/g, "&quot;") : "";
     const productNameEscaped = String(item.productName).replace(/"/g, "&quot;");
     const numericPrice = getNumericPrice(item.price);
     const formattedPrice = numericPrice !== null ? formatCurrency(numericPrice) : null;
@@ -1811,17 +1952,14 @@ function renderLowStockProducts(filtered = null) {
     
     return `
       <div class="product-color-card ${isSelected ? 'selected' : ''}" data-product-id="${productIdEscaped}" data-color="${colorEscaped}">
-        <div class="checkbox-wrapper">
-          <input type="checkbox" ${isSelected ? 'checked' : ''} 
-                 onchange="togglePublication('${productIdEscaped}', '${colorEscaped}')" />
-        </div>
-        ${item.firstImage ? `<img src="${imageUrlEscaped}" alt="${productNameEscaped}" class="product-image" loading="lazy" onerror="this.style.display='none'">` : '<div class="product-image" style="background:#f0f0f0;display:flex;align-items:center;justify-content:center;color:#999;">Sin imagen</div>'}
+        ${renderCardCheckboxes(item.productId, item.color)}
+        ${renderProductCardMedia(item, productNameEscaped)}
         <div class="product-info">
           <span class="product-color-badge">${colorEscaped}</span>
           <h3>${productNameEscaped}</h3>
           <p><strong>Categoría:</strong> ${item.category || 'N/A'}</p>
           ${formattedPrice ? `<p><strong>Precio:</strong> ${formattedPrice}</p>` : '<p><strong>Precio:</strong> N/A</p>'}
-          <div class="sizes-info">Talles: ${formatSizes(item.sizes)}</div>
+          <div class="sizes-info">Talles: ${formatCardSizesLabel(item)}</div>
           <div class="sizes-info" style="background:#fff3cd;color:#856404;margin-top:8px;">
             <strong>⚠️ Stock:</strong> ${stockInfoText}
           </div>
@@ -1994,6 +2132,7 @@ window.togglePublication = function(productId, color) {
   
   if (index >= 0) {
     selectedForPublication.splice(index, 1);
+    removeOfferSelection(pid, col);
   } else {
     selectedForPublication.push({ productId: pid, color: col });
   }
@@ -2010,6 +2149,25 @@ window.togglePublication = function(productId, color) {
   saveToLocalStorage();
 };
 
+window.toggleOffer = function(productId, color) {
+  const pid = String(productId);
+  const col = String(color ?? "");
+  if (!isPublicationSelected(pid, col)) return;
+
+  const index = selectedForOffer.findIndex(
+    s => String(s.productId) === pid && String(s.color ?? "") === col
+  );
+
+  if (index >= 0) {
+    selectedForOffer.splice(index, 1);
+  } else {
+    selectedForOffer.push({ productId: pid, color: col });
+  }
+
+  refreshAllTabsRespectingFilter();
+  saveToLocalStorage();
+};
+
 // Remover de publicación
 window.removeFromPublication = function(productId, color) {
   const pid = String(productId);
@@ -2020,6 +2178,7 @@ window.removeFromPublication = function(productId, color) {
   
   if (index >= 0) {
     selectedForPublication.splice(index, 1);
+    removeOfferSelection(pid, col);
     refreshAllTabsRespectingFilter();
     
     // Renderizar tabla de publicación (async, no bloquear)
@@ -2139,6 +2298,7 @@ window.deleteVariantColor = async function(productId, color) {
           String(row.color ?? "") === String(color ?? "")
         )
     );
+    removeOfferSelection(productId, color);
     if (prevLength !== selectedForPublication.length) {
       saveToLocalStorage();
     }
@@ -2150,73 +2310,57 @@ window.deleteVariantColor = async function(productId, color) {
   }
 };
 
-// Copiar productos seleccionados en formato TSV para Google Sheets
-// Si hay varios colores del mismo producto, se agrupan en una fila: colores unidos, talles combinados sin repetir, URLs1=primer color, URLs2=segundo color, etc.
-async function copyToSheet() {
-  if (selectedForPublication.length === 0) {
-    showMessage("No hay productos seleccionados para copiar", "err");
-    return;
+const PUBLICATION_EXPORT_HEADERS = [
+  "Facebook",
+  "Instagram",
+  "Oferta",
+  "Producto",
+  "Color",
+  "Talles Disponibles",
+  "Precio",
+  "Descripción",
+  ...Array.from({ length: 12 }, (_, i) => `URLs ${i + 1}`),
+  "URL WEB",
+];
+
+function isLocalAdminHost() {
+  if (typeof window === "undefined") return false;
+  const h = window.location.hostname;
+  return h === "localhost" || h === "127.0.0.1" || h === "";
+}
+
+async function resolveOrderedPublicationItems(selection) {
+  const allProductsList = getFullProductsList();
+  const orderedItems = [];
+  const itemsToLoad = [];
+
+  for (const { productId, color } of selection) {
+    const found = allProductsList.find(
+      p => String(p.productId) === String(productId) && String(p.color ?? "") === String(color ?? "")
+    );
+    if (found) {
+      orderedItems.push(found);
+    } else {
+      itemsToLoad.push({ productId, color });
+    }
   }
-  
-  try {
-    if (copyToSheetBtn) {
-      copyToSheetBtn.disabled = true;
-      copyToSheetBtn.innerHTML = '<span>⏳</span><span>Copiando...</span>';
-    }
-    
-    const allProductsList = getFullProductsList();
-    // Resolver cada selección a su item completo, manteniendo el orden de selección
-    const orderedItems = [];
-    const itemsToLoad = [];
-    
-    // Primero intentar encontrar productos en cache
-    for (const { productId, color } of selectedForPublication) {
-      const found = allProductsList.find(
-        p => String(p.productId) === String(productId) && String(p.color ?? "") === String(color ?? "")
-      );
-      if (found) {
-        orderedItems.push(found);
-      } else {
-        // Si no está en cache, agregarlo a la lista para cargar desde la base de datos
-        itemsToLoad.push({ productId, color });
-      }
-    }
-    
-    // Cargar productos faltantes desde la base de datos (incluyendo productos sin tags)
-    if (itemsToLoad.length > 0) {
-      const loadPromises = itemsToLoad.map(async ({ productId, color }) => {
-        try {
-          const colorData = await getProductColorData(productId, color);
-          // Obtener datos del producto incluso si no tiene tags
-          const { data: product, error } = await supabase
-            .from("products")
-            .select("id, name, category, description, created_at, last_published_at, publication_status")
-            .eq("id", productId)
-            .single();
-          
-          if (error || !product) {
-            console.warn(`⚠️ Error cargando producto ${productId}:`, error);
-            return null;
-          }
-          
-          // Si no hay colorData (sin variantes/talles), crear un objeto básico para que se copie igual
-          if (!colorData) {
-            return {
-              productId: product.id,
-              productName: product.name,
-              category: product.category,
-              description: product.description || "",
-              color,
-              created_at: product.created_at,
-              last_published_at: product.last_published_at,
-              publication_status: product.publication_status || 'nuevo',
-              sizes: [],
-              imageUrls: [],
-              firstImage: null,
-              price: null,
-            };
-          }
-          
+
+  if (itemsToLoad.length > 0) {
+    const loadPromises = itemsToLoad.map(async ({ productId, color }) => {
+      try {
+        const colorData = await getProductColorData(productId, color);
+        const { data: product, error } = await supabase
+          .from("products")
+          .select("id, name, category, description, created_at, last_published_at, publication_status")
+          .eq("id", productId)
+          .single();
+
+        if (error || !product) {
+          console.warn(`⚠️ Error cargando producto ${productId}:`, error);
+          return null;
+        }
+
+        if (!colorData) {
           return {
             productId: product.id,
             productName: product.name,
@@ -2224,129 +2368,207 @@ async function copyToSheet() {
             description: product.description || "",
             color,
             created_at: product.created_at,
-            last_published_at: resolveColorPublishedAt(product.last_published_at, colorData),
-            publication_status: product.publication_status || 'nuevo',
-            ...colorData,
+            last_published_at: product.last_published_at,
+            publication_status: product.publication_status || "nuevo",
+            sizes: [],
+            imageUrls: [],
+            firstImage: null,
+            price: null,
+            hasStock: false,
           };
-        } catch (err) {
-          console.warn(`⚠️ Error cargando producto ${productId} color ${color}:`, err);
-          return null;
         }
-      });
-      
-      const loadedItems = await Promise.all(loadPromises);
-      // Agregar productos cargados, incluso si no tienen tags o variantes
-      orderedItems.push(...loadedItems.filter(Boolean));
+
+        return {
+          productId: product.id,
+          productName: product.name,
+          category: product.category,
+          description: product.description || "",
+          color,
+          created_at: product.created_at,
+          last_published_at: resolveColorPublishedAt(product.last_published_at, colorData),
+          publication_status: product.publication_status || "nuevo",
+          ...colorData,
+        };
+      } catch (err) {
+        console.warn(`⚠️ Error cargando producto ${productId} color ${color}:`, err);
+        return null;
+      }
+    });
+
+    orderedItems.push(...(await Promise.all(loadPromises)).filter(Boolean));
+  }
+
+  return orderedItems;
+}
+
+/** Filas agrupadas por producto (mismo formato que Google Sheets / workflow n8n). */
+async function buildPublicationExportRows(selection, offerSelection = selectedForOffer) {
+  const orderedItems = await resolveOrderedPublicationItems(selection);
+  if (orderedItems.length === 0) {
+    return { headers: PUBLICATION_EXPORT_HEADERS, rows: [], rowArrays: [] };
+  }
+
+  const byProduct = new Map();
+  for (const item of orderedItems) {
+    const id = item.productId;
+    if (!byProduct.has(id)) byProduct.set(id, []);
+    const list = byProduct.get(id);
+    if (!list.some(entry => String(entry.color ?? "") === String(item.color ?? ""))) {
+      list.push(item);
     }
-    
-    if (orderedItems.length === 0) {
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  const productColorPairs = [...byProduct].flatMap(([, its]) =>
+    its.map(i => ({ product_id: i.productId, color: i.color }))
+  );
+  const inOfferSet = new Set();
+  if (productColorPairs.length > 0) {
+    const { data: offers } = await supabase
+      .from("color_price_offers")
+      .select("product_id, color")
+      .in("product_id", [...new Set(productColorPairs.map(p => p.product_id))])
+      .eq("status", "active")
+      .lte("start_date", today)
+      .gte("end_date", today);
+    if (offers?.length) {
+      offers.forEach(o => inOfferSet.add(`${o.product_id}|${(o.color || "").trim()}`));
+    }
+  }
+
+  const rowArrays = [];
+  const rows = [];
+  const manualOfferKeys = buildManualOfferKeySet(selection, offerSelection);
+
+  for (const [, items] of byProduct) {
+    const first = items[0];
+    const isNew = first.publication_status === "nuevo" || !first.last_published_at;
+    const numericPrice = getNumericPrice(first.price);
+    const priceValue = numericPrice !== null ? formatCurrency(numericPrice) : "";
+    const hasManualOffer = items.some(i =>
+      manualOfferKeys.has(publicationSelectionKey(i.productId, i.color))
+    );
+    let facebookValue;
+    let instagramValue;
+    let ofertaValue;
+    if (hasManualOffer) {
+      facebookValue = "no";
+      instagramValue = "no";
+      ofertaValue = "si";
+    } else {
+      const hasDbOffer = items.some(i => inOfferSet.has(`${i.productId}|${(i.color || "").trim()}`));
+      facebookValue = hasDbOffer ? "no" : "si";
+      instagramValue = isNew ? "si" : "no";
+      ofertaValue = hasDbOffer ? "si" : "no";
+    }
+    const colorsCell = items.map(i => i.color || "").filter(Boolean).join(", ");
+
+    const allSizes = new Set();
+    items.forEach(i => {
+      (i.sizes || []).forEach(s => allSizes.add(String(s)));
+    });
+    const tallesCell = formatSizes(normalizeUniqueSortedSizes([...allSizes]));
+    const descriptionCell = (first.description || "").trim();
+
+    const allUrls = [];
+    for (const item of items) {
+      if (item?.imageUrls && Array.isArray(item.imageUrls)) {
+        for (const url of item.imageUrls) {
+          if (url && !allUrls.includes(url)) allUrls.push(url);
+        }
+      }
+    }
+
+    const rowArray = [
+      facebookValue,
+      instagramValue,
+      ofertaValue,
+      first.productName || "",
+      colorsCell,
+      tallesCell,
+      priceValue,
+      descriptionCell,
+      ...Array.from({ length: 12 }, (_, i) => allUrls[i] || ""),
+      buildFylCatalogPdpUrlFromPublicationItem(first),
+    ];
+
+    rowArrays.push(rowArray);
+    rows.push(
+      PUBLICATION_EXPORT_HEADERS.reduce((obj, header, index) => {
+        obj[header] = rowArray[index] ?? "";
+        return obj;
+      }, {
+        product_id: first.productId,
+        colors_selected: items.map(i => i.color || "").filter(Boolean),
+      })
+    );
+  }
+
+  return { headers: PUBLICATION_EXPORT_HEADERS, rows, rowArrays };
+}
+
+/** Proxy vía Edge Function (evita CORS del navegador hacia automation.fylmoda.com.ar). */
+async function notifyN8nPublishWebhook({ publishedAt, selection, rows }) {
+  if (!rows?.length) return { ok: false, skipped: true, reason: "empty_rows" };
+
+  const body = {
+    source: "admin_publications",
+    published_at: publishedAt,
+    selection_count: selection.length,
+    variant_count: selection.length,
+    items: rows,
+    webhook_mode: isLocalAdminHost() ? "test" : "production",
+  };
+
+  const { data, error } = await supabase.functions.invoke("n8n-publish", { body });
+
+  if (error) {
+    const hint =
+      /not found|404|Function/i.test(error.message || "")
+        ? " Desplegá la Edge Function n8n-publish en Supabase."
+        : "";
+    throw new Error(`${error.message || "Error invocando n8n-publish"}${hint}`);
+  }
+
+  if (data?.error) {
+    throw new Error(String(data.error));
+  }
+
+  if (data?.ok === false) {
+    throw new Error(data.error || "n8n rechazó el webhook");
+  }
+
+  return { ok: true, status: data?.n8n_status ?? 200 };
+}
+
+// Copiar productos seleccionados en formato TSV para Google Sheets
+async function copyToSheet() {
+  if (selectedForPublication.length === 0) {
+    showMessage("No hay productos seleccionados para copiar", "err");
+    return;
+  }
+
+  try {
+    if (copyToSheetBtn) {
+      copyToSheetBtn.disabled = true;
+      copyToSheetBtn.innerHTML = '<span>⏳</span><span>Copiando...</span>';
+    }
+
+    const { headers, rowArrays } = await buildPublicationExportRows(selectedForPublication);
+    if (rowArrays.length === 0) {
       showMessage("No se pudieron cargar los datos de los productos seleccionados", "err");
       return;
     }
-    
-    // Agrupar por productId manteniendo orden de selección dentro de cada producto
-    // productId -> [ item1, item2, ... ] en el orden en que fueron seleccionados
-    const byProduct = new Map();
-    for (const item of orderedItems) {
-      const id = item.productId;
-      if (!byProduct.has(id)) {
-        byProduct.set(id, []);
-      }
-      const list = byProduct.get(id);
-      if (!list.some(entry => String(entry.color ?? "") === String(item.color ?? ""))) {
-        list.push(item);
-      }
-    }
-    
-    const headers = ["Facebook", "Instagram", "Oferta", "Producto", "Color", "Talles Disponibles", "Precio", "Descripción"];
-    for (let i = 1; i <= 12; i++) {
-      headers.push(`URLs ${i}`);
-    }
-    headers.push("URL WEB");
-    
-    // Obtener ofertas activas (product_id + color) para los productos seleccionados
-    const today = new Date().toISOString().slice(0, 10);
-    const productColorPairs = [...byProduct].flatMap(([, its]) => its.map(i => ({ product_id: i.productId, color: i.color })));
-    const inOfferSet = new Set();
-    if (productColorPairs.length > 0) {
-      const { data: offers } = await supabase
-        .from("color_price_offers")
-        .select("product_id, color")
-        .in("product_id", [...new Set(productColorPairs.map(p => p.product_id))])
-        .eq("status", "active")
-        .lte("start_date", today)
-        .gte("end_date", today);
-      if (offers && offers.length > 0) {
-        offers.forEach(o => inOfferSet.add(`${o.product_id}|${(o.color || "").trim()}`));
-      }
-    }
-    
-    const rows = [];
-    for (const [, items] of byProduct) {
-      const first = items[0];
-      const isNew = first.publication_status === 'nuevo' || !first.last_published_at;
-      const instagramValue = isNew ? "si" : "no";
-      const numericPrice = getNumericPrice(first.price);
-      const priceValue = numericPrice !== null ? formatCurrency(numericPrice) : "";
-      
-      // ¿Algún color de este producto está en oferta?
-      const hasOffer = items.some(i => inOfferSet.has(`${i.productId}|${(i.color || "").trim()}`));
-      const facebookValue = hasOffer ? "no" : "si";
-      const ofertaValue = hasOffer ? "si" : "no";
-      
-      // Colores en orden de selección: "Rojo, Negro"
-      const colorsCell = items.map(i => i.color || "").filter(Boolean).join(", ");
-      
-      // Talles: unión sin repetir, ordenados (ej: rojo 2,3,4 y negro 3,4 -> 2,3,4)
-      const allSizes = new Set();
-      items.forEach(i => {
-        (i.sizes || []).forEach(s => allSizes.add(String(s)));
-      });
-      const sizesSorted = normalizeUniqueSortedSizes([...allSizes]);
-      const tallesCell = formatSizes(sizesSorted);
-      
-      const descriptionCell = (first.description || "").trim();
-      const row = [
-        facebookValue,
-        instagramValue,
-        ofertaValue,
-        first.productName || "",
-        colorsCell,
-        tallesCell,
-        priceValue,
-        descriptionCell
-      ];
-      
-      // URLs: recopilar TODAS las URLs de imágenes de todos los colores (no solo la principal)
-      const allUrls = [];
-      for (const item of items) {
-        if (item && item.imageUrls && Array.isArray(item.imageUrls)) {
-          for (const url of item.imageUrls) {
-            if (url && !allUrls.includes(url)) allUrls.push(url);
-          }
-        }
-      }
-      for (let i = 0; i < 12; i++) {
-        row.push(allUrls[i] || "");
-      }
-      // Columna U: enlace directo al PDP (primer color seleccionado de este producto)
-      row.push(buildFylCatalogPdpUrlFromPublicationItem(first));
-      
-      rows.push(row);
-    }
-    
-    const allRows = [headers, ...rows];
-    const tsvContent = allRows
-      .map(row => row.map(cell => {
-        return String(cell).replace(/\t/g, " ").replace(/\n/g, " ").replace(/\r/g, "");
-      }).join("\t"))
+
+    const tsvContent = [headers, ...rowArrays]
+      .map(row => row.map(cell => String(cell).replace(/\t/g, " ").replace(/\n/g, " ").replace(/\r/g, "")).join("\t"))
       .join("\n");
-    
+
     await navigator.clipboard.writeText(tsvContent);
-    
-    const totalRows = rows.length;
-    showMessage(`✅ ${totalRows} fila(s) copiada(s) para Sheet (productos agrupados por color). Pegá en Google Sheets.`, "ok");
-    
+    showMessage(
+      `✅ ${rowArrays.length} fila(s) copiada(s) para Sheet (productos agrupados por color). Pegá en Google Sheets.`,
+      "ok"
+    );
   } catch (error) {
     console.error("Error copiando a Sheet:", error);
     showMessage(`❌ Error al copiar: ${error.message}`, "err");
@@ -2388,6 +2610,8 @@ async function publishSelected() {
   // Obtener productIds únicos (puede haber varios colores del mismo producto)
   const uniqueProductIds = [...new Set(selectedForPublication.map(s => s.productId))];
   const selectedColorKeys = new Set(selectedForPublication.map(s => `${s.productId}|${s.color}`));
+  const selectionSnapshot = [...selectedForPublication];
+  const offerSnapshot = [...selectedForOffer];
   
   try {
     const DEBUG_PUBLICATION_EVENTS = true;
@@ -2403,9 +2627,18 @@ async function publishSelected() {
       publishBtn.disabled = true;
       publishBtn.innerHTML = '<span>⏳</span><span>Publicando...</span>';
     }
-    
+
     const nowIso = new Date().toISOString();
     const publicationChannel = "admin_publications";
+
+    // Payload n8n antes de mutar BD (flags Facebook/Instagram coherentes con pre-publicación).
+    let n8nExportRows = [];
+    try {
+      const exportData = await buildPublicationExportRows(selectionSnapshot, offerSnapshot);
+      n8nExportRows = exportData.rows;
+    } catch (exportErr) {
+      console.warn("[publications] buildPublicationExportRows:", exportErr);
+    }
 
     if (DEBUG_PUBLICATION_EVENTS) {
       const [{ data: authData, error: authError }, { data: adminData, error: adminError }] = await Promise.all([
@@ -2507,9 +2740,30 @@ async function publishSelected() {
     }
     
     const publishedCount = selectedForPublication.length;
+    let n8nWebhookOk = false;
+    let n8nWebhookError = null;
+
+    if (n8nExportRows.length > 0) {
+      try {
+        await notifyN8nPublishWebhook({
+          publishedAt: nowIso,
+          selection: selectionSnapshot,
+          rows: n8nExportRows,
+        });
+        n8nWebhookOk = true;
+      } catch (webhookErr) {
+        n8nWebhookError = webhookErr;
+        console.warn("[publications] n8n webhook:", webhookErr);
+      }
+    }
+
     showMessage(
-      `✅ ${publishedCount} variante(s)/color(es) publicado(s). Actualizando catálogo público…`,
-      "ok"
+      n8nWebhookOk
+        ? `✅ ${publishedCount} variante(s) publicada(s) y enviada(s) a n8n. Actualizando catálogo público…`
+        : n8nWebhookError
+          ? `✅ ${publishedCount} variante(s) publicada(s) en FYL, pero n8n no respondió: ${n8nWebhookError.message}. Actualizando catálogo…`
+          : `✅ ${publishedCount} variante(s)/color(es) publicado(s). Actualizando catálogo público…`,
+      n8nWebhookError ? "err" : "ok"
     );
 
     void refreshCatalogPublicSnapshot()
@@ -2533,6 +2787,7 @@ async function publishSelected() {
     
     // Limpiar selección
     selectedForPublication = [];
+    selectedForOffer = [];
     saveToLocalStorage();
     
     // Actualizar UI inmediatamente respetando filtro actual
@@ -2571,6 +2826,7 @@ if (clearAllBtn) {
     
     if (confirm("¿Estás seguro de quitar todos los productos de la publicación?")) {
       selectedForPublication = [];
+      selectedForOffer = [];
       saveToLocalStorage();
       refreshAllTabsRespectingFilter();
       renderPublicationTable();
@@ -2650,21 +2906,15 @@ function applyFilters(tabName, searchInput, categorySelect, renderFunction) {
   const searchQuery = searchInput ? searchInput.value.trim() : "";
   const categoryValue = categorySelect ? categorySelect.value : "";
   
-  // Para la pestaña "Todo", solo cargar si hay búsqueda activa
+  // Para la pestaña "Todo", buscar en Supabase cuando hay algún filtro activo
   if (tabName === "all") {
-    const hasActiveSearch = searchQuery || categoryValue;
-    
-    if (!hasActiveSearch) {
-      // Sin búsqueda activa: mostrar mensaje y no cargar productos
+    if (!hasActiveAllTabFilters()) {
       renderAllProducts([]);
       return;
     }
-    
-    // Hay búsqueda activa: buscar directamente en la base de datos
-    // Esto es más eficiente que cargar todos los productos primero
     runPublicationsTask("filters:all_search", async () => {
       if (!(await ensurePublicationsAuth())) return;
-      await searchAllProductsDirect(searchQuery, categoryValue);
+      await searchAllProductsDirect();
     });
     return;
   }
@@ -2777,6 +3027,26 @@ if (categoryFilterLowStock) {
   });
 }
 
+function applyAllTabExtraFilters(changedEl) {
+  if (changedEl === filterNeverPublished && filterNeverPublished?.checked && filterDays30Plus) {
+    filterDays30Plus.checked = false;
+  }
+  if (changedEl === filterDays30Plus && filterDays30Plus?.checked && filterNeverPublished) {
+    filterNeverPublished.checked = false;
+  }
+  applyFilters("all", searchAll, categoryFilterAll, renderAllProducts);
+}
+
+if (filterNeverPublished) {
+  filterNeverPublished.addEventListener("change", () => applyAllTabExtraFilters(filterNeverPublished));
+}
+if (filterDays30Plus) {
+  filterDays30Plus.addEventListener("change", () => applyAllTabExtraFilters(filterDays30Plus));
+}
+if (supplierFilterAll) {
+  supplierFilterAll.addEventListener("change", () => applyAllTabExtraFilters(supplierFilterAll));
+}
+
 if (categoryFilterAll) {
   categoryFilterAll.addEventListener("change", () => {
     syncCategoryFilterAndApplyAll(categoryFilterAll.value);
@@ -2793,6 +3063,7 @@ if (searchPublication) {
 // Guardar en localStorage
 function saveToLocalStorage() {
   localStorage.setItem("publication_selected", JSON.stringify(selectedForPublication));
+  localStorage.setItem("publication_offer_selected", JSON.stringify(selectedForOffer));
 }
 
 // Cargar de localStorage
@@ -2809,6 +3080,21 @@ function loadFromLocalStorage() {
         : [];
     } catch (e) {
       console.warn("Error cargando selección guardada:", e);
+    }
+  }
+
+  const savedOffers = localStorage.getItem("publication_offer_selected");
+  if (savedOffers) {
+    try {
+      const parsedOffers = JSON.parse(savedOffers);
+      selectedForOffer = Array.isArray(parsedOffers)
+        ? parsedOffers.map(s => ({
+            productId: String(s.productId),
+            color: String(s.color ?? ""),
+          }))
+        : [];
+    } catch (e) {
+      console.warn("Error cargando ofertas guardadas:", e);
     }
   }
 }
@@ -2858,6 +3144,7 @@ function guardarEnDia(dia) {
   
   // Limpiar la lista de seleccionados después de guardar
   selectedForPublication = [];
+  selectedForOffer = [];
   saveToLocalStorage();
   refreshAllTabsRespectingFilter();
   renderPublicationTable();

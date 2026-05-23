@@ -1,0 +1,52 @@
+{
+  "name": "n8n-test-if-node",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "33b9af68-424f-41b4-992f-8b3b3cc45bcc",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{true}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "fcda9578-9f20-4a83-a1f9-a9d13fcf3b88",
+      "name": "IF Test",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "IF Test",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

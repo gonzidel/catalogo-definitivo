@@ -1,6 +1,6 @@
 # 00 — Roadmap performance Q2 2026
 
-Orden propuesto para atacar la auditoría [[../Performance/2026-05-12-Auditoria-Inicial]]. **Optimizado por ratio impacto/esfuerzo y bajo riesgo.**
+Orden propuesto para atacar la auditoría [[../Performance/2026-05-12-Auditoria-Inicial]] y re-auditoría LCP [[../Performance/2026-05-23-Auditoria-LCP-Catalogo-Clarity]] (Clarity 7.9s). **Optimizado por ratio impacto/esfuerzo y bajo riesgo.**
 
 > Regla: no reestructurar arquitectura. Fixes mínimos, reversibles, medibles.
 
@@ -41,6 +41,9 @@ Resultado esperado: dead/rage clicks por la mitad o menos.
 | ID   | Doc                                                                                                                | Estimado | Impacto                    |
 | ---- | ------------------------------------------------------------------------------------------------------------------ | -------- | -------------------------- |
 | F3-1 | [[../Performance/PERF-001-LCP-Round-Trips-Supabase]] (primer batch sin enrich, paralelizar, paginar inicial chica) | L        | LCP −2/−4s                 |
+| F3-1b | [[../Performance/PERF-008-DetallesSimilitud-Bridge-Boot]] + [[../Performance/PERF-009-Offers-RPC-Before-First-Paint]] | S     | LCP −0.5/−2s (quick)       |
+| F3-1c | [[../Performance/PERF-011-LCP-Preload-Preconnect-Gaps]] + [[../Performance/PERF-012-Config-Prod-Render-Blocking]] | S–M      | LCP −0.3/−1s               |
+| F3-1d | [[../Performance/PERF-010-CSR-JS-Critical-Path-Catalogo]] (SSG 1ª card / code-split)                             | L        | LCP −2/−4s                 |
 | F3-2 | [[../Performance/PERF-005-Apply-Size-Filter-N-Queries]] (precargar mapa de talles)                                 | M        | INP filtro de talles 5–10× |
 
 
@@ -77,5 +80,7 @@ Cada fase debe terminar con:
 ## Cruces
 
 - [[../Performance/2026-05-12-Auditoria-Inicial]]
+- [[../Performance/2026-05-23-Auditoria-LCP-Catalogo-Clarity]]
 - [[../Clarity/2026-05-12-Metricas-Iniciales]]
+- `doc/catalogo/auditoria-lcp-2026-05-23.md`
 - [[../Metricas/00-KPIs-Catalogo]]

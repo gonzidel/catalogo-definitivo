@@ -17,15 +17,16 @@ El **banner personalizado (legacy por tags)** es un pipeline **separado**: no co
 
 ---
 
-## Activación en catálogo (obligatorio)
+## Activación en catálogo
 
 | Método | Acción |
 |--------|--------|
-| URL (local/QA) | `index.html?curated_banner=1` (persiste en `localStorage`) |
-| Persistente | `localStorage.setItem('FYL_CURATED_BANNER_V1', '1')` + reload |
+| **Por defecto (prod)** | `FYL_CURATED_BANNER_V1 === true` en `index.html` / `catalogo.html` (banner home con `tag_value = '__curated__'`) |
+| Forzar ON | `?curated_banner=1` → persiste `localStorage` `"1"` |
+| Opt-out legacy | `?curated_banner=0` o `localStorage.setItem('FYL_CURATED_BANNER_V1', '0')` |
 | Comprobar | `window.FYL_CURATED_BANNER_V1 === true` |
 
-**Solo habilitar en admin no activa el runtime curado.** Son dos switches distintos.
+Admin: banner **Habilitado** + ítems + `tag_value = '__curated__'`. Sin ítems visibles el carrusel no pinta (no es fallo del flag).
 
 ---
 

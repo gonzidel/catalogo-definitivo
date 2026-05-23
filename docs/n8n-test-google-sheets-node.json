@@ -1,0 +1,56 @@
+{
+  "name": "n8n-test-google-sheets-node",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "33b9af68-424f-41b4-992f-8b3b3cc45bcc",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "1xT1nHwzF-_Pp3utuj0Sli3Q4eJhHZTU4rst2nfv9Qhw",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Publicacion Definitivo",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "9a3e4683-a074-4449-8763-32e7b1033053",
+      "name": "Google Sheets Test",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        240,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets Test",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

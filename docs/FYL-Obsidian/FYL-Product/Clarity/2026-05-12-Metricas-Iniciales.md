@@ -65,8 +65,13 @@ Ver auditoría completa [[../Performance/2026-05-12-Auditoria-Inicial]]. Resumen
 - Una semana después de cada deploy de performance (`DEP-...`).
 - Comparar tendencia, no valor puntual.
 
+## Seguimiento 2026-05-23
+
+Nueva lectura Clarity en `/catalogo`: [[2026-05-23-Metricas-Catalogo]] (LCP 7.9s, CLS 1.2).
+
 ## Cruces
 
 - [[../Performance/2026-05-12-Auditoria-Inicial]]
+- [[2026-05-23-Metricas-Catalogo]]
 - [[../Metricas/00-KPIs-Catalogo]]
 - [[../Roadmap/00-Roadmap-Performance-Q2-2026]]

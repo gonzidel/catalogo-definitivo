@@ -1,0 +1,841 @@
+{
+  "id": "db0b1969-efa7-48f7-b8e6-232d4a3d7c3f",
+  "name": "PUBLICAR DEFINITIVO NUEVO SISTEMA - importable",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "pub_manual_trigger",
+      "name": "Trigger Manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "1xT1nHwzF-_Pp3utuj0Sli3Q4eJhHZTU4rst2nfv9Qhw",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Publicacion Definitivo",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "pub_google_sheets_read",
+      "name": "Google Sheets - Leer Filas",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "cond_producto_not_empty",
+              "leftValue": "={{ $json.Producto }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "pub_filter_producto",
+      "name": "Filtro - Producto no vac?o",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "pub_split_rows",
+      "name": "Split - Una fila a la vez",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Columnas esperadas en Google Sheets:\n// A=Facebook, B=Instagram, C=Oferta, D=Producto, E=Color\n// F=Talles Disponibles, G=Precio, H=Descripci?n\n// I-T = URLs 1 a URLs 12\n\nconst row = $input.item.json;\n\nconst clean = (value) => String(value ?? '').trim();\nconst isYes = (value) => clean(value).toLowerCase() === 'si';\n\nconst urlKeys = Array.from({ length: 12 }, (_, i) => `URLs ${i + 1}`);\nconst photoUrls = urlKeys\n  .map((key) => clean(row[key]))\n  .filter(Boolean);\n\nconst product = clean(row.Producto);\nconst description = clean(row['Descripci?n']);\nconst sizes = clean(row['Talles Disponibles']);\nconst price = clean(row.Precio);\nconst color = clean(row.Color);\nconst isOferta = isYes(row.Oferta);\n\nconst igCaption = [\n  `Art. ${product}?`,\n  description,\n  `Numeracion: ~${sizes}~`,\n  `${price} Precio por Mayor`,\n  '',\n  '?? M?s modelos disponibles en el cat?logo',\n  '?? https://fylmoda.com.ar/',\n].filter((line) => line !== undefined && line !== null).join('\\n');\n\nconst fbCaptionNormal = [\n  `Art. ${product}?`,\n  description,\n  `Numeracion: ~${sizes}~`,\n  `${price} Precio por Mayor`,\n  '',\n  '?? Modelo ya disponible en nuestro cat?logo',\n  '?? https://fylmoda.com.ar/',\n].filter((line) => line !== undefined && line !== null).join('\\n');\n\nconst fbCaptionOferta = [\n  'OFERTA????',\n  `Art. ${product}?`,\n  `Colores: ${color}`,\n  description,\n  `Numeracion: ~${sizes}~`,\n  `${price} Precio por Mayor`,\n  '',\n  '?? Modelo ya disponible en nuestro cat?logo',\n  '?? https://fylmoda.com.ar/',\n].filter((line) => line !== undefined && line !== null).join('\\n');\n\nconst photoCount = photoUrls.length;\nconst postToInstagram = isYes(row.Instagram) && photoCount > 0;\nconst postToFacebook = isYes(row.Facebook) && photoCount > 0;\n\nreturn {\n  json: {\n    ...row,\n    Facebook: row.Facebook,\n    Instagram: row.Instagram,\n    Oferta: row.Oferta,\n    Producto: product,\n    Color: color,\n    Talles: sizes,\n    Precio: price,\n    Descripcion: description,\n    photoUrls,\n    photoCount,\n    igCaption,\n    fbCaption: isOferta ? fbCaptionOferta : fbCaptionNormal,\n    igUserId: '17841405282710550',\n    fbPageId: '1064608640244020',\n    postToInstagram,\n    postToFacebook,\n    skipReason: photoCount === 0 ? 'sin_fotos' : null,\n  },\n};"
+      },
+      "id": "pub_prepare_data",
+      "name": "Preparar Datos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "cond_ig_true",
+              "leftValue": "={{ $json.postToInstagram }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "pub_if_instagram",
+      "name": "?Instagram = si y hay fotos?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "cond_ig_single",
+              "leftValue": "={{ $json.photoCount }}",
+              "rightValue": 1,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "pub_if_ig_single",
+      "name": "?IG Una foto?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v20.0/{{ $json.igUserId }}/media",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "image_url",
+              "value": "={{ $json.photoUrls[0] }}"
+            },
+            {
+              "name": "caption",
+              "value": "={{ $json.igCaption }}"
+            },
+            {
+              "name": "access_token",
+              "value": "={{ $env.IG_PAGE_ACCESS_TOKEN || 'REEMPLAZAR_CON_IG_PAGE_ACCESS_TOKEN' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "pub_ig_create_container",
+      "name": "IG - Crear Container",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1540,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v20.0/{{ $(\"Preparar Datos\").item.json.igUserId }}/media_publish",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "creation_id",
+              "value": "={{ $json.id }}"
+            },
+            {
+              "name": "access_token",
+              "value": "={{ $env.IG_PAGE_ACCESS_TOKEN || 'REEMPLAZAR_CON_IG_PAGE_ACCESS_TOKEN' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "pub_ig_publish_post",
+      "name": "IG - Publicar Post",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1760,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const data = $input.item.json;\nreturn data.photoUrls.map((url, index) => ({\n  json: {\n    ...data,\n    carouselIndex: index,\n    url,\n  },\n}));"
+      },
+      "id": "pub_ig_split_carousel_urls",
+      "name": "IG - Dividir URLs Carousel",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v20.0/{{ $json.igUserId }}/media",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "image_url",
+              "value": "={{ $json.url }}"
+            },
+            {
+              "name": "is_carousel_item",
+              "value": "true"
+            },
+            {
+              "name": "access_token",
+              "value": "={{ $env.IG_PAGE_ACCESS_TOKEN || 'REEMPLAZAR_CON_IG_PAGE_ACCESS_TOKEN' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "pub_ig_create_carousel_item",
+      "name": "IG - Crear Item Carousel",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1760,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const inputItems = $input.all();\nconst creationIds = inputItems\n  .map((item) => item.json.id)\n  .filter(Boolean);\n\nconst base = $('IG - Dividir URLs Carousel').first().json;\n\nreturn [{\n  json: {\n    ...base,\n    creationIds,\n    children: creationIds.join(','),\n  },\n}];"
+      },
+      "id": "pub_ig_build_carousel",
+      "name": "IG - Armar Carousel",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v20.0/{{ $json.igUserId }}/media",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "media_type",
+              "value": "CAROUSEL"
+            },
+            {
+              "name": "children",
+              "value": "={{ $json.children }}"
+            },
+            {
+              "name": "caption",
+              "value": "={{ $json.igCaption }}"
+            },
+            {
+              "name": "access_token",
+              "value": "={{ $env.IG_PAGE_ACCESS_TOKEN || 'REEMPLAZAR_CON_IG_PAGE_ACCESS_TOKEN' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "pub_ig_create_carousel_container",
+      "name": "IG - Crear Container Carousel",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        2420,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v20.0/{{ $(\"IG - Armar Carousel\").item.json.igUserId }}/media_publish",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "creation_id",
+              "value": "={{ $json.id }}"
+            },
+            {
+              "name": "access_token",
+              "value": "={{ $env.IG_PAGE_ACCESS_TOKEN || 'REEMPLAZAR_CON_IG_PAGE_ACCESS_TOKEN' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "pub_ig_publish_carousel",
+      "name": "IG - Publicar Carousel",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        2640,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "let data = $input.item.json;\n\nif (!data.postToFacebook) {\n  try {\n    const prepared = $('Preparar Datos').item.json;\n    if (prepared && prepared.Producto) data = prepared;\n  } catch (error) {}\n}\n\nif (!data.postToFacebook) {\n  try {\n    const carousel = $('IG - Armar Carousel').item.json;\n    if (carousel && carousel.Producto) data = carousel;\n  } catch (error) {}\n}\n\nreturn { json: data };"
+      },
+      "id": "pub_restore_for_facebook",
+      "name": "Preparar Datos para Facebook",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2860,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "cond_fb_true",
+              "leftValue": "={{ $json.postToFacebook }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "pub_if_facebook",
+      "name": "?Facebook = si y hay fotos?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3080,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "cond_fb_single",
+              "leftValue": "={{ $json.photoCount }}",
+              "rightValue": 1,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "pub_if_fb_single",
+      "name": "?FB Una foto?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3300,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v20.0/{{ $json.fbPageId }}/photos",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "url",
+              "value": "={{ $json.photoUrls[0] }}"
+            },
+            {
+              "name": "message",
+              "value": "={{ $json.fbCaption }}"
+            },
+            {
+              "name": "access_token",
+              "value": "={{ $env.FB_PAGE_ACCESS_TOKEN || 'REEMPLAZAR_CON_FB_PAGE_ACCESS_TOKEN' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "pub_fb_single_photo",
+      "name": "FB - Post Una Foto",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        3520,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const data = $input.item.json;\nreturn data.photoUrls.map((url, index) => ({\n  json: {\n    ...data,\n    photoIndex: index,\n    url,\n  },\n}));"
+      },
+      "id": "pub_fb_split_urls",
+      "name": "FB - Dividir URLs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3520,
+        650
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v20.0/{{ $json.fbPageId }}/photos",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "url",
+              "value": "={{ $json.url }}"
+            },
+            {
+              "name": "published",
+              "value": "false"
+            },
+            {
+              "name": "access_token",
+              "value": "={{ $env.FB_PAGE_ACCESS_TOKEN || 'REEMPLAZAR_CON_FB_PAGE_ACCESS_TOKEN' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "pub_fb_upload_photo",
+      "name": "FB - Subir Foto",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        3740,
+        650
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const inputItems = $input.all();\nconst photoIds = inputItems\n  .map((item) => item.json.id)\n  .filter(Boolean);\n\nconst base = $('FB - Dividir URLs').first().json;\nconst attachedMedia = photoIds.map((id) => ({ media_fbid: String(id) }));\n\nreturn [{\n  json: {\n    ...base,\n    photoIds,\n    attachedMedia: JSON.stringify(attachedMedia),\n  },\n}];"
+      },
+      "id": "pub_fb_build_post",
+      "name": "FB - Armar Post",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4180,
+        650
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v20.0/{{ $json.fbPageId }}/feed",
+        "sendBody": true,
+        "specifyBody": "keypair",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "message",
+              "value": "={{ $json.fbCaption }}"
+            },
+            {
+              "name": "attached_media",
+              "value": "={{ $json.attachedMedia }}"
+            },
+            {
+              "name": "access_token",
+              "value": "={{ $env.FB_PAGE_ACCESS_TOKEN || 'REEMPLAZAR_CON_FB_PAGE_ACCESS_TOKEN' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "pub_fb_publish_feed",
+      "name": "FB - Publicar en Feed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        4400,
+        650
+      ]
+    }
+  ],
+  "connections": {
+    "Trigger Manual": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets - Leer Filas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Sheets - Leer Filas": {
+      "main": [
+        [
+          {
+            "node": "Filtro - Producto no vac?o",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filtro - Producto no vac?o": {
+      "main": [
+        [
+          {
+            "node": "Split - Una fila a la vez",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split - Una fila a la vez": {
+      "main": [
+        [
+          {
+            "node": "Preparar Datos",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Preparar Datos": {
+      "main": [
+        [
+          {
+            "node": "?Instagram = si y hay fotos?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "?Instagram = si y hay fotos?": {
+      "main": [
+        [
+          {
+            "node": "?IG Una foto?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Preparar Datos para Facebook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "?IG Una foto?": {
+      "main": [
+        [
+          {
+            "node": "IG - Crear Container",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IG - Dividir URLs Carousel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IG - Crear Container": {
+      "main": [
+        [
+          {
+            "node": "IG - Publicar Post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IG - Publicar Post": {
+      "main": [
+        [
+          {
+            "node": "Preparar Datos para Facebook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IG - Dividir URLs Carousel": {
+      "main": [
+        [
+          {
+            "node": "IG - Crear Item Carousel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IG - Crear Item Carousel": {
+      "main": [
+        [
+          {
+            "node": "IG - Armar Carousel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IG - Armar Carousel": {
+      "main": [
+        [
+          {
+            "node": "IG - Crear Container Carousel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IG - Crear Container Carousel": {
+      "main": [
+        [
+          {
+            "node": "IG - Publicar Carousel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IG - Publicar Carousel": {
+      "main": [
+        [
+          {
+            "node": "Preparar Datos para Facebook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "?Facebook = si y hay fotos?": {
+      "main": [
+        [
+          {
+            "node": "?FB Una foto?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Split - Una fila a la vez",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "?FB Una foto?": {
+      "main": [
+        [
+          {
+            "node": "FB - Post Una Foto",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "FB - Dividir URLs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FB - Post Una Foto": {
+      "main": [
+        [
+          {
+            "node": "Split - Una fila a la vez",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FB - Dividir URLs": {
+      "main": [
+        [
+          {
+            "node": "FB - Subir Foto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FB - Subir Foto": {
+      "main": [
+        [
+          {
+            "node": "FB - Armar Post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FB - Armar Post": {
+      "main": [
+        [
+          {
+            "node": "FB - Publicar en Feed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FB - Publicar en Feed": {
+      "main": [
+        [
+          {
+            "node": "Split - Una fila a la vez",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Datos para Facebook": {
+      "main": [
+        [
+          {
+            "node": "?Facebook = si y hay fotos?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "pinData": {},
+  "versionId": "d0822bab-5d94-447f-aa10-0099bfb8f93e",
+  "triggerCount": 0,
+  "tags": [],
+  "createdAt": "2026-05-21T00:00:00.000Z",
+  "updatedAt": "2026-05-21T00:00:00.000Z"
+}

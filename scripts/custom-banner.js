@@ -1039,6 +1039,11 @@ export function hideCustomBanner() {
   if (bannerWrapper) {
     bannerWrapper.remove();
   }
+  const homeSlot = document.getElementById("home-custom-banner-slot");
+  if (homeSlot) {
+    homeSlot.hidden = true;
+    homeSlot.setAttribute("aria-hidden", "true");
+  }
 }
 
 // Cantidad de productos del catálogo que ya están visibles arriba del banner (no duplicar en Productos Destacados)

@@ -39,16 +39,26 @@ function getVersion({ mode, versionOverride }) {
   return readProdVersionFromFile();
 }
 
+const SKIP_DIR_NAMES = new Set([
+  "node_modules",
+  ".git",
+  ".cursor",
+  ".claude",
+  "supabase",
+  "cloudinary-optimize",
+  "terminals",
+  "agent-transcripts",
+  // Deploy catálogo/PWA: no reescribir versiones en admin ni assets históricos
+  "admin",
+  "history",
+]);
+
 function shouldSkipDir(name) {
-  return (
-    name === "node_modules" ||
-    name === ".git" ||
-    name === ".cursor" ||
-    name === "supabase" ||
-    name === "cloudinary-optimize" ||
-    name === "terminals" ||
-    name === "agent-transcripts"
-  );
+  return SKIP_DIR_NAMES.has(name);
+}
+
+function relFromRoot(absPath) {
+  return path.relative(__repoRoot, absPath).split(path.sep).join("/");
 }
 
 function walkHtmlFiles(dir) {
@@ -167,8 +177,13 @@ const EXTRA_VERSIONED_FILES = [
   "scripts/net/fyl-fetch.js",
   "scripts/curated-banner.js",
   "scripts/fyl-curated-banner-loader.js",
-  "admin/stock.js",
+  "scripts/size-filter.js",
+  "scripts/utils/size-normalizer.js",
 ];
+
+function extraVersionedFiles() {
+  return EXTRA_VERSIONED_FILES.filter((rel) => !rel.replace(/\\/g, "/").startsWith("admin/"));
+}
 
 function main() {
   const args = parseArgs(process.argv.slice(2));
@@ -176,18 +191,19 @@ function main() {
   const version = getVersion({ mode, versionOverride: args.version });
 
   const htmlFiles = walkHtmlFiles(__repoRoot);
-  let changed = 0;
+  let htmlChanged = 0;
+  const changedPaths = [];
 
   for (const file of htmlFiles) {
     const prev = fs.readFileSync(file, "utf8");
     const next = patchHtmlContents(prev, version);
     if (next !== prev) {
-      changed++;
+      htmlChanged++;
+      changedPaths.push(relFromRoot(file));
       if (!args.dryRun) fs.writeFileSync(file, next, "utf8");
     }
   }
 
-  // También actualizar sw.js para que el SW rote el cache por versión
   const swPath = path.join(__repoRoot, "sw.js");
   let swChanged = false;
   if (fs.existsSync(swPath)) {
@@ -195,6 +211,7 @@ function main() {
     const nextSw = patchServiceWorker(prevSw, version);
     if (nextSw !== prevSw) {
       swChanged = true;
+      changedPaths.push("sw.js");
       if (!args.dryRun) fs.writeFileSync(swPath, nextSw, "utf8");
     }
   }
@@ -206,36 +223,60 @@ function main() {
     const nextPwa = patchPwaInstall(prevPwa, version);
     if (nextPwa !== prevPwa) {
       pwaChanged = true;
+      changedPaths.push("scripts/pwa-install.js");
       if (!args.dryRun) fs.writeFileSync(pwaPath, nextPwa, "utf8");
     }
   }
 
   const fylVersionPath = path.join(__repoRoot, "scripts", "fyl-version.js");
+  let fylVersionChanged = false;
   if (fs.existsSync(fylVersionPath)) {
     const prevFv = fs.readFileSync(fylVersionPath, "utf8");
     const nextFv = patchFylVersionExport(prevFv, version);
-    if (nextFv !== prevFv && !args.dryRun) {
-      fs.writeFileSync(fylVersionPath, nextFv, "utf8");
+    if (nextFv !== prevFv) {
+      fylVersionChanged = true;
+      changedPaths.push("scripts/fyl-version.js");
+      if (!args.dryRun) fs.writeFileSync(fylVersionPath, nextFv, "utf8");
     }
   }
 
+  const extraFiles = extraVersionedFiles();
   let extraChanged = 0;
-  for (const rel of EXTRA_VERSIONED_FILES) {
+  for (const rel of extraFiles) {
     const fp = path.join(__repoRoot, rel);
     if (!fs.existsSync(fp)) continue;
     const prev = fs.readFileSync(fp, "utf8");
     const next = patchQueryVersionsInFile(prev, version);
     if (next !== prev) {
       extraChanged++;
+      changedPaths.push(rel.replace(/\\/g, "/"));
       if (!args.dryRun) fs.writeFileSync(fp, next, "utf8");
     }
   }
 
+  const totalTouched =
+    htmlChanged +
+    (swChanged ? 1 : 0) +
+    (pwaChanged ? 1 : 0) +
+    (fylVersionChanged ? 1 : 0) +
+    extraChanged;
+  const suffix = args.dryRun ? " (dry-run, sin escritura)" : "";
+
   console.log(
-    `✅ cache-bust (${mode}) -> v=${version} | HTML: ${changed}/${htmlFiles.length} | sw.js: ${
-      swChanged ? "sí" : "no"
-    } | pwa-install.js: ${pwaChanged ? "sí" : "no"} | JS extra: ${extraChanged}`
+    `✅ cache-bust (${mode}) -> v=${version}${suffix}\n` +
+      `   HTML escaneados: ${htmlFiles.length} (excluye admin/**, history/**)\n` +
+      `   HTML a actualizar: ${htmlChanged}\n` +
+      `   sw.js: ${swChanged ? "sí" : "no"} | pwa-install.js: ${pwaChanged ? "sí" : "no"} | fyl-version.js: ${
+        fylVersionChanged ? "sí" : "no"
+      } | JS extra: ${extraChanged}/${extraFiles.length}\n` +
+      `   ARCHIVOS FINALES A TOCAR: ${totalTouched}`
   );
+
+  if (args.dryRun && changedPaths.length > 0 && changedPaths.length <= 40) {
+    console.log(`   Rutas: ${changedPaths.join(", ")}`);
+  } else if (args.dryRun && changedPaths.length > 40) {
+    console.log(`   Rutas (primeras 20): ${changedPaths.slice(0, 20).join(", ")} … +${changedPaths.length - 20}`);
+  }
 }
 
 main();

@@ -101,8 +101,14 @@ El problema es **boot pesado bloqueante + main thread saturado por loops y obser
 - [ ] Priorizar fixes → [[../Roadmap/00-Roadmap-Performance-Q2-2026]]
 - [ ] No tocar código hasta cerrar plan de fixes con el equipo
 
+## Seguimiento
+
+- **2026-05-23:** Re-auditoría LCP enfocada en `/catalogo` (Clarity 7.9s LCP) → [[2026-05-23-Auditoria-LCP-Catalogo-Clarity]]
+- Espejo `doc/`: `doc/catalogo/auditoria-lcp-2026-05-23.md`
+
 ## Cruces
 
 - Arquitectura actual: [[../Arquitectura/01-Boot-Sequence-Catalogo]]
 - Métricas / KPIs vivos: [[../Metricas/00-KPIs-Catalogo]]
 - Vault técnico: [[../../06-FLUJO-CATALOGO]] · [[../../21-CONTEXTO-AGENTE-HARDENING-2026-04]]
+- [[2026-05-23-Auditoria-LCP-Catalogo-Clarity]]

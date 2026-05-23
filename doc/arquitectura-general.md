@@ -6,6 +6,7 @@
 |------|---------|
 | Registro de vulnerabilidades, fixes Supabase y evidencia post-hardening | `doc/hardening-supabase-2026-05-13.md` |
 | Visibilidad del index, vista nueva, checklist, queries | `doc/catalogo/catalogo-visibilidad.md` |
+| Auditoria LCP /catalogo (Clarity 2026-05-23) | `doc/catalogo/auditoria-lcp-2026-05-23.md` (canonica Obsidian: `docs/FYL-Obsidian/FYL-Product/Performance/2026-05-23-Auditoria-LCP-Catalogo-Clarity.md`) |
 | Fuente canonica de stock, derivadas, riesgos | `doc/stock/stock-arquitectura.md` |
 | Este resumen y flujo extremo a extremo | `doc/arquitectura-general.md` |
 

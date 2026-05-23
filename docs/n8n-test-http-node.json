@@ -1,0 +1,47 @@
+{
+  "name": "n8n-test-http-node",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "33b9af68-424f-41b4-992f-8b3b3cc45bcc",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "requestMethod": "GET",
+        "url": "https://example.com",
+        "options": {}
+      },
+      "id": "b46bd6ee-314f-4412-ba7b-fe1cfd7eae1b",
+      "name": "HTTP Test",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "HTTP Test",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

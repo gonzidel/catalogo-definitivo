@@ -251,12 +251,13 @@ serve(async (req) => {
     console.log(`[meta-feed] RPC returned ${data.length} rows`);
 
     const fallbackBaseUrl = "https://fylmoda.com.ar";
+    const catalogLinkBase = `${fallbackBaseUrl}/catalogo`;
 
     // Normalización defensiva de campos críticos para Meta
     const normalizedData = data.map((row) => {
       const safeId = row.id ? String(row.id).trim() : "";
       const rawLink = row.link ? String(row.link).trim() : "";
-      const fallbackLink = `${fallbackBaseUrl}/index.html?sku=${encodeURIComponent(safeId)}`;
+      const fallbackLink = `${catalogLinkBase}?sku=${encodeURIComponent(safeId)}`;
       const safeLink = isAbsoluteUrl(rawLink) ? rawLink : fallbackLink;
 
       return {
@@ -273,15 +274,21 @@ serve(async (req) => {
       };
     });
 
-    // Filtro de calidad para catálogo de producción
+    // Filtro de calidad para catálogo de producción (RPC ya excluye sin stock)
     let excludedSinSku = 0;
     let excludedSinTitulo = 0;
     let excludedSinImagen = 0;
     let excludedSinPrecio = 0;
+    let excludedSinStock = 0;
 
     const filteredData = normalizedData.filter((row) => {
       if (!row.id) {
         excludedSinSku += 1;
+        return false;
+      }
+
+      if (row.availability !== "in stock") {
+        excludedSinStock += 1;
         return false;
       }
 
@@ -304,9 +311,12 @@ serve(async (req) => {
       return true;
     });
 
+    const sampleExportedSkus = filteredData.slice(0, 10).map((row) => row.id);
+
     console.log(
-      `[meta-feed] Filtering summary: total=${normalizedData.length}, excluded_sin_sku=${excludedSinSku}, excluded_sin_titulo=${excludedSinTitulo}, excluded_sin_imagen=${excludedSinImagen}, excluded_sin_precio=${excludedSinPrecio}, published=${filteredData.length}`
+      `[meta-feed] Filtering summary: rpc_rows=${normalizedData.length}, excluded_sin_stock=${excludedSinStock}, excluded_sin_sku=${excludedSinSku}, excluded_sin_titulo=${excludedSinTitulo}, excluded_sin_imagen=${excludedSinImagen}, excluded_sin_precio=${excludedSinPrecio}, published=${filteredData.length}`
     );
+    console.log(`[meta-feed] Sample exported SKUs: ${sampleExportedSkus.join(", ") || "(none)"}`);
 
     // Aplicar limit si se especifica
     const finalData = limit !== null && limit > 0 ? filteredData.slice(0, limit) : filteredData;
@@ -328,6 +338,16 @@ serve(async (req) => {
           metrics,
           total: filteredData.length,
           returned: finalData.length,
+          debug: {
+            rpc_rows: normalizedData.length,
+            excluded_sin_stock: excludedSinStock,
+            excluded_sin_sku: excludedSinSku,
+            excluded_sin_titulo: excludedSinTitulo,
+            excluded_sin_imagen: excludedSinImagen,
+            excluded_sin_precio: excludedSinPrecio,
+            published: filteredData.length,
+            sample_exported_skus: sampleExportedSkus,
+          },
         }),
         {
           status: 200,

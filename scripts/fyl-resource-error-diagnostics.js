@@ -2,14 +2,14 @@
  * Errores de carga SCRIPT/LINK (capture). Registra URL y clasificación sin overlay.
  */
 
-import { fylReportClientError } from "./fyl-runtime-resilience.js?v=m260518";
-import { fylClassifyClientError } from "./fyl-error-classify.js?v=m260518";
+import { fylReportClientError } from "./fyl-runtime-resilience.js?v=m260523";
+import { fylClassifyClientError } from "./fyl-error-classify.js?v=m260523";
 import {
   fylDetectMetaInAppBrowser,
   fylBrowserFamily,
   fylAppEntrypoint,
   fylReadAppVersionFromMeta,
-} from "./fyl-env-tags.js?v=m260518";
+} from "./fyl-env-tags.js?v=m260523";
 
 function fylPushClarityDiagnosticTags(errorClass) {
   try {

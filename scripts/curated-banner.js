@@ -6,7 +6,7 @@ import {
   CATALOG_AVAILABLE_VIEW,
   getCatalogAvailableSource,
 } from "./catalog-source.js";
-import { isPostgrestSchemaColumnError } from "./net/fyl-fetch.js?v=m260518";
+import { isPostgrestSchemaColumnError } from "./net/fyl-fetch.js?v=m260523";
 
 const LEGACY_TAG_PLACEHOLDER = "__curated__";
 const CURATED_CATALOG_SELECT =
@@ -44,17 +44,19 @@ function logCuratedDebug(step, detail = null) {
   else console.info("[FYL Curated Banner]", step);
 }
 
-/** URL ?curated_banner=1 o localStorage (staging QA). */
+/** URL ?curated_banner=1|0 o localStorage; por defecto ON (banner home = __curated__). */
 export function resolveCuratedBannerV1Flag() {
-  if (typeof window === "undefined") return false;
+  if (typeof window === "undefined") return true;
   try {
     if (window.FYL_CURATED_BANNER_V1 === true) return true;
+    if (window.FYL_CURATED_BANNER_V1 === false) return false;
+    const q = window.location.search || "";
+    if (/(?:^|[&?])curated_banner=0(?:&|$)/.test(q)) return false;
+    if (/(?:^|[&?])curated_banner=1(?:&|$)/.test(q)) return true;
+    if (localStorage.getItem("FYL_CURATED_BANNER_V1") === "0") return false;
     if (localStorage.getItem("FYL_CURATED_BANNER_V1") === "1") return true;
-    if (/(?:^|[&?])curated_banner=1(?:&|$)/.test(window.location.search || "")) {
-      return true;
-    }
   } catch (_e) {}
-  return false;
+  return true;
 }
 
 export function isCuratedBannerV1Enabled() {

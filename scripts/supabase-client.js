@@ -2,7 +2,7 @@
 // Cliente único de Supabase para toda la aplicación.
 //
 // Boot crítico simplificado (Safari iOS real):
-//   - El bundle vendor se carga como <script defer src="scripts/vendor/supabase-js.bundle.min.js?v=m260518">
+//   - El bundle vendor se carga como <script defer src="scripts/vendor/supabase-js.bundle.min.js?v=m260523">
 //     y expone window.fylSupabase.createClient (IIFE same-origin).
 //   - Este módulo solo lee ese global. Sin dynamic import, sin CDN fallback,
 //     sin top-level await encadenado a redes externas.
@@ -17,8 +17,8 @@ import {
   fylDevLog,
   fylDevInfo,
 } from "./config.js";
-import { FYL_VERSION } from "./fyl-version.js?v=m260518";
-import { fylReportClientError } from "./fyl-runtime-resilience.js?v=m260518";
+import { FYL_VERSION } from "./fyl-version.js?v=m260523";
+import { fylReportClientError } from "./fyl-runtime-resilience.js?v=m260523";
 
 let supabase = null;
 
@@ -91,7 +91,7 @@ function describeError(e) {
 
 /**
  * Acceso síncrono a createClient desde el bundle IIFE same-origin.
- * El <script defer src="scripts/vendor/supabase-js.bundle.min.js?v=m260518"> debe
+ * El <script defer src="scripts/vendor/supabase-js.bundle.min.js?v=m260523"> debe
  * haber ejecutado antes de cualquier <script type="module">; el atributo defer
  * garantiza ese orden.
  */

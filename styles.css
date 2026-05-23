@@ -450,6 +450,44 @@ header h1 { margin: 0; font-size: 1.5rem; }
   box-sizing: border-box;
 }
 
+/* Skeleton boot (4/5 igual que .main-image — evita CLS al reemplazar) */
+.card--skeleton {
+  pointer-events: none;
+}
+
+.card--skeleton .main-image-wrapper {
+  aspect-ratio: 4 / 5;
+  width: 100%;
+  background: #e8e2dc;
+  border-radius: 6px;
+}
+
+.card--skeleton .card-info {
+  padding: 8px 6px 10px;
+  box-sizing: border-box;
+}
+
+.skeleton-shimmer {
+  background: linear-gradient(90deg, #e8e2dc 25%, #f0ebe7 50%, #e8e2dc 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite;
+  border-radius: 4px;
+}
+
+.skeleton-line {
+  display: block;
+  border-radius: 4px;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
 .card-skeleton {
   pointer-events: none;
 }
@@ -878,21 +916,36 @@ header h1 { margin: 0; font-size: 1.5rem; }
   visibility: visible;
 }
 
-/* Pantalla de arranque: feedback visual de carga sin bloquear interacción (FASE 1A · T2) */
+/* Pantalla de arranque: skeleton visible; spinner solo con --visible (PERF 2026-05-23) */
 body.catalog-boot-active {
   overflow: auto;
+}
+
+/* Hijos del slot participan en el grid de #catalogo (mobile + desktop) */
+#catalog-container {
+  display: contents;
 }
 
 .catalog-boot-overlay {
   position: fixed;
   inset: 0;
-  z-index: 10040;
+  z-index: -1;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(245, 243, 240, 0.97);
+  background: transparent;
+  opacity: 0;
+  visibility: hidden;
   transition: opacity 0.28s ease, visibility 0.28s ease;
   pointer-events: none;
+}
+
+.catalog-boot-overlay.catalog-boot-overlay--visible {
+  z-index: 10040;
+  opacity: 1;
+  visibility: visible;
+  pointer-events: none;
+  background: transparent;
 }
 
 .catalog-boot-overlay.catalog-boot-overlay--hidden {
@@ -903,11 +956,14 @@ body.catalog-boot-active {
 }
 
 .catalog-boot-dots {
-  display: flex;
+  display: none;
   align-items: center;
   gap: 10px;
-  /* FASE 1A · T2: el overlay es pointer-events:none; los dots conservan tap por si se les ata acción a futuro. */
-  pointer-events: auto;
+  pointer-events: none;
+}
+
+.catalog-boot-overlay--visible .catalog-boot-dots {
+  display: flex;
 }
 
 .catalog-boot-dots span {
@@ -6269,10 +6325,6 @@ body.modal-open {
     padding: 1rem 24px 2rem !important;
     max-width: 1400px;
     margin: 0 auto;
-  }
-
-  #catalog-container {
-    display: contents;
   }
 
   #catalogo .card.producto {

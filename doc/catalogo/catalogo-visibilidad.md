@@ -1,5 +1,7 @@
 # Catalogo publico: visibilidad por stock real
 
+**Performance / LCP:** ver `doc/catalogo/auditoria-lcp-2026-05-23.md` y Obsidian `docs/FYL-Obsidian/FYL-Product/Performance/2026-05-23-Auditoria-LCP-Catalogo-Clarity.md`.
+
 ## Problema detectado
 
 El index publico consumia `catalog_public_view`, cuya publicacion se apoyaba en `variant_sizes.stock_qty > 0`.

@@ -10,10 +10,16 @@ id,item_group_id,title,description,price,availability,condition,brand,link,image
 
 ```csv
 id,item_group_id,title,description,price,availability,condition,brand,link,image_link,color,size
-1530-1-SUELA-37,1530-1,1530-1 - SUELA - Talle 37,Zapatilla deportiva con suela antideslizante,45000.00 ARS,in stock,new,FYL,https://tudominio.com/index.html?sku=1530-1-SUELA-37,https://res.cloudinary.com/dnuedzuzm/image/upload/f_auto,q_auto,w_1200/v1234567890/products/1530-1-suela-37.jpg,SUELA,37
-1530-1-SUELA-38,1530-1,1530-1 - SUELA - Talle 38,Zapatilla deportiva con suela antideslizante,45000.00 ARS,in stock,new,FYL,https://tudominio.com/index.html?sku=1530-1-SUELA-38,https://res.cloudinary.com/dnuedzuzm/image/upload/f_auto,q_auto,w_1200/v1234567890/products/1530-1-suela-38.jpg,SUELA,38
-1530-1-NEGRO-40,1530-1,1530-1 - NEGRO - Talle 40,Zapatilla deportiva con suela antideslizante,45000.00 ARS,out of stock,new,FYL,https://tudominio.com/index.html?sku=1530-1-NEGRO-40,https://res.cloudinary.com/dnuedzuzm/image/upload/f_auto,q_auto,w_1200/v1/meta-placeholder.jpg,NEGRO,40
+1530-1-SUELA-37,1530-1,1530-1 - SUELA - Talle 37,Zapatilla deportiva con suela antideslizante,45000.00 ARS,in stock,new,FYL,https://fylmoda.com.ar/catalogo?sku=1530-1-SUELA-37,https://res.cloudinary.com/dnuedzuzm/image/upload/f_auto,q_auto,w_1200/v1234567890/products/1530-1-suela-37.jpg,SUELA,37
+1530-1-SUELA-38,1530-1,1530-1 - SUELA - Talle 38,Zapatilla deportiva con suela antideslizante,45000.00 ARS,in stock,new,FYL,https://fylmoda.com.ar/catalogo?sku=1530-1-SUELA-38,https://res.cloudinary.com/dnuedzuzm/image/upload/f_auto,q_auto,w_1200/v1234567890/products/1530-1-suela-38.jpg,SUELA,38
 ```
+
+## Reglas vigentes (Fase 1)
+
+- Una fila por `variant_sizes.sku` con stock disponible real (depósitos `general` + `venta-publico`, reservas por talle).
+- Solo variantes presentes en `catalog_public_available_view`.
+- Sin filas `out of stock` en el CSV exportado.
+- `link`: `https://fylmoda.com.ar/catalogo?sku=<SKU_REAL>`.
 
 ## Características del Feed
 

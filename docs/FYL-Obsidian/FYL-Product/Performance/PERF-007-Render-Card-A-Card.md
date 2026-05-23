@@ -1,6 +1,6 @@
 # PERF-007 — Render card-a-card con `insertAdjacentHTML` en loop
 
-- **Estado:** abierto
+- **Estado:** mitigado en código (2026-05) — ver abajo; mantener nota por historial
 - **Severidad:** alto
 - **Detectado:** 2026-05-12 — [[2026-05-12-Auditoria-Inicial]]
 - **Métrica afectada:** LCP, INP, long tasks durante render
@@ -67,7 +67,14 @@ Ninguno.
 - DevTools Performance: 1 long task por render de lote en vez de N.
 - INP estable durante el render del listado.
 
+## Implementado (2026-05-23)
+
+`renderizarProductosPagina` usa `<template>` + `htmlParts.join('')` + un solo `appendChild` (`main-supabase.js` L2110–2113). Ya no hace `insertAdjacentHTML` en loop.
+
+Seguimiento LCP: [[2026-05-23-Auditoria-LCP-Catalogo-Clarity]] — impacto residual bajo vs JS boot y red.
+
 ## Cruces
 
 - [[PERF-002-MutationObserver-Filtros]] (consumidor principal de los inserts)
 - [[PERF-004-SetInterval-Imagenes-Lazy]] (consumidor secundario)
+- [[2026-05-23-Auditoria-LCP-Catalogo-Clarity]]

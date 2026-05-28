@@ -508,6 +508,111 @@
       font-weight: 700;
       margin-left: 8px;
     }
+    .pub-image-upload-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 10000;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .pub-image-upload-overlay.active {
+      display: flex;
+    }
+    .pub-image-upload-modal {
+      background: white;
+      border-radius: 16px;
+      padding: 24px;
+      max-width: 720px;
+      width: 100%;
+      max-height: 90vh;
+      overflow-y: auto;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+    }
+    .pub-image-upload-modal h3 {
+      margin: 0 0 8px 0;
+      font-size: 20px;
+      color: #2c3e50;
+    }
+    .pub-image-upload-subtitle {
+      margin: 0 0 16px 0;
+      font-size: 14px;
+      color: #6c757d;
+    }
+    .pub-image-dropzone {
+      border: 2px dashed #CD844D;
+      border-radius: 12px;
+      padding: 32px 20px;
+      text-align: center;
+      background: #fff8f3;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+    }
+    .pub-image-dropzone:hover,
+    .pub-image-dropzone.drag-over {
+      border-color: #a66a3d;
+      background: #fff3eb;
+    }
+    .pub-image-dropzone p {
+      margin: 0 0 8px 0;
+      font-size: 15px;
+      color: #495057;
+    }
+    .pub-image-dropzone small {
+      color: #6c757d;
+      font-size: 12px;
+    }
+    .pub-image-preview-grid {
+      display: none;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 12px;
+      margin-top: 16px;
+      max-height: 360px;
+      overflow-y: auto;
+    }
+    .pub-image-preview-grid.visible {
+      display: grid;
+    }
+    .pub-image-preview-item {
+      border: 2px solid #e9ecef;
+      border-radius: 10px;
+      padding: 8px;
+      background: #fafafa;
+      text-align: center;
+    }
+    .pub-image-preview-item img {
+      width: 100%;
+      height: 120px;
+      object-fit: cover;
+      border-radius: 6px;
+      display: block;
+      margin-bottom: 8px;
+    }
+    .pub-image-preview-item label {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #495057;
+      cursor: pointer;
+    }
+    .pub-image-upload-actions {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+      margin-top: 20px;
+      flex-wrap: wrap;
+    }
+    .pub-image-upload-status {
+      margin-top: 12px;
+      font-size: 13px;
+      color: #6c757d;
+      min-height: 1.2em;
+    }
   </style>
 </head>
 <body>
@@ -660,6 +765,10 @@
               <span>Guardar</span>
             </button>
             <button class="btn-secondary" id="clear-all">Limpiar Todo</button>
+            <button class="btn-secondary" id="update-btn" disabled type="button">
+              <span>🔄</span>
+              <span>Actualizar</span>
+            </button>
             <button class="btn-success" id="publish-btn" disabled>
               <span>📤</span>
               <span>Publicar Seleccionados</span>
@@ -706,6 +815,25 @@
         <span>Preparar (pasar a tabla de publicación)</span>
       </button>
       <button type="button" class="btn-secondary modal-cerrar-programados" style="margin-top: 12px;">Cerrar</button>
+    </div>
+  </div>
+
+  <!-- Modal: subir imágenes (solo variantes sin imagen) -->
+  <div id="pub-image-upload-overlay" class="pub-image-upload-overlay" aria-hidden="true">
+    <div class="pub-image-upload-modal" role="dialog" aria-labelledby="pub-image-upload-title">
+      <h3 id="pub-image-upload-title">📷 Subir imágenes</h3>
+      <p id="pub-image-upload-subtitle" class="pub-image-upload-subtitle"></p>
+      <div id="pub-image-dropzone" class="pub-image-dropzone" tabindex="0">
+        <p>Arrastrá imágenes acá o hacé clic para elegir archivos</p>
+        <small>JPEG, PNG o WebP · máx. 10 archivos · 10 MB c/u</small>
+        <input type="file" id="pub-image-file-input" accept="image/jpeg,image/jpg,image/png,image/webp" multiple hidden />
+      </div>
+      <div id="pub-image-preview-grid" class="pub-image-preview-grid"></div>
+      <p id="pub-image-upload-status" class="pub-image-upload-status"></p>
+      <div class="pub-image-upload-actions">
+        <button type="button" class="btn-secondary" id="pub-image-upload-cancel">Cancelar</button>
+        <button type="button" class="btn-success" id="pub-image-upload-accept" disabled>Aceptar y guardar</button>
+      </div>
     </div>
   </div>
 

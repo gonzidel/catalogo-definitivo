@@ -51,20 +51,54 @@ function trackMetaWhatsappLead() {
   }, 300);
 }
 
+function resolveConsultProductMeta({ payload, modal, card } = {}) {
+  const sku = cleanText(payload?.sku || modal?.dataset?.sku || card?.dataset?.sku || "") || null;
+  const model = cleanText(payload?.model || card?.dataset?.articulo || "");
+  const catalogProduct = findPublicCatalogProductByArticle(model);
+  const name = cleanText(
+    catalogProduct?.Articulo || catalogProduct?.Descripcion || model || ""
+  ) || null;
+  return {
+    sku,
+    title: name,
+    name,
+    category: cleanText(catalogProduct?.Categoria || "") || null,
+  };
+}
+
+const PRODUCT_WA_OPEN_DELAY_MS = 250;
+
+function trackAndOpenProductWhatsapp(waUrl, context = {}) {
+  const product = resolveConsultProductMeta(context);
+  if (window.fbq) {
+    window.fbq("track", "Contact");
+    window.fbq("trackCustom", "WhatsAppConsult", {
+      sku: product?.sku ?? null,
+      product_name: product?.title ?? product?.name ?? null,
+      category: product?.category ?? null,
+    });
+  }
+  setTimeout(() => {
+    window.open(waUrl, "_blank", "noopener");
+  }, PRODUCT_WA_OPEN_DELAY_MS);
+}
+
+function handleProductWhatsappConsultClick(event, waUrl, context) {
+  if (event?.__fylWaLeadTracked) return;
+  event.__fylWaLeadTracked = true;
+  event.preventDefault();
+  event.stopPropagation();
+  trackAndOpenProductWhatsapp(waUrl, context);
+}
+
 function buildWhatsappUrl(payload) {
   const text = encodeURIComponent(buildWhatsappMessage(payload));
   return `https://wa.me/${WHATSAPP_NUMBER}?text=${text}`;
 }
 
-/**
- * Legacy: úselo SOLO desde código sin acceso a un <a target="_blank">.
- * En WebView Meta/Instagram/Samsung/Safari iOS, window.open desde un handler
- * delegado después de preventDefault() pierde el user gesture y queda
- * bloqueado como popup ⇒ dead click. Preferí navegación natural del <a>.
- */
-function openWhatsapp(payload) {
-  trackMetaWhatsappLead();
-  window.open(buildWhatsappUrl(payload), "_blank", "noopener");
+/** Legacy: <button> sin <a>; mismo flujo que card/PDP (pixel + delay + window.open). */
+function openWhatsapp(payload, context = {}) {
+  trackAndOpenProductWhatsapp(buildWhatsappUrl(payload), { payload, ...context });
 }
 
 function getCardPayload(card) {
@@ -344,28 +378,18 @@ document.addEventListener(
   (event) => {
     if (event.target.closest("#wa-popup")) return;
 
-    // Card "Consultar" (catálogo público).
-    // Caso normal: <a target="_blank"> con href ya armado → navegación nativa.
-    // Caso legacy (caché viejo): <button> → fallback con openWhatsapp.
+    // Card "Consultar" (catálogo público): pixel + 250ms → window.open.
     const cardEl = event.target.closest(".public-consult-btn");
     if (cardEl) {
       const card = cardEl.closest(".card.producto, .fyl-originals-card");
+      const cardPayload = getCardPayload(card);
+      const waUrl = buildWhatsappUrl(cardPayload);
       if (cardEl instanceof HTMLAnchorElement) {
-        try { cardEl.href = buildWhatsappUrl(getCardPayload(card)); } catch (_) {}
-        if (!event.__fylWaLeadTracked) {
-          trackMetaWhatsappLead();
-          event.__fylWaLeadTracked = true;
-        }
-        // NO preventDefault: el <a target="_blank"> navega solo.
+        try { cardEl.href = waUrl; } catch (_) {}
+        handleProductWhatsappConsultClick(event, waUrl, { payload: cardPayload, card });
         return;
       }
-      // Fallback legacy <button>: comportamiento previo con window.open.
-      event.preventDefault();
-      event.stopPropagation();
-      if (!event.__fylWaLeadTracked) {
-        event.__fylWaLeadTracked = true;
-      }
-      openWhatsapp(getCardPayload(card));
+      handleProductWhatsappConsultClick(event, waUrl, { payload: cardPayload, card });
       return;
     }
 
@@ -392,21 +416,16 @@ document.addEventListener(
       }
     }
 
-    // CTA "Consultar por WhatsApp" del PDP.
-    // El elemento ya es <a target="_blank"> con href armado por el render. Si
-    // el usuario cambió color/talle en el PDP, refrescamos el href justo antes
-    // de que el browser navegue. No tocamos default action.
+    // CTA PDP: pixel + 250ms → window.open (solo consultas producto).
     const pdpLink = event.target.closest(".pdp-whatsapp-cta");
     if (pdpLink && pdpLink instanceof HTMLAnchorElement) {
+      const modal = document.getElementById("product-modal");
+      const pdpPayload = getPdpPayload(modal);
+      const waUrl = buildWhatsappUrl(pdpPayload);
       try {
-        const modal = document.getElementById("product-modal");
-        pdpLink.href = buildWhatsappUrl(getPdpPayload(modal));
-      } catch (_) { /* no romper navegación si falla el payload */ }
-      if (!event.__fylWaLeadTracked) {
-        trackMetaWhatsappLead();
-        event.__fylWaLeadTracked = true;
-      }
-      // NO preventDefault, NO stopPropagation: navegación natural.
+        pdpLink.href = waUrl;
+      } catch (_) { /* no romper si falla el href */ }
+      handleProductWhatsappConsultClick(event, waUrl, { payload: pdpPayload, modal });
     }
   },
   true

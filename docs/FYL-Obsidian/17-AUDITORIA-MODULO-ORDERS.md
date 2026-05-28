@@ -11,6 +11,7 @@ Archivos revisados:
 | Archivo | Rol actual |
 |---|---|
 | `admin/orders.js` | Panel principal de pedidos activos/apartados/cerrados, cambios de estado, cancelaciones y envio a local. |
+| `admin/pau.html` + `admin/pau.js` + `admin/orders-ops.js` | **PAU** — flujo movil rapido (ver [[40-PAU-PANEL-ATENCION-UNIFICADO]]); reutiliza `order-creator` sin cargar `orders.js`. |
 | `admin/order-creator.js` | Creacion/edicion admin de pedidos, clientes, items y descuento de stock. |
 | `admin/closed-orders.js` | Pedidos cerrados, transporte, etiquetas, envio y listas de despacho. |
 | `admin/sent-orders.js` | Pedidos enviados, reprogramacion, devolucion y transporte. |
@@ -155,3 +156,19 @@ SQL relevante:
 3. Evaluar una RPC transaccional para pedido admin: crear/editar orden, items, descuento de stock y fuentes en una sola funcion.
 4. Agregar validaciones DB granulares en RPCs admin: `orders:edit`, `orders:delete`, `stock:edit`, `shipping:edit`.
 5. Documentar formalmente los estados `active`, `closing_soon`, `closed`, `sent`, `devolucion`, `stock_pending`, `cancelled`, `picked`, `waiting`, `missing`.
+
+---
+
+## 10. Post-auditoría: lista de envíos y `sent_at` (2026-05-26)
+
+**Deploy:** `227_shipping_list_sent_at_only` en prod.
+
+| Antes | Después |
+|-------|---------|
+| `rpc_mark_order_as_sent` sin `sent_at` | `sent_at = now()` al finalizar |
+| Lista usaba `closed_at` si `sent_at` null | Lista solo por `sent_at` (Argentina) |
+| Pedidos cerrados sáb / finalizados lun → lista sáb | Desde deploy: lista = día de finalización |
+
+Sin backfill histórico (~1.409 `sent` sin `sent_at` no entran en listas por fecha).
+
+Nota canónica: [[39-LISTA-ENVIOS-SENT-AT-2026-05-26]] · `doc/shipping-list-sent-at-deploy-2026-05-26.md` · `TROUBLESHOOTING_LISTA_ENVIOS.md`.

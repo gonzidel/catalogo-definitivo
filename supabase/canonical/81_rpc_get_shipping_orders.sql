@@ -1,7 +1,7 @@
 -- 81_rpc_get_shipping_orders.sql — Lista de envíos por fecha y transporte (sin límite de filas)
 -- Resuelve el problema de que la lista "Imprimir Lista de Envíos" solo mostraba 24 pedidos:
 -- la consulta se ejecuta en el servidor (RPC) y devuelve todos los pedidos sin límite PostgREST.
--- Criterio: orders con status = 'sent' cuya fecha (sent_at/closed_at/updated_at en hora Argentina) = p_date
+-- Criterio: orders con status = 'sent' y sent_at (hora Argentina) = p_date. Ver 227_shipping_list_sent_at_only.sql.
 -- y cuyo transporte (order o customer) = p_transport_id. Alineado con el concepto de envíos del día.
 
 create or replace function public.rpc_get_shipping_orders(

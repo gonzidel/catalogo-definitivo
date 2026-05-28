@@ -72,6 +72,9 @@ Ver [[10-BACKLOG-NO-CRITICO]]: columnas legacy, RLS fino, helpers duplicados, `r
 - [[36-CATALOGO-SNAPSHOT-REFRESH-2026-05-15]] — refresh `catalog_public_snapshot` (botón Acciones rápidas + plan `doc/plan-catalogo-publico-snapshot-banner-2026-05-15.md`)
 - [[24-CURATED-BANNER-V1-SCHEMA]] — Fase 1 schema Curated Banner v1.1 (`product_variant_id`, `variant_id` en vista/snapshot)
 - [[37-CURATED-BANNER-FRONTEND-OPERATIVO-2026-05-18]] — **Banner curado OK en index** (flag, loader, admin, diagnóstico)
+- [[38-META-FEED-ENRICHMENT-2026-05-23]] — Meta Catalog Feed enriquecido (spec 3 fases; canónico `doc/meta-feed/`)
+- [[39-LISTA-ENVIOS-SENT-AT-2026-05-26]] — Lista de envíos (`sent_at` al finalizar; migración 227; sin backfill histórico)
+- [[40-PAU-PANEL-ATENCION-UNIFICADO]] — PAU: panel móvil pedidos/WhatsApp (QR, borrador, cerrar); canónico `doc/pau/README.md`
 
 ---
 

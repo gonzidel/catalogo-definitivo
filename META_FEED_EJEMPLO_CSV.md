@@ -1,18 +1,25 @@
 # Ejemplo de CSV - Meta Catalog Feed
 
-## Headers del Feed
+> **Spec enriquecimiento (2026-05-23):** `doc/meta-feed/2026-05-23-meta-feed-enriquecimiento-spec.md` · Obsidian: `docs/FYL-Obsidian/38-META-FEED-ENRICHMENT-2026-05-23.md`  
+> **Fase 1 implementada en repo:** headers 14 columnas (ver abajo). Fases 2–3 pendientes.
+
+## Headers del Feed (Fase 1 — vigente en código)
 
 ```
-id,item_group_id,title,description,price,availability,condition,brand,link,image_link,color,size
+id,item_group_id,title,description,availability,condition,price,link,image_link,brand,color,size,gender,product_type
 ```
 
-## Ejemplo de 3 filas
+Ejemplo completo: `doc/meta-feed/ejemplo-csv-fase1.csv`
+
+## Ejemplo de filas (Fase 1)
 
 ```csv
-id,item_group_id,title,description,price,availability,condition,brand,link,image_link,color,size
-1530-1-SUELA-37,1530-1,1530-1 - SUELA - Talle 37,Zapatilla deportiva con suela antideslizante,45000.00 ARS,in stock,new,FYL,https://fylmoda.com.ar/catalogo?sku=1530-1-SUELA-37,https://res.cloudinary.com/dnuedzuzm/image/upload/f_auto,q_auto,w_1200/v1234567890/products/1530-1-suela-37.jpg,SUELA,37
-1530-1-SUELA-38,1530-1,1530-1 - SUELA - Talle 38,Zapatilla deportiva con suela antideslizante,45000.00 ARS,in stock,new,FYL,https://fylmoda.com.ar/catalogo?sku=1530-1-SUELA-38,https://res.cloudinary.com/dnuedzuzm/image/upload/f_auto,q_auto,w_1200/v1234567890/products/1530-1-suela-38.jpg,SUELA,38
+id,item_group_id,title,description,availability,condition,price,link,image_link,brand,color,size,gender,product_type
+1530-1-SUELA-37,<uuid-producto>,Botas ... Suela Talle 37,...,in stock,new,45000 ARS,https://fylmoda.com.ar/catalogo?sku=1530-1-SUELA-37,<cloudinary>,FYL,Suela,37,female,Calzado > Botas
+1530-1-NEGRO-38,<uuid-producto>,Botas ... Negro Talle 38,...,in stock,new,45000 ARS,https://fylmoda.com.ar/catalogo?sku=1530-1-NEGRO-38,<cloudinary>,FYL,Negro,38,female,Calzado > Botas
 ```
+
+`item_group_id` = `products.id` (UUID). Variantes del mismo modelo comparten UUID.
 
 ## Reglas vigentes (Fase 1)
 

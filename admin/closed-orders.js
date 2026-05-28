@@ -619,11 +619,69 @@ async function loadScheduledTransports() {
     }
 
     scheduledTransports = data || [];
+    populateExtractTransportSelect();
     return scheduledTransports;
   } catch (err) {
     console.warn("⚠️ Error al cargar transportes (tabla puede no existir):", err.message);
     scheduledTransports = [];
+    populateExtractTransportSelect();
     return [];
+  }
+}
+
+/** Un transporte por nombre canónico (evita duplicados Retira/Retiro en el Excel). */
+function getTransportsForSelect() {
+  const byKey = new Map();
+  for (const transport of scheduledTransports) {
+    const canonical = canonicalizeTransportName(transport.name || "");
+    const key = normalizeTransportKey(canonical || transport.name || "");
+    if (!key) continue;
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, transport);
+      continue;
+    }
+    const prefer =
+      canonicalizeTransportName(transport.name) === canonical ? transport : existing;
+    byKey.set(key, prefer);
+  }
+  return Array.from(byKey.values()).sort((a, b) =>
+    String(a.name || "").localeCompare(String(b.name || ""), "es")
+  );
+}
+
+function populateExtractTransportSelect() {
+  const extractTransport = document.getElementById("extract-transport");
+  const filterTransport = document.getElementById("filter-transport");
+  const transports = getTransportsForSelect();
+
+  if (extractTransport) {
+    if (transports.length === 0) {
+      extractTransport.innerHTML =
+        '<option value="all">Todos los transportes</option><option value="">No hay transportes disponibles</option>';
+    } else {
+      extractTransport.innerHTML = '<option value="all">Todos los transportes</option>';
+      transports.forEach((transport) => {
+        const option = document.createElement("option");
+        option.value = transport.id;
+        option.textContent = canonicalizeTransportName(transport.name || "") || transport.name || "Sin nombre";
+        extractTransport.appendChild(option);
+      });
+    }
+  }
+
+  if (filterTransport && transports.length > 0) {
+    const prev = filterTransport.value;
+    filterTransport.innerHTML = '<option value="">Seleccionar transporte...</option>';
+    transports.forEach((transport) => {
+      const option = document.createElement("option");
+      option.value = transport.id;
+      option.textContent = canonicalizeTransportName(transport.name || "") || transport.name || "Sin nombre";
+      filterTransport.appendChild(option);
+    });
+    if (prev && [...filterTransport.options].some((o) => o.value === prev)) {
+      filterTransport.value = prev;
+    }
   }
 }
 
@@ -1592,6 +1650,7 @@ async function finalizeOrder(orderId) {
   }
 
   console.log("✅ Pedido finalizado correctamente");
+  alert("✅ Pedido finalizado. Aparecerá en la lista de envíos del día de hoy al buscar por su transporte.");
   await loadClosedOrders();
 }
 
@@ -3180,32 +3239,7 @@ function setupPrintListsModal() {
           });
         }
 
-        // Cargar transportes en el selector de Nueva Lista
-        if (filterTransport && scheduledTransports.length > 0) {
-          filterTransport.innerHTML = '<option value="">Seleccionar transporte...</option>';
-          scheduledTransports.forEach(transport => {
-            const option = document.createElement("option");
-            option.value = transport.id;
-            option.textContent = transport.name || "Sin nombre";
-            filterTransport.appendChild(option);
-          });
-        } else if (filterTransport) {
-          filterTransport.innerHTML = '<option value="">No hay transportes disponibles</option>';
-        }
-
-        // Cargar transportes en el selector de Extraer
-        const extractTransport = document.getElementById("extract-transport");
-        if (extractTransport && scheduledTransports.length > 0) {
-          extractTransport.innerHTML = '<option value="all">Todos los transportes</option>';
-          scheduledTransports.forEach(transport => {
-            const option = document.createElement("option");
-            option.value = transport.id;
-            option.textContent = transport.name || "Sin nombre";
-            extractTransport.appendChild(option);
-          });
-        } else if (extractTransport) {
-          extractTransport.innerHTML = '<option value="all">Todos los transportes</option><option value="">No hay transportes disponibles</option>';
-        }
+        populateExtractTransportSelect();
       }
     });
   }

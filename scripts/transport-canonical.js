@@ -18,6 +18,7 @@ const TRANSPORT_ALIAS_TO_CANONICAL = Object.freeze({
   "retiro de local": CANONICAL_TRANSPORTS.RETIRO_DE_LOCAL,
   "retiro del local": CANONICAL_TRANSPORTS.RETIRO_DE_LOCAL,
   "retiro local": CANONICAL_TRANSPORTS.RETIRO_DE_LOCAL,
+  "retira local": CANONICAL_TRANSPORTS.RETIRO_DE_LOCAL,
 });
 
 export const RESERVED_TRANSPORT_KEYS = Object.freeze(

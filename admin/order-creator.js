@@ -6,6 +6,12 @@ console.log("📦 order-creator.js: Iniciando carga del módulo...");
 import { supabase as supabaseClient } from "../scripts/supabase-client.js";
 import { normalizeSize } from "../scripts/utils/size-normalizer.js";
 import { PROVINCE_CITIES_DATA } from './argentina-cities-data.js';
+import {
+  normalizeCustomerSearchText,
+  tokenizeCustomerSearch,
+  rankCustomersForSearch,
+  computeWarehouseQtySplitForOrderItem,
+} from "./orders-domain.js";
 
 console.log("📦 order-creator.js: Importación de supabase-client completada");
 
@@ -603,58 +609,6 @@ async function searchCustomers(query) {
   } catch (error) {
     console.error("❌ Error en búsqueda de clientes:", error);
   }
-}
-
-function normalizeCustomerSearchText(value) {
-  return String(value || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function tokenizeCustomerSearch(value) {
-  return normalizeCustomerSearchText(value)
-    .split(" ")
-    .map((t) => t.trim())
-    .filter(Boolean);
-}
-
-function rankCustomersForSearch(customers, normQuery, tokens) {
-  return [...customers]
-    .map((customer) => {
-      const fullName = normalizeCustomerSearchText(customer.full_name || "");
-      const dni = String(customer.dni || "").toLowerCase();
-      const email = String(customer.email || "").toLowerCase();
-      const phone = String(customer.phone || "").replace(/\D/g, "");
-      const customerNumber = String(customer.customer_number || "").toLowerCase();
-      const queryDigits = String(normQuery || "").replace(/\D/g, "");
-      const allTokensMatch = tokens.length > 0 && tokens.every((t) => fullName.includes(t));
-      const startsWithAllTokens =
-        tokens.length > 0 &&
-        fullName &&
-        tokens.every((t) => fullName.startsWith(t) || fullName.includes(` ${t}`));
-
-      let score = 0;
-      if (fullName === normQuery) score += 140;
-      if (fullName.startsWith(normQuery)) score += 100;
-      if (startsWithAllTokens) score += 75;
-      if (allTokensMatch) score += 55;
-      if (customerNumber && customerNumber.includes(normQuery)) score += 45;
-      if (dni && dni.includes(normQuery)) score += 35;
-      if (queryDigits && phone.includes(queryDigits)) score += 35;
-      if (email && email.includes(normQuery)) score += 20;
-      if (!fullName && (dni || email || customerNumber || phone)) score += 5;
-
-      return { customer, score, fullName };
-    })
-    .filter((row) => row.score > 0)
-    .sort((a, b) => {
-      if (b.score !== a.score) return b.score - a.score;
-      return a.fullName.localeCompare(b.fullName, "es", { sensitivity: "base" });
-    })
-    .map((row) => row.customer);
 }
 
 function escapeCustomerResultHtml(value) {
@@ -2365,26 +2319,6 @@ function addSpecialExtra() {
   console.log(`✅ Extra especial agregado: ${name} - $${amount}`);
 }
 
-// Reparto depósito general vs venta (misma prioridad que grilla / RPC). Evita que al fusionar
-// dos líneas del mismo SKU se sume dos veces "todo desde venta" cuando el stock está partido.
-function computeWarehouseQtySplitForOrderItem(quantity, stockGeneral, stockVenta) {
-  const q = Math.max(0, Number(quantity) || 0);
-  const gAvail = Math.max(0, Number(stockGeneral) || 0);
-  const vAvail = Math.max(0, Number(stockVenta) || 0);
-  let qtyFromVenta = 0;
-  let qtyFromGeneral = 0;
-  if (vAvail > 0) {
-    qtyFromVenta = Math.min(q, vAvail);
-    const remaining = q - qtyFromVenta;
-    if (remaining > 0 && gAvail > 0) {
-      qtyFromGeneral = Math.min(remaining, gAvail);
-    }
-  } else if (gAvail > 0) {
-    qtyFromGeneral = Math.min(q, gAvail);
-  }
-  return { qty_from_general: qtyFromGeneral, qty_from_venta: qtyFromVenta };
-}
-
 // Agregar producto al pedido
 async function addProductToOrder(product) {
   let resolvedStatus = product.status || "picked";
@@ -3764,25 +3698,25 @@ async function createNewOrder(customerId, items, total, extraValues = {}) {
     admin_confirmed_missing: Boolean(item.admin_confirmed_missing)
   }));
   
-  console.log("🔵 createNewOrder: Creando items del pedido...");
-  const { data: insertedItems, error: itemsError } = await supabase
-    .from("order_items")
-    .insert(orderItemsData)
-    .select("id, variant_id, size, quantity, admin_confirmed_missing");
-  
-  if (itemsError) {
-    console.error("❌ createNewOrder: Error creando items:", itemsError);
-    // Si falla, intentar eliminar el pedido creado
-    await supabase.from("orders").delete().eq("id", order.id);
-    throw new Error(`Error agregando productos: ${itemsError.message}`);
-  }
-  
-  console.log("✅ createNewOrder: Items del pedido creados correctamente");
+  let insertedItems = [];
+  if (orderItemsData.length > 0) {
+    console.log("🔵 createNewOrder: Creando items del pedido...");
+    const { data, error: itemsError } = await supabase
+      .from("order_items")
+      .insert(orderItemsData)
+      .select("id, variant_id, size, quantity, admin_confirmed_missing");
 
+    if (itemsError) {
+      console.error("❌ createNewOrder: Error creando items:", itemsError);
+      await supabase.from("orders").delete().eq("id", order.id);
+      throw new Error(`Error agregando productos: ${itemsError.message}`);
+    }
+    insertedItems = data || [];
+    console.log("✅ createNewOrder: Items del pedido creados correctamente");
+  }
+
+  if (itemsForPersistence.length > 0) {
   // Etapa 2 / Fase corta: descuento transaccional.
-  // Primero los ítems confirmados manualmente (inject-and-deduct),
-  // luego los ítems normales (rpc_apply_order_stock_deduction).
-  // Si falla cualquiera, rollback manual o stock_pending.
   console.log("🔵 createNewOrder: Descontando stock (RPC)...");
   try {
     await applyManualConfirmedItems(insertedItems || [], order.id);
@@ -3869,6 +3803,7 @@ async function createNewOrder(customerId, items, total, extraValues = {}) {
         ? "Los cambios fueron revertidos."
         : "La orden quedó marcada como 'stock_pending' y requiere intervención manual.")
     );
+  }
   }
 
   console.log("✅ createNewOrder: Proceso completado exitosamente");
@@ -4148,18 +4083,138 @@ async function loadOrderForEdit(orderId) {
   }
 }
 
-// Inicializar cuando el DOM esté listo
-console.log("📦 order-creator.js: Estado del DOM:", document.readyState);
+/** Resuelve QR/SKU a ítem de pedido (sin DOM). Usado por PAU vía orders-ops. */
+export async function resolveQrCodeToOrderItem(qrCode) {
+  if (!supabase) {
+    supabase = await getSupabase();
+  }
+  if (!supabase) {
+    throw new Error("No se pudo conectar con la base de datos.");
+  }
+
+  const qrNormalized = String(qrCode).trim().replace(/\s+/g, "");
+  if (!qrNormalized) {
+    throw new Error("Código vacío.");
+  }
+
+  if (!warehouses.general || !warehouses.ventaPublico) {
+    await loadWarehouses();
+  }
+
+  const baseQuery = () =>
+    supabase
+      .from("variant_sizes")
+      .select(`
+        variant_id,
+        size,
+        sku,
+        qr_code,
+        stock_qty,
+        product_variants!inner (
+          id,
+          sku,
+          color,
+          price,
+          active,
+          products!inner (
+            id,
+            name,
+            category,
+            status
+          )
+        )
+      `);
+
+  let sizeData = null;
+
+  if (/^\d+$/.test(qrNormalized)) {
+    let { data, error } = await baseQuery()
+      .eq("qr_code", qrNormalized)
+      .in("product_variants.products.status", ["active", "pending_stock", "draft"])
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    sizeData = data;
+    if (!sizeData?.product_variants) {
+      const fallback = await baseQuery().eq("qr_code", qrNormalized).maybeSingle();
+      if (fallback.error) throw new Error(fallback.error.message);
+      sizeData = fallback.data;
+    }
+  }
+
+  if (!sizeData?.product_variants) {
+    let { data: bySku, error: skuErr } = await baseQuery()
+      .eq("sku", qrNormalized)
+      .in("product_variants.products.status", ["active", "pending_stock", "draft"])
+      .maybeSingle();
+    if (skuErr) throw new Error(skuErr.message);
+    sizeData = bySku;
+  }
+
+  if (!sizeData?.product_variants) {
+    throw new Error(`No se encontró producto con código "${qrNormalized}".`);
+  }
+
+  const variant = { ...sizeData.product_variants, size: sizeData.size };
+  const product = sizeData.product_variants.products;
+  const normalizedSize = normalizeSize(variant.size);
+  let stockGeneral = 0;
+  let stockVenta = 0;
+
+  if (normalizedSize && warehouses.general && warehouses.ventaPublico) {
+    const { data: sizeWarehouseStocks } = await supabase
+      .from("variant_size_warehouse_stock")
+      .select("size, warehouse_id, stock_qty")
+      .eq("variant_id", variant.id)
+      .in("warehouse_id", [warehouses.general, warehouses.ventaPublico]);
+
+    if (sizeWarehouseStocks) {
+      sizeWarehouseStocks.forEach((sws) => {
+        const swsNormalizedSize = normalizeSize(sws.size);
+        if (swsNormalizedSize !== normalizedSize) return;
+        if (sws.warehouse_id === warehouses.general) stockGeneral += sws.stock_qty || 0;
+        else if (sws.warehouse_id === warehouses.ventaPublico) stockVenta += sws.stock_qty || 0;
+      });
+    }
+  }
+
+  const split = computeWarehouseQtySplitForOrderItem(1, stockGeneral, stockVenta);
+  const qtyFromGeneral = split.qty_from_general;
+  const qtyFromVenta = split.qty_from_venta;
+  const hasConfirmedStock = (qtyFromGeneral + qtyFromVenta) >= 1;
+
+  const { data: imageData } = await supabase
+    .from("variant_images")
+    .select("url")
+    .eq("variant_id", variant.id)
+    .eq("position", 1)
+    .maybeSingle();
+
+  return {
+    product_name: product.name,
+    color: variant.color,
+    size: normalizedSize,
+    quantity: 1,
+    price_snapshot: variant.price,
+    imagen: imageData?.url || null,
+    variant_id: variant.id,
+    qty_from_general: qtyFromGeneral,
+    qty_from_venta: qtyFromVenta,
+    status: hasConfirmedStock ? "picked" : "missing",
+    admin_confirmed_missing: !hasConfirmedStock,
+  };
+}
+
+export { createNewOrder, addItemsToExistingOrder };
+
+function bootOrderCreatorIfModalPresent() {
+  if (!document.getElementById("create-order-modal")) return;
+  initOrderCreator();
+}
 
 if (document.readyState === "loading") {
-  console.log("📦 order-creator.js: Esperando DOMContentLoaded...");
-  document.addEventListener("DOMContentLoaded", () => {
-    console.log("📦 order-creator.js: DOMContentLoaded disparado, inicializando...");
-    initOrderCreator();
-  });
+  document.addEventListener("DOMContentLoaded", bootOrderCreatorIfModalPresent);
 } else {
-  console.log("📦 order-creator.js: DOM ya listo, inicializando inmediatamente...");
-  initOrderCreator();
+  bootOrderCreatorIfModalPresent();
 }
 
 

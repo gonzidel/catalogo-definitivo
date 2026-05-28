@@ -69,6 +69,20 @@ Los estados `sent`, `expired` y `devolución` están excluidos del cálculo de r
 | Quitar/restaurar stock | `rpc_remove_order_item_restore_stock` |
 | Cancelar pedido completo | `rpc_cancel_order_full` |
 | Enviar a local | `rpc_send_order_to_local` |
+| Finalizar / enviar (cerrados) | `rpc_mark_order_as_sent` — escribe `sent_at` (desde migración **227**, 2026-05-26) |
+| Lista de envíos por día | `rpc_get_shipping_orders`, `rpc_get_shipping_orders_range` |
+| Reprogramar fecha envío | `rpc_reschedule_sent_order` |
+
+## Pedidos cerrados y lista de envíos
+
+Pantalla: `admin/closed-orders.html`.
+
+1. **Cerrar** (`rpc_close_order`) → `status = closed`, `closed_at = now()`. Aparece en la grilla de cerrados; **no** en «Imprimir Lista de Envíos».
+2. Imprimir rótulos → `labels_printed`.
+3. **Finalizar (Enviar)** → `rpc_mark_order_as_sent` → `status = sent`, **`sent_at = now()`**.
+4. Lista del día: buscar por transporte y fecha; la RPC filtra solo pedidos `sent` cuya fecha **Argentina** de `sent_at` coincide (sin usar `closed_at`).
+
+Detalle del incidente sábado→lunes y deploy: [[39-LISTA-ENVIOS-SENT-AT-2026-05-26]]. Runbook: `doc/shipping-list-sent-at-deploy-2026-05-26.md`.
 
 ## Cruces
 
@@ -76,3 +90,4 @@ Los estados `sent`, `expired` y `devolución` están excluidos del cálculo de r
 - Carrito: [[19-AUDITORIA-MODULO-CLIENTE-CARRITO]]
 - Public Sales/local orders: [[18-AUDITORIA-MODULO-PUBLIC-SALES]]
 - Observaciones: [[15-OBSERVACIONES-PRODUCTS-A-REVISAR]]
+- Lista envíos / `sent_at`: [[39-LISTA-ENVIOS-SENT-AT-2026-05-26]]

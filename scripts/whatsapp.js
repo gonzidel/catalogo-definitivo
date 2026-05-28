@@ -1,24 +1,34 @@
+function isExcludedGeneralWhatsappLink(link) {
+  if (!link) return true;
+  if (link.closest("#wa-popup, #wa-menu")) return true;
+  if (link.id === "wa-toggle") return true;
+  if (link.classList.contains("public-catalog-wa-link")) return true;
+  return false;
+}
+
+function isProductWhatsappConsultLink(link) {
+  return !!link?.closest?.(".public-consult-btn, .pdp-whatsapp-cta");
+}
+
 if (!window.__fbWaLeadDelegationInit) {
   window.__fbWaLeadDelegationInit = true;
   document.addEventListener("click", (e) => {
     const link = e.target?.closest?.('a[href*="wa.me"]');
     if (!link) return;
-    // Deduplicación: si otro listener (catalogo-publico.js para .public-consult-btn
-    // o .pdp-whatsapp-cta) ya disparó Meta Lead en este mismo click, NO lo
-    // dupliquemos. Evita inflado del CPL en Meta Ads Manager.
+
+    // Catálogo público: pixel solo en catalogo-publico.js (card/PDP). FAB, menú, footer: nada.
+    if (document.documentElement.classList.contains("public-catalog")) return;
+    if (isExcludedGeneralWhatsappLink(link) || isProductWhatsappConsultLink(link)) return;
+
     if (e.__fylWaLeadTracked) return;
     e.__fylWaLeadTracked = true;
 
-    const payload =
-      link.id === "wa-toggle"
-        ? { content_name: "WhatsApp Click", content_category: "public_catalog" }
-        : { content_name: "WhatsApp Click" };
+    const payload = { content_name: "WhatsApp Click" };
     if (typeof fbq === "function") {
       fbq("track", "Lead", payload);
       return;
     }
 
-    // Delay corto defensivo para casos de carga tardía del pixel.
     setTimeout(() => {
       if (typeof fbq === "function") {
         fbq("track", "Lead", payload);

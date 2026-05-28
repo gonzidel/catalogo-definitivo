@@ -2,6 +2,13 @@
 import { supabase } from "../scripts/supabase-client.js";
 import { preloadAuthState, can, isAdminUser } from "./auth-state.js";
 import { normalizeSize, compareCatalogSizes } from "../scripts/utils/size-normalizer.js";
+import {
+  assertProductHasTagsForImageUpload,
+  ensureProductsEditPermission,
+  orderFilesWithMainFirst,
+  uploadVariantImages,
+  validateImageFiles,
+} from "./variant-image-upload.js";
 
 // Verificar que Supabase esté disponible (puede fallar en error de config, no de red)
 if (!supabase) {
@@ -193,6 +200,7 @@ const publicationTableBody = document.getElementById("publication-table-body");
 const publicationCount = document.getElementById("publication-count");
 const selectedCount = document.getElementById("selected-count");
 const publishBtn = document.getElementById("publish-btn");
+const updateBtn = document.getElementById("update-btn");
 const copyToSheetBtn = document.getElementById("copy-to-sheet-btn");
 const clearAllBtn = document.getElementById("clear-all");
 const messageContainer = document.getElementById("message-container");
@@ -436,24 +444,43 @@ document.addEventListener('DOMContentLoaded', async () => {
     runPublicationsTask("boot:new", () => loadNewProducts(true));
   }
   await loadPublicationSuppliers();
+  initPublicationImageUploadModal();
   // La pestaña "Todo" es la activa por defecto; muestra ayuda hasta activar un filtro
 });
 
+function buildPublicationImageFields(images) {
+  if (!images?.length) {
+    return { imageUrls: [], firstImage: null };
+  }
+  const sorted = [...images].sort((a, b) => {
+    if (!!b.is_main !== !!a.is_main) {
+      return (b.is_main ? 1 : 0) - (a.is_main ? 1 : 0);
+    }
+    return (a.position ?? 0) - (b.position ?? 0);
+  });
+  const imageUrls = [];
+  const seen = new Set();
+  for (const img of sorted) {
+    const u = img.url || img.secure_url;
+    if (u && !seen.has(u)) {
+      seen.add(u);
+      imageUrls.push(u);
+    }
+  }
+  return { imageUrls, firstImage: imageUrls[0] || null };
+}
+
 async function fetchVariantImageUrls(variantIds) {
-  if (!variantIds?.length) return [];
+  if (!variantIds?.length) return { imageUrls: [], firstImage: null };
   const { data: images, error } = await supabase
     .from("variant_images")
-    .select("url, public_id, secure_url, position")
-    .in("variant_id", variantIds)
-    .order("position");
+    .select("url, public_id, secure_url, position, is_main")
+    .in("variant_id", variantIds);
   if (error) {
     console.warn("⚠️ Error obteniendo imágenes de variantes:", error);
-    return [];
+    return { imageUrls: [], firstImage: null };
   }
-  const urls = (images || [])
-    .map(img => img.url || img.secure_url)
-    .filter(Boolean);
-  return [...new Set(urls)];
+  return buildPublicationImageFields(images || []);
 }
 
 function buildColorPublicationMeta(variants) {
@@ -484,11 +511,11 @@ async function getProductColorData(productId, color) {
   }
   
   const variantIds = variants.map(v => v.id);
-  const uniqueImageUrls = await fetchVariantImageUrls(variantIds);
+  const imageFields = await fetchVariantImageUrls(variantIds);
   const { price, last_published_at: colorLastPublishedAt } = buildColorPublicationMeta(variants);
   const imagePayload = {
-    imageUrls: uniqueImageUrls,
-    firstImage: uniqueImageUrls[0] || null,
+    imageUrls: imageFields.imageUrls,
+    firstImage: imageFields.firstImage,
     price,
     last_published_at: colorLastPublishedAt,
   };
@@ -1387,19 +1414,12 @@ async function getProductColorDataLowStock(productId, color) {
     stock: vs.stock_qty || 0
   }));
   
-  // Obtener imágenes de las variantes (url, public_id para optimización)
   const { data: images } = await supabase
     .from("variant_images")
-    .select("url, public_id, secure_url, position")
-    .in("variant_id", variantIds)
-    .order("position");
-  
-  // Obtener URLs únicas (priorizar url o secure_url)
-  const allImageUrls = (images || [])
-    .map(img => img.url || img.secure_url)
-    .filter(Boolean);
-  
-  const uniqueImageUrls = [...new Set(allImageUrls)];
+    .select("url, public_id, secure_url, position, is_main")
+    .in("variant_id", variantIds);
+  const { imageUrls: uniqueImageUrls, firstImage: lowStockFirstImage } =
+    buildPublicationImageFields(images || []);
   
   // Obtener precio
   const price = availableVariants.length > 0 && availableVariants[0].price 
@@ -1423,7 +1443,7 @@ async function getProductColorDataLowStock(productId, color) {
     })),
     sizes,
     imageUrls: uniqueImageUrls,
-    firstImage: uniqueImageUrls[0] || null,
+    firstImage: lowStockFirstImage,
     price,
     stockInfo, // Información de stock para mostrar
     last_published_at: colorLastPublishedAt,
@@ -1768,6 +1788,321 @@ function formatCardSizesLabel(item) {
   return formatSizes(item.sizes);
 }
 
+function renderUploadImageButton(item) {
+  if (item.firstImage) return "";
+  const productIdEscaped = String(item.productId).replace(/'/g, "&#39;");
+  const colorEscaped = String(item.color).replace(/'/g, "&#39;");
+  return `<button type="button" class="btn-small btn-success" onclick="openPublicationImageUpload('${productIdEscaped}', '${colorEscaped}')">📷 Subir imagen</button>`;
+}
+
+function patchProductColorInLists(productId, color, patch) {
+  const matches = (it) =>
+    String(it.productId) === String(productId) &&
+    String(it.color ?? "") === String(color ?? "");
+  const apply = (arr) => (Array.isArray(arr) ? arr.map((it) => (matches(it) ? { ...it, ...patch } : it)) : arr);
+
+  newProducts = apply(newProducts);
+  recommendedProducts = apply(recommendedProducts);
+  lowStockProducts = apply(lowStockProducts);
+  allProducts = apply(allProducts);
+  paginationState.new.allLoaded = apply(paginationState.new.allLoaded);
+  paginationState.recommended.allLoaded = apply(paginationState.recommended.allLoaded);
+  paginationState.lowStock.allLoaded = apply(paginationState.lowStock.allLoaded);
+  paginationState.all.allLoaded = apply(paginationState.all.allLoaded);
+}
+
+async function resolveUploadVariantContext(productId, color) {
+  const item =
+    getFullProductsList().find(
+      (p) =>
+        String(p.productId) === String(productId) &&
+        String(p.color ?? "") === String(color ?? "")
+    ) || null;
+
+  const activeTab = document.querySelector(".tab.active")?.dataset?.tab;
+  const loadColorData =
+    activeTab === "low-stock" ? getProductColorDataLowStock : getProductColorData;
+  const colorData = await loadColorData(productId, color);
+  if (!colorData?.variants?.length) {
+    return null;
+  }
+
+  const variants = colorData.variants;
+  const variantIds = variants.map((v) => v.id);
+  const { data: existingRows } = await supabase
+    .from("variant_images")
+    .select("variant_id")
+    .in("variant_id", variantIds);
+  const withImages = new Set((existingRows || []).map((r) => r.variant_id));
+  const target =
+    variants.find((v) => !withImages.has(v.id)) || variants[0];
+
+  let category = item?.category || "";
+  if (!category) {
+    const { data: product } = await supabase
+      .from("products")
+      .select("name, category")
+      .eq("id", productId)
+      .maybeSingle();
+    category = product?.category || "";
+  }
+
+  return {
+    productId,
+    color,
+    variantId: target.id,
+    category,
+    skuBase: (target.sku || "").trim(),
+    productName: item?.productName || "",
+  };
+}
+
+let _pubImageUploadContext = null;
+let _pubImagePendingFiles = [];
+let _pubImageMainIndex = 0;
+const _pubImageObjectUrls = [];
+
+function revokePubImageObjectUrls() {
+  while (_pubImageObjectUrls.length) {
+    URL.revokeObjectURL(_pubImageObjectUrls.pop());
+  }
+}
+
+function closePublicationImageUploadModal() {
+  const overlay = document.getElementById("pub-image-upload-overlay");
+  if (overlay) {
+    overlay.classList.remove("active");
+    overlay.setAttribute("aria-hidden", "true");
+  }
+  revokePubImageObjectUrls();
+  _pubImageUploadContext = null;
+  _pubImagePendingFiles = [];
+  _pubImageMainIndex = 0;
+  const grid = document.getElementById("pub-image-preview-grid");
+  const fileInput = document.getElementById("pub-image-file-input");
+  const acceptBtn = document.getElementById("pub-image-upload-accept");
+  const statusEl = document.getElementById("pub-image-upload-status");
+  if (grid) {
+    grid.innerHTML = "";
+    grid.classList.remove("visible");
+  }
+  if (fileInput) fileInput.value = "";
+  if (acceptBtn) acceptBtn.disabled = true;
+  if (statusEl) statusEl.textContent = "";
+}
+
+function renderPublicationImagePreviews(files) {
+  const grid = document.getElementById("pub-image-preview-grid");
+  const acceptBtn = document.getElementById("pub-image-upload-accept");
+  if (!grid) return;
+
+  revokePubImageObjectUrls();
+  grid.innerHTML = "";
+  _pubImageMainIndex = 0;
+
+  files.forEach((file, index) => {
+    const item = document.createElement("div");
+    item.className = "pub-image-preview-item";
+    const img = document.createElement("img");
+    const objectUrl = URL.createObjectURL(file);
+    _pubImageObjectUrls.push(objectUrl);
+    img.src = objectUrl;
+    img.alt = file.name;
+
+    const label = document.createElement("label");
+    const radio = document.createElement("input");
+    radio.type = "radio";
+    radio.name = "pub-main-image";
+    radio.value = String(index);
+    radio.checked = index === 0;
+    radio.addEventListener("change", () => {
+      _pubImageMainIndex = index;
+    });
+    label.appendChild(radio);
+    label.appendChild(document.createTextNode(" Principal"));
+
+    item.appendChild(img);
+    item.appendChild(label);
+    grid.appendChild(item);
+  });
+
+  grid.classList.toggle("visible", files.length > 0);
+  if (acceptBtn) acceptBtn.disabled = files.length === 0;
+}
+
+function setPublicationImagePendingFiles(files) {
+  const { validFiles, error } = validateImageFiles(files);
+  if (error) {
+    showMessage(error, "err");
+    return;
+  }
+  _pubImagePendingFiles = validFiles;
+  renderPublicationImagePreviews(validFiles);
+  const statusEl = document.getElementById("pub-image-upload-status");
+  if (statusEl) {
+    statusEl.textContent =
+      validFiles.length > 1
+        ? "Elegí cuál será la imagen principal y tocá Aceptar."
+        : "Tocá Aceptar para subir la imagen.";
+  }
+}
+
+function initPublicationImageUploadModal() {
+  const overlay = document.getElementById("pub-image-upload-overlay");
+  const dropzone = document.getElementById("pub-image-dropzone");
+  const fileInput = document.getElementById("pub-image-file-input");
+  const cancelBtn = document.getElementById("pub-image-upload-cancel");
+  const acceptBtn = document.getElementById("pub-image-upload-accept");
+
+  if (!overlay || !dropzone || !fileInput) return;
+
+  dropzone.addEventListener("click", (e) => {
+    if (e.target.closest("label")) return;
+    fileInput.click();
+  });
+
+  dropzone.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      fileInput.click();
+    }
+  });
+
+  fileInput.addEventListener("change", (e) => {
+    if (e.target.files?.length) setPublicationImagePendingFiles(e.target.files);
+  });
+
+  ["dragenter", "dragover"].forEach((ev) => {
+    dropzone.addEventListener(ev, (e) => {
+      e.preventDefault();
+      dropzone.classList.add("drag-over");
+    });
+  });
+  ["dragleave", "drop"].forEach((ev) => {
+    dropzone.addEventListener(ev, (e) => {
+      e.preventDefault();
+      dropzone.classList.remove("drag-over");
+    });
+  });
+  dropzone.addEventListener("drop", (e) => {
+    if (e.dataTransfer?.files?.length) {
+      setPublicationImagePendingFiles(e.dataTransfer.files);
+    }
+  });
+
+  cancelBtn?.addEventListener("click", closePublicationImageUploadModal);
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) closePublicationImageUploadModal();
+  });
+
+  acceptBtn?.addEventListener("click", async () => {
+    if (!_pubImageUploadContext || _pubImagePendingFiles.length === 0) return;
+    const ctx = _pubImageUploadContext;
+    acceptBtn.disabled = true;
+    const statusEl = document.getElementById("pub-image-upload-status");
+    const ordered = orderFilesWithMainFirst(_pubImagePendingFiles, _pubImageMainIndex);
+    const result = await uploadVariantImages({
+      variantId: ctx.variantId,
+      productId: ctx.productId,
+      category: ctx.category,
+      skuBase: ctx.skuBase,
+      color: ctx.color,
+      files: ordered,
+      onStatus: (msg) => {
+        if (statusEl) statusEl.textContent = msg;
+      },
+    });
+    if (result.ok) {
+      closePublicationImageUploadModal();
+      showMessage(`✅ Imagen(es) cargada(s) para ${ctx.productName || "el producto"}`, "ok");
+      await refreshProductColorAfterUpload(ctx.productId, ctx.color);
+    } else {
+      showMessage(
+        result.successCount > 0
+          ? `⚠️ Se subieron ${result.successCount} imagen(es) con ${result.errorCount} error(es)`
+          : "No se pudieron subir las imágenes. Revisá la consola o los tags en Productos.",
+        "err"
+      );
+      acceptBtn.disabled = false;
+    }
+  });
+}
+
+async function refreshProductColorAfterUpload(productId, color) {
+  const activeTab = document.querySelector(".tab.active")?.dataset?.tab;
+  const loadColorData =
+    activeTab === "low-stock" ? getProductColorDataLowStock : getProductColorData;
+  const fresh = await loadColorData(productId, color);
+  if (fresh) {
+    patchProductColorInLists(productId, color, {
+      firstImage: fresh.firstImage,
+      imageUrls: fresh.imageUrls,
+      variants: fresh.variants,
+    });
+  }
+
+  if (activeTab === "new") {
+    applyFilters("new", searchNew, categoryFilterNew, renderNewProducts);
+  } else if (activeTab === "recommended") {
+    applyFilters("recommended", searchRecommended, categoryFilterRecommended, renderRecommendedProducts);
+  } else if (activeTab === "low-stock") {
+    applyFilters("lowStock", searchLowStock, categoryFilterLowStock, renderLowStockProducts);
+  } else if (activeTab === "all" && hasActiveAllTabFilters()) {
+    applyFilters("all", searchAll, categoryFilterAll, renderAllProducts);
+  } else if (activeTab === "publication") {
+    renderPublicationTable();
+  }
+}
+
+window.openPublicationImageUpload = async function (productId, color) {
+  runPublicationsTask("image_upload_open", async () => {
+    if (!(await ensurePublicationsAuth())) return;
+    const canEdit = await ensureProductsEditPermission(
+      "Debes estar autenticado para subir imágenes."
+    );
+    if (!canEdit) return;
+    if (!(await assertProductHasTagsForImageUpload(productId))) return;
+
+    const ctx = await resolveUploadVariantContext(productId, color);
+    if (!ctx) {
+      showMessage("No se encontró una variante activa para ese color.", "err");
+      return;
+    }
+    if (!ctx.category || !ctx.skuBase) {
+      showMessage(
+        "Faltan categoría o SKU en la variante. Completalos en Productos antes de subir.",
+        "err"
+      );
+      return;
+    }
+
+    _pubImageUploadContext = ctx;
+    _pubImagePendingFiles = [];
+    _pubImageMainIndex = 0;
+
+    const overlay = document.getElementById("pub-image-upload-overlay");
+    const subtitle = document.getElementById("pub-image-upload-subtitle");
+    const fileInput = document.getElementById("pub-image-file-input");
+    const grid = document.getElementById("pub-image-preview-grid");
+    const acceptBtn = document.getElementById("pub-image-upload-accept");
+    const statusEl = document.getElementById("pub-image-upload-status");
+
+    if (subtitle) {
+      subtitle.textContent = `${ctx.productName || "Producto"} · ${ctx.color}`;
+    }
+    if (fileInput) fileInput.value = "";
+    if (grid) {
+      grid.innerHTML = "";
+      grid.classList.remove("visible");
+    }
+    if (acceptBtn) acceptBtn.disabled = true;
+    if (statusEl) statusEl.textContent = "";
+
+    overlay?.classList.add("active");
+    overlay?.setAttribute("aria-hidden", "false");
+  });
+};
+
 // Función auxiliar para crear una tarjeta de producto
 function createProductCard(item) {
   const isSelected = selectedForPublication.some(
@@ -1792,6 +2127,7 @@ function createProductCard(item) {
         <p><strong>Creado:</strong> ${new Date(item.created_at).toLocaleDateString('es-AR')}</p>
         <div class="sizes-info">Talles: ${formatCardSizesLabel(item)}</div>
         <div class="card-actions">
+          ${renderUploadImageButton(item)}
           <button class="btn-small btn-primary" onclick="editVariantPrice('${productIdEscaped}', '${colorEscaped}', ${editPriceArg})">
             ✏️ Editar precio
           </button>
@@ -1841,6 +2177,7 @@ function renderRecommendedProducts(filtered = null) {
           <p><strong>Última publicación:</strong> Hace ${days} días</p>
           <div class="sizes-info">Talles: ${formatCardSizesLabel(item)}</div>
           <div class="card-actions">
+            ${renderUploadImageButton(item)}
             <button class="btn-small btn-primary" onclick="editVariantPrice('${productIdEscaped}', '${colorEscaped}', ${editPriceArg})">
               ✏️ Editar precio
             </button>
@@ -1905,6 +2242,7 @@ function renderAllProducts(filtered = null) {
           ${publicationInfo}
           <div class="sizes-info">Talles: ${formatCardSizesLabel(item)}</div>
           <div class="card-actions">
+            ${renderUploadImageButton(item)}
             <button class="btn-small btn-primary" onclick="editVariantPrice('${productIdEscaped}', '${colorEscaped}', ${editPriceArg})">
               ✏️ Editar precio
             </button>
@@ -1964,6 +2302,7 @@ function renderLowStockProducts(filtered = null) {
             <strong>⚠️ Stock:</strong> ${stockInfoText}
           </div>
           <div class="card-actions">
+            ${renderUploadImageButton(item)}
             <button class="btn-small btn-primary" onclick="editVariantPrice('${productIdEscaped}', '${colorEscaped}', ${editPriceArg})">
               ✏️ Editar precio
             </button>
@@ -1983,6 +2322,7 @@ async function renderPublicationTable(filtered = null) {
     if (publicationTableBody) publicationTableBody.innerHTML = '<tr><td colspan="7" class="empty-state">No hay productos seleccionados para publicar</td></tr>';
     if (selectedCount) selectedCount.textContent = "0";
     if (publishBtn) publishBtn.disabled = true;
+    if (updateBtn) updateBtn.disabled = true;
     if (copyToSheetBtn) copyToSheetBtn.disabled = true;
     return;
   }
@@ -2119,6 +2459,7 @@ async function renderPublicationTable(filtered = null) {
   if (selectedCount) selectedCount.textContent = validItems.length;
   if (publicationCount) publicationCount.textContent = validItems.length;
   if (publishBtn) publishBtn.disabled = validItems.length === 0;
+  if (updateBtn) updateBtn.disabled = validItems.length === 0;
   if (copyToSheetBtn) copyToSheetBtn.disabled = validItems.length === 0;
 }
 
@@ -2164,7 +2505,8 @@ window.toggleOffer = function(productId, color) {
     selectedForOffer.push({ productId: pid, color: col });
   }
 
-  refreshAllTabsRespectingFilter();
+  // No refrescar pestañas: el checkbox ya cambió en el DOM; refreshAllTabsRespectingFilter
+  // re-renderizaba las 4 grillas y podía lanzar búsqueda Supabase en "Todo" (muy lento).
   saveToLocalStorage();
 };
 
@@ -2600,10 +2942,16 @@ async function refreshCatalogPublicSnapshot() {
   return parseRefreshSnapshotRpcPayload(data);
 }
 
-// Publicar productos seleccionados
-async function publishSelected() {
+// Publicar o actualizar productos seleccionados (notifyWebhook=false omite n8n)
+async function publishSelected({ notifyWebhook = true } = {}) {
+  const isUpdateOnly = !notifyWebhook;
   if (selectedForPublication.length === 0) {
-    showMessage("No hay productos seleccionados para publicar", "err");
+    showMessage(
+      isUpdateOnly
+        ? "No hay productos seleccionados para actualizar"
+        : "No hay productos seleccionados para publicar",
+      "err"
+    );
     return;
   }
   
@@ -2625,19 +2973,29 @@ async function publishSelected() {
 
     if (publishBtn) {
       publishBtn.disabled = true;
-      publishBtn.innerHTML = '<span>⏳</span><span>Publicando...</span>';
+      publishBtn.innerHTML = isUpdateOnly
+        ? '<span>🔄</span><span>Actualizar</span>'
+        : '<span>⏳</span><span>Publicando...</span>';
+    }
+    if (updateBtn) {
+      updateBtn.disabled = true;
+      updateBtn.innerHTML = isUpdateOnly
+        ? '<span>⏳</span><span>Actualizando...</span>'
+        : '<span>🔄</span><span>Actualizar</span>';
     }
 
     const nowIso = new Date().toISOString();
     const publicationChannel = "admin_publications";
 
-    // Payload n8n antes de mutar BD (flags Facebook/Instagram coherentes con pre-publicación).
+    // Payload n8n antes de mutar BD (solo si se va a notificar webhook).
     let n8nExportRows = [];
-    try {
-      const exportData = await buildPublicationExportRows(selectionSnapshot, offerSnapshot);
-      n8nExportRows = exportData.rows;
-    } catch (exportErr) {
-      console.warn("[publications] buildPublicationExportRows:", exportErr);
+    if (notifyWebhook) {
+      try {
+        const exportData = await buildPublicationExportRows(selectionSnapshot, offerSnapshot);
+        n8nExportRows = exportData.rows;
+      } catch (exportErr) {
+        console.warn("[publications] buildPublicationExportRows:", exportErr);
+      }
     }
 
     if (DEBUG_PUBLICATION_EVENTS) {
@@ -2743,7 +3101,7 @@ async function publishSelected() {
     let n8nWebhookOk = false;
     let n8nWebhookError = null;
 
-    if (n8nExportRows.length > 0) {
+    if (notifyWebhook && n8nExportRows.length > 0) {
       try {
         await notifyN8nPublishWebhook({
           publishedAt: nowIso,
@@ -2757,27 +3115,36 @@ async function publishSelected() {
       }
     }
 
-    showMessage(
-      n8nWebhookOk
-        ? `✅ ${publishedCount} variante(s) publicada(s) y enviada(s) a n8n. Actualizando catálogo público…`
-        : n8nWebhookError
-          ? `✅ ${publishedCount} variante(s) publicada(s) en FYL, pero n8n no respondió: ${n8nWebhookError.message}. Actualizando catálogo…`
-          : `✅ ${publishedCount} variante(s)/color(es) publicado(s). Actualizando catálogo público…`,
-      n8nWebhookError ? "err" : "ok"
-    );
+    if (isUpdateOnly) {
+      showMessage(
+        `✅ ${publishedCount} variante(s)/color(es) actualizada(s). Actualizando catálogo público…`,
+        "ok"
+      );
+    } else {
+      showMessage(
+        n8nWebhookOk
+          ? `✅ ${publishedCount} variante(s) publicada(s) y enviada(s) a n8n. Actualizando catálogo público…`
+          : n8nWebhookError
+            ? `✅ ${publishedCount} variante(s) publicada(s) en FYL, pero n8n no respondió: ${n8nWebhookError.message}. Actualizando catálogo…`
+            : `✅ ${publishedCount} variante(s)/color(es) publicado(s). Actualizando catálogo público…`,
+        n8nWebhookError ? "err" : "ok"
+      );
+    }
 
     void refreshCatalogPublicSnapshot()
       .then(({ row_count }) => {
         const rowsLabel = row_count != null ? row_count : "?";
+        const doneVerb = isUpdateOnly ? "Actualizado" : "Publicado";
         showMessage(
-          `✅ Publicado y catálogo actualizado (${rowsLabel} filas). Recargá el index en otra pestaña si ya estaba abierto.`,
+          `✅ ${doneVerb} y catálogo actualizado (${rowsLabel} filas). Recargá el index en otra pestaña si ya estaba abierto.`,
           "ok"
         );
       })
       .catch((refreshErr) => {
         console.warn("[publications] refresh snapshot:", refreshErr);
+        const doneVerb = isUpdateOnly ? "Actualizado" : "Publicado";
         showMessage(
-          `✅ Publicado, pero no se pudo actualizar el catálogo: ${refreshErr?.message || "error"}. Usá Acciones rápidas → Actualizar catálogo público.`,
+          `✅ ${doneVerb}, pero no se pudo actualizar el catálogo: ${refreshErr?.message || "error"}. Usá Acciones rápidas → Actualizar catálogo público.`,
           "err"
         );
       });
@@ -2806,15 +3173,23 @@ async function publishSelected() {
     });
     
   } catch (error) {
-    console.error("Error al publicar:", error);
-    showMessage(`❌ Error al publicar: ${error.message}`, "err");
+    console.error(isUpdateOnly ? "Error al actualizar:" : "Error al publicar:", error);
+    showMessage(
+      `❌ Error al ${isUpdateOnly ? "actualizar" : "publicar"}: ${error.message}`,
+      "err"
+    );
   } finally {
     if (typeof console.groupEnd === "function") {
       console.groupEnd();
     }
+    const empty = selectedForPublication.length === 0;
     if (publishBtn) {
-      publishBtn.disabled = false;
+      publishBtn.disabled = empty;
       publishBtn.innerHTML = '<span>📤</span><span>Publicar Seleccionados</span>';
+    }
+    if (updateBtn) {
+      updateBtn.disabled = empty;
+      updateBtn.innerHTML = '<span>🔄</span><span>Actualizar</span>';
     }
   }
 }
@@ -3262,7 +3637,10 @@ function showMessage(text, type = "ok") {
 
 // Event listeners
 if (publishBtn) {
-  publishBtn.addEventListener("click", publishSelected);
+  publishBtn.addEventListener("click", () => publishSelected({ notifyWebhook: true }));
+}
+if (updateBtn) {
+  updateBtn.addEventListener("click", () => publishSelected({ notifyWebhook: false }));
 }
 if (copyToSheetBtn) {
   copyToSheetBtn.addEventListener("click", copyToSheet);

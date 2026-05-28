@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <!-- Cache bust: subí la versión en app-version.json y ejecutá npm run build (o deploy con predeploy). -->
-  <meta name="app-version" content="m260523">
+  <meta name="app-version" content="m260527">
   <title>Catálogo público FYL</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -13,10 +13,10 @@
   <link rel="dns-prefetch" href="https://dtfznewwvsadkorxwzft.supabase.co">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=optional" media="print" onload="this.media='all'">
   <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=optional"></noscript>
-  <link rel="manifest" href="manifest.json?v=m260523">
-  <link rel="stylesheet" href="styles.css?v=m260523">
+  <link rel="manifest" href="manifest.json?v=m260527">
+  <link rel="stylesheet" href="styles.css?v=m260527">
   <!-- [FASE 1A · T1] styles-desktop solo aplica >=1024px; con media= deja de bloquear render en mobile (paridad con index.html, ver DEC-001). -->
-  <link rel="stylesheet" href="styles-desktop.css?v=m260523" media="(min-width: 1024px)">
+  <link rel="stylesheet" href="styles-desktop.css?v=m260527" media="(min-width: 1024px)">
   <link rel="icon" href="icons/icon-192x192.png" type="image/png">
   <meta name="theme-color" content="#CD844D">
   <script>
@@ -493,7 +493,7 @@
         };
     })(window, document, "clarity", "script", "w7h6cytm9j");
   </script>
-  <script src="scripts/fyl-clarity-env-tags.js?v=m260523"></script>
+  <script src="scripts/fyl-clarity-env-tags.js?v=m260527"></script>
   <script>
     (function () {
       let done = false;
@@ -1153,32 +1153,32 @@
     })();
   </script>
   <!-- Vendor Supabase (IIFE same-origin: window.fylSupabase.createClient). defer => corre antes que los modules. -->
-  <script defer src="scripts/vendor/supabase-js.bundle.min.js?v=m260523"></script>
-  <script type="module" src="scripts/fyl-error-state.js?v=m260523"></script>
-  <script type="module" src="scripts/boot-telemetry.js?v=m260523"></script>
-  <script type="module" src="scripts/config.js?v=m260523"></script>
-  <script type="module" src="scripts/supabase-client.js?v=m260523"></script>
-  <script type="module" src="scripts/analytics.js?v=m260523"></script>
+  <script defer src="scripts/vendor/supabase-js.bundle.min.js?v=m260527"></script>
+  <script type="module" src="scripts/fyl-error-state.js?v=m260527"></script>
+  <script type="module" src="scripts/boot-telemetry.js?v=m260527"></script>
+  <script type="module" src="scripts/config.js?v=m260527"></script>
+  <script type="module" src="scripts/supabase-client.js?v=m260527"></script>
+  <script type="module" src="scripts/analytics.js?v=m260527"></script>
   <script type="module">
-    import { fylAnalytics } from "./scripts/analytics.js?v=m260523";
+    import { fylAnalytics } from "./scripts/analytics.js?v=m260527";
     fylAnalytics.init({ app_area: "catalog", page_type: "home", user_role: "guest" });
   </script>
-  <script type="module" src="scripts/catalogo-publico.js?v=m260523"></script>
-  <script type="module" src="scripts/main-supabase.js?v=m260523"></script>
-  <script type="module" src="scripts/ui/toast.js?v=m260523"></script>
-  <script type="module" src="scripts/search-manager.js?v=m260523"></script>
-  <script defer src="scripts/filtros.js?v=m260523"></script>
-  <script type="module" src="scripts/quick-actions.js?v=m260523"></script>
-  <script type="module" src="scripts/mobile-nav.js?v=m260523"></script>
-  <script type="module" src="scripts/banner.js?v=m260523"></script>
-  <script type="module" src="scripts/size-filter.js?v=m260523"></script>
-  <script type="module" src="scripts/fyl-originals-banner.js?v=m260523"></script>
-  <script type="module" src="scripts/fyl-legacy-banner-loader.js?v=m260523"></script>
-  <script type="module" src="scripts/curated-banner.js?v=m260523"></script>
-  <script type="module" src="scripts/como-comprar.js?v=m260523"></script>
+  <script type="module" src="scripts/catalogo-publico.js?v=m260527"></script>
+  <script type="module" src="scripts/main-supabase.js?v=m260527"></script>
+  <script type="module" src="scripts/ui/toast.js?v=m260527"></script>
+  <script type="module" src="scripts/search-manager.js?v=m260527"></script>
+  <script defer src="scripts/filtros.js?v=m260527"></script>
+  <script type="module" src="scripts/quick-actions.js?v=m260527"></script>
+  <script type="module" src="scripts/mobile-nav.js?v=m260527"></script>
+  <script type="module" src="scripts/banner.js?v=m260527"></script>
+  <script type="module" src="scripts/size-filter.js?v=m260527"></script>
+  <script type="module" src="scripts/fyl-originals-banner.js?v=m260527"></script>
+  <script type="module" src="scripts/fyl-legacy-banner-loader.js?v=m260527"></script>
+  <script type="module" src="scripts/curated-banner.js?v=m260527"></script>
+  <script type="module" src="scripts/como-comprar.js?v=m260527"></script>
   <!-- [PERF] Scripts diferidos: se cargan despues del primer render del catalogo -->
   <!-- WhatsApp FAB: script clásico diferido (sin import dinámico tardío); listeners mínimos -->
-  <script defer src="scripts/whatsapp.js?v=m260523"></script>
+  <script defer src="scripts/whatsapp.js?v=m260527"></script>
   <script type="module">
     var __fylDeferredLoaded = false;
     function __fylSchedulePostBootTask(fn, timeoutMs) {
@@ -1193,8 +1193,8 @@
       if (__fylDeferredLoaded) return;
       __fylDeferredLoaded = true;
       __fylSchedulePostBootTask(function () {
-        import("./scripts/scroll.js?v=m260523");
-        import("./scripts/product-alternatives.js?v=m260523");
+        import("./scripts/scroll.js?v=m260527");
+        import("./scripts/product-alternatives.js?v=m260527");
       }, 300);
     }
     window.addEventListener("fyl-catalog-boot-done", __fylLoadDeferred, { once: true });

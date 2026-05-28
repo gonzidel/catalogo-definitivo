@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="robots" content="noindex" />
+  <title>PAU — Panel de Atención Unificado</title>
+  <link rel="stylesheet" href="../styles.css" />
+  <link rel="stylesheet" href="./pau.css" />
+  <script>
+    window.redirectTarget = "./pau.html";
+    window.skipPanelRedirect = true;
+  </script>
+</head>
+<body class="pau-body">
+  <div class="pau-app" id="pau-app">
+    <header class="pau-top" id="pau-top" hidden>
+      <button type="button" class="pau-btn pau-btn-ghost pau-btn-search-another" id="pau-search-another-customer">
+        Buscar otro cliente
+      </button>
+      <div class="pau-customer" id="pau-customer-header"></div>
+    </header>
+
+    <!-- Landing: solo búsqueda clienta -->
+    <section class="pau-landing" id="pau-landing">
+      <div class="pau-float-card">
+        <h1 class="pau-title">PAU</h1>
+        <p class="pau-subtitle">Buscar clienta por nombre, teléfono o DNI</p>
+        <div class="pau-search-row">
+          <input
+            type="search"
+            id="pau-customer-search"
+            class="pau-input pau-search-input"
+            autocomplete="off"
+            enterkeyhint="search"
+            placeholder="Nombre, teléfono o DNI…"
+          />
+          <button
+            type="button"
+            id="pau-recent-toggle"
+            class="pau-btn pau-btn-recent"
+            aria-label="Últimas clientas"
+            aria-expanded="false"
+            aria-controls="pau-recent-panel"
+            title="Últimas clientas"
+          >
+            <svg class="pau-recent-icon" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/>
+              <path d="M12 7v5l3 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+          </button>
+        </div>
+        <div id="pau-recent-panel" class="pau-recent-panel" hidden>
+          <p class="pau-recent-title">Últimas clientas</p>
+          <div id="pau-recent-list" class="pau-results pau-recent-list"></div>
+          <p id="pau-recent-empty" class="pau-empty" hidden>Aún no hay clientas recientes.</p>
+        </div>
+        <button type="button" class="pau-btn pau-btn-ghost pau-btn-block pau-btn-create-customer" id="pau-create-customer-btn" hidden>
+          Crear clienta
+        </button>
+        <div id="pau-customer-results" class="pau-results"></div>
+        <p id="pau-customer-empty" class="pau-empty" hidden>No se encontraron clientas.</p>
+      </div>
+    </section>
+
+    <!-- Confirmación teléfono compartido -->
+    <section class="pau-phone-confirm" id="pau-phone-confirm" hidden>
+      <div class="pau-float-card">
+        <p id="pau-phone-confirm-text" class="pau-confirm-text"></p>
+        <div class="pau-confirm-actions">
+          <button type="button" class="pau-btn pau-btn-primary" id="pau-phone-yes">Sí</button>
+          <button type="button" class="pau-btn pau-btn-ghost" id="pau-phone-no">Buscar otra</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Modo armado -->
+    <section class="pau-compose" id="pau-compose" hidden>
+      <div class="pau-scan-row">
+        <input
+          type="text"
+          id="pau-product-input"
+          class="pau-input pau-scan-input"
+          autocomplete="off"
+          placeholder="Escanear código o buscar…"
+        />
+        <button type="button" id="pau-manual-toggle" class="pau-btn pau-btn-manual">Manual</button>
+      </div>
+      <div id="pau-manual-picker" class="pau-manual-picker" hidden>
+        <div id="pau-manual-picker-head" class="pau-manual-picker-head" hidden>
+          <button type="button" id="pau-manual-back" class="pau-manual-back" hidden>← Volver</button>
+          <span id="pau-manual-step-label" class="pau-manual-step-label"></span>
+        </div>
+        <div id="pau-manual-choices" class="pau-manual-choices"></div>
+        <button type="button" id="pau-manual-add-picks" class="pau-btn pau-btn-primary pau-btn-block" hidden>
+          Agregar seleccionados
+        </button>
+      </div>
+
+      <section class="pau-draft">
+        <div class="pau-draft-head">
+          <h2>Productos por agregar</h2>
+          <span class="pau-scanned-count" id="pau-scanned-count">Escaneados: <span class="pau-scanned-count-num">0</span></span>
+        </div>
+        <ul id="pau-draft-list" class="pau-item-list"></ul>
+      </section>
+
+      <section class="pau-existing" id="pau-existing-order">
+        <button type="button" class="pau-existing-toggle" id="pau-order-toggle">
+          <span id="pau-order-summary">Pedido: 0 productos</span>
+          <span class="pau-expand-label" id="pau-expand-label">Desplegar</span>
+        </button>
+        <ul id="pau-order-items" class="pau-item-list pau-order-items-list" hidden></ul>
+      </section>
+
+      <footer class="pau-actions">
+        <button type="button" class="pau-btn pau-btn-primary pau-btn-block" id="pau-add-to-order" disabled>
+          Agregar al pedido
+        </button>
+        <div class="pau-actions-row">
+          <button type="button" class="pau-btn pau-btn-copy-order" id="pau-copy-order" disabled>
+            Copiar pedido
+          </button>
+          <button type="button" class="pau-btn pau-btn-danger" id="pau-close-order">
+            Cerrar pedido
+          </button>
+        </div>
+      </footer>
+    </section>
+
+    <!-- Cerrar pedido: método de pago o envío al local (como Pedidos) -->
+    <dialog class="pau-dialog pau-dialog-close-actions" id="pau-close-action-dialog">
+      <div class="pau-dialog-inner">
+        <h3>Cerrar pedido</h3>
+        <p class="pau-dialog-sub">Elegí cómo continuar (igual que en Pedidos).</p>
+        <div class="pau-close-actions">
+          <button type="button" class="pau-btn pau-btn-ghost pau-btn-close-opt" id="pau-close-contra-rem">
+            Contra Rem.
+          </button>
+          <button type="button" class="pau-btn pau-btn-primary pau-btn-close-opt" id="pau-close-pagado">
+            Pagado
+          </button>
+          <button type="button" class="pau-btn pau-btn-close-local" id="pau-close-send-local">
+            Enviar al local
+          </button>
+        </div>
+        <button type="button" class="pau-btn pau-btn-ghost pau-btn-block" id="pau-close-action-cancel">Cancelar</button>
+      </div>
+    </dialog>
+
+    <dialog class="pau-dialog" id="pau-send-local-dialog">
+      <div class="pau-dialog-inner">
+        <h3>Enviar al local</h3>
+        <p class="pau-dialog-sub">
+          La clienta se copiará a clientes del local y el pedido quedará en Venta al Público, igual que en Pedidos.
+        </p>
+        <div class="pau-confirm-actions">
+          <button type="button" class="pau-btn pau-btn-close-local" id="pau-send-local-yes">Sí, enviar</button>
+          <button type="button" class="pau-btn pau-btn-ghost" id="pau-send-local-no">Cancelar</button>
+        </div>
+      </div>
+    </dialog>
+
+    <!-- Crear clienta -->
+    <dialog class="pau-dialog pau-dialog-cf" id="pau-create-customer-dialog">
+      <form class="pau-dialog-inner pau-cf-form" id="pau-create-customer-form" method="dialog">
+        <h3 class="pau-cf-title">Crear clienta</h3>
+        <div class="pau-cf-grid">
+          <label class="pau-cf-field">
+            Nombre <span class="pau-cf-req">*</span>
+            <input type="text" id="pau-cf-first-name" class="pau-input pau-input-compact" autocomplete="off" required />
+          </label>
+          <label class="pau-cf-field">
+            Apellido <span class="pau-cf-req">*</span>
+            <input type="text" id="pau-cf-last-name" class="pau-input pau-input-compact" autocomplete="off" required />
+          </label>
+          <label class="pau-cf-field">
+            DNI
+            <input type="text" id="pau-cf-dni" class="pau-input pau-input-compact" inputmode="numeric" autocomplete="off" placeholder="Opcional" />
+          </label>
+          <label class="pau-cf-field">
+            Teléfono <span class="pau-cf-req">*</span>
+            <div class="pau-cf-phone">
+              <span class="pau-cf-phone-prefix">+54</span>
+              <input type="tel" id="pau-cf-phone" class="pau-input pau-input-compact" autocomplete="off" required placeholder="93624720762" />
+            </div>
+          </label>
+          <label class="pau-cf-field pau-cf-span-2">
+            Email
+            <input type="email" id="pau-cf-email" class="pau-input pau-input-compact" autocomplete="off" placeholder="Opcional" />
+          </label>
+          <label class="pau-cf-field pau-cf-span-2">
+            Dirección <span class="pau-cf-req">*</span>
+            <input type="text" id="pau-cf-address" class="pau-input pau-input-compact" autocomplete="off" required />
+          </label>
+          <label class="pau-cf-field pau-cf-field-relative">
+            Provincia <span class="pau-cf-req">*</span>
+            <input type="text" id="pau-cf-province" class="pau-input pau-input-compact" autocomplete="off" required placeholder="Provincia…" />
+            <div id="pau-cf-province-dropdown" class="pau-cf-dropdown"></div>
+          </label>
+          <label class="pau-cf-field pau-cf-field-relative">
+            Ciudad <span class="pau-cf-req">*</span>
+            <input type="text" id="pau-cf-city" class="pau-input pau-input-compact" autocomplete="off" required disabled placeholder="Ciudad…" />
+            <div id="pau-cf-city-dropdown" class="pau-cf-dropdown"></div>
+          </label>
+        </div>
+        <p id="pau-cf-error" class="pau-cf-error" hidden></p>
+        <div class="pau-cf-actions">
+          <button type="submit" class="pau-btn pau-btn-primary" id="pau-cf-save">Guardar</button>
+          <button type="button" class="pau-btn pau-btn-ghost" id="pau-cf-cancel">Cancelar</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div class="pau-toast" id="pau-toast" hidden></div>
+  </div>
+
+  <script src="./suppress-extension-errors.js"></script>
+  <script type="module" src="../scripts/config.js"></script>
+  <script defer src="../scripts/vendor/supabase-js.bundle.min.js?v=m260518"></script>
+  <script type="module" src="../scripts/supabase-client.js"></script>
+  <script type="module" src="./admin-auth.js"></script>
+  <script type="module" src="./pau.js"></script>
+</body>
+</html>

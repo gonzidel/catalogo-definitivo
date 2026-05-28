@@ -6,7 +6,7 @@ import {
   CATALOG_AVAILABLE_VIEW,
   getCatalogAvailableSource,
 } from "./catalog-source.js";
-import { isPostgrestSchemaColumnError } from "./net/fyl-fetch.js?v=m260523";
+import { isPostgrestSchemaColumnError } from "./net/fyl-fetch.js?v=m260527";
 
 const LEGACY_TAG_PLACEHOLDER = "__curated__";
 const CURATED_CATALOG_SELECT =
@@ -237,6 +237,26 @@ export async function fetchCuratedBannerCards(config) {
       .in("variant_id", orderedVariantIds);
     catalogRows = fallback.data;
     catErr = fallback.error;
+  }
+
+  // Si el snapshot no tiene todas las variantes (p.ej. snapshot desactualizado),
+  // complementar con la vista en vivo para las que faltan.
+  if (!catErr && primarySource !== CATALOG_AVAILABLE_VIEW && (catalogRows || []).length < orderedVariantIds.length) {
+    const foundIds = new Set((catalogRows || []).map((r) => r.variant_id));
+    const missingIds = orderedVariantIds.filter((id) => !foundIds.has(id));
+    if (missingIds.length > 0) {
+      logCuratedDebug("fetchCuratedBannerCards:snapshot_miss", {
+        missing: missingIds.length,
+        ids: missingIds,
+      });
+      const { data: liveRows } = await supabase
+        .from(CATALOG_AVAILABLE_VIEW)
+        .select(CURATED_CATALOG_SELECT)
+        .in("variant_id", missingIds);
+      if (liveRows?.length) {
+        catalogRows = [...(catalogRows || []), ...liveRows];
+      }
+    }
   }
 
   const { data: variants, error: varErr } = await supabase

@@ -43,6 +43,9 @@ Nota importante: el usuario confirmo que los SQL analizados ya estan cargados y 
 | # | Archivo | Contenido |
 |---|---|---|
 | 20 | [[20-N8N-COMPRAS-TELEGRAM-INGEST]] | Workflow n8n — recepción de pedidos por Telegram (foto/audio/texto → Supabase) |
+| 38 | [[38-META-FEED-ENRICHMENT-2026-05-23]] | Meta Catalog Feed — auditoría, enriquecimiento por fases (spec en `doc/meta-feed/`) |
+| 39 | [[39-LISTA-ENVIOS-SENT-AT-2026-05-26]] | Lista de envíos: fecha por finalización (`sent_at`), deploy 227 |
+| 40 | [[40-PAU-PANEL-ATENCION-UNIFICADO]] | PAU — panel móvil admin: buscar clienta, QR/manual, agregar pedido, cerrar (canónico `doc/pau/`) |
 
 ## Auditorias modulares
 

@@ -2,7 +2,7 @@
 
 import { fylDevLog } from "./config.js";
 import { supabase } from "./supabase-client.js";
-import { compareCatalogSizes, normalizeSize } from "./utils/size-normalizer.js?v=m260523";
+import { compareCatalogSizes, normalizeSize } from "./utils/size-normalizer.js?v=m260527";
 
 // Estado global
 let currentCategory = null;

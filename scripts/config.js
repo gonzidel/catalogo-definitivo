@@ -1,4 +1,4 @@
-import { FYL_VERSION } from "./fyl-version.js?v=m260523";
+import { FYL_VERSION } from "./fyl-version.js?v=m260527";
 
 // scripts/config.js
 // Valores por defecto (no sensibles). Para valores sensibles, copia
@@ -289,7 +289,7 @@ export {
       .catch((e) => {
         const msg = e && e.message ? String(e.message).slice(0, 200) : String(e);
         globalThis.markBootStage?.("sw.register_failed", { message: msg });
-        import("./fyl-runtime-resilience.js?v=m260523")
+        import("./fyl-runtime-resilience.js?v=m260527")
           .then((m) =>
             m.fylReportClientError({ kind: "sw.register_failed", message: msg })
           )

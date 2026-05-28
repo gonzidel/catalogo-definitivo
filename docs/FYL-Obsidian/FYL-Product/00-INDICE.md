@@ -84,6 +84,10 @@ FYL-Product/
 
 - [[2026-05-12-Metricas-Iniciales]] — lectura base de Web Vitals
 
+### Integraciones (catálogo externo)
+
+- [[../38-META-FEED-ENRICHMENT-2026-05-23]] — Meta Commerce feed: auditoría, spec 3 fases (`doc/meta-feed/2026-05-23-meta-feed-enriquecimiento-spec.md`)
+
 ### Arquitectura
 
 - [[01-Boot-Sequence-Catalogo]] — secuencia real de boot tal como está hoy

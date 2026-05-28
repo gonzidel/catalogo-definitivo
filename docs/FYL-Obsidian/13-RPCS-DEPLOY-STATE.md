@@ -49,6 +49,10 @@ Verificadas el 2026-05-04 contra `pg_proc` en producción. Todas con `security_d
 | `rpc_void_public_sale` | 2 firmas (legacy + idempotente) | CONFIRMADO ACTIVO | Anulación/reversión. |
 | `rpc_mark_order_as_devolucion` | 2 firmas (legacy + idempotente) | CONFIRMADO ACTIVO | Devolución. |
 | `rpc_mark_order_items_picked` | 1 firma con `p_order_item_ids, p_operation_id` | CONFIRMADO ACTIVO | Picking idempotente. |
+| `rpc_mark_order_as_sent` | 1 firma `uuid` | **ACTUALIZADO 2026-05-26** | Migración `227`: escribe `sent_at = now()` al finalizar. Ver [[39-LISTA-ENVIOS-SENT-AT-2026-05-26]]. |
+| `rpc_get_shipping_orders` | `(date, uuid)` | **ACTUALIZADO 2026-05-26** | Lista envíos: solo `sent_at` (BA), sin fallback `closed_at`. |
+| `rpc_get_shipping_orders_range` | `(date, date, uuid)` | **ACTUALIZADO 2026-05-26** | Excel extracción: mismo criterio que lista. |
+| `register_envio_to_daily_sales` | trigger fn | CONFIRMADO ACTIVO | `COALESCE(sent_at, updated_at)` al pasar a `sent`. |
 | `guard_variant_sizes_stock_qty_writes` | 1 firma sin args (trigger function) | CONFIRMADO ACTIVO | Guard 148 sobre variant_sizes. |
 | `guard_variant_warehouse_stock_qty_writes` | 1 firma sin args (trigger function) | CONFIRMADO ACTIVO | Guard 148 sobre variant_warehouse_stock. |
 | `sync_variant_sizes_stock_from_warehouse` | 1 firma sin args (trigger function) | CONFIRMADO ACTIVO | Función del trigger 84. |

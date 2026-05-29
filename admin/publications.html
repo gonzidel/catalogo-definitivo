@@ -198,6 +198,19 @@
       cursor: pointer;
       min-width: 200px;
     }
+    .supplier-sort-toggle {
+      padding: 10px 12px;
+      font-size: 13px;
+      font-weight: 600;
+      white-space: nowrap;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+    }
+    .supplier-sort-toggle:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
     .products-grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
@@ -659,15 +672,30 @@
             <input type="checkbox" id="filter-never-published" />
             <span>Nunca publicados</span>
           </label>
-          <label class="filter-checkbox">
-            <input type="checkbox" id="filter-days-30-plus" />
-            <span>Más de 30 días sin publicar</span>
-          </label>
+          <div class="supplier-filter-wrap">
+            <label for="filter-stale-days">Sin publicar hace</label>
+            <select id="filter-stale-days">
+              <option value="">Cualquier antigüedad</option>
+              <option value="7">Más de 7 días</option>
+              <option value="15">Más de 15 días</option>
+              <option value="20">Más de 20 días</option>
+              <option value="30">Más de 30 días</option>
+            </select>
+          </div>
           <div class="supplier-filter-wrap">
             <label for="supplier-filter-all">Proveedor</label>
             <select id="supplier-filter-all">
               <option value="">Todos los proveedores</option>
             </select>
+            <button
+              type="button"
+              class="btn-secondary supplier-sort-toggle"
+              id="supplier-sort-toggle"
+              disabled
+              title="Ordenar por fecha de última publicación"
+            >
+              Antiguos primero
+            </button>
           </div>
         </div>
         <div id="all-products-container" class="products-grid"></div>

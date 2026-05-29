@@ -193,7 +193,6 @@ export async function refreshAuthState() {
 const AUTH_INVALIDATION_EVENTS = new Set([
   "SIGNED_OUT",
   "SIGNED_IN",
-  "TOKEN_REFRESHED",
   "USER_UPDATED",
 ]);
 

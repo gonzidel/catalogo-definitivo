@@ -1,5 +1,25 @@
 # Meta Feed — Fase 1 deploy checklist
 
+## Deploy ejecutado (2026-05-23)
+
+| Paso | Estado |
+|------|--------|
+| SQL `meta_feed_phase1_category_filtro1` en **fyl-core** (`dtfznewwvsadkorxwzft`) | OK |
+| Edge `meta-feed` v21 (`verify_jwt: false`) | OK |
+| CSV live 14 headers | OK (ver abajo) |
+
+**Muestra live (2 filas):**
+
+```csv
+id,item_group_id,title,description,availability,condition,price,link,image_link,brand,color,size,gender,product_type
+FYL-010-NEG-37,1cf36d71-c195-4608-baa2-57898e41610b,...,female,Calzado > Chatitas
+TA-04-NEG-35,742047b7-66b1-4392-9c50-9dc5310f5ec1,...,female,Calzado > Texanas
+```
+
+`TA-04-NEG-35` y `TA-04-NEG-36` comparten `item_group_id` `742047b7-66b1-4392-9c50-9dc5310f5ec1` (verificado en SQL).
+
+---
+
 ## Headers exportados (14)
 
 ```text
@@ -28,7 +48,7 @@ curl -s "https://<PROJECT>.supabase.co/functions/v1/meta-feed?format=json&limit=
 ## Edge
 
 ```bash
-supabase functions deploy meta-feed
+supabase functions deploy meta-feed --no-verify-jwt
 ```
 
 ## Commerce Manager

@@ -5,7 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <!-- Cache bust: subí la versión en app-version.json y ejecutá npm run build (o deploy con predeploy). -->
   <meta name="app-version" content="m260527">
-  <title>Catálogo público FYL</title>
+  <title>FYL Moda | Calzado e Indumentaria Femenina por Mayor — Argentina</title>
+  <meta name="description" content="Mayorista de calzado e indumentaria femenina con fábrica propia. Stock visible, surtido libre de talles. Envíos a todo el país. Consultá por WhatsApp.">
+  <link rel="canonical" href="https://fylmoda.com.ar/catalogo">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="FYL Moda">
+  <meta property="og:title" content="FYL Moda | Calzado e Indumentaria Femenina por Mayor">
+  <meta property="og:description" content="Mayorista de calzado e indumentaria femenina con fábrica propia. Stock visible, surtido libre. Envíos a todo el país.">
+  <meta property="og:url" content="https://fylmoda.com.ar/catalogo">
+  <meta property="og:image" content="https://fylmoda.com.ar/icons/icon-192x192.png">
+  <meta property="og:locale" content="es_AR">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="preconnect" href="https://res.cloudinary.com" crossorigin>
@@ -676,6 +685,7 @@
   </header>
 
   <div id="catalog-view">
+  <h1 class="visually-hidden">Calzado e Indumentaria Femenina por Mayor — FYL</h1>
   <div class="container">
     <!-- Menú Desktop (visible en desktop vía CSS @media min-width: 768px) -->
     <div class="menu menu-desktop" aria-label="Categorías">
@@ -799,7 +809,7 @@
     <div id="collection-header" class="collection-head is-hidden" aria-hidden="true" style="display: none;">
       <a href="#/" class="collection-back" aria-label="Volver al inicio">← Volver</a>
       <div class="collection-head__titleRow">
-        <h1 class="collection-title">F&L Originals</h1>
+        <h2 class="collection-title">F&L Originals</h2>
         <div class="collection-sub">
           Producción propia • Stock estable • Reposición frecuente •
           <span class="collection-count"><span id="collection-count">0</span> modelos</span>
@@ -860,7 +870,7 @@
         <a class="howto-tab is-active" role="tab" aria-selected="true" href="#/como-comprar">Cómo usar el catálogo</a>
         <a class="howto-tab" role="tab" aria-selected="false" href="#/quienes-somos">Quiénes somos</a>
       </div>
-      <h1 id="howto-title">Cómo usar el catálogo</h1>
+      <h2 id="howto-title">Cómo usar el catálogo</h2>
       <p class="howto-hero__lead">
         Explorá productos, revisá stock, descargá fotos y consultanos por WhatsApp para coordinar tu pedido.
       </p>
@@ -993,7 +1003,7 @@
       </div>
       <article class="info-card about-fyl__mainCard">
         <div class="about-fyl__eyebrow">FYL Moda</div>
-        <h1 id="about-fyl-title">Quiénes somos</h1>
+        <h2 id="about-fyl-title">Quiénes somos</h2>
         <p class="about-fyl__subtitle">Mayorista para revendedoras de todo el país.</p>
       </article>
     </section>
@@ -1071,6 +1081,39 @@
           <span class="about-fyl__socialGo" aria-hidden="true">↗</span>
         </a>
       </div>
+    </section>
+
+    <section class="howto-section about-fyl__block" aria-label="Guías y recursos">
+      <div class="howto-section__head">
+        <h2>Guías y recursos</h2>
+        <p class="muted">Información detallada sobre cada categoría y cómo trabajamos.</p>
+      </div>
+      <nav style="display:grid; gap:8px; margin-top:12px;" aria-label="Páginas de recursos">
+        <a href="/revendedoras" class="info-card" style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-weight:600; font-size:14px; color:var(--howto-ink); text-decoration:none;">
+          <span>Cómo ser revendedora de calzado y ropa femenina</span>
+          <span style="color:var(--howto-accent); flex-shrink:0; font-size:16px;">›</span>
+        </a>
+        <a href="/calzado-femenino-por-mayor" class="info-card" style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-weight:600; font-size:14px; color:var(--howto-ink); text-decoration:none;">
+          <span>Calzado femenino por mayor — modelos y categorías</span>
+          <span style="color:var(--howto-accent); flex-shrink:0; font-size:16px;">›</span>
+        </a>
+        <a href="/ropa-femenina-por-mayor" class="info-card" style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-weight:600; font-size:14px; color:var(--howto-ink); text-decoration:none;">
+          <span>Ropa femenina por mayor — indumentaria mayorista</span>
+          <span style="color:var(--howto-accent); flex-shrink:0; font-size:16px;">›</span>
+        </a>
+        <a href="/accesorios-por-mayor" class="info-card" style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-weight:600; font-size:14px; color:var(--howto-ink); text-decoration:none;">
+          <span>Accesorios por mayor — carteras, cintos y bufandas</span>
+          <span style="color:var(--howto-accent); flex-shrink:0; font-size:16px;">›</span>
+        </a>
+        <a href="/lenceria-por-mayor" class="info-card" style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-weight:600; font-size:14px; color:var(--howto-ink); text-decoration:none;">
+          <span>Lencería y bodies por mayor — surtido libre de talles</span>
+          <span style="color:var(--howto-accent); flex-shrink:0; font-size:16px;">›</span>
+        </a>
+        <a href="/quienes-somos" class="info-card" style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-weight:600; font-size:14px; color:var(--howto-ink); text-decoration:none;">
+          <span>Quiénes somos — empresa familiar mayorista en Chaco</span>
+          <span style="color:var(--howto-accent); flex-shrink:0; font-size:16px;">›</span>
+        </a>
+      </nav>
     </section>
 
     <section class="howto-final about-fyl__final" aria-label="Acción final">
@@ -1227,6 +1270,70 @@
       <div id="product-modal-footer" class="product-modal-footer"></div>
     </div>
   </div>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    "name": "FYL Moda",
+    "alternateName": "F&L Originals",
+    "url": "https://fylmoda.com.ar",
+    "logo": "https://fylmoda.com.ar/icons/icon-192x192.png",
+    "description": "Empresa familiar especializada en venta mayorista de calzado e indumentaria femenina. Fábrica propia de calzado. Envíos a todo el país.",
+    "address": {
+      "@type": "PostalAddress",
+      "streetAddress": "Av. Alberdi 1099",
+      "addressLocality": "Resistencia",
+      "addressRegion": "Chaco",
+      "addressCountry": "AR"
+    },
+    "contactPoint": {
+      "@type": "ContactPoint",
+      "contactType": "sales",
+      "availableLanguage": "Spanish"
+    }
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "¿Cómo hago un pedido?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Elegís los modelos en el catálogo y nos escribís por WhatsApp. Te ayudamos a armar y confirmar tu pedido."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "¿Hacen envíos a todo el país?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Sí, hacemos envíos a todo el país o podés retirar en Resistencia coordinando previamente."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "¿Puedo ver el stock disponible antes de comprar?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Sí, el catálogo muestra el stock en tiempo real. Lo que ves es lo que hay disponible."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "¿Tienen fábrica propia?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Sí, contamos con fábrica propia de calzado, lo que nos permite ofrecer stock constante y respuesta rápida en cada pedido."
+        }
+      }
+    ]
+  }
+  </script>
 
 </body>
 </html>

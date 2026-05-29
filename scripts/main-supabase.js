@@ -294,6 +294,11 @@ let fylPendingHomeCustomBanner = false;
 let isLoadingMore = false; // Flag para evitar múltiples cargas simultáneas
 const PRODUCTOS_INICIALES = 14; // Cantidad de productos en la primera carga
 const PRODUCTOS_POR_PAGINA = 14; // Cantidad de productos a cargar por página con el botón
+
+/** Ancho Cloudinary para cards del grid (mobile <=430px: w_400, desktop: w_600). */
+function fylCardImageWidth() {
+  return typeof window !== "undefined" && window.innerWidth <= 430 ? 400 : 600;
+}
 /** Primera página de datos en boot (resto en background para cat "all"). */
 const CATALOG_BOOT_INITIAL_ROWS = 120;
 let _lcpPreloadUrl = "";
@@ -781,14 +786,57 @@ function fylFilterMostrarCatalogRows(items = []) {
   });
 }
 
+function fylCatalogRowVariantKey(row) {
+  return `${String(row?.Articulo || "").trim()}|${getCatalogColorKey(row?.Color)}|${String(row?.Numeracion || "").trim()}`;
+}
+
+function fylMergeCatalogRowsByVariantKey(rows = []) {
+  const merged = new Map();
+  rows.forEach((row) => {
+    if (!row) return;
+    merged.set(fylCatalogRowVariantKey(row), row);
+  });
+  return Array.from(merged.values());
+}
+
+/** Todas las filas de variantes para los artículos del boot (evita cards con un solo color). */
+async function fylFetchCatalogRowsForArticulos(createQuery, articulos = []) {
+  const unique = [...new Set(articulos.map((a) => String(a || "").trim()).filter(Boolean))];
+  if (!unique.length) return [];
+  const BATCH = 80;
+  const allRows = [];
+  for (let i = 0; i < unique.length; i += BATCH) {
+    const chunk = unique.slice(i, i + BATCH);
+    const { data, error } = await createQuery().in("Articulo", chunk);
+    if (error) {
+      console.warn("[FYL] Error completando variantes boot:", error.message || error);
+      continue;
+    }
+    if (Array.isArray(data)) allRows.push(...data);
+  }
+  return allRows;
+}
+
 /** Primera página acotada para boot Home (PERF-001 / HI-2). */
 async function fetchCatalogPublicRowsBoot(createQuery, limit = CATALOG_BOOT_INITIAL_ROWS) {
   const cap = Math.max(1, Number(limit) || CATALOG_BOOT_INITIAL_ROWS);
   const { data, error } = await createQuery().range(0, cap - 1);
   if (error) return { data: null, error };
-  const rows = Array.isArray(data) ? data : [];
+  const bootRows = Array.isArray(data) ? data : [];
+  let rows = bootRows;
+  const articulosBoot = bootRows.map((row) => row?.Articulo).filter(Boolean);
+  if (articulosBoot.length > 0) {
+    const completeRows = await fylFetchCatalogRowsForArticulos(createQuery, articulosBoot);
+    if (completeRows.length > 0) {
+      rows = fylMergeCatalogRowsByVariantKey([...bootRows, ...completeRows]);
+    }
+  }
   const enriched = await enrichCatalogRowsWithDetallesSimilitud(rows);
-  fylPerf("catalog_boot_rows", { rows: enriched.length, limit: cap });
+  fylPerf("catalog_boot_rows", {
+    rows: enriched.length,
+    limit: cap,
+    articulos: new Set(articulosBoot.map((a) => String(a).trim())).size,
+  });
   return { data: enriched, error: null };
 }
 
@@ -812,6 +860,49 @@ function scheduleFullCatalogBackgroundFetch(createCatalogQuery) {
   }, 400);
 }
 
+function fylPatchRenderedCardsAfterFullCatalog(productosCompletos = []) {
+  if (!Array.isArray(productosCompletos) || productosCompletos.length === 0) return;
+  if (typeof getCurrentSearchTerm === "function" && getCurrentSearchTerm()) return;
+  if (catalogoLoadMode !== "paged") return;
+
+  const byArticulo = new Map();
+  productosCompletos.forEach((producto) => {
+    const art = String(producto?.Articulo || "").trim();
+    if (art) byArticulo.set(art, producto);
+  });
+
+  const toEnrich = [];
+  let patched = 0;
+  document.querySelectorAll(".card.producto[data-articulo]").forEach((card) => {
+    const articulo = String(card.dataset.articulo || "").trim();
+    if (!articulo) return;
+    const producto = byArticulo.get(articulo);
+    if (!producto) return;
+
+    productosActualesMap.set(articulo, producto);
+    const colorsEl = card.querySelector(".colors");
+    if (colorsEl) {
+      colorsEl.innerHTML = renderizarColores(producto);
+      patched += 1;
+    }
+    toEnrich.push(producto);
+  });
+
+  if (typeof window !== "undefined") {
+    window.productosActualesMap = productosActualesMap;
+  }
+
+  if (patched > 0) {
+    fylCatalogDbg(`🎨 Cards actualizadas con variantes completas: ${patched}`);
+    fylScheduleIdle(async () => {
+      await enrichProductsWithStock(toEnrich);
+      refreshSizeBadgesForProducts(toEnrich);
+      fylRebuildCatalogSizeIndex();
+    }, 120);
+    mostrarBotonVerMas();
+  }
+}
+
 function fylApplyFullCatalogBackground(rawRows) {
   if (categoriaActual !== "all") return;
   const filtered = fylFilterMostrarCatalogRows(rawRows);
@@ -822,6 +913,7 @@ function fylApplyFullCatalogBackground(rawRows) {
   setProductosPendientes(productosOrdenados);
   window.__allProductsCache = productosOrdenados;
   fylRebuildCatalogSizeIndex();
+  fylPatchRenderedCardsAfterFullCatalog(productosOrdenados);
   window.__FYL_CATALOG_FULL_READY = true;
   try {
     window.dispatchEvent(
@@ -1853,7 +1945,8 @@ function renderOfferCard(offer) {
   return `
     <div class="card offer-card" data-offer-campaign-id="${offer.campaignId}" style="cursor: pointer; border: 3px solid #ff9800; position: relative; overflow: hidden;">
       <div style="position: relative; width: 100%; padding-top: 100%; background: #fff;">
-        <img src="${offer.imageUrl}" alt="${title}" 
+        <img src="${offer.imageUrl}" alt="${title}"
+             width="400" height="400"
              style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover;"
              onerror="this.src='data:image/svg+xml,%3Csvg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'400\\' height=\\'400\\'%3E%3Crect width=\\'400\\' height=\\'400\\' fill=\\'%23ff9800\\'/%3E%3Ctext x=\\'50%25\\' y=\\'50%25\\' text-anchor=\\'middle\\' dy=\\'.3em\\' fill=\\'white\\' font-size=\\'24\\' font-weight=\\'bold\\'%3EOferta%3C/text%3E%3C/svg%3E'">
         <div style="position: absolute; top: 0; left: 0; right: 0; background: linear-gradient(to bottom, rgba(0,0,0,0.6), transparent); padding: 12px;">
@@ -2032,9 +2125,8 @@ function fylTryRestoreHomeProductBannerAfterPdpClose() {
 
 function buildProductCardHTML(producto, meta = {}) {
   const skuDefecto = meta.skuDefecto ?? obtenerSKUDefecto(producto);
-  const cardImageWidth =
-    meta.cardImageWidth ??
-    (typeof window !== "undefined" && window.innerWidth <= 430 ? 480 : 800);
+  const cardImageWidth = meta.cardImageWidth ?? fylCardImageWidth();
+  const cardImageHeight = Math.round((cardImageWidth * 5) / 4);
   const mainImageUrls = meta.mainImageUrls ?? getMainImageFallbackUrls(producto, cardImageWidth);
   const mainSrc =
     mainImageUrls[0] || cloudinaryOptimized(producto.VariantePrincipal, cardImageWidth);
@@ -2063,8 +2155,9 @@ function buildProductCardHTML(producto, meta = {}) {
              data-name="${(producto.name || producto.Articulo || "").toLowerCase()}">
           <div class="main-image-wrapper">
             <img class="main-image" loading="${imageLoading}" decoding="async"${imageFetchPriority}
-                 src="${mainSrc}" 
+                 src="${mainSrc}"
                  alt="${producto.Articulo}"
+                 width="${cardImageWidth}" height="${cardImageHeight}"
                  data-sku="${skuDefecto || ""}"
                  ${fallbackUrlsAttr ? `data-fallback-urls="${fallbackUrlsAttr}" onerror="window.mainImageFallback&&window.mainImageFallback(this)"` : ""}/>
             ${catalogArtBadgeHtml ? `<div class="product-name-badge product-art-badge">${catalogArtBadgeHtml}</div>` : ""}
@@ -2161,8 +2254,7 @@ async function renderizarProductosPagina(productos, container, offersCards = [],
     allItems.push({ type: 'product', data: producto });
   });
   
-  const cardImageWidth =
-    typeof window !== "undefined" && window.innerWidth <= 430 ? 480 : 800;
+  const cardImageWidth = fylCardImageWidth();
   const htmlParts = [];
   let productosRenderizadosEnEstaPagina = 0;
   let firstLcpSrc = "";
@@ -2848,7 +2940,7 @@ function renderizarGaleria(producto, mainImageSrc) {
       const full = getImgUrl(img, 1200);
       const isActive = mainImageSrc ? (img === mainImageSrc) : i === 0;
       if (!thumb) return '';
-      return `<img loading="lazy" src="${thumb}" data-full="${full}" alt="Miniatura de producto" class="miniatura${isActive ? ' active' : ''}">`;
+      return `<img loading="lazy" src="${thumb}" data-full="${full}" alt="Miniatura de producto" width="200" height="200" class="miniatura${isActive ? ' active' : ''}">`;
     })
     .join("");
 }

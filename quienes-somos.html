@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Quiénes Somos — FYL Moda Mayorista de Calzado e Indumentaria</title>
+  <meta name="description" content="FYL Moda es una empresa familiar con fábrica propia en Resistencia, Chaco. Mayoristas de calzado e indumentaria femenina para todo el país. Conocé nuestra historia.">
+  <link rel="canonical" href="https://fylmoda.com.ar/quienes-somos">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="FYL Moda">
+  <meta property="og:title" content="Quiénes Somos — FYL Moda Mayorista">
+  <meta property="og:description" content="Empresa familiar con fábrica propia en Resistencia, Chaco. Mayoristas de calzado e indumentaria femenina para todo Argentina.">
+  <meta property="og:url" content="https://fylmoda.com.ar/quienes-somos">
+  <meta property="og:image" content="https://fylmoda.com.ar/icons/icon-192x192.png">
+  <meta property="og:locale" content="es_AR">
+  <link rel="icon" href="/icons/icon-192x192.png" type="image/png">
+  <meta name="theme-color" content="#CD844D">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap">
+  <style>
+    :root {
+      --primary: #CD844D;
+      --primary-dark: #b8703a;
+      --primary-light: #f5ece3;
+      --text: #2d2d2d;
+      --muted: #666;
+      --border: #e8ddd4;
+      --radius: 12px;
+      --shadow: 0 2px 12px rgba(0,0,0,.07);
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Poppins', system-ui, sans-serif; color: var(--text); background: #fafaf8; line-height: 1.65; }
+    a { color: inherit; text-decoration: none; }
+    img { max-width: 100%; display: block; }
+
+    .container { max-width: 1100px; margin: 0 auto; padding: 0 20px; }
+
+    /* Header */
+    .site-header { background: #fff; border-bottom: 1px solid var(--border); padding: 12px 0; position: sticky; top: 0; z-index: 100; }
+    .site-header .inner { display: flex; align-items: center; justify-content: space-between; }
+    .logo { height: 38px; width: auto; }
+    .btn-wa { background: #25D366; color: white; padding: 9px 18px; border-radius: 8px; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 6px; transition: background .2s; white-space: nowrap; }
+    .btn-wa:hover { background: #1ebe5d; }
+    .btn-wa svg { width: 18px; height: 18px; fill: white; }
+
+    /* Breadcrumb */
+    .breadcrumb { font-size: 0.8rem; color: var(--muted); padding: 10px 0; }
+    .breadcrumb a { color: var(--primary); }
+    .breadcrumb span { margin: 0 6px; }
+
+    /* Hero */
+    .hero { background: linear-gradient(135deg, var(--primary-light) 0%, #fffaf6 100%); padding: 56px 0 48px; }
+    .hero h1 { font-size: clamp(1.6rem, 4vw, 2.6rem); font-weight: 700; line-height: 1.2; margin-bottom: 16px; }
+    .hero h1 em { font-style: normal; color: var(--primary); }
+    .hero .lead { font-size: 1.05rem; color: var(--muted); margin-bottom: 28px; max-width: 620px; }
+    .hero-ctas { display: flex; flex-wrap: wrap; gap: 12px; }
+    .btn-primary { background: var(--primary); color: white; padding: 14px 28px; border-radius: 10px; font-size: 1rem; font-weight: 600; display: inline-block; transition: background .2s; }
+    .btn-primary:hover { background: var(--primary-dark); }
+    .btn-outline { border: 2px solid var(--primary); color: var(--primary); padding: 13px 24px; border-radius: 10px; font-size: 1rem; font-weight: 600; display: inline-block; transition: all .2s; }
+    .btn-outline:hover { background: var(--primary-light); }
+
+    /* Stats */
+    .stats-row { display: flex; flex-wrap: wrap; gap: 28px; margin-top: 36px; }
+    .stat-num { font-size: 2rem; font-weight: 700; color: var(--primary); display: block; }
+    .stat-label { font-size: 0.8rem; color: var(--muted); }
+
+    /* Sections */
+    .section { padding: 52px 0; }
+    .section + .section { border-top: 1px solid var(--border); }
+    .section-label { font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--primary); margin-bottom: 6px; }
+    .section-title { font-size: clamp(1.3rem, 3vw, 1.8rem); font-weight: 700; margin-bottom: 8px; }
+    .section-sub { color: var(--muted); margin-bottom: 36px; max-width: 600px; }
+
+    /* Feature cards */
+    .features-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
+    .feature-card { background: white; border-radius: var(--radius); padding: 22px; border: 1px solid var(--border); box-shadow: var(--shadow); }
+    .feature-icon { font-size: 2rem; margin-bottom: 12px; }
+    .feature-card h3 { font-size: 1rem; font-weight: 600; margin-bottom: 6px; }
+    .feature-card p { font-size: 0.88rem; color: var(--muted); }
+
+    /* Two-col layout */
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: start; }
+    .two-col .prose h2 { font-size: clamp(1.2rem, 2.5vw, 1.6rem); font-weight: 700; margin-bottom: 14px; }
+    .two-col .prose p { color: var(--muted); font-size: .95rem; margin-bottom: 12px; }
+    .two-col .prose p:last-child { margin-bottom: 0; }
+    .info-box { background: white; border-radius: var(--radius); border: 1px solid var(--border); padding: 28px; box-shadow: var(--shadow); }
+    .info-box h3 { font-size: 1rem; font-weight: 700; margin-bottom: 14px; color: var(--primary); }
+    .info-row { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 12px; font-size: .9rem; }
+    .info-row:last-child { margin-bottom: 0; }
+    .info-icon { font-size: 1.1rem; flex-shrink: 0; margin-top: 2px; }
+    .info-text strong { display: block; font-weight: 600; }
+    .info-text span { color: var(--muted); font-size: .85rem; }
+
+    /* Timeline */
+    .timeline { position: relative; padding-left: 28px; }
+    .timeline::before { content: ''; position: absolute; left: 8px; top: 6px; bottom: 6px; width: 2px; background: var(--border); }
+    .tl-item { position: relative; padding-bottom: 28px; }
+    .tl-item:last-child { padding-bottom: 0; }
+    .tl-dot { position: absolute; left: -24px; top: 4px; width: 14px; height: 14px; border-radius: 50%; background: var(--primary); border: 2px solid white; box-shadow: 0 0 0 2px var(--primary); }
+    .tl-year { font-size: .78rem; font-weight: 700; color: var(--primary); text-transform: uppercase; letter-spacing: .06em; }
+    .tl-item h3 { font-size: .95rem; font-weight: 600; margin-bottom: 4px; }
+    .tl-item p { font-size: .87rem; color: var(--muted); }
+
+    /* Values */
+    .values-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; }
+    .value-card { background: white; border-radius: var(--radius); padding: 20px; border: 1px solid var(--border); text-align: center; box-shadow: var(--shadow); }
+    .value-icon { font-size: 2.2rem; margin-bottom: 10px; }
+    .value-card h3 { font-size: .95rem; font-weight: 700; margin-bottom: 6px; }
+    .value-card p { font-size: .85rem; color: var(--muted); }
+
+    /* Category pills */
+    .cat-pills { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px; }
+    .cat-pill { background: white; border: 1px solid var(--border); border-radius: 30px; padding: 7px 16px; font-size: .88rem; font-weight: 600; color: var(--text); box-shadow: var(--shadow); }
+    .cat-pill span { color: var(--muted); font-weight: 400; }
+
+    /* CTA section */
+    .cta-section { background: var(--primary); padding: 56px 0; text-align: center; color: white; }
+    .cta-section h2 { font-size: clamp(1.4rem, 3vw, 2rem); margin-bottom: 12px; }
+    .cta-section p { opacity: .9; margin-bottom: 28px; font-size: 1.05rem; }
+    .btn-white { background: white; color: var(--primary); padding: 14px 32px; border-radius: 10px; font-size: 1rem; font-weight: 700; display: inline-block; transition: opacity .2s; }
+    .btn-white:hover { opacity: .9; }
+
+    /* Footer */
+    .site-footer { background: #2d2d2d; color: #bbb; padding: 28px 0; }
+    .site-footer .inner { display: flex; flex-wrap: wrap; gap: 16px; justify-content: space-between; align-items: center; font-size: .82rem; }
+    .site-footer a { color: #ccc; text-decoration: underline; }
+    .footer-links { display: flex; flex-wrap: wrap; gap: 16px; }
+
+    /* Floating WA */
+    .wa-float { position: fixed; bottom: 22px; right: 22px; background: #25D366; color: white; width: 54px; height: 54px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 16px rgba(37,211,102,.4); z-index: 999; transition: transform .2s; }
+    .wa-float:hover { transform: scale(1.08); }
+    .wa-float svg { width: 28px; height: 28px; fill: white; }
+
+    @media (max-width: 768px) {
+      .two-col { grid-template-columns: 1fr; gap: 28px; }
+    }
+    @media (max-width: 600px) {
+      .hero { padding: 36px 0 32px; }
+      .section { padding: 36px 0; }
+    }
+  </style>
+
+  <!-- Schema: AboutPage + Organization + BreadcrumbList -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          { "@type": "ListItem", "position": 1, "name": "Inicio", "item": "https://fylmoda.com.ar/catalogo" },
+          { "@type": "ListItem", "position": 2, "name": "Quiénes Somos", "item": "https://fylmoda.com.ar/quienes-somos" }
+        ]
+      },
+      {
+        "@type": "AboutPage",
+        "@id": "https://fylmoda.com.ar/quienes-somos",
+        "name": "Quiénes Somos — FYL Moda",
+        "description": "FYL Moda es una empresa familiar con fábrica propia en Resistencia, Chaco, especializada en la venta mayorista de calzado e indumentaria femenina para todo el país.",
+        "url": "https://fylmoda.com.ar/quienes-somos",
+        "inLanguage": "es-AR",
+        "breadcrumb": { "@id": "https://fylmoda.com.ar/quienes-somos#breadcrumb" },
+        "about": {
+          "@type": "Organization",
+          "@id": "https://fylmoda.com.ar/#organization"
+        }
+      },
+      {
+        "@type": "Organization",
+        "@id": "https://fylmoda.com.ar/#organization",
+        "name": "FYL Moda",
+        "legalName": "FYL Moda",
+        "description": "Empresa familiar mayorista de calzado e indumentaria femenina con fábrica propia en Resistencia, Chaco, Argentina.",
+        "url": "https://fylmoda.com.ar",
+        "logo": "https://fylmoda.com.ar/logo.png",
+        "contactPoint": {
+          "@type": "ContactPoint",
+          "contactType": "sales",
+          "telephone": "+54-9-362-517-2874",
+          "availableLanguage": "Spanish"
+        },
+        "address": {
+          "@type": "PostalAddress",
+          "streetAddress": "Av. Alberdi 1099",
+          "addressLocality": "Resistencia",
+          "addressRegion": "Chaco",
+          "postalCode": "3500",
+          "addressCountry": "AR"
+        },
+        "areaServed": {
+          "@type": "Country",
+          "name": "Argentina"
+        },
+        "sameAs": [
+          "https://wa.me/5493625172874"
+        ]
+      }
+    ]
+  }
+  </script>
+</head>
+<body>
+
+  <!-- Header -->
+  <header class="site-header">
+    <div class="container inner">
+      <a href="/catalogo" aria-label="FYL Moda — inicio">
+        <img src="/logo.png" alt="FYL Moda" class="logo">
+      </a>
+      <a class="btn-wa" href="https://wa.me/5493625172874" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+        Consultar por WhatsApp
+      </a>
+    </div>
+  </header>
+
+  <!-- Breadcrumb -->
+  <div class="container">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a href="/catalogo">Inicio</a><span>›</span>Quiénes Somos
+    </nav>
+  </div>
+
+  <!-- Hero -->
+  <section class="hero">
+    <div class="container">
+      <h1>FYL Moda — <em>Empresa Familiar Mayorista</em><br>de Calzado e Indumentaria</h1>
+      <p class="lead">Somos un mayorista de calzado e indumentaria femenina con fábrica propia en Resistencia, Chaco. Vendemos a emprendedores y pequeños negocios de todo el país con el mínimo de compra más accesible del mercado: solo 4 productos.</p>
+      <div class="hero-ctas">
+        <a class="btn-primary" href="/catalogo">Ver catálogo completo</a>
+        <a class="btn-outline" href="https://wa.me/5493625172874" target="_blank" rel="noopener">Hablar con ventas</a>
+      </div>
+      <div class="stats-row">
+        <div>
+          <span class="stat-num">786+</span>
+          <span class="stat-label">artículos en catálogo</span>
+        </div>
+        <div>
+          <span class="stat-num">4</span>
+          <span class="stat-label">productos mínimo de compra</span>
+        </div>
+        <div>
+          <span class="stat-num">🏭</span>
+          <span class="stat-label">fábrica propia en Chaco</span>
+        </div>
+        <div>
+          <span class="stat-num">🇦🇷</span>
+          <span class="stat-label">envíos a todo el país</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Nuestra historia + Datos -->
+  <section class="section">
+    <div class="container two-col">
+      <div class="prose">
+        <p class="section-label">Nuestra historia</p>
+        <h2>Una fábrica en el norte, un catálogo para todo el país</h2>
+        <p>FYL Moda nació como un proyecto familiar en Resistencia, Chaco, con un objetivo claro: fabricar calzado e indumentaria femenina de calidad y hacerlo accesible para emprendedoras y pequeños negocios sin obligarlos a comprar grandes volúmenes.</p>
+        <p>Con producción propia, controlamos cada etapa del proceso — desde el diseño hasta la fotografía de producto — lo que nos permite ofrecer precios mayoristas reales con stock confiable y fotos listas para publicar en redes o tiendas online.</p>
+        <p>Hoy tenemos más de 786 artículos activos entre calzado (botas, zapatillas, texanas, borcegos) e indumentaria (pantalones, remeras, camperas, conjuntos), y despachamos a todo el país desde nuestra base en el NEA.</p>
+        <p>El diferencial que más valoran nuestros clientes es simple: <strong>surtido libre</strong>. Comprás el mínimo de 4 productos eligiendo los modelos y talles que te convienen, sin forzarte a llevar docenas de unidades del mismo artículo.</p>
+      </div>
+      <div>
+        <div class="info-box">
+          <h3>📍 Dónde estamos</h3>
+          <div class="info-row">
+            <span class="info-icon">🏭</span>
+            <div class="info-text">
+              <strong>Fábrica y showroom</strong>
+              <span>Av. Alberdi 1099, Resistencia, Chaco</span>
+            </div>
+          </div>
+          <div class="info-row">
+            <span class="info-icon">📦</span>
+            <div class="info-text">
+              <strong>Despachos a todo el país</strong>
+              <span>Envíos por Correo Argentino, OCA y transportes</span>
+            </div>
+          </div>
+          <div class="info-row">
+            <span class="info-icon">💬</span>
+            <div class="info-text">
+              <strong>WhatsApp de ventas</strong>
+              <span>+54 9 362 517-2874</span>
+            </div>
+          </div>
+          <div class="info-row">
+            <span class="info-icon">🕐</span>
+            <div class="info-text">
+              <strong>Atención</strong>
+              <span>Lunes a viernes, horario comercial</span>
+            </div>
+          </div>
+          <div class="info-row">
+            <span class="info-icon">🛒</span>
+            <div class="info-text">
+              <strong>Catálogo online</strong>
+              <span><a href="/catalogo" style="color: var(--primary); text-decoration: underline;">fylmoda.com.ar/catalogo</a></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Valores -->
+  <section class="section">
+    <div class="container">
+      <p class="section-label">Cómo trabajamos</p>
+      <h2 class="section-title">Los principios que guían cada pedido</h2>
+      <p class="section-sub">No somos un intermediario. Somos la fábrica, lo que significa menos eslabones entre el producto y tu negocio.</p>
+      <div class="values-grid">
+        <div class="value-card">
+          <div class="value-icon">🏭</div>
+          <h3>Producción propia</h3>
+          <p>Fabricamos en Chaco. Controlamos calidad, modelos y tiempos sin depender de terceros.</p>
+        </div>
+        <div class="value-card">
+          <div class="value-icon">📸</div>
+          <h3>Fotos listas para vender</h3>
+          <p>Cada artículo tiene fotografía profesional que podés usar en tu tienda online o redes sociales.</p>
+        </div>
+        <div class="value-card">
+          <div class="value-icon">🔓</div>
+          <h3>Surtido libre</h3>
+          <p>Elegís los modelos y los talles. Nada de cupos ni packs armados que no te sirven.</p>
+        </div>
+        <div class="value-card">
+          <div class="value-icon">📦</div>
+          <h3>Mínimo accesible</h3>
+          <p>Arrancás con solo 4 productos. Sin obligarte a inmovilizar capital en stock excesivo.</p>
+        </div>
+        <div class="value-card">
+          <div class="value-icon">🚚</div>
+          <h3>Envíos a todo el país</h3>
+          <p>Despachamos desde Resistencia a cualquier provincia, con opciones de transporte conocidas.</p>
+        </div>
+        <div class="value-card">
+          <div class="value-icon">🤝</div>
+          <h3>Trato directo</h3>
+          <p>Empresa familiar. Hablás con la misma persona que conoce el catálogo de punta a punta.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Catálogo por categoría -->
+  <section class="section">
+    <div class="container">
+      <p class="section-label">Nuestro catálogo</p>
+      <h2 class="section-title">786+ artículos entre calzado e indumentaria</h2>
+      <p class="section-sub">Stock real, actualizado y con disponibilidad de talles. Todo visible en el catálogo online.</p>
+      <div class="cat-pills">
+        <span class="cat-pill">👟 Zapatillas <span>(94)</span></span>
+        <span class="cat-pill">🥾 Botas <span>(95)</span></span>
+        <span class="cat-pill">👡 Texanas <span>(37)</span></span>
+        <span class="cat-pill">🥿 Chatitas <span>(12)</span></span>
+        <span class="cat-pill">👢 Borcegos <span>(25)</span></span>
+        <span class="cat-pill">👖 Pantalones <span>(120+)</span></span>
+        <span class="cat-pill">👕 Remeras <span>(86)</span></span>
+        <span class="cat-pill">🧥 Camperas <span>(48)</span></span>
+        <span class="cat-pill">🧶 Buzos y Sweaters <span>(61)</span></span>
+        <span class="cat-pill">👗 Conjuntos <span>(17)</span></span>
+        <span class="cat-pill">👜 Marroquinería <span>(38)</span></span>
+        <span class="cat-pill">🎀 Accesorios <span>(84+)</span></span>
+      </div>
+      <div style="margin-top: 28px;">
+        <a class="btn-primary" href="/catalogo">Ver todo el catálogo</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ¿Por qué elegirnos? -->
+  <section class="section">
+    <div class="container">
+      <p class="section-label">Por qué elegirnos</p>
+      <h2 class="section-title">Lo que nos diferencia de otros mayoristas</h2>
+      <p class="section-sub">Hay muchos mayoristas de moda. Esto es lo que hace que nuestros clientes vuelvan.</p>
+      <div class="features-grid">
+        <div class="feature-card">
+          <div class="feature-icon">💰</div>
+          <h3>Precio de fábrica real</h3>
+          <p>No somos distribuidores. La ropa y el calzado salen de nuestra fábrica directo a vos.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🗂️</div>
+          <h3>Catálogo online actualizado</h3>
+          <p>Stock visible en tiempo real en fylmoda.com.ar/catalogo. Sin sorpresas de "ese artículo no hay".</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🆓</div>
+          <h3>Sin mínimo por modelo</h3>
+          <p>Llevás 1 par de cada modelo si querés. El mínimo es global, no por artículo.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">📲</div>
+          <h3>Asesoramiento por WhatsApp</h3>
+          <p>Te ayudamos a elegir según tu cliente. Trato directo, sin formularios ni esperas largas.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🔄</div>
+          <h3>Renovación constante</h3>
+          <p>Incorporamos modelos cada temporada para que tu oferta no se estanque.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">📍</div>
+          <h3>Producción nacional</h3>
+          <p>Calzado e indumentaria fabricada en Argentina. Precios en pesos, sin variaciones por dólar importado.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA Final -->
+  <section class="cta-section">
+    <div class="container">
+      <h2>¿Querés ser cliente mayorista?</h2>
+      <p>Escribinos por WhatsApp y te explicamos cómo funciona el primer pedido. Sin compromisos, sin trámites.</p>
+      <div style="display: flex; flex-wrap: wrap; gap: 16px; justify-content: center;">
+        <a class="btn-white" href="https://wa.me/5493625172874" target="_blank" rel="noopener">Consultar por WhatsApp</a>
+        <a href="/catalogo" style="background: transparent; border: 2px solid white; color: white; padding: 14px 28px; border-radius: 10px; font-size: 1rem; font-weight: 600; display: inline-block; transition: opacity .2s;">Ver el catálogo</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="site-footer">
+    <div class="container inner">
+      <span>© 2026 FYL Moda — Resistencia, Chaco, Argentina</span>
+      <nav class="footer-links" aria-label="Links del sitio">
+        <a href="/catalogo">Catálogo</a>
+        <a href="/calzado-femenino-por-mayor">Calzado por Mayor</a>
+        <a href="/ropa-femenina-por-mayor">Ropa por Mayor</a>
+        <a href="/revendedoras">Revendedoras</a>
+        <a href="/quienes-somos">Quiénes Somos</a>
+      </nav>
+    </div>
+  </footer>
+
+  <!-- Floating WhatsApp -->
+  <a class="wa-float" href="https://wa.me/5493625172874" target="_blank" rel="noopener" aria-label="Consultar por WhatsApp">
+    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+  </a>
+
+</body>
+</html>

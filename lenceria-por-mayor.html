@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lencería y Bodies por Mayor — FYL Moda Mayorista</title>
+  <meta name="description" content="Comprá lencería y bodies femeninos por mayor desde 4 productos. Surtido libre de talles, stock real, envíos a todo el país. FYL Moda — mayorista con fábrica propia.">
+  <link rel="canonical" href="https://fylmoda.com.ar/lenceria-por-mayor">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="FYL Moda">
+  <meta property="og:title" content="Lencería y Bodies por Mayor — FYL Moda">
+  <meta property="og:description" content="Lencería y bodies femeninos por mayor desde 4 productos. Surtido libre, stock visible, envíos a todo el país.">
+  <meta property="og:url" content="https://fylmoda.com.ar/lenceria-por-mayor">
+  <meta property="og:image" content="https://fylmoda.com.ar/icons/icon-192x192.png">
+  <meta property="og:locale" content="es_AR">
+  <link rel="icon" href="/icons/icon-192x192.png" type="image/png">
+  <meta name="theme-color" content="#CD844D">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap">
+  <style>
+    :root {
+      --primary: #CD844D;
+      --primary-dark: #b8703a;
+      --primary-light: #f5ece3;
+      --text: #2d2d2d;
+      --muted: #666;
+      --border: #e8ddd4;
+      --radius: 12px;
+      --shadow: 0 2px 12px rgba(0,0,0,.07);
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Poppins', system-ui, sans-serif; color: var(--text); background: #fafaf8; line-height: 1.65; }
+    a { color: inherit; text-decoration: none; }
+    img { max-width: 100%; display: block; }
+    .container { max-width: 1100px; margin: 0 auto; padding: 0 20px; }
+
+    .site-header { background: #fff; border-bottom: 1px solid var(--border); padding: 12px 0; position: sticky; top: 0; z-index: 100; }
+    .site-header .inner { display: flex; align-items: center; justify-content: space-between; }
+    .logo { height: 38px; width: auto; }
+    .btn-wa { background: #25D366; color: white; padding: 9px 18px; border-radius: 8px; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 6px; transition: background .2s; white-space: nowrap; }
+    .btn-wa:hover { background: #1ebe5d; }
+    .btn-wa svg { width: 18px; height: 18px; fill: white; }
+
+    .breadcrumb { font-size: 0.8rem; color: var(--muted); padding: 10px 0; }
+    .breadcrumb a { color: var(--primary); }
+    .breadcrumb span { margin: 0 6px; }
+
+    .hero { background: linear-gradient(135deg, var(--primary-light) 0%, #fffaf6 100%); padding: 56px 0 48px; }
+    .hero h1 { font-size: clamp(1.6rem, 4vw, 2.6rem); font-weight: 700; line-height: 1.2; margin-bottom: 16px; }
+    .hero h1 em { font-style: normal; color: var(--primary); }
+    .hero .lead { font-size: 1.05rem; color: var(--muted); margin-bottom: 28px; max-width: 580px; }
+    .hero-ctas { display: flex; flex-wrap: wrap; gap: 12px; }
+    .btn-primary { background: var(--primary); color: white; padding: 14px 28px; border-radius: 10px; font-size: 1rem; font-weight: 600; display: inline-block; transition: background .2s; }
+    .btn-primary:hover { background: var(--primary-dark); }
+    .btn-outline { border: 2px solid var(--primary); color: var(--primary); padding: 13px 24px; border-radius: 10px; font-size: 1rem; font-weight: 600; display: inline-block; transition: all .2s; }
+    .btn-outline:hover { background: var(--primary-light); }
+    .stats-row { display: flex; flex-wrap: wrap; gap: 28px; margin-top: 36px; }
+    .stat-num { font-size: 2rem; font-weight: 700; color: var(--primary); display: block; }
+    .stat-label { font-size: 0.8rem; color: var(--muted); }
+
+    .section { padding: 52px 0; }
+    .section + .section { border-top: 1px solid var(--border); }
+    .section-label { font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--primary); margin-bottom: 6px; }
+    .section-title { font-size: clamp(1.3rem, 3vw, 1.8rem); font-weight: 700; margin-bottom: 8px; }
+    .section-sub { color: var(--muted); margin-bottom: 36px; max-width: 600px; }
+
+    .features-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
+    .feature-card { background: white; border-radius: var(--radius); padding: 22px; border: 1px solid var(--border); box-shadow: var(--shadow); }
+    .feature-icon { font-size: 2rem; margin-bottom: 12px; }
+    .feature-card h3 { font-size: 1rem; font-weight: 600; margin-bottom: 6px; }
+    .feature-card p { font-size: 0.88rem; color: var(--muted); }
+
+    .cat-pills { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px; }
+    .cat-pill { background: white; border: 1px solid var(--border); border-radius: 30px; padding: 7px 16px; font-size: .88rem; font-weight: 600; color: var(--text); box-shadow: var(--shadow); }
+    .cat-pill span { color: var(--muted); font-weight: 400; }
+
+    .info-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
+    .info-card { background: white; border-radius: var(--radius); padding: 22px; border: 1px solid var(--border); box-shadow: var(--shadow); }
+    .info-card h3 { font-size: 1rem; font-weight: 700; margin-bottom: 8px; color: var(--primary); }
+    .info-card p { font-size: .88rem; color: var(--muted); }
+
+    .faq-grid { display: grid; gap: 12px; }
+    .faq-item { background: white; border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; }
+    .faq-item h3 { font-size: .95rem; font-weight: 600; color: var(--primary); margin-bottom: 6px; }
+    .faq-item p { font-size: .9rem; color: var(--muted); }
+
+    .cta-section { background: var(--primary); padding: 56px 0; text-align: center; color: white; }
+    .cta-section h2 { font-size: clamp(1.4rem, 3vw, 2rem); margin-bottom: 12px; }
+    .cta-section p { opacity: .9; margin-bottom: 28px; font-size: 1.05rem; }
+    .btn-white { background: white; color: var(--primary); padding: 14px 32px; border-radius: 10px; font-size: 1rem; font-weight: 700; display: inline-block; transition: opacity .2s; }
+    .btn-white:hover { opacity: .9; }
+
+    .site-footer { background: #2d2d2d; color: #bbb; padding: 28px 0; }
+    .site-footer .inner { display: flex; flex-wrap: wrap; gap: 16px; justify-content: space-between; align-items: center; font-size: .82rem; }
+    .site-footer a { color: #ccc; text-decoration: underline; }
+    .footer-links { display: flex; flex-wrap: wrap; gap: 16px; }
+
+    .wa-float { position: fixed; bottom: 22px; right: 22px; background: #25D366; color: white; width: 54px; height: 54px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 16px rgba(37,211,102,.4); z-index: 999; transition: transform .2s; }
+    .wa-float:hover { transform: scale(1.08); }
+    .wa-float svg { width: 28px; height: 28px; fill: white; }
+
+    @media (max-width: 600px) {
+      .hero { padding: 36px 0 32px; }
+      .section { padding: 36px 0; }
+    }
+  </style>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          { "@type": "ListItem", "position": 1, "name": "Inicio", "item": "https://fylmoda.com.ar/catalogo" },
+          { "@type": "ListItem", "position": 2, "name": "Lencería por Mayor", "item": "https://fylmoda.com.ar/lenceria-por-mayor" }
+        ]
+      },
+      {
+        "@type": "CollectionPage",
+        "@id": "https://fylmoda.com.ar/lenceria-por-mayor",
+        "name": "Lencería y Bodies por Mayor — FYL Moda",
+        "description": "Lencería femenina y bodies por mayor con surtido libre de talles. Comprá desde 4 productos, envíos a todo Argentina.",
+        "url": "https://fylmoda.com.ar/lenceria-por-mayor",
+        "inLanguage": "es-AR",
+        "about": { "@type": "Thing", "name": "Lencería femenina mayorista" },
+        "provider": {
+          "@type": "Organization",
+          "name": "FYL Moda",
+          "url": "https://fylmoda.com.ar",
+          "address": { "@type": "PostalAddress", "addressLocality": "Resistencia", "addressRegion": "Chaco", "addressCountry": "AR" }
+        }
+      }
+    ]
+  }
+  </script>
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="container inner">
+      <a href="/catalogo" aria-label="FYL Moda — inicio">
+        <img src="/logo.png" alt="FYL Moda" class="logo">
+      </a>
+      <a class="btn-wa" href="https://wa.me/5493625172874" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+        Consultar por WhatsApp
+      </a>
+    </div>
+  </header>
+
+  <div class="container">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a href="/catalogo">Inicio</a><span>›</span>Lencería por Mayor
+    </nav>
+  </div>
+
+  <section class="hero">
+    <div class="container">
+      <h1>Lencería y Bodies Femeninos<br><em>por Mayor — Surtido Libre</em></h1>
+      <p class="lead">Bodies y lencería femenina al por mayor con el mínimo más accesible del mercado. Comprás desde 4 productos, elegís talles y modelos libremente, y recibís en todo el país.</p>
+      <div class="hero-ctas">
+        <a class="btn-primary" href="/catalogo">Ver catálogo completo</a>
+        <a class="btn-outline" href="https://wa.me/5493625172874" target="_blank" rel="noopener">Consultar por WhatsApp</a>
+      </div>
+      <div class="stats-row">
+        <div>
+          <span class="stat-num">18+</span>
+          <span class="stat-label">modelos de lencería y bodies</span>
+        </div>
+        <div>
+          <span class="stat-num">4</span>
+          <span class="stat-label">productos mínimo de compra</span>
+        </div>
+        <div>
+          <span class="stat-num">100%</span>
+          <span class="stat-label">surtido libre de talles</span>
+        </div>
+        <div>
+          <span class="stat-num">🇦🇷</span>
+          <span class="stat-label">envíos a todo el país</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Categorías -->
+  <section class="section">
+    <div class="container">
+      <p class="section-label">Categorías disponibles</p>
+      <h2 class="section-title">Bodies y lencería con stock real</h2>
+      <p class="section-sub">Todo lo que ves en el catálogo tiene stock disponible. Los precios y talles se actualizan en tiempo real.</p>
+      <div class="cat-pills">
+        <span class="cat-pill">👙 Bodies <span>(12 modelos)</span></span>
+        <span class="cat-pill">🩱 Lencería <span>(6 modelos)</span></span>
+      </div>
+      <div style="margin-top: 28px;">
+        <a class="btn-primary" href="/catalogo">Ver todos los modelos en el catálogo</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Por qué comprar lencería por mayor en FYL -->
+  <section class="section">
+    <div class="container">
+      <p class="section-label">Por qué elegirnos</p>
+      <h2 class="section-title">Lo que buscás en un mayorista de lencería</h2>
+      <p class="section-sub">Comprar lencería por mayor tiene sus particularidades. Estos son los puntos que más valoran nuestros clientes.</p>
+      <div class="features-grid">
+        <div class="feature-card">
+          <div class="feature-icon">📏</div>
+          <h3>Surtido libre de talles</h3>
+          <p>No te forzamos a llevar el mismo talle en todo el pedido. Combinás talles dentro del mismo modelo o entre modelos.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">📸</div>
+          <h3>Fotos listas para publicar</h3>
+          <p>Cada body y pieza de lencería tiene foto de producto que podés usar directamente en tu tienda online o redes.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">💰</div>
+          <h3>Precio mayorista real</h3>
+          <p>Comprás directo a nosotros, sin intermediarios. El precio que ves es el precio de fábrica.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">📦</div>
+          <h3>Mínimo de 4 productos</h3>
+          <p>Podés arrancar con solo 4 piezas, mezclando lencería con otras categorías del catálogo.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🚚</div>
+          <h3>Envíos a todo el país</h3>
+          <p>Despachamos desde Resistencia, Chaco, a cualquier provincia. Coordinar por WhatsApp es rápido.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🔄</div>
+          <h3>Stock actualizado</h3>
+          <p>El catálogo online muestra solo lo que hay disponible. Si está publicado, tiene stock.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Guía: cómo comprar lencería por mayor -->
+  <section class="section">
+    <div class="container">
+      <p class="section-label">Guía de compra</p>
+      <h2 class="section-title">Qué tener en cuenta al comprar lencería por mayor</h2>
+      <p class="section-sub">Si es tu primera vez comprando lencería mayorista, estos puntos te van a ayudar a hacer un mejor pedido.</p>
+      <div class="info-grid">
+        <div class="info-card">
+          <h3>🎯 Conocé a tu cliente</h3>
+          <p>La lencería mayorista vende mejor cuando sabés qué talle y estilo prefiere tu clientela. Bodies con aro y sin copa, lencería de algodón o sintética — el mix depende de tu mercado.</p>
+        </div>
+        <div class="info-card">
+          <h3>📐 Surtido de talles inteligente</h3>
+          <p>Los talles S y M son los de mayor rotación en lencería femenina. Si comprás 4 piezas del mismo modelo, un mix 1S-2M-1L suele funcionar bien como punto de partida.</p>
+        </div>
+        <div class="info-card">
+          <h3>🔗 Combiná con otras categorías</h3>
+          <p>Podés armar un pedido mezclando lencería con remeras, conjuntos o accesorios. El mínimo es sobre el total del pedido, no por categoría.</p>
+        </div>
+        <div class="info-card">
+          <h3>📷 Usá las fotos del catálogo</h3>
+          <p>Todas las piezas tienen fotografía profesional. Podés publicarlas en Marketplace, Instagram o tu tienda online sin necesidad de hacer producción propia.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FAQ -->
+  <section class="section">
+    <div class="container">
+      <p class="section-label">Preguntas frecuentes</p>
+      <h2 class="section-title">Dudas sobre lencería por mayor</h2>
+      <p class="section-sub" style="margin-bottom: 24px;"></p>
+      <div class="faq-grid">
+        <div class="faq-item">
+          <h3>¿Cuál es el mínimo para comprar lencería por mayor?</h3>
+          <p>El mínimo es de 4 productos en total. Podés mezclar lencería con cualquier otra categoría del catálogo — calzado, ropa, accesorios — para completar el mínimo.</p>
+        </div>
+        <div class="faq-item">
+          <h3>¿Puedo elegir los talles que quiero?</h3>
+          <p>Sí, el surtido es completamente libre. No hay packs ni talles impuestos. Elegís talle por talle dentro de cada modelo.</p>
+        </div>
+        <div class="faq-item">
+          <h3>¿Hacen envíos de lencería a todo el país?</h3>
+          <p>Sí, despachamos a todo Argentina. El costo de envío varía según la provincia y el peso del pedido. Coordinar por WhatsApp para calcular.</p>
+        </div>
+        <div class="faq-item">
+          <h3>¿Los bodies tienen talle único o tallado?</h3>
+          <p>Depende del modelo — algunos son talle único y otros tienen tallado S/M/L. El catálogo muestra el detalle de talles disponibles para cada artículo.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="cta-section">
+    <div class="container">
+      <h2>¿Querés ver los modelos disponibles?</h2>
+      <p>Entrá al catálogo o escribinos por WhatsApp para consultar stock y hacer tu primer pedido.</p>
+      <div style="display: flex; flex-wrap: wrap; gap: 16px; justify-content: center;">
+        <a class="btn-white" href="/catalogo">Ver catálogo completo</a>
+        <a href="https://wa.me/5493625172874" target="_blank" rel="noopener" style="background: transparent; border: 2px solid white; color: white; padding: 14px 28px; border-radius: 10px; font-size: 1rem; font-weight: 600; display: inline-block;">Consultar por WhatsApp</a>
+      </div>
+    </div>
+  </section>
+
+  <footer class="site-footer">
+    <div class="container inner">
+      <span>© 2026 FYL Moda — Resistencia, Chaco, Argentina</span>
+      <nav class="footer-links" aria-label="Links del sitio">
+        <a href="/catalogo">Catálogo</a>
+        <a href="/calzado-femenino-por-mayor">Calzado por Mayor</a>
+        <a href="/ropa-femenina-por-mayor">Ropa por Mayor</a>
+        <a href="/accesorios-por-mayor">Accesorios por Mayor</a>
+        <a href="/revendedoras">Revendedoras</a>
+        <a href="/quienes-somos">Quiénes Somos</a>
+      </nav>
+    </div>
+  </footer>
+
+  <a class="wa-float" href="https://wa.me/5493625172874" target="_blank" rel="noopener" aria-label="Consultar por WhatsApp">
+    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+  </a>
+
+</body>
+</html>

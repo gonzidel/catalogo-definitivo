@@ -234,7 +234,8 @@ export async function fetchOrderById(orderId) {
         size,
         quantity,
         price_snapshot,
-        status
+        status,
+        variant_id
       )
     `)
     .eq("id", orderId)

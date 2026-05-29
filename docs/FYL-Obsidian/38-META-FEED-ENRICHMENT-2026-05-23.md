@@ -1,6 +1,6 @@
 # 38 — Meta Catalog Feed: enriquecimiento (2026-05-23)
 
-> **Estado:** Fase 1 **implementada en repo** (2026-05-23) — pendiente deploy SQL `226` + Edge + validación CM. Fases 2–3 no iniciadas.  
+> **Estado:** Fases 1–3 **desplegadas en prod** (2026-05-23): SQL `meta_feed_phase3_offers_images_marketing` + Edge Fase 3 (24 cols). **Acción CM:** reimport feed + reindex 24–48 h. Checklist: `doc/meta-feed/2026-05-23-fase3-deploy-checklist.md`.  
 > **ID estable:** META-FEED-2026-05-23  
 > **Fuente canónica (repo):** `doc/meta-feed/2026-05-23-meta-feed-enriquecimiento-spec.md`
 
@@ -63,7 +63,7 @@ Meta Commerce Manager no muestra categorías, subcategorías ni labels porque el
 |---------|------|
 | `226_meta_feed_phase1_category_filtro1.sql` | 1 — `category`, `filtro1` |
 | `227_meta_feed_phase2_commercial_sources.sql` | 2 — filtro2/3, detalles, supplier, oferta flag |
-| `228_meta_feed_phase3_offers_images.sql` | 3 — list/offer price, imágenes secundarias, fast sellers |
+| `228_meta_feed_phase3_offers_images_marketing.sql` | 3 — list/offer price, imágenes secundarias, fast sellers (desplegado) |
 
 ---
 

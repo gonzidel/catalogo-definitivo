@@ -121,9 +121,16 @@
           <button type="button" class="pau-btn pau-btn-copy-order" id="pau-copy-order" disabled>
             Copiar pedido
           </button>
-          <button type="button" class="pau-btn pau-btn-danger" id="pau-close-order">
+          <button type="button" class="pau-btn pau-btn-adjust-order" id="pau-adjust-toggle">
+            +/-
+          </button>
+          <button type="button" class="pau-btn pau-btn-danger pau-btn-close-main" id="pau-close-order">
             Cerrar pedido
           </button>
+        </div>
+        <div class="pau-adjust-panel" id="pau-adjust-panel" hidden>
+          <button type="button" class="pau-btn pau-btn-adjust-plus" id="pau-adjust-plus">Extra</button>
+          <button type="button" class="pau-btn pau-btn-adjust-minus" id="pau-adjust-minus">Resta</button>
         </div>
       </footer>
     </section>
@@ -146,6 +153,42 @@
         </div>
         <button type="button" class="pau-btn pau-btn-ghost pau-btn-block" id="pau-close-action-cancel">Cancelar</button>
       </div>
+    </dialog>
+
+    <!-- Extra / Resta especial (misma ventana: descripción + monto) -->
+    <dialog class="pau-dialog pau-dialog-adjust" id="pau-adjust-dialog">
+      <form class="pau-dialog-inner pau-adjust-form" id="pau-adjust-form" method="dialog">
+        <h3 class="pau-adjust-title" id="pau-adjust-title">Extra especial</h3>
+        <p class="pau-dialog-sub" id="pau-adjust-hint"></p>
+        <label class="pau-adjust-field">
+          Descripción <span class="pau-cf-req">*</span>
+          <input
+            type="text"
+            id="pau-adjust-description"
+            class="pau-input pau-input-compact"
+            autocomplete="off"
+            required
+            placeholder="Ej: Envío, descuento, caja regalo…"
+          />
+        </label>
+        <label class="pau-adjust-field">
+          Monto ($) <span class="pau-cf-req">*</span>
+          <input
+            type="text"
+            id="pau-adjust-amount"
+            class="pau-input pau-input-compact"
+            inputmode="decimal"
+            autocomplete="off"
+            required
+            placeholder="Ej: 1500"
+          />
+        </label>
+        <p id="pau-adjust-error" class="pau-cf-error" hidden></p>
+        <div class="pau-cf-actions">
+          <button type="submit" class="pau-btn pau-btn-primary" id="pau-adjust-save">Agregar</button>
+          <button type="button" class="pau-btn pau-btn-ghost" id="pau-adjust-cancel">Cancelar</button>
+        </div>
+      </form>
     </dialog>
 
     <dialog class="pau-dialog" id="pau-send-local-dialog">

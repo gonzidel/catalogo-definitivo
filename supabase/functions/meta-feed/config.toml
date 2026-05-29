@@ -1,0 +1,2 @@
+# Meta Commerce fetch sin Authorization header; auth opcional vía ?token=
+verify_jwt = false

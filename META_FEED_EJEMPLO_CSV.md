@@ -1,15 +1,15 @@
 # Ejemplo de CSV - Meta Catalog Feed
 
 > **Spec enriquecimiento (2026-05-23):** `doc/meta-feed/2026-05-23-meta-feed-enriquecimiento-spec.md` · Obsidian: `docs/FYL-Obsidian/38-META-FEED-ENRICHMENT-2026-05-23.md`  
-> **Fase 1 implementada en repo:** headers 14 columnas (ver abajo). Fases 2–3 pendientes.
+> **Fase 3 desplegada en prod (2026-05-23):** 24 columnas — `sale_price`, `additional_image_link`, marketing en `custom_label_4` / `internal_label`.
 
-## Headers del Feed (Fase 1 — vigente en código)
+## Headers del Feed (Fase 3 — vigente en prod)
 
 ```
-id,item_group_id,title,description,availability,condition,price,link,image_link,brand,color,size,gender,product_type
+id,item_group_id,title,description,availability,condition,price,sale_price,link,image_link,additional_image_link,brand,color,size,gender,product_type,google_product_category,custom_label_0,custom_label_1,custom_label_2,custom_label_3,custom_label_4,internal_label
 ```
 
-Ejemplo completo: `doc/meta-feed/ejemplo-csv-fase1.csv`
+Checklists: `doc/meta-feed/2026-05-23-fase3-deploy-checklist.md` (Fase 3), `doc/meta-feed/2026-05-23-fase2-deploy-checklist.md`
 
 ## Ejemplo de filas (Fase 1)
 

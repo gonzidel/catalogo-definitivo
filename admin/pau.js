@@ -2,11 +2,15 @@
 
 import { requireAuth } from "./admin-auth.js";
 import { supabase } from "../scripts/supabase-client.js";
-import { getAdminPermissions, can, isAuthStateReady } from "./auth-state.js";
+import { getAdminPermissions, can } from "./auth-state.js";
 import {
   normalizeCustomerSearchText,
   tokenizeCustomerSearch,
   rankCustomersForSearch,
+  normalizePhoneDigitsForMatch,
+  getPhoneSearchSuffix,
+  phonesMatchBySuffix,
+  PHONE_SEARCH_SUFFIX_LEN,
 } from "./orders-domain.js";
 import { normalizeSize } from "../scripts/utils/size-normalizer.js";
 import {
@@ -33,11 +37,17 @@ import {
 
 await requireAuth();
 await getAdminPermissions();
-if (!can("orders", "view")) {
+/** Permisos fijados al entrar (no usar can() en runtime: TOKEN_REFRESHED invalida el cache). */
+const PAU_PERMISSIONS = {
+  ordersView: can("orders", "view"),
+  ordersEdit: can("orders", "edit"),
+  customersEdit: can("customers", "edit"),
+};
+if (!PAU_PERMISSIONS.ordersView) {
   alert("No tenés permiso para ver pedidos.");
   window.location.href = "./index.html";
 }
-if (!can("orders", "edit")) {
+if (!PAU_PERMISSIONS.ordersEdit) {
   alert("PAU requiere permiso para editar pedidos (no solo ver). Pedile a un administrador que active «editar» en el módulo Pedidos.");
   window.location.href = "./index.html";
 }
@@ -84,6 +94,19 @@ const els = {
   expandLabel: document.getElementById("pau-expand-label"),
   addBtn: document.getElementById("pau-add-to-order"),
   copyOrderBtn: document.getElementById("pau-copy-order"),
+  adjustToggleBtn: document.getElementById("pau-adjust-toggle"),
+  adjustPanel: document.getElementById("pau-adjust-panel"),
+  adjustPlusBtn: document.getElementById("pau-adjust-plus"),
+  adjustMinusBtn: document.getElementById("pau-adjust-minus"),
+  adjustDialog: document.getElementById("pau-adjust-dialog"),
+  adjustForm: document.getElementById("pau-adjust-form"),
+  adjustTitle: document.getElementById("pau-adjust-title"),
+  adjustHint: document.getElementById("pau-adjust-hint"),
+  adjustDescription: document.getElementById("pau-adjust-description"),
+  adjustAmount: document.getElementById("pau-adjust-amount"),
+  adjustError: document.getElementById("pau-adjust-error"),
+  adjustSave: document.getElementById("pau-adjust-save"),
+  adjustCancel: document.getElementById("pau-adjust-cancel"),
   closeBtn: document.getElementById("pau-close-order"),
   searchAnotherBtn: document.getElementById("pau-search-another-customer"),
   closeActionDialog: document.getElementById("pau-close-action-dialog"),
@@ -132,6 +155,7 @@ const state = {
   orderExpanded: false,
   pendingPhoneCustomer: null,
   recentPanelOpen: false,
+  pendingAdjustKind: null,
   qrQueue: [],
   qrProcessing: false,
   manual: {
@@ -148,6 +172,13 @@ let customerSearchTimer = null;
 let productInputTimer = null;
 let manualSearchTimer = null;
 let toastTimer = null;
+
+function parseMoneyInput(rawValue) {
+  const normalized = String(rawValue ?? "").trim().replace(",", ".");
+  const n = Number(normalized);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n;
+}
 
 function showToast(msg, ms = 2800) {
   els.toast.textContent = msg;
@@ -194,16 +225,11 @@ function formatLocality(customer) {
 }
 
 function extractPhoneDigits(text) {
-  const digits = String(text || "").replace(/\D/g, "");
-  if (digits.length >= 8) return digits;
-  return "";
+  return String(text || "").replace(/\D/g, "");
 }
 
 function normalizePhoneForSearch(text) {
-  let d = extractPhoneDigits(text);
-  if (d.startsWith("54") && d.length > 10) d = d.slice(2);
-  if (d.startsWith("0")) d = d.slice(1);
-  return d;
+  return normalizePhoneDigitsForMatch(text);
 }
 
 function loadRecentCustomers() {
@@ -311,8 +337,11 @@ async function searchCustomers(query) {
   const normQuery = normalizeCustomerSearchText(clean);
   const tokens = tokenizeCustomerSearch(normQuery);
   const escaped = clean.replace(/[%_]/g, "");
-  const phoneDigits = extractPhoneDigits(clean);
-  const phoneLast4 = phoneDigits && phoneDigits.length >= 4 ? phoneDigits.slice(-4) : "";
+  const phoneNorm = normalizePhoneDigitsForMatch(clean);
+  const phoneSuffix7 = getPhoneSearchSuffix(clean, PHONE_SEARCH_SUFFIX_LEN);
+  const phoneIlikeSuffix =
+    phoneSuffix7 ||
+    (phoneNorm.length >= 4 ? phoneNorm.slice(-4) : "");
 
   const { data, error } = await supabase
     .from("customers")
@@ -323,7 +352,7 @@ async function searchCustomers(query) {
         `dni.ilike.%${escaped}%`,
         `email.ilike.%${escaped}%`,
         `customer_number.ilike.%${escaped}%`,
-        ...(phoneLast4 ? [`phone.ilike.%${phoneLast4}%`] : []),
+        ...(phoneIlikeSuffix ? [`phone.ilike.%${phoneIlikeSuffix}%`] : []),
       ].join(",")
     )
     .limit(80);
@@ -333,7 +362,27 @@ async function searchCustomers(query) {
     return;
   }
 
-  const ranked = rankCustomersForSearch(data || [], normQuery, tokens);
+  let rows = data || [];
+
+  // Refuerzo: formatos con guiones/espacios no siempre matchean ilike; comparar últimos 7 dígitos.
+  if (phoneSuffix7.length >= PHONE_SEARCH_SUFFIX_LEN) {
+    const { data: phoneRows, error: phoneErr } = await supabase
+      .from("customers")
+      .select("id, customer_number, full_name, dni, phone, email, city, province")
+      .not("phone", "is", null)
+      .ilike("phone", `%${phoneSuffix7.slice(-4)}%`)
+      .limit(120);
+
+    if (!phoneErr && phoneRows?.length) {
+      const byId = new Map(rows.map((c) => [c.id, c]));
+      phoneRows.forEach((c) => {
+        if (phonesMatchBySuffix(clean, c.phone)) byId.set(c.id, c);
+      });
+      rows = [...byId.values()];
+    }
+  }
+
+  const ranked = rankCustomersForSearch(rows, normQuery, tokens);
   const ids = ranked.map((c) => c.id);
   const chipMap = await getOrderStatusChipForCustomers(ids);
   renderCustomerResults(ranked, chipMap, clean);
@@ -412,12 +461,21 @@ function getDraftTotalQty() {
   return state.draft.reduce((s, i) => s + (Number(i.quantity) || 0), 0);
 }
 
+function hasDraftItems() {
+  return state.draft.length > 0 && getDraftTotalQty() > 0;
+}
+
+function isOrderLockedForDraftAdd(order) {
+  if (!order?.id) return false;
+  const st = normOrderStatus(order);
+  return st === "closed" || st === "cancelled";
+}
+
 function canAddDraftToOrder() {
   if (!state.customer?.id) return false;
-  if (getDraftTotalQty() <= 0) return false;
-  if (!isAuthStateReady() || !can("orders", "edit")) return false;
-  const st = normOrderStatus(state.order);
-  if (st === "closed" || st === "cancelled") return false;
+  if (!hasDraftItems()) return false;
+  if (!PAU_PERMISSIONS.ordersEdit) return false;
+  if (isOrderLockedForDraftAdd(state.order)) return false;
   return true;
 }
 
@@ -428,7 +486,7 @@ function updateAddToOrderButton() {
   if (!allowed && getDraftTotalQty() > 0) {
     if (!state.customer?.id) {
       els.addBtn.title = "Seleccioná una clienta para guardar el pedido";
-    } else if (!can("orders", "edit")) {
+    } else if (!PAU_PERMISSIONS.ordersEdit) {
       els.addBtn.title = "Sin permiso para editar pedidos";
     } else if (["closed", "cancelled"].includes(normOrderStatus(state.order))) {
       els.addBtn.title = "El pedido está cerrado o cancelado";
@@ -443,17 +501,180 @@ function updateAddToOrderButton() {
 }
 
 function canCloseCurrentOrder() {
+  const st = normOrderStatus(state.order);
   return (
     Boolean(state.order?.id) &&
     orderHasLoadedProducts(state.order) &&
-    state.order.status !== "closed" &&
-    state.order.status !== "cancelled" &&
-    can("orders", "edit")
+    st !== "closed" &&
+    st !== "cancelled" &&
+    PAU_PERMISSIONS.ordersEdit
   );
 }
 
 function canCopyCurrentOrder() {
   return Boolean(state.order?.id) && orderHasLoadedProducts(state.order);
+}
+
+/** Extra/Resta: no exige productos guardados; crea el pedido al confirmar si hace falta. */
+function canUseOrderAdjustments() {
+  if (!state.customer?.id) return false;
+  if (!PAU_PERMISSIONS.ordersEdit) return false;
+  if (!state.order?.id) return true;
+  const st = normOrderStatus(state.order);
+  return st !== "closed" && st !== "cancelled";
+}
+
+function getAdjustButtonTitle(canAdjust) {
+  if (!canAdjust) {
+    if (!state.customer?.id) return "Seleccioná una clienta";
+    if (!PAU_PERMISSIONS.ordersEdit) return "Sin permiso para editar pedidos";
+    if (state.order?.id && isOrderLockedForDraftAdd(state.order)) {
+      return "El pedido está cerrado o cancelado";
+    }
+    return "No disponible";
+  }
+  if (!state.order?.id) {
+    return "Agregar extra o resta (crea el pedido si todavía no hay uno guardado)";
+  }
+  return "Agregar extra o resta especial";
+}
+
+function refreshOrderFooterButtons() {
+  updateAddToOrderButton();
+  updateCloseButtonState();
+}
+
+function setAdjustPanelOpen(open) {
+  if (!els.adjustPanel || !els.adjustToggleBtn) return;
+  els.adjustPanel.hidden = !open;
+  els.adjustToggleBtn.classList.toggle("is-open", open);
+  els.adjustToggleBtn.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+function buildSpecialExtraItem(description, amount) {
+  return {
+    id: `special-${Date.now()}-${Math.random()}`,
+    product_name: description,
+    color: null,
+    size: null,
+    quantity: 1,
+    price_snapshot: amount,
+    imagen: null,
+    variant_id: null,
+    qty_from_general: 0,
+    qty_from_venta: 0,
+    status: "picked",
+    is_special_extra: true,
+  };
+}
+
+function isSpecialAdjustmentItem(item) {
+  if (!item) return false;
+  if (item.is_special_extra === true) return true;
+  // Compatibilidad: en algunos entornos no existe `is_special_extra`.
+  return !item.variant_id && !item.color && !item.size;
+}
+
+function closeAdjustDialog() {
+  state.pendingAdjustKind = null;
+  if (els.adjustDialog?.open) els.adjustDialog.close();
+  if (els.adjustError) els.adjustError.hidden = true;
+  if (els.adjustSave) {
+    els.adjustSave.disabled = false;
+    els.adjustSave.textContent = "Agregar";
+  }
+}
+
+function openAdjustDialog(kind) {
+  if (!canUseOrderAdjustments()) {
+    showToast(getAdjustButtonTitle(false) || "No se puede ajustar este pedido ahora");
+    return;
+  }
+  if (!els.adjustDialog) return;
+
+  state.pendingAdjustKind = kind;
+  const isMinus = kind === "minus";
+
+  if (els.adjustDialog) {
+    els.adjustDialog.classList.toggle("is-minus", isMinus);
+    els.adjustDialog.classList.toggle("is-plus", !isMinus);
+  }
+  if (els.adjustTitle) {
+    els.adjustTitle.textContent = isMinus ? "Resta al pedido" : "Extra al pedido";
+  }
+  if (els.adjustHint) {
+    els.adjustHint.textContent = isMinus
+      ? "El monto se descontará del total del pedido."
+      : "El monto se sumará al total del pedido.";
+  }
+  if (els.adjustDescription) els.adjustDescription.value = "";
+  if (els.adjustAmount) els.adjustAmount.value = "";
+  if (els.adjustError) els.adjustError.hidden = true;
+  if (els.adjustSave) {
+    els.adjustSave.disabled = false;
+    els.adjustSave.textContent = isMinus ? "Agregar resta" : "Agregar extra";
+  }
+
+  setAdjustPanelOpen(false);
+  els.adjustDialog.showModal();
+  setTimeout(() => els.adjustDescription?.focus(), 50);
+}
+
+async function submitAdjustForm(ev) {
+  ev.preventDefault();
+  const kind = state.pendingAdjustKind;
+  if (!kind || !canUseOrderAdjustments()) return;
+
+  const description = String(els.adjustDescription?.value || "").trim();
+  const amountValue = parseMoneyInput(els.adjustAmount?.value);
+  if (!description) {
+    if (els.adjustError) {
+      els.adjustError.textContent = "Ingresá una descripción.";
+      els.adjustError.hidden = false;
+    }
+    els.adjustDescription?.focus();
+    return;
+  }
+  if (!amountValue) {
+    if (els.adjustError) {
+      els.adjustError.textContent = "Ingresá un monto válido mayor a 0.";
+      els.adjustError.hidden = false;
+    }
+    els.adjustAmount?.focus();
+    return;
+  }
+
+  if (els.adjustError) els.adjustError.hidden = true;
+  if (els.adjustSave) {
+    els.adjustSave.disabled = true;
+    els.adjustSave.textContent = "Guardando…";
+  }
+
+  const signedAmount = kind === "minus" ? -amountValue : amountValue;
+  const specialItem = buildSpecialExtraItem(description, signedAmount);
+
+  try {
+    if (!state.order?.id) {
+      const created = await createApartadoOrder(state.customer.id);
+      state.order = created.order;
+    }
+    await addItemsToOrder(state.order.id, [specialItem]);
+    closeAdjustDialog();
+    showToast(kind === "minus" ? "Resta agregada al pedido" : "Extra agregado al pedido");
+    await refreshOrderUi();
+  } catch (err) {
+    console.error(err);
+    if (els.adjustError) {
+      els.adjustError.textContent = err.message || "No se pudo guardar el ajuste.";
+      els.adjustError.hidden = false;
+    }
+  } finally {
+    if (els.adjustSave) {
+      const isMinus = kind === "minus";
+      els.adjustSave.disabled = false;
+      els.adjustSave.textContent = isMinus ? "Agregar resta" : "Agregar extra";
+    }
+  }
 }
 
 function updateCloseButtonState() {
@@ -470,11 +691,32 @@ function updateCloseButtonState() {
       ? "Copiar detalle del pedido para WhatsApp"
       : "Disponible cuando haya productos guardados en el pedido";
   }
+
+  const canAdjust = canUseOrderAdjustments();
+  if (els.adjustToggleBtn) {
+    els.adjustToggleBtn.disabled = !canAdjust;
+    els.adjustToggleBtn.title = getAdjustButtonTitle(canAdjust);
+  }
+  if (!canAdjust) setAdjustPanelOpen(false);
 }
 
 function formatMoneyAr(amount) {
   const n = Number(amount) || 0;
   return `$${n.toLocaleString("es-AR", { maximumFractionDigits: 0 })}`;
+}
+
+function formatItemPriceForCopy(item) {
+  const unit = Number(item.price_snapshot) || 0;
+  const qty = Math.max(Number(item.quantity) || 0, 1);
+  const signedUnit =
+    unit < 0 ? `- ${formatMoneyAr(Math.abs(unit))}` : formatMoneyAr(unit);
+  if (qty > 1) {
+    const lineTotal = unit * qty;
+    const signedLine =
+      lineTotal < 0 ? `- ${formatMoneyAr(Math.abs(lineTotal))}` : formatMoneyAr(lineTotal);
+    return `${signedUnit} c/u · ${signedLine}`;
+  }
+  return signedUnit;
 }
 
 /** Texto listo para pegar en WhatsApp (negritas con *). */
@@ -488,11 +730,20 @@ function buildPauOrderWhatsAppText() {
   const lines = [];
 
   items.forEach((item) => {
+    const isSpecial = isSpecialAdjustmentItem(item);
+    const qty = Number(item.quantity) || 0;
+    const pricePart = formatItemPriceForCopy(item);
+
+    if (isSpecial) {
+      const desc = (item.product_name || "Ajuste").trim();
+      lines.push(`• ${desc} — x${qty} — ${pricePart}`);
+      return;
+    }
+
     const name = (item.product_name || "Producto").trim();
     const color = (item.color || "-").trim();
     const size = (item.size || "-").trim();
-    const qty = Number(item.quantity) || 0;
-    lines.push(`• ${name} — ${color} — Talle ${size} — x${qty}`);
+    lines.push(`• ${name} — ${color} — Talle ${size} — x${qty} — ${pricePart}`);
   });
 
   const totalQty = items.reduce((s, i) => s + (Number(i.quantity) || 0), 0);
@@ -576,8 +827,7 @@ async function selectCustomer(customer) {
     saveSession();
     hideRecentPanel();
     showComposeMode();
-    updateCloseButtonState();
-    updateAddToOrderButton();
+    refreshOrderFooterButtons();
     await refreshOrderUi();
   } catch (err) {
     console.error(err);
@@ -591,6 +841,7 @@ function showLandingMode() {
   els.phoneConfirm.hidden = true;
   els.top.hidden = true;
   hideRecentPanel();
+  setAdjustPanelOpen(false);
   els.customerSearch.focus();
 }
 
@@ -603,6 +854,8 @@ function goToCustomerSearchLanding() {
   state.orderExpanded = false;
   state.qrQueue = [];
   state.qrProcessing = false;
+  setAdjustPanelOpen(false);
+  closeAdjustDialog();
   resetManualPicker();
   setManualMode(false);
 
@@ -620,8 +873,7 @@ function goToCustomerSearchLanding() {
   els.orderItems.hidden = true;
   els.expandLabel.textContent = "Desplegar";
   renderDraft();
-  updateCloseButtonState();
-  updateAddToOrderButton();
+  refreshOrderFooterButtons();
 
   showLandingMode();
 }
@@ -632,6 +884,7 @@ function showPhoneConfirmMode() {
   els.phoneConfirm.hidden = false;
   els.top.hidden = true;
   hideRecentPanel();
+  setAdjustPanelOpen(false);
 }
 
 function showComposeMode() {
@@ -640,7 +893,8 @@ function showComposeMode() {
   els.compose.hidden = false;
   els.top.hidden = false;
   renderCustomerHeader();
-  updateCloseButtonState();
+  refreshOrderFooterButtons();
+  setAdjustPanelOpen(false);
   setManualMode(false);
   focusScanInput();
 }
@@ -945,15 +1199,23 @@ async function processQrQueue() {
   }
   state.qrProcessing = true;
   const code = state.qrQueue.shift();
+  let addedName = "";
   try {
     const item = await resolveQrCodeToOrderItem(code);
     mergeDraftItem(state.draft, item);
-    state.draft = await enrichDraftItemsWithStock(state.draft);
+    addedName = item.product_name || "";
+    try {
+      state.draft = await enrichDraftItemsWithStock(state.draft);
+    } catch (enrichErr) {
+      console.error(enrichErr);
+      showToast("Producto agregado; no se pudo recalcular stock del borrador");
+    }
     saveSession();
-    renderDraft();
-    showToast(`+ ${item.product_name}`);
+    if (addedName) showToast(`+ ${addedName}`);
   } catch (err) {
     showToast(err.message || "Error al escanear");
+  } finally {
+    renderDraft();
   }
   setTimeout(processQrQueue, 0);
 }
@@ -976,7 +1238,7 @@ function renderDraft() {
   const scannedNumEl = els.scannedCount.querySelector(".pau-scanned-count-num");
   if (scannedNumEl) scannedNumEl.textContent = String(totalQty);
   else els.scannedCount.textContent = `Escaneados: ${totalQty}`;
-  updateAddToOrderButton();
+  refreshOrderFooterButtons();
 
   els.draftList.innerHTML = "";
   state.draft.forEach((item, idx) => {
@@ -1002,7 +1264,7 @@ function renderDraft() {
 
 async function handleRemoveOrderItem(orderItemId) {
   if (!orderItemId || !state.order?.id) return;
-  if (!can("orders", "edit")) {
+  if (!PAU_PERMISSIONS.ordersEdit) {
     alert("No tenés permiso para editar pedidos.");
     return;
   }
@@ -1046,8 +1308,7 @@ async function refreshOrderUi() {
     els.orderItems.hidden = true;
     state.orderExpanded = false;
     els.expandLabel.textContent = "Desplegar";
-    updateCloseButtonState();
-    updateAddToOrderButton();
+    refreshOrderFooterButtons();
     return;
   }
 
@@ -1057,8 +1318,7 @@ async function refreshOrderUi() {
     els.orderSummary.innerHTML = '<span class="pau-status-sin-pedido">Sin pedido</span>';
     els.orderItems.innerHTML = "";
     els.orderItems.hidden = true;
-    updateCloseButtonState();
-    updateAddToOrderButton();
+    refreshOrderFooterButtons();
     return;
   }
 
@@ -1067,8 +1327,7 @@ async function refreshOrderUi() {
     els.orderSummary.innerHTML = '<span class="pau-status-sin-pedido">Sin pedido</span>';
     els.orderItems.innerHTML = "";
     els.orderItems.hidden = true;
-    updateCloseButtonState();
-    updateAddToOrderButton();
+    refreshOrderFooterButtons();
     return;
   }
 
@@ -1077,25 +1336,39 @@ async function refreshOrderUi() {
   const total = Number(state.order.total_amount) || 0;
   els.orderSummary.textContent = `Pedido: ${qty} producto(s) · $${total.toLocaleString("es-AR")}`;
 
-  const canRemoveSaved = can("orders", "edit");
+  const canRemoveSaved = PAU_PERMISSIONS.ordersEdit;
   const orderStatus = normOrderStatus(state.order);
   const orderLocked = orderStatus === "closed" || orderStatus === "cancelled";
+  const sortedItems = [...items].sort((a, b) => {
+    const aExtra = isSpecialAdjustmentItem(a);
+    const bExtra = isSpecialAdjustmentItem(b);
+    if (aExtra !== bExtra) return aExtra ? 1 : -1;
+    return 0;
+  });
 
   els.orderItems.innerHTML = "";
-  items.forEach((item) => {
+  sortedItems.forEach((item) => {
     const itemStatus = normOrderStatus({ status: item.status });
     const removable =
       canRemoveSaved &&
       !orderLocked &&
       item.id &&
       itemStatus !== "cancelled";
+    const isSpecial = isSpecialAdjustmentItem(item);
+    const signedAmount = Number(item.price_snapshot) || 0;
+    const specialLabel = isSpecial ? (signedAmount < 0 ? "➖ Resta" : "➕ Extra") : "";
+    const displayName = isSpecial
+      ? `${specialLabel}: ${item.product_name || "Ajuste"}`
+      : (item.product_name || "Producto");
+    const detailColor = isSpecial ? "Ajuste" : (item.color || "-");
+    const detailSize = isSpecial ? "—" : `Talle ${item.size || "-"}`;
     const li = document.createElement("li");
     li.className = "pau-item-row";
     li.innerHTML = `
       <div class="pau-item-main">
-        <strong class="pau-item-name">${escapeHtml(item.product_name || "Producto")}</strong>
-        <span class="pau-item-detail">${escapeHtml(item.color || "-")}</span>
-        <span class="pau-item-detail">Talle ${escapeHtml(item.size || "-")}</span>
+        <strong class="pau-item-name">${escapeHtml(displayName)}</strong>
+        <span class="pau-item-detail">${escapeHtml(detailColor)}</span>
+        <span class="pau-item-detail">${escapeHtml(detailSize)}</span>
         <span class="pau-item-qty">x${item.quantity}</span>
       </div>
       ${
@@ -1109,8 +1382,7 @@ async function refreshOrderUi() {
 
   renderCustomerHeader();
 
-  updateCloseButtonState();
-  updateAddToOrderButton();
+  refreshOrderFooterButtons();
 }
 
 function openCloseActionDialog() {
@@ -1127,7 +1399,7 @@ function setCloseActionButtonsDisabled(disabled) {
 
 async function handleCloseOrderWithPayment(paymentMethod) {
   if (!state.order?.id) return;
-  if (!can("orders", "edit")) {
+  if (!PAU_PERMISSIONS.ordersEdit) {
     alert("No tenés permiso para editar pedidos.");
     return;
   }
@@ -1148,7 +1420,7 @@ async function handleCloseOrderWithPayment(paymentMethod) {
 
 async function handleSendOrderToLocal() {
   if (!state.order?.id) return;
-  if (!can("orders", "edit")) {
+  if (!PAU_PERMISSIONS.ordersEdit) {
     alert("No tenés permiso para editar pedidos.");
     return;
   }
@@ -1178,7 +1450,7 @@ async function handleSendOrderToLocal() {
 
 async function handleAddToOrder() {
   if (!state.customer?.id || !state.draft.length) return;
-  if (!can("orders", "edit")) {
+  if (!PAU_PERMISSIONS.ordersEdit) {
     alert("No tenés permiso para editar pedidos.");
     return;
   }
@@ -1220,7 +1492,6 @@ async function handleAddToOrder() {
       alert(msg);
     }
   } finally {
-    updateAddToOrderButton();
     renderDraft();
   }
 }
@@ -1269,14 +1540,25 @@ async function handleSharedPhoneText(text) {
   if (!digits || digits.length < 8) return false;
 
   localStorage.setItem(STORAGE.phone, digits);
-  const phoneLast4 = digits.slice(-4);
+  const phoneSuffix7 = getPhoneSearchSuffix(text, PHONE_SEARCH_SUFFIX_LEN);
+  const phoneIlike = phoneSuffix7 || digits.slice(-4);
   const { data } = await supabase
     .from("customers")
     .select("id, full_name, phone, city, province, dni")
-    .or(`phone.ilike.%${phoneLast4}%`)
-    .limit(10);
+    .not("phone", "is", null)
+    .ilike("phone", `%${phoneIlike}%`)
+    .limit(30);
 
-  const list = data || [];
+  let list = (data || []).filter((c) => phonesMatchBySuffix(text, c.phone));
+  if (!list.length && phoneSuffix7.length >= PHONE_SEARCH_SUFFIX_LEN) {
+    const { data: broader } = await supabase
+      .from("customers")
+      .select("id, full_name, phone, city, province, dni")
+      .not("phone", "is", null)
+      .limit(200);
+    list = (broader || []).filter((c) => phonesMatchBySuffix(text, c.phone));
+  }
+
   if (!list.length) {
     showToast("No hay clienta con ese teléfono");
     return true;
@@ -1284,7 +1566,7 @@ async function handleSharedPhoneText(text) {
 
   const match =
     list.find((c) => normalizePhoneForSearch(c.phone) === digits) ||
-    list.find((c) => String(c.phone || "").replace(/\D/g, "").includes(digits)) ||
+    list.find((c) => phonesMatchBySuffix(text, c.phone)) ||
     list[0];
 
   state.pendingPhoneCustomer = match;
@@ -1294,7 +1576,7 @@ async function handleSharedPhoneText(text) {
 }
 
 function openCreateCustomerDialog() {
-  if (!can("customers", "edit")) {
+  if (!PAU_PERMISSIONS.customersEdit) {
     alert("No tenés permiso para crear clientas. Pedile a un administrador permiso de edición en Clientes.");
     return;
   }
@@ -1358,7 +1640,7 @@ async function handleCreateCustomerSubmit(ev) {
 }
 
 function setupCreateCustomerUi() {
-  if (can("customers", "edit") && els.createCustomerBtn) {
+  if (PAU_PERMISSIONS.customersEdit && els.createCustomerBtn) {
     els.createCustomerBtn.hidden = false;
   }
 
@@ -1407,6 +1689,18 @@ els.manualBack.addEventListener("click", manualGoBack);
 els.manualAddPicks.addEventListener("click", flushManualPendingToDraft);
 els.addBtn.addEventListener("click", handleAddToOrder);
 els.copyOrderBtn?.addEventListener("click", () => void handleCopyOrder());
+els.adjustToggleBtn?.addEventListener("click", () => {
+  if (!canUseOrderAdjustments()) return;
+  setAdjustPanelOpen(Boolean(els.adjustPanel?.hidden));
+});
+els.adjustPlusBtn?.addEventListener("click", () => openAdjustDialog("plus"));
+els.adjustMinusBtn?.addEventListener("click", () => openAdjustDialog("minus"));
+els.adjustForm?.addEventListener("submit", (e) => void submitAdjustForm(e));
+els.adjustCancel?.addEventListener("click", closeAdjustDialog);
+els.adjustDialog?.addEventListener("cancel", (e) => {
+  e.preventDefault();
+  closeAdjustDialog();
+});
 els.closeBtn.addEventListener("click", openCloseDialog);
 els.closeActionCancel.addEventListener("click", () => els.closeActionDialog.close());
 els.closeContraRem.addEventListener("click", () => {

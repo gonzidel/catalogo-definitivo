@@ -1,17 +1,8 @@
 import {
   canonicalTagKey,
-  normalizeTagBasic,
+  normalizeRootCategoryKey,
   normalizeTagDisplay,
 } from "./tag-normalize.ts";
-
-/** Raíz FYL (Calzado/Ropa/Otros): no usar singularización de canonicalTagKey en "Otros". */
-function normalizeRootCategoryKey(categoryRaw: string): string {
-  const basic = normalizeTagBasic(categoryRaw);
-  if (basic === "calzado" || basic === "calzados") return "calzado";
-  if (basic === "ropa") return "ropa";
-  if (basic === "otros" || basic === "otro") return "otros";
-  return canonicalTagKey(categoryRaw);
-}
 
 /** product_type FYL: "Calzado > Botas" (display; keys vía canonicalTagKey). */
 export function buildProductType(categoryRaw: string, filtro1Raw: string): string {

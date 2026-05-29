@@ -4,8 +4,10 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
-import { META_CSV_HEADERS_PHASE1 } from "./csv-schema.ts";
+import { META_CSV_HEADERS_PHASE3 } from "./csv-schema.ts";
 import { applyPhase1Enrichment } from "./enrichment-phase1.ts";
+import { applyPhase2Enrichment } from "./enrichment-phase2.ts";
+import { applyPhase3Enrichment } from "./enrichment-phase3.ts";
 
 // Whitelist de origins permitidos
 const ALLOWED_ORIGINS = [
@@ -267,14 +269,19 @@ serve(async (req) => {
         id: safeId,
         title: row.title ? String(row.title).trim() : "",
         description: row.description ? String(row.description).trim() : "",
-        price: normalizePriceForMeta(row.price != null ? String(row.price) : ""),
+        price: normalizePriceForMeta(
+          row.list_price != null ? String(row.list_price) : (row.price != null ? String(row.price) : ""),
+        ),
         link: safeLink,
         image_link: normalizeCloudinaryURL(row.image_link || ""),
         availability: normalizeAvailability(row.availability),
         condition: "new",
         brand: row.brand ? String(row.brand).trim() : "FYL",
       };
-      return applyPhase1Enrichment(base as Record<string, unknown>);
+      const enriched = applyPhase2Enrichment(
+        applyPhase1Enrichment(base as Record<string, unknown>) as Record<string, unknown>,
+      );
+      return applyPhase3Enrichment(enriched, normalizeCloudinaryURL);
     });
 
     // Filtro de calidad para catálogo de producción (RPC ya excluye sin stock)
@@ -320,7 +327,7 @@ serve(async (req) => {
       `[meta-feed] Filtering summary: rpc_rows=${normalizedData.length}, excluded_sin_stock=${excludedSinStock}, excluded_sin_sku=${excludedSinSku}, excluded_sin_titulo=${excludedSinTitulo}, excluded_sin_imagen=${excludedSinImagen}, excluded_sin_precio=${excludedSinPrecio}, published=${filteredData.length}`
     );
     console.log(`[meta-feed] Sample exported SKUs: ${sampleExportedSkus.join(", ") || "(none)"}`);
-    console.log(`[meta-feed] CSV phase=1 headers=${META_CSV_HEADERS_PHASE1.join("|")}`);
+    console.log(`[meta-feed] CSV phase=3 headers=${META_CSV_HEADERS_PHASE3.join("|")}`);
 
     // Aplicar limit si se especifica
     const finalData = limit !== null && limit > 0 ? filteredData.slice(0, limit) : filteredData;
@@ -343,8 +350,8 @@ serve(async (req) => {
           total: filteredData.length,
           returned: finalData.length,
           debug: {
-            feed_phase: 1,
-            csv_headers: [...META_CSV_HEADERS_PHASE1],
+            feed_phase: 3,
+            csv_headers: [...META_CSV_HEADERS_PHASE3],
             rpc_rows: normalizedData.length,
             excluded_sin_stock: excludedSinStock,
             excluded_sin_sku: excludedSinSku,
@@ -363,7 +370,7 @@ serve(async (req) => {
     }
 
     // Default: CSV
-    const csv = generateCSV(finalData, META_CSV_HEADERS_PHASE1);
+    const csv = generateCSV(finalData, META_CSV_HEADERS_PHASE3);
 
     // Headers para Meta Commerce Manager
     // Nota: Meta requiere CSV puro con Content-Type correcto y sin Content-Disposition: attachment

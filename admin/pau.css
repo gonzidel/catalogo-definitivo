@@ -578,7 +578,7 @@
 }
 
 .pau-actions-row .pau-btn {
-  flex: 1;
+  flex: 1 1 0;
   min-width: 0;
   padding: 12px 10px;
   font-size: 14px;
@@ -597,6 +597,91 @@
 
 .pau-btn-copy-order:not(:disabled):active {
   background: #e8f5e9;
+}
+
+.pau-actions-row .pau-btn.pau-btn-adjust-order {
+  flex: 1.3 1 0;
+  padding: 16px 12px;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.pau-btn-adjust-order {
+  background: #fff;
+  color: #374151;
+  border: 2px solid #9ca3af;
+}
+
+.pau-btn-adjust-order.is-open,
+.pau-btn-adjust-order:not(:disabled):active {
+  background: #374151;
+  color: #fff;
+  border-color: #374151;
+}
+
+.pau-btn-close-main {
+  flex: 1.7 1 0 !important;
+}
+
+.pau-adjust-panel {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.pau-adjust-panel[hidden] {
+  display: none !important;
+}
+
+.pau-btn-adjust-plus {
+  background: #ecfdf3;
+  color: #14532d;
+  border: 2px solid #86efac;
+}
+
+.pau-btn-adjust-minus {
+  background: #fff1f2;
+  color: #9f1239;
+  border: 2px solid #fda4af;
+}
+
+.pau-dialog-adjust {
+  max-width: min(400px, calc(100vw - 12px));
+  margin: auto;
+}
+
+.pau-dialog-adjust .pau-dialog-inner {
+  padding: 16px;
+}
+
+.pau-adjust-title {
+  margin: 0 0 6px;
+  font-size: 18px;
+  text-align: center;
+}
+
+.pau-dialog-adjust.is-minus .pau-adjust-title {
+  color: #9f1239;
+}
+
+.pau-dialog-adjust.is-plus .pau-adjust-title {
+  color: #14532d;
+}
+
+.pau-adjust-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pau-adjust-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #444;
 }
 
 .pau-confirm-text {

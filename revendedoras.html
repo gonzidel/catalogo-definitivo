@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ser Revendedora de Calzado y Ropa — FYL Moda Mayorista</title>
+  <meta name="description" content="Vendé calzado y ropa femenina sin local ni inversión enorme. Comprá por mayor desde 4 productos, surtí modelos y talles libremente. Envíos a todo el país. ¡Empezá hoy!">
+  <link rel="canonical" href="https://fylmoda.com.ar/revendedoras">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="FYL Moda">
+  <meta property="og:title" content="Ser Revendedora de Calzado y Ropa — FYL Moda">
+  <meta property="og:description" content="Vendé calzado y ropa femenina sin local. Comprá por mayor desde 4 productos, surtido libre de talles, envíos a todo el país.">
+  <meta property="og:url" content="https://fylmoda.com.ar/revendedoras">
+  <meta property="og:image" content="https://fylmoda.com.ar/icons/icon-192x192.png">
+  <meta property="og:locale" content="es_AR">
+  <link rel="icon" href="/icons/icon-192x192.png" type="image/png">
+  <meta name="theme-color" content="#CD844D">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap">
+  <style>
+    :root {
+      --primary: #CD844D;
+      --primary-dark: #b8703a;
+      --primary-light: #f5ece3;
+      --text: #2d2d2d;
+      --muted: #666;
+      --border: #e8ddd4;
+      --radius: 12px;
+      --shadow: 0 2px 12px rgba(0,0,0,.07);
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Poppins', system-ui, sans-serif; color: var(--text); background: #fafaf8; line-height: 1.65; }
+    a { color: inherit; text-decoration: none; }
+    img { max-width: 100%; display: block; }
+
+    .container { max-width: 1100px; margin: 0 auto; padding: 0 20px; }
+
+    /* Header */
+    .site-header { background: #fff; border-bottom: 1px solid var(--border); padding: 12px 0; position: sticky; top: 0; z-index: 100; }
+    .site-header .inner { display: flex; align-items: center; justify-content: space-between; }
+    .logo { height: 38px; width: auto; }
+    .btn-wa { background: #25D366; color: white; padding: 9px 18px; border-radius: 8px; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 6px; transition: background .2s; white-space: nowrap; }
+    .btn-wa:hover { background: #1ebe5d; }
+    .btn-wa svg { width: 18px; height: 18px; fill: white; }
+
+    /* Breadcrumb */
+    .breadcrumb { font-size: 0.8rem; color: var(--muted); padding: 10px 0; }
+    .breadcrumb a { color: var(--primary); }
+    .breadcrumb span { margin: 0 6px; }
+
+    /* Hero */
+    .hero { background: linear-gradient(135deg, var(--primary-light) 0%, #fffaf6 100%); padding: 56px 0 48px; }
+    .hero h1 { font-size: clamp(1.6rem, 4vw, 2.6rem); font-weight: 700; line-height: 1.2; margin-bottom: 16px; }
+    .hero h1 em { font-style: normal; color: var(--primary); }
+    .hero .lead { font-size: 1.05rem; color: var(--muted); margin-bottom: 28px; max-width: 580px; }
+    .hero-ctas { display: flex; flex-wrap: wrap; gap: 12px; }
+    .btn-primary { background: var(--primary); color: white; padding: 14px 28px; border-radius: 10px; font-size: 1rem; font-weight: 600; display: inline-block; transition: background .2s; }
+    .btn-primary:hover { background: var(--primary-dark); }
+    .btn-outline { border: 2px solid var(--primary); color: var(--primary); padding: 13px 24px; border-radius: 10px; font-size: 1rem; font-weight: 600; display: inline-block; transition: all .2s; }
+    .btn-outline:hover { background: var(--primary-light); }
+
+    /* Stats */
+    .stats-row { display: flex; flex-wrap: wrap; gap: 28px; margin-top: 36px; }
+    .stat-num { font-size: 2rem; font-weight: 700; color: var(--primary); display: block; }
+    .stat-label { font-size: 0.8rem; color: var(--muted); }
+
+    /* Sections */
+    .section { padding: 52px 0; }
+    .section + .section { border-top: 1px solid var(--border); }
+    .section-label { font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--primary); margin-bottom: 6px; }
+    .section-title { font-size: clamp(1.3rem, 3vw, 1.8rem); font-weight: 700; margin-bottom: 8px; }
+    .section-sub { color: var(--muted); margin-bottom: 36px; max-width: 600px; }
+
+    /* Feature cards */
+    .features-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
+    .feature-card { background: white; border-radius: var(--radius); padding: 22px; border: 1px solid var(--border); box-shadow: var(--shadow); }
+    .feature-icon { font-size: 2rem; margin-bottom: 12px; }
+    .feature-card h3 { font-size: 1rem; font-weight: 600; margin-bottom: 6px; }
+    .feature-card p { font-size: 0.88rem; color: var(--muted); }
+
+    /* Steps */
+    .steps-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 20px; counter-reset: step; }
+    .step { display: flex; gap: 14px; align-items: flex-start; }
+    .step-num { min-width: 36px; height: 36px; background: var(--primary); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 1rem; flex-shrink: 0; }
+    .step-body h3 { font-size: .95rem; font-weight: 600; margin-bottom: 4px; }
+    .step-body p { font-size: .87rem; color: var(--muted); }
+
+    /* Category pills */
+    .cat-pills { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px; }
+    .cat-pill { background: white; border: 1px solid var(--border); border-radius: 30px; padding: 7px 16px; font-size: .88rem; font-weight: 600; color: var(--text); box-shadow: var(--shadow); }
+    .cat-pill span { color: var(--muted); font-weight: 400; }
+
+    /* FAQ */
+    .faq-grid { display: grid; gap: 12px; }
+    .faq-item { background: white; border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; }
+    .faq-item h3 { font-size: .95rem; font-weight: 600; color: var(--primary); margin-bottom: 6px; }
+    .faq-item p { font-size: .9rem; color: var(--muted); }
+
+    /* Testimonial */
+    .testimonial-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
+    .testimonial { background: white; border-radius: var(--radius); padding: 20px; border-left: 4px solid var(--primary); box-shadow: var(--shadow); }
+    .testimonial p { font-size: .9rem; color: var(--muted); font-style: italic; margin-bottom: 10px; }
+    .testimonial strong { font-size: .85rem; color: var(--text); }
+
+    /* CTA section */
+    .cta-section { background: var(--primary); padding: 56px 0; text-align: center; color: white; }
+    .cta-section h2 { font-size: clamp(1.4rem, 3vw, 2rem); margin-bottom: 12px; }
+    .cta-section p { opacity: .9; margin-bottom: 28px; font-size: 1.05rem; }
+    .btn-white { background: white; color: var(--primary); padding: 14px 32px; border-radius: 10px; font-size: 1rem; font-weight: 700; display: inline-block; transition: opacity .2s; }
+    .btn-white:hover { opacity: .9; }
+
+    /* Footer */
+    .site-footer { background: #2d2d2d; color: #bbb; padding: 28px 0; }
+    .site-footer .inner { display: flex; flex-wrap: wrap; gap: 16px; justify-content: space-between; align-items: center; font-size: .82rem; }
+    .site-footer a { color: #ccc; text-decoration: underline; }
+    .footer-links { display: flex; flex-wrap: wrap; gap: 16px; }
+
+    /* Floating WA */
+    .wa-float { position: fixed; bottom: 22px; right: 22px; background: #25D366; color: white; width: 54px; height: 54px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 16px rgba(37,211,102,.4); z-index: 999; transition: transform .2s; }
+    .wa-float:hover { transform: scale(1.08); }
+    .wa-float svg { width: 28px; height: 28px; fill: white; }
+
+    @media (max-width: 600px) {
+      .hero { padding: 36px 0 32px; }
+      .section { padding: 36px 0; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <header class="site-header">
+    <div class="container inner">
+      <a href="/catalogo" aria-label="FYL Moda — inicio">
+        <img src="/logo.png" alt="FYL Moda" class="logo">
+      </a>
+      <a class="btn-wa" href="https://wa.me/5493625172874" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+        Consultar por WhatsApp
+      </a>
+    </div>
+  </header>
+
+  <!-- Breadcrumb -->
+  <div class="container">
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <a href="/catalogo">Inicio</a><span>›</span>Revendedoras
+    </nav>
+  </div>
+
+  <!-- Hero -->
+  <section class="hero">
+    <div class="container">
+      <h1>Vendé Calzado y Ropa Femenina<br><em>sin local, sin experiencia previa</em></h1>
+      <p class="lead">Comprá por mayor desde 4 productos, elegís los modelos y talles que querés, y revendés con tu margen. FYL Moda te da acceso a más de 786 artículos con stock real y fotos listas para publicar.</p>
+      <div class="hero-ctas">
+        <a class="btn-primary" href="/catalogo">Ver catálogo completo</a>
+        <a class="btn-outline" href="https://wa.me/5493625172874" target="_blank" rel="noopener">Consultar por WhatsApp</a>
+      </div>
+      <div class="stats-row">
+        <div>
+          <span class="stat-num">786+</span>
+          <span class="stat-label">artículos en catálogo</span>
+        </div>
+        <div>
+          <span class="stat-num">4</span>
+          <span class="stat-label">productos mínimo de compra</span>
+        </div>
+        <div>
+          <span class="stat-num">100%</span>
+          <span class="stat-label">surtido libre de talles</span>
+        </div>
+        <div>
+          <span class="stat-num">🇦🇷</span>
+          <span class="stat-label">envíos a todo el país</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Por qué FYL -->
+  <section class="section" style="background: white;">
+    <div class="container">
+      <p class="section-label">Por qué elegir FYL</p>
+      <h2 class="section-title">Todo lo que necesitás para empezar a vender</h2>
+      <p class="section-sub">Sin contrato, sin cuota mensual, sin mínimo de colores. Comprás lo que querés, cuando querés.</p>
+      <div class="features-grid">
+        <div class="feature-card">
+          <div class="feature-icon">📦</div>
+          <h3>Mínimo accesible</h3>
+          <p>Podés arrancar comprando solo 4 productos. Combiná calzado, ropa y accesorios en el mismo pedido.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">👟</div>
+          <h3>Surtido libre de talles</h3>
+          <p>Elegís qué talles llevar de cada modelo. No estás obligada a comprar toda la numeración.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">📸</div>
+          <h3>Fotos listas para publicar</h3>
+          <p>El catálogo tiene imágenes profesionales de cada producto. Las usás directamente en tu tienda o redes.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">📊</div>
+          <h3>Stock en tiempo real</h3>
+          <p>El catálogo muestra el stock disponible al momento. Lo que ves en pantalla es lo que hay.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🚚</div>
+          <h3>Envíos a todo el país</h3>
+          <p>Coordinamos el envío a cualquier provincia. También podés retirar en Resistencia, Chaco.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🏭</div>
+          <h3>Fábrica propia de calzado</h3>
+          <p>Producimos calzado en nuestra propia fábrica. Stock constante y renovación permanente de modelos.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Qué podés vender -->
+  <section class="section">
+    <div class="container">
+      <p class="section-label">Catálogo disponible</p>
+      <h2 class="section-title">Más de 786 artículos para elegir</h2>
+      <p class="section-sub">Calzado, ropa e indumentaria femenina para todas las temporadas. Renovación constante de modelos.</p>
+      <div class="cat-pills">
+        <div class="cat-pill">Botas <span>95 modelos</span></div>
+        <div class="cat-pill">Zapatillas <span>94 modelos</span></div>
+        <div class="cat-pill">Texanas <span>37 modelos</span></div>
+        <div class="cat-pill">Borcegos <span>25 modelos</span></div>
+        <div class="cat-pill">Pantalones <span>120+ modelos</span></div>
+        <div class="cat-pill">Remeras <span>86 modelos</span></div>
+        <div class="cat-pill">Camperas <span>48 modelos</span></div>
+        <div class="cat-pill">Buzos y Sweaters <span>60 modelos</span></div>
+        <div class="cat-pill">Marroquinería <span>38 modelos</span></div>
+        <div class="cat-pill">Cintos y Accesorios <span>+25 modelos</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Cómo empezar -->
+  <section class="section" style="background: white;">
+    <div class="container">
+      <p class="section-label">Primeros pasos</p>
+      <h2 class="section-title">Empezar es más simple de lo que pensás</h2>
+      <p class="section-sub">Sin trámites, sin formularios. Desde que entrás al catálogo hasta que tenés la mercadería en tu puerta, el proceso es directo.</p>
+      <div class="steps-list">
+        <div class="step">
+          <div class="step-num">1</div>
+          <div class="step-body">
+            <h3>Explorá el catálogo</h3>
+            <p>Navegá los más de 786 artículos con fotos, precios mayoristas y stock disponible en tiempo real.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <div class="step-body">
+            <h3>Seleccioná lo que querés</h3>
+            <p>Elegís los modelos, colores y talles que más se venden en tu zona. Mínimo 4 productos.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <div class="step-body">
+            <h3>Consultá por WhatsApp</h3>
+            <p>Nos escribís con tu selección y coordinamos el precio, pago y envío. Respuesta rápida garantizada.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num">4</div>
+          <div class="step-body">
+            <h3>Recibís y empezás a vender</h3>
+            <p>Recibís la mercadería con fotos listas para publicar. Ponés tu precio y vendés en tus canales.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FAQ -->
+  <section class="section">
+    <div class="container">
+      <p class="section-label">Preguntas frecuentes</p>
+      <h2 class="section-title">Dudas comunes de revendedoras</h2>
+      <p class="section-sub"></p>
+      <div class="faq-grid">
+        <div class="faq-item">
+          <h3>¿Necesito tener un local o negocio abierto?</h3>
+          <p>No. Podés revendernos desde cualquier canal: WhatsApp, Instagram, Facebook Marketplace, ferias o boca a boca. No pedimos ningún tipo de habilitación comercial.</p>
+        </div>
+        <div class="faq-item">
+          <h3>¿Cuál es la compra mínima para revendedoras?</h3>
+          <p>El pedido mínimo es de 4 productos combinables. Podés mezclar calzado, ropa y accesorios en el mismo pedido. Surtido libre de modelos y talles.</p>
+        </div>
+        <div class="faq-item">
+          <h3>¿Cómo sé cuánto margen puedo ganar?</h3>
+          <p>El margen depende del canal y la zona. En promedio, las revendedoras aplican entre un 40% y 80% sobre el precio mayorista. Al ver el catálogo con precios, podés calcular cuánto querés cobrar vos.</p>
+        </div>
+        <div class="faq-item">
+          <h3>¿FYL hace envíos fuera de Chaco?</h3>
+          <p>Sí, realizamos envíos a todo el país. Coordinamos el transporte y el costo de envío se acuerda por WhatsApp según destino y volumen.</p>
+        </div>
+        <div class="faq-item">
+          <h3>¿Cada cuánto se renuevan los modelos?</h3>
+          <p>El catálogo se actualiza constantemente. Tenemos fábrica propia de calzado, lo que nos permite incorporar modelos nuevos con frecuencia. También recibimos indumentaria de temporada regularmente.</p>
+        </div>
+        <div class="faq-item">
+          <h3>¿Puedo ver el stock antes de comprar?</h3>
+          <p>Sí. El catálogo online muestra el stock en tiempo real. Lo que ves disponible es lo que hay — sin necesidad de confirmar por teléfono.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA -->
+  <section class="cta-section">
+    <div class="container">
+      <h2>¿Lista para empezar a vender?</h2>
+      <p>Entrá al catálogo, elegí tus primeros modelos y escribinos por WhatsApp.<br>Te respondemos rápido y coordinamos tu primer pedido.</p>
+      <a class="btn-white" href="/catalogo">Ver catálogo y precios mayoristas</a>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="site-footer">
+    <div class="container inner">
+      <span>© 2026 FYL Moda — Mayorista de Calzado e Indumentaria Femenina</span>
+      <div class="footer-links">
+        <a href="/catalogo">Catálogo</a>
+        <a href="/calzado-femenino-por-mayor">Calzado</a>
+        <a href="/ropa-femenina-por-mayor">Ropa</a>
+        <a href="/quienes-somos">Quiénes somos</a>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Floating WhatsApp -->
+  <a class="wa-float" href="https://wa.me/5493625172874" target="_blank" rel="noopener" aria-label="Contactar por WhatsApp">
+    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+  </a>
+
+  <!-- Schema -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebPage",
+    "name": "Ser Revendedora de Calzado y Ropa — FYL Moda",
+    "description": "Vendé calzado y ropa femenina por mayor. Mínimo 4 productos, surtido libre de talles, envíos a todo el país.",
+    "url": "https://fylmoda.com.ar/revendedoras",
+    "isPartOf": { "@type": "WebSite", "url": "https://fylmoda.com.ar", "name": "FYL Moda" },
+    "breadcrumb": {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "Inicio", "item": "https://fylmoda.com.ar/catalogo" },
+        { "@type": "ListItem", "position": 2, "name": "Revendedoras", "item": "https://fylmoda.com.ar/revendedoras" }
+      ]
+    }
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "¿Necesito tener un local o negocio abierto para comprar a FYL?",
+        "acceptedAnswer": { "@type": "Answer", "text": "No. Podés revender desde cualquier canal: WhatsApp, Instagram, ferias o boca a boca. No pedimos habilitación comercial." }
+      },
+      {
+        "@type": "Question",
+        "name": "¿Cuál es la compra mínima para revendedoras?",
+        "acceptedAnswer": { "@type": "Answer", "text": "El pedido mínimo es de 4 productos combinables. Podés mezclar calzado, ropa y accesorios con surtido libre de modelos y talles." }
+      },
+      {
+        "@type": "Question",
+        "name": "¿FYL hace envíos a todo el país?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Sí. Realizamos envíos a todo el país. También podés retirar en Resistencia, Chaco." }
+      },
+      {
+        "@type": "Question",
+        "name": "¿Cada cuánto se renuevan los modelos del catálogo?",
+        "acceptedAnswer": { "@type": "Answer", "text": "El catálogo se actualiza constantemente. Tenemos fábrica propia de calzado e incorporamos indumentaria de temporada de forma regular." }
+      }
+    ]
+  }
+  </script>
+
+</body>
+</html>

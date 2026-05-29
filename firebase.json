@@ -109,6 +109,54 @@
         "destination": "/catalogo.html"
       },
       {
+        "source": "/revendedoras",
+        "destination": "/revendedoras.html"
+      },
+      {
+        "source": "/revendedoras/**",
+        "destination": "/revendedoras.html"
+      },
+      {
+        "source": "/calzado-femenino-por-mayor",
+        "destination": "/calzado-femenino-por-mayor.html"
+      },
+      {
+        "source": "/calzado-femenino-por-mayor/**",
+        "destination": "/calzado-femenino-por-mayor.html"
+      },
+      {
+        "source": "/ropa-femenina-por-mayor",
+        "destination": "/ropa-femenina-por-mayor.html"
+      },
+      {
+        "source": "/ropa-femenina-por-mayor/**",
+        "destination": "/ropa-femenina-por-mayor.html"
+      },
+      {
+        "source": "/quienes-somos",
+        "destination": "/quienes-somos.html"
+      },
+      {
+        "source": "/quienes-somos/**",
+        "destination": "/quienes-somos.html"
+      },
+      {
+        "source": "/lenceria-por-mayor",
+        "destination": "/lenceria-por-mayor.html"
+      },
+      {
+        "source": "/lenceria-por-mayor/**",
+        "destination": "/lenceria-por-mayor.html"
+      },
+      {
+        "source": "/accesorios-por-mayor",
+        "destination": "/accesorios-por-mayor.html"
+      },
+      {
+        "source": "/accesorios-por-mayor/**",
+        "destination": "/accesorios-por-mayor.html"
+      },
+      {
         "source": "**",
         "destination": "/catalogo.html"
       }

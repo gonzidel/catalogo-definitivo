@@ -188,10 +188,55 @@ const categoryFilterRecommended = document.getElementById("category-filter-recom
 const categoryFilterLowStock = document.getElementById("category-filter-low-stock");
 const categoryFilterAll = document.getElementById("category-filter-all");
 const filterNeverPublished = document.getElementById("filter-never-published");
-const filterDays30Plus = document.getElementById("filter-days-30-plus");
+const filterStaleDays = document.getElementById("filter-stale-days");
 const supplierFilterAll = document.getElementById("supplier-filter-all");
+const supplierSortToggleBtn = document.getElementById("supplier-sort-toggle");
 
-const STALE_PUBLICATION_DAYS = 30;
+/** Con proveedor activo: true = más recientes publicados primero (default). */
+let supplierPublishNewestFirst = true;
+
+const STALE_PUBLICATION_DAY_OPTIONS = [7, 15, 20, 30];
+
+function getStaleDaysThreshold() {
+  const days = Number(filterStaleDays?.value);
+  return STALE_PUBLICATION_DAY_OPTIONS.includes(days) ? days : null;
+}
+
+function sortByPublicationDate(items, newestFirst = true) {
+  return [...items].sort((a, b) => {
+    const ta = a.last_published_at ? new Date(a.last_published_at).getTime() : null;
+    const tb = b.last_published_at ? new Date(b.last_published_at).getTime() : null;
+
+    if (ta === null && tb === null) {
+      return String(a.productName ?? "").localeCompare(String(b.productName ?? ""), "es");
+    }
+    if (ta === null) return newestFirst ? 1 : -1;
+    if (tb === null) return newestFirst ? -1 : 1;
+    if (ta !== tb) return newestFirst ? tb - ta : ta - tb;
+
+    return String(a.productName ?? "").localeCompare(String(b.productName ?? ""), "es");
+  });
+}
+
+function applySupplierPublicationSort(items, filterState = getAllTabFilterState()) {
+  if (!filterState.supplierId) return items;
+  return sortByPublicationDate(items, supplierPublishNewestFirst);
+}
+
+function syncSupplierSortToggleUi() {
+  if (!supplierSortToggleBtn) return;
+  const hasSupplier = !!supplierFilterAll?.value;
+  supplierSortToggleBtn.disabled = !hasSupplier;
+  if (!hasSupplier) {
+    supplierPublishNewestFirst = true;
+    supplierSortToggleBtn.textContent = "Antiguos primero";
+    return;
+  }
+  supplierSortToggleBtn.textContent = supplierPublishNewestFirst
+    ? "Antiguos primero"
+    : "Recientes primero";
+}
+
 const newContainer = document.getElementById("new-products-container");
 const recommendedContainer = document.getElementById("recommended-products-container");
 const lowStockContainer = document.getElementById("low-stock-products-container");
@@ -444,6 +489,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     runPublicationsTask("boot:new", () => loadNewProducts(true));
   }
   await loadPublicationSuppliers();
+  syncSupplierSortToggleUi();
   initPublicationImageUploadModal();
   // La pestaña "Todo" es la activa por defecto; muestra ayuda hasta activar un filtro
 });
@@ -653,6 +699,7 @@ async function groupProductsByColor(products, batchSize = 10) {
               productName: product.name,
               category: product.category,
               description: product.description || "",
+              supplierId: product.supplier_id ?? null,
               color,
               created_at: product.created_at,
               last_published_at: resolveColorPublishedAt(product.last_published_at, colorData),
@@ -708,7 +755,7 @@ function getAllTabFilterState() {
     searchQuery: searchAll?.value?.trim() || "",
     categoryValue: categoryFilterAll?.value || "",
     neverPublished: filterNeverPublished?.checked === true,
-    days30Plus: filterDays30Plus?.checked === true,
+    staleDays: getStaleDaysThreshold(),
     supplierId: supplierFilterAll?.value || "",
   };
 }
@@ -718,21 +765,26 @@ function hasActiveAllTabFilters(state = getAllTabFilterState()) {
     state.searchQuery ||
     state.categoryValue ||
     state.neverPublished ||
-    state.days30Plus ||
+    state.staleDays ||
     state.supplierId
   );
 }
 
 function applyAllTabClientFilters(items, state = getAllTabFilterState()) {
   let filtered = items;
+  if (state.supplierId) {
+    filtered = filtered.filter(
+      item => String(item.supplierId ?? item.supplier_id ?? "") === String(state.supplierId)
+    );
+  }
   if (state.neverPublished) {
     filtered = filtered.filter(item => !item.last_published_at);
   }
-  if (state.days30Plus) {
+  if (state.staleDays) {
     filtered = filtered.filter(item => {
       if (!item.last_published_at) return false;
       const days = daysSincePublished(item.last_published_at);
-      return days !== null && days > STALE_PUBLICATION_DAYS;
+      return days !== null && days > state.staleDays;
     });
   }
   return filtered;
@@ -742,9 +794,9 @@ function applyServerFiltersToAllProductsQuery(query, state = getAllTabFilterStat
   if (state.neverPublished) {
     query = query.is("last_published_at", null);
   }
-  if (state.days30Plus) {
+  if (state.staleDays) {
     const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - STALE_PUBLICATION_DAYS);
+    cutoff.setDate(cutoff.getDate() - state.staleDays);
     query = query.not("last_published_at", "is", null).lt("last_published_at", cutoff.toISOString());
   }
   if (state.supplierId) {
@@ -1499,8 +1551,7 @@ async function searchAllProductsDirect(filterState = getAllTabFilterState()) {
     // Construir consulta base - TODOS los productos sin importar estado
     let query = supabase
       .from("products")
-      .select("id, name, category, description, created_at, last_published_at, publication_status, status, supplier_id")
-      .order("created_at", { ascending: false });
+      .select("id, name, category, description, created_at, last_published_at, publication_status, status, supplier_id");
 
     // Cancelar request HTTP si el usuario cambia la búsqueda mientras está en vuelo
     if (typeof query.abortSignal === "function") {
@@ -1508,6 +1559,15 @@ async function searchAllProductsDirect(filterState = getAllTabFilterState()) {
     }
 
     query = applyServerFiltersToAllProductsQuery(query, filterState);
+
+    if (filterState.supplierId) {
+      query = query.order("last_published_at", {
+        ascending: !supplierPublishNewestFirst,
+        nullsFirst: !supplierPublishNewestFirst,
+      });
+    } else {
+      query = query.order("created_at", { ascending: false });
+    }
     
     // Aplicar filtro de categoría si existe
     if (categoryValue && categoryValue.trim()) {
@@ -1561,6 +1621,7 @@ async function searchAllProductsDirect(filterState = getAllTabFilterState()) {
       filtered = initialGrouped.filter(item => matchesProductSearch(item, searchLower));
     }
     filtered = applyAllTabClientFilters(filtered, filterState);
+    filtered = applySupplierPublicationSort(filtered, filterState);
     
     // Guardar productos en el estado para que estén disponibles cuando se seleccionen
     state.allLoaded = initialGrouped; // Guardar todos los productos agrupados (sin filtrar)
@@ -1589,7 +1650,8 @@ async function searchAllProductsDirect(filterState = getAllTabFilterState()) {
         remainingFiltered = applyAllTabClientFilters(remainingFiltered, filterState);
         // Combinar y guardar todos los resultados en el estado
         const allGrouped = [...initialGrouped, ...remainingGrouped];
-        const allFiltered = [...filtered, ...remainingFiltered];
+        let allFiltered = [...filtered, ...remainingFiltered];
+        allFiltered = applySupplierPublicationSort(allFiltered, filterState);
         state.allLoaded = allGrouped; // Guardar todos los productos agrupados (sin filtrar)
         allProducts = allFiltered; // Guardar productos filtrados para mostrar
         if (isLatest()) {
@@ -1619,11 +1681,19 @@ async function searchAllProductsDirect(filterState = getAllTabFilterState()) {
   }
 }
 
-// Cargar todos los productos (sin filtros)
+// Cargar todos los productos (sin filtros; con filtros activos usa búsqueda directa en servidor)
 async function loadAllProducts(reset = false) {
   const state = paginationState.all;
   
   if (state.loading) return;
+
+  // Proveedor / checkboxes de publicación requieren filtro en servidor, no carga masiva local.
+  if (reset || state.allLoaded.length === 0) {
+    if (hasActiveAllTabFilters()) {
+      await searchAllProductsDirect();
+      return;
+    }
+  }
   
   try {
     state.loading = true;
@@ -1634,7 +1704,7 @@ async function loadAllProducts(reset = false) {
       // Cargar TODOS los productos sin importar el estado
       const { data: products, error } = await supabase
         .from("products")
-        .select("id, name, category, description, created_at, last_published_at, publication_status, status")
+        .select("id, name, category, description, created_at, last_published_at, publication_status, status, supplier_id")
         .order("created_at", { ascending: false });
       
       if (error) {
@@ -1673,16 +1743,7 @@ async function loadAllProducts(reset = false) {
       allProducts = firstBatch;
       state.offset = state.limit;
       
-      // Aplicar filtros actuales inmediatamente para mostrar resultados de búsqueda
-      if (hasActiveAllTabFilters()) {
-        const fs = getAllTabFilterState();
-        let filtered = searchProducts(fs.searchQuery, initialGrouped, fs.categoryValue);
-        filtered = applyAllTabClientFilters(filtered, fs);
-        renderAllProducts(filtered);
-      } else {
-        // Si no hay búsqueda, mostrar primeros productos
-        renderAllProducts();
-      }
+      renderAllProducts();
       
       populateCategoryFilters(); // Actualizar filtros de categorías
       hideLoadingIndicator('all');
@@ -2198,7 +2259,7 @@ function renderAllProducts(filtered = null) {
   }
   
   if (!hasActiveAllTabFilters()) {
-    container.innerHTML = '<div class="empty-state" style="text-align: center; padding: 40px; color: #6c757d;"><p style="font-size: 18px; margin-bottom: 12px;">🔍 Buscá o filtrá productos para ver resultados</p><p style="font-size: 14px;">Usá el buscador, una categoría, los checkboxes o un proveedor para comenzar</p></div>';
+    container.innerHTML = '<div class="empty-state" style="text-align: center; padding: 40px; color: #6c757d;"><p style="font-size: 18px; margin-bottom: 12px;">🔍 Buscá o filtrá productos para ver resultados</p><p style="font-size: 14px;">Usá el buscador, una categoría, antigüedad sin publicar o un proveedor para comenzar</p></div>';
     return;
   }
   
@@ -2561,10 +2622,10 @@ window.copyImageUrls = async function(productId, color) {
 };
 
 async function refreshAllProductLists() {
-  await loadNewProducts();
-  await loadRecommendedProducts();
-  await loadLowStockProducts();
-  await loadAllProducts();
+  await loadNewProducts(true);
+  await loadRecommendedProducts(true);
+  await loadLowStockProducts(true);
+  await loadAllProducts(true);
   populateCategoryFilters(); // Actualizar filtros de categorías después de cargar productos
   renderPublicationTable();
 }
@@ -3403,11 +3464,18 @@ if (categoryFilterLowStock) {
 }
 
 function applyAllTabExtraFilters(changedEl) {
-  if (changedEl === filterNeverPublished && filterNeverPublished?.checked && filterDays30Plus) {
-    filterDays30Plus.checked = false;
+  if (changedEl === filterNeverPublished && filterNeverPublished?.checked && filterStaleDays) {
+    filterStaleDays.value = "";
   }
-  if (changedEl === filterDays30Plus && filterDays30Plus?.checked && filterNeverPublished) {
+  if (changedEl === filterStaleDays && getStaleDaysThreshold() && filterNeverPublished) {
     filterNeverPublished.checked = false;
+  }
+  if (changedEl === supplierFilterAll && !supplierFilterAll?.value) {
+    supplierPublishNewestFirst = true;
+    syncSupplierSortToggleUi();
+  } else if (changedEl === supplierFilterAll && supplierFilterAll?.value) {
+    supplierPublishNewestFirst = true;
+    syncSupplierSortToggleUi();
   }
   applyFilters("all", searchAll, categoryFilterAll, renderAllProducts);
 }
@@ -3415,11 +3483,19 @@ function applyAllTabExtraFilters(changedEl) {
 if (filterNeverPublished) {
   filterNeverPublished.addEventListener("change", () => applyAllTabExtraFilters(filterNeverPublished));
 }
-if (filterDays30Plus) {
-  filterDays30Plus.addEventListener("change", () => applyAllTabExtraFilters(filterDays30Plus));
+if (filterStaleDays) {
+  filterStaleDays.addEventListener("change", () => applyAllTabExtraFilters(filterStaleDays));
 }
 if (supplierFilterAll) {
   supplierFilterAll.addEventListener("change", () => applyAllTabExtraFilters(supplierFilterAll));
+}
+if (supplierSortToggleBtn) {
+  supplierSortToggleBtn.addEventListener("click", () => {
+    if (!supplierFilterAll?.value) return;
+    supplierPublishNewestFirst = !supplierPublishNewestFirst;
+    syncSupplierSortToggleUi();
+    applyFilters("all", searchAll, categoryFilterAll, renderAllProducts);
+  });
 }
 
 if (categoryFilterAll) {

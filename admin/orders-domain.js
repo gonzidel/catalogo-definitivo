@@ -20,6 +20,44 @@ export function tokenizeCustomerSearch(value) {
     .filter(Boolean);
 }
 
+/** Dígitos locales AR sin prefijo país ni 0 inicial (para comparar sufijos). */
+export function normalizePhoneDigitsForMatch(text) {
+  let d = String(text || "").replace(/\D/g, "");
+  if (!d) return "";
+  if (d.startsWith("54") && d.length > 10) d = d.slice(2);
+  if (d.startsWith("0")) d = d.slice(1);
+  return d;
+}
+
+export const PHONE_SEARCH_SUFFIX_LEN = 7;
+
+export function getPhoneSearchSuffix(text, suffixLen = PHONE_SEARCH_SUFFIX_LEN) {
+  const d = normalizePhoneDigitsForMatch(text);
+  if (!d) return "";
+  const len = Math.min(suffixLen, d.length);
+  return len >= 4 ? d.slice(-len) : "";
+}
+
+/** Coincide por últimos N dígitos (prioridad 7): tolera +54, espacios, guiones, etc. */
+export function phonesMatchBySuffix(
+  queryText,
+  storedPhone,
+  suffixLen = PHONE_SEARCH_SUFFIX_LEN
+) {
+  const q = normalizePhoneDigitsForMatch(queryText);
+  const p = normalizePhoneDigitsForMatch(storedPhone);
+  if (!q || !p) return false;
+
+  const compareLen = Math.min(suffixLen, q.length, p.length);
+  if (compareLen < 4) return false;
+
+  if (q.length >= suffixLen && p.length >= suffixLen) {
+    return q.slice(-suffixLen) === p.slice(-suffixLen);
+  }
+
+  return q.slice(-compareLen) === p.slice(-compareLen);
+}
+
 export function customerMatchesFlexible(searchTerm, customer) {
   const normQuery = normalizeCustomerSearchText(searchTerm);
   const tokens = tokenizeCustomerSearch(normQuery);
@@ -27,8 +65,7 @@ export function customerMatchesFlexible(searchTerm, customer) {
   const dni = String(customer?.dni || "").toLowerCase();
   const email = String(customer?.email || "").toLowerCase();
   const customerNumber = String(customer?.customer_number || "").toLowerCase();
-  const phoneDigits = String(customer?.phone || "").replace(/\D/g, "");
-  const queryDigits = String(searchTerm || "").replace(/\D/g, "");
+  const queryDigits = normalizePhoneDigitsForMatch(searchTerm);
 
   if (fullName === normQuery) return true;
   if (fullName.startsWith(normQuery)) return true;
@@ -36,7 +73,10 @@ export function customerMatchesFlexible(searchTerm, customer) {
   if (customerNumber && customerNumber.includes(normQuery)) return true;
   if (dni && dni.includes(normQuery)) return true;
   if (email && email.includes(normQuery)) return true;
-  if (queryDigits && phoneDigits.includes(queryDigits)) return true;
+  if (queryDigits && phonesMatchBySuffix(searchTerm, customer?.phone)) return true;
+  if (queryDigits && String(customer?.phone || "").replace(/\D/g, "").includes(queryDigits)) {
+    return true;
+  }
   return false;
 }
 
@@ -46,9 +86,9 @@ export function rankCustomersForSearch(customers, normQuery, tokens) {
       const fullName = normalizeCustomerSearchText(customer.full_name || "");
       const dni = String(customer.dni || "").toLowerCase();
       const email = String(customer.email || "").toLowerCase();
-      const phone = String(customer.phone || "").replace(/\D/g, "");
+      const phone = normalizePhoneDigitsForMatch(customer.phone || "");
       const customerNumber = String(customer.customer_number || "").toLowerCase();
-      const queryDigits = String(normQuery || "").replace(/\D/g, "");
+      const queryDigits = normalizePhoneDigitsForMatch(normQuery);
       const allTokensMatch = tokens.length > 0 && tokens.every((t) => fullName.includes(t));
       const startsWithAllTokens =
         tokens.length > 0 &&
@@ -62,7 +102,8 @@ export function rankCustomersForSearch(customers, normQuery, tokens) {
       if (allTokensMatch) score += 55;
       if (customerNumber && customerNumber.includes(normQuery)) score += 45;
       if (dni && dni.includes(normQuery)) score += 35;
-      if (queryDigits && phone.includes(queryDigits)) score += 35;
+      if (queryDigits && phonesMatchBySuffix(normQuery, customer.phone)) score += 90;
+      else if (queryDigits && phone.includes(queryDigits)) score += 35;
       if (email && email.includes(normQuery)) score += 20;
       if (!fullName && (dni || email || customerNumber || phone)) score += 5;
 

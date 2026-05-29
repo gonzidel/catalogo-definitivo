@@ -9,7 +9,7 @@ La Edge Function `meta-feed` no está desplegada o tiene problemas de CORS, caus
 
 ```bash
 # Desde la raíz del proyecto
-supabase functions deploy meta-feed
+supabase functions deploy meta-feed --no-verify-jwt
 ```
 
 ### Opción 2: Desde Supabase Dashboard

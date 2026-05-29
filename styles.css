@@ -624,15 +624,19 @@ header h1 { margin: 0; font-size: 1.5rem; }
 .main-image-wrapper {
   position: relative;
   width: 100%;
+  aspect-ratio: 4 / 5;
+  overflow: hidden;
 }
 
-/* Imagen principal */
+/* Imagen principal — width/height HTML son hint de ratio (CLS); el tamaño lo define el wrapper */
 .main-image {
   display: block;
   width: 100%;
+  height: 100%;
+  max-width: 100%;
   border-radius: 6px;
-  aspect-ratio: 4 / 5;
   object-fit: cover;
+  object-position: center;
 }
 
 /* Badge artículo sobre la imagen (alto contraste, legible en capturas). .product-art-badge: hook semántico en el HTML. */
@@ -8172,10 +8176,12 @@ body.modal-open {
     flex-shrink: 0;
   }
   .main-image-wrapper {
-    overflow: visible;
+    overflow: hidden;
   }
   .main-image {
-    aspect-ratio: 4 / 5;
+    width: 100%;
+    height: 100%;
+    max-width: 100%;
     object-fit: cover;
     object-position: center;
   }

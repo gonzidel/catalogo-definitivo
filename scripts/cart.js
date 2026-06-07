@@ -1,7 +1,7 @@
 // scripts/cart.js
-import { supabase } from "./supabase-client.js";
-import { normalizeSize } from "./utils/size-normalizer.js";
-import { showFylToastError } from "./fyl-error-state.js";
+import { supabase } from "./supabase-client.js?v=m260607";
+import { normalizeSize } from "./utils/size-normalizer.js?v=m260607";
+import { showFylToastError } from "./fyl-error-state.js?v=m260607";
 
 const countEl = document.getElementById("cart-count");
 const submitBtn = document.getElementById("cart-submit");

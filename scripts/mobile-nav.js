@@ -18,40 +18,34 @@ function setPedidosBadge(count) {
   }
 }
 
-function isCuratedOrBannerHashRoute() {
-  const hash = location.hash || "";
-  if (/^#\/banner\//i.test(hash)) return true;
-  if (typeof window.parseHashBannerSlug === "function" && window.parseHashBannerSlug(hash)) {
-    return true;
+function isHomeHash(hash) {
+  const h = hash || "";
+  return h === "#/" || h === "#/all" || h === "";
+}
+
+function clearHomeUrlParams() {
+  if (typeof window.updateURL === "function") {
+    window.updateURL({ tab: "", sku: undefined }, { mode: "replace" });
+    const url = new URL(window.location);
+    if (url.searchParams.has("banner")) {
+      url.searchParams.delete("banner");
+      window.history.replaceState({}, "", url);
+    }
+    return;
   }
-  return false;
+  const url = new URL(window.location);
+  url.searchParams.delete("tab");
+  url.searchParams.delete("sku");
+  url.searchParams.delete("banner");
+  window.history.replaceState({}, "", url);
 }
 
-/** Rutas que deben volver a Home limpiando el hash (dispara onNavChange / resetHomeState). */
-function shouldGoHomeViaHashOnly() {
-  const hash = location.hash || "";
-  if (hash.startsWith("#/como-comprar") || hash.startsWith("#/quienes-somos")) return true;
-  if (hash === "#/coleccion/fyl-originals") return true;
-  if (isCuratedOrBannerHashRoute()) return true;
-  return false;
-}
-
-function goHomeViaHash() {
-  const prevHash = location.hash || "";
-  const mustReset = shouldGoHomeViaHashOnly();
-  location.hash = "#/";
+function markHomeNavActive() {
   updateActiveNav();
   const navInicio = document.getElementById("nav-inicio");
   const navCategorias = document.getElementById("nav-categorias");
   if (navInicio) navInicio.classList.add("active");
   if (navCategorias) navCategorias.classList.add("active");
-  window.scrollTo({ top: 0, behavior: "smooth" });
-
-  const hashUnchanged =
-    prevHash === "#/" || prevHash === "#/all" || prevHash === "";
-  if (mustReset && hashUnchanged && typeof window.fylResetHomeState === "function") {
-    window.fylResetHomeState().catch((err) => console.error("fylResetHomeState:", err));
-  }
 }
 
 // Obtener página actual
@@ -86,9 +80,6 @@ function updateActiveNav() {
 
 /** Inicio (bottom nav), logo header y cualquier atajo a home. */
 function navigateToHome() {
-  const navInicio = document.getElementById("nav-inicio");
-  const navCategorias = document.getElementById("nav-categorias");
-
   const productModal = document.getElementById("product-modal");
   if (productModal?.classList.contains("active") && typeof window.cerrarModal === "function") {
     window.cerrarModal(true);
@@ -99,39 +90,24 @@ function navigateToHome() {
     return;
   }
 
-  if (shouldGoHomeViaHashOnly()) {
-    goHomeViaHash();
+  clearHomeUrlParams();
+
+  const prevHash = window.location.hash || "";
+  if (!isHomeHash(prevHash)) {
+    window.location.hash = "#/";
+    markHomeNavActive();
+    window.scrollTo({ top: 0, behavior: "smooth" });
     return;
   }
 
-  if (typeof window.clearSearch === "function") {
-    window.clearSearch({ skipCatalogReset: true });
-  }
-  if (typeof window.cambiarCategoria === "function") {
+  if (typeof window.fylResetHomeState === "function") {
+    window.fylResetHomeState().catch((err) => console.error("fylResetHomeState:", err));
+  } else if (typeof window.cambiarCategoria === "function") {
     Promise.resolve(window.cambiarCategoria("all"));
-  } else {
-    location.hash = "#/";
-    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  if (typeof window.updateURL === "function") {
-    window.updateURL({ tab: "", sku: undefined }, { mode: "replace" });
-    const url = new URL(window.location);
-    if (url.searchParams.has("banner")) {
-      url.searchParams.delete("banner");
-      window.history.replaceState({}, "", url);
-    }
-  } else {
-    const url = new URL(window.location);
-    url.searchParams.delete("tab");
-    url.searchParams.delete("sku");
-    url.searchParams.delete("banner");
-    window.history.replaceState({}, "", url);
-  }
-
-  updateActiveNav();
-  if (navInicio) navInicio.classList.add("active");
-  if (navCategorias) navCategorias.classList.add("active");
+  markHomeNavActive();
+  window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 if (typeof window !== "undefined") {
@@ -202,7 +178,7 @@ function setupNavHandlers() {
       
       // Verificar si hay sesión activa
       try {
-        const { supabase } = await import("../scripts/supabase-client.js");
+        const { supabase } = await import("../scripts/supabase-client.js?v=m260607");
         const { data: { session } } = await supabase.auth.getSession();
         
         if (session) {

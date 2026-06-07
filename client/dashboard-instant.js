@@ -1,22 +1,22 @@
-import { fylDevLog } from "../scripts/config.js";
-import { supabase } from "../scripts/supabase-client.js";
-import { normalizeSize } from "../scripts/utils/size-normalizer.js";
-import { hasInitialProfileComplete } from "./auth-helper.js";
-import { maybeShowProfileOnboardingModal } from "../scripts/profile-onboarding-modal.js";
-import { parseARSNumber, resolveOrderItemUnitPrice } from "../scripts/utils/price.js";
+import { fylDevLog } from "../scripts/config.js?v=m260607";
+import { supabase } from "../scripts/supabase-client.js?v=m260607";
+import { normalizeSize } from "../scripts/utils/size-normalizer.js?v=m260607";
+import { hasInitialProfileComplete } from "./auth-helper.js?v=m260607";
+import { maybeShowProfileOnboardingModal } from "../scripts/profile-onboarding-modal.js?v=m260607";
+import { parseARSNumber, resolveOrderItemUnitPrice } from "../scripts/utils/price.js?v=m260607";
 import {
   getTransportesDisponibles,
   guardarTransporteElegido,
-} from "./transportes-data.js";
-import { fylAnalytics } from "../scripts/analytics.js";
-import { canonicalizeTransportName } from "../scripts/transport-canonical.js";
+} from "./transportes-data.js?v=m260607";
+import { fylAnalytics } from "../scripts/analytics.js?v=m260607";
+import { canonicalizeTransportName } from "../scripts/transport-canonical.js?v=m260607";
 import {
   showFylErrorState,
   hideFylErrorState,
   renderFylInlineError,
   showFylToastError,
   isFylOfflineDeepCheck,
-} from "../scripts/fyl-error-state.js";
+} from "../scripts/fyl-error-state.js?v=m260607";
 
 let fylDashboardViewOnce = false;
 if (typeof window !== "undefined") {

@@ -1,8 +1,8 @@
-// admin/import-customers.js
+﻿// admin/import-customers.js
 // Importación masiva de clientes desde CSV
 
-import { supabase as supabaseClient } from "../scripts/supabase-client.js";
-import { preloadAuthState, can, isAdminUser } from "./auth-state.js";
+import { supabase as supabaseClient } from "../scripts/supabase-client.js?v=m260607";
+import { preloadAuthState, can, isAdminUser } from "./auth-state.js?v=m260607";
 
 let supabase = supabaseClient;
 let parsedCustomers = [];
@@ -39,7 +39,7 @@ async function getSupabase() {
   }
   
   try {
-    const module = await import("../scripts/supabase-client.js");
+    const module = await import("../scripts/supabase-client.js?v=m260607");
     supabase = module.supabase || window.supabase;
     if (!supabase) {
       await new Promise(resolve => setTimeout(resolve, 500));

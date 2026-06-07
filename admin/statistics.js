@@ -1,4 +1,4 @@
-// statistics.js - Módulo de Estadísticas Admin
+﻿// statistics.js - Módulo de Estadísticas Admin
 
 let supabase = null;
 let currentAdminUser = null;
@@ -31,7 +31,7 @@ async function getSupabase() {
   }
   
   try {
-    const module = await import("../scripts/supabase-client.js");
+    const module = await import("../scripts/supabase-client.js?v=m260607");
     supabase = module.supabase || window.supabase;
     
     if (!supabase) {

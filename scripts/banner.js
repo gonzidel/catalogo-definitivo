@@ -1,7 +1,7 @@
 // scripts/banner.js - Carga y renderiza banner promocional
 
-import { supabase } from "./supabase-client.js";
-import { fylAnalytics } from "./analytics.js";
+import { supabase, supabaseReady } from "./supabase-client.js?v=m260607";
+import { fylAnalytics } from "./analytics.js?v=m260607";
 
 let currentBanner = null;
 /** Evita 406 de PostgREST con `.single()` sin filas y peticiones duplicadas al inicio. */
@@ -12,6 +12,9 @@ export async function loadBanner() {
   if (loadBannerInFlight) return loadBannerInFlight;
   loadBannerInFlight = (async () => {
     try {
+      await supabaseReady;
+      if (!supabase) return;
+
       const { data, error } = await supabase
         .from("promotional_banners")
         .select("*")

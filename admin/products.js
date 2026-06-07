@@ -1,7 +1,7 @@
-// admin/products.js
-import { supabase } from "../scripts/supabase-client.js";
-import { preloadAuthState, can, isAdminUser } from "./auth-state.js";
-import { isSuperAdmin } from "./permissions-helper.js";
+﻿// admin/products.js
+import { supabase } from "../scripts/supabase-client.js?v=m260607";
+import { preloadAuthState, can, isAdminUser } from "./auth-state.js?v=m260607";
+import { isSuperAdmin } from "./permissions-helper.js?v=m260607";
 import {
   logCommercialTagsCleanup,
   splitCommercialTags,
@@ -6519,6 +6519,26 @@ async function saveProduct(shouldReset = true) {
       if (statusSelect) {
         const validStatuses = ["active", "draft", "pending_stock", "missing_tags", "archived"];
         statusSelect.value = validStatuses.includes(calculatedStatus) ? calculatedStatus : "draft";
+      }
+      if (calculatedStatus === "active") {
+        void supabase
+          .rpc("rpc_refresh_catalog_public_snapshot")
+          .then(({ data, error }) => {
+            if (error) {
+              console.warn("[products] refresh snapshot:", error.message || error);
+              return;
+            }
+            const rows =
+              data != null && typeof data === "object" && "row_count" in data
+                ? data.row_count
+                : null;
+            console.log(
+              `[products] Catálogo público actualizado${rows != null ? ` (${rows} filas)` : ""}`
+            );
+          })
+          .catch((err) => {
+            console.warn("[products] refresh snapshot:", err?.message || err);
+          });
       }
     }
   } catch (e) {

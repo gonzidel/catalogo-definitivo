@@ -3,9 +3,9 @@
  * Se usa desde index2 (auth-status) y client/dashboard (dashboard.js) y login.js.
  */
 
-import { supabase } from "./supabase-client.js";
-import { hasInitialProfileComplete } from "../client/auth-helper.js";
-import { ARGENTINA_PROVINCES, PROVINCE_CITIES } from "./argentina-locations-data.js";
+import { supabase } from "./supabase-client.js?v=m260607";
+import { hasInitialProfileComplete } from "../client/auth-helper.js?v=m260607";
+import { ARGENTINA_PROVINCES, PROVINCE_CITIES } from "./argentina-locations-data.js?v=m260607";
 
 let profileModalVisible = false;
 

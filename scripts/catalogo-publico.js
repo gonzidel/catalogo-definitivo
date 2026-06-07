@@ -1,7 +1,7 @@
 // scripts/catalogo-publico.js
 // Comportamiento aislado para /catalogo publico.
 
-import { supabase } from "./supabase-client.js";
+import { supabase, supabaseReady } from "./supabase-client.js?v=m260607";
 
 const WHATSAPP_NUMBER = "5493625172874";
 const publicFylSkuCache = new Map();
@@ -170,6 +170,9 @@ async function fetchPublicFylOriginalSku(articulo) {
   const article = cleanText(articulo);
   if (!article) return "";
   if (publicFylSkuCache.has(article)) return publicFylSkuCache.get(article);
+
+  await supabaseReady;
+  if (!supabase) return "";
 
   const { data, error } = await supabase
     .from("products")

@@ -1,14 +1,14 @@
 // scripts/data-source.js
 // Proveedor de datos con fallback: Supabase si está configurado, OpenSheet si no.
 
-import { supabase } from "./supabase-client.js";
-import { USE_SUPABASE, USE_OPEN_SHEET_FALLBACK } from "./config.js";
+import { supabase } from "./supabase-client.js?v=m260607";
+import { USE_SUPABASE, USE_OPEN_SHEET_FALLBACK } from "./config.js?v=m260607";
 import {
   errorHandler,
   handlePromise,
   withRetry,
   withTimeout,
-} from "./error-handler.js";
+} from "./error-handler.js?v=m260607";
 
 function parseFecha(str) {
   if (!str) return null;

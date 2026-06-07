@@ -1,8 +1,8 @@
-import { supabase } from "../scripts/supabase-client.js";
-import { clearProfileOnboardingSessionFlag } from "../scripts/profile-onboarding-modal.js";
-import { requireAuth } from "./auth-helper.js";
-import { getTransportesDisponibles, getTransporte, guardarTransporteElegido } from "./transportes-data.js";
-import { canonicalizeTransportName } from "../scripts/transport-canonical.js";
+import { supabase } from "../scripts/supabase-client.js?v=m260607";
+import { clearProfileOnboardingSessionFlag } from "../scripts/profile-onboarding-modal.js?v=m260607";
+import { requireAuth } from "./auth-helper.js?v=m260607";
+import { getTransportesDisponibles, getTransporte, guardarTransporteElegido } from "./transportes-data.js?v=m260607";
+import { canonicalizeTransportName } from "../scripts/transport-canonical.js?v=m260607";
 
 // Validar formato de teléfono argentino
 function validatePhone(phone) {

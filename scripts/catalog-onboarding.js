@@ -2,8 +2,8 @@
  * Onboarding tipo historias (index2): solo usuarios sin sesión Supabase.
  * Tras el evento fyl-catalog-boot-done (o si el boot ya terminó).
  */
-import { supabase } from "./supabase-client.js";
-import { fylAnalytics } from "./analytics.js";
+import { supabase } from "./supabase-client.js?v=m260607";
+import { fylAnalytics } from "./analytics.js?v=m260607";
 
 const STORAGE_KEY = "fyl-catalog-onboarding-hide";
 const SEEN_KEY = "fyl-catalog-onboarding-seen";

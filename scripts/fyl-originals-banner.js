@@ -1,7 +1,7 @@
 // scripts/fyl-originals-banner.js - Banner de productos FYL Originals
 
-import { supabase } from "./supabase-client.js";
-import { getCatalogAvailableSource } from "./catalog-source.js";
+import { supabase } from "./supabase-client.js?v=m260607";
+import { getCatalogAvailableSource } from "./catalog-source.js?v=m260607";
 
 const FYL_ORIGINALS_CATALOG_SELECT =
   '"Articulo", "Descripcion", "Color", "Numeracion", "FechaIngreso", "FechaPublicacion", "Precio", "Imagen Principal", "Imagen 1", "Imagen 2", "Imagen 3", "Filtro1", "Filtro2", "Filtro3", "OfertaActiva", "PrecioOferta", "PromoActiva", "ColorHex", "ColorDisplayNumber", "SupplierCode"';

@@ -1,6 +1,6 @@
-// admin/compras-proveedores.js — purchase_* (temporadas, proveedores, reglas, pedidos, recepciones, arqueo)
-import { supabase } from "../scripts/supabase-client.js";
-import { preloadAuthState, can, isAdminUser } from "./auth-state.js";
+﻿// admin/compras-proveedores.js — purchase_* (temporadas, proveedores, reglas, pedidos, recepciones, arqueo)
+import { supabase } from "../scripts/supabase-client.js?v=m260607";
+import { preloadAuthState, can, isAdminUser } from "./auth-state.js?v=m260607";
 
 const globalErr = document.getElementById("global-err");
 let _comprasAuthAllowed = false;

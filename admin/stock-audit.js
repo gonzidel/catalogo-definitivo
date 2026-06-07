@@ -1,11 +1,11 @@
-// admin/stock-audit.js
+﻿// admin/stock-audit.js
 // Módulo "Salud de stock" — v1
 // Evolución de la pantalla de auditoría técnica hacia una vista operativa.
 // Spec: docs/FYL-Obsidian/26-SPEC-MODULO-ADMIN-STOCK.md
 
-import { supabase } from "../scripts/supabase-client.js";
-import { preloadAuthState, can, isAdminUser } from "./auth-state.js";
-import { isSuperAdmin } from "./permissions-helper.js";
+import { supabase } from "../scripts/supabase-client.js?v=m260607";
+import { preloadAuthState, can, isAdminUser } from "./auth-state.js?v=m260607";
+import { isSuperAdmin } from "./permissions-helper.js?v=m260607";
 
 // ─────────────────────────────────────────────────────────────────
 // CONSTANTES

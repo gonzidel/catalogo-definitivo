@@ -1,4 +1,4 @@
-// scripts/main-supabase.js - Versión que prioriza Supabase con fallback a Google Sheets
+﻿// scripts/main-supabase.js - Versión que prioriza Supabase con fallback a Google Sheets
 // Esta versión carga productos desde Supabase primero, y si falla, usa Google Sheets
 
 import {
@@ -6,20 +6,19 @@ import {
   SUPABASE_ANON_KEY as CONFIG_SUPABASE_ANON_KEY,
   USE_SUPABASE as CONFIG_USE_SUPABASE,
   USE_OPEN_SHEET_FALLBACK as CONFIG_USE_OPEN_SHEET_FALLBACK,
-  configReady,
-} from "./config.js";
-import { supabase as supabaseClient } from "./supabase-client.js?v=m260527";
-import { normalizeSize } from "./utils/size-normalizer.js";
-import { fylAnalytics } from "./analytics.js";
-import { formatARS as formatARSValue, parseARSNumber } from "./utils/price.js";
-import { createScreenScope } from "./net/screen-scope.js";
+} from "./config.js?v=m260607";
+import { supabase as supabaseClient, supabaseReady } from "./supabase-client.js?v=m260607";
+import { normalizeSize } from "./utils/size-normalizer.js?v=m260607";
+import { fylAnalytics } from "./analytics.js?v=m260607";
+import { formatARS as formatARSValue, parseARSNumber } from "./utils/price.js?v=m260607";
+import { createScreenScope } from "./net/screen-scope.js?v=m260607";
 import {
   wrapSupabase,
   createAbortScope,
   FYL_ERROR_KIND,
   classifyError,
   isPostgrestSchemaColumnError,
-} from "./net/fyl-fetch.js?v=m260527";
+} from "./net/fyl-fetch.js?v=m260607";
 import {
   showFylErrorState,
   hideFylErrorState,
@@ -27,10 +26,21 @@ import {
   showFylToastError,
   isFylOfflineDeepCheck,
   watchFylConnectivity,
-} from "./fyl-error-state.js";
-import { getCatalogAvailableSource } from "./catalog-source.js";
-import { enrichCatalogRowsWithDetallesSimilitud } from "./commercial-tags.js";
-import { fylPerf } from "./fyl-perf.js";
+} from "./fyl-error-state.js?v=m260607";
+import {
+  CATALOG_AVAILABLE_VIEW,
+  getCatalogAvailableSource,
+  resolveCatalogSourceIfStale,
+  getCatalogVersion,
+} from "./catalog-source.js?v=m260607";
+import {
+  readBootCache,
+  writeBootCache,
+  isUsableOnCriticalPath,
+  bootRowsChanged,
+} from "./catalog-cache.js?v=m260607";
+import { enrichCatalogRowsWithDetallesSimilitud } from "./commercial-tags.js?v=m260607";
+import { fylPerf } from "./fyl-perf.js?v=m260607";
 import {
   canonicalTagKey,
   groupedProductMatchesAnyCommercialTag,
@@ -40,7 +50,7 @@ import {
   parseTagSelectorValues,
   productRowMatchesAnyCommercialTag,
   productRowMatchesCommercialTag,
-} from "./tag-normalize.js";
+} from "./tag-normalize.js?v=m260607";
 import {
   buildTagComboAnalyticsKey,
   buildTagsHash,
@@ -49,10 +59,8 @@ import {
   parseHashTags,
   trackTagFilterConversion,
   trackTagsFilterOpen,
-} from "./tag-routing.js";
-import { fylScheduleIdle } from "./fyl-scheduler.js";
-
-await configReady;
+} from "./tag-routing.js?v=m260607";
+import { fylScheduleIdle } from "./fyl-scheduler.js?v=m260607";
 
 function fylIsCuratedBannerEnabled() {
   return typeof window !== "undefined" && window.FYL_CURATED_BANNER_V1 === true;
@@ -541,8 +549,12 @@ function isCatalogItemRecent(item, sinceDate) {
 }
 
 function cloudinaryOptimized(url, w) {
-  if (!url || typeof url !== "string") return url || "";
+  if (!url || typeof url !== "string") return "";
+  url = url.trim();
+  if (!url) return "";
+  if (url.startsWith("//")) url = `https:${url}`;
   url = url.startsWith("http://") ? url.replace("http://", "https://") : url;
+  if (!/^https?:\/\//i.test(url)) return "";
   return url.replace("/upload/", `/upload/f_auto,q_auto,c_scale,w_${w}/`);
 }
 
@@ -820,7 +832,12 @@ async function fylFetchCatalogRowsForArticulos(createQuery, articulos = []) {
 /** Primera página acotada para boot Home (PERF-001 / HI-2). */
 async function fetchCatalogPublicRowsBoot(createQuery, limit = CATALOG_BOOT_INITIAL_ROWS) {
   const cap = Math.max(1, Number(limit) || CATALOG_BOOT_INITIAL_ROWS);
-  const { data, error } = await createQuery().range(0, cap - 1);
+  let { data, error } = await createQuery()
+    .order("FechaPublicacion", { ascending: false, nullsFirst: false })
+    .range(0, cap - 1);
+  if (error && isPostgrestSchemaColumnError(error)) {
+    ({ data, error } = await createQuery().range(0, cap - 1));
+  }
   if (error) return { data: null, error };
   const bootRows = Array.isArray(data) ? data : [];
   let rows = bootRows;
@@ -842,14 +859,69 @@ async function fetchCatalogPublicRowsBoot(createQuery, limit = CATALOG_BOOT_INIT
 
 let _catalogFullFetchInflight = null;
 
-function scheduleFullCatalogBackgroundFetch(createCatalogQuery) {
+function fylHomeRenderedTopArticulos(limit = PRODUCTOS_INICIALES) {
+  return [...document.querySelectorAll(".card.producto[data-articulo]")]
+    .slice(0, limit)
+    .map((card) => String(card.dataset.articulo || "").trim())
+    .filter(Boolean);
+}
+
+function fylProductListTopArticulos(productos, limit = PRODUCTOS_INICIALES) {
+  return (productos || [])
+    .slice(0, limit)
+    .map((p) => String(p?.Articulo || "").trim())
+    .filter(Boolean);
+}
+
+function fylCatalogTopArticulosMatch(rendered, expected) {
+  if (rendered.length !== expected.length) return false;
+  return rendered.every((art, i) => art === expected[i]);
+}
+
+async function fylRerenderHomeCatalogFromFullList(productosOrdenados) {
+  if (categoriaActual !== "all") return false;
+  if (typeof getCurrentSearchTerm === "function" && getCurrentSearchTerm()) return false;
+  if (catalogoLoadMode !== "paged") return false;
+  if (productosRenderizados > PRODUCTOS_INICIALES) return false;
+
+  const cont = document.getElementById("catalogo");
+  if (!cont) return false;
+
+  const renderedTop = fylHomeRenderedTopArticulos();
+  const expectedTop = fylProductListTopArticulos(productosOrdenados);
+  if (fylCatalogTopArticulosMatch(renderedTop, expectedTop)) return false;
+
+  cont.innerHTML = "";
+  productosRenderizados = 0;
+  syncHomeTopSlotState({ pending: true });
+  const firstChunkRendered = await renderizarProductosPagina(
+    productosOrdenados,
+    cont,
+    offersCardsPendientes,
+    0,
+    PRODUCTOS_INICIALES,
+    { deferEnrich: true }
+  );
+  productosRenderizados = Number(firstChunkRendered) || 0;
+  initCatalogCardDelegation();
+  configurarEventos();
+  mostrarBotonVerMas();
+  syncHomeTopSlotState({ pending: false });
+  fylCatalogTrackViewItemList("category:all", productosOrdenados, "category_grid");
+  fylCatalogDbg(`🔄 Home reordenada tras catálogo completo (${expectedTop.slice(0, 5).join(", ")}…)`);
+  return true;
+}
+
+function scheduleFullCatalogBackgroundFetch(_createCatalogQuery) {
   if (_catalogFullFetchInflight) return;
   _catalogFullFetchInflight = true;
   fylScheduleIdle(() => {
-    fetchAllCatalogPublicRows(createCatalogQuery)
-      .then(({ data, error }) => {
+    const createLiveCatalogQuery = () =>
+      supabase.from(CATALOG_AVAILABLE_VIEW).select(CATALOG_PUBLIC_SELECT);
+    fetchAllCatalogPublicRows(createLiveCatalogQuery)
+      .then(async ({ data, error }) => {
         if (error || !data?.length) return;
-        fylApplyFullCatalogBackground(data);
+        await fylApplyFullCatalogBackground(data);
       })
       .catch((err) => {
         console.warn("[FYL] Full catalog background fetch:", err?.message || err);
@@ -903,7 +975,7 @@ function fylPatchRenderedCardsAfterFullCatalog(productosCompletos = []) {
   }
 }
 
-function fylApplyFullCatalogBackground(rawRows) {
+async function fylApplyFullCatalogBackground(rawRows) {
   if (categoriaActual !== "all") return;
   const filtered = fylFilterMostrarCatalogRows(rawRows);
   window.__allCatalogRawRows = filtered;
@@ -913,7 +985,10 @@ function fylApplyFullCatalogBackground(rawRows) {
   setProductosPendientes(productosOrdenados);
   window.__allProductsCache = productosOrdenados;
   fylRebuildCatalogSizeIndex();
-  fylPatchRenderedCardsAfterFullCatalog(productosOrdenados);
+  const rerendered = await fylRerenderHomeCatalogFromFullList(productosOrdenados);
+  if (!rerendered) {
+    fylPatchRenderedCardsAfterFullCatalog(productosOrdenados);
+  }
   window.__FYL_CATALOG_FULL_READY = true;
   try {
     window.dispatchEvent(
@@ -923,11 +998,115 @@ function fylApplyFullCatalogBackground(rawRows) {
   fylCatalogDbg(`📦 Catálogo completo en background: ${productosOrdenados.length} productos`);
 }
 
+let _bootCacheRevalidateInflight = false;
+
+async function fylApplyBootCacheRevalidation(rawRows) {
+  if (categoriaActual !== "all") return false;
+  if (typeof getCurrentSearchTerm === "function" && getCurrentSearchTerm()) return false;
+  if (catalogoLoadMode !== "paged") return false;
+  if (!Array.isArray(rawRows) || rawRows.length === 0) return false;
+
+  const sorted = rawRows.slice().sort(compareCatalogRecency);
+  let productosOrdenados = agruparProductos(sorted);
+  productosOrdenados = intercalarProductosPorCategoria(productosOrdenados);
+  setProductosPendientes(productosOrdenados);
+  window.__allProductsCache = productosOrdenados;
+
+  const rerendered = await fylRerenderHomeCatalogFromFullList(productosOrdenados);
+  if (!rerendered) {
+    fylPatchRenderedCardsAfterFullCatalog(productosOrdenados);
+  }
+  fylRebuildCatalogSizeIndex();
+  return true;
+}
+
+function scheduleBootCacheRevalidation(createCatalogQuery) {
+  if (_bootCacheRevalidateInflight) return;
+  _bootCacheRevalidateInflight = true;
+  const revalidateStart =
+    typeof performance !== "undefined" && typeof performance.now === "function"
+      ? performance.now()
+      : Date.now();
+
+  fylScheduleIdle(() => {
+    void (async () => {
+      try {
+        const [bootResult, remoteCatalogVersion] = await Promise.all([
+          fetchCatalogPublicRowsBoot(createCatalogQuery),
+          getCatalogVersion(supabase).catch(() => null),
+        ]);
+
+        if (bootResult?.error) {
+          fylPerf("catalog_revalidate_error", {
+            message: bootResult.error?.message || String(bootResult.error),
+          });
+          return;
+        }
+
+        const freshItems = fylFilterMostrarCatalogRows(bootResult.data || []);
+        const cached = readBootCache();
+
+        if (
+          cached?.catalogVersion &&
+          remoteCatalogVersion &&
+          cached.catalogVersion !== remoteCatalogVersion
+        ) {
+          fylPerf("catalog_version_diff", {
+            cached: cached.catalogVersion,
+            remote: remoteCatalogVersion,
+          });
+        }
+
+        const changed = bootRowsChanged(cached?.rows, freshItems);
+        if (changed) {
+          await fylApplyBootCacheRevalidation(freshItems);
+        }
+
+        writeBootCache(freshItems, remoteCatalogVersion);
+
+        const end =
+          typeof performance !== "undefined" && typeof performance.now === "function"
+            ? performance.now()
+            : Date.now();
+        fylPerf("catalog_revalidate_done", {
+          ms: Math.round(end - revalidateStart),
+          changed,
+          rows: freshItems.length,
+        });
+      } catch (err) {
+        fylPerf("catalog_revalidate_error", {
+          message: err?.message || String(err),
+        });
+      } finally {
+        _bootCacheRevalidateInflight = false;
+      }
+    })();
+  }, 0);
+}
+
 /** Carga full-catalog (all / Novedades / Ofertas). */
 async function cargarDesdeSupabaseAllLike(cat, createCatalogQuery) {
   fylCatalogDbg(`📦 Cargando todas las categorías para: ${cat}`);
 
   if (cat === "all") {
+    const cached = readBootCache();
+    if (isUsableOnCriticalPath(cached)) {
+      fylPerf("catalog_cache_hit", {
+        source: "local",
+        rows: cached.rows.length,
+      });
+      if (typeof window !== "undefined") {
+        window.__FYL_BOOT_FROM_CACHE = true;
+      }
+      scheduleBootCacheRevalidation(createCatalogQuery);
+      scheduleFullCatalogBackgroundFetch(createCatalogQuery);
+      return cached.rows;
+    }
+
+    fylPerf("catalog_cache_miss", {
+      reason: cached ? "stale_or_invalid" : "empty",
+    });
+
     const { data: bootData, error: bootError } = await fetchCatalogPublicRowsBoot(createCatalogQuery);
     if (bootError) {
       console.error("❌ Error en consulta boot:", bootError);
@@ -935,6 +1114,7 @@ async function cargarDesdeSupabaseAllLike(cat, createCatalogQuery) {
     }
     fylCatalogDbg(`📊 Registros boot (home): ${bootData?.length || 0}`);
     const items = fylFilterMostrarCatalogRows(bootData || []);
+    writeBootCache(items, null);
     scheduleFullCatalogBackgroundFetch(createCatalogQuery);
     return items;
   }
@@ -1531,6 +1711,10 @@ async function cargarCategoria(cat) {
     
     data = await cargarDesdeSupabase(cat);
     fylCatalogDbg(`✅ Datos cargados desde Supabase: ${data.length} productos`);
+    if (typeof window !== "undefined" && window.__FYL_BOOT_FROM_CACHE) {
+      fylPerf("catalog_render_from_cache", { rows: data.length, category: cat });
+      window.__FYL_BOOT_FROM_CACHE = false;
+    }
     fylCatalogDbg(`📊 Fuente de datos: ${fuente}`);
     
     // Log detallado de los primeros productos
@@ -2005,9 +2189,21 @@ function syncHomeTopSlotState({ pending = false } = {}) {
   }
 }
 
-function fylPreloadLcpImage(url) {
+function fylIsValidImagePreloadUrl(url) {
   const href = String(url || "").trim();
-  if (!href || href === _lcpPreloadUrl) return;
+  if (!href) return false;
+  try {
+    const parsed = new URL(href, typeof location !== "undefined" ? location.href : "https://fylmoda.com.ar/");
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function fylPreloadLcpImage(url) {
+  if (!fylIsValidImagePreloadUrl(url)) return;
+  const href = String(url).trim();
+  if (href === _lcpPreloadUrl) return;
   _lcpPreloadUrl = href;
   let link = document.querySelector('link[data-fyl-lcp-preload="1"]');
   if (!link) {
@@ -2015,7 +2211,9 @@ function fylPreloadLcpImage(url) {
     link.rel = "preload";
     link.as = "image";
     link.setAttribute("data-fyl-lcp-preload", "1");
+    link.href = href;
     document.head.appendChild(link);
+    return;
   }
   link.href = href;
 }
@@ -2129,7 +2327,7 @@ function buildProductCardHTML(producto, meta = {}) {
   const cardImageHeight = Math.round((cardImageWidth * 5) / 4);
   const mainImageUrls = meta.mainImageUrls ?? getMainImageFallbackUrls(producto, cardImageWidth);
   const mainSrc =
-    mainImageUrls[0] || cloudinaryOptimized(producto.VariantePrincipal, cardImageWidth);
+    mainImageUrls[0] || getImgUrl(producto.VariantePrincipal, cardImageWidth);
   const fallbackUrls = mainImageUrls.slice(1);
   const fallbackUrlsAttr = fallbackUrls.length
     ? JSON.stringify(fallbackUrls).replace(/"/g, "&quot;")
@@ -2269,8 +2467,8 @@ async function renderizarProductosPagina(productos, container, offersCards = [],
     const skuDefecto = obtenerSKUDefecto(producto);
     const mainImageUrls = getMainImageFallbackUrls(producto, cardImageWidth);
     const mainSrc =
-      mainImageUrls[0] || cloudinaryOptimized(producto.VariantePrincipal, cardImageWidth);
-    if (!firstLcpSrc && mainSrc) firstLcpSrc = mainSrc;
+      mainImageUrls[0] || getImgUrl(producto.VariantePrincipal, cardImageWidth);
+    if (!firstLcpSrc && fylIsValidImagePreloadUrl(mainSrc)) firstLcpSrc = mainSrc;
 
     const isFirstChunk = startIndex === 0;
     const isAboveFoldCard = isFirstChunk && productosRenderizadosEnEstaPagina <= 4;
@@ -3411,7 +3609,7 @@ let pdpFetchAbortScope = null;
  * @param {string} sku   SKU del producto a abrir (puede no estar en cache aún).
  * @param {object} [hint]  Datos parciales de la card para pre-poblar el skeleton
  *   con información visual más rica: { nombre?, imagen?, color? }
- * @returns {import('./net/screen-scope.js').ScreenScope}
+ * @returns {import('./net/screen-scope.js?v=m260607').ScreenScope}
  */
 function _abrirModalConSkeleton(sku, hint = {}) {
   // Abortar cualquier fetch anterior del PDP y crear uno nuevo.
@@ -3543,6 +3741,31 @@ window._pdpRetry = function(sku) {
     .finally(() => { _pdpRetryInFlight = false; });
 };
 
+async function fylFetchCatalogRowsByArticulo(articulo, { signal } = {}) {
+  const art = String(articulo || "").trim();
+  if (!art || !supabase) return [];
+
+  const sources = [];
+  const primary = getCatalogAvailableSource();
+  sources.push(primary);
+  if (primary !== CATALOG_AVAILABLE_VIEW) sources.push(CATALOG_AVAILABLE_VIEW);
+
+  for (const source of sources) {
+    const rExact = await wrapSupabase(
+      () => supabase.from(source).select(CATALOG_PUBLIC_SELECT).eq("Articulo", art),
+      { retries: 1, signal, label: `pdp.catalog.${source}` }
+    );
+    if (!rExact.aborted && !rExact.error && rExact.data?.length) return rExact.data;
+
+    const rIlike = await wrapSupabase(
+      () => supabase.from(source).select(CATALOG_PUBLIC_SELECT).ilike("Articulo", art),
+      { signal, label: `pdp.catalog.ilike.${source}` }
+    );
+    if (!rIlike.aborted && !rIlike.error && rIlike.data?.length) return rIlike.data;
+  }
+  return [];
+}
+
 async function buscarPorSKUEnSupabase(sku, { signal } = {}) {
   if (!sku || !supabase) return null;
   
@@ -3580,7 +3803,7 @@ async function buscarPorSKUEnSupabase(sku, { signal } = {}) {
       const { data: variantData, error: variantError, aborted: vAborted } = await wrapSupabase(
         () => supabase
           .from("product_variants")
-          .select("id, color, product_id")
+          .select("id, color, product_id, price")
           .eq("sku", sku.trim())
           .eq("active", true)
           .limit(1)
@@ -3617,7 +3840,7 @@ async function buscarPorSKUEnSupabase(sku, { signal } = {}) {
     const { data: variantData, error: variantError, aborted: varAborted } = await wrapSupabase(
       () => supabase
         .from("product_variants")
-        .select("id, color, product_id, products!inner(name, description)")
+        .select("id, color, product_id, price, products!inner(name, description)")
         .eq("id", variantId)
         .eq("active", true)
         .limit(1)
@@ -3634,20 +3857,7 @@ async function buscarPorSKUEnSupabase(sku, { signal } = {}) {
     // 3b. Mismo shape que el catálogo: filas de la vista por artículo → agrupar + enrich (precio, colores, talles)
     if (articulo && supabase) {
       try {
-        let catRows = null;
-        const rCat = await wrapSupabase(
-          () => supabase.from(getCatalogAvailableSource()).select(CATALOG_PUBLIC_SELECT).eq("Articulo", articulo),
-          { retries: 1, signal, label: "pdp.catalog_view_exact" }
-        );
-        if (!rCat.aborted && !rCat.error && rCat.data?.length) {
-          catRows = rCat.data;
-        } else if (!rCat.aborted && !rCat.error) {
-          const rCatI = await wrapSupabase(
-            () => supabase.from(getCatalogAvailableSource()).select(CATALOG_PUBLIC_SELECT).ilike("Articulo", articulo),
-            { signal, label: "pdp.catalog_view_ilike" }
-          );
-          if (!rCatI.aborted && !rCatI.error && rCatI.data?.length) catRows = rCatI.data;
-        }
+        const catRows = await fylFetchCatalogRowsByArticulo(articulo, { signal });
         if (catRows && catRows.length > 0) {
           const grouped = agruparProductos(catRows);
           const productoFull = grouped[0];
@@ -3768,6 +3978,7 @@ async function buscarPorSKUEnSupabase(sku, { signal } = {}) {
     const producto = {
       Articulo: productoData.name || productoData.Articulo || '',
       Descripcion: productoData.description || productoData.Descripcion || '',
+      Precio: String(variant.price || variantData?.price || ""),
       VariantePrincipal: image,
       DetalleColor: [{
         color: variant.color || '',
@@ -4327,6 +4538,15 @@ function abrirModalConResultado(resultado, { pushState = true } = {}) {
  */
 async function abrirPdpPorSkuIfPossible(sku, { pushState = true, hint = {} } = {}) {
   if (!sku) return false;
+
+  await supabaseReady;
+  if (
+    typeof window !== "undefined" &&
+    window.supabase &&
+    typeof window.supabase.from === "function"
+  ) {
+    supabase = window.supabase;
+  }
 
   // Camino rápido: SKU ya está en cache → abre sin red, sin skeleton.
   if (abrirModalPorSKU(sku, { pushState })) return true;
@@ -5810,9 +6030,29 @@ function initEscClose() {
 }
 
 // Handler popstate + hashchange: back nativo cierra PDP sin salir de la web
-async function resetHomeState() {
-  const hadCuratedCatalogOverride = window.__fylCuratedBannerCatalogOverride === true;
+let _homeResetPromise = null;
 
+function fylCatalogHasStaleNonHomeView() {
+  const catalogo = document.getElementById("catalogo");
+  const noData = catalogo?.querySelector(".no-data");
+  const noDataText = noData?.textContent?.trim() || "";
+  if (/banner no encontrado|no tiene productos visibles|no hay productos con los tags/i.test(noDataText)) {
+    return true;
+  }
+  const curatedTitle = document.getElementById("curated-banner-top-title");
+  if (curatedTitle && !curatedTitle.classList.contains("is-hidden")) {
+    return true;
+  }
+  return window.__fylCuratedBannerCatalogOverride === true;
+}
+
+async function resetHomeStateImpl() {
+  const hadCuratedCatalogOverride = window.__fylCuratedBannerCatalogOverride === true;
+  const staleCatalogView = fylCatalogHasStaleNonHomeView();
+
+  if (typeof window.cancelCuratedBannerRoute === "function") {
+    window.cancelCuratedBannerRoute();
+  }
   fylHideProductBanner();
   if (typeof window.clearSearch === "function") {
     await window.clearSearch({ skipCatalogReset: true });
@@ -5837,14 +6077,17 @@ async function resetHomeState() {
   // Desmarcar acciones rápidas (si el usuario venía desde una categoría/tag)
   document.querySelectorAll(".quick-action-btn").forEach((btn) => btn.classList.remove("category-chip--active"));
 
-  // Ver todo del banner curado deja productos filtrados en #catalogo aunque categoriaActual siga en "all".
-  if (!isAlreadyAll || hadCuratedCatalogOverride) {
+  // Ver todo del banner curado / errores de banner dejan el grid en un estado no-inicio.
+  if (!isAlreadyAll || hadCuratedCatalogOverride || staleCatalogView) {
+    if (_categoryInFlight === "all") {
+      _categoryInFlight = null;
+    }
     await cambiarCategoria("all");
   } else {
     document.querySelectorAll(".menu button").forEach((btn) => btn.classList.remove("active"));
   }
 
-  if (hadCuratedCatalogOverride) {
+  if (hadCuratedCatalogOverride || staleCatalogView) {
     syncInfoBannerVisibility();
     if (fylIsCuratedBannerEnabled()) {
       await fylLoadHomeProductBanner({ preferInline: true });
@@ -5853,6 +6096,14 @@ async function resetHomeState() {
 
   updateURL({ tab: "", sku: "" }, { mode: "replace" });
   restoreScrollFromHistoryState();
+}
+
+async function resetHomeState() {
+  if (_homeResetPromise) return _homeResetPromise;
+  _homeResetPromise = resetHomeStateImpl().finally(() => {
+    _homeResetPromise = null;
+  });
+  return _homeResetPromise;
 }
 
 if (typeof window !== "undefined") {
@@ -7085,6 +7336,17 @@ function ejecutarDiagnostico() {
 
 // Inicialización
 async function inicializarCatalogo() {
+  await supabaseReady;
+  if (
+    typeof window !== "undefined" &&
+    window.supabase &&
+    typeof window.supabase.from === "function"
+  ) {
+    supabase = window.supabase;
+  } else if (supabaseClient && typeof supabaseClient.from === "function") {
+    supabase = supabaseClient;
+  }
+
   window.__FYL_BOOT_SUPPRESS_ROUTE = true;
   globalThis.markBootStage?.("catalog.init.start");
   renderCatalogSkeletonCards(CATALOG_BOOT_SKELETON_COUNT);
@@ -7111,6 +7373,8 @@ async function inicializarCatalogo() {
       hideCatalogBootOverlay();
       return;
     }
+
+    await resolveCatalogSourceIfStale(supabase);
 
     // Ejecutar diagnóstico
     ejecutarDiagnostico();
@@ -7392,12 +7656,14 @@ async function inicializarCatalogo() {
   }
 }
 
-// Ejecutar inicialización cuando el DOM esté listo o si ya está listo
+function fylScheduleCatalogInit() {
+  void inicializarCatalogo();
+}
+
 if (document.readyState === "loading") {
-  window.addEventListener("DOMContentLoaded", inicializarCatalogo);
+  window.addEventListener("DOMContentLoaded", fylScheduleCatalogInit);
 } else {
-  // El DOM ya está listo, ejecutar inmediatamente
-  inicializarCatalogo();
+  fylScheduleCatalogInit();
 }
 
 // Configurar eventos de la interfaz

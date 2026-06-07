@@ -7,13 +7,18 @@ function isExcludedGeneralWhatsappLink(link) {
 }
 
 function isProductWhatsappConsultLink(link) {
-  return !!link?.closest?.(".public-consult-btn, .pdp-whatsapp-cta");
+  if (!link || typeof link.closest !== "function") return false;
+  return !!link.closest(".public-consult-btn, .pdp-whatsapp-cta");
 }
 
 if (!window.__fbWaLeadDelegationInit) {
   window.__fbWaLeadDelegationInit = true;
   document.addEventListener("click", (e) => {
-    const link = e.target?.closest?.('a[href*="wa.me"]');
+    const target = e.target;
+    const link =
+      target && typeof target.closest === "function"
+        ? target.closest('a[href*="wa.me"]')
+        : null;
     if (!link) return;
 
     // Catálogo público: pixel solo en catalogo-publico.js (card/PDP). FAB, menú, footer: nada.

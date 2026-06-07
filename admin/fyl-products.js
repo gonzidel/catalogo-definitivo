@@ -1,6 +1,6 @@
-// admin/fyl-products.js
-import { supabase } from "../scripts/supabase-client.js";
-import { preloadAuthState, can, isAdminUser } from "./auth-state.js";
+﻿// admin/fyl-products.js
+import { supabase } from "../scripts/supabase-client.js?v=m260607";
+import { preloadAuthState, can, isAdminUser } from "./auth-state.js?v=m260607";
 
 // Verificar permisos de stock
 let canViewStock = false;

@@ -2,7 +2,7 @@
 // Capa compartida de dominio para pedidos (sin dependencias de UI/DOM).
 // Extraída desde orders.js y order-creator.js — misma semántica, sin reglas nuevas.
 
-import { normalizeSize } from "../scripts/utils/size-normalizer.js";
+import { normalizeSize } from "../scripts/utils/size-normalizer.js?v=m260607";
 
 export function normalizeCustomerSearchText(value) {
   return String(value || "")

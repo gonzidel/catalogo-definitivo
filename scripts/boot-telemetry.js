@@ -1,7 +1,7 @@
-// scripts/boot-telemetry.js — telemetría de arranque (móvil / Safari). Cargar antes de config.js.
+﻿// scripts/boot-telemetry.js — telemetría de arranque (móvil / Safari). Cargar antes de config.js.
 // ?debug_boot=1 o localStorage.fyl_debug_boot=1 → panel visual + logs extra.
 
-import "./fyl-error-state.js";
+import "./fyl-error-state.js?v=m260607";
 
 const LOG = "[FYL boot]";
 
@@ -191,7 +191,7 @@ if (typeof window !== "undefined") {
 
 markBootStage("boot.telemetry.ready", { debug });
 
-import("./fyl-resource-error-diagnostics.js?v=m260527")
+import("./fyl-resource-error-diagnostics.js?v=m260607")
   .then((m) => m.installFylResourceErrorDiagnostics?.())
   .catch((e) => {
     markBootStage("resource_diag.init_failed", {
@@ -199,7 +199,7 @@ import("./fyl-resource-error-diagnostics.js?v=m260527")
     });
   });
 
-import("./fyl-runtime-resilience.js?v=m260527")
+import("./fyl-runtime-resilience.js?v=m260607")
   .then((m) => m.initFylRuntimeResilience())
   .catch((e) => {
     markBootStage("resilience.init_failed", { message: String(e && e.message ? e.message : e) });

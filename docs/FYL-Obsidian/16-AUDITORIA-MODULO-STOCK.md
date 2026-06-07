@@ -137,3 +137,23 @@ Lectura: el modulo consulta `products`, `product_variants`, `variant_sizes`, `va
 3. Evaluar helper DB `has_admin_permission('stock','edit')` o equivalente, y usarlo dentro de RPCs de stock en lugar de solo `exists public.admins`.
 4. Separar, en una futura etapa, la edicion de `price`/`active` que hoy ocurre en `admin/stock.js` hacia una RPC o flujo documentado con permiso propio.
 5. Mantener `04-FLUJO-STOCK.md` como flujo conceptual y esta nota como mapa operativo auditado.
+
+## 9. Alerta stock inmovilizado en `admin/stock.html` (2026-06-03)
+
+Implementado en repo (requiere deploy migracion `231_stock_immobile_variants.sql`):
+
+| Pieza | Ubicacion |
+|---|---|
+| Vista 14d por variante | `vw_stock_immobile_variants` — fuentes: `stock_history`, `stock_movements`, `orders`, `public_sale_items` |
+| Postergacion estacional | `stock_immobile_snooze` + `rpc_stock_immobile_snooze(p_variant_id, p_season)` |
+| UI campana + modal | `admin/stock.html`, `admin/stock.js` |
+| Rearqueo | Reutiliza wizard mobile QR (`openMobileRearqueoWizard`) |
+| Sin stock | RPC 164/165 qty=0 + `product_variants.active=false` (solo variante) |
+
+Distinto de `vw_stock_dead_products` (184): 90 dias, nivel producto, bloque stock-audit.
+
+Verificacion post-deploy:
+
+```sql
+SELECT count(*) FROM public.vw_stock_immobile_variants;
+```

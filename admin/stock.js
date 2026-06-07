@@ -1,9 +1,9 @@
-// admin/stock.js
-import { requireAuth } from "./admin-auth.js";
-import { supabase } from "../scripts/supabase-client.js";
-import { can, preloadAuthState } from "./auth-state.js";
-import { normalizeSize, compareCatalogSizes } from "../scripts/utils/size-normalizer.js?v=m260518";
-import { printProductLabelsZebra } from "./qz-printing.js";
+﻿// admin/stock.js
+import { requireAuth } from "./admin-auth.js?v=m260607";
+import { supabase } from "../scripts/supabase-client.js?v=m260607";
+import { can, preloadAuthState } from "./auth-state.js?v=m260607";
+import { normalizeSize, compareCatalogSizes } from "../scripts/utils/size-normalizer.js?v=m260607";
+import { printProductLabelsZebra } from "./qz-printing.js?v=m260607";
 import { wrapSupabase, createAbortScope, FYL_ERROR_KIND, classifyError } from "../scripts/net/fyl-fetch.js";
 
 // Verificar permisos de stock
@@ -128,6 +128,18 @@ const oldListTbody = document.getElementById("old-list");
 const oldSummary = document.getElementById("old-summary");
 const oldCheckAll = document.getElementById("old-check-all");
 const archiveSelectedBtn = document.getElementById("archive-selected");
+const immobileAlertBtn = document.getElementById("immobile-alert");
+const immobileAlertCount = document.getElementById("immobile-alert-count");
+const overlayImmobile = document.getElementById("overlay-immobile");
+const closeOverlayImmobile = document.getElementById("close-overlay-immobile");
+const immobileSummary = document.getElementById("immobile-summary");
+const immobileList = document.getElementById("immobile-list");
+const immobileEmpty = document.getElementById("immobile-empty");
+const overlayImmobileSeason = document.getElementById("overlay-immobile-season");
+const immobileSeasonDesc = document.getElementById("immobile-season-desc");
+const immobileSeasonVerano = document.getElementById("immobile-season-verano");
+const immobileSeasonInvierno = document.getElementById("immobile-season-invierno");
+const immobileSeasonCancel = document.getElementById("immobile-season-cancel");
 const incompleteAlert = document.getElementById("incomplete-alert");
 const incompleteCount = document.getElementById("incomplete-count");
 const productNamesDatalist = document.getElementById("product-names");
@@ -231,6 +243,19 @@ const mobileLectorSizeMap = new Map();
 const mobileLectorVariantSizeMap = new Map();
 const mobileLectorQrMap = new Map();
 const mobileLectorCellMap = new Map();
+
+/** Variantes inmovilizadas (14+ días) para alerta campana */
+let immobileVariants = [];
+let immobileSeasonPendingVariant = null;
+let mobileWizardOpenedFromImmobile = false;
+
+function escapeImmobileHtml(str) {
+  return String(str ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
 
 function isCompleteMobileLectorCode(raw) {
   const code = String(raw ?? "").trim();
@@ -1828,6 +1853,56 @@ function openMobileProductStockWizard(productId) {
   updateMobileWizardKeyboardOffset();
 }
 
+function activateMobileLectorRecount() {
+  mobileWizardState.mode = "modify";
+  mobileWizardState.currentIndex = 0;
+  mobileWizardState.lectorActive = true;
+  if (mobileLectorCheckbox) mobileLectorCheckbox.checked = true;
+  mobileWizardState.rows.forEach((r) => {
+    mobileWizardState.values.set(r.rowId, 0);
+  });
+  mobileLectorQrMap.clear();
+  void preloadMobileLectorQrCache();
+  switchMobileWizardStep(mobileStepSize);
+  updateMobileSizeStep();
+}
+
+async function openMobileRearqueoWizard(productId, variantId) {
+  if (!canEditStock) {
+    alert("No tienes permiso para editar el stock.");
+    return;
+  }
+  if (!isMobileStockViewport()) {
+    alert("El rearqueo está disponible solo en vista móvil.");
+    return;
+  }
+  if (msg) msg.textContent = "Cargando variante para rearqueo...";
+  const ok = await load([productId]);
+  if (!ok) {
+    alert("No se pudo cargar el producto para rearqueo.");
+    return;
+  }
+  openMobileStockWizard(productId, variantId);
+  mobileWizardState.selectedField = "stock_general";
+  mobileWarehouseButtons.forEach((btn) => {
+    btn.classList.remove("active");
+    if (btn.getAttribute("data-mobile-warehouse") === "stock_general") {
+      btn.classList.add("active");
+    }
+  });
+  mobileModeButtons.forEach((btn) => {
+    btn.classList.remove("active");
+    if (btn.getAttribute("data-mobile-mode") === "modify") {
+      btn.classList.add("active");
+    }
+  });
+  setMobileModeTag(mobileModeTag, "modify");
+  activateMobileLectorRecount();
+  mobileWizardOpenedFromImmobile = true;
+  closeImmobileOverlay();
+  if (msg) msg.textContent = "";
+}
+
 function closeMobileStockWizard() {
   if (!mobileWizardOverlay) return;
   mobileWizardOverlay.classList.remove("show");
@@ -1838,6 +1913,7 @@ function closeMobileStockWizard() {
   }
   clearMobileLectorUi();
   resetMobileWizardState();
+  mobileWizardOpenedFromImmobile = false;
 }
 
 function updateMobileWizardKeyboardOffset() {
@@ -2142,6 +2218,10 @@ async function applyMobileWizardAndSave() {
 
   closeMobileStockWizard();
   await saveAll();
+  if (mobileWizardOpenedFromImmobile) {
+    mobileWizardOpenedFromImmobile = false;
+    await refreshImmobileAlert();
+  }
 }
 
 // Funciones globales para toggle
@@ -2872,16 +2952,7 @@ mobileWarehouseButtons.forEach((btn) => {
     if (mobileLectorCheckbox) mobileLectorCheckbox.checked = false;
     if (mobileWizardState.scope === "product") {
       mobileWizardState.mode = "modify";
-      mobileWizardState.currentIndex = 0;
-      mobileWizardState.lectorActive = true;
-      if (mobileLectorCheckbox) mobileLectorCheckbox.checked = true;
-      mobileWizardState.rows.forEach((r) => {
-        mobileWizardState.values.set(r.rowId, 0);
-      });
-      mobileLectorQrMap.clear();
-      void preloadMobileLectorQrCache();
-      switchMobileWizardStep(mobileStepSize);
-      updateMobileSizeStep();
+      activateMobileLectorRecount();
       return;
     }
     switchMobileWizardStep(mobileStepMode);
@@ -3722,6 +3793,286 @@ archiveSelectedBtn?.addEventListener("click", () => {
 // No cargar automáticamente al inicio - solo cargar cuando hay filtros o búsqueda
 // load(); // Comentado: no cargar automáticamente
 
+// ========== ALERTA STOCK INMOVILIZADO (14+ días) ==========
+
+async function loadImmobileVariants() {
+  const { data, error } = await supabase
+    .from("vw_stock_immobile_variants")
+    .select("variant_id, product_id, product_name, color, category, stock_total, dias_sin_movimiento, fuente_actividad")
+    .order("dias_sin_movimiento", { ascending: false });
+  if (error) {
+    console.warn("[stock] vw_stock_immobile_variants:", error.message);
+    return [];
+  }
+  return data || [];
+}
+
+function updateImmobileBadge(count) {
+  if (immobileAlertCount) {
+    immobileAlertCount.textContent = String(count);
+  }
+  if (immobileAlertBtn) {
+    immobileAlertBtn.style.display = count > 0 || canViewStock ? "" : "none";
+    immobileAlertBtn.setAttribute("aria-label", `Stock inmovilizado: ${count} variante(s)`);
+  }
+}
+
+async function refreshImmobileAlert() {
+  try {
+    immobileVariants = await loadImmobileVariants();
+    updateImmobileBadge(immobileVariants.length);
+    if (overlayImmobile?.classList.contains("show")) {
+      renderImmobileModal();
+    }
+  } catch (err) {
+    console.warn("[stock] refreshImmobileAlert:", err);
+  }
+}
+
+function closeImmobileOverlay() {
+  if (!overlayImmobile) return;
+  overlayImmobile.classList.remove("show");
+  overlayImmobile.setAttribute("aria-hidden", "true");
+}
+
+function closeImmobileSeasonOverlay() {
+  if (!overlayImmobileSeason) return;
+  overlayImmobileSeason.classList.remove("show");
+  overlayImmobileSeason.setAttribute("aria-hidden", "true");
+  immobileSeasonPendingVariant = null;
+}
+
+function renderImmobileModal() {
+  if (!immobileList || !immobileSummary) return;
+
+  const items = immobileVariants;
+  if (immobileEmpty) {
+    immobileEmpty.style.display = items.length ? "none" : "block";
+  }
+  immobileSummary.textContent = items.length
+    ? `${items.length} variante(s) con stock sin movimiento en 14+ días.`
+    : "No hay variantes inmovilizadas.";
+
+  if (!items.length) {
+    immobileList.innerHTML = "";
+    return;
+  }
+
+  const isMobile = isMobileStockViewport();
+  const readOnly = !canEditStock;
+
+  immobileList.innerHTML = items.map((row) => {
+    const pid = escapeImmobileHtml(row.product_id);
+    const vid = escapeImmobileHtml(row.variant_id);
+    const name = escapeImmobileHtml(row.product_name || "—");
+    const color = escapeImmobileHtml(row.color || "—");
+    const dias = Number(row.dias_sin_movimiento) || 0;
+    const stock = Number(row.stock_total) || 0;
+    const rearqueoHidden = !isMobile ? " is-desktop-disabled" : "";
+    const rearqueoDisabled = readOnly || !isMobile ? " disabled" : "";
+    const selectDisabled = readOnly ? " disabled" : "";
+    return `
+      <div class="immobile-row" data-variant-id="${vid}" data-product-id="${pid}">
+        <div class="immobile-row-head">
+          <div>
+            <p class="immobile-row-title">${name}</p>
+            <p class="immobile-row-color">Color: ${color}</p>
+          </div>
+          <span class="immobile-row-meta">${dias}d sin movimiento · ${stock} u</span>
+        </div>
+        <div class="immobile-row-actions">
+          <button type="button" class="immobile-rearqueo-btn${rearqueoHidden}" data-immobile-rearqueo="${vid}" data-immobile-product="${pid}"${rearqueoDisabled}${!isMobile ? ' title="Disponible en móvil"' : ""}>Rearqueo</button>
+          <select class="immobile-action-select" data-immobile-action="${vid}" data-immobile-product="${pid}" data-immobile-color="${color}" data-immobile-name="${name}"${selectDisabled}>
+            <option value="">Acción…</option>
+            <option value="sin_stock">Sin stock</option>
+            <option value="postergar">Postergar</option>
+          </select>
+        </div>
+      </div>`;
+  }).join("");
+}
+
+async function zeroVariantStock(variantId, productId, label) {
+  const { data: warehouses, error: whErr } = await supabase
+    .from("warehouses")
+    .select("id, code")
+    .in("code", ["general", "venta-publico"]);
+  if (whErr) throw whErr;
+
+  const whMap = new Map((warehouses || []).map((w) => [w.code, w.id]));
+  const generalId = whMap.get("general");
+  const ventaId = whMap.get("venta-publico");
+  if (!generalId || !ventaId) {
+    throw new Error("No se encontraron los depósitos general / venta-publico.");
+  }
+
+  const { data: sizes, error: sizesErr } = await supabase
+    .from("variant_sizes")
+    .select("size")
+    .eq("variant_id", variantId);
+  if (sizesErr) throw sizesErr;
+
+  const rpcSizeItems = [];
+  const rpcNoSizeItems = [];
+
+  if (sizes && sizes.length > 0) {
+    for (const s of sizes) {
+      if (!s.size) continue;
+      rpcSizeItems.push(
+        { variant_id: variantId, product_id: productId, size: s.size, warehouse_id: generalId, stock_qty: 0 },
+        { variant_id: variantId, product_id: productId, size: s.size, warehouse_id: ventaId, stock_qty: 0 }
+      );
+    }
+  } else {
+    rpcNoSizeItems.push(
+      { variant_id: variantId, product_id: productId, warehouse_id: generalId, stock_qty: 0 },
+      { variant_id: variantId, product_id: productId, warehouse_id: ventaId, stock_qty: 0 }
+    );
+  }
+
+  if (rpcSizeItems.length > 0) {
+    const { data, error } = await supabase.rpc("rpc_set_variant_size_stock_batch", {
+      p_items: rpcSizeItems,
+      p_source: "manual_edit",
+    });
+    if (error) throw error;
+    if (!data?.ok) throw new Error("No se pudo zerar stock por talle.");
+  }
+
+  if (rpcNoSizeItems.length > 0) {
+    const { data, error } = await supabase.rpc("rpc_set_variant_warehouse_stock_batch", {
+      p_items: rpcNoSizeItems,
+      p_source: "manual_edit",
+    });
+    if (error) throw error;
+    if (!data?.ok) throw new Error("No se pudo zerar stock de variante.");
+  }
+
+  const { error: inactiveErr } = await supabase
+    .from("product_variants")
+    .update({ active: false })
+    .eq("id", variantId);
+  if (inactiveErr) throw inactiveErr;
+
+  if (msg) msg.textContent = `Variante "${label}" sin stock y desactivada.`;
+}
+
+function openImmobileSeasonDialog(variantId, productName, color) {
+  immobileSeasonPendingVariant = variantId;
+  if (immobileSeasonDesc) {
+    immobileSeasonDesc.textContent = `${productName} — ${color}`;
+  }
+  if (overlayImmobileSeason) {
+    overlayImmobileSeason.classList.add("show");
+    overlayImmobileSeason.setAttribute("aria-hidden", "false");
+  }
+}
+
+async function applyImmobileSnooze(variantId, season) {
+  const { data, error } = await supabase.rpc("rpc_stock_immobile_snooze", {
+    p_variant_id: variantId,
+    p_season: season,
+  });
+  if (error) throw error;
+  if (!data?.ok) throw new Error("No se pudo postergar la alerta.");
+  if (msg) {
+    msg.textContent = `Alerta postergada hasta ${data.snooze_until} (${season}).`;
+  }
+}
+
+async function handleImmobileActionSelect(selectEl) {
+  if (!selectEl || !canEditStock) return;
+  const action = selectEl.value;
+  if (!action) return;
+
+  const variantId = selectEl.getAttribute("data-immobile-action");
+  const productId = selectEl.getAttribute("data-immobile-product");
+  const productName = selectEl.getAttribute("data-immobile-name") || "";
+  const color = selectEl.getAttribute("data-immobile-color") || "";
+  const label = `${productName} (${color})`;
+
+  selectEl.value = "";
+
+  if (action === "sin_stock") {
+    if (!confirm(`¿Poner en 0 y desactivar la variante ${label}? No se mostrará en catálogo.`)) {
+      return;
+    }
+    try {
+      await zeroVariantStock(variantId, productId, label);
+      await refreshImmobileAlert();
+    } catch (err) {
+      alert(`Error: ${err?.message || "No se pudo aplicar sin stock."}`);
+    }
+    return;
+  }
+
+  if (action === "postergar") {
+    openImmobileSeasonDialog(variantId, productName, color);
+  }
+}
+
+function bindImmobileModalEvents() {
+  immobileAlertBtn?.addEventListener("click", async () => {
+    await refreshImmobileAlert();
+    renderImmobileModal();
+    if (overlayImmobile) {
+      overlayImmobile.classList.add("show");
+      overlayImmobile.setAttribute("aria-hidden", "false");
+    }
+  });
+
+  closeOverlayImmobile?.addEventListener("click", closeImmobileOverlay);
+  overlayImmobile?.addEventListener("click", (e) => {
+    if (e.target === overlayImmobile) closeImmobileOverlay();
+  });
+
+  immobileList?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-immobile-rearqueo]");
+    if (!btn || btn.disabled) return;
+    const productId = btn.getAttribute("data-immobile-product");
+    const variantId = btn.getAttribute("data-immobile-rearqueo");
+    if (productId && variantId) {
+      runStockTask("immobile_rearqueo", () => openMobileRearqueoWizard(productId, variantId));
+    }
+  });
+
+  immobileList?.addEventListener("change", (e) => {
+    const select = e.target.closest(".immobile-action-select");
+    if (select) handleImmobileActionSelect(select);
+  });
+
+  immobileSeasonVerano?.addEventListener("click", async () => {
+    if (!immobileSeasonPendingVariant) return;
+    const vid = immobileSeasonPendingVariant;
+    closeImmobileSeasonOverlay();
+    try {
+      await applyImmobileSnooze(vid, "verano");
+      await refreshImmobileAlert();
+    } catch (err) {
+      alert(`Error: ${err?.message || "No se pudo postergar."}`);
+    }
+  });
+
+  immobileSeasonInvierno?.addEventListener("click", async () => {
+    if (!immobileSeasonPendingVariant) return;
+    const vid = immobileSeasonPendingVariant;
+    closeImmobileSeasonOverlay();
+    try {
+      await applyImmobileSnooze(vid, "invierno");
+      await refreshImmobileAlert();
+    } catch (err) {
+      alert(`Error: ${err?.message || "No se pudo postergar."}`);
+    }
+  });
+
+  immobileSeasonCancel?.addEventListener("click", closeImmobileSeasonOverlay);
+  overlayImmobileSeason?.addEventListener("click", (e) => {
+    if (e.target === overlayImmobileSeason) closeImmobileSeasonOverlay();
+  });
+}
+
+bindImmobileModalEvents();
+
 async function bootstrapStockUi() {
   isStockUiReady = false;
   setStockLoadingState(true);
@@ -3735,6 +4086,7 @@ async function bootstrapStockUi() {
     applyStockPermissions().catch((err) => console.warn("applyStockPermissions async:", err));
     await loadProductNames();
     await loadSuppliersForFilter();
+    await refreshImmobileAlert();
     msg.textContent = stockLoadHintMessage();
     isStockUiReady = true;
   } catch (initError) {

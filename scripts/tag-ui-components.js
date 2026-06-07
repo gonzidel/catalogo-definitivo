@@ -1,7 +1,7 @@
 // scripts/tag-ui-components.js
 // Componentes UI para mostrar tags (highlights y filtros avanzados)
 
-import { tagService } from './tag-service.js';
+import { tagService } from './tag-service.js?v=m260607';
 
 // Renderizar chips usando HIGHLIGHTS (no details)
 export function renderTagChips(productId, containerId) {

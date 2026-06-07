@@ -1,6 +1,6 @@
-// admin/proveedores.js — lectura de supplier_message_ingest (RLS admin)
-import { supabase } from "../scripts/supabase-client.js";
-import { preloadAuthState, can, isAdminUser } from "./auth-state.js";
+﻿// admin/proveedores.js — lectura de supplier_message_ingest (RLS admin)
+import { supabase } from "../scripts/supabase-client.js?v=m260607";
+import { preloadAuthState, can, isAdminUser } from "./auth-state.js?v=m260607";
 
 const tbody = document.getElementById("ingest-tbody");
 const loadErr = document.getElementById("load-err");

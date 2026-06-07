@@ -71,7 +71,7 @@
             // 1. Verificar configuración
             reporte.push('\n1. 📋 CONFIGURACIÓN:');
             try {
-                const config = await import('./scripts/config.local.js');
+                const config = await import('./scripts/config.local.js?v=m260607');
                 reporte.push(`✅ SUPABASE_URL: ${config.SUPABASE_URL}`);
                 reporte.push(`✅ SUPABASE_ANON_KEY: ${config.SUPABASE_ANON_KEY ? 'Configurada' : 'No configurada'}`);
                 reporte.push(`✅ USE_SUPABASE: ${config.USE_SUPABASE}`);
@@ -84,7 +84,7 @@
             reporte.push('\n2. 🗄️ SUPABASE:');
             try {
                 const { createClient } = await import('https://cdn.skypack.dev/@supabase/supabase-js@2');
-                const config = await import('./scripts/config.local.js');
+                const config = await import('./scripts/config.local.js?v=m260607');
                 const supabase = createClient(config.SUPABASE_URL, config.SUPABASE_ANON_KEY);
                 
                 // Probar conexión

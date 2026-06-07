@@ -1,7 +1,7 @@
 // scripts/tag-service.js
 // Servicio para operaciones con tags jerárquicos y similitud
 
-import { supabase } from './supabase-client.js';
+import { supabase } from './supabase-client.js?v=m260607';
 
 export class TagService {
   // Obtener tipos por categoría

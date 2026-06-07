@@ -1,8 +1,8 @@
 // scripts/passkeys.js
 // Módulo frontend para WebAuthn/Passkeys
 
-import { supabase } from "./supabase-client.js";
-import { SUPABASE_URL } from "./config.js";
+import { supabase } from "./supabase-client.js?v=m260607";
+import { SUPABASE_URL } from "./config.js?v=m260607";
 
 const EDGE_FUNCTION_URL = `${SUPABASE_URL}/functions/v1/passkeys`;
 

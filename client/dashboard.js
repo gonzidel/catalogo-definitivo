@@ -1,7 +1,7 @@
 // client/dashboard.js - Dashboard del cliente
-import { fylDevLog } from "../scripts/config.js";
-import { supabase } from "../scripts/supabase-client.js";
-import { hasInitialProfileComplete } from "./auth-helper.js";
+import { fylDevLog } from "../scripts/config.js?v=m260607";
+import { supabase } from "../scripts/supabase-client.js?v=m260607";
+import { hasInitialProfileComplete } from "./auth-helper.js?v=m260607";
 
 // Función para verificar autenticación y perfil
 async function checkAuthAndProfile() {

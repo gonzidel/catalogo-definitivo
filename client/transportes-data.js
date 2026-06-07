@@ -2,9 +2,9 @@
  * Asignación de transporte por provincia y localidad.
  * Transportes: SEDE, Expreso Norte, Credifin, Transporte Snaider, Via Cargo, Correo Argentino, Retiro de Local.
  */
-import { viaCargoLocalities } from "./data/via-cargo-localidades.js";
-import { snaiderLocalities } from "./data/snaider-localidades.js";
-import { canonicalizeTransportName } from "../scripts/transport-canonical.js";
+import { viaCargoLocalities } from "./data/via-cargo-localidades.js?v=m260607";
+import { snaiderLocalities } from "./data/snaider-localidades.js?v=m260607";
+import { canonicalizeTransportName } from "../scripts/transport-canonical.js?v=m260607";
 
 /** Via Cargo y Transporte Snaider: listados generados con scripts/import-viacargo-xlsx.mjs e import-snaider-xlsx.mjs */
 

@@ -1,8 +1,8 @@
-// scripts/size-filter.js - Filtro de talles con modal bottom sheet
+﻿// scripts/size-filter.js - Filtro de talles con modal bottom sheet
 
-import { fylDevLog } from "./config.js";
-import { supabase } from "./supabase-client.js";
-import { compareCatalogSizes, normalizeSize } from "./utils/size-normalizer.js?v=m260527";
+import { fylDevLog } from "./config.js?v=m260607";
+import { supabase } from "./supabase-client.js?v=m260607";
+import { compareCatalogSizes, normalizeSize } from "./utils/size-normalizer.js?v=m260607";
 
 // Estado global
 let currentCategory = null;

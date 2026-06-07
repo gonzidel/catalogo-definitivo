@@ -4,6 +4,49 @@
 
 ---
 
+## 2026-06-06 — Catálogo (`/`, `/catalogo`, `/index`): `SyntaxError` intermitente en el primer ingreso (version skew de imports ESM)
+
+### Síntoma
+
+- Al entrar a `/`, `/catalogo` o `/index` aparecía en consola, rompiendo el boot del catálogo:
+
+  > `Uncaught SyntaxError: The requested module './catalog-source.js' does not provide an export named 'resolveCatalogSourceIfStale' (at main-supabase.js)`
+
+- **Al refrescar (F5) se solucionaba.** El resto de errores de consola (`content.js hostname`, `fbevents.js ERR_BLOCKED_BY_CLIENT`, Apollo `vendors-async.js`, `ERR_CACHE_READ_FAILURE 200`) eran ruido de extensiones/adblocker, no del código.
+
+### Causa raíz
+
+`firebase.json` sirve **todos** los `.js` con `Cache-Control: public, max-age=31536000, immutable`. El cache-busting depende 100% del `?v=`. El HTML (no-cache) bajaba el `main-supabase.js?v=m260604` nuevo, pero adentro importaba `from "./catalog-source.js"` **sin `?v=`** ⇒ el navegador servía la versión vieja cacheada de `catalog-source.js` (sin el export nuevo `resolveCatalogSourceIfStale`) ⇒ `SyntaxError`. Al refrescar, el SW/caché revalidaba y agarraba la versión nueva.
+
+Era una instancia de un problema **sistémico de "version skew"**: la mayoría de los imports relativos del grafo público (`scripts/`, `client/`, e inline en HTML) eran **bare** (sin `?v=`) o estaban **desfasados** (decenas pinneaban `supabase-client.js?v=m260603`). Efectos colaterales latentes:
+
+- **Doble instancia de `supabase-client.js`** en una misma página (URLs `?v=m260603` vs `?v=m260604`).
+- **Doble instancia de `analytics.js`**: `catalogo.html`/`index.html` lo cargaban inline como `./scripts/analytics.js?v=m260604` mientras `main-supabase.js` lo importaba bare como `./analytics.js`.
+
+### Solución (build, sistémica)
+
+`scripts/cache-bust-html.mjs` ahora **versiona automáticamente todos los imports relativos** del grafo público en cada build:
+
+- Nueva función `patchImportSpecifiers()` con regex anclado en `from`/`import` (estáticos, side-effect y dinámicos `import(...)`). Agrega/normaliza `?v=<version>` en specifiers relativos `./` y `../` que terminan en `.js`/`.mjs`.
+- **No toca**: template literals con backticks (imports dinámicos versionados en runtime), rutas no relativas (`https://`, paquetes bare), ni `fetch()`/asignaciones tipo `let from = "..."`.
+- Se aplica a HTML inline (excepto `admin/`, que es no-cache ⇒ sin skew posible) y a todos los JS bajo `scripts/` y `client/` (salta `vendor/`).
+- Como todo queda en la **misma versión**, cada módulo resuelve a una URL absoluta idéntica ⇒ **una sola instancia** por módulo, sin export-mismatch.
+
+Cambios puntuales previos al fix sistémico (ya incluidos): versionado del import de `catalog-source.js` en `main-supabase.js`, `curated-banner.js` y `fyl-originals-banner.js`; corrección del `supabase-client.js?v=m260603` desfasado en `fyl-originals-banner.js`; alta de `scripts/fyl-originals-banner.js` en `EXTRA_VERSIONED_FILES`.
+
+### Verificación
+
+- Dry-run del build: 40 imports JS + 6 HTML normalizados a `m260604`; **idempotente** (segunda corrida: 0 cambios).
+- Simulación de bump (`--version m260605 --dry-run`): re-versiona los 44 imports + HTML + `sw.js` + `fyl-version.js` de forma atómica.
+- `grep` post-fix: 0 imports relativos bare y 0 `?v=m260603` en `scripts/` y `client/`.
+
+### Riesgo / rollback
+
+- Sin migración de datos ni cambios de backend. Rollback = revertir el commit del build script + re-correr `npm run build`.
+- `admin/` queda intencionalmente fuera (no-cache, sin skew).
+
+---
+
 ## 2026-05-08 — Safari iPhone: error `no_client` al iniciar el catálogo (Supabase no se inicializaba)
 
 ### Síntoma

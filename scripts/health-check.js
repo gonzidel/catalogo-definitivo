@@ -41,7 +41,7 @@ class HealthChecker {
 
     try {
       // Verificar si existe config.local.js
-      const localConfig = await import("./config.local.js");
+      const localConfig = await import("./config.local.js?v=m260607");
       config.hasLocalConfig = true;
       config.supabaseUrl = localConfig.SUPABASE_URL || window.SUPABASE_URL;
     } catch (e) {

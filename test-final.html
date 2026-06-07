@@ -80,7 +80,7 @@
         // Inicializar Supabase
         async function initSupabase() {
             try {
-                const config = await import('./scripts/config.local.js');
+                const config = await import('./scripts/config.local.js?v=m260607');
                 const { createClient } = await import('https://cdn.skypack.dev/@supabase/supabase-js@2');
                 supabase = createClient(config.SUPABASE_URL, config.SUPABASE_ANON_KEY);
                 return true;
@@ -157,7 +157,7 @@
 
             try {
                 // Cargar el script principal
-                await import('./scripts/main-supabase.js');
+                await import('./scripts/main-supabase.js?v=m260607');
 
                 let html = '<p class="success">✅ Funciones del catálogo cargadas</p>';
                 html += '<ul>';

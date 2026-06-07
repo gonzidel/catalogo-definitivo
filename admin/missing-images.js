@@ -1,11 +1,12 @@
-// admin/missing-images.js
-import { supabase } from "../scripts/supabase-client.js";
+﻿// admin/missing-images.js
+import { supabase, supabaseReady } from "../scripts/supabase-client.js?v=m260607";
 
 console.log("🔧 missing-images.js cargado");
 
 // Verificación simple de autenticación
 let __currentUser = null;
 async function checkAuth() {
+  await supabaseReady;
   try {
     const { data } = await supabase.auth.getSession();
     if (data?.session) {

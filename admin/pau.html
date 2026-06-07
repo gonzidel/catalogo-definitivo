@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
@@ -11,6 +11,143 @@
     window.redirectTarget = "./pau.html";
     window.skipPanelRedirect = true;
   </script>
+  <!-- ── PAU DEBUG CAPTURE (temporal para diagnóstico mobile) ───────────── -->
+  <script>
+  (function () {
+    var LOG = [];
+    var startedAt = Date.now();
+    function ts() { return ((Date.now() - startedAt) / 1000).toFixed(2) + "s"; }
+    function push(kind, args) {
+      try {
+        var parts = [];
+        for (var i = 0; i < args.length; i++) {
+          var a = args[i];
+          if (a instanceof Error) {
+            parts.push(a.name + ": " + a.message + (a.stack ? "\n" + a.stack : ""));
+          } else if (typeof a === "object") {
+            try { parts.push(JSON.stringify(a)); } catch (e) { parts.push(String(a)); }
+          } else {
+            parts.push(String(a));
+          }
+        }
+        LOG.push("[" + ts() + "] [" + kind + "] " + parts.join(" "));
+      } catch (e) { /* noop */ }
+    }
+    window.__PAU_DEBUG__ = LOG;
+
+    // Proxy de console
+    ["log", "warn", "error", "info"].forEach(function (m) {
+      var orig = console[m] ? console[m].bind(console) : function () {};
+      console[m] = function () { push(m.toUpperCase(), arguments); orig.apply(null, arguments); };
+    });
+
+    // Errores globales
+    window.addEventListener("error", function (e) {
+      if (e && e.message) {
+        push("WINDOW.ERROR", [e.message + " @ " + (e.filename || "?") + ":" + (e.lineno || "?") + ":" + (e.colno || "?")]);
+      } else if (e && e.target && e.target.src) {
+        push("RESOURCE.ERROR", ["No cargó recurso: " + e.target.src]);
+      }
+    }, true);
+
+    // Promesas rechazadas (los await de arriba de pau.js caen acá)
+    window.addEventListener("unhandledrejection", function (e) {
+      var r = e ? e.reason : null;
+      if (r instanceof Error) push("UNHANDLED.REJECTION", [r.name + ": " + r.message + (r.stack ? "\n" + r.stack : "")]);
+      else push("UNHANDLED.REJECTION", [String(r)]);
+    });
+
+    // Detectar redirección (requireAuth manda a index.html si falla)
+    var _assign = window.location.assign.bind(window.location);
+    try {
+      window.location.assign = function (url) { push("REDIRECT", ["location.assign -> " + url]); _assign(url); };
+    } catch (e) { /* algunos browsers no permiten override */ }
+
+    push("BOOT", ["PAU debug capture activo. UA=" + navigator.userAgent]);
+    push("BOOT", ["URL=" + location.href]);
+
+    // Marca de progreso: si pau.js termina de inicializar, lo seteamos al final del módulo
+    window.__PAU_BOOT_OK__ = false;
+
+    function buildPanel() {
+      var btn = document.createElement("button");
+      btn.textContent = "🐞 DEBUG";
+      btn.setAttribute("type", "button");
+      btn.style.cssText = "position:fixed;bottom:14px;right:14px;z-index:999999;background:#b00020;color:#fff;border:none;border-radius:24px;padding:12px 18px;font-size:15px;font-weight:700;box-shadow:0 2px 10px rgba(0,0,0,.35);";
+
+      var overlay = document.createElement("div");
+      overlay.style.cssText = "position:fixed;inset:0;z-index:1000000;background:rgba(0,0,0,.92);display:none;flex-direction:column;padding:12px;box-sizing:border-box;";
+
+      var info = document.createElement("div");
+      info.style.cssText = "color:#fff;font:12px/1.4 monospace;margin-bottom:8px;";
+
+      var ta = document.createElement("textarea");
+      ta.readOnly = true;
+      ta.style.cssText = "flex:1;width:100%;box-sizing:border-box;background:#111;color:#0f0;font:12px/1.4 monospace;border:1px solid #444;border-radius:6px;padding:8px;white-space:pre;overflow:auto;";
+
+      var row = document.createElement("div");
+      row.style.cssText = "display:flex;gap:8px;margin-top:8px;";
+
+      var copyBtn = document.createElement("button");
+      copyBtn.textContent = "📋 Copiar todo";
+      copyBtn.setAttribute("type", "button");
+      copyBtn.style.cssText = "flex:1;background:#0a7;color:#fff;border:none;border-radius:6px;padding:12px;font-size:15px;font-weight:700;";
+
+      var closeBtn = document.createElement("button");
+      closeBtn.textContent = "✕ Cerrar";
+      closeBtn.setAttribute("type", "button");
+      closeBtn.style.cssText = "flex:1;background:#555;color:#fff;border:none;border-radius:6px;padding:12px;font-size:15px;font-weight:700;";
+
+      function snapshot() {
+        var bootState = window.__PAU_BOOT_OK__ ? "✅ pau.js terminó de inicializar (listeners OK)" : "❌ pau.js NO terminó de inicializar (se colgó antes de los listeners)";
+        var btnState = (function () {
+          var b = document.getElementById("pau-create-customer-btn");
+          if (!b) return "botón crear-cliente: NO existe en DOM";
+          return "botón crear-cliente: existe, hidden=" + b.hidden;
+        })();
+        info.textContent = bootState + "\n" + btnState + "\nEntradas capturadas: " + LOG.length;
+        ta.value = LOG.join("\n") + "\n\n--- ESTADO ---\n" + bootState + "\n" + btnState;
+      }
+
+      btn.addEventListener("click", function () {
+        snapshot();
+        overlay.style.display = "flex";
+      });
+      closeBtn.addEventListener("click", function () { overlay.style.display = "none"; });
+      copyBtn.addEventListener("click", function () {
+        ta.focus();
+        ta.select();
+        var ok = false;
+        try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(ta.value).then(function () {
+            copyBtn.textContent = "✅ Copiado";
+            setTimeout(function () { copyBtn.textContent = "📋 Copiar todo"; }, 1500);
+          }, function () {
+            copyBtn.textContent = ok ? "✅ Copiado" : "Selecciona y copia manual";
+          });
+        } else {
+          copyBtn.textContent = ok ? "✅ Copiado" : "Selecciona y copia manual";
+        }
+      });
+
+      row.appendChild(copyBtn);
+      row.appendChild(closeBtn);
+      overlay.appendChild(info);
+      overlay.appendChild(ta);
+      overlay.appendChild(row);
+      document.body.appendChild(btn);
+      document.body.appendChild(overlay);
+    }
+
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", buildPanel, { once: true });
+    } else {
+      buildPanel();
+    }
+  })();
+  </script>
+  <!-- ── FIN PAU DEBUG CAPTURE ──────────────────────────────────────────── -->
 </head>
 <body class="pau-body">
   <div class="pau-app" id="pau-app">
@@ -260,9 +397,9 @@
 
   <script src="./suppress-extension-errors.js"></script>
   <script type="module" src="../scripts/config.js"></script>
-  <script defer src="../scripts/vendor/supabase-js.bundle.min.js?v=m260518"></script>
-  <script type="module" src="../scripts/supabase-client.js"></script>
-  <script type="module" src="./admin-auth.js"></script>
-  <script type="module" src="./pau.js"></script>
+  <script defer src="../scripts/vendor/supabase-js.bundle.min.js?v=m260607"></script>
+  <script type="module" src="../scripts/supabase-client.js?v=m260607"></script>
+  <script type="module" src="./admin-auth.js?v=m260607"></script>
+  <script type="module" src="./pau.js?v=m260607"></script>
 </body>
 </html>

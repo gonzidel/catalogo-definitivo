@@ -1,6 +1,6 @@
-// admin/customer-create-shared.js — Alta de clienta (misma validación que customers.html)
+﻿// admin/customer-create-shared.js — Alta de clienta (misma validación que customers.html)
 
-import { PROVINCE_CITIES_DATA } from "./argentina-cities-data.js";
+import { PROVINCE_CITIES_DATA } from "./argentina-cities-data.js?v=m260607";
 
 const PROVINCE_CITIES = PROVINCE_CITIES_DATA;
 const ARGENTINA_PROVINCES = Object.keys(PROVINCE_CITIES).sort();

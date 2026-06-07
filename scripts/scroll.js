@@ -1,5 +1,5 @@
-import { fylDevLog } from "./config.js";
-import { fylAnalytics } from "./analytics.js";
+import { fylDevLog } from "./config.js?v=m260607";
+import { fylAnalytics } from "./analytics.js?v=m260607";
 
 const scrollBtn = document.getElementById("btn-scroll-top");
 

@@ -1,6 +1,6 @@
 // client/dashboard-simple.js - Dashboard simplificado que no se bloquea
 
-import { supabase } from "../scripts/supabase-client.js";
+import { supabase } from "../scripts/supabase-client.js?v=m260607";
 
 // Función principal para inicializar el dashboard (no bloqueante)
 async function initDashboard() {

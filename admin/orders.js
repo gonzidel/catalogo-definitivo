@@ -3,7 +3,7 @@ let supabase = null;
 
 import { createScreenScope } from "../scripts/net/screen-scope.js";
 import { wrapSupabase, createAbortScope, FYL_ERROR_KIND, classifyError } from "../scripts/net/fyl-fetch.js";
-import { getSessionUser, getAdminPermissions, can, preloadAuthState } from "./auth-state.js";
+import { getSessionUser, getAdminPermissions, can, preloadAuthState } from "./auth-state.js?v=m260607";
 import {
   normalizeCustomerSearchText,
   tokenizeCustomerSearch,
@@ -14,7 +14,7 @@ import {
   parseStockPendingReasonConflict,
   describeStockPendingConflict,
   clampIncidentPoints,
-} from "./orders-domain.js";
+} from "./orders-domain.js?v=m260607";
 
 /**
  * Scope de pedidos: libera el spinner de "#orders-content" cuando la primera
@@ -163,7 +163,7 @@ async function getSupabase() {
   
   // Si aún no está disponible, intentar importar
   try {
-    const module = await import("../scripts/supabase-client.js");
+    const module = await import("../scripts/supabase-client.js?v=m260607");
     supabase = module.supabase || window.supabase;
     
     // Esperar un poco más
@@ -190,7 +190,7 @@ async function getSupabase() {
 // Módulo orders.js cargado
 
 // Importar función centralizada de normalización de tamaños
-import { normalizeSize } from "../scripts/utils/size-normalizer.js";
+import { normalizeSize } from "../scripts/utils/size-normalizer.js?v=m260607";
 
 const STATUS = {
   ACTIVE: "active",

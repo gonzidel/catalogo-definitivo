@@ -1,7 +1,7 @@
-// admin/qz-printing.js
+﻿// admin/qz-printing.js
 // Módulo compartido: única fuente de carga, firma y conexión QZ Tray
 import { SUPABASE_URL } from "../scripts/config.js";
-import { supabase } from "../scripts/supabase-client.js";
+import { supabase } from "../scripts/supabase-client.js?v=m260607";
 
 const QZ_CERT_URL = "/certs/qz-site.crt";
 const QZ_TRAY_SCRIPT_SRC = "https://cdn.jsdelivr.net/npm/qz-tray@2.2.5/qz-tray.js";

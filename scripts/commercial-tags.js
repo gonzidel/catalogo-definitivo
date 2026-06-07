@@ -1,8 +1,8 @@
 // scripts/commercial-tags.js — Puente legacy: solo si la vista no expone DetallesSimilitud.
 // Objetivo: 0 requests en Home tras migración 219 + CATALOG_PUBLIC_SELECT.
 
-import { supabase } from "./supabase-client.js";
-import { fylPerf } from "./fyl-perf.js";
+import { supabase } from "./supabase-client.js?v=m260607";
+import { fylPerf } from "./fyl-perf.js?v=m260607";
 import {
   canonicalTagKey,
   collectUnifiedCommercialTagsFromRows,
@@ -11,7 +11,7 @@ import {
   sanitizeDetallesSimilitudField,
   sanitizeRowDetallesSimilitud,
   splitCommercialTags,
-} from "./tag-normalize.js";
+} from "./tag-normalize.js?v=m260607";
 
 /** Copia DetallesSimilitud del catálogo crudo al cache agrupado (bridge no siempre llega al grupo). */
 export function syncGroupedProductsDetallesSimilitud(grouped, rawRows) {

@@ -1,4 +1,4 @@
-// daily-sales.js - Gestión de ventas diarias
+﻿// daily-sales.js - Gestión de ventas diarias
 // Zona horaria: America/Argentina/Buenos_Aires (alineado con Supabase/triggers)
 
 const TIMEZONE_BUENOS_AIRES = 'America/Argentina/Buenos_Aires';
@@ -36,7 +36,7 @@ async function getSupabase() {
   }
   
   try {
-    const module = await import("../scripts/supabase-client.js");
+    const module = await import("../scripts/supabase-client.js?v=m260607");
     supabase = module.supabase || window.supabase;
     
     if (!supabase) {

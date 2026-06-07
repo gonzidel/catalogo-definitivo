@@ -1,7 +1,7 @@
 // scripts/product-alternatives.js
 // Sistema de productos alternativos cuando un producto/variante está sin stock
 
-import { supabase as supabaseClient } from "./supabase-client.js";
+import { supabase as supabaseClient } from "./supabase-client.js?v=m260607";
 
 let supabase = supabaseClient;
 

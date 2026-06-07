@@ -1,6 +1,6 @@
-// admin/permissions-helper.js
+﻿// admin/permissions-helper.js
 // Utilidades para verificar permisos de administradores y colaboradores
-import { supabase } from "../scripts/supabase-client.js";
+import { supabase, supabaseReady } from "../scripts/supabase-client.js?v=m260607";
 
 let cachedUserPermissions = null;
 let cachedIsSuperAdmin = null;
@@ -49,32 +49,72 @@ export function clearPermissionsCache() {
  * Verifica si el usuario actual es super_admin
  * @returns {Promise<boolean>}
  */
+const IS_SUPER_ADMIN_TIMEOUT_MS = 5000;
+
+async function _isSuperAdminFromAdminsTable(userId) {
+  const { data, error } = await supabase
+    .from("admins")
+    .select("role")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) {
+    console.warn("[permissions] fallback admins.role:", error.message);
+    return false;
+  }
+  return data?.role === "super_admin";
+}
+
 export async function isSuperAdmin() {
   try {
     if (cachedIsSuperAdmin !== null && cacheTimestamp && Date.now() - cacheTimestamp < CACHE_DURATION) {
       return cachedIsSuperAdmin;
     }
 
-    // Usar session local (sin red) en lugar de getUser() (red)
+    await supabaseReady;
     const user = await _getSessionUser();
     if (!user) {
       cachedIsSuperAdmin = false;
+      cacheTimestamp = Date.now();
       return false;
     }
 
-    const { data, error } = await supabase
-      .rpc('is_super_admin', { check_user_id: user.id });
-
-    if (error) {
-      console.error("Error verificando super_admin:", error);
-      return false;
+    let fromRpc = false;
+    try {
+      const rpcTimeout = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("is_super_admin_timeout")), IS_SUPER_ADMIN_TIMEOUT_MS)
+      );
+      const rpcCall = supabase.rpc("is_super_admin", { check_user_id: user.id });
+      const { data, error } = await Promise.race([rpcCall, rpcTimeout]);
+      if (!error && data) {
+        fromRpc = true;
+        cachedIsSuperAdmin = true;
+        cacheTimestamp = Date.now();
+        return true;
+      }
+      if (error) {
+        console.warn("[permissions] is_super_admin RPC error:", error.message);
+      }
+    } catch (rpcErr) {
+      console.warn("[permissions] is_super_admin timeout/error:", rpcErr.message);
     }
 
-    cachedIsSuperAdmin = !!data;
+    if (!fromRpc) {
+      const fromTable = await _isSuperAdminFromAdminsTable(user.id);
+      if (fromTable) {
+        console.log("[permissions] super_admin detectado por tabla admins (fallback RPC)");
+        cachedIsSuperAdmin = true;
+        cacheTimestamp = Date.now();
+        return true;
+      }
+    }
+
+    cachedIsSuperAdmin = false;
     cacheTimestamp = Date.now();
-    return cachedIsSuperAdmin;
+    return false;
   } catch (error) {
-    console.error("Error en isSuperAdmin:", error);
+    console.warn("[permissions] isSuperAdmin:", error.message);
+    cachedIsSuperAdmin = false;
+    cacheTimestamp = Date.now();
     return false;
   }
 }
@@ -101,54 +141,62 @@ export async function getUserPermissions() {
   }
 }
 
+const ALL_PERMISSIONS = {
+  products: { can_view: true, can_edit: true, can_delete: true },
+  'fyl-products': { can_view: true, can_edit: true, can_delete: true },
+  stock: { can_view: true, can_edit: true, can_delete: true },
+  'stock-audit': { can_view: true, can_edit: false, can_delete: false },
+  orders: { can_view: true, can_edit: true, can_delete: true },
+  'daily-sales': { can_view: true, can_edit: true, can_delete: true },
+  statistics: { can_view: true, can_edit: true, can_delete: true },
+  'closed-orders': { can_view: true, can_edit: true, can_delete: true },
+  import: { can_view: true, can_edit: true, can_delete: true },
+  export: { can_view: true, can_edit: true, can_delete: true },
+  publications: { can_view: true, can_edit: true, can_delete: true },
+  'move-stock': { can_view: true, can_edit: true, can_delete: true },
+  'public-sales': { can_view: true, can_edit: true, can_delete: true },
+  offers: { can_view: true, can_edit: true, can_delete: true },
+  search: { can_view: true, can_edit: true, can_delete: true },
+  labels: { can_view: true, can_edit: true, can_delete: true },
+  customers: { can_view: true, can_edit: true, can_delete: true },
+  'meta-feed': { can_view: true, can_edit: true, can_delete: true },
+  proveedores: { can_view: true, can_edit: true, can_delete: true },
+};
+
 async function _doGetUserPermissions() {
   try {
-    // Usar session local (sin red)
     const user = await _getSessionUser();
     if (!user) {
       cachedUserPermissions = {};
       return {};
     }
 
-    // Si es super_admin, retornar todos los permisos habilitados
+    // RPC is_super_admin (puede fallar en mobile con red lenta, usamos fallback)
     const superAdmin = await isSuperAdmin();
     if (superAdmin) {
-      const allPermissions = {
-        products: { can_view: true, can_edit: true, can_delete: true },
-        'fyl-products': { can_view: true, can_edit: true, can_delete: true },
-        stock: { can_view: true, can_edit: true, can_delete: true },
-        'stock-audit': { can_view: true, can_edit: false, can_delete: false },
-        orders: { can_view: true, can_edit: true, can_delete: true },
-        'daily-sales': { can_view: true, can_edit: true, can_delete: true },
-        statistics: { can_view: true, can_edit: true, can_delete: true },
-        'closed-orders': { can_view: true, can_edit: true, can_delete: true },
-        import: { can_view: true, can_edit: true, can_delete: true },
-        export: { can_view: true, can_edit: true, can_delete: true },
-        publications: { can_view: true, can_edit: true, can_delete: true },
-        'move-stock': { can_view: true, can_edit: true, can_delete: true },
-        'public-sales': { can_view: true, can_edit: true, can_delete: true },
-        offers: { can_view: true, can_edit: true, can_delete: true },
-        search: { can_view: true, can_edit: true, can_delete: true },
-        labels: { can_view: true, can_edit: true, can_delete: true },
-        customers: { can_view: true, can_edit: true, can_delete: true },
-        'meta-feed': { can_view: true, can_edit: true, can_delete: true },
-        proveedores: { can_view: true, can_edit: true, can_delete: true },
-      };
-      cachedUserPermissions = allPermissions;
+      cachedUserPermissions = ALL_PERMISSIONS;
       cacheTimestamp = Date.now();
-      return allPermissions;
+      return ALL_PERMISSIONS;
     }
 
-    // Obtener permisos del colaborador
+    // Fallback: consultar tabla admins con role
     const { data: adminData, error: adminError } = await supabase
       .from("admins")
-      .select("id")
+      .select("id, role")
       .eq("user_id", user.id)
       .single();
 
     if (adminError || !adminData) {
       cachedUserPermissions = {};
       return {};
+    }
+
+    // Si el rol en la tabla es super_admin, dar todos los permisos (RPC falló por red)
+    if (adminData.role === 'super_admin') {
+      console.log("[permissions] super_admin detectado por tabla (fallback RPC)");
+      cachedUserPermissions = ALL_PERMISSIONS;
+      cacheTimestamp = Date.now();
+      return ALL_PERMISSIONS;
     }
 
     const { data: permissions, error: permError } = await supabase
@@ -335,13 +383,14 @@ export async function requirePermission(permissionKey, action = 'view', redirect
 }
 
 // Limpiar caché cuando el usuario cierra/abre sesión
-if (supabase?.auth?.onAuthStateChange) {
+supabaseReady.then(() => {
+  if (!supabase?.auth?.onAuthStateChange) return;
   supabase.auth.onAuthStateChange((event) => {
     if (event === 'SIGNED_OUT' || event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
       clearPermissionsCache();
     }
   });
-}
+});
 
 // Hacer disponible globalmente para que admin-auth.js pueda usarlo
 if (typeof window !== 'undefined') {

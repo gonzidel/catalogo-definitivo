@@ -1,4 +1,4 @@
-import { FYL_VERSION } from "./fyl-version.js?v=m260527";
+﻿import { FYL_VERSION } from "./fyl-version.js?v=m260607";
 
 // scripts/config.js
 // Valores por defecto (no sensibles). Para valores sensibles, copia
@@ -203,7 +203,7 @@ const configReady = (async () => {
     // En local se permiten overrides no sensibles, manteniendo secretos fuera del navegador.
     if (local || !SUPABASE_ANON_KEY || SUPABASE_ANON_KEY === "") {
       try {
-        const loc = await import("./config.local.js");
+        const loc = await import("./config.local.js?v=m260607");
         if (loc) {
           if (typeof loc.SUPABASE_URL === "string" && loc.SUPABASE_URL)
             SUPABASE_URL = loc.SUPABASE_URL;
@@ -289,7 +289,7 @@ export {
       .catch((e) => {
         const msg = e && e.message ? String(e.message).slice(0, 200) : String(e);
         globalThis.markBootStage?.("sw.register_failed", { message: msg });
-        import("./fyl-runtime-resilience.js?v=m260527")
+        import("./fyl-runtime-resilience.js?v=m260607")
           .then((m) =>
             m.fylReportClientError({ kind: "sw.register_failed", message: msg })
           )

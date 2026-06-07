@@ -1,12 +1,12 @@
-﻿// scripts/curated-banner.js — Banner curado por variant_id (Fase 3–4)
-// Legacy custom-banner.js: carga física condicional (fyl-legacy-banner-loader.js).
+﻿// scripts/curated-banner.js � Banner curado por variant_id (Fase 3�4)
+// Legacy custom-banner.js: carga f�sica condicional (fyl-legacy-banner-loader.js).
 
-import { supabase } from "./supabase-client.js";
+import { supabase } from "./supabase-client.js?v=m260607";
 import {
   CATALOG_AVAILABLE_VIEW,
   getCatalogAvailableSource,
-} from "./catalog-source.js";
-import { isPostgrestSchemaColumnError } from "./net/fyl-fetch.js?v=m260527";
+} from "./catalog-source.js?v=m260607";
+import { isPostgrestSchemaColumnError } from "./net/fyl-fetch.js?v=m260607";
 
 const LEGACY_TAG_PLACEHOLDER = "__curated__";
 const CURATED_CATALOG_SELECT =
@@ -20,6 +20,9 @@ let activeCardHandler = null;
 /** @type {{ config: object, cards: object[] } | null} */
 let activeRoute = null;
 let routeLoadPromise = null;
+/** Invalida cargas async de `#/banner/{slug}` al salir de la ruta. */
+let routeGeneration = 0;
+let pendingBannerSlug = "";
 let lastPdpOpenAt = 0;
 let lastPdpSku = "";
 
@@ -93,8 +96,9 @@ export function buildBannerHash(slug) {
   return `#/banner/${encodeURIComponent(s)}`;
 }
 
-function cacheKeyForConfig(slug) {
-  return slug ? `slug:${slug.trim().toLowerCase()}` : "home";
+function cacheKeyForConfig(slug, { includeDisabled = false } = {}) {
+  const base = slug ? `slug:${slug.trim().toLowerCase()}` : "home";
+  return includeDisabled ? `${base}:direct` : base;
 }
 
 function readCache(key) {
@@ -108,10 +112,87 @@ function writeCache(key, partial) {
   shortCache.set(key, { ...prev, ...partial, at: Date.now() });
 }
 
-export async function loadCuratedBannerConfig({ slug = null } = {}) {
-  const key = cacheKeyForConfig(slug);
+async function loadCuratedBannerBySlugDirect(slug, { includeDisabled = false } = {}) {
+  let query = supabase
+    .from("custom_product_banners")
+    .select(
+      `id, title, slug, description, enabled, sort_order, tag_value,
+       custom_product_banner_items ( product_variant_id, position )`
+    )
+    .order("position", {
+      foreignTable: "custom_product_banner_items",
+      ascending: true,
+    });
+
+  if (!includeDisabled) {
+    query = query.eq("enabled", true);
+  }
+
+  const normalized = String(slug).trim().toLowerCase();
+  const { data, error } = await query
+    .eq("slug", normalized)
+    .order("sort_order", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    if (error.code === "PGRST116") return null;
+    throw error;
+  }
+  return data;
+}
+
+/** Slug directo (#/banner/{slug}): incluye banners deshabilitados v�a RPC (anon no pasa RLS). */
+async function loadCuratedBannerBySlugPublic(slug) {
+  const normalized = String(slug).trim().toLowerCase();
+  if (!normalized) return null;
+
+  const { data, error } = await supabase.rpc("rpc_get_public_curated_banner_by_slug", {
+    p_slug: normalized,
+  });
+
+  if (error) {
+    if (/rpc_get_public_curated_banner_by_slug/i.test(String(error.message || ""))) {
+      logCuratedDebug("loadCuratedBannerBySlugPublic:rpc_missing", error.message);
+      return loadCuratedBannerBySlugDirect(normalized, { includeDisabled: true });
+    }
+    throw error;
+  }
+
+  if (data == null) return null;
+  if (typeof data === "string") {
+    try {
+      return JSON.parse(data);
+    } catch {
+      return null;
+    }
+  }
+  return data;
+}
+
+export async function loadCuratedBannerConfig({ slug = null, includeDisabled = false } = {}) {
+  const key = cacheKeyForConfig(slug, { includeDisabled });
   const cached = readCache(key);
   if (cached?.config) return slug ? cached.config : [cached.config];
+
+  if (slug && includeDisabled) {
+    try {
+      const row = await loadCuratedBannerBySlugPublic(slug);
+      const config = pickCuratedConfigFromRow(row);
+      logCuratedDebug("loadCuratedBannerConfig:row", {
+        slug,
+        includeDisabled: true,
+        found: Boolean(config),
+        enabled: config?.enabled,
+      });
+      if (config) writeCache(key, { config });
+      return config;
+    } catch (error) {
+      console.error("[curated-banner] loadCuratedBannerConfig (slug direct):", error);
+      logCuratedDebug("loadCuratedBannerConfig:error", error);
+      return null;
+    }
+  }
 
   let query = supabase
     .from("custom_product_banners")
@@ -176,7 +257,7 @@ export async function loadCuratedBannerConfig({ slug = null } = {}) {
   return config ? [config] : [];
 }
 
-/** Primer banner curated válido desde fila PostgREST (0 o 1 fila vía maybeSingle). */
+/** Primer banner curated v�lido desde fila PostgREST (0 o 1 fila v�a maybeSingle). */
 function pickCuratedConfigFromRow(row) {
   if (!row) return null;
   const cfg = normalizeBannerConfig(row);
@@ -355,7 +436,7 @@ function getOrCreateCuratedBannerTopTitleEl() {
   return el;
 }
 
-/** En «Ver todo»: oculta guía de compra y muestra título editado del banner curado. */
+/** En �Ver todo�: oculta gu�a de compra y muestra t�tulo editado del banner curado. */
 function setCuratedBannerTopChrome(config, visible) {
   const info = document.getElementById("info-banner-top-container");
   if (info) info.classList.toggle("is-hidden", Boolean(visible));
@@ -381,7 +462,25 @@ function setCuratedBannerTopChrome(config, visible) {
   `;
 }
 
+function isBannerHashRouteActive(slug) {
+  const current = parseHashBannerSlug(location.hash || "");
+  if (!current || !slug) return false;
+  return current.trim().toLowerCase() === String(slug).trim().toLowerCase();
+}
+
+function isRouteGenerationActive(gen) {
+  return gen === routeGeneration;
+}
+
+/** Cancela promesas de ruta banner en vuelo (p. ej. al volver a Inicio). */
+export function cancelCuratedBannerRoute() {
+  routeGeneration += 1;
+  routeLoadPromise = null;
+  pendingBannerSlug = "";
+}
+
 export function destroyCuratedBanner() {
+  cancelCuratedBannerRoute();
   if (typeof activeScrollCleanup === "function") {
     activeScrollCleanup();
     activeScrollCleanup = null;
@@ -575,7 +674,7 @@ function updateVerTodoLink(headerContainer, config) {
 let defaultDocumentTitle = "";
 
 function updateCuratedBannerPageMeta(config) {
-  defaultDocumentTitle = defaultDocumentTitle || document.title || "Catálogo FYL";
+  defaultDocumentTitle = defaultDocumentTitle || document.title || "Cat�logo FYL";
   const title = config?.title ? `${config.title} | FYL` : "Destacados | FYL";
   document.title = title;
   try {
@@ -768,13 +867,23 @@ export async function applyCuratedBannerHashRoute(slug) {
     return true;
   }
 
-  if (routeLoadPromise) {
+  const slugKey = normalized.toLowerCase();
+  if (routeLoadPromise && pendingBannerSlug === slugKey) {
     return routeLoadPromise;
   }
 
+  const gen = ++routeGeneration;
+  pendingBannerSlug = slugKey;
+
   routeLoadPromise = (async () => {
     try {
-      const config = await loadCuratedBannerConfig({ slug: normalized });
+      const config = await loadCuratedBannerConfig({
+        slug: normalized,
+        includeDisabled: true,
+      });
+      if (!isRouteGenerationActive(gen) || !isBannerHashRouteActive(normalized)) {
+        return false;
+      }
       if (!config) {
         const catalogo = document.getElementById("catalogo");
         if (catalogo) {
@@ -784,6 +893,9 @@ export async function applyCuratedBannerHashRoute(slug) {
         return false;
       }
       const cards = await fetchCuratedBannerCards(config);
+      if (!isRouteGenerationActive(gen) || !isBannerHashRouteActive(normalized)) {
+        return false;
+      }
       if (!cards.length) {
         const catalogo = document.getElementById("catalogo");
         if (catalogo) {
@@ -794,7 +906,12 @@ export async function applyCuratedBannerHashRoute(slug) {
       }
       return await renderCuratedBannerFullPage(cards, config);
     } finally {
-      routeLoadPromise = null;
+      if (pendingBannerSlug === slugKey) {
+        pendingBannerSlug = "";
+      }
+      if (isRouteGenerationActive(gen)) {
+        routeLoadPromise = null;
+      }
     }
   })();
 
@@ -860,7 +977,7 @@ export async function loadAndShowCuratedBanner(options = {}) {
   }
 }
 
-/** Diagnóstico en consola (staging). */
+/** Diagn�stico en consola (staging). */
 export async function fylAuditCuratedBanner() {
   const report = {
     flag: {
@@ -920,6 +1037,7 @@ if (typeof window !== "undefined") {
   window.renderCuratedBannerFullPage = renderCuratedBannerFullPage;
   window.openBannerProductPdp = openBannerProductPdp;
   window.destroyCuratedBanner = destroyCuratedBanner;
+  window.cancelCuratedBannerRoute = cancelCuratedBannerRoute;
   window.hideCuratedBanner = destroyCuratedBanner;
   window.loadAndShowCuratedBanner = loadAndShowCuratedBanner;
   window.applyCuratedBannerHashRoute = applyCuratedBannerHashRoute;

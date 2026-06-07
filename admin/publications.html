@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
@@ -40,6 +40,15 @@
       content: "📱";
       font-size: 36px;
     }
+    .page-header-desc {
+      color: #6c757d;
+      margin: 0;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .page-title-short {
+      display: none;
+    }
     .nav-bar {
       display: flex;
       gap: 12px;
@@ -48,6 +57,15 @@
       padding: 16px 0;
       border-top: 1px solid #e9ecef;
       margin-top: 16px;
+    }
+    .nav-bar-shortcuts {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+      flex: 1 1 auto;
+      margin-left: auto;
+      justify-content: flex-end;
     }
     .nav-bar a {
       padding: 10px 18px;
@@ -70,6 +88,17 @@
       background: #CD844D;
       color: white;
       border-color: #CD844D;
+    }
+    .nav-bar-btn {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      padding: 10px 18px;
+      border-radius: 10px;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: 'Poppins', sans-serif;
+      font-size: 14px;
     }
     .tabs-container {
       background: white;
@@ -626,22 +655,385 @@
       color: #6c757d;
       min-height: 1.2em;
     }
+
+    /* ── Mobile (360–430px) ── */
+    @media (max-width: 768px) {
+      body {
+        padding: 8px;
+      }
+
+      .page-header {
+        padding: 10px 12px;
+        margin-bottom: 8px;
+        border-radius: 12px;
+      }
+
+      .page-header h1 {
+        font-size: 18px;
+        gap: 8px;
+        line-height: 1.2;
+        margin-bottom: 0;
+      }
+
+      .page-header h1::before {
+        font-size: 20px;
+        flex-shrink: 0;
+      }
+
+      .page-title-full {
+        display: none;
+      }
+
+      .page-title-short {
+        display: inline;
+      }
+
+      .page-header-desc,
+      .nav-bar {
+        display: none;
+      }
+
+      .nav-bar a:hover,
+      .product-color-card:hover,
+      button:hover {
+        transform: none;
+      }
+
+      .tabs-container {
+        padding: 12px 10px;
+        margin-bottom: 12px;
+        border-radius: 12px;
+      }
+
+      .tabs {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        gap: 4px;
+        margin-bottom: 14px;
+        padding-bottom: 2px;
+        scrollbar-width: none;
+      }
+
+      .tabs::-webkit-scrollbar {
+        display: none;
+      }
+
+      .tab {
+        flex: 0 0 auto;
+        padding: 8px 12px;
+        font-size: 12px;
+        white-space: nowrap;
+      }
+
+      .count-badge {
+        min-width: 18px;
+        height: 18px;
+        font-size: 10px;
+        margin-left: 4px;
+        padding: 0 5px;
+      }
+
+      .search-bar {
+        flex-direction: column;
+        gap: 6px;
+        margin-bottom: 8px;
+      }
+
+      .search-bar input,
+      .search-bar select {
+        width: 100%;
+        min-width: 0;
+        font-size: 14px;
+        padding: 7px 10px;
+        border-width: 1px;
+        border-radius: 8px;
+        line-height: 1.3;
+      }
+
+      .search-bar input {
+        font-size: 16px;
+      }
+
+      .all-filters-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        align-items: start;
+        gap: 6px 8px;
+        padding: 8px;
+        margin-bottom: 8px;
+        border-radius: 8px;
+      }
+
+      .filter-checkbox {
+        grid-column: 1 / -1;
+        font-size: 12px;
+        gap: 6px;
+        padding-bottom: 2px;
+      }
+
+      .filter-checkbox input[type="checkbox"] {
+        width: 15px;
+        height: 15px;
+      }
+
+      .all-filters-row .supplier-filter-wrap {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 3px;
+        min-width: 0;
+      }
+
+      .all-filters-row .supplier-filter-wrap label {
+        font-size: 11px;
+        font-weight: 600;
+        line-height: 1.2;
+      }
+
+      .all-filters-row .supplier-filter-wrap select {
+        width: 100%;
+        min-width: 0;
+        font-size: 13px;
+        padding: 6px 8px;
+        border-width: 1px;
+        border-radius: 6px;
+        line-height: 1.3;
+      }
+
+      .all-filters-row .supplier-filter-wrap .supplier-sort-toggle {
+        width: 100%;
+        min-height: 0;
+        margin-top: 2px;
+        padding: 5px 6px;
+        font-size: 10px;
+        border-radius: 6px;
+        line-height: 1.2;
+        white-space: normal;
+        text-align: center;
+      }
+
+      .products-grid {
+        grid-template-columns: 1fr;
+        gap: 10px;
+      }
+
+      .product-color-card {
+        padding: 12px;
+        border-radius: 10px;
+      }
+
+      .product-image {
+        aspect-ratio: 4 / 5;
+        height: auto;
+        max-height: 220px;
+        margin-bottom: 6px;
+      }
+
+      .product-info h3 {
+        font-size: 15px;
+        margin-bottom: 4px;
+      }
+
+      .product-info p {
+        font-size: 12px;
+      }
+
+      .product-color-badge {
+        font-size: 11px;
+        padding: 3px 10px;
+        margin-bottom: 6px;
+      }
+
+      .sizes-info {
+        margin: 8px 0;
+        padding: 6px 10px;
+        font-size: 12px;
+      }
+
+      .card-checkboxes {
+        top: 8px;
+        right: 8px;
+        gap: 4px;
+      }
+
+      .card-actions {
+        gap: 6px;
+        margin-top: 8px;
+      }
+
+      .card-actions button,
+      button:not(.supplier-sort-toggle) {
+        padding: 9px 12px;
+        font-size: 12px;
+        min-height: 40px;
+      }
+
+      .btn-small {
+        padding: 6px 10px;
+        font-size: 11px;
+        min-height: 36px;
+      }
+
+      .publication-actions {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+        margin-top: 14px;
+        padding-top: 14px;
+      }
+
+      .publication-actions .action-buttons {
+        flex-direction: column;
+      }
+
+      .publication-actions .action-buttons button {
+        width: 100%;
+        justify-content: center;
+      }
+
+      #publication-table-container {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        margin: 0 -4px;
+        padding: 0 4px;
+      }
+
+      .publication-table th,
+      .publication-table td {
+        padding: 8px 6px;
+        font-size: 11px;
+      }
+
+      .publication-table img {
+        width: 44px;
+        height: 44px;
+      }
+
+      .image-urls {
+        max-width: 140px;
+        font-size: 10px;
+      }
+
+      .empty-state {
+        padding: 32px 12px;
+      }
+
+      .empty-state::before {
+        font-size: 40px;
+        margin-bottom: 10px;
+      }
+
+      .loading-indicator {
+        padding: 28px 16px;
+        margin-top: 10px;
+      }
+
+      .loading-spinner {
+        width: 40px;
+        height: 40px;
+      }
+
+      .loading-indicator .loading-text {
+        font-size: 13px;
+      }
+
+      .loading-indicator .loading-subtext {
+        font-size: 11px;
+      }
+
+      .message {
+        font-size: 12px;
+        padding: 10px 12px;
+        width: 100%;
+      }
+
+      .pub-image-upload-overlay {
+        padding: 10px;
+        align-items: flex-end;
+      }
+
+      .pub-image-upload-modal {
+        padding: 16px;
+        border-radius: 14px 14px 0 0;
+        max-height: 92vh;
+      }
+
+      .pub-image-upload-modal h3 {
+        font-size: 17px;
+      }
+
+      .pub-image-dropzone {
+        padding: 20px 12px;
+      }
+
+      .pub-image-preview-grid {
+        grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+        gap: 8px;
+        max-height: 240px;
+      }
+
+      .pub-image-preview-item img {
+        height: 90px;
+      }
+
+      .pub-image-upload-actions {
+        flex-direction: column-reverse;
+      }
+
+      .pub-image-upload-actions button {
+        width: 100%;
+        justify-content: center;
+      }
+
+      .modal-overlay {
+        padding: 10px;
+        align-items: flex-end;
+      }
+
+      .modal-box {
+        padding: 16px;
+        border-radius: 14px 14px 0 0;
+        width: 100%;
+        max-width: none !important;
+      }
+
+      .modal-box h3 {
+        font-size: 16px !important;
+        margin-bottom: 12px !important;
+      }
+
+      .modal-dias {
+        gap: 6px !important;
+      }
+
+      .modal-dia-btn {
+        padding: 10px 12px;
+        font-size: 13px;
+        flex: 1 1 calc(50% - 6px);
+        min-height: 40px;
+      }
+    }
   </style>
 </head>
 <body>
   <div class="container">
     <div class="page-header">
-      <h1>Publicaciones para Redes Sociales</h1>
-      <p style="color: #6c757d; margin: 0;">Seleccioná productos por color para publicar en redes sociales. Cada color se publica por separado.</p>
+      <h1>
+        <span class="page-title-full">Publicaciones para Redes Sociales</span>
+        <span class="page-title-short">Publicaciones</span>
+      </h1>
+      <p class="page-header-desc">Seleccioná productos por color para publicar en redes sociales. Cada color se publica por separado.</p>
       <div class="nav-bar">
-        <a href="./index.html">← Volver al panel</a>
-        <span style="flex:1 1 auto"></span>
-        <a href="./products.html">Productos</a>
-        <a href="./stock.html">Stock</a>
-        <a href="./orders.html">Pedidos</a>
-        <a href="./import-export.html">Importar/Exportar</a>
-        <a href="./publications.html" class="active">Publicaciones</a>
-        <button type="button" class="nav-bar-btn" id="btn-programados" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; padding: 10px 18px; border-radius: 10px; font-weight: 600; cursor: pointer;">📅 Programados</button>
+        <a href="./index.html" class="nav-bar-back">← Volver al panel</a>
+        <div class="nav-bar-shortcuts">
+          <a href="./products.html">Productos</a>
+          <a href="./stock.html">Stock</a>
+          <a href="./orders.html">Pedidos</a>
+          <a href="./import-export.html">Importar/Exportar</a>
+          <a href="./publications.html" class="active">Publicaciones</a>
+          <button type="button" class="nav-bar-btn" id="btn-programados">📅 Programados</button>
+        </div>
       </div>
     </div>
 
@@ -881,9 +1273,9 @@
     window.skipPanelRedirect = true;
   </script>
   <script type="module" src="../scripts/config.js"></script>
-  <script defer src="../scripts/vendor/supabase-js.bundle.min.js?v=m260518"></script>
-  <script type="module" src="../scripts/supabase-client.js"></script>
-  <script type="module" src="./publications.js"></script>
+  <script defer src="../scripts/vendor/supabase-js.bundle.min.js?v=m260607"></script>
+  <script type="module" src="../scripts/supabase-client.js?v=m260607"></script>
+  <script type="module" src="./publications.js?v=m260607"></script>
 </body>
 </html>
 

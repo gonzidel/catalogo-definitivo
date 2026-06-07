@@ -1,6 +1,6 @@
-// admin/product-status.js
-import { requireAuth } from "./admin-auth.js";
-import { supabase } from "../scripts/supabase-client.js";
+﻿// admin/product-status.js
+import { requireAuth } from "./admin-auth.js?v=m260607";
+import { supabase } from "../scripts/supabase-client.js?v=m260607";
 
 await requireAuth();
 

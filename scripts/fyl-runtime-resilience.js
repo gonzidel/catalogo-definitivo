@@ -1,10 +1,10 @@
-/**
+﻿/**
  * Resiliencia runtime: kill switch remoto, recuperación Supabase/SW, logs de error.
  * Cargar después de boot-telemetry (via dynamic import) para encadenar window.onerror.
  */
 
-import { FYL_VERSION } from "./fyl-version.js?v=m260527";
-import { showFylErrorState } from "./fyl-error-state.js";
+import { FYL_VERSION } from "./fyl-version.js?v=m260607";
+import { showFylErrorState } from "./fyl-error-state.js?v=m260607";
 import {
   fylClassifyClientError,
   fylIsBenignErrorClass,
@@ -12,7 +12,7 @@ import {
   fylIsGenericScriptError,
   fylIsKnownThirdPartySource,
   fylIsMetaWebViewBridgeMessage,
-} from "./fyl-error-classify.js?v=m260527";
+} from "./fyl-error-classify.js?v=m260607";
 
 const SS_NUCLEAR = "__fyl_ss_nuclear_v2";
 /** Compartido entre pestañas (misma origin) para no repetir kill switch en cada tab. */

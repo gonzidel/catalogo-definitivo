@@ -48,8 +48,6 @@ const SKIP_DIR_NAMES = new Set([
   "cloudinary-optimize",
   "terminals",
   "agent-transcripts",
-  // Deploy catálogo/PWA: no reescribir versiones en admin ni assets históricos
-  "admin",
   "history",
 ]);
 
@@ -158,6 +156,23 @@ function patchQueryVersionsInFile(contents, version) {
   return next;
 }
 
+// Relative ESM import/export specifiers (static, side-effect y dinámicos).
+// Garantiza que TODO import relativo lleve ?v=<version> para que un módulo de
+// entrada nuevo nunca cargue una dependencia vieja cacheada (version skew) y
+// para que cada módulo resuelva siempre a la misma URL (una sola instancia).
+// Se ancla en las keywords `from`/`import` para no tocar strings arbitrarios.
+// No toca specifiers con backticks (imports dinámicos versionados en runtime),
+// rutas no relativas, ni paquetes bare.
+const REL_IMPORT_SPEC_RE =
+  /(\b(?:from|import)\s*\(?\s*)(["'])(\.\.?\/[^"'?#\s]+\.m?js)(?:[?#][^"']*)?\2/g;
+
+function patchImportSpecifiers(contents, version) {
+  return contents.replace(
+    REL_IMPORT_SPEC_RE,
+    (_m, pre, quote, spec) => `${pre}${quote}${spec}?v=${version}${quote}`
+  );
+}
+
 function patchFylVersionExport(contents, version) {
   return contents.replace(
     /export const FYL_VERSION = "[^"]*";/,
@@ -167,6 +182,8 @@ function patchFylVersionExport(contents, version) {
 
 const EXTRA_VERSIONED_FILES = [
   "scripts/main-supabase.js",
+  "scripts/catalog-cache.js",
+  "scripts/catalog-source.js",
   "scripts/fyl-runtime-resilience.js",
   "scripts/fyl-error-classify.js",
   "scripts/fyl-env-tags.js",
@@ -176,13 +193,30 @@ const EXTRA_VERSIONED_FILES = [
   "scripts/boot-telemetry.js",
   "scripts/net/fyl-fetch.js",
   "scripts/curated-banner.js",
+  "scripts/fyl-originals-banner.js",
   "scripts/fyl-curated-banner-loader.js",
   "scripts/size-filter.js",
   "scripts/utils/size-normalizer.js",
+  "admin/stock.js",
 ];
 
-function extraVersionedFiles() {
-  return EXTRA_VERSIONED_FILES.filter((rel) => !rel.replace(/\\/g, "/").startsWith("admin/"));
+function walkJsFilesUnder(relDir) {
+  const root = path.join(__repoRoot, relDir);
+  if (!fs.existsSync(root)) return [];
+  const out = [];
+  function walk(dir) {
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, ent.name);
+      if (ent.isDirectory()) {
+        if (shouldSkipDir(ent.name)) continue;
+        walk(p);
+        continue;
+      }
+      if (ent.isFile() && ent.name.endsWith(".js")) out.push(p);
+    }
+  }
+  walk(root);
+  return out;
 }
 
 function main() {
@@ -195,11 +229,16 @@ function main() {
   const changedPaths = [];
 
   for (const file of htmlFiles) {
+    const rel = relFromRoot(file);
     const prev = fs.readFileSync(file, "utf8");
-    const next = patchHtmlContents(prev, version);
+    let next = patchHtmlContents(prev, version);
+    // Admin se sirve no-cache (sin skew posible): no tocamos sus imports.
+    if (!rel.startsWith("admin/")) {
+      next = patchImportSpecifiers(next, version);
+    }
     if (next !== prev) {
       htmlChanged++;
-      changedPaths.push(relFromRoot(file));
+      changedPaths.push(rel);
       if (!args.dryRun) fs.writeFileSync(file, next, "utf8");
     }
   }
@@ -240,9 +279,8 @@ function main() {
     }
   }
 
-  const extraFiles = extraVersionedFiles();
   let extraChanged = 0;
-  for (const rel of extraFiles) {
+  for (const rel of EXTRA_VERSIONED_FILES) {
     const fp = path.join(__repoRoot, rel);
     if (!fs.existsSync(fp)) continue;
     const prev = fs.readFileSync(fp, "utf8");
@@ -254,21 +292,55 @@ function main() {
     }
   }
 
+  let adminJsChanged = 0;
+  for (const file of walkJsFilesUnder("admin")) {
+    const prev = fs.readFileSync(file, "utf8");
+    if (!/\?v=[a-zA-Z0-9._-]+/.test(prev)) continue;
+    const next = patchQueryVersionsInFile(prev, version);
+    if (next !== prev) {
+      adminJsChanged++;
+      changedPaths.push(relFromRoot(file));
+      if (!args.dryRun) fs.writeFileSync(file, next, "utf8");
+    }
+  }
+
+  // Versionado de imports relativos en TODO el grafo público (scripts/ + client/).
+  // Elimina la clase de bug de "version skew": un módulo de entrada nuevo nunca
+  // importa una dependencia vieja cacheada, y cada módulo resuelve a una sola URL.
+  let importSpecChanged = 0;
+  const importSpecRoots = ["scripts", "client"];
+  for (const root of importSpecRoots) {
+    for (const file of walkJsFilesUnder(root)) {
+      const rel = relFromRoot(file);
+      // Saltar bundles vendorizados (no son ESM con imports relativos).
+      if (rel.includes("/vendor/")) continue;
+      const prev = fs.readFileSync(file, "utf8");
+      const next = patchImportSpecifiers(prev, version);
+      if (next !== prev) {
+        importSpecChanged++;
+        changedPaths.push(rel);
+        if (!args.dryRun) fs.writeFileSync(file, next, "utf8");
+      }
+    }
+  }
+
   const totalTouched =
     htmlChanged +
     (swChanged ? 1 : 0) +
     (pwaChanged ? 1 : 0) +
     (fylVersionChanged ? 1 : 0) +
-    extraChanged;
+    extraChanged +
+    adminJsChanged +
+    importSpecChanged;
   const suffix = args.dryRun ? " (dry-run, sin escritura)" : "";
 
   console.log(
     `✅ cache-bust (${mode}) -> v=${version}${suffix}\n` +
-      `   HTML escaneados: ${htmlFiles.length} (excluye admin/**, history/**)\n` +
+      `   HTML escaneados: ${htmlFiles.length} (incluye admin/**; excluye history/**)\n` +
       `   HTML a actualizar: ${htmlChanged}\n` +
       `   sw.js: ${swChanged ? "sí" : "no"} | pwa-install.js: ${pwaChanged ? "sí" : "no"} | fyl-version.js: ${
         fylVersionChanged ? "sí" : "no"
-      } | JS extra: ${extraChanged}/${extraFiles.length}\n` +
+      } | JS extra: ${extraChanged}/${EXTRA_VERSIONED_FILES.length} | admin JS: ${adminJsChanged} | imports versionados: ${importSpecChanged}\n` +
       `   ARCHIVOS FINALES A TOCAR: ${totalTouched}`
   );
 

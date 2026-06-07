@@ -1,14 +1,14 @@
-import { supabase } from "../scripts/supabase-client.js";
-import { checkPasskeySupport, authenticateWithPasskey } from "../scripts/passkeys.js";
-import { hasInitialProfileComplete } from "./auth-helper.js";
-import { fylAnalytics } from "../scripts/analytics.js";
+import { supabase } from "../scripts/supabase-client.js?v=m260607";
+import { checkPasskeySupport, authenticateWithPasskey } from "../scripts/passkeys.js?v=m260607";
+import { hasInitialProfileComplete } from "./auth-helper.js?v=m260607";
+import { fylAnalytics } from "../scripts/analytics.js?v=m260607";
 import {
   getPostLoginRedirectUrl,
   initLoginPageReturnPath,
   clearOAuthReturnPath,
   savePreAuthReturnTarget,
-} from "../scripts/auth-redirect-url.js";
-import { maybeShowProfileOnboardingModal } from "../scripts/profile-onboarding-modal.js";
+} from "../scripts/auth-redirect-url.js?v=m260607";
+import { maybeShowProfileOnboardingModal } from "../scripts/profile-onboarding-modal.js?v=m260607";
 
 initLoginPageReturnPath();
 

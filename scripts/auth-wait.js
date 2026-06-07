@@ -4,7 +4,7 @@
  * antes de ejecutar cualquier lógica que dependa de ella
  */
 
-import { fylDevLog } from "./config.js";
+import { fylDevLog } from "./config.js?v=m260607";
 
 function hasLikelySupabaseSession() {
   try {

@@ -1,4 +1,15 @@
 User-agent: *
 Allow: /
 
+# Bloquear endpoints de Supabase (auth, storage, rest API)
+Disallow: /auth/
+Disallow: /rest/
+Disallow: /storage/
+Disallow: /functions/
+Disallow: /realtime/
+
+# Bloquear rutas internas de la app
+Disallow: /client/
+Disallow: /admin/
+
 Sitemap: https://fylmoda.com.ar/sitemap.xml

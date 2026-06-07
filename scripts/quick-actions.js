@@ -1,8 +1,8 @@
 // scripts/quick-actions.js - Gestión de acciones rápidas configurables
 
-import { fylDevLog } from "./config.js";
-import { supabase } from "./supabase-client.js";
-import { fylAnalytics } from "./analytics.js";
+import { fylDevLog } from "./config.js?v=m260607";
+import { supabase, supabaseReady } from "./supabase-client.js?v=m260607";
+import { fylAnalytics } from "./analytics.js?v=m260607";
 
 let quickActionsData = [];
 let activeAction = null;
@@ -17,6 +17,7 @@ function isOfferAction(action) {
 
 async function hasActiveOffersForQuickActions() {
   try {
+    if (!supabase) return false;
     const { data, error } = await supabase.rpc("get_active_offers_with_images");
     if (error) {
       console.error("Error verificando ofertas para quick actions:", error);
@@ -32,6 +33,9 @@ async function hasActiveOffersForQuickActions() {
 // Cargar acciones rápidas desde Supabase
 export async function loadQuickActions() {
   try {
+    await supabaseReady;
+    if (!supabase) return;
+
     // 1. Cargar acciones rápidas configuradas desde la tabla quick_actions
     const { data: actionsData, error: actionsError } = await supabase
       .from("quick_actions")

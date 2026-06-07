@@ -1,9 +1,9 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="app-version" content="m260527">
+    <meta name="app-version" content="m260607">
     <title>Dashboard - Catálogo FYL</title>
     <!-- Área cliente (pedidos) deshabilitada en hosts públicos hasta habilitarla: quitar redirects en firebase.json y este bloque. -->
     <script>
@@ -59,8 +59,8 @@
     </noscript>
     <!-- End Meta Pixel Code -->
 
-    <link rel="stylesheet" href="../styles.css?v=m260527">
-    <link rel="stylesheet" href="./dashboard.css?v=m260527">
+    <link rel="stylesheet" href="../styles.css?v=m260607">
+    <link rel="stylesheet" href="./dashboard.css?v=m260607">
     <style>
         /* Misma familia visual que index2: fondo claro, cards blancas, sombras suaves, #CD844D */
         .dashboard-container {
@@ -699,21 +699,21 @@
         </a>
     </nav>
 
-    <script defer src="../scripts/vendor/supabase-js.bundle.min.js?v=m260527"></script>
-    <script type="module" src="../scripts/fyl-error-state.js?v=m260527"></script>
-    <script type="module" src="../scripts/supabase-client.js?v=m260527"></script>
+    <script defer src="../scripts/vendor/supabase-js.bundle.min.js?v=m260607"></script>
+    <script type="module" src="../scripts/fyl-error-state.js?v=m260607"></script>
+    <script type="module" src="../scripts/supabase-client.js?v=m260607"></script>
     <script type="module">
-      import { fylAnalytics } from "../scripts/analytics.js?v=m260527";
-      import { attachClientAnalyticsAuthListener } from "../scripts/analytics-auth-hook.js?v=m260527";
+      import { fylAnalytics } from "../scripts/analytics.js?v=m260607";
+      import { attachClientAnalyticsAuthListener } from "../scripts/analytics-auth-hook.js?v=m260607";
       fylAnalytics.init({ app_area: "client", page_type: "dashboard", user_role: "guest" });
       attachClientAnalyticsAuthListener();
     </script>
-    <script type="module" src="../scripts/auth-wait.js?v=m260527"></script>
-    <script type="module" src="auth-helper.js?v=m260527"></script>
-    <script type="module" src="../scripts/passkeys.js?v=m260527"></script>
-    <script type="module" src="../scripts/cart-persistent.js?v=m260527"></script>
-    <script type="module" src="dashboard-instant.js?v=m260527"></script>
-    <script type="module" src="dashboard.js?v=m260527"></script>
+    <script type="module" src="../scripts/auth-wait.js?v=m260607"></script>
+    <script type="module" src="auth-helper.js?v=m260607"></script>
+    <script type="module" src="../scripts/passkeys.js?v=m260607"></script>
+    <script type="module" src="../scripts/cart-persistent.js?v=m260607"></script>
+    <script type="module" src="dashboard-instant.js?v=m260607"></script>
+    <script type="module" src="dashboard.js?v=m260607"></script>
     <script type="module">
       let __fylDashboardDeferredLoaded = false;
       function __fylScheduleDashboardPostBoot(fn, timeoutMs) {
@@ -728,15 +728,15 @@
         if (__fylDashboardDeferredLoaded) return;
         __fylDashboardDeferredLoaded = true;
         __fylScheduleDashboardPostBoot(() => {
-          import("../scripts/product-alternatives.js?v=m260527");
+          import("../scripts/product-alternatives.js?v=m260607");
         }, 400);
         __fylScheduleDashboardPostBoot(() => {
-          import("../scripts/notifications.js?v=m260527");
-          import("./dashboard-onboarding.js?v=m260527");
+          import("../scripts/notifications.js?v=m260607");
+          import("./dashboard-onboarding.js?v=m260607");
         }, 1100);
         __fylScheduleDashboardPostBoot(() => {
           const s = document.createElement("script");
-          s.src = "../scripts/pwa-install.js?v=m260527";
+          s.src = "../scripts/pwa-install.js?v=m260607";
           document.body.appendChild(s);
         }, 1700);
       }

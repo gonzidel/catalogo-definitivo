@@ -1,0 +1,213 @@
+---
+description: UI/UX rules para React/Next.js y React Native. Aplicar en todo task que cambie cómo algo se ve, siente, mueve o es interactuado. Omitir en backend puro, APIs, DB, DevOps.
+globs: ["**/*.tsx", "**/*.jsx", "**/*.ts", "**/*.js", "**/*.css", "**/*.scss"]
+alwaysApply: false
+---
+
+# UI/UX Pro Max — Cursor Rule
+
+Seguir estas reglas en orden de prioridad (1 = CRITICAL → 10 = LOW) al revisar, generar o refactorizar código de interfaz.
+
+---
+
+## P1 — ACCESIBILIDAD (CRITICAL)
+
+- Contraste ≥4.5:1 texto normal, ≥3:1 texto grande (WCAG AA).
+- Focus rings visibles en todos los interactivos (2–4px outline).
+- Alt text descriptivo en imágenes. `aria-label` en botones icon-only.
+- En React Native: `accessibilityLabel` + `accessibilityHint` en controles.
+- Tab order = orden visual. Headings h1→h6 sin saltar niveles.
+- `<label htmlFor>` en cada input — nunca solo placeholder como label.
+- No transmitir info solo por color (agregar ícono o texto).
+- Siempre `prefers-reduced-motion`: reducir/deshabilitar animaciones.
+- Skip-to-main-content link (web).
+
+```tsx
+// ✅ correcto
+<button aria-label="Cerrar modal">
+  <XIcon />
+</button>
+
+// ❌ incorrecto
+<button><XIcon /></button>
+```
+
+---
+
+## P2 — TOUCH & INTERACCIÓN (CRITICAL)
+
+- Touch targets: ≥44×44pt (iOS) / ≥48×48dp (Android).
+- Espaciado mínimo 8px entre targets.
+- Nunca depender solo de hover para acciones primarias.
+- Deshabilitar botón durante async + mostrar spinner/estado loading.
+- `cursor: pointer` en todo clickeable (web).
+- `touch-action: manipulation` para eliminar delay 300ms (web).
+- Feedback visual en ≤100ms tras tap.
+- Evitar targets cerca de notch, Dynamic Island y gesture bar.
+
+```tsx
+// ✅ React Native — hitSlop para área extendida
+<Pressable hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+  <SmallIcon />
+</Pressable>
+```
+
+---
+
+## P3 — PERFORMANCE (HIGH)
+
+- Imágenes: WebP/AVIF + srcset. `loading="lazy"` fuera del fold.
+- Declarar `width` y `height` (o `aspect-ratio`) para evitar CLS > 0.1.
+- `font-display: swap` siempre.
+- Code splitting por ruta: `next/dynamic` o `React.lazy` + Suspense.
+- Skeleton/shimmer para cargas > 300ms — no spinner bloqueante largo.
+- Virtualizar listas con 50+ items (`FlatList` en RN, `react-window` en web).
+- Debounce/throttle en scroll, resize e inputs frecuentes.
+- Scripts de terceros: `async` o `defer`.
+
+---
+
+## P4 — ESTILO (HIGH)
+
+- El estilo debe coincidir con el tipo de producto. Consistencia total entre páginas.
+- Íconos: Lucide / Heroicons (web) o `@expo/vector-icons` (RN). **NUNCA emojis como íconos UI.**
+- Un solo set de íconos, stroke consistente (1.5px o 2px). No mezclar filled/outline en el mismo nivel.
+- Tokens semánticos para colores, sombras y radios — no valores mágicos inline.
+- Dark mode: variantes desaturadas/más claras, NO inversión de colores. Testear contraste por separado.
+- Una sola acción primaria (CTA) por pantalla. Secundarias visualmente subordinadas.
+- Blur solo para indicar fondo dismissible (modales/sheets), no como decoración.
+
+```tsx
+// ✅ token semántico
+className="bg-primary text-on-primary"
+
+// ❌ hex hardcoded por pantalla
+style={{ backgroundColor: '#6C47FF', color: '#fff' }}
+```
+
+---
+
+## P5 — LAYOUT & RESPONSIVE (HIGH)
+
+- **Mobile-first**. Breakpoints: 375 / 768 / 1024 / 1440px.
+- viewport meta: `width=device-width, initial-scale=1` — nunca deshabilitar zoom.
+- Sin scroll horizontal en mobile.
+- Sistema de espaciado 4pt/8dp. Nunca valores arbitrarios.
+- `min-h-dvh` en lugar de `100vh` en mobile.
+- max-width en desktop: `max-w-6xl` o `max-w-7xl` consistente.
+- Z-index con escala: 0 / 10 / 20 / 40 / 100 / 1000.
+- Navbar/bottom bar fija: reservar padding en el contenido debajo.
+- React Native: `SafeAreaView` o `useSafeAreaInsets` en todas las pantallas.
+
+---
+
+## P6 — TIPOGRAFÍA & COLOR (MEDIUM)
+
+- Texto body mínimo 16px en mobile (evita auto-zoom iOS).
+- Line-height 1.5–1.75 en body.
+- 60–75 chars/línea desktop; 35–60 mobile.
+- Escala tipográfica consistente: 12/14/16/18/24/32.
+- Pesos: 600–700 headings, 400 body, 500 labels.
+- Figuras tabulares para precios, datos y timers (`font-variant-numeric: tabular-nums`).
+- No gray sobre gray: verificar pares foreground/background con herramienta de contraste.
+
+---
+
+## P7 — ANIMACIÓN (MEDIUM)
+
+- Micro-interacciones: 150–300ms. Transiciones complejas ≤400ms. Nunca > 500ms.
+- Solo animar `transform` y `opacity`. **Nunca `width`, `height`, `top`, `left`.**
+- ease-out al entrar, ease-in al salir. Preferir spring/physics-based.
+- Exit ~60–70% duración del enter.
+- Stagger en listas: 30–50ms por item. Máximo 1–2 elementos animados por vista.
+- Animaciones interrumpibles; la UI no se bloquea durante una animación.
+- Modales/sheets: desde el origen del trigger (scale+fade o slide-in).
+- Forward nav → izquierda/arriba. Back → derecha/abajo.
+
+```tsx
+// ✅ correcto: solo transform/opacity
+transition: 'transform 200ms ease-out, opacity 200ms ease-out'
+
+// ❌ incorrecto: causa reflow
+transition: 'height 200ms, width 200ms'
+```
+
+---
+
+## P8 — FORMULARIOS & FEEDBACK (MEDIUM)
+
+- Label visible por campo. Error debajo del campo, no solo al inicio.
+- Validar en `onBlur`, no en cada keystroke.
+- Error message = causa + cómo resolverlo. Nunca "Input inválido".
+- Submit: loading state → success/error explícito.
+- Toasts: auto-dismiss 3–5s; `aria-live="polite"`.
+- Confirmar antes de acciones destructivas.
+- Formularios largos: auto-save draft.
+- `autocomplete` / `textContentType` para autofill del sistema.
+- Input height ≥44px mobile.
+- Focus al primer campo inválido después de submit fallido.
+
+---
+
+## P9 — NAVEGACIÓN (HIGH)
+
+- Bottom nav: máximo 5 items con ícono + label de texto.
+- Drawer/sidebar: solo navegación secundaria.
+- Back siempre predecible; restaurar scroll y estado al volver.
+- Deep linking en todas las rutas/pantallas clave.
+- Item activo visualmente destacado.
+- Modales: siempre ofrecer cierre claro (X, swipe-down, cancelar). No usar para flujos primarios.
+- ≥1024px: sidebar. < 1024px: bottom/top nav.
+- Acciones destructivas separadas del nav normal.
+- Después de cambio de ruta: mover focus al contenido principal.
+
+---
+
+## P10 — CHARTS & DATA (LOW)
+
+- Tipo según dato: tendencia→line, comparación→bar, proporción→donut (máx 5 cats).
+- Paleta accesible: nunca solo rojo/verde como único diferenciador.
+- Leyenda siempre visible cerca del chart.
+- Tooltips en hover (web) y tap (mobile).
+- Skeleton/shimmer mientras carga. Error state con opción de retry.
+- Respeta `prefers-reduced-motion` en animaciones de chart.
+- 1000+ puntos: agregar/samplear + drill-down.
+- Alternativa tabla para screen readers.
+
+---
+
+## CHECKLIST PRE-ENTREGA
+
+```
+VISUAL
+[ ] Sin emojis como íconos UI
+[ ] Set de íconos único con stroke consistente
+[ ] Tokens de color (no hex hardcoded por componente/pantalla)
+[ ] Press state no desplaza layout
+
+INTERACCIÓN
+[ ] Feedback visual en tap ≤100ms
+[ ] Touch targets ≥44×44pt / ≥48×48dp
+[ ] Micro-interacciones 150–300ms
+[ ] Disabled states claros y no interactivos
+[ ] Sin conflictos de gestos
+
+LIGHT/DARK MODE
+[ ] Texto primario ≥4.5:1 en ambos modos
+[ ] Texto secundario ≥3:1 en ambos modos
+[ ] Divisores visibles en ambos modos
+[ ] Scrim modal 40–60% opacity
+
+LAYOUT
+[ ] Safe areas respetadas (React Native + web)
+[ ] Scroll content no oculto por barras fijas
+[ ] Testeado en 375px, teléfono grande y tablet (portrait + landscape)
+[ ] Espaciado 4/8dp mantenido
+
+ACCESIBILIDAD
+[ ] Todos los íconos/imágenes tienen labels
+[ ] Form fields con label, hint y error claro
+[ ] Color no es el único indicador de estado
+[ ] reduced-motion y dynamic type soportados
+[ ] Roles a11y anunciados (selected, disabled, expanded)
+```

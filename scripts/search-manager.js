@@ -1,6 +1,6 @@
 // scripts/search-manager.js
 
-import { fylAnalytics } from "./analytics.js";
+import { fylAnalytics } from "./analytics.js?v=m260607";
 
 // Search functionality
 const searchInput = document.getElementById("searchInput");

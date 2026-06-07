@@ -1,7 +1,7 @@
 // admin/move-stock.js
-import { requireAuth } from "./admin-auth.js";
-import { supabase } from "../scripts/supabase-client.js";
-import { normalizeSize } from "../scripts/utils/size-normalizer.js";
+import { requireAuth } from "./admin-auth.js?v=m260607";
+import { supabase } from "../scripts/supabase-client.js?v=m260607";
+import { normalizeSize } from "../scripts/utils/size-normalizer.js?v=m260607";
 
 await requireAuth();
 

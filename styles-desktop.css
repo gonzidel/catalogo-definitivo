@@ -1,34 +1,118 @@
 /*
- * Capa desktop experimental y reversible.
- * No contiene lógica; solo presentación.
- * Solo aplica desde 1024px de ancho de viewport.
- * Desactivar: quitar el <link rel="stylesheet" href="styles-desktop.css"> del HTML.
+ * styles-desktop.css
+ * Capa desktop — solo aplica desde 1024px.
+ * Mobile intacto: este archivo se carga con media="(min-width:1024px)".
+ * Para desactivar: quitar el <link> en el HTML.
  */
 
 @media (min-width: 1024px) {
+
+  /* ====================================================
+     VARIABLES
+  ==================================================== */
   :root {
-    --fyl-desktop-max: min(1720px, calc(100vw - 32px));
-    --fyl-desktop-pad-x: clamp(20px, 2.4vw, 40px);
+    --fyl-desktop-max: min(1800px, calc(100vw - 0px));
+    --fyl-desktop-pad-x: clamp(16px, 2vw, 32px);
+    --fyl-header-h: 64px;
   }
 
-  @media (min-width: 1280px) {
-    :root {
-      --fyl-desktop-max: min(1840px, calc(100vw - 40px));
-    }
+  /* ====================================================
+     BODY / PAGE CANVAS
+     Fondo blanco puro en escritorio para look profesional
+  ==================================================== */
+  body {
+    background: #f5f3f0 !important;
   }
 
-  @media (min-width: 1536px) {
-    :root {
-      --fyl-desktop-max: min(1920px, calc(100vw - 48px));
-    }
+  /* ====================================================
+     HEADER — edge-to-edge, logo | espacio | whatsapp
+  ==================================================== */
+  header {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 16px !important;
+    padding: 0 clamp(20px, 2.5vw, 48px) !important;
+    height: var(--fyl-header-h) !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    box-sizing: border-box !important;
+    background: #fff !important;
+    border-bottom: 1px solid rgba(0,0,0,0.07) !important;
+    box-shadow: 0 1px 8px rgba(0,0,0,0.06) !important;
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 1000 !important;
   }
 
-  /* ——— Layout general: bloque centrado, menos bandas vacías laterales ——— */
+  /* Buscador del header: oculto — el único buscador está en la toolbar */
+  .search-bar-wrapper {
+    display: none !important;
+  }
+
+  .header-left {
+    display: flex !important;
+    align-items: center !important;
+    flex-shrink: 0 !important;
+  }
+
+  .header-logo {
+    height: 52px !important;
+    width: auto !important;
+  }
+
+  .header-right {
+    display: flex !important;
+    align-items: center !important;
+    gap: 12px !important;
+    flex-shrink: 0 !important;
+  }
+
+  /* ====================================================
+     MENU CATEGORIAS — edge-to-edge, fondo blanco
+  ==================================================== */
+  .menu.menu-desktop {
+    display: flex !important;
+    gap: 6px !important;
+    padding: 8px clamp(20px, 2.5vw, 48px) !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    box-sizing: border-box !important;
+    background: #fff !important;
+    border-bottom: 1px solid rgba(0,0,0,0.05) !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    justify-content: flex-start !important;
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    scrollbar-width: none !important;
+  }
+
+  .menu.menu-desktop::-webkit-scrollbar {
+    display: none !important;
+  }
+
+  .menu.menu-desktop button {
+    border-radius: 999px !important;
+    padding: 6px 16px !important;
+    font-size: 13.5px !important;
+    font-weight: 500 !important;
+    white-space: nowrap !important;
+    flex-shrink: 0 !important;
+    box-shadow: none !important;
+    transition: background 0.15s ease, color 0.15s ease !important;
+  }
+
+  /* ====================================================
+     LAYOUT PRINCIPAL
+  ==================================================== */
   .container {
     width: 100% !important;
-    max-width: var(--fyl-desktop-max) !important;
-    margin-left: auto !important;
-    margin-right: auto !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
     box-sizing: border-box !important;
   }
 
@@ -37,112 +121,112 @@
     box-sizing: border-box !important;
   }
 
-  /* ——— Header: grid logo | buscador (protagonista) | acciones ——— */
-  header {
-    display: grid !important;
-    grid-template-columns: auto minmax(200px, 1fr) auto !important;
-    align-items: center !important;
-    gap: 16px 20px !important;
-    padding: 12px var(--fyl-desktop-pad-x) !important;
+  /* ====================================================
+     INFO BANNER — 2 columnas en desktop
+     Texto izquierda, CTA derecha
+  ==================================================== */
+  .home-top-dynamic-slot {
     width: 100% !important;
-    max-width: var(--fyl-desktop-max) !important;
-    margin-left: auto !important;
-    margin-right: auto !important;
+    max-width: 100% !important;
+    padding: 10px clamp(20px, 2.5vw, 48px) 6px !important;
     box-sizing: border-box !important;
-    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.06), 0 10px 28px rgba(0, 0, 0, 0.04) !important;
-    border-bottom: 1px solid rgba(0, 0, 0, 0.05) !important;
-    background: rgba(255, 255, 255, 0.98) !important;
+    margin: 0 !important;
   }
 
-  .header-left {
-    grid-column: 1 !important;
-    justify-self: start !important;
+  #info-banner-top-container,
+  #fyl-originals-banner {
+    max-width: none !important;
+    margin: 0 !important;
   }
 
-  .search-bar-wrapper {
-    grid-column: 2 !important;
-    justify-self: stretch !important;
+  /* Banner interno: layout horizontal */
+  html.public-catalog #info-banner-top-container .info-banner-top.info-banner-top--visual {
+    padding: 14px 20px !important;
+    min-height: 58px !important;
+    border-radius: 12px !important;
+    box-shadow: none !important;
+    border: 1px solid rgba(205,132,77,0.3) !important;
+    display: block !important;
+  }
+
+  html.public-catalog .info-banner-top__inner {
     display: flex !important;
+    flex-direction: row !important;
     align-items: center !important;
-    gap: 10px !important;
+    justify-content: space-between !important;
+    gap: 24px !important;
     width: 100% !important;
-    max-width: min(720px, 100%) !important;
-    margin: 0 auto !important;
-    padding: 10px 16px !important;
-    box-sizing: border-box !important;
-    background: #f4f1ed !important;
-    border: 1px solid rgba(0, 0, 0, 0.08) !important;
-    border-radius: 14px !important;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75) !important;
   }
 
-  .search-bar-wrapper .search-icon {
-    color: #7a6a5e !important;
+  html.public-catalog .info-banner-top__content {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    gap: 20px !important;
+    flex: 1 !important;
+    min-width: 0 !important;
+    padding: 0 !important;
+  }
+
+  html.public-catalog .info-banner-top__title {
+    margin: 0 !important;
     flex-shrink: 0 !important;
   }
 
-  .search-bar-mobile {
-    display: block !important;
-    flex: 1 1 auto !important;
+  html.public-catalog .info-banner-top__title-main {
+    font-size: 15px !important;
+    font-weight: 700 !important;
+    white-space: nowrap !important;
+    line-height: 1.2 !important;
+  }
+
+  html.public-catalog .info-banner-top__line {
+    margin: 0 !important;
+    font-size: 13px !important;
+    white-space: nowrap !important;
+    color: #6b5c50 !important;
+    flex-shrink: 1 !important;
     min-width: 0 !important;
-    width: 100% !important;
-    font-size: 16px !important;
-    line-height: 1.35 !important;
-    padding: 4px 0 !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
   }
 
-  .header-right {
-    grid-column: 3 !important;
-    justify-self: end !important;
-    display: flex !important;
-    align-items: center !important;
-    gap: 10px !important;
-  }
-
-  .header-logo {
-    height: 44px !important;
+  html.public-catalog .info-banner-top__cta {
+    flex-shrink: 0 !important;
     width: auto !important;
-  }
-
-  /* ——— Menú categorías desktop ——— */
-  .menu.menu-desktop {
-    gap: 8px !important;
-    padding: 10px var(--fyl-desktop-pad-x) !important;
-    width: 100% !important;
-    max-width: var(--fyl-desktop-max) !important;
-    margin-left: auto !important;
-    margin-right: auto !important;
-    box-sizing: border-box !important;
-    border-radius: 0 0 14px 14px !important;
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.06) !important;
-    border: 1px solid rgba(0, 0, 0, 0.04) !important;
-    border-top: none !important;
-    background: #fff !important;
+    min-width: 180px !important;
+    height: 38px !important;
+    padding: 0 20px !important;
+    margin: 0 !important;
+    font-size: 13.5px !important;
+    font-weight: 600 !important;
+    border-radius: 9px !important;
+    white-space: nowrap !important;
+    display: inline-flex !important;
+    align-items: center !important;
     justify-content: center !important;
+    gap: 6px !important;
+    background: #CD844D !important;
+    color: #fff !important;
+    text-decoration: none !important;
   }
 
-  .menu.menu-desktop button {
-    border-radius: 999px !important;
-    padding: 0.48rem 1rem !important;
-    font-size: 0.9rem !important;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05) !important;
-  }
-
-  /* ——— Barra filtros: izq (Filtros + Talles) | centro (buscador compacto) | der ——— */
+  /* ====================================================
+     BARRA DE FILTROS
+  ==================================================== */
   #filter-container {
     display: grid !important;
     align-items: center !important;
     column-gap: 10px !important;
-    row-gap: 10px !important;
+    row-gap: 0 !important;
     width: 100% !important;
-    max-width: var(--fyl-desktop-max) !important;
-    margin-left: auto !important;
-    margin-right: auto !important;
-    margin-top: 8px !important;
-    padding: 10px var(--fyl-desktop-pad-x) !important;
-    border-radius: 12px !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 8px clamp(20px, 2.5vw, 48px) !important;
     box-sizing: border-box !important;
-    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.05), 0 4px 18px rgba(0, 0, 0, 0.04) !important;
+    background: #fff !important;
+    border-bottom: 1px solid rgba(0,0,0,0.06) !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.04) !important;
   }
 
   #filter-container:not(:has(#cart-bar)) {
@@ -157,13 +241,16 @@
     grid-column: 1 !important;
     grid-row: 1 !important;
     margin: 0 !important;
+    border-radius: 8px !important;
+    font-size: 13.5px !important;
+    padding: 7px 14px !important;
   }
 
   #filter-container .desktop-only-talles.size-filter-chip {
     grid-column: 2 !important;
     grid-row: 1 !important;
     margin: 0 !important;
-    border-radius: 10px !important;
+    border-radius: 8px !important;
   }
 
   #filter-container #searchInput {
@@ -171,24 +258,33 @@
     grid-row: 1 !important;
     justify-self: center !important;
     width: 100% !important;
-    max-width: 280px !important;
-    min-width: 160px !important;
-    padding: 8px 12px !important;
-    font-size: 13px !important;
-    border-radius: 10px !important;
+    max-width: 380px !important;
+    min-width: 200px !important;
+    padding: 7px 14px !important;
+    font-size: 14px !important;
+    border-radius: 8px !important;
     margin: 0 !important;
+    background: #f4f1ed !important;
+    border: 1px solid rgba(0,0,0,0.08) !important;
+    color: #333 !important;
   }
 
   #filter-container #clear-search {
     grid-column: 4 !important;
     grid-row: 1 !important;
     margin: 0 !important;
+    border-radius: 8px !important;
+    font-size: 13.5px !important;
+    padding: 7px 12px !important;
   }
 
   #filter-container #view-toggle {
     grid-column: 5 !important;
     grid-row: 1 !important;
     margin: 0 !important;
+    border-radius: 8px !important;
+    font-size: 13.5px !important;
+    padding: 7px 12px !important;
   }
 
   #filter-container #cart-bar {
@@ -202,236 +298,202 @@
     grid-column: 1 / -1 !important;
     grid-row: 2 !important;
     width: 100% !important;
-    margin-top: 2px !important;
-  }
-
-  #filter-container #toggleFiltros,
-  #filter-container #clear-search,
-  #filter-container #view-toggle {
-    border-radius: 10px !important;
-    padding: 0.48rem 0.95rem !important;
-    font-size: 0.88rem !important;
+    margin-top: 4px !important;
+    padding-top: 8px !important;
+    border-top: 1px solid rgba(0,0,0,0.05) !important;
   }
 
   #filter-container #cart-button {
-    border-radius: 10px !important;
-    padding: 9px 16px !important;
+    border-radius: 8px !important;
+    padding: 8px 16px !important;
     font-size: 14px !important;
-    box-shadow: 0 2px 10px rgba(205, 132, 77, 0.22) !important;
   }
 
   #filter-container #cart-submit {
-    border-radius: 10px !important;
-    padding: 9px 14px !important;
+    border-radius: 8px !important;
+    padding: 8px 12px !important;
   }
 
-  /* ——— Grid catálogo ——— */
+  /* ====================================================
+     GRID DE PRODUCTOS — 5 columnas a 1440px
+  ==================================================== */
   #catalogo {
     width: 100% !important;
-    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
-    gap: 1.1rem !important;
-    padding: 1rem var(--fyl-desktop-pad-x) 2.5rem !important;
-    max-width: var(--fyl-desktop-max) !important;
-    margin-left: auto !important;
-    margin-right: auto !important;
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    gap: 14px !important;
+    padding: 16px clamp(20px, 2.5vw, 48px) 40px !important;
+    max-width: 100% !important;
+    margin: 0 !important;
     box-sizing: border-box !important;
   }
 
   @media (min-width: 1280px) {
     #catalogo {
       grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
-      gap: 1.2rem !important;
+      gap: 16px !important;
     }
   }
 
-  @media (min-width: 1536px) {
+  @media (min-width: 1600px) {
     #catalogo {
-      grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
-      gap: 1.25rem !important;
+      grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+      gap: 20px !important;
     }
   }
 
-  /* Carruseles / campañas de oferta: fila completa, no como celda del grid de productos */
+  /* Cards */
+  #catalogo .card.producto {
+    border-radius: 14px !important;
+    overflow: hidden !important;
+    background: #fff !important;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.07) !important;
+    transition: transform 0.18s ease, box-shadow 0.18s ease !important;
+  }
+
   #catalogo .card.offer-card {
     grid-column: 1 / -1 !important;
     width: 100% !important;
     max-width: none !important;
-    margin: 14px 0 !important;
-    border-radius: 18px !important;
-    box-shadow:
-      0 12px 40px rgba(255, 152, 0, 0.16),
-      0 2px 0 rgba(0, 0, 0, 0.03) inset !important;
-  }
-
-  #catalogo .card.offer-card:first-child {
-    margin-top: 6px !important;
+    margin: 10px 0 !important;
+    border-radius: 16px !important;
+    box-shadow: 0 8px 28px rgba(255,152,0,0.14) !important;
   }
 
   @media (hover: hover) and (pointer: fine) {
-    #catalogo .card.producto,
-    #catalogo .card.offer-card {
-      transition: transform 0.2s ease, box-shadow 0.2s ease !important;
-    }
-
     #catalogo .card.producto:hover {
-      transform: translateY(-3px) !important;
-      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.1) !important;
+      transform: translateY(-4px) !important;
+      box-shadow: 0 10px 28px rgba(0,0,0,0.11) !important;
     }
 
     #catalogo .card.offer-card:hover {
       transform: translateY(-2px) !important;
-      box-shadow:
-        0 16px 44px rgba(255, 152, 0, 0.22),
-        0 2px 0 rgba(0, 0, 0, 0.03) inset !important;
+      box-shadow: 0 14px 36px rgba(255,152,0,0.2) !important;
     }
   }
 
-  /* ——— Banners superiores: hero compacto (sin tocar HTML ni textos) ——— */
-  .home-top-dynamic-slot {
-    width: 100% !important;
-    max-width: var(--fyl-desktop-max) !important;
-    margin-left: auto !important;
-    margin-right: auto !important;
-    padding: 12px var(--fyl-desktop-pad-x) 8px !important;
-    box-sizing: border-box !important;
-  }
-
-  #info-banner-top-container,
-  #fyl-originals-banner {
-    max-width: none !important;
-    margin-left: 0 !important;
-    margin-right: 0 !important;
-  }
-
-  #info-banner-top-container .info-banner-top {
-    min-height: 104px !important;
-    padding: 20px 26px !important;
-    box-sizing: border-box !important;
-    border-radius: 16px !important;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08) !important;
-  }
-
-  #info-banner-top-container .info-banner-top__inner {
-    align-items: center !important;
-  }
-
-  #info-banner-top-container .info-banner-top__title-main {
-    font-size: clamp(17px, 1.35vw, 20px) !important;
-    line-height: 1.2 !important;
-  }
-
-  #info-banner-top-container .info-banner-top__line {
-    font-size: 14px !important;
-    margin-top: 6px !important;
-    opacity: 0.92 !important;
-  }
-
-  #info-banner-top-container .info-banner-top__cta {
-    display: inline-flex !important;
-    align-items: center !important;
-    gap: 6px !important;
-    margin-top: 12px !important;
-    padding: 10px 18px !important;
-    border-radius: 999px !important;
-    font-weight: 700 !important;
-    font-size: 14px !important;
-    letter-spacing: 0.02em !important;
-    background: #c4753f !important;
-    color: #fff !important;
-    box-shadow: 0 4px 14px rgba(205, 132, 77, 0.45) !important;
-  }
-
-  #info-banner-top-container .info-banner-top__cta-arrow {
-    font-weight: 800 !important;
-  }
-
+  /* ====================================================
+     BANNERS Y SLOTS
+  ==================================================== */
   .fyl-originals-banner.orig-block {
-    padding: 14px var(--fyl-desktop-pad-x) 18px !important;
-    border-radius: 16px !important;
-    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.07) !important;
-    margin-bottom: 6px !important;
-  }
-
-  .fyl-originals-banner .orig-head {
-    margin-bottom: 10px !important;
-  }
-
-  .fyl-originals-banner .orig-title {
-    font-size: clamp(1.1rem, 1.2vw, 1.35rem) !important;
+    padding: 12px clamp(20px, 2.5vw, 48px) 14px !important;
+    border-radius: 12px !important;
+    margin-bottom: 4px !important;
   }
 
   .promotional-banner-container {
-    margin-top: 10px !important;
-  }
-
-  /* Catálogo público: banner compacto del inline ——— refuerzo desktop */
-  html.public-catalog #info-banner-top-container .info-banner-top.info-banner-top--visual {
-    min-height: 112px !important;
-    padding: 22px 28px !important;
-  }
-
-  html.public-catalog #info-banner-top-container .info-banner-top__title-main {
-    font-size: clamp(18px, 1.4vw, 21px) !important;
-  }
-
-  html.public-catalog #info-banner-top-container .info-banner-top__line {
-    font-size: 14px !important;
     margin-top: 8px !important;
   }
 
-  html.public-catalog #info-banner-top-container .info-banner-top__cta {
-    margin-top: 14px !important;
-  }
-
-  /* Banner personalizado destacados */
   #custom-banner-container {
     width: 100% !important;
-    max-width: var(--fyl-desktop-max) !important;
-    margin-left: auto !important;
-    margin-right: auto !important;
-    padding-left: var(--fyl-desktop-pad-x) !important;
-    padding-right: var(--fyl-desktop-pad-x) !important;
+    max-width: 100% !important;
+    margin: 6px 0 6px !important;
+    padding-left: clamp(20px, 2.5vw, 48px) !important;
+    padding-right: clamp(20px, 2.5vw, 48px) !important;
     box-sizing: border-box !important;
-    margin-top: 8px !important;
-    margin-bottom: 8px !important;
-    border-radius: 14px !important;
-    background: rgba(255, 255, 255, 0.65) !important;
-    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.04) !important;
-  }
-
-  .custom-banner-header {
-    padding: 10px 6px 8px !important;
-  }
-
-  .custom-banner-title {
-    font-size: 1.3rem !important;
   }
 
   .collection-head {
     width: 100% !important;
-    max-width: var(--fyl-desktop-max) !important;
-    margin-left: auto !important;
-    margin-right: auto !important;
-    padding-left: var(--fyl-desktop-pad-x) !important;
-    padding-right: var(--fyl-desktop-pad-x) !important;
+    max-width: 100% !important;
+    padding-left: clamp(20px, 2.5vw, 48px) !important;
+    padding-right: clamp(20px, 2.5vw, 48px) !important;
     box-sizing: border-box !important;
   }
 
   main#howto-page.howto {
-    max-width: 920px !important;
-    margin-left: auto !important;
-    margin-right: auto !important;
-    padding: 28px var(--fyl-desktop-pad-x) 40px !important;
+    max-width: 860px !important;
+    margin: 0 auto !important;
+    padding: 28px 32px 48px !important;
     box-sizing: border-box !important;
   }
 
-  #product-modal-body.product-modal-body,
-  .product-modal-body {
-    padding: 20px 28px calc(20px + env(safe-area-inset-bottom, 0px)) !important;
+  /* ====================================================
+     PDP — layout 2 columnas (60/40), CTA derecha
+  ==================================================== */
+  .product-modal-main-content {
+    grid-template-columns: 58% 1fr !important;
+    gap: 36px !important;
+    padding: 0 40px 100px !important;
+    align-items: start !important;
   }
 
+  .product-modal-info {
+    gap: 18px !important;
+    padding-top: 8px !important;
+  }
+
+  .product-modal-section-label {
+    font-size: 10.5px !important;
+    letter-spacing: 1.4px !important;
+    color: #999 !important;
+    text-transform: uppercase !important;
+    margin-bottom: 10px !important;
+  }
+
+  .pdp-main-image-wrap {
+    max-height: 74vh !important;
+    border-radius: 18px !important;
+  }
+
+  .pdp-thumb,
+  .pdp-thumbs .miniatura {
+    width: 72px !important;
+    min-width: 72px !important;
+  }
+
+  .pdp-reco {
+    grid-column: 1 / -1 !important;
+    padding-top: 20px !important;
+    margin-top: 8px !important;
+    border-top: 1px solid #eee !important;
+  }
+
+  .pdp-reco-card {
+    width: 186px !important;
+  }
+
+  .pdp-reco-card img {
+    height: 205px !important;
+    max-height: 205px !important;
+  }
+
+  .pdp-reco-row {
+    gap: 14px !important;
+    padding-bottom: 12px !important;
+  }
+
+  #product-modal-body.product-modal-body {
+    padding: 20px 40px calc(20px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  /* CTA no full-width: alineado a la derecha (columna info) */
+  #product-modal-footer.product-modal-footer {
+    background: transparent !important;
+    border-top: none !important;
+    box-shadow: none !important;
+    padding: 0 40px 20px !important;
+    display: flex !important;
+    justify-content: flex-end !important;
+  }
+
+  #product-modal-footer .pdp-whatsapp-cta,
+  #product-modal-footer .product-modal-cta {
+    width: auto !important;
+    min-width: 240px !important;
+    max-width: 360px !important;
+    border-radius: 12px !important;
+    font-size: 15px !important;
+    font-weight: 700 !important;
+    padding-top: 14px !important;
+    padding-bottom: 14px !important;
+  }
+
+  /* ====================================================
+     MISC
+  ==================================================== */
   #btn-scroll-top {
-    right: max(24px, env(safe-area-inset-right, 0px)) !important;
+    right: 24px !important;
     bottom: 28px !important;
   }
 
@@ -440,18 +502,368 @@
   }
 
   html.public-catalog .public-catalog-wa-link {
-    min-height: 44px !important;
-    padding: 0 18px !important;
-    font-size: 15px !important;
+    min-height: 40px !important;
+    padding: 0 16px !important;
+    font-size: 14px !important;
     font-weight: 600 !important;
-    border-radius: 12px !important;
-    box-shadow: 0 3px 14px rgba(37, 211, 102, 0.35) !important;
-    letter-spacing: 0.01em !important;
+    border-radius: 10px !important;
+    box-shadow: 0 2px 10px rgba(37,211,102,0.3) !important;
   }
 
-  /* Flotante WhatsApp visible también en catálogo público desktop (antes estaba oculto). */
   html.public-catalog #wa-popup {
     bottom: 28px !important;
-    right: max(24px, env(safe-area-inset-right, 0px)) !important;
+    right: 24px !important;
   }
+
+  /* ====================================================
+     FIX: Una sola barra de búsqueda
+     El buscador funcional está en la toolbar (#searchInput)
+     — hacerlo más prominente y quitarle el max-width chico
+  ==================================================== */
+  #filter-container #searchInput {
+    display: block !important;
+    max-width: 480px !important;
+    min-width: 200px !important;
+    font-size: 14px !important;
+  }
+
+  /* ====================================================
+     FIX: Nuevos Ingresos — tarjetas más grandes en desktop
+  ==================================================== */
+  .pdp-reco-row,
+  .quick-carousel-row,
+  [class*="carousel"] {
+    gap: 14px !important;
+  }
+
+  /* El strip de "Nuevos Ingresos" en el catálogo */
+  #catalogo ~ * .card-mini,
+  .mini-card,
+  [class*="mini-card"] {
+    min-width: 160px !important;
+  }
+
+  /* ====================================================
+     FIX: Banner slot superior — menos espacio, más limpio
+  ==================================================== */
+  #home-top-dynamic-slot,
+  .home-top-dynamic-slot {
+    padding-bottom: 0 !important;
+    padding-top: 8px !important;
+  }
+
+  /* Quitar fondo flotante del loader */
+  .home-top-dynamic-loader {
+    background: transparent !important;
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    min-height: 0 !important;
+    padding: 12px 0 !important;
+  }
+
+  /* El slot del carrusel F&L Originals: sin fondo propio */
+  #fyl-originals-banner,
+  .fyl-originals-banner {
+    background: transparent !important;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    padding: 8px 0 12px !important;
+  }
+
+
+  /* ====================================================
+     CARRUSELES "NUEVOS INGRESOS" / F&L ORIGINALS
+     Skill UX: cards más grandes, mejor densidad visual
+  ==================================================== */
+  .fyl-originals-card {
+    flex: 0 0 160px !important;
+    border-radius: 12px !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08) !important;
+  }
+
+  .fyl-originals-card-image {
+    height: 175px !important;
+  }
+
+  .fyl-originals-card-content {
+    padding: 0.4rem 0.6rem 0.3rem !important;
+  }
+
+  .fyl-originals-card-code {
+    font-size: 11px !important;
+  }
+
+  .fyl-originals-card-name {
+    font-size: 12px !important;
+    -webkit-line-clamp: 2 !important;
+  }
+
+  .fyl-originals-card-price {
+    font-size: 14px !important;
+    font-weight: 700 !important;
+  }
+
+  .custom-banner-card {
+    flex: 0 0 160px !important;
+    border-radius: 12px !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08) !important;
+  }
+
+  .custom-banner-card-image {
+    height: 175px !important;
+  }
+
+  .custom-banner-card-price {
+    font-size: 14px !important;
+    font-weight: 700 !important;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .fyl-originals-card:hover,
+    .custom-banner-card:hover {
+      transform: translateY(-4px) !important;
+      box-shadow: 0 8px 20px rgba(0,0,0,0.12) !important;
+    }
+  }
+
+  /* ====================================================
+     SEARCH BAR — más prominente (única barra)
+     Skill UX: search is the CTA for marketplace pattern
+  ==================================================== */
+  #filter-container #searchInput {
+    padding: 10px 16px !important;
+    font-size: 14.5px !important;
+    border-radius: 10px !important;
+    background: #fff !important;
+    border: 1.5px solid rgba(0,0,0,0.12) !important;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06) !important;
+    transition: border-color 0.2s, box-shadow 0.2s !important;
+    max-width: 520px !important;
+  }
+
+  #filter-container #searchInput:focus {
+    border-color: #CD844D !important;
+    box-shadow: 0 0 0 3px rgba(205,132,77,0.12) !important;
+    outline: none !important;
+  }
+
+  /* ====================================================
+     CARDS PRINCIPALES — cursor pointer + transición
+     Skill UX: cursor-pointer en todos los clickeables
+  ==================================================== */
+  #catalogo .card.producto {
+    cursor: pointer !important;
+  }
+
+  #catalogo .card.producto .main-image-wrapper {
+    border-radius: 10px !important;
+    overflow: hidden !important;
+  }
+
+  /* Precio destacado en card */
+  #catalogo .card.producto .price {
+    font-size: 16px !important;
+    font-weight: 700 !important;
+  }
+
+  /* ====================================================
+     SECCIÓN "NUEVOS INGRESOS" — título más destacado
+  ==================================================== */
+  .custom-banner-header,
+  [class*="collection"] h2,
+  [class*="banner-title"] {
+    font-size: 1.1rem !important;
+    font-weight: 700 !important;
+    letter-spacing: -0.01em !important;
+  }
+
+
+  /* ====================================================
+     MENU CATEGORIAS — hover y activo refinados
+     Skill: state-clarity, hover transitions 150-300ms
+  ==================================================== */
+  .menu.menu-desktop button {
+    background: transparent !important;
+    color: #555 !important;
+    border: 1.5px solid transparent !important;
+    font-weight: 500 !important;
+    transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease !important;
+  }
+
+  .menu.menu-desktop button:hover {
+    background: rgba(205, 132, 77, 0.08) !important;
+    color: #CD844D !important;
+    border-color: rgba(205, 132, 77, 0.25) !important;
+  }
+
+  .menu.menu-desktop button.active {
+    background: #CD844D !important;
+    color: #fff !important;
+    border-color: #CD844D !important;
+    font-weight: 600 !important;
+    box-shadow: 0 2px 8px rgba(205, 132, 77, 0.3) !important;
+  }
+
+  .menu.menu-desktop button.active:hover {
+    background: #b86f3d !important;
+    border-color: #b86f3d !important;
+  }
+
+  /* ====================================================
+     CARD INFO — precio y detalles mejorados en desktop
+     Skill: font-scale, weight-hierarchy, number-tabular
+  ==================================================== */
+  .card-footer .card-price .price {
+    font-size: 20px !important;
+    font-weight: 800 !important;
+    letter-spacing: -0.4px !important;
+    font-variant-numeric: tabular-nums !important;
+  }
+
+  .card-footer .card-price .price-wholesale {
+    font-size: 11.5px !important;
+    letter-spacing: 0.1px !important;
+    text-transform: uppercase !important;
+    opacity: 0.55 !important;
+  }
+
+  /* Talles: texto más legible */
+  .card-footer-size {
+    font-size: 13px !important;
+    font-weight: 500 !important;
+    color: #777 !important;
+  }
+
+  /* ====================================================
+     BOTON "CONSULTAR" — CTA principal de la card
+     Skill: primary-action, 44px touch target, transitions
+  ==================================================== */
+  .public-consult-btn {
+    border-radius: 10px !important;
+    font-size: 14px !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.01em !important;
+    transition: background 0.18s ease, transform 0.15s ease, box-shadow 0.18s ease !important;
+    cursor: pointer !important;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .public-consult-btn:hover {
+      filter: brightness(1.08) !important;
+      transform: translateY(-1px) !important;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15) !important;
+    }
+
+    .public-consult-btn:active {
+      transform: translateY(0) !important;
+      filter: brightness(0.96) !important;
+    }
+  }
+
+  /* ====================================================
+     FILTER TOOLBAR — altura y espaciado consistentes
+     Skill: spacing-scale, touch-density
+  ==================================================== */
+  #filter-container {
+    padding-top: 10px !important;
+    padding-bottom: 10px !important;
+    min-height: 52px !important;
+  }
+
+  #filter-container #toggleFiltros,
+  #filter-container .size-filter-chip,
+  #filter-container #clear-search,
+  #filter-container #view-toggle {
+    height: 36px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    cursor: pointer !important;
+    transition: background 0.15s ease, border-color 0.15s ease !important;
+  }
+
+  /* ====================================================
+     SECTION HEADERS — jerarquía tipografica clara
+     Skill: heading-hierarchy, weight-hierarchy
+  ==================================================== */
+  .custom-banner-header .custom-banner-title {
+    font-size: 1.15rem !important;
+    font-weight: 700 !important;
+    letter-spacing: -0.02em !important;
+    color: #1a1a1a !important;
+  }
+
+  /* "Nuevos Ingresos" y otros títulos de sección */
+  .home-top-dynamic-slot h2,
+  .home-top-dynamic-slot h3,
+  .collection-head h2 {
+    font-size: 1.25rem !important;
+    font-weight: 700 !important;
+    letter-spacing: -0.02em !important;
+    color: #1a1a1a !important;
+  }
+
+
+  /* ====================================================
+     FIX: 4 productos destacados + banner editable
+     
+     El JS inserta el banner después de la 4.ª card.
+     Con 4 columnas, las primeras 4 llenan siempre 1 fila.
+     El slot del banner debe ocupar todas las columnas.
+  ==================================================== */
+
+  /* Banner slot que se inserta tras la 4.ª card */
+  .home-custom-banner-slot {
+    grid-column: 1 / -1 !important;
+    width: 100% !important;
+  }
+
+  /* El contenedor inline del banner en el grid */
+  #custom-banner-container-inline {
+    width: 100% !important;
+    margin: 0 !important;
+    border-radius: 16px !important;
+    overflow: hidden !important;
+  }
+
+  /* Wrapper del banner editable — altura mínima decente en desktop */
+  .custom-banner-wrapper {
+    width: 100% !important;
+  }
+
+  /* El contenedor principal del banner en el grid (cuando está inline) */
+  #catalogo .home-custom-banner-slot .custom-banner-header {
+    padding: 16px 20px 10px !important;
+  }
+
+  #catalogo .home-custom-banner-slot .custom-banner-title {
+    font-size: 1.2rem !important;
+    font-weight: 700 !important;
+  }
+
+  /* Cards del banner editable: más grandes en desktop */
+  #catalogo .home-custom-banner-slot .custom-banner-card {
+    flex: 0 0 200px !important;
+  }
+
+  #catalogo .home-custom-banner-slot .custom-banner-card-image {
+    height: 220px !important;
+  }
+
+  /* Banner de ofertas (offer-card) también ocupa fila completa */
+  #catalogo .card.offer-card {
+    grid-column: 1 / -1 !important;
+    min-height: 280px !important;
+    border-radius: 18px !important;
+  }
+
+  /* ====================================================
+     CARDS DESTACADOS — primer grupo de 4, ligeramente
+     más altas para diferenciarse visualmente
+  ==================================================== */
+  #catalogo > .card.producto:nth-child(-n+4) .main-image-wrapper {
+    aspect-ratio: 3 / 4 !important;
+  }
+
 }

@@ -1,5 +1,5 @@
-import { supabase } from "../scripts/supabase-client.js";
-import { requireAuth } from "./admin-auth.js";
+﻿import { supabase } from "../scripts/supabase-client.js?v=m260607";
+import { requireAuth } from "./admin-auth.js?v=m260607";
 
 const els = {
   from: document.getElementById("metrics-from"),

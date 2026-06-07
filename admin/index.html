@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
@@ -419,15 +419,16 @@
   <!-- Suprimir errores de extensiones del navegador -->
   <script src="./suppress-extension-errors.js"></script>
   <script type="module" src="../scripts/config.js"></script>
-  <script defer src="../scripts/vendor/supabase-js.bundle.min.js?v=m260518"></script>
-  <script type="module" src="../scripts/supabase-client.js"></script>
-  <script type="module" src="./admin-auth.js"></script>
+  <script defer src="../scripts/vendor/supabase-js.bundle.min.js?v=m260607"></script>
+  <script type="module" src="../scripts/supabase-client.js?v=m260607"></script>
+  <script type="module" src="./admin-auth.js?v=m260607"></script>
   <script type="module">
     // Mostrar card de Colaboradores solo para super_admin
     import { isSuperAdmin } from "./permissions-helper.js";
-    import { supabase } from "../scripts/supabase-client.js";
+    import { supabase, supabaseReady } from "../scripts/supabase-client.js?v=m260607";
     
     async function checkAndShowCollaboratorsCard() {
+      await supabaseReady;
       const card = document.getElementById("collaborators-card");
       if (!card) {
         console.warn("Card de colaboradores no encontrado");
@@ -491,8 +492,8 @@
         });
       }
       
-      // Esperar un poco más para que supabase esté listo
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // Esperar a que supabase esté listo (reemplaza el setTimeout frágil)
+      await supabaseReady;
       
       // Esperar a que la sesión se verifique (admin-auth.js actualiza la UI)
       let attempts = 0;
@@ -520,9 +521,10 @@
   <script type="module">
     // Ocultar módulos del dashboard según permisos del colaborador
     import { getUserPermissions, isSuperAdmin } from "./permissions-helper.js";
-    import { supabase } from "../scripts/supabase-client.js";
+    import { supabase, supabaseReady } from "../scripts/supabase-client.js?v=m260607";
     
     async function filterDashboardModules() {
+      await supabaseReady;
       try {
         // Verificar que hay sesión activa
         const { data: { session } } = await supabase.auth.getSession();
@@ -640,8 +642,8 @@
         });
       }
       
-      // Esperar un poco más para que supabase esté listo
-      await new Promise(resolve => setTimeout(resolve, 300));
+      // Esperar a que supabase esté listo (reemplaza el setTimeout frágil)
+      await supabaseReady;
       
       // Esperar a que la autenticación esté lista
       // admin-auth.js establecerá window.authReady = true cuando esté listo

@@ -1,8 +1,8 @@
 // scripts/ui/bottom-sheet.js
 // Bottom Sheet modular para agregar productos al carrito
 
-import { normalizeSize } from '../utils/size-normalizer.js';
-import { parseARSNumber, formatARS } from '../utils/price.js';
+import { normalizeSize } from '../utils/size-normalizer.js?v=m260607';
+import { parseARSNumber, formatARS } from '../utils/price.js?v=m260607';
 
 (function() {
   'use strict';

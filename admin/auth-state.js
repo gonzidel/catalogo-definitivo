@@ -1,4 +1,4 @@
-/**
+﻿/**
  * admin/auth-state.js
  *
  * Fuente única de verdad de auth + permisos admin para el panel.
@@ -36,8 +36,8 @@
  * cache esté listo, ambas reciben la misma Promise y solo se hace una carga.
  */
 
-import { supabase } from "../scripts/supabase-client.js";
-import { getUserPermissions, clearPermissionsCache } from "./permissions-helper.js";
+import { supabase, supabaseReady } from "../scripts/supabase-client.js?v=m260607";
+import { getUserPermissions, clearPermissionsCache } from "./permissions-helper.js?v=m260607";
 
 // ── Cache de usuario ───────────────────────────────────────────────────────
 // Guardamos el user del session (local, sin red). Se invalida en SIGNED_OUT.
@@ -66,6 +66,7 @@ let _warnedCanBeforeReady = false;
  * @returns {Promise<import('@supabase/supabase-js').User|null>}
  */
 export async function getSessionUser() {
+  await supabaseReady;
   if (_cachedUser) return _cachedUser;
   if (_userLoadPromise) return _userLoadPromise;
 
@@ -89,21 +90,27 @@ export async function getSessionUser() {
  *
  * @returns {Promise<Record<string, {can_view: boolean, can_edit: boolean, can_delete: boolean}>>}
  */
+const PERMISSIONS_TIMEOUT_MS = 12000;
+
 export async function getAdminPermissions() {
   if (_cachedPermissions) return _cachedPermissions;
   if (_permissionsLoadPromise) return _permissionsLoadPromise;
 
-  _permissionsLoadPromise = getUserPermissions().then((perms) => {
-    _cachedPermissions = perms ?? {};
-    _permissionsLoadPromise = null;
-    return _cachedPermissions;
-  }).catch((err) => {
-    _permissionsLoadPromise = null;
-    console.warn("[auth-state] error cargando permisos:", err);
-    // Dejar un snapshot vacío coherente: can() = deny, isAuthStateReady() = true
-    _cachedPermissions = {};
-    return _cachedPermissions;
-  });
+  const timeoutPromise = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error("permissions_timeout")), PERMISSIONS_TIMEOUT_MS)
+  );
+
+  _permissionsLoadPromise = Promise.race([getUserPermissions(), timeoutPromise])
+    .then((perms) => {
+      _cachedPermissions = perms ?? {};
+      _permissionsLoadPromise = null;
+      return _cachedPermissions;
+    }).catch((err) => {
+      _permissionsLoadPromise = null;
+      console.warn("[auth-state] error/timeout cargando permisos:", err.message);
+      _cachedPermissions = {};
+      return _cachedPermissions;
+    });
 
   return _permissionsLoadPromise;
 }
@@ -196,10 +203,13 @@ const AUTH_INVALIDATION_EVENTS = new Set([
   "USER_UPDATED",
 ]);
 
-supabase.auth.onAuthStateChange((event) => {
-  if (AUTH_INVALIDATION_EVENTS.has(event)) {
-    invalidate();
-  }
+supabaseReady.then(() => {
+  if (!supabase) return;
+  supabase.auth.onAuthStateChange((event) => {
+    if (AUTH_INVALIDATION_EVENTS.has(event)) {
+      invalidate();
+    }
+  });
 });
 
 if (typeof window !== "undefined") {

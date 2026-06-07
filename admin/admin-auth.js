@@ -1,8 +1,8 @@
 ﻿// admin/admin-auth.js (simple y fiable)
-import { invalidate } from "./auth-state.js";
-import { supabase } from "../scripts/supabase-client.js";
+import { invalidate } from "./auth-state.js?v=m260607";
+import { supabase, supabaseReady } from "../scripts/supabase-client.js?v=m260607";
 
-// Función para obtener elementos del DOM de forma segura
+// Funci�n para obtener elementos del DOM de forma segura
 function getDOMElements() {
   return {
     loginForm: document.getElementById("login-form"),
@@ -22,7 +22,7 @@ function getDOMElements() {
 function isIndexPage() {
   const currentPath = window.location.pathname || "";
   const currentHref = window.location.href || "";
-  // Detectar si estamos en la página index (panel principal)
+  // Detectar si estamos en la p�gina index (panel principal)
   return (
     currentPath.includes("index.html") ||
     currentPath.endsWith("/admin/") ||
@@ -38,7 +38,7 @@ function redirectToPanel() {
     updateSessionUI();
     return;
   }
-  // En otras páginas, redirigir al panel principal
+  // En otras p�ginas, redirigir al panel principal
   try {
     const target = window.redirectTarget || "./index.html";
     window.location.replace(target);
@@ -49,20 +49,21 @@ function redirectToPanel() {
 }
 
 async function updateSessionUI() {
+  await supabaseReady;
+  let loginForm, loggedBox, userEmail, loginErr;
   try {
     // Obtener elementos del DOM de forma segura
     let attempts = 0;
-    let loginForm, loggedBox, userEmail, loginErr;
     
-    // Solo intentar obtener elementos si estamos en una página que los tiene (index.html)
-    // En otras páginas como orders.html, estos elementos no existen y no debemos intentar buscarlos
+    // Solo intentar obtener elementos si estamos en una p�gina que los tiene (index.html)
+    // En otras p�ginas como orders.html, estos elementos no existen y no debemos intentar buscarlos
     const isIndexPage = window.location.pathname.includes("index.html") || 
                         window.location.pathname.endsWith("/admin/") ||
                         window.location.pathname.endsWith("/admin");
     
     if (!isIndexPage) {
       // Si no estamos en index.html, no intentar actualizar la UI de login
-      // Las otras páginas manejan su propia autenticación
+      // Las otras p�ginas manejan su propia autenticaci�n
       return;
     }
     
@@ -79,25 +80,25 @@ async function updateSessionUI() {
       
       // Solo mostrar advertencia si realmente estamos esperando (no en el primer intento)
       if (attempts > 0) {
-        console.warn(`Elementos del DOM no están listos (intento ${attempts + 1}/10), esperando...`);
+        console.warn(`Elementos del DOM no est�n listos (intento ${attempts + 1}/10), esperando...`);
       }
       await new Promise(resolve => setTimeout(resolve, 100));
       attempts++;
     }
 
     if (!loginForm || !loggedBox) {
-      // Solo mostrar error si realmente estamos en index.html y deberían existir
+      // Solo mostrar error si realmente estamos en index.html y deber�an existir
       if (isIndexPage) {
-        console.error("❌ Elementos del DOM no están disponibles después de varios intentos");
+        console.error("? Elementos del DOM no est�n disponibles despu�s de varios intentos");
       }
       return;
     }
 
-    console.log("🔍 Verificando sesión...");
+    console.log("?? Verificando sesi�n...");
     const { data, error } = await supabase.auth.getSession();
     
     if (error) {
-      console.error("❌ Error obteniendo sesión:", error);
+      console.error("? Error obteniendo sesi�n:", error);
       // Marcar como loaded solo cuando vamos a mostrar el login
       const authSection = document.getElementById("auth-section");
       if (authSection) {
@@ -111,18 +112,18 @@ async function updateSessionUI() {
     }
 
     const has = !!data?.session;
-    console.log(`📊 Estado de sesión: ${has ? "ACTIVA" : "INACTIVA"}`);
+    console.log(`?? Estado de sesi�n: ${has ? "ACTIVA" : "INACTIVA"}`);
 
-    // NO marcar como loaded aún - esperar a determinar si hay sesión o no
-    // Esto evita que el CSS muestre el login automáticamente
+    // NO marcar como loaded a�n - esperar a determinar si hay sesi�n o no
+    // Esto evita que el CSS muestre el login autom�ticamente
 
     if (has) {
       // Verificar que el usuario sea admin antes de mostrar el dashboard
-      const { isAdmin } = await import("./permissions-helper.js");
+      const { isAdmin } = await import("./permissions-helper.js?v=m260607");
       const userIsAdmin = await isAdmin();
       
       if (!userIsAdmin) {
-        console.log("⚠️ Usuario no autorizado como admin, mostrando mensaje");
+        console.log("?? Usuario no autorizado como admin, mostrando mensaje");
         const userEmail = data.session.user?.email || "";
         // Marcar como loaded solo cuando vamos a mostrar el login
         const authSection = document.getElementById("auth-section");
@@ -135,12 +136,12 @@ async function updateSessionUI() {
         if (loginErr) {
           loginErr.innerHTML = `
             <div style="color: #e74c3c; background: #f8d7da; padding: 16px; border-radius: 8px; border: 1px solid #f5c6cb; margin-top: 12px;">
-              <strong>⚠️ Acceso no autorizado</strong>
+              <strong>?? Acceso no autorizado</strong>
               <p style="margin: 12px 0 8px 0; font-size: 14px;">
-                Tu cuenta <strong>${userEmail}</strong> no tiene permisos para acceder al panel de administración.
+                Tu cuenta <strong>${userEmail}</strong> no tiene permisos para acceder al panel de administraci�n.
               </p>
               <p style="margin: 0; font-size: 13px; color: #721c24;">
-                Para obtener acceso, un super administrador debe agregarte como colaborador desde la página de <strong>Colaboradores</strong>.
+                Para obtener acceso, un super administrador debe agregarte como colaborador desde la p�gina de <strong>Colaboradores</strong>.
               </p>
               <p style="margin: 8px 0 0 0; font-size: 12px; color: #856404;">
                 Si crees que esto es un error, contacta al super administrador.
@@ -149,18 +150,18 @@ async function updateSessionUI() {
           `;
           loginErr.style.color = "#e74c3c";
         }
-        // Cerrar sesión automáticamente
+        // Cerrar sesi�n autom�ticamente
         await supabase.auth.signOut();
         return;
       }
       
-      console.log("✅ Sesión activa y usuario autorizado");
-      console.log("👤 Usuario:", data.session.user?.email || "Sin email");
+      console.log("? Sesi�n activa y usuario autorizado");
+      console.log("?? Usuario:", data.session.user?.email || "Sin email");
       
-      // Preparar el dashboard pero NO mostrarlo aún
-      // El script de filtrado de módulos se encargará de mostrarlo cuando esté listo
+      // Preparar el dashboard pero NO mostrarlo a�n
+      // El script de filtrado de m�dulos se encargar� de mostrarlo cuando est� listo
       loginForm.style.display = "none";
-      // NO mostrar loggedBox aún - el filtrado de módulos lo mostrará cuando esté listo
+      // NO mostrar loggedBox a�n - el filtrado de m�dulos lo mostrar� cuando est� listo
       loggedBox.style.display = "none";
       if (userEmail) {
         userEmail.textContent = `Conectado: ${
@@ -168,13 +169,13 @@ async function updateSessionUI() {
         }`;
       }
       
-      // Notificar que la autenticación está lista para que el filtrado de módulos continúe
+      // Notificar que la autenticaci�n est� lista para que el filtrado de m�dulos contin�e
       window.authReady = true;
       if (window.onAuthReady) {
         window.onAuthReady();
       }
     } else {
-      console.log("⚠️ No hay sesión activa, mostrando login");
+      console.log("?? No hay sesi�n activa, mostrando login");
       // Marcar como loaded solo cuando vamos a mostrar el login
       const authSection = document.getElementById("auth-section");
       if (authSection) {
@@ -186,14 +187,14 @@ async function updateSessionUI() {
       if (userEmail) {
         userEmail.textContent = "";
       }
-      // Asegurar que el spinner esté oculto
+      // Asegurar que el spinner est� oculto
       const spinner = document.getElementById("loading-spinner");
       if (spinner) {
         spinner.style.display = "none";
       }
     }
   } catch (error) {
-    console.error("❌ Error actualizando UI de sesión:", error);
+    console.error("? Error actualizando UI de sesi�n:", error);
     // Marcar como loaded solo cuando vamos a mostrar el login
     const authSection = document.getElementById("auth-section");
     if (authSection) {
@@ -207,7 +208,7 @@ async function updateSessionUI() {
   }
 }
 
-// Función para ocultar el spinner de carga
+// Funci�n para ocultar el spinner de carga
 function hideLoadingSpinner() {
   const spinner = document.getElementById("loading-spinner");
   if (spinner) {
@@ -229,20 +230,21 @@ function runWhenDocumentInteractive(fn) {
 
 // Entrar + OAuth + resto de acciones (debe correr aunque DOMContentLoaded ya haya ocurrido:
 // admin-auth carga tras supabase-client con top-level await y puede inscribirse demasiado tarde.)
-function setupAuthFormListeners() {
+async function setupAuthFormListeners() {
   if (__fylAdminAuthFormListenersBound) {
     return;
   }
   __fylAdminAuthFormListenersBound = true;
 
+  await supabaseReady;
   if (!supabase) {
     console.error(
-      "[FYL admin-auth] supabase no está disponible; no se configuran eventos de login"
+      "[FYL admin-auth] supabase no est� disponible; no se configuran eventos de login"
     );
     return;
   }
 
-  console.log("📋 Configurando eventos de login (dom ready state:", document.readyState, ")");
+  console.log("?? Configurando eventos de login (dom ready state:", document.readyState, ")");
   const { loginBtn, loginErr, emailEl, passEl } = getDOMElements();
   
   if (loginBtn) {
@@ -255,13 +257,13 @@ function setupAuthFormListeners() {
       const password = elements.passEl?.value;
 
       if (!email || !password) {
-        elements.loginErr.textContent = "Ingresá email y contraseña";
+        elements.loginErr.textContent = "Ingres� email y contrase�a";
         return;
       }
 
       try {
         elements.loginBtn.disabled = true;
-        console.log("🔐 Intentando login para:", email);
+        console.log("?? Intentando login para:", email);
         
         const { data, error } = await supabase.auth.signInWithPassword({
           email,
@@ -269,39 +271,39 @@ function setupAuthFormListeners() {
         });
 
         if (error) {
-          console.error("❌ Error en login:", error);
-          console.error("Código de error:", error.status);
+          console.error("? Error en login:", error);
+          console.error("C�digo de error:", error.status);
           console.error("Mensaje:", error.message);
           
-          // Mensaje más descriptivo según el tipo de error
+          // Mensaje m�s descriptivo seg�n el tipo de error
           let errorMessage = "";
           if (error.message.includes("Invalid login credentials")) {
-            errorMessage = "Credenciales inválidas. Verifica tu email y contraseña.";
+            errorMessage = "Credenciales inv�lidas. Verifica tu email y contrase�a.";
           } else if (error.message.includes("Email not confirmed")) {
-            errorMessage = "Tu email no está confirmado. Revisa tu bandeja de entrada.";
+            errorMessage = "Tu email no est� confirmado. Revisa tu bandeja de entrada.";
           } else if (error.message.includes("Email rate limit")) {
             errorMessage = "Demasiados intentos. Espera unos minutos antes de intentar de nuevo.";
           } else if (error.message.includes("User not found")) {
-            errorMessage = "Usuario no encontrado. ¿Necesitas registrarte? Usa el botón 'Registrarme (dev)'.";
+            errorMessage = "Usuario no encontrado. �Necesitas registrarte? Usa el bot�n 'Registrarme (dev)'.";
           } else if (error.message.includes("redirect")) {
-            errorMessage = "Error de redirección. Verifica que la URL esté configurada en Supabase.";
+            errorMessage = "Error de redirecci�n. Verifica que la URL est� configurada en Supabase.";
           } else {
-            errorMessage = error.message || "Error al iniciar sesión. Intenta de nuevo.";
+            errorMessage = error.message || "Error al iniciar sesi�n. Intenta de nuevo.";
           }
           
           elements.loginErr.textContent = errorMessage;
           elements.loginErr.style.color = "#e74c3c";
           
           // Mostrar sugerencias adicionales en la consola
-          console.warn("💡 Sugerencias:");
-          console.warn("  1. Verifica que tu email y contraseña sean correctos");
-          console.warn("  2. Si te registraste con Google, necesitas establecer una contraseña");
-          console.warn("  3. Verifica que las URLs de redirección estén configuradas en Supabase");
-          console.warn("  4. Revisa SOLUCION_LOGIN_ADMIN.md para más ayuda");
+          console.warn("?? Sugerencias:");
+          console.warn("  1. Verifica que tu email y contrase�a sean correctos");
+          console.warn("  2. Si te registraste con Google, necesitas establecer una contrase�a");
+          console.warn("  3. Verifica que las URLs de redirecci�n est�n configuradas en Supabase");
+          console.warn("  4. Revisa SOLUCION_LOGIN_ADMIN.md para m�s ayuda");
           return;
         }
 
-        console.log("✅ Login exitoso para:", email);
+        console.log("? Login exitoso para:", email);
         console.log("Usuario:", data.user);
 
         // Invalidar auth-state + permissions-helper para no mezclar permisos viejos
@@ -312,7 +314,7 @@ function setupAuthFormListeners() {
           if (window.clearPermissionsCache) window.clearPermissionsCache();
         }
 
-        // Esperar un momento para que la sesión se establezca completamente
+        // Esperar un momento para que la sesi�n se establezca completamente
         await new Promise(resolve => setTimeout(resolve, 300));
 
         redirectToPanel();
@@ -326,7 +328,7 @@ function setupAuthFormListeners() {
     });
   }
   
-  // Enter en contraseña
+  // Enter en contrase�a
   const { passEl: passElForEnter, loginBtn: loginBtnForEnter } = getDOMElements();
   if (passElForEnter && loginBtnForEnter) {
     passElForEnter.addEventListener("keydown", (e) => {
@@ -349,13 +351,13 @@ function setupAuthFormListeners() {
       const password = elements.passEl?.value;
 
       if (!email || !password) {
-        elements.loginErr.textContent = "Ingresá email y contraseña para registrarte";
+        elements.loginErr.textContent = "Ingres� email y contrase�a para registrarte";
         elements.loginErr.style.color = "#e74c3c";
         return;
       }
 
       if (password.length < 6) {
-        elements.loginErr.textContent = "La contraseña debe tener al menos 6 caracteres";
+        elements.loginErr.textContent = "La contrase�a debe tener al menos 6 caracteres";
         elements.loginErr.style.color = "#e74c3c";
         return;
       }
@@ -381,18 +383,18 @@ function setupAuthFormListeners() {
 
         // Verificar si el usuario fue creado
         if (!data?.user) {
-          elements.loginErr.textContent = "Error: No se pudo crear el usuario. Verifica la configuración de Supabase.";
+          elements.loginErr.textContent = "Error: No se pudo crear el usuario. Verifica la configuraci�n de Supabase.";
           elements.loginErr.style.color = "#e74c3c";
           elements.signupBtn.textContent = "Registrarme (dev)";
           return;
         }
 
-        // IMPORTANTE: El usuario registrado NO se agrega automáticamente como admin
-        // Solo el super_admin puede agregar colaboradores desde la página de Colaboradores
+        // IMPORTANTE: El usuario registrado NO se agrega autom�ticamente como admin
+        // Solo el super_admin puede agregar colaboradores desde la p�gina de Colaboradores
         // Esto previene que usuarios se auto-registren como administradores
 
-        // Intentar confirmar el email automáticamente usando la función RPC
-        // Esto evita el problema de que el email no se confirme automáticamente
+        // Intentar confirmar el email autom�ticamente usando la funci�n RPC
+        // Esto evita el problema de que el email no se confirme autom�ticamente
         try {
           const { data: confirmData, error: confirmError } = await supabase
             .rpc('confirm_user_email', {
@@ -400,36 +402,36 @@ function setupAuthFormListeners() {
             });
           
           if (confirmError) {
-            console.warn("No se pudo confirmar el email automáticamente:", confirmError);
-            // Intentar método alternativo por email
+            console.warn("No se pudo confirmar el email autom�ticamente:", confirmError);
+            // Intentar m�todo alternativo por email
             const { error: confirmByEmailError } = await supabase
               .rpc('confirm_user_email_by_address', {
                 p_email: email
               });
             
             if (confirmByEmailError) {
-              console.warn("Método alternativo también falló:", confirmByEmailError);
+              console.warn("M�todo alternativo tambi�n fall�:", confirmByEmailError);
             }
           } else {
-            console.log("Email confirmado automáticamente:", confirmData);
+            console.log("Email confirmado autom�ticamente:", confirmData);
           }
         } catch (confirmErr) {
           console.warn("Error al intentar confirmar email:", confirmErr);
         }
 
-        // Verificar si se requiere confirmación de email
-        // Si data.user.email_confirmed_at es null, significa que se requiere confirmación
+        // Verificar si se requiere confirmaci�n de email
+        // Si data.user.email_confirmed_at es null, significa que se requiere confirmaci�n
         const requiresEmailConfirmation = !data.user.email_confirmed_at;
         
         // IMPORTANTE: Informar al usuario que debe ser autorizado por el super_admin
         if (requiresEmailConfirmation) {
           elements.loginErr.innerHTML = `
             <div style="color: #f39c12; background: #fff3cd; padding: 12px; border-radius: 6px; border: 1px solid #ffc107;">
-              <strong>⚠️ Registro exitoso, pero el correo de confirmación puede no haberse enviado.</strong><br/>
+              <strong>?? Registro exitoso, pero el correo de confirmaci�n puede no haberse enviado.</strong><br/>
               <small style="display:block; margin-top: 8px;">
-                <strong>IMPORTANTE:</strong> Tu cuenta ha sido creada, pero NO tienes acceso al panel de administración.<br/>
-                El super administrador debe autorizarte como colaborador desde la página de Colaboradores.<br/>
-                Solo los usuarios autorizados pueden acceder al panel de administración.
+                <strong>IMPORTANTE:</strong> Tu cuenta ha sido creada, pero NO tienes acceso al panel de administraci�n.<br/>
+                El super administrador debe autorizarte como colaborador desde la p�gina de Colaboradores.<br/>
+                Solo los usuarios autorizados pueden acceder al panel de administraci�n.
               </small>
             </div>
           `;
@@ -437,11 +439,11 @@ function setupAuthFormListeners() {
         } else {
           elements.loginErr.innerHTML = `
             <div style="color: #090; background: #d4edda; padding: 12px; border-radius: 6px; border: 1px solid #28a745;">
-              <strong>✅ Registro exitoso. Tu cuenta está lista.</strong><br/>
+              <strong>? Registro exitoso. Tu cuenta est� lista.</strong><br/>
               <small style="display:block; margin-top: 8px;">
-                <strong>IMPORTANTE:</strong> Tu cuenta ha sido creada, pero NO tienes acceso al panel de administración.<br/>
-                El super administrador debe autorizarte como colaborador desde la página de Colaboradores.<br/>
-                Solo los usuarios autorizados pueden acceder al panel de administración.
+                <strong>IMPORTANTE:</strong> Tu cuenta ha sido creada, pero NO tienes acceso al panel de administraci�n.<br/>
+                El super administrador debe autorizarte como colaborador desde la p�gina de Colaboradores.<br/>
+                Solo los usuarios autorizados pueden acceder al panel de administraci�n.
               </small>
             </div>
           `;
@@ -452,7 +454,7 @@ function setupAuthFormListeners() {
         if (elements.emailEl) elements.emailEl.value = "";
         if (elements.passEl) elements.passEl.value = "";
         
-        // Cerrar sesión automáticamente ya que el usuario no está autorizado como admin
+        // Cerrar sesi�n autom�ticamente ya que el usuario no est� autorizado como admin
         setTimeout(async () => {
           await supabase.auth.signOut();
           elements.loginErr.textContent = "Por favor, contacta al super administrador para que te autorice como colaborador.";
@@ -470,7 +472,7 @@ function setupAuthFormListeners() {
     });
   }
 
-  // Reset contraseña
+  // Reset contrase�a
   const { resetBtn } = getDOMElements();
   if (resetBtn) {
     resetBtn.addEventListener("click", async () => {
@@ -481,7 +483,7 @@ function setupAuthFormListeners() {
       const email = elements.emailEl?.value?.trim();
 
       if (!email) {
-        elements.loginErr.textContent = "Ingresá tu email";
+        elements.loginErr.textContent = "Ingres� tu email";
         return;
       }
 
@@ -500,7 +502,7 @@ function setupAuthFormListeners() {
   }
 
   // Login con Google OAuth - usando event delegation para mayor robustez
-  console.log("🔍 Configurando botón de Google OAuth...");
+  console.log("?? Configurando bot�n de Google OAuth...");
 
   function getOAuthRedirectCandidates() {
     const origin = window.location.origin;
@@ -523,7 +525,7 @@ function setupAuthFormListeners() {
     let lastError = null;
 
     for (const redirectUrl of redirectCandidates) {
-      console.log("📍 Intentando OAuth con redirectTo:", redirectUrl);
+      console.log("?? Intentando OAuth con redirectTo:", redirectUrl);
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
@@ -551,22 +553,22 @@ function setupAuthFormListeners() {
       }
     }
 
-    throw lastError || new Error("No se pudo iniciar OAuth con ninguna URL de redirección");
+    throw lastError || new Error("No se pudo iniciar OAuth con ninguna URL de redirecci�n");
   }
   
-  // Función para manejar el click del botón de Google
+  // Funci�n para manejar el click del bot�n de Google
   async function handleGoogleLogin(e) {
-    // Verificar si el click fue en el botón o en un elemento dentro del botón
+    // Verificar si el click fue en el bot�n o en un elemento dentro del bot�n
     const btn = e.target.closest("#google-login-btn");
     if (!btn) return;
     
     e.preventDefault();
     e.stopPropagation();
-    console.log("🖱️ Click en botón de Google detectado");
+    console.log("??? Click en bot�n de Google detectado");
     
     const elements = getDOMElements();
     if (!elements.loginErr) {
-      console.error("❌ Elemento loginErr no encontrado");
+      console.error("? Elemento loginErr no encontrado");
       return;
     }
 
@@ -576,17 +578,17 @@ function setupAuthFormListeners() {
     btn.textContent = "Redirigiendo a Google...";
 
     try {
-      console.log("🔐 Iniciando login con Google OAuth...");
+      console.log("?? Iniciando login con Google OAuth...");
       await signInWithGoogleOAuthWithFallback();
-      console.log("✅ Redirigiendo a Google...");
-      // La redirección se hará automáticamente
+      console.log("? Redirigiendo a Google...");
+      // La redirecci�n se har� autom�ticamente
     } catch (e) {
-      console.error("❌ Error en login con Google:", e);
+      console.error("? Error en login con Google:", e);
       const message = e?.message || String(e);
       if (/redirect|redirect_to|not allowed/i.test(message)) {
         elements.loginErr.innerHTML = `
-          Error de redirección OAuth.<br/>
-          Verificá en Supabase Auth > URL Configuration que exista:<br/>
+          Error de redirecci�n OAuth.<br/>
+          Verific� en Supabase Auth > URL Configuration que exista:<br/>
           <code>${window.location.origin}/admin/index.html</code> o <code>${window.location.origin}/admin/</code>
         `;
       } else {
@@ -599,11 +601,11 @@ function setupAuthFormListeners() {
   }
   
   // Usar event delegation en el documento para capturar clicks
-  // Esto funciona incluso si el botón se carga después
+  // Esto funciona incluso si el bot�n se carga despu�s
   document.addEventListener("click", handleGoogleLogin);
-  console.log("✅ Event listener configurado con event delegation");
+  console.log("? Event listener configurado con event delegation");
 
-  // Cerrar sesión (bloque logueado)
+  // Cerrar sesi�n (bloque logueado)
   const { logoutBtn } = getDOMElements();
   if (logoutBtn) {
     logoutBtn.addEventListener("click", async () => {
@@ -612,12 +614,12 @@ function setupAuthFormListeners() {
         invalidate();
         await updateSessionUI();
       } catch (error) {
-        console.error("Error al cerrar sesión:", error);
+        console.error("Error al cerrar sesi�n:", error);
       }
     });
   }
 
-  // Cerrar sesión forzada (limpia tokens "sb-*")
+  // Cerrar sesi�n forzada (limpia tokens "sb-*")
   const { forceLogoutBtn } = getDOMElements();
   if (forceLogoutBtn) {
     forceLogoutBtn.addEventListener("click", async () => {
@@ -643,33 +645,34 @@ function setupAuthFormListeners() {
 
 runWhenDocumentInteractive(setupAuthFormListeners);
 
-// Función para inicializar la UI cuando la página carga
+// Funci�n para inicializar la UI cuando la p�gina carga
 async function initializeUI() {
+  await supabaseReady;
   try {
-    console.log("🔍 Iniciando verificación de sesión...");
-    console.log("📍 URL actual:", window.location.href);
+    console.log("?? Iniciando verificaci�n de sesi�n...");
+    console.log("?? URL actual:", window.location.href);
     
-    // Verificar si hay un hash de OAuth o reset de contraseña en la URL
+    // Verificar si hay un hash de OAuth o reset de contrase�a en la URL
     const hash = window.location.hash;
     
     // Manejar retorno de OAuth (Google)
     if (hash && (hash.includes("access_token") || hash.includes("type=recovery"))) {
-      console.log("🔄 Procesando retorno de OAuth...");
+      console.log("?? Procesando retorno de OAuth...");
       // Esperar un momento para que Supabase procese el hash
       await new Promise(resolve => setTimeout(resolve, 500));
       
-      // Verificar si la sesión se estableció correctamente
+      // Verificar si la sesi�n se estableci� correctamente
       const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
       
       if (sessionError) {
-        console.error("❌ Error procesando OAuth:", sessionError);
+        console.error("? Error procesando OAuth:", sessionError);
         const elements = getDOMElements();
         if (elements.loginErr) {
-          elements.loginErr.textContent = `Error al procesar autenticación: ${sessionError.message}`;
+          elements.loginErr.textContent = `Error al procesar autenticaci�n: ${sessionError.message}`;
           elements.loginErr.style.color = "#e74c3c";
         }
       } else if (sessionData?.session) {
-        console.log("✅ OAuth exitoso, sesión establecida");
+        console.log("? OAuth exitoso, sesi�n establecida");
         // Limpiar el hash de la URL
         window.history.replaceState(null, '', window.location.pathname);
         // Actualizar la UI para mostrar el dashboard
@@ -677,11 +680,11 @@ async function initializeUI() {
         return;
       }
       
-      // Limpiar el hash después de procesarlo
+      // Limpiar el hash despu�s de procesarlo
       window.history.replaceState(null, '', window.location.pathname);
     }
     
-    // Verificar si hay un error de reset de contraseña en la URL
+    // Verificar si hay un error de reset de contrase�a en la URL
     if (hash.includes("error=") && hash.includes("otp_expired")) {
       const params = new URLSearchParams(hash.substring(1));
       const errorDescription = params.get("error_description") || "El enlace ha expirado";
@@ -689,9 +692,9 @@ async function initializeUI() {
       if (elements.loginErr) {
         elements.loginErr.innerHTML = `
           <div style="color: #e74c3c; background: #f8d7da; padding: 12px; border-radius: 6px; border: 1px solid #f5c6cb;">
-            <strong>⚠️ Enlace expirado</strong><br/>
+            <strong>?? Enlace expirado</strong><br/>
             <small>${decodeURIComponent(errorDescription.replace(/\+/g, ' '))}</small><br/>
-            <small style="display:block; margin-top: 8px;">Por favor, solicita un nuevo enlace de restablecimiento de contraseña.</small>
+            <small style="display:block; margin-top: 8px;">Por favor, solicita un nuevo enlace de restablecimiento de contrase�a.</small>
           </div>
         `;
         elements.loginErr.style.color = "#e74c3c";
@@ -700,25 +703,25 @@ async function initializeUI() {
       window.history.replaceState(null, '', window.location.pathname);
     }
     
-    // Verificar si estamos en orders.html o si skipPanelRedirect está activo
+    // Verificar si estamos en orders.html o si skipPanelRedirect est� activo
     const currentPath = window.location.pathname || window.location.href;
     const currentHref = window.location.href;
     const isOrdersPage = currentPath.includes("orders.html") || currentHref.includes("orders.html");
     
-    // NO redirigir si estamos en orders.html - dejar que orders.js maneje su propia lógica
+    // NO redirigir si estamos en orders.html - dejar que orders.js maneje su propia l�gica
     if (isOrdersPage || window.skipPanelRedirect === true) {
-      console.log("📋 Página de pedidos detectada, actualizando UI sin redirección");
+      console.log("?? P�gina de pedidos detectada, actualizando UI sin redirecci�n");
       await updateSessionUI();
       return; // Salir temprano para no interferir
     }
     
-    // Verificar sesión primero
-    console.log("🔄 Verificando sesión...");
+    // Verificar sesi�n primero
+    console.log("?? Verificando sesi�n...");
     const { data, error } = await supabase.auth.getSession();
     
     if (error) {
-      console.error("❌ Error verificando sesión:", error);
-      // Si hay error y no estamos en index.html, ir a index.html que mostrará login
+      console.error("? Error verificando sesi�n:", error);
+      // Si hay error y no estamos en index.html, ir a index.html que mostrar� login
       if (!isIndexPage()) {
         window.location.href = "./index.html";
       } else {
@@ -729,45 +732,42 @@ async function initializeUI() {
     
     const hasSession = !!data?.session;
     
-    // Si estamos en index.html, siempre actualizar la UI (mostrará login o dashboard según sesión)
+    // Si estamos en index.html, siempre actualizar la UI (mostrar� login o dashboard seg�n sesi�n)
     if (isIndexPage()) {
-      console.log("🏠 Página index detectada, actualizando UI");
-      // Esperar un momento para asegurar que el DOM esté completamente cargado
+      console.log("?? P�gina index detectada, actualizando UI");
+      // Esperar un momento para asegurar que el DOM est� completamente cargado
       await new Promise(resolve => setTimeout(resolve, 100));
       await updateSessionUI();
       return;
     }
     
-    // Si NO hay sesión y estamos en otra página, redirigir al login (index.html)
+    // Si NO hay sesi�n y estamos en otra p�gina, redirigir al login (index.html)
     if (!hasSession) {
-      console.log("⚠️ No hay sesión activa, redirigiendo a login");
-      console.log("🔄 Redirigiendo a index.html (login)...");
+      console.log("?? No hay sesi�n activa, redirigiendo a login");
+      console.log("?? Redirigiendo a index.html (login)...");
       window.location.href = "./index.html";
       return;
     }
     
-    // Si hay sesión y estamos en otra página (products, stock, orders, import-export),
-    // NO redirigir - dejar que la página funcione normalmente
-    // Las páginas individuales usarán requireAuth() para verificar sesión
-    console.log("✅ Sesión activa - permitiendo acceso a la página");
+    // Si hay sesi�n y estamos en otra p�gina (products, stock, orders, import-export),
+    // NO redirigir - dejar que la p�gina funcione normalmente
+    // Las p�ginas individuales usar�n requireAuth() para verificar sesi�n
+    console.log("? Sesi�n activa - permitiendo acceso a la p�gina");
   } catch (error) {
-    console.error("❌ Error al cargar sesión:", error);
+    console.error("? Error al cargar sesi�n:", error);
     await updateSessionUI();
   }
 }
 
 // Al cargar: si hay sesión, ir al panel; si no, mostrar login
-document.addEventListener("DOMContentLoaded", initializeUI);
-
-// También ejecutar cuando la página se carga completamente (por si acaso)
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', initializeUI);
+  document.addEventListener('DOMContentLoaded', initializeUI, { once: true });
 } else {
-  // DOM ya está listo, ejecutar inmediatamente
   initializeUI();
 }
 
 export async function requireAuth() {
+  await supabaseReady;
   try {
     const { data } = await supabase.auth.getSession();
     if (!data?.session) {
@@ -776,7 +776,7 @@ export async function requireAuth() {
     }
 
     // Verificar que el usuario sea admin
-    const { requireAdminAuth } = await import("./permissions-helper.js");
+    const { requireAdminAuth } = await import("./permissions-helper.js?v=m260607");
     const isAuthorized = await requireAdminAuth("./index.html");
     
     if (!isAuthorized) {

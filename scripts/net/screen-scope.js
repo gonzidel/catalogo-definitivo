@@ -16,7 +16,7 @@
  *
  * ── Uso básico ──────────────────────────────────────────────────────────────
  *
- *   import { createScreenScope } from '../scripts/net/screen-scope.js';
+ *   import { createScreenScope } from '../scripts/net/screen-scope.js?v=m260607';
  *
  *   const scope = createScreenScope('admin-orders', {
  *     onFirstPaint({ reason }) { hideMySpinner(); },

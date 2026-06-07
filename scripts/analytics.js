@@ -3,7 +3,7 @@
  * Legado no instrumentado (no cargar en produccion): scripts/main.js, scripts/main-optimized.js,
  * scripts/index2.html, scripts/image-manager.js (usan gtag directo si se incluyen). scripts/pwa.js está obsoleto.
  */
-import { parseARSNumber } from "./utils/price.js";
+import { parseARSNumber } from "./utils/price.js?v=m260607";
 
 const DEFAULT_MEASUREMENT_ID = "G-2JDYZW1KD6";
 const VALID_APP_AREAS = new Set(["catalog", "client"]);

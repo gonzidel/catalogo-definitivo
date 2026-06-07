@@ -89,7 +89,7 @@
 
         // Intentar cargar configuración local
         try {
-            const localConfig = await import('./scripts/config.local.js');
+            const localConfig = await import('./scripts/config.local.js?v=m260607');
             config = {
                 SUPABASE_URL: localConfig.SUPABASE_URL || "No configurado",
                 SUPABASE_ANON_KEY: localConfig.SUPABASE_ANON_KEY ? "Configurada" : "No configurada",

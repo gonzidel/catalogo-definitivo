@@ -1,10 +1,10 @@
-// admin/customers.js
+﻿// admin/customers.js
 // Gestión de clientes en el panel de admin
 
 console.log("📦 Módulo customers.js cargado");
 
-import { supabase as supabaseClient } from "../scripts/supabase-client.js";
-import { preloadAuthState, can, isAdminUser } from "./auth-state.js";
+import { supabase as supabaseClient } from "../scripts/supabase-client.js?v=m260607";
+import { preloadAuthState, can, isAdminUser } from "./auth-state.js?v=m260607";
 import { createScreenScope } from "../scripts/net/screen-scope.js";
 import { wrapSupabase, createAbortScope, FYL_ERROR_KIND, classifyError } from "../scripts/net/fyl-fetch.js";
 
@@ -161,7 +161,7 @@ async function getSupabase() {
   }
 
   try {
-    const module = await import("../scripts/supabase-client.js");
+    const module = await import("../scripts/supabase-client.js?v=m260607");
     supabase = module.supabase || window.supabase;
     if (!supabase) {
       await new Promise(resolve => setTimeout(resolve, 500));

@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="es">
 
 <head>
@@ -730,6 +730,127 @@
             gap: 8px;
             align-items: center;
         }
+
+        /* ------------------------------------------------------------------ */
+        /* Botones de Facturación Electrónica                                  */
+        /* ------------------------------------------------------------------ */
+
+        .btn-invoice,
+        .btn-invoice-processing,
+        .btn-invoice-approved,
+        .btn-invoice-error {
+            border: none;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            min-height: 32px;
+            white-space: nowrap;
+            transition: background 0.2s, opacity 0.2s;
+        }
+
+        .btn-invoice {
+            background: #6c757d;
+            color: #fff;
+            cursor: pointer;
+        }
+
+        .btn-invoice:hover {
+            background: #5a6268;
+        }
+
+        .btn-invoice-processing {
+            background: #b8d4f0;
+            color: #555;
+            cursor: not-allowed;
+            opacity: 0.85;
+        }
+
+        .btn-invoice-approved {
+            background: #28a745;
+            color: #fff;
+            cursor: pointer;
+        }
+
+        .btn-invoice-approved:hover {
+            background: #218838;
+        }
+
+        .btn-invoice-error {
+            background: #dc3545;
+            color: #fff;
+            cursor: pointer;
+        }
+
+        .btn-invoice-error:hover {
+            background: #c82333;
+        }
+
+        /* Popover de error de facturación */
+        .invoice-error-popover {
+            position: absolute;
+            z-index: 10000;
+            background: #fff;
+            border: 1px solid #dc3545;
+            border-radius: 8px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+            padding: 14px 16px;
+            min-width: 240px;
+            max-width: 320px;
+        }
+
+        .invoice-error-popover-header {
+            font-weight: 700;
+            font-size: 13px;
+            color: #dc3545;
+            margin-bottom: 6px;
+        }
+
+        .invoice-error-popover-msg {
+            font-size: 13px;
+            color: #333;
+            margin-bottom: 12px;
+            word-break: break-word;
+        }
+
+        .invoice-error-popover-actions {
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+        }
+
+        .invoice-popover-retry {
+            background: #dc3545;
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            padding: 5px 12px;
+            font-size: 13px;
+            cursor: pointer;
+        }
+
+        .invoice-popover-retry:hover {
+            background: #c82333;
+        }
+
+        .invoice-popover-close {
+            background: #f8f9fa;
+            color: #333;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            padding: 5px 12px;
+            font-size: 13px;
+            cursor: pointer;
+        }
+
+        .invoice-popover-close:hover {
+            background: #e9ecef;
+        }
+
+        /* Toast de feedback */
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(8px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
     </style>
     <script src="../config.local.js"></script>
 </head>
@@ -1002,8 +1123,8 @@
         }
     </script>
     <script src="/config.prod.js"></script>
-    <script defer src="../scripts/vendor/supabase-js.bundle.min.js?v=m260518"></script>
-    <script type="module" src="../scripts/supabase-client.js"></script>
+    <script defer src="../scripts/vendor/supabase-js.bundle.min.js?v=m260607"></script>
+    <script type="module" src="../scripts/supabase-client.js?v=m260607"></script>
     <script type="module" src="admin-auth.js"></script>
     <script type="module" src="sent-orders.js"></script>
     <script type="module" src="order-creator.js"></script>

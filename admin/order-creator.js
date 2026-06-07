@@ -3,15 +3,16 @@
 
 console.log("📦 order-creator.js: Iniciando carga del módulo...");
 
-import { supabase as supabaseClient } from "../scripts/supabase-client.js";
-import { normalizeSize } from "../scripts/utils/size-normalizer.js";
-import { PROVINCE_CITIES_DATA } from './argentina-cities-data.js';
+import { supabase as supabaseClient } from "../scripts/supabase-client.js?v=m260607";
+import { normalizeSize } from "../scripts/utils/size-normalizer.js?v=m260607";
+import { PROVINCE_CITIES_DATA } from './argentina-cities-data.js?v=m260607';
 import {
   normalizeCustomerSearchText,
   tokenizeCustomerSearch,
   rankCustomersForSearch,
   computeWarehouseQtySplitForOrderItem,
-} from "./orders-domain.js";
+} from "./orders-domain.js?v=m260607";
+import { hasCatalogPrice, catalogPriceGuardMessage } from "../scripts/utils/price.js?v=m260607";
 
 console.log("📦 order-creator.js: Importación de supabase-client completada");
 
@@ -109,7 +110,7 @@ async function getSupabase() {
   }
   
   try {
-    const module = await import("../scripts/supabase-client.js");
+    const module = await import("../scripts/supabase-client.js?v=m260607");
     supabase = module.supabase || window.supabase;
     if (!supabase) {
       await new Promise(resolve => setTimeout(resolve, 500));
@@ -1593,6 +1594,11 @@ async function processQrCodeForOrder(qrCode) {
     };
     
     const product = sizeData.product_variants.products;
+
+    if (!hasCatalogPrice(variant.price)) {
+      alert(catalogPriceGuardMessage(product.name));
+      return;
+    }
     
     // Obtener stock del talle específico
     const normalizedSize = normalizeSize(variant.size);
@@ -1908,6 +1914,11 @@ function displayProductResults(products, query = "") {
       const stockTotal = parseInt(square.dataset.stockTotal) || 0;
       const hasNoStock = square.dataset.hasNoStock === 'true';
       const currentQty = selectedQuantities.get(quantityKey) || 0;
+
+      if (!hasCatalogPrice(precio)) {
+        alert(catalogPriceGuardMessage(articulo));
+        return;
+      }
       
       // Sin stock: el admin agrega al pedido sin confirmación (mal arqueo / carga operativa).
       if (hasNoStock) {
@@ -2144,6 +2155,11 @@ async function addSelectedProductsToOrder() {
     const stockGeneral = parseInt(square.dataset.stockGeneral) || 0;
     const stockVenta = parseInt(square.dataset.stockVenta) || 0;
     const variantId = square.dataset.variantId;
+
+    if (!hasCatalogPrice(precio)) {
+      alert(catalogPriceGuardMessage(articulo));
+      continue;
+    }
     
     // VALIDACIÓN: Verificar stock disponible antes de agregar
     const stockTotal = stockGeneral + stockVenta;
@@ -2321,6 +2337,11 @@ function addSpecialExtra() {
 
 // Agregar producto al pedido
 async function addProductToOrder(product) {
+  if (!product.is_special_extra && !hasCatalogPrice(product.price_snapshot)) {
+    alert(catalogPriceGuardMessage(product.product_name));
+    return;
+  }
+
   let resolvedStatus = product.status || "picked";
   let resolvedMissingIsManual = Boolean(product.admin_confirmed_missing);
   let fetchedStockForSplit = null;
@@ -4156,6 +4177,11 @@ export async function resolveQrCodeToOrderItem(qrCode) {
 
   const variant = { ...sizeData.product_variants, size: sizeData.size };
   const product = sizeData.product_variants.products;
+
+  if (!hasCatalogPrice(variant.price)) {
+    throw new Error(catalogPriceGuardMessage(product.name));
+  }
+
   const normalizedSize = normalizeSize(variant.size);
   let stockGeneral = 0;
   let stockVenta = 0;

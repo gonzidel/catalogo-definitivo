@@ -1,11 +1,11 @@
 // closed-orders.js - Módulo de gestión de pedidos cerrados
 
-import { qzConnect } from "./qz-printing.js";
+import { qzConnect } from "./qz-printing.js?v=m260607";
 import {
   canonicalizeTransportName,
   normalizeTransportKey,
 } from "../scripts/transport-canonical.js";
-import { parseARSNumber, resolveOrderItemUnitPrice } from "../scripts/utils/price.js";
+import { parseARSNumber, resolveOrderItemUnitPrice } from "../scripts/utils/price.js?v=m260607";
 
 const TIMEZONE_BUENOS_AIRES = "America/Argentina/Buenos_Aires";
 
@@ -40,7 +40,7 @@ async function getSupabase() {
   }
 
   try {
-    const module = await import("../scripts/supabase-client.js");
+    const module = await import("../scripts/supabase-client.js?v=m260607");
     supabase = module.supabase || window.supabase;
     if (supabase && !window.supabase) {
       window.supabase = supabase;

@@ -1,5 +1,5 @@
-﻿import { supabase } from "./supabase-client.js";
-import { fylAnalytics } from "./analytics.js";
+import { supabase } from "./supabase-client.js?v=m260607";
+import { fylAnalytics } from "./analytics.js?v=m260607";
 
 let clientAuthHookAttached = false;
 

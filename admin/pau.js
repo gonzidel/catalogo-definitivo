@@ -1,8 +1,8 @@
 // admin/pau.js — Panel de Atención Unificado
 
-import { requireAuth } from "./admin-auth.js";
-import { supabase } from "../scripts/supabase-client.js";
-import { getAdminPermissions, can } from "./auth-state.js";
+import { requireAuth } from "./admin-auth.js?v=m260607";
+import { supabase } from "../scripts/supabase-client.js?v=m260607";
+import { getAdminPermissions, can } from "./auth-state.js?v=m260607";
 import {
   normalizeCustomerSearchText,
   tokenizeCustomerSearch,
@@ -11,8 +11,9 @@ import {
   getPhoneSearchSuffix,
   phonesMatchBySuffix,
   PHONE_SEARCH_SUFFIX_LEN,
-} from "./orders-domain.js";
-import { normalizeSize } from "../scripts/utils/size-normalizer.js";
+} from "./orders-domain.js?v=m260607";
+import { normalizeSize } from "../scripts/utils/size-normalizer.js?v=m260607";
+import { hasCatalogPrice, catalogPriceGuardMessage } from "../scripts/utils/price.js?v=m260607";
 import {
   findActiveOrderForCustomer,
   createApartadoOrder,
@@ -27,22 +28,26 @@ import {
   resolveQrCodeToOrderItem,
   searchProductsGroupedByPrefix,
   mergeDraftItem,
-} from "./orders-ops.js";
+} from "./orders-ops.js?v=m260607";
 import {
   validateNewCustomerForm,
   createAdminCustomer,
   initArgentinaLocationAutocomplete,
   resetCustomerCreateForm,
-} from "./customer-create-shared.js";
+} from "./customer-create-shared.js?v=m260607";
 
+console.log("PAU boot: antes de requireAuth()");
 await requireAuth();
+console.log("PAU boot: requireAuth() OK, antes de getAdminPermissions()");
 await getAdminPermissions();
+console.log("PAU boot: getAdminPermissions() OK");
 /** Permisos fijados al entrar (no usar can() en runtime: TOKEN_REFRESHED invalida el cache). */
 const PAU_PERMISSIONS = {
   ordersView: can("orders", "view"),
   ordersEdit: can("orders", "edit"),
   customersEdit: can("customers", "edit"),
 };
+console.log("PAU boot: permisos =", JSON.stringify(PAU_PERMISSIONS));
 if (!PAU_PERMISSIONS.ordersView) {
   alert("No tenés permiso para ver pedidos.");
   window.location.href = "./index.html";
@@ -1103,6 +1108,10 @@ function renderManualSizes() {
     btn.className = "pau-choice-btn";
     decorateChoiceButton(btn, s.size || "—", qty);
     btn.addEventListener("click", () => {
+      if (!hasCatalogPrice(v.price_snapshot)) {
+        showToast(catalogPriceGuardMessage(p.product_name));
+        return;
+      }
       const nextQty = qty + 1;
       state.manual.pending.set(key, {
         product_name: p.product_name,
@@ -1787,3 +1796,6 @@ els.customerEmpty.hidden = true;
 if (sharedText) {
   await handleSharedPhoneText(sharedText);
 }
+
+// DEBUG: marca de inicialización completa (lo lee el panel de debug de pau.html)
+try { window.__PAU_BOOT_OK__ = true; console.log("✅ pau.js: inicialización completa, listeners activos"); } catch (e) { /* noop */ }

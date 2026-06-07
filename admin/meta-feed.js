@@ -1,8 +1,8 @@
-// admin/meta-feed.js
+﻿// admin/meta-feed.js
 // Módulo admin para gestionar Meta Catalog Feed
 // Usa Edge Function (NO RPC directo) para evitar problemas de RLS/privilegios
 
-import { supabase } from "../scripts/supabase-client.js";
+import { supabase, supabaseReady } from "../scripts/supabase-client.js?v=m260607";
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from "../scripts/config.js";
 
 // Configuración desde localStorage
@@ -92,6 +92,7 @@ function generateToken() {
 
 // Llamar Edge Function
 async function callEdgeFunction(params = {}) {
+  await supabaseReady;
   try {
     const url = new URL(getEdgeFunctionURL());
     Object.entries(params).forEach(([key, value]) => {
@@ -149,6 +150,7 @@ async function callEdgeFunction(params = {}) {
 
 // Descargar CSV
 async function downloadCSV() {
+  await supabaseReady;
   try {
     const url = new URL(getEdgeFunctionURL());
     const config = getConfig();

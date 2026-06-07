@@ -1,5 +1,5 @@
-import { supabase } from "../scripts/supabase-client.js";
-import { ARGENTINA_PROVINCES, PROVINCE_CITIES } from "../scripts/argentina-locations-data.js";
+import { supabase } from "../scripts/supabase-client.js?v=m260607";
+import { ARGENTINA_PROVINCES, PROVINCE_CITIES } from "../scripts/argentina-locations-data.js?v=m260607";
 
 const form = document.getElementById("form");
 const emailInput = document.getElementById("email");

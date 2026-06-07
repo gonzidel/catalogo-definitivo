@@ -1,2 +1,8 @@
 [functions.qz-sign]
 verify_jwt = true
+
+[functions.facturante-invoice]
+verify_jwt = true
+
+[functions.facturante-webhook]
+verify_jwt = false

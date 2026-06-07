@@ -1,16 +1,16 @@
 // scripts/custom-banner.js - Banner de productos personalizable
 
-import { supabase } from "./supabase-client.js";
+import { supabase } from "./supabase-client.js?v=m260607";
 import {
   applyLatestVariantMainImage,
   enrichGroupedProductsWithVariantRecency,
   parseDateMs,
-} from "./fyl-originals-banner.js";
+} from "./fyl-originals-banner.js?v=m260607";
 import {
   loadCommercialTagNamesForAdmin,
   syncGroupedProductsDetallesSimilitud,
-} from "./commercial-tags.js";
-import { fylPerf } from "./fyl-perf.js";
+} from "./commercial-tags.js?v=m260607";
+import { fylPerf } from "./fyl-perf.js?v=m260607";
 import {
   buildCommercialTagMatchComparison,
   collectFiltro3CommercialMatchParts,
@@ -24,8 +24,8 @@ import {
   productRowMatchesAnyCommercialTag,
   productRowMatchesCommercialTag,
   splitCommercialTags,
-} from "./tag-normalize.js";
-import { buildTagsHash } from "./tag-routing.js";
+} from "./tag-normalize.js?v=m260607";
+import { buildTagsHash } from "./tag-routing.js?v=m260607";
 
 /** Banners curated en DB; este módulo no los usa (carga condicional vía fyl-legacy-banner-loader.js). */
 const CURATED_TAG_PLACEHOLDER = "__curated__";

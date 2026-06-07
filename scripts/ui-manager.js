@@ -1,4 +1,4 @@
-import { cloudinaryOptimized } from "./data-manager.js";
+import { cloudinaryOptimized } from "./data-manager.js?v=m260607";
 
 export function showLoader() {
   document.getElementById("loader").classList.add("show");

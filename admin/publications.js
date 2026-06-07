@@ -1,25 +1,14 @@
 // admin/publications.js
-import { supabase } from "../scripts/supabase-client.js";
-import { preloadAuthState, can, isAdminUser } from "./auth-state.js";
-import { normalizeSize, compareCatalogSizes } from "../scripts/utils/size-normalizer.js";
+import { supabase, supabaseReady } from "../scripts/supabase-client.js?v=m260607";
+import { preloadAuthState, can, isAdminUser } from "./auth-state.js?v=m260607";
+import { normalizeSize, compareCatalogSizes } from "../scripts/utils/size-normalizer.js?v=m260607";
 import {
   assertProductHasTagsForImageUpload,
   ensureProductsEditPermission,
   orderFilesWithMainFirst,
   uploadVariantImages,
   validateImageFiles,
-} from "./variant-image-upload.js";
-
-// Verificar que Supabase esté disponible (puede fallar en error de config, no de red)
-if (!supabase) {
-  console.error("❌ Cliente de Supabase no disponible");
-  document.body.innerHTML = `
-    <div style="padding: 20px; text-align: center;">
-      <h1>Error de configuración</h1>
-      <p>El cliente de Supabase no está disponible. Verifica la configuración.</p>
-    </div>
-  `;
-}
+} from "./variant-image-upload.js?v=m260607";
 
 let _publicationsAuthAllowed = false;
 let _publicationsAuthChecked = false;
@@ -204,8 +193,8 @@ function getStaleDaysThreshold() {
 
 function sortByPublicationDate(items, newestFirst = true) {
   return [...items].sort((a, b) => {
-    const ta = a.last_published_at ? new Date(a.last_published_at).getTime() : null;
-    const tb = b.last_published_at ? new Date(b.last_published_at).getTime() : null;
+    const ta = itemColorPublicationAt(a) ? new Date(itemColorPublicationAt(a)).getTime() : null;
+    const tb = itemColorPublicationAt(b) ? new Date(itemColorPublicationAt(b)).getTime() : null;
 
     if (ta === null && tb === null) {
       return String(a.productName ?? "").localeCompare(String(b.productName ?? ""), "es");
@@ -694,6 +683,8 @@ async function groupProductsByColor(products, batchSize = 10) {
               colorsWithoutStock++;
             }
 
+            const colorPublicationAt = colorData.last_published_at ?? null;
+
             return {
               productId: product.id,
               productName: product.name,
@@ -702,9 +693,10 @@ async function groupProductsByColor(products, batchSize = 10) {
               supplierId: product.supplier_id ?? null,
               color,
               created_at: product.created_at,
-              last_published_at: resolveColorPublishedAt(product.last_published_at, colorData),
               publication_status: product.publication_status || 'nuevo',
               ...colorData,
+              color_publication_at: colorPublicationAt,
+              last_published_at: colorPublicationAt,
             };
           } catch (colorError) {
             console.warn(`⚠️ Error obteniendo datos de color ${color} para producto ${product.id}:`, colorError);
@@ -770,6 +762,10 @@ function hasActiveAllTabFilters(state = getAllTabFilterState()) {
   );
 }
 
+function itemColorPublicationAt(item) {
+  return item?.color_publication_at ?? item?.last_published_at ?? null;
+}
+
 function applyAllTabClientFilters(items, state = getAllTabFilterState()) {
   let filtered = items;
   if (state.supplierId) {
@@ -778,31 +774,140 @@ function applyAllTabClientFilters(items, state = getAllTabFilterState()) {
     );
   }
   if (state.neverPublished) {
-    filtered = filtered.filter(item => !item.last_published_at);
+    filtered = filtered.filter(item => !itemColorPublicationAt(item));
   }
   if (state.staleDays) {
     filtered = filtered.filter(item => {
-      if (!item.last_published_at) return false;
-      const days = daysSincePublished(item.last_published_at);
+      const publishedAt = itemColorPublicationAt(item);
+      if (!publishedAt) return false;
+      const days = daysSincePublished(publishedAt);
       return days !== null && days > state.staleDays;
     });
   }
   return filtered;
 }
 
+const ALL_TAB_PRODUCT_SELECT =
+  "id, name, category, description, created_at, last_published_at, publication_status, status, supplier_id";
+const SUPABASE_PAGE_SIZE = 1000;
+const PRODUCT_ID_CHUNK_SIZE = 150;
+
+function staleDaysCutoffIso(staleDays) {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - staleDays);
+  return cutoff.toISOString();
+}
+
+async function fetchPaginatedSupabaseRows(buildPageQuery) {
+  const all = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await buildPageQuery(from, from + SUPABASE_PAGE_SIZE - 1);
+    if (error) throw error;
+    if (!data?.length) break;
+    all.push(...data);
+    if (data.length < SUPABASE_PAGE_SIZE) break;
+    from += SUPABASE_PAGE_SIZE;
+  }
+  return all;
+}
+
+/** IDs de productos con al menos una variante activa que cumple el filtro de publicación. */
+async function fetchVariantFilteredProductIds(filterState) {
+  const productIds = new Set();
+  let from = 0;
+
+  while (true) {
+    let query = supabase
+      .from("product_variants")
+      .select("product_id")
+      .eq("active", true);
+
+    if (filterState.neverPublished) {
+      query = query.is("last_published_at", null);
+    } else if (filterState.staleDays) {
+      query = query
+        .not("last_published_at", "is", null)
+        .lt("last_published_at", staleDaysCutoffIso(filterState.staleDays));
+    } else {
+      return null;
+    }
+
+    const { data, error } = await query.range(from, from + SUPABASE_PAGE_SIZE - 1);
+    if (error) throw error;
+    if (!data?.length) break;
+    data.forEach(row => productIds.add(row.product_id));
+    if (data.length < SUPABASE_PAGE_SIZE) break;
+    from += SUPABASE_PAGE_SIZE;
+  }
+
+  return [...productIds];
+}
+
 function applyServerFiltersToAllProductsQuery(query, state = getAllTabFilterState()) {
-  if (state.neverPublished) {
-    query = query.is("last_published_at", null);
-  }
-  if (state.staleDays) {
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - state.staleDays);
-    query = query.not("last_published_at", "is", null).lt("last_published_at", cutoff.toISOString());
-  }
   if (state.supplierId) {
     query = query.eq("supplier_id", state.supplierId);
   }
   return query;
+}
+
+function buildAllTabProductsQuery(filterState, { productIds = null, signal = null } = {}) {
+  const { searchQuery, categoryValue } = filterState;
+  let query = supabase.from("products").select(ALL_TAB_PRODUCT_SELECT);
+
+  if (productIds?.length) {
+    query = query.in("id", productIds);
+  }
+
+  query = applyServerFiltersToAllProductsQuery(query, filterState);
+
+  if (categoryValue?.trim()) {
+    query = query.eq("category", categoryValue.trim());
+  }
+
+  if (searchQuery?.trim() && isSafeServerSearchQuery(searchQuery.trim())) {
+    const term = searchQuery.trim();
+    query = query.or(`name.ilike.%${term}%,category.ilike.%${term}%`);
+  }
+
+  if (filterState.supplierId) {
+    query = query.order("last_published_at", {
+      ascending: !supplierPublishNewestFirst,
+      nullsFirst: !supplierPublishNewestFirst,
+    });
+  } else {
+    query = query.order("created_at", { ascending: false });
+  }
+
+  if (signal && typeof query.abortSignal === "function") {
+    query = query.abortSignal(signal);
+  }
+
+  return query;
+}
+
+async function fetchAllTabProductsRaw(filterState, { signal = null } = {}) {
+  const publicationProductIds = await fetchVariantFilteredProductIds(filterState);
+
+  if (publicationProductIds !== null && publicationProductIds.length === 0) {
+    return [];
+  }
+
+  if (publicationProductIds?.length) {
+    const all = [];
+    for (let i = 0; i < publicationProductIds.length; i += PRODUCT_ID_CHUNK_SIZE) {
+      const chunk = publicationProductIds.slice(i, i + PRODUCT_ID_CHUNK_SIZE);
+      const rows = await fetchPaginatedSupabaseRows((from, to) =>
+        buildAllTabProductsQuery(filterState, { productIds: chunk, signal }).range(from, to)
+      );
+      all.push(...rows);
+    }
+    return all;
+  }
+
+  return fetchPaginatedSupabaseRows((from, to) =>
+    buildAllTabProductsQuery(filterState, { signal }).range(from, to)
+  );
 }
 
 async function loadPublicationSuppliers() {
@@ -1547,55 +1652,11 @@ async function searchAllProductsDirect(filterState = getAllTabFilterState()) {
   try {
     state.loading = true;
     if (isLatest()) showLoadingIndicator('all');
-    
-    // Construir consulta base - TODOS los productos sin importar estado
-    let query = supabase
-      .from("products")
-      .select("id, name, category, description, created_at, last_published_at, publication_status, status, supplier_id");
 
-    // Cancelar request HTTP si el usuario cambia la búsqueda mientras está en vuelo
-    if (typeof query.abortSignal === "function") {
-      query = query.abortSignal(currentSearchAbortController.signal);
-    }
+    const products = await fetchAllTabProductsRaw(filterState, {
+      signal: currentSearchAbortController.signal,
+    });
 
-    query = applyServerFiltersToAllProductsQuery(query, filterState);
-
-    if (filterState.supplierId) {
-      query = query.order("last_published_at", {
-        ascending: !supplierPublishNewestFirst,
-        nullsFirst: !supplierPublishNewestFirst,
-      });
-    } else {
-      query = query.order("created_at", { ascending: false });
-    }
-    
-    // Aplicar filtro de categoría si existe
-    if (categoryValue && categoryValue.trim()) {
-      query = query.eq("category", categoryValue.trim());
-    }
-    
-    // Aplicar filtro de búsqueda de texto si existe
-    if (searchQuery && searchQuery.trim()) {
-      const searchLower = searchQuery.trim();
-      // Evitar errores del parser PostgREST con caracteres especiales.
-      // Si la query no es segura, filtramos localmente después de agrupar.
-      if (isSafeServerSearchQuery(searchLower)) {
-        query = query.or(`name.ilike.%${searchLower}%,category.ilike.%${searchLower}%`);
-      }
-    }
-    
-    const { data: products, error } = await query;
-    
-    if (error) {
-      // Si fue abort, no hacer nada (viene otra búsqueda)
-      if (!isLatest()) return;
-      console.error("❌ Error en búsqueda directa:", error);
-      showMessage(`Error buscando productos: ${error.message}`, "err");
-      state.loading = false;
-      hideLoadingIndicator('all');
-      renderAllProducts([]);
-      return;
-    }
     if (!isLatest()) return;
     
     console.log(`🔍 Productos encontrados en búsqueda directa: ${(products || []).length}`);
@@ -1667,6 +1728,7 @@ async function searchAllProductsDirect(filterState = getAllTabFilterState()) {
     
   } catch (error) {
     if (!isLatest()) return;
+    if (error?.name === "AbortError") return;
     console.error("❌ Error en búsqueda directa:", error);
     showMessage(`Error buscando productos: ${error.message}`, "err");
     state.loading = false;

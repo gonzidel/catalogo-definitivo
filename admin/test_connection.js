@@ -1,5 +1,5 @@
-// admin/test_connection.js - Script para probar la conexión y permisos
-import { supabase } from "../scripts/supabase-client.js";
+﻿// admin/test_connection.js - Script para probar la conexión y permisos
+import { supabase } from "../scripts/supabase-client.js?v=m260607";
 
 async function testConnection() {
   console.log("🔧 Iniciando prueba de conexión...");

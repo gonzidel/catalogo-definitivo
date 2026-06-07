@@ -1,12 +1,13 @@
-// scripts/supabase-client.js
+﻿// scripts/supabase-client.js
 // Cliente único de Supabase para toda la aplicación.
 //
 // Boot crítico simplificado (Safari iOS real):
-//   - El bundle vendor se carga como <script defer src="scripts/vendor/supabase-js.bundle.min.js?v=m260527">
+//   - El bundle vendor se carga como <script defer src="scripts/vendor/supabase-js.bundle.min.js?v=m260607">
 //     y expone window.fylSupabase.createClient (IIFE same-origin).
 //   - Este módulo solo lee ese global. Sin dynamic import, sin CDN fallback,
 //     sin top-level await encadenado a redes externas.
-//   - Único TLA: `await configReady` (IIFE local trivial).
+//   - Sin top-level await (WebViews Meta/Android viejos: "Unexpected reserved word").
+//     Init diferida vía configReady.then() + export supabaseReady.
 
 import {
   SUPABASE_URL,
@@ -16,9 +17,9 @@ import {
   fylConfigDiagnostics,
   fylDevLog,
   fylDevInfo,
-} from "./config.js";
-import { FYL_VERSION } from "./fyl-version.js?v=m260527";
-import { fylReportClientError } from "./fyl-runtime-resilience.js?v=m260527";
+} from "./config.js?v=m260607";
+import { FYL_VERSION } from "./fyl-version.js?v=m260607";
+import { fylReportClientError } from "./fyl-runtime-resilience.js?v=m260607";
 
 let supabase = null;
 
@@ -91,7 +92,7 @@ function describeError(e) {
 
 /**
  * Acceso síncrono a createClient desde el bundle IIFE same-origin.
- * El <script defer src="scripts/vendor/supabase-js.bundle.min.js?v=m260527"> debe
+ * El <script defer src="scripts/vendor/supabase-js.bundle.min.js?v=m260607"> debe
  * haber ejecutado antes de cualquier <script type="module">; el atributo defer
  * garantiza ese orden.
  */
@@ -141,96 +142,98 @@ function buildSupabaseAuthOptions() {
   }
 }
 
-// Config local (overrides) ya está cargada al resolverse configReady.
-await configReady;
-
-if (typeof window !== "undefined") {
-  fylDevInfo(`${LOG} Tras configReady:`, {
-    configProdScriptMarker: fylConfigDiagnostics.configProdScriptMarker,
-    SUPABASE_URL: fylConfigDiagnostics.resolvedSupabaseUrl || "(vacío)",
-    SUPABASE_ANON_KEY: fylConfigDiagnostics.resolvedAnonKeyMasked,
-    USE_SUPABASE,
-  });
-}
-
-if (USE_SUPABASE) {
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-    console.error(`${LOG} SUPABASE_URL o SUPABASE_ANON_KEY no configurados`);
-    console.error("   SUPABASE_URL:", SUPABASE_URL ? "✅" : "❌");
-    console.error(
-      "   SUPABASE_ANON_KEY:",
-      SUPABASE_ANON_KEY ? "✅ (longitud " + SUPABASE_ANON_KEY.length + ")" : "❌"
-    );
-    globalThis.markBootStage?.("supabase.client.skipped", {
-      reason: "missing_url_or_anon",
+function initSupabaseClientAfterConfig() {
+  if (typeof window !== "undefined") {
+    fylDevInfo(`${LOG} Tras configReady:`, {
+      configProdScriptMarker: fylConfigDiagnostics.configProdScriptMarker,
+      SUPABASE_URL: fylConfigDiagnostics.resolvedSupabaseUrl || "(vacío)",
+      SUPABASE_ANON_KEY: fylConfigDiagnostics.resolvedAnonKeyMasked,
+      USE_SUPABASE,
     });
-  } else {
-    const canUseWindow = typeof window !== "undefined";
-    const existingWindowClient =
-      canUseWindow && window.supabase && typeof window.supabase.from === "function"
-        ? window.supabase
-        : null;
+  }
 
-    if (existingWindowClient) {
-      // Reutilizá la instancia ya creada (e.g. cuando este módulo se evalúa más
-      // de una vez por specifier con/sin ?v=).
-      fylDevLog(`${LOG} Reutilizando instancia existente en window.supabase`);
-      supabase = existingWindowClient;
-      globalThis.markBootStage?.("supabase.client.reused", { from: "window" });
+  if (USE_SUPABASE) {
+    if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+      console.error(`${LOG} SUPABASE_URL o SUPABASE_ANON_KEY no configurados`);
+      console.error("   SUPABASE_URL:", SUPABASE_URL ? "✅" : "❌");
+      console.error(
+        "   SUPABASE_ANON_KEY:",
+        SUPABASE_ANON_KEY ? "✅ (longitud " + SUPABASE_ANON_KEY.length + ")" : "❌"
+      );
+      globalThis.markBootStage?.("supabase.client.skipped", {
+        reason: "missing_url_or_anon",
+      });
     } else {
-      try {
-        globalThis.markBootStage?.("supabase.runtime.bundle_url", {
-          version: FYL_VERSION,
-          source: "vendor-iife",
-        });
-        const createClient = getCreateClient();
-        const created = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-          auth: buildSupabaseAuthOptions(),
-          global: { fetch: fylFetchWithTimeout },
-        });
+      const canUseWindow = typeof window !== "undefined";
+      const existingWindowClient =
+        canUseWindow && window.supabase && typeof window.supabase.from === "function"
+          ? window.supabase
+          : null;
 
-        if (!created || typeof created.from !== "function") {
-          throw new Error("createClient devolvió un objeto inválido");
-        }
-
-        supabase = created;
-        if (canUseWindow) {
-          window.supabaseClient = created;
-          window.supabase = created;
-        }
-        fylDevInfo(`${LOG} Cliente createClient() creado correctamente.`);
-        globalThis.markBootStage?.("supabase.client.ready", { source: "vendor-iife" });
-      } catch (error) {
-        const d = describeError(error);
-        console.error(`${LOG} ERROR al crear cliente:`, d.name, d.message);
-        if (error?.stack) console.error(`${LOG} Stack:`, error.stack);
-        globalThis.markBootStage?.("supabase.client.failed", {
-          name: d.name,
-          message: d.message,
-        });
+      if (existingWindowClient) {
+        fylDevLog(`${LOG} Reutilizando instancia existente en window.supabase`);
+        supabase = existingWindowClient;
+        globalThis.markBootStage?.("supabase.client.reused", { from: "window" });
+      } else {
         try {
-          fylReportClientError({
-            kind: "supabase.client.failed",
+          globalThis.markBootStage?.("supabase.runtime.bundle_url", {
+            version: FYL_VERSION,
+            source: "vendor-iife",
+          });
+          const createClient = getCreateClient();
+          const created = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+            auth: buildSupabaseAuthOptions(),
+            global: { fetch: fylFetchWithTimeout },
+          });
+
+          if (!created || typeof created.from !== "function") {
+            throw new Error("createClient devolvió un objeto inválido");
+          }
+
+          supabase = created;
+          if (canUseWindow) {
+            window.supabaseClient = created;
+            window.supabase = created;
+          }
+          fylDevInfo(`${LOG} Cliente createClient() creado correctamente.`);
+          globalThis.markBootStage?.("supabase.client.ready", { source: "vendor-iife" });
+        } catch (error) {
+          const d = describeError(error);
+          console.error(`${LOG} ERROR al crear cliente:`, d.name, d.message);
+          if (error?.stack) console.error(`${LOG} Stack:`, error.stack);
+          globalThis.markBootStage?.("supabase.client.failed", {
             name: d.name,
             message: d.message,
           });
-        } catch (_) {}
-        supabase = null;
+          try {
+            fylReportClientError({
+              kind: "supabase.client.failed",
+              name: d.name,
+              message: d.message,
+            });
+          } catch (_) {}
+          supabase = null;
+        }
       }
     }
+  } else {
+    globalThis.markBootStage?.("supabase.client.skipped", { reason: "USE_SUPABASE_false" });
   }
-} else {
-  globalThis.markBootStage?.("supabase.client.skipped", { reason: "USE_SUPABASE_false" });
+
+  if (typeof window !== "undefined") {
+    window.supabaseClient = supabase;
+    window.supabase = supabase;
+  }
+
+  if (!supabase && USE_SUPABASE) {
+    console.error(`${LOG} CRÍTICO: cliente no disponible`);
+    console.error("   Revisá logs [FYL config] y [FYL supabase] arriba.");
+  }
+
+  return supabase;
 }
 
-if (typeof window !== "undefined") {
-  window.supabaseClient = supabase;
-  window.supabase = supabase;
-}
-
-if (!supabase && USE_SUPABASE) {
-  console.error(`${LOG} CRÍTICO: cliente no disponible`);
-  console.error("   Revisá logs [FYL config] y [FYL supabase] arriba.");
-}
+/** Resuelve cuando config + createClient terminaron (sin top-level await). */
+export const supabaseReady = configReady.then(initSupabaseClientAfterConfig);
 
 export { supabase };

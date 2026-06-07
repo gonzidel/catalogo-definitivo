@@ -1,18 +1,18 @@
 // scripts/auth-status.js - Manejo del estado de autenticación en la página principal
 
-import { supabase } from "./supabase-client.js";
-import { checkPasskeySupport, authenticateWithPasskey } from "./passkeys.js";
+import { supabase } from "./supabase-client.js?v=m260607";
+import { checkPasskeySupport, authenticateWithPasskey } from "./passkeys.js?v=m260607";
 import {
   getPostLoginRedirectUrl,
   savePreAuthReturnTarget,
   restorePostAuthNavigation,
   remindSupabaseRedirectUrlsIfLocal,
-} from "./auth-redirect-url.js";
+} from "./auth-redirect-url.js?v=m260607";
 import {
   maybeShowProfileOnboardingModal,
   clearProfileOnboardingSessionFlag,
-} from "./profile-onboarding-modal.js";
-import { fylAnalytics } from "./analytics.js";
+} from "./profile-onboarding-modal.js?v=m260607";
+import { fylAnalytics } from "./analytics.js?v=m260607";
 
 remindSupabaseRedirectUrlsIfLocal();
 

@@ -1,4 +1,4 @@
-import { supabase as sharedSupabase } from "./supabase-client.js";
+import { supabase as sharedSupabase } from "./supabase-client.js?v=m260607";
 
 const BADGE_ID = "notification-badge";
 const BTN_ID = "header-notifications";

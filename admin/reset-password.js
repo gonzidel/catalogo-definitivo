@@ -1,5 +1,5 @@
-// admin/reset-password.js
-import { supabase } from "../scripts/supabase-client.js";
+﻿// admin/reset-password.js
+import { supabase } from "../scripts/supabase-client.js?v=m260607";
 
 const form = document.getElementById("reset-form");
 const passwordInput = document.getElementById("password");

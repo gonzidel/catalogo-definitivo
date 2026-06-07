@@ -68,6 +68,7 @@ Re-auditoría [[2026-05-23-Auditoria-LCP-Catalogo-Clarity]] — Clarity LCP **7.
 | Boot Home acotado a 120 filas + full catalog en background | L298, L728–756, L781–790 |
 | Primer render 14 cards con `deferEnrich: true` (stock post-paint idle) | L1528–1535, L2116–2122 |
 | `releaseBootOverlayOnFirstPaint` tras primer chunk | L1538–1541 |
+| Cache SWR local del boot (~120 filas) — 2ª visita sin red en camino crítico | [[PERF-013-Cache-SWR-Boot-Catalogo]] (2026-06-07) |
 
 **Sigue abierto:**
 

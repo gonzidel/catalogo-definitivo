@@ -1,6 +1,6 @@
 // Importar dinámicamente para asegurar que se cargue después
-import { qzConnect } from "./qz-printing.js";
-import { parseARSNumber, resolveOrderItemUnitPrice } from "../scripts/utils/price.js";
+import { qzConnect } from "./qz-printing.js?v=m260607";
+import { parseARSNumber, resolveOrderItemUnitPrice } from "../scripts/utils/price.js?v=m260607";
 
 function generateOperationId() {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -39,7 +39,7 @@ async function getSupabase() {
 
   // Si aún no está disponible, intentar importar
   try {
-    const module = await import("../scripts/supabase-client.js");
+    const module = await import("../scripts/supabase-client.js?v=m260607");
     supabase = module.supabase || window.supabase;
 
     // Esperar un poco más
@@ -147,6 +147,7 @@ async function initSentOrders() {
     setupPrintTicketButtons();
     setupDeleteItemButtons();
     setupDevolucionButtons();
+    setupFacturarButtons();
   } catch (error) {
     console.error("❌ Error inicializando pedidos enviados:", error);
     window.location.href = "index.html";
@@ -257,6 +258,13 @@ async function loadSentOrders(customerIds = []) {
             transport_id,
             status,
             payment_method,
+            invoice_status,
+            facturante_id,
+            invoice_prefix,
+            invoice_number,
+            invoice_pdf_url,
+            invoice_created_at,
+            invoice_error,
             order_items (
               id,
               product_name,
@@ -266,7 +274,8 @@ async function loadSentOrders(customerIds = []) {
               price_snapshot,
               imagen,
               status,
-              variant_id
+              variant_id,
+              sku
             )
             `
           )
@@ -796,6 +805,7 @@ function openCustomerModal(customer) {
                   <button class="modify-order-btn" data-modify-order="${order.id}">✏️ Modificar</button>
                   <button class="btn btn-warning" data-print-labels="${order.id}" style="background: #ffc107; color: #000; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: background 0.2s; white-space: nowrap;">Imprimir rótulos</button>
                   <button class="btn btn-primary" data-print-ticket="${order.id}" style="background: #17a2b8; color: #000; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: background 0.2s; white-space: nowrap;">Imprimir ticket</button>
+                  ${renderInvoiceButton(order)}
                 </div>
               </div>
               <div class="order-card-right">
@@ -865,6 +875,300 @@ function openCustomerModal(customer) {
   // Mostrar modal
   modal.classList.add("active");
 }
+
+// =============================================================================
+// FACTURACIÓN ELECTRÓNICA — Facturante (Factura B / Consumidor Final)
+// =============================================================================
+
+/**
+ * Renderiza el botón de Facturar según el invoice_status del pedido.
+ * Retorna HTML string listo para insertarse en el template del pedido.
+ */
+function renderInvoiceButton(order) {
+  const status = order.invoice_status || "sin_facturar";
+  const invoicePrefix = order.invoice_prefix || "";
+  const invoiceNumber = order.invoice_number || "";
+  const pdfUrl = order.invoice_pdf_url || "";
+  const invoiceError = order.invoice_error || "Error desconocido";
+  const orderId = order.id;
+
+  const baseStyle = "border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; min-height: 32px; white-space: nowrap; transition: background 0.2s;";
+
+  switch (status) {
+    case "sin_facturar":
+      return `<button
+        class="btn-invoice"
+        data-facturar="${orderId}"
+        style="${baseStyle} background: #6c757d; color: #fff;"
+        title="Emitir Factura B para este pedido">
+        🧾 Facturar
+      </button>`;
+
+    case "processing":
+      return `<button
+        class="btn-invoice-processing"
+        disabled
+        style="${baseStyle} background: #b8d4f0; color: #555; cursor: not-allowed; opacity: 0.8;"
+        title="Esperando autorización de AFIP...">
+        ⏳ Pendiente AFIP
+      </button>`;
+
+    case "approved": {
+      const numDisplay = invoicePrefix && invoiceNumber
+        ? `${invoicePrefix}-${String(invoiceNumber).padStart(8, "0")}`
+        : "Facturado";
+      return `<button
+        class="btn-invoice-approved"
+        data-invoice-pdf="${encodeURIComponent(pdfUrl)}"
+        style="${baseStyle} background: #28a745; color: #fff;"
+        title="Factura ${numDisplay} — clic para ver PDF">
+        ✓ ${numDisplay}
+      </button>`;
+    }
+
+    case "error":
+      return `<button
+        class="btn-invoice-error"
+        data-invoice-error="${encodeURIComponent(invoiceError)}"
+        data-facturar-retry="${orderId}"
+        style="${baseStyle} background: #dc3545; color: #fff;"
+        title="${invoiceError}">
+        ⚠ Error
+      </button>`;
+
+    default:
+      return "";
+  }
+}
+
+/**
+ * Formatea una fecha ISO como dd/mm/aaaa.
+ */
+function formatInvoiceDate(isoString) {
+  if (!isoString) return "";
+  const d = new Date(isoString);
+  return d.toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
+/**
+ * Configura todos los botones de facturación en el DOM actual.
+ * Se llama desde initSentOrders (configuración global via delegación de eventos).
+ */
+function setupFacturarButtons() {
+  // Delegación de eventos en el documento para capturar botones generados dinámicamente
+  document.addEventListener("click", handleInvoiceClick, { capture: false });
+}
+
+async function handleInvoiceClick(e) {
+  const btn = e.target.closest("[data-facturar], [data-facturar-retry], [data-invoice-pdf], [data-invoice-error]");
+  if (!btn) return;
+
+  // -----------------------------------------------------------------------
+  // Botón "Ver PDF" (estado approved)
+  // -----------------------------------------------------------------------
+  if (btn.dataset.invoicePdf !== undefined) {
+    const url = decodeURIComponent(btn.dataset.invoicePdf || "");
+    if (url) {
+      window.open(url, "_blank");
+    }
+    return;
+  }
+
+  // -----------------------------------------------------------------------
+  // Botón "⚠ Error" — mostrar popover con mensaje y opción de reintentar
+  // -----------------------------------------------------------------------
+  if (btn.dataset.invoiceError !== undefined && !btn.dataset.facturarRetry) {
+    const errMsg = decodeURIComponent(btn.dataset.invoiceError || "Error desconocido");
+    showInvoiceErrorPopover(btn, errMsg, null);
+    return;
+  }
+
+  // -----------------------------------------------------------------------
+  // Botón "Facturar" (estado sin_facturar) — con confirm de seguridad
+  // -----------------------------------------------------------------------
+  const orderId = btn.dataset.facturar || btn.dataset.facturarRetry;
+  if (!orderId) return;
+
+  // Error con retry: mostrar popover antes de reintentar
+  if (btn.dataset.invoiceError !== undefined && btn.dataset.facturarRetry) {
+    const errMsg = decodeURIComponent(btn.dataset.invoiceError || "Error desconocido");
+    showInvoiceErrorPopover(btn, errMsg, orderId);
+    return;
+  }
+
+  // CAPA 1 — Prevenir doble clic: deshabilitar inmediatamente
+  if (btn.disabled || btn.dataset.invoicing === "true") return;
+  btn.dataset.invoicing = "true";
+
+  // Buscar el order_number para el confirm
+  const orderEl = btn.closest("[data-order-id]");
+  const orderCard = orderEl ? orderEl.querySelector(".order-number") : null;
+  const orderLabel = orderCard ? orderCard.textContent.trim() : "este pedido";
+
+  // Confirm deliberado — fricción intencional contra doble facturación
+  const confirmed = window.confirm(
+    `¿Confirmar emisión de Factura B para ${orderLabel}?\n\nEsta acción genera un comprobante legal ante AFIP y consume un crédito de Facturante.`
+  );
+
+  if (!confirmed) {
+    btn.dataset.invoicing = "false";
+    return;
+  }
+
+  await executeFacturar(btn, orderId);
+}
+
+async function executeFacturar(btn, orderId) {
+  // Feedback visual inmediato — CAPA 1 UI
+  btn.textContent = "Facturando...";
+  btn.disabled = true;
+  btn.style.background = "#5a9fd4";
+  btn.style.cursor = "not-allowed";
+
+  try {
+    const { data: invokeData, error: invokeError } = await supabase.functions.invoke(
+      "facturante-invoice",
+      { body: { order_id: orderId } }
+    );
+
+    // supabase.functions.invoke lanza error en respuestas no-2xx
+    const result = invokeData || {};
+    const isConflict = invokeError?.context?.status === 409;
+    const isError = !!invokeError && !isConflict;
+
+    if (!invokeError && result.success) {
+      // Actualizar botón a estado "processing" sin recargar toda la lista
+      btn.outerHTML = `<button
+        class="btn-invoice-processing"
+        disabled
+        style="border:none;padding:6px 12px;border-radius:6px;cursor:not-allowed;font-size:13px;min-height:32px;white-space:nowrap;background:#b8d4f0;color:#555;opacity:0.8;"
+        title="Esperando autorización de AFIP...">
+        ⏳ Pendiente AFIP
+      </button>`;
+      showInvoiceToast("✅ Factura enviada a AFIP. El botón se actualizará automáticamente al recibir la respuesta.", "success");
+    } else if (isConflict) {
+      // Ya facturado o en proceso — refrescar para mostrar estado real
+      const conflictMsg = invokeError?.message || result.error || "Este pedido ya está en proceso de facturación.";
+      showInvoiceToast(`ℹ️ ${conflictMsg}`, "info");
+      if (typeof runSentOrdersSearch === "function") runSentOrdersSearch();
+    } else {
+      const errMsg = (invokeError?.message) || result.error || "Error al facturar";
+      btn.outerHTML = `<button
+        class="btn-invoice-error"
+        data-invoice-error="${encodeURIComponent(errMsg)}"
+        data-facturar-retry="${orderId}"
+        style="border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:13px;min-height:32px;white-space:nowrap;background:#dc3545;color:#fff;"
+        title="${encodeURIComponent(errMsg)}">
+        ⚠ Error
+      </button>`;
+      showInvoiceToast(`❌ ${errMsg}`, "error");
+    }
+  } catch (err) {
+    console.error("❌ Error inesperado en executeFacturar:", err);
+    const errMsg = `Error de conexión: ${err?.message || "Timeout"}`;
+    resetInvoiceButton(btn, orderId, errMsg);
+    showInvoiceToast(`❌ ${errMsg}`, "error");
+  }
+}
+
+function resetInvoiceButton(btn, orderId, errorMsg) {
+  btn.disabled = false;
+  btn.dataset.invoicing = "false";
+  if (errorMsg) {
+    btn.outerHTML = `<button
+      class="btn-invoice-error"
+      data-invoice-error="${encodeURIComponent(errorMsg)}"
+      data-facturar-retry="${orderId}"
+      style="border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:13px;min-height:32px;white-space:nowrap;background:#dc3545;color:#fff;">
+      ⚠ Error
+    </button>`;
+  } else {
+    btn.textContent = "🧾 Facturar";
+    btn.disabled = false;
+    btn.style.background = "#6c757d";
+    btn.style.cursor = "pointer";
+  }
+}
+
+/**
+ * Muestra un popover en el botón de error con el mensaje y opción de reintentar.
+ */
+function showInvoiceErrorPopover(btn, errMsg, retryOrderId) {
+  // Cerrar popover existente si hay uno
+  const existing = document.getElementById("invoice-error-popover");
+  if (existing) existing.remove();
+
+  const popover = document.createElement("div");
+  popover.id = "invoice-error-popover";
+  popover.className = "invoice-error-popover";
+  popover.innerHTML = `
+    <div class="invoice-error-popover-header">Error de facturación</div>
+    <div class="invoice-error-popover-msg">${errMsg.substring(0, 200)}</div>
+    <div class="invoice-error-popover-actions">
+      ${retryOrderId ? `<button class="invoice-popover-retry" data-retry-order="${retryOrderId}">Reintentar</button>` : ""}
+      <button class="invoice-popover-close">Cerrar</button>
+    </div>
+  `;
+
+  // Posicionar cerca del botón
+  document.body.appendChild(popover);
+  const rect = btn.getBoundingClientRect();
+  const top = rect.bottom + window.scrollY + 4;
+  const left = Math.min(rect.left + window.scrollX, window.innerWidth - 260);
+  popover.style.top = `${top}px`;
+  popover.style.left = `${left}px`;
+
+  // Cerrar
+  popover.querySelector(".invoice-popover-close").addEventListener("click", () => popover.remove());
+
+  // Reintentar
+  if (retryOrderId) {
+    popover.querySelector(".invoice-popover-retry").addEventListener("click", async () => {
+      popover.remove();
+      // Encontrar el botón de error del pedido y ejecutar el flujo de facturación
+      const retryBtn = document.querySelector(`[data-facturar-retry="${retryOrderId}"]`);
+      if (retryBtn) {
+        await executeFacturar(retryBtn, retryOrderId);
+      }
+    });
+  }
+
+  // Auto-cerrar al clic fuera
+  setTimeout(() => {
+    document.addEventListener("click", function closePopover(ev) {
+      if (!popover.contains(ev.target)) {
+        popover.remove();
+        document.removeEventListener("click", closePopover);
+      }
+    });
+  }, 100);
+}
+
+/**
+ * Muestra un toast de notificación temporal para feedback de facturación.
+ */
+function showInvoiceToast(message, type = "info") {
+  const existing = document.getElementById("invoice-toast");
+  if (existing) existing.remove();
+
+  const colors = { success: "#28a745", error: "#dc3545", info: "#17a2b8" };
+  const toast = document.createElement("div");
+  toast.id = "invoice-toast";
+  toast.style.cssText = `
+    position: fixed; bottom: 20px; right: 20px; z-index: 9999;
+    background: ${colors[type] || colors.info}; color: #fff;
+    padding: 12px 18px; border-radius: 8px; font-size: 14px;
+    max-width: 360px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    animation: fadeInUp 0.3s ease;
+  `;
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 5000);
+}
+
+// =============================================================================
+// FIN FACTURACIÓN ELECTRÓNICA
+// =============================================================================
 
 function closeModal() {
   const modal = document.getElementById("customer-modal");

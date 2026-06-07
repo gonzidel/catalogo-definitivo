@@ -1,7 +1,7 @@
-// admin/quick-actions.js - Gestión de acciones rápidas
-import { requireAuth } from "./admin-auth.js";
-import { supabase } from "../scripts/supabase-client.js";
-import { initCuratedBannerAdmin } from "./curated-banner-admin.js";
+﻿// admin/quick-actions.js - Gestión de acciones rápidas
+import { requireAuth } from "./admin-auth.js?v=m260607";
+import { supabase } from "../scripts/supabase-client.js?v=m260607";
+import { initCuratedBannerAdmin } from "./curated-banner-admin.js?v=m260607";
 import {
   joinCommercialTags,
   normalizeCommercialTag,

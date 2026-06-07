@@ -1,7 +1,7 @@
-// admin/collaborators.js
-import { supabase } from "../scripts/supabase-client.js";
-import { isSuperAdmin } from "./permissions-helper.js";
-import { preloadAuthState, isAdminUser } from "./auth-state.js";
+﻿// admin/collaborators.js
+import { supabase } from "../scripts/supabase-client.js?v=m260607";
+import { isSuperAdmin } from "./permissions-helper.js?v=m260607";
+import { preloadAuthState, isAdminUser } from "./auth-state.js?v=m260607";
 
 let _sessionUser = null;
 const _permissionUpdateInFlight = new Set();

@@ -1,10 +1,15 @@
 // admin/public-sales.js
-import { requireAuth } from "./admin-auth.js";
-import { supabase } from "../scripts/supabase-client.js";
+import { requireAuth } from "./admin-auth.js?v=m260607";
+import { supabase } from "../scripts/supabase-client.js?v=m260607";
 import { fylDevLog } from "../scripts/config.js";
-import { normalizeSize } from "../scripts/utils/size-normalizer.js";
-import { parseARSNumber, resolveOrderItemUnitPrice } from "../scripts/utils/price.js";
-import { loadQZTray, qzConnect, qzGetPrinterConfigDefault } from "./qz-printing.js";
+import { normalizeSize } from "../scripts/utils/size-normalizer.js?v=m260607";
+import {
+  parseARSNumber,
+  resolveOrderItemUnitPrice,
+  hasCatalogPrice,
+  catalogPriceGuardMessage,
+} from "../scripts/utils/price.js?v=m260607";
+import { loadQZTray, qzConnect, qzGetPrinterConfigDefault } from "./qz-printing.js?v=m260607";
 
 const TIMEZONE_BUENOS_AIRES = "America/Argentina/Buenos_Aires";
 
@@ -1993,6 +1998,14 @@ async function renderManualSizeButtons() {
     // En modo devoluciones, todos los botones están disponibles sin límite de stock
     if (returnMode.checked || totalStock > 0) {
       btn.addEventListener("click", async () => {
+        if (!hasCatalogPrice(variant.price)) {
+          showMessage(
+            catalogPriceGuardMessage(manualCurrentProduct?.name || variant.sku),
+            "error"
+          );
+          return;
+        }
+
         const currentQty = manualSelectedSizes[size] || 0;
         const currentSource = manualSelectedSizesSource[size] || { ventaPublico: 0, general: 0 };
 
@@ -2217,6 +2230,12 @@ if (manualLoadBtn) {
 
       const variant = variantsByColor.find(v => normalizeSize(v.size) === normalizeSize(size));
       if (!variant) continue;
+
+      if (!hasCatalogPrice(variant.price)) {
+        showMessage(catalogPriceGuardMessage(manualCurrentProduct?.name || variant.sku), "error");
+        hasStockError = true;
+        break;
+      }
 
       const sizeStock = await getVariantSizeStockByWarehouse(variant.id, size);
       const totalStock = sizeStock.total || 0;
@@ -2573,6 +2592,11 @@ async function processQrCodeFast(qrCode) {
     effPrice !== null && effPrice !== undefined ? effPrice : variant.price;
   const basePrice = variant.price;
 
+  if (!hasCatalogPrice(basePrice)) {
+    showMessage(catalogPriceGuardMessage(variant.products.name), "error");
+    return;
+  }
+
   // En flujo SKU/QR no mostrar modal ni aviso de confirmación cuando no hay stock.
   // Se continúa y se agrega con source 0,0.
 
@@ -2688,6 +2712,13 @@ function scheduleUIUpdate() {
 // NOTA: Esta función se mantiene para compatibilidad, pero el flujo optimizado usa processQrCodeFast
 async function processVariantFoundByQrCode(variant) {
   try {
+    if (!hasCatalogPrice(variant.price)) {
+      showMessage(
+        catalogPriceGuardMessage(variant.products?.name || variant.sku),
+        "error"
+      );
+      return;
+    }
     // Si tenemos el tamaño, usar el proceso optimizado (similar a processQrCodeFast)
     if (variant.size) {
       // Obtener warehouses y stock en paralelo

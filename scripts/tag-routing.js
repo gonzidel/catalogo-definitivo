@@ -4,7 +4,7 @@ import {
   normalizeCommercialTag,
   normalizeTagDisplay,
   parseTagSelectorValues,
-} from "./tag-normalize.js";
+} from "./tag-normalize.js?v=m260607";
 
 /** Slug para URL: minúsculas, sin acentos, espacios → guiones. */
 export function tagToHashSlug(tag) {

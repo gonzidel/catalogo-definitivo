@@ -1,5 +1,5 @@
-// admin/diagnostic.js - Script de diagnóstico para problemas de RLS
-import { supabase } from "../scripts/supabase-client.js";
+﻿// admin/diagnostic.js - Script de diagnóstico para problemas de RLS
+import { supabase } from "../scripts/supabase-client.js?v=m260607";
 
 async function runDiagnostic() {
   console.log("🔧 Iniciando diagnóstico de RLS...");

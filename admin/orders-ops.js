@@ -1,13 +1,14 @@
 // admin/orders-ops.js — operaciones de pedido sin DOM (PAU y otros módulos)
 
-import { supabase as supabaseClient } from "../scripts/supabase-client.js";
-import { normalizeSize } from "../scripts/utils/size-normalizer.js";
-import { computeWarehouseQtySplitForOrderItem } from "./orders-domain.js";
+import { supabase as supabaseClient } from "../scripts/supabase-client.js?v=m260607";
+import { normalizeSize } from "../scripts/utils/size-normalizer.js?v=m260607";
+import { hasCatalogPrice, catalogPriceGuardMessage } from "../scripts/utils/price.js?v=m260607";
+import { computeWarehouseQtySplitForOrderItem } from "./orders-domain.js?v=m260607";
 import {
   createNewOrder,
   addItemsToExistingOrder,
   resolveQrCodeToOrderItem,
-} from "./order-creator.js";
+} from "./order-creator.js?v=m260607";
 
 let supabase = supabaseClient;
 
@@ -45,7 +46,7 @@ async function getSb() {
     supabase = window.supabase;
     return supabase;
   }
-  const mod = await import("../scripts/supabase-client.js");
+  const mod = await import("../scripts/supabase-client.js?v=m260607");
   supabase = mod.supabase || window.supabase;
   return supabase;
 }
@@ -210,6 +211,12 @@ export async function enrichDraftItemsWithStock(items) {
 export async function addItemsToOrder(orderId, items) {
   if (!items?.length) {
     return { success: true, skipped: true };
+  }
+  for (const item of items) {
+    if (item.is_special_extra) continue;
+    if (!hasCatalogPrice(item.price_snapshot)) {
+      throw new Error(catalogPriceGuardMessage(item.product_name));
+    }
   }
   const enriched = await enrichDraftItemsWithStock(items);
   await addItemsToExistingOrder(orderId, enriched, null, {});

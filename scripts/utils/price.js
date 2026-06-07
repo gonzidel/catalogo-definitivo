@@ -84,6 +84,17 @@ function normalizeLegacyPrice(num, enableLegacyFix) {
  * (típico: parseFloat sobre "$18.000" / "18.000" guardó 18 en lugar de 18000).
  * Si existe precio de variante en catálogo y el snapshot es claramente inconsistente, usa la variante.
  */
+/** Variante con precio de catálogo cargado (mayor a 0). */
+export function hasCatalogPrice(price) {
+  return parseARSNumber(price) > 0;
+}
+
+/** Mensaje estándar al bloquear carga sin precio. */
+export function catalogPriceGuardMessage(productName) {
+  const name = String(productName || "El producto").trim() || "El producto";
+  return `${name} no tiene precio cargado. Actualizá el precio en catálogo antes de agregarlo.`;
+}
+
 export function resolveOrderItemUnitPrice(priceSnapshot, variantPrice) {
   const snap = parseARSNumber(priceSnapshot);
   const pv = parseARSNumber(variantPrice);

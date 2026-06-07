@@ -8,9 +8,9 @@ function construirMenuFiltros() {
   const filtrosSet = new Set();
 
   productos.forEach((prod) => {
-    const f1 = prod.dataset.filtro1?.trim();
-    const f2 = prod.dataset.filtro2?.trim();
-    const f3 = prod.dataset.filtro3?.trim();
+    const f1 = prod.dataset.filtro1 ? prod.dataset.filtro1.trim() : "";
+    const f2 = prod.dataset.filtro2 ? prod.dataset.filtro2.trim() : "";
+    const f3 = prod.dataset.filtro3 ? prod.dataset.filtro3.trim() : "";
     [f1, f2, f3].forEach((f) => {
       if (f) filtrosSet.add(f);
     });

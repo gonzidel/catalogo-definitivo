@@ -1,8 +1,8 @@
-import { supabase } from "./supabase-client.js";
-import { normalizeSize } from "./utils/size-normalizer.js";
-import { fylAnalytics } from "./analytics.js";
-import { parseARSNumber, formatARS as formatARSValue } from "./utils/price.js";
-import { showFylToastError } from "./fyl-error-state.js";
+import { supabase } from "./supabase-client.js?v=m260607";
+import { normalizeSize } from "./utils/size-normalizer.js?v=m260607";
+import { fylAnalytics } from "./analytics.js?v=m260607";
+import { parseARSNumber, formatARS as formatARSValue } from "./utils/price.js?v=m260607";
+import { showFylToastError } from "./fyl-error-state.js?v=m260607";
 
 function fylDevLog(...args) {
   if (

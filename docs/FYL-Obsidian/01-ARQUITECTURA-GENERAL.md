@@ -15,12 +15,13 @@
 
 | Ruta | Rol |
 |---|---|
-| `index.html` | Entrada principal del catalogo |
+| `index.html` | Entrada principal del catalogo (Vanilla JS — producción actual) |
 | `scripts/` | Logica compartida: Supabase, catalogo, carrito, filtros, busqueda |
 | `client/` | Dashboard cliente, carrito separado, perfil, completar perfil |
 | `admin/` | Backoffice: products, stock, orders, public sales, customers, permisos |
 | `supabase/canonical/` | SQL canonico, migraciones, RPCs, triggers |
 | `docs/FYL-Obsidian/` | Documentacion viva |
+| `nj/` | **Migración Next.js 15 App Router** (paralela, solo lectura por ahora) — ver [[41-MIGRACION-NEXTJS-NJ-2026-06-08]] |
 
 ## Modulos auditados
 

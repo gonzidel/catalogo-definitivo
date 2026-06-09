@@ -96,6 +96,21 @@ No se crea un estado especial de "discontinuado". La combinación de `status` y 
 
 ---
 
+## D) Migración Next.js 15 — `/nj` (2026-06-08)
+
+Ver detalle completo en [[41-MIGRACION-NEXTJS-NJ-2026-06-08]].
+
+1. **Migración paralela**: `/nj` corre junto a `index.html` sin tocar producción hasta validar paridad.
+2. **`basePath: '/nj'`** permanece en producción paralela; cutover a `/` es manual y diferido.
+3. **CSS reutilizado**: `globals.css` importa `../../styles.css`; no se duplica el sistema de estilos.
+4. **SSR con timeout 3s** + Suspense skeleton: evita bloqueo cuando Node no alcanza Supabase en dev.
+5. **Banners como client components** (SWR): no dependen de SSR que falla; igual comportamiento que Vanilla.
+6. **Auth y carrito diferidos**: primera etapa es solo lectura pública.
+7. **`ProductCard` como Server Component**: recibe `href` como prop; no usa `useSearchParams`.
+8. **CuratedBanner usa `__curated__` + `custom_product_banner_items`**: productos curados específicos por variant_id, no tag-based.
+
+---
+
 ## C) Documentales (vault)
 
 - Auditorías 14–19: referencia por módulo; [[15-OBSERVACIONES-PRODUCTS-A-REVISAR]] riesgos transversales.

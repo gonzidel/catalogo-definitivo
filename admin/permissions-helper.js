@@ -22,14 +22,21 @@ let _permissionsFetchPromise = null;
 async function _getSessionUser() {
   if (_cachedUser) return _cachedUser;
   if (_userFetchPromise) return _userFetchPromise;
-  _userFetchPromise = supabase.auth.getSession().then(({ data }) => {
-    _cachedUser = data?.session?.user ?? null;
-    _userFetchPromise = null;
-    return _cachedUser;
-  }).catch(() => {
-    _userFetchPromise = null;
-    return null;
-  });
+
+  _userFetchPromise = (async () => {
+    await supabaseReady;
+    if (!supabase?.auth?.getSession) return null;
+    try {
+      const { data } = await supabase.auth.getSession();
+      _cachedUser = data?.session?.user ?? null;
+      return _cachedUser;
+    } catch {
+      return null;
+    } finally {
+      _userFetchPromise = null;
+    }
+  })();
+
   return _userFetchPromise;
 }
 
@@ -165,6 +172,12 @@ const ALL_PERMISSIONS = {
 
 async function _doGetUserPermissions() {
   try {
+    await supabaseReady;
+    if (!supabase) {
+      cachedUserPermissions = {};
+      return {};
+    }
+
     const user = await _getSessionUser();
     if (!user) {
       cachedUserPermissions = {};
@@ -273,6 +286,9 @@ export async function checkMultiplePermissions(permissions) {
  */
 export async function isAdmin() {
   try {
+    await supabaseReady;
+    if (!supabase) return false;
+
     const user = await _getSessionUser();
     if (!user) {
       console.log("isAdmin: No hay usuario autenticado");
@@ -310,6 +326,9 @@ export async function isAdmin() {
  */
 export async function getUserRole() {
   try {
+    await supabaseReady;
+    if (!supabase) return null;
+
     if (await isSuperAdmin()) {
       return 'super_admin';
     }

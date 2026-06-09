@@ -1,0 +1,22 @@
+/*
+ * globals.css — Punto de entrada de estilos para /nj
+ *
+ * Reutiliza el sistema de diseño completo del proyecto raíz.
+ * Path relativo: nj/styles/globals.css → ../../styles.css (raíz del proyecto)
+ *
+ * Si hay conflictos de selectores con el layout Next.js, agregarlos
+ * debajo del @import para sobreescribir sin tocar styles.css.
+ */
+@import "../../styles.css";
+
+/* ── Ajustes específicos del shell Next.js ──────────────────────────────── */
+
+/* Next.js wrappea el contenido en un div — asegurar que el body no tenga
+   overflow-x oculto roto por el basePath */
+html,
+body {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+/* Placeholder para futuras sobreescrituras sin tocar styles.css */

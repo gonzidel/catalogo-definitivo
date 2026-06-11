@@ -4,6 +4,7 @@ import {
   CATALOG_SELECT,
   agruparProductos,
   intercalarProductos,
+  compareCatalogRecency,
 } from "@/lib/utils/catalog";
 import type { CatalogRow, GroupedProduct } from "@/types/catalog";
 import type { PromotionalBannerData, CuratedBannerConfig } from "@/types/banners";
@@ -138,9 +139,7 @@ export async function getAllCatalogProducts(
   if (categoria === "all" && tags.length === 0) {
     return intercalarProductos(grouped);
   }
-  return grouped.sort((a, b) =>
-    (b.FechaPublicacion ?? "") > (a.FechaPublicacion ?? "") ? 1 : -1
-  );
+  return grouped.sort(compareCatalogRecency);
 }
 
 /**

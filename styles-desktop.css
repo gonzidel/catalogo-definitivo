@@ -794,6 +794,17 @@
     color: #1a1a1a !important;
   }
 
+  .custom-banner-wrapper.curated-dynamic-banner .custom-banner-header .custom-banner-title {
+    font-size: clamp(1.35rem, 2.2vw, 1.65rem) !important;
+    font-weight: 900 !important;
+    letter-spacing: -0.03em !important;
+    color: #1a1510 !important;
+  }
+
+  .custom-banner-wrapper.curated-dynamic-banner .custom-banner-header {
+    padding: 14px 12px 16px 0 !important;
+  }
+
   /* "Nuevos Ingresos" y otros títulos de sección */
   .home-top-dynamic-slot h2,
   .home-top-dynamic-slot h3,

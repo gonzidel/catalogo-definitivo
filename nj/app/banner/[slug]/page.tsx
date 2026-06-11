@@ -2,7 +2,9 @@ import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import type { Metadata } from "next";
-import { getCuratedBanners, getCuratedBannerProducts } from "@/lib/supabase/queries";
+import { getCuratedBanners } from "@/lib/supabase/queries";
+import { fetchCuratedGroupedProductsBySlug } from "@/lib/banners/curated-banner-fetch";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 import CatalogShell from "@/components/catalog/CatalogShell";
 import SkeletonCard from "@/components/catalog/SkeletonCard";
 
@@ -39,11 +41,15 @@ function CatalogSkeleton() {
 }
 
 async function BannerContent({ slug }: { slug: string }) {
-  const banners = await getCuratedBanners();
-  const banner = banners.find((b) => b.slug === slug);
-  if (!banner) notFound();
+  const supabase = await createSupabaseServerClient();
+  const result = await fetchCuratedGroupedProductsBySlug(supabase, slug);
 
-  const products = await getCuratedBannerProducts(banner.tag_value);
+  if (!result) notFound();
+
+  const { banner, products } = {
+    banner: result.config,
+    products: result.products,
+  };
 
   return (
     <>
@@ -65,7 +71,12 @@ async function BannerContent({ slug }: { slug: string }) {
         </h1>
       </div>
 
-      <CatalogShell initialProducts={products} categoria="all" tags={[]} />
+      <CatalogShell
+        initialProducts={products}
+        categoria="all"
+        tags={[]}
+        fixedProductSet
+      />
     </>
   );
 }

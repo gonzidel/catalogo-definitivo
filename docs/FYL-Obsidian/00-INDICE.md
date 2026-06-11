@@ -75,7 +75,7 @@ Ver [[10-BACKLOG-NO-CRITICO]]: columnas legacy, RLS fino, helpers duplicados, `r
 - [[38-META-FEED-ENRICHMENT-2026-05-23]] — Meta Catalog Feed enriquecido (spec 3 fases; canónico `doc/meta-feed/`)
 - [[39-LISTA-ENVIOS-SENT-AT-2026-05-26]] — Lista de envíos (`sent_at` al finalizar; migración 227; sin backfill histórico)
 - [[40-PAU-PANEL-ATENCION-UNIFICADO]] — PAU: panel móvil pedidos/WhatsApp (QR, borrador, cerrar); canónico `doc/pau/README.md`
-- [[41-MIGRACION-NEXTJS-NJ-2026-06-08]] — **Migración Next.js 15 App Router en `/nj`**: catálogo, banners, PDP, rutas informativas. Primera etapa solo lectura; auth/carrito diferidos.
+- [[41-MIGRACION-NEXTJS-NJ-2026-06-08]] — **Migración Next.js 15 App Router en `/nj`**: catálogo, banners, PDP, auth. Ver [[42-HOME-BANNERS-FEED-NJ-2026-06-09]] para banners home y feed 2026-06-09.
 
 ---
 

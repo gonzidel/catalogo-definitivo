@@ -1,4 +1,5 @@
 import type { CatalogRow, GroupedProduct, ColorDetail, CatalogImage } from "@/types/catalog";
+import { catalogRecencyMs } from "@/lib/banners/catalog-dates";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -144,65 +145,57 @@ export function agruparProductos(rows: CatalogRow[]): GroupedProduct[] {
   return result;
 }
 
-// ─── Intercalado por categoría (patrón 3/2/3/2/2/2) ─────────────────────────
+export const CATALOG_FEED_BUCKETS = ["Calzado", "Ropa", "Otros"] as const;
+export type CatalogFeedBucket = (typeof CATALOG_FEED_BUCKETS)[number];
 
+export function catalogFeedBucket(producto: GroupedProduct): CatalogFeedBucket {
+  const c = producto.Categoria.trim().toLowerCase();
+  if (c === "calzado") return "Calzado";
+  if (c === "ropa") return "Ropa";
+  return "Otros";
+}
+
+export function compareCatalogRecency(a: GroupedProduct, b: GroupedProduct): number {
+  return catalogRecencyMs(b) - catalogRecencyMs(a);
+}
+
+function sortByRepublicacionReciente(arr: GroupedProduct[]): GroupedProduct[] {
+  return [...arr].sort(compareCatalogRecency);
+}
+
+/**
+ * Feed home: republicación reciente (FechaPublicacion admin) + mezcla Calzado/Ropa/Otros.
+ * Round-robin para que Otros (menor stock) no quede enterrado bajo Calzado.
+ */
 export function intercalarProductos(productos: GroupedProduct[]): GroupedProduct[] {
-  const sort = (arr: GroupedProduct[]) =>
-    [...arr].sort((a, b) =>
-      (b.FechaPublicacion ?? "") > (a.FechaPublicacion ?? "") ? 1 : -1
-    );
+  if (productos.length <= 1) return productos;
 
-  const calzado = sort(
-    productos.filter((p) => p.Categoria.trim().toLowerCase() === "calzado")
-  );
-  const ropa = sort(
-    productos.filter((p) => p.Categoria.trim().toLowerCase() === "ropa")
-  );
-  const marroquineria = sort(
-    productos.filter(
-      (p) =>
-        p.Categoria.trim().toLowerCase() === "otros" &&
-        (p.Filtro1 ?? "").trim().toLowerCase() === "marroquineria"
-    )
-  );
-  const lenceria = sort(
-    productos.filter(
-      (p) =>
-        p.Categoria.trim().toLowerCase() === "otros" &&
-        (p.Filtro1 ?? "").trim().toLowerCase() === "lenceria"
-    )
-  );
-  const resto = sort(
-    productos.filter(
-      (p) =>
-        !["calzado", "ropa"].includes(p.Categoria.trim().toLowerCase()) &&
-        !marroquineria.includes(p) &&
-        !lenceria.includes(p)
-    )
-  );
+  const lists: Record<CatalogFeedBucket, GroupedProduct[]> = {
+    Calzado: [],
+    Ropa: [],
+    Otros: [],
+  };
 
-  // Pattern: 3 calzado, 2 ropa, 3 calzado, 2 marroquineria, 2 calzado, 2 lenceria
+  for (const p of productos) {
+    lists[catalogFeedBucket(p)].push(p);
+  }
+
+  for (const key of CATALOG_FEED_BUCKETS) {
+    lists[key] = sortByRepublicacionReciente(lists[key]);
+  }
+
+  const idx: Record<CatalogFeedBucket, number> = { Calzado: 0, Ropa: 0, Otros: 0 };
   const result: GroupedProduct[] = [];
-  let ic = 0, ir = 0, im = 0, il = 0, ie = 0;
 
-  while (
-    ic < calzado.length ||
-    ir < ropa.length ||
-    im < marroquineria.length ||
-    il < lenceria.length ||
-    ie < resto.length
-  ) {
-    const prevLen = result.length;
-
-    for (let i = 0; i < 3 && ic < calzado.length; i++) result.push(calzado[ic++]);
-    for (let i = 0; i < 2 && ir < ropa.length; i++) result.push(ropa[ir++]);
-    for (let i = 0; i < 3 && ic < calzado.length; i++) result.push(calzado[ic++]);
-    for (let i = 0; i < 2 && im < marroquineria.length; i++) result.push(marroquineria[im++]);
-    for (let i = 0; i < 2 && ic < calzado.length; i++) result.push(calzado[ic++]);
-    for (let i = 0; i < 2 && il < lenceria.length; i++) result.push(lenceria[il++]);
-    for (let i = 0; i < 2 && ie < resto.length; i++) result.push(resto[ie++]);
-
-    if (result.length === prevLen) break; // safety: avoid infinite loop
+  while (true) {
+    let pickedAny = false;
+    for (const bucket of CATALOG_FEED_BUCKETS) {
+      if (idx[bucket] < lists[bucket].length) {
+        result.push(lists[bucket][idx[bucket]++]);
+        pickedAny = true;
+      }
+    }
+    if (!pickedAny) break;
   }
 
   return result;

@@ -1,3 +1,5 @@
+import type { ColorDetail } from "@/types/catalog";
+
 export interface PromotionalBannerData {
   id: string;
   text: string;
@@ -33,4 +35,9 @@ export interface CuratedVariantCard {
   "Imagen Principal": string | null;
   OfertaActiva: boolean;
   PrecioOferta: number | null;
+  ColorHex?: string | null;
 }
+
+export type CuratedVariantCardEnriched = CuratedVariantCard & {
+  colors: ColorDetail[];
+};

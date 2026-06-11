@@ -94,7 +94,9 @@ nj/
 │   │   └── SearchBar.tsx           # Barra de búsqueda
 │   ├── banners/
 │   │   ├── InfoBanner.tsx          # ESTÁTICO: "COMPRA MÍNIMA 4 productos"
+│   │   ├── NuevosIngresosBanner.tsx  # CLIENT: primera publicación 7 días (SWR + RPC)
 │   │   ├── FylOriginalsBanner.tsx  # CLIENT: F&L Originals (SWR, SupplierCode=FYL)
+│   │   ├── CuratedSpecialBanner.tsx # CLIENT: banner especial (SWR, __curated_special__)
 │   │   ├── CuratedBanner.tsx       # CLIENT: banner dinámico curado (SWR, __curated__)
 │   │   └── PromotionalBanner.tsx   # SERVER: promotional_banners (SSR, fallback silencioso)
 │   └── howto/
@@ -108,8 +110,14 @@ nj/
 │   │   ├── server.ts               # createServerClient (Server Components)
 │   │   ├── client.ts               # getSupabaseBrowserClient (singleton browser)
 │   │   └── queries.ts              # Todas las queries SSR centralizadas
+│   ├── banners/
+│   │   ├── nuevos-ingresos.ts      # RPC + mezcla banner Nuevos ingresos
+│   │   ├── curated-banner-fetch.ts
+│   │   ├── curated-banner-layout.ts
+│   │   ├── curated-banner-tags.ts  # __curated__ / __curated_special__
+│   │   └── catalog-dates.ts
 │   └── utils/
-│       ├── catalog.ts              # agruparProductos, intercalarProductos, formatARS
+│       ├── catalog.ts              # agruparProductos, intercalarProductos (round-robin feed), formatARS
 │       ├── size-normalizer.ts      # Normalización de talles
 │       └── search.ts               # searchProducts, filterBySizes
 ├── styles/
@@ -143,25 +151,38 @@ nj/
 - **Posición**: `aboveGridSlot` (entre filtros y grid)
 - **Icono**: `assets/icono-carrito-x4.png`
 
-### 2. FylOriginalsBanner — Client SWR
+### 2. NuevosIngresosBanner — Client SWR
+- **Componente**: `components/banners/NuevosIngresosBanner.tsx`
+- **Fuente**: `rpc_get_nuevos_ingresos_products(7)` + cruce con catálogo disponible
+- **Criterio**: primera publicación (`min(publication_events.published_at)`); reingreso solo vía `nuevos_ingresos_highlight_at` (admin)
+- **Detalle completo**: [[42-HOME-BANNERS-FEED-NJ-2026-06-09]] §1
+
+### 3. FylOriginalsBanner — Client SWR
 - **Componente**: `components/banners/FylOriginalsBanner.tsx`
 - **Tipo**: Client Component con `useSWR`
 - **Fuente**: `catalog_public_view` WHERE `SupplierCode = 'FYL'`
 - **Render**: Scroll horizontal de product cards, skeleton mientras carga
 - **Link "Ver colección"**: `/tags/fyl-originals`
-- **Posición**: `aboveGridSlot` (primero, antes de InfoBanner)
+- **Posición**: `aboveGridSlot` (después de Nuevos ingresos e InfoBanner)
 
-### 3. CuratedBanner — Client SWR (banner dinámico)
+### 4. CuratedSpecialBanner — Client SWR (banner dinámico especial)
+- **Componente**: `components/banners/CuratedSpecialBanner.tsx`
+- **Fuente**: `custom_product_banners` WHERE `tag_value = '__curated_special__'`
+- **UI**: tarjeta oscura, 3 fotos superpuestas, textos JSON en `description`
+- **Admin**: `quick-actions.html` preset `special`
+- **Posición**: `aboveGridSlot`, encima de CuratedBanner
+- **Detalle**: [[42-HOME-BANNERS-FEED-NJ-2026-06-09]] §3
+
+### 5. CuratedBanner — Client SWR (banner dinámico)
 - **Componente**: `components/banners/CuratedBanner.tsx`
 - **Tipo**: Client Component con `useSWR`
 - **Fuente**: `custom_product_banners` WHERE `enabled = true AND tag_value = '__curated__'` + JOIN `custom_product_banner_items(product_variant_id, position)`
-- **Productos**: fetcha por `variant_id IN (...)` desde `catalog_public_view`, ordenados por `position`
-- **Render**: Scroll horizontal de variant cards con skeleton mientras carga
+- **Productos**: fetcha por `variant_id IN (...)` desde catálogo snapshot/vista, ordenados por `position`
+- **Render**: Carrusel 2×2 horizontal
 - **Link "Ver todo"**: `/banner/[slug]`
-- **Posición**: `curatedSlot` — intercalado en el grid **después del 4º producto**
-- **Nota**: El admin selecciona los productos específicos vía `custom_product_banner_items`; no es tag-based
+- **Posición**: `aboveGridSlot` (debajo del banner especial)
 
-### 4. PromotionalBanner — Server (SSR)
+### 6. PromotionalBanner — Server (SSR)
 - **Componente**: `components/banners/PromotionalBanner.tsx`
 - **Tipo**: Server Component
 - **Fuente**: `promotional_banners` WHERE `enabled = true` ORDER BY `order` LIMIT 1
@@ -229,6 +250,9 @@ El banner dinámico principal usa `custom_product_banner_items.product_variant_i
 2. Items desde `custom_product_banner_items` (JOIN automático con select nested)
 3. Productos desde `catalog_public_view` WHERE `variant_id IN (...)`
 
+### D9 — Feed home: round-robin Calzado/Ropa/Otros + republicación
+`intercalarProductos` en `lib/utils/catalog.ts` ordena por `max(FechaPublicacion, FechaIngreso)` dentro de cada bucket y mezcla 1:1:1. `useCatalog` aplica la misma mezcla tras SWR para que el scroll no pierda el orden. Ver [[42-HOME-BANNERS-FEED-NJ-2026-06-09]] §5.
+
 ---
 
 ## Errores resueltos durante la implementación
@@ -255,15 +279,15 @@ El banner dinámico principal usa `custom_product_banner_items.product_variant_i
          └── <CatalogContent /> (async Server Component)
                ├── getCatalogPage("all", 1)  [SSR, 3s timeout]
                └── <CatalogShell
-                     initialProducts={products}
-                     aboveGridSlot={<FylOriginalsBanner/> + <InfoBanner/>}
-                     curatedSlot={<CuratedBanner/>}
+                     initialProducts={products}   // intercalarProductos en SSR
+                     aboveGridSlot={InfoBanner + NuevosIngresos + FylOriginals + Special + Curated}
                    />
 
 2. Browser monta CatalogShell (Client Component)
-   ├── useSWRInfinite → fetch directo a Supabase (browser)
-   ├── FylOriginalsBanner: useSWR → SupplierCode=FYL
-   └── CuratedBanner: useSWR → __curated__ + variant_ids
+   ├── useSWRInfinite → merge + intercalarProductos (all, sin tags)
+   ├── NuevosIngresosBanner: useSWR → rpc_get_nuevos_ingresos_products
+   ├── CuratedSpecialBanner: useSWR → __curated_special__
+   └── CuratedBanner: useSWR → __curated__
 ```
 
 ---
@@ -302,7 +326,7 @@ Contenido idéntico al original `#/quienes-somos`:
 
 ---
 
-## Estado actual (2026-06-08)
+## Estado actual (2026-06-09)
 
 | Área | Estado |
 |------|--------|
@@ -310,10 +334,14 @@ Contenido idéntico al original `#/quienes-somos`:
 | PDP `/producto/[sku]` | ✅ Implementado |
 | Filtros (categoría, tag, talle, búsqueda) | ✅ Implementado |
 | Infinite scroll (SWR) | ✅ Implementado |
+| Feed orden republicación + mix categorías | ✅ Round-robin NJ (2026-06-09) |
 | Back button restaura scroll + filtros | ✅ Vía `?from=...` param |
+| Banner Nuevos ingresos | ✅ Client SWR + RPC 231/232 |
 | Banner FYL Originals | ✅ Client SWR |
 | Banner Info (compra mínima) | ✅ Estático |
+| Banner especial (`__curated_special__`) | ✅ Client SWR + admin quick-actions |
 | Banner Dinámico Curado (`__curated__`) | ✅ Client SWR |
+| Reingreso destacado admin publications | ✅ Checkbox + `nuevos_ingresos_highlight_at` |
 | Banner Promocional (`promotional_banners`) | ✅ Server (silencioso si SSR falla) |
 | Página Cómo comprar | ✅ Implementado |
 | Página Quiénes somos | ✅ Implementado |
@@ -456,9 +484,10 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=...
 - Schema curated banner: [[24-CURATED-BANNER-V1-SCHEMA]]
 - Banner FYL Originals original: [[22-BANNER-FYL-ORIGINALS]]
 - Banner curado operativo (Vanilla): [[37-CURATED-BANNER-FRONTEND-OPERATIVO-2026-05-18]]
+- **Home NJ banners + feed + republicaciones (2026-06-09):** [[42-HOME-BANNERS-FEED-NJ-2026-06-09]]
 - Arquitectura general (Vanilla): [[01-ARQUITECTURA-GENERAL]]
 
 ---
 
-*Creado: 2026-06-08. Última actualización: 2026-06-08 14:28 ART. Autor: agente Cursor.*
-*Etapa 1: catálogo público solo lectura. Etapa 2: auth + dashboard cliente (completada).*
+*Creado: 2026-06-08. Última actualización: 2026-06-09. Autor: agente Cursor.*
+*Etapa 1: catálogo público solo lectura. Etapa 2: auth + dashboard cliente. Etapa 3: banners home + feed (ver nota 42).*

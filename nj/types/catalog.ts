@@ -45,6 +45,10 @@ export interface ColorDetail {
   OfertaActiva: boolean;
   PrecioOferta: string;
   PromoActiva: string;
+  /** Enriquecimiento banner FYL Originals (recencia por fila catálogo). */
+  __recencyMs?: number;
+  __variantRecencyMs?: number;
+  __variantRecencySource?: string;
 }
 
 export interface GroupedProduct {
@@ -66,6 +70,9 @@ export interface GroupedProduct {
   DetalleColor: ColorDetail[];
   CommercialTags?: string[];
   SupplierCode?: string;
+  /** Enriquecimiento banner FYL Originals. */
+  __variantePrincipalSource?: string;
+  Activo?: boolean | string;
   // enriched with stock (optional — not in read-only phase)
   variantDetails?: VariantDetail[];
 }

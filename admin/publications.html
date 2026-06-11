@@ -358,6 +358,33 @@
       cursor: not-allowed;
       opacity: 0.45;
     }
+    .checkbox-wrapper--rehighlight {
+      background: rgba(255, 248, 240, 0.95);
+      border-radius: 8px;
+      padding: 4px 6px;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+      border: 1px solid rgba(205, 132, 77, 0.35);
+    }
+    .checkbox-rehighlight-label {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      margin: 0;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 600;
+      color: #8b5a2b;
+      user-select: none;
+    }
+    .checkbox-rehighlight-label input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      accent-color: #CD844D;
+    }
+    .checkbox-rehighlight-label input[type="checkbox"]:disabled {
+      cursor: not-allowed;
+      opacity: 0.45;
+    }
     .publication-table {
       width: 100%;
       border-collapse: collapse;

@@ -252,6 +252,24 @@ REVOKE EXECUTE ON FUNCTION public.rpc_update_cart_item_quantity(uuid, integer) F
 
 ---
 
+## RPCs catálogo / banners (2026-06-09)
+
+| RPC | Migración | Estado | Nota |
+|-----|-----------|--------|------|
+| `rpc_get_nuevos_ingresos_products(integer)` | 231 + 232 | **DEPLOY 2026-06-09** fyl-core | Primera publicación + `nuevos_ingresos_highlight_at`; SECURITY DEFINER |
+| `rpc_get_public_curated_banner_by_slug(text)` | 229 + 233 | **DEPLOY 2026-06-09** fyl-core | Slug público; tags `__curated__` y `__curated_special__` |
+
+Verificación:
+
+```sql
+SELECT count(*) FROM rpc_get_nuevos_ingresos_products(7);
+SELECT proname FROM pg_proc WHERE proname = 'rpc_get_public_curated_banner_by_slug';
+```
+
+Detalle: [[42-HOME-BANNERS-FEED-NJ-2026-06-09]].
+
+---
+
 ## Enlaces
 
 - [[03-MAPA-DE-RPCS]]

@@ -1,6 +1,8 @@
 import { Suspense } from "react";
+import { redirect } from "next/navigation";
 import type { Metadata } from "next";
 import { getCatalogPage } from "@/lib/supabase/queries";
+import { isCollectionSlug } from "@/lib/banners/collections";
 import CatalogShell from "@/components/catalog/CatalogShell";
 import SkeletonCard from "@/components/catalog/SkeletonCard";
 
@@ -39,6 +41,10 @@ async function CatalogContent({ tags }: { tags: string[] }) {
 export default async function TagsPage({ params }: PageProps) {
   const { slugs } = await params;
   const tags = slugs.map((s) => decodeURIComponent(s));
+
+  if (tags.length === 1 && isCollectionSlug(tags[0].trim().toLowerCase())) {
+    redirect(`/coleccion/${encodeURIComponent(tags[0].trim().toLowerCase())}`);
+  }
 
   return (
     <Suspense fallback={<CatalogSkeleton />}>

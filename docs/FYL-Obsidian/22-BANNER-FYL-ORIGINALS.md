@@ -148,3 +148,12 @@ Esto evita seleccionar siempre el hash minimo y mantiene rotacion diaria estable
 - `scripts/main-supabase.js` (invocacion desde home)
 - `styles.css` (layout visual carrusel)
 
+### Paridad Next.js (`/nj`)
+
+Desde 2026-06-09 el banner NJ replica la misma curaduria:
+
+- `nj/lib/banners/fyl-originals.ts` — `agruparFylOriginals`, `enrichGroupedProductsWithVariantRecency`, `curateFylOriginalsSlots`, `fetchFylOriginalsCurated`
+- `nj/components/banners/FylOriginalsBanner.tsx` — SWR sobre `fetchFylOriginalsCurated`
+
+Sin `enrichProductsWithStock` en NJ (ver drift en nota [[42-HOME-BANNERS-FEED-NJ-2026-06-09]] §2).
+

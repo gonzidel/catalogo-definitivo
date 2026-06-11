@@ -25,6 +25,8 @@ interface CartState {
   isCheckingOut: boolean;
   checkoutError: string | null;
   checkoutSuccess: boolean;
+  activeOrderStatus: string | null; // current order status, set by dashboard
+  syntheticNotifications: Array<{ id: string; type: string; message: string; read: boolean; created_at: string }>;
 
   // Actions
   setCartId: (id: string | null) => void;
@@ -36,6 +38,8 @@ interface CartState {
   setCheckingOut: (v: boolean) => void;
   setCheckoutError: (e: string | null) => void;
   setCheckoutSuccess: (v: boolean) => void;
+  setActiveOrderStatus: (s: string | null) => void;
+  setSyntheticNotifications: (n: Array<{ id: string; type: string; message: string; read: boolean; created_at: string }>) => void;
 }
 
 // ─── Store ────────────────────────────────────────────────────────────────────
@@ -48,6 +52,8 @@ export const useCartStore = create<CartState>()(
       isCheckingOut: false,
       checkoutError: null,
       checkoutSuccess: false,
+      activeOrderStatus: null,
+      syntheticNotifications: [],
 
       setCartId: (id) => set({ cartId: id }),
 
@@ -100,6 +106,8 @@ export const useCartStore = create<CartState>()(
       setCheckingOut: (v) => set({ isCheckingOut: v }),
       setCheckoutError: (e) => set({ checkoutError: e }),
       setCheckoutSuccess: (v) => set({ checkoutSuccess: v }),
+      setActiveOrderStatus: (s) => set({ activeOrderStatus: s }),
+      setSyntheticNotifications: (n) => set({ syntheticNotifications: n }),
     }),
     {
       name: "fyl-nj-cart",

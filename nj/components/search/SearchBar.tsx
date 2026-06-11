@@ -141,15 +141,19 @@ export default function SearchBar() {
   return (
     <div
       ref={containerRef}
-      style={{ position: "relative", flex: 1 }}
+      className="search-bar-inner"
+      style={{ position: "relative", flex: 1, minWidth: 0, width: "100%", maxWidth: "100%" }}
     >
       {/* Input wrapper */}
       <div style={{
         display: "flex", alignItems: "center", gap: 6,
-        background: "#f5f5f5", borderRadius: 22,
-        padding: "0 12px",
-        border: hasSuggestions ? "1.5px solid #CD844D" : "1.5px solid transparent",
+        background: "#f5f5f5", borderRadius: 20,
+        padding: "0 10px",
+        border: hasSuggestions ? "1.5px solid #CD844D" : "1.5px solid #e8e8e8",
         transition: "border-color 0.15s",
+        minWidth: 0,
+        width: "100%",
+        boxSizing: "border-box",
       }}>
         {ICON_SEARCH}
         <input
@@ -157,7 +161,7 @@ export default function SearchBar() {
           type="search"
           className="search-bar-mobile"
           id="search-bar-mobile"
-          placeholder="¿Qué buscás? Ej: Zapatillas..."
+          placeholder="¿Qué buscás?"
           autoComplete="off"
           spellCheck={false}
           enterKeyHint="search"
@@ -168,8 +172,9 @@ export default function SearchBar() {
             if (suggestions.length > 0) setShowDropdown(true);
           }}
           style={{
-            flex: 1, background: "none", border: "none", outline: "none",
-            fontSize: 14, padding: "9px 0", color: "#222",
+            flex: 1, minWidth: 0, width: "100%",
+            background: "none", border: "none", outline: "none",
+            fontSize: 13, padding: "8px 0", color: "#222",
           }}
         />
         {inputValue && (

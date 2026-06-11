@@ -64,6 +64,7 @@ let lowStockProducts = [];
 let allProducts = [];
 let selectedForPublication = []; // Array de { productId, color }
 let selectedForOffer = []; // Array de { productId, color } — requiere también publicación seleccionada
+let selectedForNuevosIngresosHighlight = []; // Array de productId — reingreso destacado (solo ya publicados)
 
 function publicationSelectionKey(productId, color) {
   return `${String(productId)}|${String(color ?? "")}`;
@@ -95,11 +96,43 @@ function removeOfferSelection(productId, color) {
   );
 }
 
-function renderCardCheckboxes(productId, color) {
+function isNuevosIngresosHighlightSelected(productId) {
+  const pid = String(productId);
+  return selectedForNuevosIngresosHighlight.some(id => String(id) === pid);
+}
+
+function syncNuevosIngresosHighlightForProduct(productId) {
+  const pid = String(productId);
+  const stillPub = selectedForPublication.some(s => String(s.productId) === pid);
+  if (!stillPub) {
+    selectedForNuevosIngresosHighlight = selectedForNuevosIngresosHighlight.filter(
+      id => String(id) !== pid
+    );
+  }
+}
+
+function wasColorPublishedBefore(item) {
+  return Boolean(item?.last_published_at || item?.color_publication_at);
+}
+
+function renderCardCheckboxes(productId, color, item = null) {
   const productIdEscaped = String(productId).replace(/'/g, "&#39;");
   const colorEscaped = String(color ?? "").replace(/'/g, "&#39;");
   const pubSelected = isPublicationSelected(productId, color);
   const offerSelected = isOfferSelected(productId, color);
+  const showRehighlight = item ? wasColorPublishedBefore(item) : false;
+  const rehighlightSelected = isNuevosIngresosHighlightSelected(productId);
+
+  const rehighlightBlock = showRehighlight
+    ? `
+      <div class="checkbox-wrapper checkbox-wrapper--rehighlight" title="Destacar en banner Nuevos ingresos (reingreso)">
+        <label class="checkbox-rehighlight-label">
+          <input type="checkbox" ${rehighlightSelected ? "checked" : ""} ${pubSelected ? "" : "disabled"}
+                 onchange="toggleNuevosIngresosHighlight('${productIdEscaped}')" />
+          <span>Nuevos ing.</span>
+        </label>
+      </div>`
+    : "";
 
   return `
     <div class="card-checkboxes">
@@ -114,6 +147,7 @@ function renderCardCheckboxes(productId, color) {
           <span>Oferta</span>
         </label>
       </div>
+      ${rehighlightBlock}
     </div>
   `;
 }
@@ -2240,7 +2274,7 @@ function createProductCard(item) {
   
   return `
     <div class="product-color-card ${isSelected ? 'selected' : ''}" data-product-id="${productIdEscaped}" data-color="${colorEscaped}">
-      ${renderCardCheckboxes(item.productId, item.color)}
+      ${renderCardCheckboxes(item.productId, item.color, item)}
       ${renderProductCardMedia(item, productNameEscaped)}
       <div class="product-info">
         <span class="product-color-badge">${colorEscaped}</span>
@@ -2290,7 +2324,7 @@ function renderRecommendedProducts(filtered = null) {
     
     return `
       <div class="product-color-card ${isSelected ? 'selected' : ''}" data-product-id="${productIdEscaped}" data-color="${colorEscaped}">
-        ${renderCardCheckboxes(item.productId, item.color)}
+        ${renderCardCheckboxes(item.productId, item.color, item)}
         ${renderProductCardMedia(item, productNameEscaped)}
         <div class="product-info">
           <span class="product-color-badge">${colorEscaped}</span>
@@ -2354,7 +2388,7 @@ function renderAllProducts(filtered = null) {
     
     return `
       <div class="product-color-card ${isSelected ? 'selected' : ''}" data-product-id="${productIdEscaped}" data-color="${colorEscaped}">
-        ${renderCardCheckboxes(item.productId, item.color)}
+        ${renderCardCheckboxes(item.productId, item.color, item)}
         ${renderProductCardMedia(item, productNameEscaped)}
         <div class="product-info">
           <span class="product-color-badge">${colorEscaped}</span>
@@ -2413,7 +2447,7 @@ function renderLowStockProducts(filtered = null) {
     
     return `
       <div class="product-color-card ${isSelected ? 'selected' : ''}" data-product-id="${productIdEscaped}" data-color="${colorEscaped}">
-        ${renderCardCheckboxes(item.productId, item.color)}
+        ${renderCardCheckboxes(item.productId, item.color, item)}
         ${renderProductCardMedia(item, productNameEscaped)}
         <div class="product-info">
           <span class="product-color-badge">${colorEscaped}</span>
@@ -2597,6 +2631,7 @@ window.togglePublication = function(productId, color) {
   if (index >= 0) {
     selectedForPublication.splice(index, 1);
     removeOfferSelection(pid, col);
+    syncNuevosIngresosHighlightForProduct(pid);
   } else {
     selectedForPublication.push({ productId: pid, color: col });
   }
@@ -2633,6 +2668,20 @@ window.toggleOffer = function(productId, color) {
   saveToLocalStorage();
 };
 
+window.toggleNuevosIngresosHighlight = function(productId) {
+  const pid = String(productId);
+  const hasPub = selectedForPublication.some(s => String(s.productId) === pid);
+  if (!hasPub) return;
+
+  const index = selectedForNuevosIngresosHighlight.findIndex(id => String(id) === pid);
+  if (index >= 0) {
+    selectedForNuevosIngresosHighlight.splice(index, 1);
+  } else {
+    selectedForNuevosIngresosHighlight.push(pid);
+  }
+  saveToLocalStorage();
+};
+
 // Remover de publicación
 window.removeFromPublication = function(productId, color) {
   const pid = String(productId);
@@ -2644,6 +2693,7 @@ window.removeFromPublication = function(productId, color) {
   if (index >= 0) {
     selectedForPublication.splice(index, 1);
     removeOfferSelection(pid, col);
+    syncNuevosIngresosHighlightForProduct(pid);
     refreshAllTabsRespectingFilter();
     
     // Renderizar tabla de publicación (async, no bloquear)
@@ -3083,6 +3133,7 @@ async function publishSelected({ notifyWebhook = true } = {}) {
   const selectedColorKeys = new Set(selectedForPublication.map(s => `${s.productId}|${s.color}`));
   const selectionSnapshot = [...selectedForPublication];
   const offerSnapshot = [...selectedForOffer];
+  const rehighlightSnapshot = [...selectedForNuevosIngresosHighlight];
   
   try {
     const DEBUG_PUBLICATION_EVENTS = true;
@@ -3109,6 +3160,17 @@ async function publishSelected({ notifyWebhook = true } = {}) {
 
     const nowIso = new Date().toISOString();
     const publicationChannel = "admin_publications";
+
+    const { data: prePublishProducts, error: prePublishErr } = await supabase
+      .from("products")
+      .select("id, last_published_at")
+      .in("id", uniqueProductIds);
+    if (prePublishErr) throw prePublishErr;
+    const wasPublishedBefore = new Set(
+      (prePublishProducts || [])
+        .filter(p => p.last_published_at)
+        .map(p => String(p.id))
+    );
 
     // Payload n8n antes de mutar BD (solo si se va a notificar webhook).
     let n8nExportRows = [];
@@ -3176,6 +3238,27 @@ async function publishSelected({ notifyWebhook = true } = {}) {
       .in("id", uniqueProductIds);
     
     if (error) throw error;
+
+    const rehighlightProductIds = [...new Set(
+      rehighlightSnapshot.map(id => String(id))
+    )].filter(pid => {
+      const inSelection = uniqueProductIds.some(id => String(id) === pid);
+      return inSelection && wasPublishedBefore.has(pid);
+    });
+
+    if (rehighlightProductIds.length > 0) {
+      const { error: rehighlightErr } = await supabase
+        .from("products")
+        .update({ nuevos_ingresos_highlight_at: nowIso })
+        .in("id", rehighlightProductIds);
+      if (rehighlightErr) {
+        console.warn("⚠️ No se pudo marcar reingreso en Nuevos ingresos:", rehighlightErr);
+        showMessage(
+          `⚠️ Publicación OK, pero no se pudo destacar en Nuevos ingresos: ${rehighlightErr.message}`,
+          "err"
+        );
+      }
+    }
 
     // FASE 2: historial real de publicaciones (no reemplaza comportamiento actual).
     // Si publication_events todavía no existe en algún entorno, no bloquear publicación.
@@ -3278,6 +3361,7 @@ async function publishSelected({ notifyWebhook = true } = {}) {
     // Limpiar selección
     selectedForPublication = [];
     selectedForOffer = [];
+    selectedForNuevosIngresosHighlight = [];
     saveToLocalStorage();
     
     // Actualizar UI inmediatamente respetando filtro actual
@@ -3325,6 +3409,7 @@ if (clearAllBtn) {
     if (confirm("¿Estás seguro de quitar todos los productos de la publicación?")) {
       selectedForPublication = [];
       selectedForOffer = [];
+      selectedForNuevosIngresosHighlight = [];
       saveToLocalStorage();
       refreshAllTabsRespectingFilter();
       renderPublicationTable();
@@ -3577,6 +3662,10 @@ if (searchPublication) {
 function saveToLocalStorage() {
   localStorage.setItem("publication_selected", JSON.stringify(selectedForPublication));
   localStorage.setItem("publication_offer_selected", JSON.stringify(selectedForOffer));
+  localStorage.setItem(
+    "publication_nuevos_ingresos_highlight",
+    JSON.stringify(selectedForNuevosIngresosHighlight)
+  );
 }
 
 // Cargar de localStorage
@@ -3610,6 +3699,22 @@ function loadFromLocalStorage() {
       console.warn("Error cargando ofertas guardadas:", e);
     }
   }
+
+  const savedRehighlight = localStorage.getItem("publication_nuevos_ingresos_highlight");
+  if (savedRehighlight) {
+    try {
+      const parsedRehighlight = JSON.parse(savedRehighlight);
+      selectedForNuevosIngresosHighlight = Array.isArray(parsedRehighlight)
+        ? parsedRehighlight.map(id => String(id))
+        : [];
+    } catch (e) {
+      console.warn("Error cargando reingresos destacados:", e);
+    }
+  }
+
+  selectedForNuevosIngresosHighlight = selectedForNuevosIngresosHighlight.filter(pid =>
+    selectedForPublication.some(s => String(s.productId) === String(pid))
+  );
 }
 
 // Programados: cargar y guardar

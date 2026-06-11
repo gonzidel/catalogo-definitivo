@@ -38,7 +38,9 @@ export default async function DashboardPage() {
         price_snapshot,
         imagen,
         sku,
-        status
+        status,
+        created_at,
+        variant_id
       )
     `)
     .eq("customer_id", user.id)

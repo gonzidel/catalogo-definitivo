@@ -6,6 +6,8 @@ import {
   CATALOG_SOURCE,
   CATALOG_SELECT,
   agruparProductos,
+  intercalarProductos,
+  compareCatalogRecency,
 } from "@/lib/utils/catalog";
 import type { CatalogRow, GroupedProduct, ColorDetail } from "@/types/catalog";
 
@@ -98,15 +100,19 @@ export function useCatalog({
   categoria = "all",
   tags = [] as string[],
   basePath: _basePath = "/nj", // kept for API compat, unused
+  enabled = true,
 }: {
   categoria?: string;
   tags?: string[];
   basePath?: string;
+  /** When false, skip Supabase fetch (banner pages with a fixed product set). */
+  enabled?: boolean;
 }) {
   const getKey = (
     pageIndex: number,
     previousData: CatalogPage | null
   ): FetchKey | null => {
+    if (!enabled) return null;
     if (previousData && !previousData.hasMore) return null;
     return { _type: "catalog", categoria, tags, page: pageIndex + 1 };
   };
@@ -128,9 +134,12 @@ export function useCatalog({
 
   // Merge all pages: products at batch boundaries can be split across pages.
   // Re-group by Articulo to merge DetalleColor from different batches.
-  const allProducts: GroupedProduct[] = mergeGroupedProducts(
-    pages.flatMap((p) => p.products)
-  );
+  const merged = mergeGroupedProducts(pages.flatMap((p) => p.products));
+
+  const allProducts: GroupedProduct[] =
+    categoria === "all" && tags.length === 0
+      ? intercalarProductos(merged)
+      : [...merged].sort(compareCatalogRecency);
 
   return {
     allProducts,

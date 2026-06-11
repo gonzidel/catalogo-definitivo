@@ -19,6 +19,8 @@ interface CatalogShellProps {
   initialProducts: GroupedProduct[];
   categoria: string;
   tags: string[];
+  /** Solo muestra initialProducts; no reemplaza con el feed global (p. ej. /banner/[slug]). */
+  fixedProductSet?: boolean;
   /** Content rendered between category filters and the catalog grid (home only) */
   aboveGridSlot?: React.ReactNode;
   /** Content inserted after the 4th product in the grid (home only) */
@@ -29,6 +31,7 @@ export default function CatalogShell({
   initialProducts,
   categoria,
   tags,
+  fixedProductSet = false,
   aboveGridSlot,
   curatedSlot,
 }: CatalogShellProps) {
@@ -69,17 +72,24 @@ export default function CatalogShell({
   const { allProducts, hasMore, isLoadingMore, loadMore } = useCatalog({
     categoria,
     tags,
+    enabled: !fixedProductSet,
   });
 
-  // Merge: prefer SWR data once loaded, fall back to SSR initialProducts
-  const baseProducts =
-    allProducts.length > 0 ? allProducts : initialProducts;
+  const baseProducts = fixedProductSet
+    ? initialProducts
+    : allProducts.length > 0
+      ? allProducts
+      : initialProducts;
+
+  const canLoadMore = !fixedProductSet && hasMore;
 
   // Apply search + size filters
   const searched =
     searchTerm.length >= 2 ? searchProducts(baseProducts, searchTerm) : baseProducts;
   const filtered =
-    activeSizes.length > 0 ? filterBySizes(searched, activeSizes) : searched;
+    activeSizes.length > 0
+      ? filterBySizes(searched, activeSizes, categoria)
+      : searched;
 
   // Expose loaded products globally so SearchBar autocomplete can use them
   useEffect(() => {
@@ -101,8 +111,8 @@ export default function CatalogShell({
   loadMoreRef.current = loadMore;
   const filteredRef = useRef(filtered);
   filteredRef.current = filtered;
-  const hasMoreRef = useRef(hasMore);
-  hasMoreRef.current = hasMore;
+  const hasMoreRef = useRef(canLoadMore);
+  hasMoreRef.current = canLoadMore;
   const displayCountRef = useRef(displayCount);
   displayCountRef.current = displayCount;
 
@@ -160,6 +170,7 @@ export default function CatalogShell({
         <SizeFilterSheet
           activeSizes={activeSizes}
           categoria={categoria}
+          products={baseProducts}
           onNeedCategory={handleNeedCategory}
           highlight={highlightTalles}
         />
@@ -302,7 +313,7 @@ export default function CatalogShell({
       />
 
       {/* Loading indicator */}
-      {isLoadingMore && allProducts.length > 0 && (
+      {isLoadingMore && !fixedProductSet && allProducts.length > 0 && (
         <div
           style={{
             display: "flex",
@@ -316,7 +327,7 @@ export default function CatalogShell({
       )}
 
       {/* End of results */}
-      {!hasMore && !isLoadingMore && filtered.length === 0 && searchTerm && (
+      {!canLoadMore && !isLoadingMore && filtered.length === 0 && searchTerm && (
         <div
           style={{ textAlign: "center", padding: "32px 16px", color: "#666" }}
         >

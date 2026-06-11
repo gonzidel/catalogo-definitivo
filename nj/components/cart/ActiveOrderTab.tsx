@@ -4,11 +4,10 @@ import { useState } from "react";
 import Link from "next/link";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useCartStore } from "@/store/cart";
+import LineItemRow, { formatItemARS } from "@/components/cart/LineItemRow";
 
 function formatARS(n: number) {
-  return new Intl.NumberFormat("es-AR", {
-    style: "currency", currency: "ARS", minimumFractionDigits: 0,
-  }).format(n);
+  return formatItemARS(n);
 }
 
 // Matches ITEM_STATUS_INFO in admin/orders.js
@@ -36,6 +35,7 @@ interface OrderItem {
   imagen?: string;
   status?: string;
   variant_id?: string;
+  created_at?: string;
 }
 
 interface ActiveOrder {
@@ -220,15 +220,19 @@ interface ActiveOrderTabProps {
   onOrderSent: () => void;
   onOrderRefresh: () => void;
   onOrderDismissed: () => void;
+  onOrderCancelled: () => void; // revert closed → active
 }
 
-export default function ActiveOrderTab({ order, onOrderSent, onOrderRefresh, onOrderDismissed }: ActiveOrderTabProps) {
-  const [sending, setSending]           = useState(false);
-  const [error, setError]               = useState<string | null>(null);
-  const [cancelingId, setCancelingId]   = useState<string | null>(null);
-  const [altOpenFor, setAltOpenFor]     = useState<string | null>(null);
-  const [menuOpenFor, setMenuOpenFor]   = useState<string | null>(null);
-  const [showSendConfirm, setShowSendConfirm] = useState(false);
+export default function ActiveOrderTab({ order, onOrderSent, onOrderRefresh, onOrderDismissed, onOrderCancelled }: ActiveOrderTabProps) {
+  const [sending, setSending]                   = useState(false);
+  const [error, setError]                       = useState<string | null>(null);
+  const [cancelingId, setCancelingId]           = useState<string | null>(null);
+  const [altOpenFor, setAltOpenFor]             = useState<string | null>(null);
+  const [menuOpenFor, setMenuOpenFor]           = useState<string | null>(null);
+  const [showSendConfirm, setShowSendConfirm]   = useState(false);
+  const [cancelingPrep, setCancelingPrep]       = useState(false);
+  const [showAllItems, setShowAllItems]         = useState(false);
+  const ITEMS_PREVIEW = 4;
   const addItem = useCartStore((s) => s.addItem);
 
   if (!order) {
@@ -319,6 +323,22 @@ export default function ActiveOrderTab({ order, onOrderSent, onOrderRefresh, onO
       .filter((i) => i.status !== "cancelled" && Number(i.quantity ?? 0) > 0 && i.status !== "missing")
       .reduce((a, i) => a + i.price_snapshot * i.quantity, 0);
 
+    async function handleCancelPreparation() {
+      if (!order || cancelingPrep) return;
+      setCancelingPrep(true);
+      const supabase = getSupabaseBrowserClient();
+      const { error: err } = await supabase
+        .from("orders")
+        .update({ status: "active" })
+        .eq("id", order.id);
+      setCancelingPrep(false);
+      if (err) {
+        alert("No se pudo cancelar la preparación. Intentá de nuevo.");
+      } else {
+        onOrderCancelled();
+      }
+    }
+
     return (
       <div>
         {/* Status card */}
@@ -355,9 +375,22 @@ export default function ActiveOrderTab({ order, onOrderSent, onOrderRefresh, onO
               40% { opacity: 1; transform: scale(1.1); }
             }
           `}</style>
-          <div style={{ fontSize: 12, color: "#CD844D", fontWeight: 600 }}>
+          <div style={{ fontSize: 12, color: "#CD844D", fontWeight: 600, marginBottom: 16 }}>
             Te avisamos cuando esté listo para enviar
           </div>
+          {/* Cancel preparation */}
+          <button
+            onClick={handleCancelPreparation}
+            disabled={cancelingPrep}
+            style={{
+              background: "none", border: "1.5px solid #e0d5cb",
+              borderRadius: 10, padding: "9px 18px",
+              fontSize: 13, color: "#999", cursor: cancelingPrep ? "not-allowed" : "pointer",
+              opacity: cancelingPrep ? 0.6 : 1,
+            }}
+          >
+            {cancelingPrep ? "Cancelando..." : "Cancelar preparación"}
+          </button>
         </div>
 
         {/* Order summary */}
@@ -382,35 +415,22 @@ export default function ActiveOrderTab({ order, onOrderSent, onOrderRefresh, onO
         }}>
           {order.order_items
             .filter((i) => i.status !== "cancelled" && Number(i.quantity ?? 0) > 0)
+            .sort((a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime())
             .map((item, idx, arr) => {
               const ist = ITEM_STATUS_INFO[item.status ?? "reserved"] ?? ITEM_STATUS_INFO.reserved;
               return (
                 <div key={item.id} style={{
-                  display: "flex", gap: 10, padding: "12px 16px",
                   borderBottom: idx < arr.length - 1 ? "1px solid #f5f5f5" : "none",
-                  alignItems: "center",
                 }}>
-                  {item.imagen && (
-                    <img src={item.imagen} alt={item.product_name} style={{
-                      width: 44, height: 44, borderRadius: 7, objectFit: "cover",
-                      flexShrink: 0, background: "#f5f5f5",
-                    }} />
-                  )}
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: "#222" }}>
-                      {item.product_name}
-                    </div>
-                    <div style={{ fontSize: 12, color: "#888" }}>
-                      {[item.color, item.size && `T. ${item.size}`].filter(Boolean).join(" · ")}
-                      {" · "}Cant. {item.quantity}
-                    </div>
-                  </div>
-                  <span style={{
-                    fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 20,
-                    color: ist.color, background: ist.bg, flexShrink: 0,
-                  }}>
-                    {ist.label}
-                  </span>
+                  <LineItemRow
+                    imagen={item.imagen}
+                    productName={item.product_name}
+                    color={item.color}
+                    size={item.size}
+                    quantity={item.quantity}
+                    unitPrice={item.price_snapshot}
+                    status={ist}
+                  />
                 </div>
               );
             })}
@@ -429,11 +449,25 @@ export default function ActiveOrderTab({ order, onOrderSent, onOrderRefresh, onO
     } // end if (!hasUnresolvedMissing)
   } // end if (order.status === "closed")
 
-  const visibleItems = order.order_items.filter(
-    (i) => i.status !== "cancelled" && Number(i.quantity ?? 0) > 0
-  );
-  const missingItems    = visibleItems.filter((i) => i.status === "missing");
-  const regularItems    = visibleItems.filter((i) => i.status !== "missing");
+  // Most recently added first — missing always pinned at top regardless of date
+  const allVisible = order.order_items
+    .filter((i) => i.status !== "cancelled" && Number(i.quantity ?? 0) > 0)
+    .sort((a, b) => {
+      // missing items float to top
+      if (a.status === "missing" && b.status !== "missing") return -1;
+      if (b.status === "missing" && a.status !== "missing") return 1;
+      // then newest first
+      return new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime();
+    });
+
+  const missingItems = allVisible.filter((i) => i.status === "missing");
+  const regularItems = allVisible.filter((i) => i.status !== "missing");
+
+  // Preview: show ITEMS_PREVIEW regular items (missing always shown)
+  const hiddenCount   = Math.max(0, regularItems.length - ITEMS_PREVIEW);
+  const shownRegular  = showAllItems ? regularItems : regularItems.slice(0, ITEMS_PREVIEW);
+  // Combined for render: missing first, then regular (possibly truncated)
+  const visibleItems  = [...missingItems, ...shownRegular];
   const totalItems      = regularItems.reduce((a, i) => a + i.quantity, 0);
   const totalAmount     = regularItems.reduce((a, i) => a + i.price_snapshot * i.quantity, 0);
   // Block send if there are unresolved missing items
@@ -505,133 +539,94 @@ export default function ActiveOrderTab({ order, onOrderSent, onOrderRefresh, onO
 
     return (
       <div key={item.id}>
-        <div style={{
-          display: "flex", gap: 10, padding: "14px 16px", alignItems: "flex-start",
-          background: isMissing ? "#fff5f5" : "transparent",
-          borderLeft: isMissing ? "3px solid #fca5a5" : "3px solid transparent",
-        }}>
-          {item.imagen && (
-            <img src={item.imagen} alt={item.product_name} style={{
-              width: 52, height: 52, borderRadius: 8, objectFit: "cover",
-              flexShrink: 0, background: "#f5f5f5",
-              opacity: isMissing ? 0.55 : 1,
-              filter: isMissing ? "grayscale(0.3)" : "none",
-            }} />
-          )}
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: isMissing ? "#991b1b" : "#222" }}>
-              {item.product_name}
-            </div>
-            <div style={{ fontSize: 12, color: "#888", marginTop: 2 }}>
-              {[item.color, item.size && `Talle ${item.size}`].filter(Boolean).join(" · ")}
-              {" · "}Cant. {item.quantity}
-            </div>
-            <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap", alignItems: "center" }}>
-              {item.status && (
-                <span style={{
-                  fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 20,
-                  color: ist.color, background: ist.bg,
-                }}>
-                  {ist.label}
-                </span>
-              )}
-              {/* Missing item inline actions */}
+        <LineItemRow
+          imagen={item.imagen}
+          productName={item.product_name}
+          color={item.color}
+          size={item.size}
+          quantity={item.quantity}
+          unitPrice={item.price_snapshot}
+          status={item.status ? ist : undefined}
+          highlight={isMissing ? "missing" : null}
+          strikePrice={isMissing}
+          line2={
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span>{item.quantity} uni · {formatARS(item.price_snapshot)} c/u</span>
               {isMissing && !isReadOnly && (
-                <>
-                  <button
-                    onClick={() => setAltOpenFor(isAltOpen ? null : item.id)}
-                    style={{
-                      fontSize: 11, fontWeight: 600, padding: "3px 9px", borderRadius: 20,
-                      background: "#FFF5EE", border: "1.5px solid #f0c898",
-                      color: "#CD844D", cursor: "pointer",
-                    }}
-                  >
-                    {isAltOpen ? "Cerrar" : "Ver alternativas"}
-                  </button>
-                </>
+                <button
+                  onClick={() => setAltOpenFor(isAltOpen ? null : item.id)}
+                  style={{
+                    fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 20,
+                    background: "#FFF5EE", border: "1px solid #f0c898",
+                    color: "#CD844D", cursor: "pointer",
+                  }}
+                >
+                  {isAltOpen ? "Cerrar" : "Alternativas"}
+                </button>
               )}
-            </div>
-          </div>
+            </span>
+          }
+          trailing={
+            !isReadOnly ? (
+              <div style={{ position: "relative" }}>
+                <button
+                  onClick={() => setMenuOpenFor(isMenuOpen ? null : item.id)}
+                  aria-label="Opciones"
+                  style={{
+                    background: "none", border: "none", cursor: "pointer",
+                    fontSize: 18, color: "#aaa", padding: "2px 4px",
+                    lineHeight: 1, borderRadius: 6,
+                  }}
+                >
+                  ⋯
+                </button>
 
-          {/* Right: price + kebab menu */}
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4, flexShrink: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{
-                fontSize: 13, fontWeight: 700,
-                color: isMissing ? "#ccc" : "#555",
-                textDecoration: isMissing ? "line-through" : "none",
-              }}>
-                {formatARS(item.price_snapshot * item.quantity)}
-              </span>
-
-              {/* Kebab ⋯ */}
-              {!isReadOnly && (
-                <div style={{ position: "relative" }}>
-                  <button
-                    onClick={() => setMenuOpenFor(isMenuOpen ? null : item.id)}
-                    aria-label="Opciones"
-                    style={{
-                      background: "none", border: "none", cursor: "pointer",
-                      fontSize: 18, color: "#aaa", padding: "2px 4px",
-                      lineHeight: 1, borderRadius: 6,
-                    }}
-                  >
-                    ⋯
-                  </button>
-
-                  {isMenuOpen && (
-                    <>
-                      {/* backdrop to close on outside click */}
-                      <div
+                {isMenuOpen && (
+                  <>
+                    <div
+                      onClick={() => setMenuOpenFor(null)}
+                      style={{ position: "fixed", inset: 0, zIndex: 40 }}
+                    />
+                    <div style={{
+                      position: "absolute", right: 0, top: "calc(100% + 4px)",
+                      background: "#fff", borderRadius: 12, zIndex: 50,
+                      boxShadow: "0 4px 20px rgba(0,0,0,0.15)",
+                      minWidth: 170, overflow: "hidden",
+                      border: "1px solid #f0f0f0",
+                    }}>
+                      <button
+                        onClick={() => { setMenuOpenFor(null); handleCancelItem(item.id); }}
+                        disabled={cancelingId === item.id}
+                        style={{
+                          display: "block", width: "100%", padding: "12px 16px",
+                          background: "none", border: "none", textAlign: "left",
+                          fontSize: 14, fontWeight: 500, color: "#e53e3e",
+                          cursor: "pointer", borderBottom: "1px solid #f5f5f5",
+                        }}
+                      >
+                        {cancelingId === item.id ? "Quitando..." : "Quitar del pedido"}
+                      </button>
+                      <a
+                        href={`/nj/producto/${productSlug}`}
                         onClick={() => setMenuOpenFor(null)}
                         style={{
-                          position: "fixed", inset: 0, zIndex: 40,
+                          display: "block", padding: "12px 16px",
+                          fontSize: 14, fontWeight: 500, color: "#333",
+                          textDecoration: "none",
                         }}
-                      />
-                      <div style={{
-                        position: "absolute", right: 0, top: "calc(100% + 4px)",
-                        background: "#fff", borderRadius: 12, zIndex: 50,
-                        boxShadow: "0 4px 20px rgba(0,0,0,0.15)",
-                        minWidth: 170, overflow: "hidden",
-                        border: "1px solid #f0f0f0",
-                      }}>
-                        {/* Quitar del pedido */}
-                        <button
-                          onClick={() => { setMenuOpenFor(null); handleCancelItem(item.id); }}
-                          disabled={cancelingId === item.id}
-                          style={{
-                            display: "block", width: "100%", padding: "12px 16px",
-                            background: "none", border: "none", textAlign: "left",
-                            fontSize: 14, fontWeight: 500, color: "#e53e3e",
-                            cursor: "pointer", borderBottom: "1px solid #f5f5f5",
-                          }}
-                        >
-                          {cancelingId === item.id ? "Quitando..." : "Quitar del pedido"}
-                        </button>
-                        {/* Ver producto */}
-                        <a
-                          href={`/nj/producto/${productSlug}`}
-                          onClick={() => setMenuOpenFor(null)}
-                          style={{
-                            display: "block", padding: "12px 16px",
-                            fontSize: 14, fontWeight: 500, color: "#333",
-                            textDecoration: "none",
-                          }}
-                        >
-                          Ver producto
-                        </a>
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
+                      >
+                        Ver producto
+                      </a>
+                    </div>
+                  </>
+                )}
+              </div>
+            ) : undefined
+          }
+        />
 
-        {/* Alternatives panel */}
         {isMissing && isAltOpen && (
-          <div style={{ padding: "0 14px 10px" }}>
+          <div style={{ padding: "0 12px 10px" }}>
             <AlternativesPanel
               item={item}
               onClose={() => setAltOpenFor(null)}
@@ -772,26 +767,65 @@ export default function ActiveOrderTab({ order, onOrderSent, onOrderRefresh, onO
         background: "#fff", borderRadius: 16, marginBottom: 10,
         boxShadow: "0 1px 4px rgba(0,0,0,0.07)", overflow: "hidden",
       }}>
-        {/* Missing items first */}
+        {/* Missing items (always shown, pinned at top) */}
         {missingItems.map((item, idx) => (
           <div key={item.id} style={{
-            borderBottom: idx < missingItems.length - 1 || regularItems.length > 0
+            borderBottom: idx < missingItems.length - 1 || shownRegular.length > 0
               ? "1px solid #f5f5f5" : "none",
           }}>
             {renderItem(item, true)}
           </div>
         ))}
 
-        {/* Regular items */}
-        {regularItems.map((item, idx) => (
+        {/* Regular items (newest first, truncated to ITEMS_PREVIEW unless expanded) */}
+        {shownRegular.map((item, idx) => (
           <div key={item.id} style={{
-            borderBottom: idx < regularItems.length - 1 ? "1px solid #f5f5f5" : "none",
+            borderBottom: idx < shownRegular.length - 1 || hiddenCount > 0
+              ? "1px solid #f5f5f5" : "none",
           }}>
             {renderItem(item, false)}
           </div>
         ))}
 
-        {visibleItems.length === 0 && (
+        {/* "Ver todo el pedido" expand button */}
+        {hiddenCount > 0 && !showAllItems && (
+          <button
+            onClick={() => setShowAllItems(true)}
+            style={{
+              width: "100%", padding: "12px 16px", border: "none",
+              background: "#fafafa", cursor: "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+              fontSize: 13, color: "#CD844D", fontWeight: 600,
+              borderTop: "1px solid #f5f5f5",
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="6 9 12 15 18 9"/>
+            </svg>
+            Ver {hiddenCount} producto{hiddenCount !== 1 ? "s" : ""} más del pedido
+          </button>
+        )}
+
+        {/* "Ver menos" collapse */}
+        {showAllItems && regularItems.length > ITEMS_PREVIEW && (
+          <button
+            onClick={() => setShowAllItems(false)}
+            style={{
+              width: "100%", padding: "12px 16px", border: "none",
+              background: "#fafafa", cursor: "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+              fontSize: 13, color: "#aaa", fontWeight: 500,
+              borderTop: "1px solid #f5f5f5",
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="18 15 12 9 6 15"/>
+            </svg>
+            Ver menos
+          </button>
+        )}
+
+        {allVisible.length === 0 && (
           <div style={{ padding: "20px 16px", textAlign: "center", color: "#aaa", fontSize: 13 }}>
             No hay productos en este pedido
           </div>

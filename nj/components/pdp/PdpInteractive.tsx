@@ -6,9 +6,12 @@ import PdpColorPicker from "./PdpColorPicker";
 import PdpSizePicker from "./PdpSizePicker";
 import PdpGallery from "./PdpGallery";
 import PdpRecommended from "./PdpRecommended";
-import AddToCartButton from "@/components/cart/AddToCartButton";
+import { useCartStore } from "@/store/cart";
 import { formatARS } from "@/lib/utils/catalog";
 import type { GroupedProduct, ColorDetail } from "@/types/catalog";
+
+/** selections[variantId][size] = qty */
+type MultiSelection = Record<string, Record<string, number>>;
 
 interface VariantSizeInfo {
   variantId: string;
@@ -72,8 +75,13 @@ export default function PdpInteractive({
     );
     return exists ? requested : firstColor;
   });
-  const [activeSize, setActiveSize] = useState("");
   const [currentHeroSrc, setCurrentHeroSrc] = useState<string | null>(null);
+
+  // Multi-selection: { variantId: { size: qty } }
+  const [selections, setSelections] = useState<MultiSelection>({});
+  const [addedFlash, setAddedFlash] = useState(false);
+
+  const addItem = useCartStore((s) => s.addItem);
 
   // Always resolve to a valid color — fallback to first if not found
   const colorDetail: ColorDetail | null =
@@ -95,16 +103,73 @@ export default function PdpInteractive({
     (v) => v.color.toLowerCase() === activeColor.toLowerCase()
   );
   const sizesWithStock = variantInfo?.sizes ?? [];
-
-  // Cart button state
   const resolvedVariantId = variantInfo?.variantId ?? "";
-  const sizeStock = variantInfo?.sizes.find((s) => s.size === activeSize)?.stock_qty ?? 1;
-  const outOfStock = activeSize !== "" && sizeStock <= 0;
+
+  // Selections for the current color/variant
+  const currentVariantSelections: Record<string, number> =
+    resolvedVariantId ? (selections[resolvedVariantId] ?? {}) : {};
+
+  const handleSizeChange = useCallback((size: string, qty: number) => {
+    if (!resolvedVariantId) return;
+    setSelections((prev) => {
+      const variant = { ...(prev[resolvedVariantId] ?? {}) };
+      if (qty <= 0) {
+        delete variant[size];
+      } else {
+        variant[size] = qty;
+      }
+      return { ...prev, [resolvedVariantId]: variant };
+    });
+  }, [resolvedVariantId]);
 
   const onColorChange = useCallback((color: string) => {
     setActiveColor(color);
-    setActiveSize("");
   }, []);
+
+  // Build flat list of all selected items across all variants
+  const allSelectedItems = useMemo(() => {
+    const items: Array<{ variantId: string; color: string; size: string; qty: number; imagen?: string }> = [];
+    for (const [varId, sizeMap] of Object.entries(selections)) {
+      const vi = variantSizes.find((v) => v.variantId === varId);
+      if (!vi) continue;
+      const dc = product.DetalleColor.find(
+        (d) => d.color.toLowerCase() === vi.color.toLowerCase()
+      );
+      const imagen =
+        typeof dc?.images?.[0] === "string"
+          ? dc.images[0]
+          : (dc?.images?.[0] as any)?.url ?? undefined;
+      for (const [size, qty] of Object.entries(sizeMap)) {
+        if (qty > 0) items.push({ variantId: varId, color: vi.color, size, qty, imagen });
+      }
+    }
+    // Sort by color then size for display
+    items.sort((a, b) => a.color.localeCompare(b.color) || a.size.localeCompare(b.size));
+    return items;
+  }, [selections, variantSizes, product.DetalleColor]);
+
+  const totalSelectedQty = allSelectedItems.reduce((a, i) => a + i.qty, 0);
+  const totalSelectedAmount = allSelectedItems.reduce(
+    (a, i) => a + i.qty * Number(product.Precio ?? 0), 0
+  );
+
+  function handleAddAllToCart() {
+    if (totalSelectedQty === 0) return;
+    for (const item of allSelectedItems) {
+      addItem({
+        variant_id: item.variantId,
+        product_name: product.Articulo,
+        color: item.color,
+        size: item.size,
+        qty: item.qty,
+        price_snapshot: Number(product.Precio ?? 0),
+        imagen: item.imagen,
+      });
+    }
+    setSelections({});
+    setAddedFlash(true);
+    setTimeout(() => setAddedFlash(false), 2500);
+  }
 
   const price = formatARS(product.Precio);
   const offerPrice = product.OfertaActiva ? formatARS(product.PrecioOferta) : null;
@@ -295,8 +360,8 @@ export default function PdpInteractive({
             <PdpSizePicker
               colorDetail={colorDetail}
               sizesWithStock={sizesWithStock}
-              activeSize={activeSize}
-              onSizeChange={setActiveSize}
+              selections={currentVariantSelections}
+              onSelectionChange={handleSizeChange}
             />
           </div>
 
@@ -307,29 +372,8 @@ export default function PdpInteractive({
             </div>
           )}
 
-          <div style={{ marginTop: 24 }}>
-            <AddToCartButton
-              variantId={resolvedVariantId}
-              productName={product.Articulo}
-              color={activeColor}
-              size={activeSize}
-              priceSnapshot={Number(product.Precio ?? 0)}
-              imagen={
-                typeof colorDetail?.images?.[0] === "string"
-                  ? colorDetail.images[0]
-                  : (colorDetail?.images?.[0] as any)?.url ?? undefined
-              }
-              disabled={!resolvedVariantId || outOfStock}
-            />
-            {outOfStock && (
-              <p style={{
-                textAlign: "center", fontSize: 12, color: "#e85d04",
-                margin: "8px 0 0", fontWeight: 500,
-              }}>
-                Sin stock en este talle
-              </p>
-            )}
-          </div>
+          {/* Space for the sticky cart bar */}
+          <div style={{ height: totalSelectedQty > 0 ? 96 : 0, transition: "height 0.2s" }} />
 
           {/* Recommended products */}
           <PdpRecommended
@@ -339,6 +383,63 @@ export default function PdpInteractive({
             filtro3={product.Filtro3}
             categoria={product.Categoria}
           />
+        </div>
+      </div>
+
+      {/* ── Sticky cart summary bar — sits above BottomNav ───────────── */}
+      <div style={{
+        position: "fixed", bottom: 60, left: 0, right: 0,
+        zIndex: 60,
+        transform: totalSelectedQty > 0 || addedFlash ? "translateY(0)" : "translateY(calc(100% + 60px))",
+        transition: "transform 0.25s cubic-bezier(0.4,0,0.2,1)",
+      }}>
+        <div style={{
+          background: "#fff",
+          borderTop: "1px solid #f0ebe4",
+          padding: "10px 16px 12px",
+          boxShadow: "0 -4px 20px rgba(0,0,0,0.1)",
+        }}>
+          {/* Success flash */}
+          {addedFlash && totalSelectedQty === 0 ? (
+            <div style={{
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+              padding: "14px", borderRadius: 14,
+              background: "#f0fdf4", border: "1.5px solid #86efac",
+            }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+                stroke="#16a34a" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+              <span style={{ fontSize: 15, fontWeight: 700, color: "#16a34a" }}>
+                ¡Agregado al carrito!
+              </span>
+            </div>
+          ) : (
+            <button
+              onClick={handleAddAllToCart}
+              style={{
+                width: "100%", padding: "14px 16px",
+                borderRadius: 14, border: "none",
+                background: "#CD844D", color: "#fff",
+                fontSize: 15, fontWeight: 700, cursor: "pointer",
+                boxShadow: "0 4px 14px rgba(205,132,77,0.35)",
+                display: "flex", alignItems: "center", justifyContent: "space-between",
+              }}
+            >
+              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+                  strokeLinejoin="round">
+                  <circle cx="9" cy="21" r="1" /><circle cx="20" cy="21" r="1" />
+                  <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
+                </svg>
+                Agregar {totalSelectedQty} par{totalSelectedQty !== 1 ? "es" : ""} al carrito
+              </span>
+              <span style={{ fontWeight: 600, opacity: 0.9 }}>
+                {formatARS(totalSelectedAmount)}
+              </span>
+            </button>
+          )}
         </div>
       </div>
     </div>

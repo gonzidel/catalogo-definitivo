@@ -46,6 +46,8 @@ Nota importante: el usuario confirmo que los SQL analizados ya estan cargados y 
 | 38 | [[38-META-FEED-ENRICHMENT-2026-05-23]] | Meta Catalog Feed — auditoría, enriquecimiento por fases (spec en `doc/meta-feed/`) |
 | 39 | [[39-LISTA-ENVIOS-SENT-AT-2026-05-26]] | Lista de envíos: fecha por finalización (`sent_at`), deploy 227 |
 | 40 | [[40-PAU-PANEL-ATENCION-UNIFICADO]] | PAU — panel móvil admin: buscar clienta, QR/manual, agregar pedido, cerrar (canónico `doc/pau/`) |
+| 41 | [[41-MIGRACION-NEXTJS-NJ-2026-06-08]] | Migración Next.js 15 App Router en `/nj` |
+| 42 | [[42-HOME-BANNERS-FEED-NJ-2026-06-09]] | Home NJ: banners (Nuevos ingresos, especial, curado), reingreso admin, orden feed |
 
 ## Auditorias modulares
 

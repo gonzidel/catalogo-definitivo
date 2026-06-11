@@ -2,11 +2,64 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import CartTab from "@/components/cart/CartTab";
 import ActiveOrderTab from "@/components/cart/ActiveOrderTab";
+import ProfileShippingBlock from "@/components/profile/ProfileShippingBlock";
 import { useCartStore, selectCartCount } from "@/store/cart";
+
+// Mirrors dashboard-instant.js buildSyntheticDeadlineNotificationsList
+function buildDeadlineNotifications(order: { id: string; status: string; created_at: string; dismantle_at?: string | null; order_items: { quantity: number; status?: string }[] } | null) {
+  if (!order || !["active", "closing_soon"].includes(order.status)) return [];
+
+  const oneDayMs = 1000 * 60 * 60 * 24;
+  const now = Date.now();
+  const deadline = order.dismantle_at
+    ? new Date(order.dismantle_at).getTime()
+    : new Date(order.created_at).getTime() + 7 * oneDayMs;
+  const daysLeft = Math.max(0, Math.ceil((deadline - now) / oneDayMs));
+
+  if (daysLeft !== 1 && daysLeft !== 2 && daysLeft !== 0) return [];
+
+  const totalItems = order.order_items
+    .filter((i) => i.status !== "cancelled" && i.status !== "missing" && Number(i.quantity ?? 0) > 0)
+    .reduce((a: number, i) => a + i.quantity, 0);
+  const hasMin = totalItems >= 4;
+  const missing = Math.max(0, 4 - totalItems);
+  const tier = daysLeft === 2 ? 5 : 6;
+
+  const message = tier === 5
+    ? hasMin
+      ? "Faltan 2 días para que se cierre tu pedido. Finalizalo cuando quieras para que lo preparemos y enviemos."
+      : `Faltan 2 días para que se cierre tu pedido.<br>Te faltan ${missing} productos para alcanzar el mínimo y poder enviarlo.`
+    : hasMin
+      ? "Tu pedido se cierra mañana.<br>Finalizalo hoy para asegurarte el envío."
+      : `Tu pedido se cierra mañana.<br>Te faltan ${missing} productos para alcanzar el mínimo.<br>Si no lo completás, el pedido se desarmará.`;
+
+  const isExpired = daysLeft === 0;
+  const expiredMsg = "Tu pedido alcanzó el plazo de 7 días. Ya no se puede editar desde la web y está pendiente de desarme por administración.";
+
+  const results = [];
+  if (isExpired) {
+    results.push({
+      id: `synthetic-order-expired-pending-disassembly-${order.id}`,
+      type: "ORDER_EXPIRED_PENDING_DISASSEMBLY",
+      message: expiredMsg,
+      read: false,
+      created_at: order.dismantle_at ?? order.created_at,
+    });
+  } else {
+    results.push({
+      id: `synthetic-order-deadline-${order.id}-${tier}`,
+      type: "ORDER_DEADLINE_REMINDER",
+      message,
+      read: false,
+      created_at: order.dismantle_at ?? order.created_at,
+    });
+  }
+  return results;
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -183,13 +236,60 @@ function OrderCard({ order, expanded, onToggle }: {
 
 type TabId = "cart" | "active-order" | "orders" | "profile";
 
+function IconCart({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="9" cy="21" r="1" /><circle cx="20" cy="21" r="1" />
+      <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
+    </svg>
+  );
+}
+
+function IconOrder({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+      <rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
+      <line x1="9" y1="12" x2="15" y2="12" /><line x1="9" y1="16" x2="13" y2="16" />
+    </svg>
+  );
+}
+
+function IconHistory({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
+    </svg>
+  );
+}
+
+function IconProfile({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" />
+    </svg>
+  );
+}
+
 export default function DashboardClient({ user, customer, orders: initialOrders }: DashboardClientProps) {
   const router = useRouter();
   const [orders, setOrders] = useState<Order[]>(initialOrders);
   const [expandedOrder, setExpandedOrder] = useState<string | null>(null);
+  const searchParams = useSearchParams();
   const [loggingOut, setLoggingOut] = useState(false);
-  const [tab, setTab] = useState<TabId>("cart");
   const cartCount = useCartStore(selectCartCount);
+  const setActiveOrderStatus      = useCartStore((s) => s.setActiveOrderStatus);
+  const setSyntheticNotifications = useCartStore((s) => s.setSyntheticNotifications);
+
+  const VALID_TABS = new Set<TabId>(["cart", "active-order", "orders", "profile"]);
+  const paramTab = searchParams.get("tab") as TabId | null;
+  const [tab, setTab] = useState<TabId>(
+    paramTab && VALID_TABS.has(paramTab) ? paramTab : "cart"
+  );
 
   // Priority: active → closing_soon → closed → sent (if recently sent / not dismissed)
   const statusRank = (s: string) => {
@@ -259,6 +359,17 @@ export default function DashboardClient({ user, customer, orders: initialOrders 
     refreshOrders().then(() => setTab("orders"));
   }
 
+  // Revert closed → active: go to cart tab so user can add more
+  function handleOrderCancelled() {
+    refreshOrders().then(() => setTab("cart"));
+  }
+
+  // Sync active order status + synthetic notifications to Zustand
+  useEffect(() => {
+    setActiveOrderStatus(activeOrder?.status ?? null);
+    setSyntheticNotifications(buildDeadlineNotifications(activeOrder));
+  }, [activeOrder?.id, activeOrder?.status, setActiveOrderStatus, setSyntheticNotifications]);
+
   // Realtime: watch the active order for status changes (e.g. sent by admin)
   // Realtime: watch the active order and its items for status changes
   useEffect(() => {
@@ -286,32 +397,25 @@ export default function DashboardClient({ user, customer, orders: initialOrders 
 
   const displayName = customer?.full_name ?? user.email.split("@")[0] ?? "Cliente";
 
-  const TABS = [
-    {
-      id: "cart" as TabId,
-      label: cartCount > 0 ? `🛒 Carrito (${cartCount})` : "🛒 Carrito",
-    },
-    {
-      id: "active-order" as TabId,
-      label: activeOrder ? "📋 Mi pedido" : "📋 Mi pedido",
-    },
-    { id: "orders" as TabId, label: "🕐 Historial" },
-    { id: "profile" as TabId, label: "👤 Perfil" },
+  const PRIMARY_TABS = [
+    { id: "cart" as TabId,         label: "Carrito",   iconType: "cart" as const,  badge: cartCount > 0 ? String(cartCount) : null },
+    { id: "active-order" as TabId, label: "Mi pedido", iconType: "order" as const, badge: activeOrder && tab !== "active-order" ? "·" : null },
   ];
 
   return (
     <div style={{ minHeight: "100svh", background: "#E5E1DC" }}>
-      {/* Header */}
+      {/* Breadcrumb row — no logo, the global Header already has it */}
       <div style={{
-        background: "#fff", padding: "16px",
+        background: "#fff", padding: "10px 16px",
         display: "flex", alignItems: "center", justifyContent: "space-between",
-        borderBottom: "1px solid #eee", position: "sticky", top: 0, zIndex: 10,
+        borderBottom: "1px solid #eee",
       }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <Link href="/" style={{ display: "flex", textDecoration: "none" }}>
-            <img src="/nj/logo.png" alt="FYL" style={{ height: 36, objectFit: "contain" }} />
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <Link href="/" style={{ fontSize: 13, color: "#aaa", textDecoration: "none" }}>
+            Inicio
           </Link>
-          <span style={{ fontSize: 14, color: "#aaa" }}>/ Mi cuenta</span>
+          <span style={{ fontSize: 13, color: "#ccc" }}>/</span>
+          <span style={{ fontSize: 13, color: "#555", fontWeight: 600 }}>Mi cuenta</span>
         </div>
         <button onClick={handleLogout} disabled={loggingOut} style={{
           background: "none", border: "1px solid #ddd", borderRadius: 8,
@@ -323,60 +427,108 @@ export default function DashboardClient({ user, customer, orders: initialOrders 
       </div>
 
       <div style={{ padding: "16px", maxWidth: 640, margin: "0 auto" }}>
-        {/* Welcome */}
+        {/* Welcome card + secondary nav */}
         <div style={{
-          background: "#fff", borderRadius: 16, padding: "20px",
+          background: "#fff", borderRadius: 16, padding: "16px 20px",
           marginBottom: 12, boxShadow: "0 1px 4px rgba(0,0,0,0.07)",
+          display: "flex", alignItems: "center", justifyContent: "space-between",
         }}>
-          <div style={{ fontSize: 13, color: "#888" }}>Hola,</div>
-          <div style={{ fontSize: 20, fontWeight: 700, color: "#222", marginTop: 2 }}>
-            {displayName}
-          </div>
-          {customer?.customer_number && (
-            <div style={{ fontSize: 12, color: "#aaa", marginTop: 4 }}>
-              Cliente #{customer.customer_number}
+          <div>
+            <div style={{ fontSize: 12, color: "#aaa" }}>Hola,</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: "#222", marginTop: 1 }}>
+              {displayName}
             </div>
-          )}
-        </div>
-
-        {/* Tabs — scroll horizontal en mobile */}
-        <div style={{
-          display: "flex", gap: 6, marginBottom: 12,
-          overflowX: "auto", paddingBottom: 2,
-          scrollbarWidth: "none",
-        }}>
-          {TABS.map((t) => (
+            {customer?.customer_number && (
+              <div style={{ fontSize: 11, color: "#bbb", marginTop: 2 }}>
+                Cliente #{customer.customer_number}
+              </div>
+            )}
+          </div>
+          {/* Secondary access: Historial + Perfil */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end" }}>
             <button
-              key={t.id}
-              onClick={() => setTab(t.id)}
+              onClick={() => setTab("orders")}
               style={{
-                flexShrink: 0, padding: "10px 12px", borderRadius: 12, border: "none",
-                background: tab === t.id ? "#CD844D" : "#fff",
-                color: tab === t.id ? "#fff" : "#555",
-                fontSize: 13, fontWeight: tab === t.id ? 600 : 400,
-                cursor: "pointer", boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
-                transition: "all 0.15s",
-                position: "relative",
+                background: tab === "orders" ? "#f5f0eb" : "none",
+                border: "none", cursor: "pointer",
+                display: "flex", alignItems: "center", gap: 5,
+                fontSize: 13, color: tab === "orders" ? "#CD844D" : "#888",
+                fontWeight: tab === "orders" ? 600 : 400,
+                padding: "4px 8px", borderRadius: 8,
               }}
             >
-              {t.label}
-              {/* Dot indicator on "Mi pedido" when there's an active order */}
-              {t.id === "active-order" && activeOrder && tab !== "active-order" && (
-                <span style={{
-                  position: "absolute", top: 6, right: 6,
-                  width: 7, height: 7, borderRadius: "50%",
-                  background: "#e85d04", border: "1.5px solid #fff",
-                }} />
-              )}
+              <IconHistory /> Historial
             </button>
-          ))}
+            <button
+              onClick={() => setTab("profile")}
+              style={{
+                background: tab === "profile" ? "#f5f0eb" : "none",
+                border: "none", cursor: "pointer",
+                display: "flex", alignItems: "center", gap: 5,
+                fontSize: 13, color: tab === "profile" ? "#CD844D" : "#888",
+                fontWeight: tab === "profile" ? 600 : 400,
+                padding: "4px 8px", borderRadius: 8,
+              }}
+            >
+              <IconProfile /> Perfil
+            </button>
+          </div>
         </div>
+
+        {/* ── Primary tabs: Carrito + Mi pedido ── */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+          {PRIMARY_TABS.map((t) => {
+            const isActive = tab === t.id;
+            return (
+              <button
+                key={t.id}
+                onClick={() => setTab(t.id)}
+                style={{
+                  flex: 1, padding: "8px 12px", borderRadius: 10, border: "none",
+                  background: isActive ? "#CD844D" : "#fff",
+                  color: isActive ? "#fff" : "#555",
+                  fontSize: 13, fontWeight: isActive ? 600 : 500,
+                  cursor: "pointer",
+                  boxShadow: isActive ? "0 2px 8px rgba(205,132,77,0.25)" : "0 1px 3px rgba(0,0,0,0.06)",
+                  transition: "all 0.15s",
+                  position: "relative",
+                  display: "flex", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6,
+                }}
+              >
+                <span style={{ display: "flex", alignItems: "center" }}>
+                  {t.iconType === "cart" ? <IconCart size={17} /> : <IconOrder size={17} />}
+                </span>
+                <span>{t.label}</span>
+                {t.badge && (
+                  <span style={{
+                    position: "absolute", top: 4, right: 8,
+                    minWidth: 15, height: 15, borderRadius: 99,
+                    background: isActive ? "#fff" : "#CD844D",
+                    color: isActive ? "#CD844D" : "#fff",
+                    fontSize: 9, fontWeight: 800,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    padding: "0 3px",
+                    lineHeight: 1,
+                    pointerEvents: "none",
+                  }}>
+                    {t.badge === "·" ? "" : t.badge}
+                    {t.badge === "·" && <span style={{ width: 5, height: 5, borderRadius: "50%", background: isActive ? "#CD844D" : "#fff", display: "block" }} />}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+
 
         {/* ── Tab: Carrito ── */}
         {tab === "cart" && (
           <CartTab
             customerId={user.id}
             onOrderCreated={handleOrderCreated}
+            activeOrderStatus={activeOrder?.status ?? null}
+            onGoToOrder={() => setTab("active-order")}
           />
         )}
 
@@ -387,6 +539,7 @@ export default function DashboardClient({ user, customer, orders: initialOrders 
             onOrderSent={handleOrderSent}
             onOrderRefresh={refreshOrders}
             onOrderDismissed={handleOrderDismissed}
+            onOrderCancelled={handleOrderCancelled}
           />
         )}
 
@@ -451,6 +604,10 @@ export default function DashboardClient({ user, customer, orders: initialOrders 
                 </div>
               ) : null
             )}
+            <ProfileShippingBlock
+              province={customer?.province}
+              city={customer?.city}
+            />
             <div style={{ marginTop: 20, textAlign: "center" }}>
               <a href="/dashboard/perfil" style={{
                 display: "inline-block", padding: "10px 20px", borderRadius: 10,

@@ -1,4 +1,11 @@
 import type { GroupedProduct } from "@/types/catalog";
+import { expandCombinedSizes } from "@/lib/utils/size-filter-catalog";
+import {
+  expandRopaSelectionToKeys,
+  productTalleMatchesRopaKeys,
+  ROPA_PAIR_LABELS,
+} from "@/lib/utils/size-filter-ropa";
+import { normalizeSize } from "@/lib/utils/size-normalizer";
 
 // ─── Normalization (same as original: NFD + lowercase + no accents) ───────────
 
@@ -223,15 +230,42 @@ export function buildSuggestions(
 
 // ─── Size filter ─────────────────────────────────────────────────────────────
 
+function talleMatchesSelection(
+  talle: string,
+  selected: string[],
+  categoria: string
+): boolean {
+  const cat = categoria.trim().toLowerCase();
+  const parts = expandCombinedSizes([talle]);
+
+  if (cat === "ropa") {
+    const keys = expandRopaSelectionToKeys(selected);
+    return parts.some((p) => productTalleMatchesRopaKeys(p, keys));
+  }
+
+  const selectedNorm = new Set(
+    selected.flatMap((s) => {
+      const t = String(s).trim();
+      if (ROPA_PAIR_LABELS.has(t)) return expandCombinedSizes([t]);
+      return [normalizeSize(t) || t.trim().toUpperCase()];
+    })
+  );
+
+  return parts.some((p) => {
+    const n = normalizeSize(p) || p.trim().toUpperCase();
+    return selectedNorm.has(n);
+  });
+}
+
 export function filterBySizes(
   products: GroupedProduct[],
-  sizes: string[]
+  sizes: string[],
+  categoria = "all"
 ): GroupedProduct[] {
   if (!sizes || sizes.length === 0) return products;
-  const sizeSet = new Set(sizes.map((s) => s.trim().toLowerCase()));
   return products.filter((p) =>
     (p.DetalleColor ?? []).some((dc) =>
-      dc.talles.some((t) => sizeSet.has(t.trim().toLowerCase()))
+      dc.talles.some((t) => talleMatchesSelection(t, sizes, categoria))
     )
   );
 }

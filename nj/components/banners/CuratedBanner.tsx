@@ -4,25 +4,27 @@ import Image from "next/image";
 import Link from "next/link";
 import useSWR from "swr";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
-import { CATALOG_SOURCE, formatARS } from "@/lib/utils/catalog";
+import { formatARS } from "@/lib/utils/catalog";
 import { resolveImageSrc } from "@/lib/cloudinary";
-import type { CuratedBannerConfig, CuratedVariantCard } from "@/types/banners";
+import {
+  enrichCuratedCardsWithProductColors,
+  fetchCuratedVariantCards,
+} from "@/lib/banners/curated-banner-fetch";
+import {
+  chunkPairPages,
+  getCarouselCards,
+  toColumnPairs,
+} from "@/lib/banners/curated-banner-layout";
+import type { CuratedBannerConfig, CuratedVariantCardEnriched } from "@/types/banners";
 
-// ─── Constants ────────────────────────────────────────────────────────────────
-
-const DYNAMIC_TAG = "__curated__";
-const VARIANT_SELECT =
-  'variant_id,Articulo,Descripcion,Color,Precio,"Imagen Principal",OfertaActiva,PrecioOferta';
-
-// ─── Fetcher: config + products ───────────────────────────────────────────────
+import { CURATED_TAG } from "@/lib/banners/curated-banner-tags";
 
 async function fetchCuratedBanner(): Promise<{
   config: CuratedBannerConfig;
-  cards: CuratedVariantCard[];
+  cards: CuratedVariantCardEnriched[];
 } | null> {
   const supabase = getSupabaseBrowserClient();
 
-  // 1. Fetch the first enabled banner with tag_value = "__curated__"
   const { data: config, error: cfgErr } = await supabase
     .from("custom_product_banners")
     .select(
@@ -30,65 +32,38 @@ async function fetchCuratedBanner(): Promise<{
        custom_product_banner_items ( product_variant_id, position )`
     )
     .eq("enabled", true)
-    .eq("tag_value", DYNAMIC_TAG)
+    .eq("tag_value", CURATED_TAG)
     .order("sort_order", { ascending: true })
     .limit(1)
     .maybeSingle();
 
   if (cfgErr || !config) return null;
 
-  const items: { product_variant_id: string; position: number }[] =
-    ((config as any).custom_product_banner_items ?? [])
-      .slice()
-      .sort(
-        (
-          a: { position: number },
-          b: { position: number }
-        ) => (a.position ?? 0) - (b.position ?? 0)
-      );
+  const items = (
+    (config as CuratedBannerConfig).custom_product_banner_items ?? []
+  )
+    .slice()
+    .sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
 
   if (items.length === 0) return null;
 
-  const variantIds = items
-    .map((i) => i.product_variant_id)
-    .filter(Boolean);
-
-  // 2. Fetch the actual product data for those variant IDs
-  const { data: rows, error: rowErr } = await supabase
-    .from(CATALOG_SOURCE)
-    .select(VARIANT_SELECT)
-    .in("variant_id", variantIds);
-
-  if (rowErr || !rows || rows.length === 0) return null;
-
-  // Deduplicate by variant_id (view may return multiple rows per variant, one per size)
-  const seen = new Set<string>();
-  const unique = (rows as any[]).filter((r) => {
-    if (seen.has(r.variant_id)) return false;
-    seen.add(r.variant_id);
-    return true;
-  });
-
-  // Re-sort to match the curated position order
-  const idxMap = new Map(variantIds.map((id, i) => [id, i]));
-  const sorted = unique.sort(
-    (a, b) =>
-      (idxMap.get(a.variant_id) ?? 999) -
-      (idxMap.get(b.variant_id) ?? 999)
-  );
+  const variantIds = items.map((i) => i.product_variant_id).filter(Boolean);
+  const cards = await fetchCuratedVariantCards(variantIds, supabase);
+  const enriched = await enrichCuratedCardsWithProductColors(cards, supabase);
 
   return {
-    config: config as unknown as CuratedBannerConfig,
-    cards: sorted as unknown as CuratedVariantCard[],
+    config: config as CuratedBannerConfig,
+    cards: enriched,
   };
 }
 
-// ─── Card components ──────────────────────────────────────────────────────────
-
-function VariantCard({ card }: { card: CuratedVariantCard }) {
-  const imageSrc = resolveImageSrc(card["Imagen Principal"] as any);
+function VariantCard({ card }: { card: CuratedVariantCardEnriched }) {
+  const imageSrc = resolveImageSrc(
+    card["Imagen Principal"] as Parameters<typeof resolveImageSrc>[0]
+  );
   const precio =
     card.OfertaActiva && card.PrecioOferta ? card.PrecioOferta : card.Precio;
+  const colors = card.colors ?? [];
 
   return (
     <Link
@@ -96,54 +71,93 @@ function VariantCard({ card }: { card: CuratedVariantCard }) {
       className="custom-banner-card"
       style={{ textDecoration: "none", color: "inherit" }}
     >
-      <div style={{ position: "relative", width: "100%", height: 110 }}>
+      <div className="custom-banner-card-image-wrap">
         {imageSrc ? (
           <Image
             src={imageSrc}
             alt={card.Articulo}
             fill
-            sizes="110px"
+            sizes="(max-width: 480px) 42vw, 180px"
+            className="custom-banner-card-image"
             style={{ objectFit: "cover" }}
           />
         ) : (
-          <div
-            className="skeleton-shimmer"
-            style={{ width: "100%", height: "100%" }}
-          />
+          <div className="custom-banner-card-image skeleton-shimmer" aria-hidden="true" />
         )}
         <div className="custom-banner-badge">{card.Articulo}</div>
       </div>
+      {colors.length > 0 && (
+        <div className="custom-banner-colors">
+          {colors.slice(0, 3).map((c) => (
+            <span
+              key={c.color}
+              className="color-dot"
+              style={{ background: c.hex_color ?? "#ccc" }}
+              title={c.color}
+            />
+          ))}
+          {colors.length > 3 && (
+            <span className="color-dot color-dot-more" aria-hidden="true">
+              +{colors.length - 3}
+            </span>
+          )}
+        </div>
+      )}
       <div className="custom-banner-card-content">
         <div className="custom-banner-card-price">{formatARS(precio)}</div>
+        <div className="custom-banner-card-wholesale">Precio por Mayor</div>
       </div>
     </Link>
   );
 }
 
-function SkeletonCards() {
+function ColumnPair({ pair }: { pair: [CuratedVariantCardEnriched, CuratedVariantCardEnriched] }) {
   return (
-    <>
-      {Array.from({ length: 4 }).map((_, i) => (
-        <div
-          key={i}
-          className="custom-banner-card"
-          style={{ pointerEvents: "none" }}
-          aria-hidden="true"
-        >
-          <div className="skeleton-shimmer" style={{ width: "100%", height: 110 }} />
-          <div className="custom-banner-card-content">
-            <div
-              className="skeleton-shimmer"
-              style={{ width: "60%", height: 14, borderRadius: 4 }}
-            />
-          </div>
-        </div>
+    <div className="custom-banner-column-pair">
+      {pair.map((card) => (
+        <VariantCard key={card.variant_id} card={card} />
       ))}
-    </>
+    </div>
   );
 }
 
-// ─── Main component ───────────────────────────────────────────────────────────
+function ScrollPage({
+  pairs,
+}: {
+  pairs: [CuratedVariantCardEnriched, CuratedVariantCardEnriched][];
+}) {
+  return (
+    <div className="custom-banner-grid-page" data-pairs={pairs.length}>
+      {pairs.map((pair, index) => (
+        <ColumnPair key={`${pair[0].variant_id}-${index}`} pair={pair} />
+      ))}
+    </div>
+  );
+}
+
+function SkeletonScrollPage() {
+  return (
+    <div className="custom-banner-grid-page" data-pairs={2} aria-hidden="true">
+      {Array.from({ length: 2 }).map((_, col) => (
+        <div key={col} className="custom-banner-column-pair">
+          {Array.from({ length: 2 }).map((__, row) => (
+            <div key={row} className="custom-banner-card" style={{ pointerEvents: "none" }}>
+              <div className="custom-banner-card-image-wrap">
+                <div className="custom-banner-card-image skeleton-shimmer" />
+              </div>
+              <div className="custom-banner-card-content">
+                <div
+                  className="skeleton-shimmer"
+                  style={{ width: "60%", height: 14, borderRadius: 4 }}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export default function CuratedBanner() {
   const { data, isLoading } = useSWR("curated-banner", fetchCuratedBanner, {
@@ -155,34 +169,31 @@ export default function CuratedBanner() {
   if (!isLoading && !data) return null;
 
   const config = data?.config;
-  const cards = data?.cards ?? [];
+  const allCards = data?.cards ?? [];
+  const carouselCards = getCarouselCards(allCards);
+  const pages = chunkPairPages(toColumnPairs(allCards));
   const verTodoHref = config
     ? `/banner/${encodeURIComponent(config.slug)}`
     : "#";
 
+  if (!isLoading && allCards.length === 0) return null;
+
+  const showGrid = isLoading || carouselCards.length > 0;
+
   return (
-    <div className="custom-banner-wrapper">
+    <div className="custom-banner-wrapper curated-dynamic-banner">
       <div className="custom-banner-container" style={{ display: "block" }}>
         <div className="custom-banner-header">
           <h2 className="custom-banner-title">
             {config?.title ?? (
-              <span className="skeleton-shimmer" style={{ display: "inline-block", width: 140, height: 20 }} />
+              <span
+                className="skeleton-shimmer"
+                style={{ display: "inline-block", width: 140, height: 20 }}
+              />
             )}
           </h2>
           {config && (
-            <Link
-              href={verTodoHref}
-              className="custom-banner-ver-todo-btn"
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 4,
-                color: "#CD844D",
-                textDecoration: "none",
-                fontSize: "0.9rem",
-                fontWeight: 500,
-              }}
-            >
+            <Link href={verTodoHref} className="custom-banner-ver-todo-btn">
               Ver todo{" "}
               <svg
                 viewBox="0 0 24 24"
@@ -198,16 +209,21 @@ export default function CuratedBanner() {
           )}
         </div>
 
-        <div className="custom-banner-scroll">
-          {isLoading ? (
-            <SkeletonCards />
-          ) : (
-            cards.map((card) => (
-              <VariantCard key={card.variant_id} card={card} />
-            ))
-          )}
-        </div>
+        {showGrid && (
+          <div className="custom-banner-scroll">
+            {isLoading ? (
+              <SkeletonScrollPage />
+            ) : (
+              pages.map((pagePairs, index) => (
+                <ScrollPage key={`page-${index}`} pairs={pagePairs} />
+              ))
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
 }
+
+// Re-export helpers for tests
+export { getCarouselCards, toColumnPairs, chunkPairPages };

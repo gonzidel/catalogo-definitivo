@@ -28,7 +28,7 @@ import {
 import { buildTagsHash } from "./tag-routing.js?v=m260607";
 
 /** Banners curated en DB; este módulo no los usa (carga condicional vía fyl-legacy-banner-loader.js). */
-const CURATED_TAG_PLACEHOLDER = "__curated__";
+const CURATED_TAG_PLACEHOLDERS = ["__curated__", "__curated_special__"];
 
 /** Logs verbosos del banner/catálogo. Activar: `window.FYL_DEBUG_CATALOG = true` antes de cargar, o `?debug=catalog` en la URL. */
 function fylCatalogDebugEnabled() {
@@ -111,7 +111,7 @@ export async function loadCustomBannerConfig() {
       .from("custom_product_banners")
       .select("*")
       .eq("enabled", true)
-      .neq("tag_value", CURATED_TAG_PLACEHOLDER)
+      .not("tag_value", "in", `(${CURATED_TAG_PLACEHOLDERS.map((t) => `"${t}"`).join(",")})`)
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();

@@ -1,18 +1,80 @@
-// admin/curated-banner-admin.js — Admin Curated Banner (Fase 2)
-// Solo admin/quick-actions. No toca home ni custom-banner.js público.
+// admin/curated-banner-admin.js — Admin banners curados por variante (estándar y especial)
 
 const MAX_VARIANTS = 20;
-const LEGACY_TAG_PLACEHOLDER = "__curated__";
-/** Placeholder legacy: tag_value y tag_filter NOT NULL en prod/staging. */
-const CURATED_LEGACY_TAG_FIELDS = {
-  tag_value: LEGACY_TAG_PLACEHOLDER,
-  tag_filter: LEGACY_TAG_PLACEHOLDER,
+
+const BANNER_ADMIN_PRESETS = {
+  curated: {
+    tagValue: "__curated__",
+    idPrefix: "cba",
+    previewMode: "carousel",
+    hasSpecialTextFields: false,
+    labels: {
+      lead: "Banners curados por variante visual. Carrusel 2×2 en el home.",
+      btnNew: "Nuevo banner curado",
+      editorNew: "Nuevo banner curado",
+      editorEdit: "Editar banner curado",
+      titleLabel: "Título visible *",
+      titlePlaceholder: "Ej: Especiales para el frío",
+      savedOk: "Banner curado guardado",
+      deleteConfirm: "¿Eliminar este banner curado y todas sus variantes?",
+      deletedOk: "Banner eliminado",
+      emptyList: "No hay banners curados. Creá uno con el botón de arriba.",
+    },
+  },
+  special: {
+    tagValue: "__curated_special__",
+    idPrefix: "csba",
+    previewMode: "special",
+    hasSpecialTextFields: true,
+    labels: {
+      lead: "Banner destacado con 3 fotos superpuestas. Se muestra arriba del banner dinámico en el home.",
+      btnNew: "Nuevo banner especial",
+      editorNew: "Nuevo banner especial",
+      editorEdit: "Editar banner especial",
+      titleLabel: "Título principal *",
+      titlePlaceholder: "Ej: Día del Padre",
+      overlineLabel: "Etiqueta superior *",
+      overlinePlaceholder: "Ej: OCASIÓN ESPECIAL",
+      ctaLabel: "Texto del botón",
+      ctaPlaceholder: "Ver selección",
+      savedOk: "Banner especial guardado",
+      deleteConfirm: "¿Eliminar este banner especial y todas sus variantes?",
+      deletedOk: "Banner eliminado",
+      emptyList: "No hay banners especiales. Creá uno con el botón de arriba.",
+    },
+  },
 };
+
 const CATALOG_SELECT =
   'variant_id,Articulo,Descripcion,Color,Precio,"Imagen Principal",OfertaActiva,PrecioOferta';
 
-export async function initCuratedBannerAdmin({ supabase, root, messageEl = null }) {
+function parseSpecialBannerMeta(description) {
+  const defaults = { overline: "OCASIÓN ESPECIAL", ctaLabel: "Ver selección" };
+  if (!description?.trim()) return { ...defaults };
+  try {
+    const parsed = JSON.parse(description);
+    return {
+      overline: String(parsed.overline ?? defaults.overline).trim(),
+      ctaLabel: String(parsed.ctaLabel ?? defaults.ctaLabel).trim(),
+    };
+  } catch {
+    return { overline: description.trim(), ctaLabel: defaults.ctaLabel };
+  }
+}
+
+function serializeSpecialBannerMeta(overline, ctaLabel) {
+  return JSON.stringify({
+    overline: String(overline || "OCASIÓN ESPECIAL").trim(),
+    ctaLabel: String(ctaLabel || "Ver selección").trim(),
+  });
+}
+
+export async function initCuratedBannerAdmin({ supabase, root, messageEl = null, preset = "curated" }) {
   if (!root || !supabase) return;
+
+  const config = BANNER_ADMIN_PRESETS[preset] ?? BANNER_ADMIN_PRESETS.curated;
+  const p = config.idPrefix;
+  const TAG_FIELDS = { tag_value: config.tagValue, tag_filter: config.tagValue };
 
   let banners = [];
   let draftItems = [];
@@ -23,31 +85,33 @@ export async function initCuratedBannerAdmin({ supabase, root, messageEl = null 
   let slugUi = { conflict: false, checking: false, suggestion: null };
   let dragFromIndex = -1;
 
-  root.innerHTML = buildShellHtml();
+  root.innerHTML = buildShellHtml(config);
 
   const refs = {
-    list: root.querySelector("#cba-banner-list"),
-    btnNew: root.querySelector("#cba-btn-new"),
-    editorBackdrop: root.querySelector("#cba-editor-modal"),
-    editorClose: root.querySelector("#cba-editor-close"),
-    editorCancel: root.querySelector("#cba-editor-cancel"),
-    editorForm: root.querySelector("#cba-editor-form"),
-    editorDelete: root.querySelector("#cba-editor-delete"),
-    editorTitle: root.querySelector("#cba-editor-title"),
-    bannerId: root.querySelector("#cba-banner-id"),
-    titleInput: root.querySelector("#cba-title"),
-    slugInput: root.querySelector("#cba-slug"),
-    slugError: root.querySelector("#cba-slug-error"),
-    slugSuggest: root.querySelector("#cba-slug-suggest"),
-    submitBtn: root.querySelector("#cba-editor-submit"),
-    descInput: root.querySelector("#cba-description"),
-    enabledInput: root.querySelector("#cba-enabled"),
-    sortInput: root.querySelector("#cba-sort-order"),
-    searchInput: root.querySelector("#cba-search"),
-    searchResults: root.querySelector("#cba-search-results"),
-    itemsList: root.querySelector("#cba-items-list"),
-    itemsCount: root.querySelector("#cba-items-count"),
-    previewHost: root.querySelector("#cba-preview-host"),
+    list: root.querySelector(`#${p}-banner-list`),
+    btnNew: root.querySelector(`#${p}-btn-new`),
+    editorBackdrop: root.querySelector(`#${p}-editor-modal`),
+    editorClose: root.querySelector(`#${p}-editor-close`),
+    editorCancel: root.querySelector(`#${p}-editor-cancel`),
+    editorForm: root.querySelector(`#${p}-editor-form`),
+    editorDelete: root.querySelector(`#${p}-editor-delete`),
+    editorTitle: root.querySelector(`#${p}-editor-title`),
+    bannerId: root.querySelector(`#${p}-banner-id`),
+    titleInput: root.querySelector(`#${p}-title`),
+    slugInput: root.querySelector(`#${p}-slug`),
+    slugError: root.querySelector(`#${p}-slug-error`),
+    slugSuggest: root.querySelector(`#${p}-slug-suggest`),
+    submitBtn: root.querySelector(`#${p}-editor-submit`),
+    descInput: root.querySelector(`#${p}-description`),
+    overlineInput: root.querySelector(`#${p}-overline`),
+    ctaInput: root.querySelector(`#${p}-cta`),
+    enabledInput: root.querySelector(`#${p}-enabled`),
+    sortInput: root.querySelector(`#${p}-sort-order`),
+    searchInput: root.querySelector(`#${p}-search`),
+    searchResults: root.querySelector(`#${p}-search-results`),
+    itemsList: root.querySelector(`#${p}-items-list`),
+    itemsCount: root.querySelector(`#${p}-items-count`),
+    previewHost: root.querySelector(`#${p}-preview-host`),
   };
 
   refs.btnNew?.addEventListener("click", () => openEditor(null));
@@ -63,6 +127,8 @@ export async function initCuratedBannerAdmin({ supabase, root, messageEl = null 
   refs.slugInput?.addEventListener("input", onSlugInput);
   refs.slugInput?.addEventListener("blur", onSlugBlur);
   refs.slugSuggest?.addEventListener("click", onSlugSuggestClick);
+  refs.overlineInput?.addEventListener("input", () => refreshPreview());
+  refs.ctaInput?.addEventListener("input", () => refreshPreview());
 
   await loadBannerList();
 
@@ -80,8 +146,9 @@ export async function initCuratedBannerAdmin({ supabase, root, messageEl = null 
     const { data, error } = await supabase
       .from("custom_product_banners")
       .select(
-        "id, name, title, slug, enabled, sort_order, tag_value, custom_product_banner_items(count)"
+        "id, name, title, slug, enabled, sort_order, tag_value, description, custom_product_banner_items(count)"
       )
+      .eq("tag_value", config.tagValue)
       .order("sort_order", { ascending: true })
       .order("created_at", { ascending: false });
 
@@ -97,23 +164,17 @@ export async function initCuratedBannerAdmin({ supabase, root, messageEl = null 
   function renderBannerList() {
     if (!refs.list) return;
 
-    const curated = banners.filter(isCuratedBannerRow);
-    const legacyOnly = banners.filter((b) => !isCuratedBannerRow(b));
+    const curated = banners;
+    const legacyOnly = [];
 
     if (curated.length === 0 && legacyOnly.length === 0) {
-      refs.list.innerHTML =
-        '<p class="cba-muted">No hay banners curados. Creá uno con el botón de arriba.</p>';
+      refs.list.innerHTML = `<p class="cba-muted">${escapeHtml(config.labels.emptyList)}</p>`;
       return;
     }
 
     let html = "";
     if (curated.length) {
       html += curated.map((b) => renderBannerCard(b)).join("");
-    }
-    if (legacyOnly.length) {
-      html += `<p class="cba-muted cba-legacy-note">Banner legacy por tags (no editado acá): ${legacyOnly
-        .map((b) => escapeHtml(b.title || b.name || "sin nombre"))
-        .join(", ")}</p>`;
     }
     refs.list.innerHTML = html;
 
@@ -171,7 +232,7 @@ export async function initCuratedBannerAdmin({ supabase, root, messageEl = null 
   }
 
   async function moveBannerSort(id, delta) {
-    const curated = banners.filter(isCuratedBannerRow).sort(
+    const curated = banners.sort(
       (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)
     );
     const idx = curated.findIndex((b) => b.id === id);
@@ -203,12 +264,21 @@ export async function initCuratedBannerAdmin({ supabase, root, messageEl = null 
     dragFromIndex = -1;
 
     if (refs.editorTitle) {
-      refs.editorTitle.textContent = bannerRow ? "Editar banner curado" : "Nuevo banner curado";
+      refs.editorTitle.textContent = bannerRow
+        ? config.labels.editorEdit
+        : config.labels.editorNew;
     }
     if (refs.bannerId) refs.bannerId.value = bannerRow?.id || "";
     if (refs.titleInput) refs.titleInput.value = bannerRow?.title || bannerRow?.name || "";
     if (refs.slugInput) refs.slugInput.value = bannerRow?.slug || "";
-    if (refs.descInput) refs.descInput.value = bannerRow?.description || "";
+    if (config.hasSpecialTextFields) {
+      const meta = parseSpecialBannerMeta(bannerRow?.description);
+      if (refs.overlineInput) refs.overlineInput.value = meta.overline;
+      if (refs.ctaInput) refs.ctaInput.value = meta.ctaLabel;
+      if (refs.descInput) refs.descInput.value = "";
+    } else if (refs.descInput) {
+      refs.descInput.value = bannerRow?.description || "";
+    }
     if (refs.enabledInput) refs.enabledInput.checked = bannerRow?.enabled !== false;
     if (refs.sortInput) refs.sortInput.value = String(bannerRow?.sort_order ?? 0);
     if (refs.searchInput) refs.searchInput.value = "";
@@ -721,7 +791,7 @@ export async function initCuratedBannerAdmin({ supabase, root, messageEl = null 
   async function refreshPreview() {
     if (!refs.previewHost) return;
 
-    const title = refs.titleInput?.value?.trim() || "Banner curado";
+    const title = refs.titleInput?.value?.trim() || config.labels.titlePlaceholder;
     const missingIds = draftItems
       .filter((i) => !i.catalog?.Articulo)
       .map((i) => i.product_variant_id);
@@ -741,7 +811,39 @@ export async function initCuratedBannerAdmin({ supabase, root, messageEl = null 
 
     if (!cards.length) {
       refs.previewHost.innerHTML =
-        '<p class="cba-muted" style="padding:12px">Agregá variantes para ver el carrusel.</p>';
+        '<p class="cba-muted" style="padding:12px">Agregá variantes para ver la vista previa.</p>';
+      return;
+    }
+
+    if (config.previewMode === "special") {
+      const meta = parseSpecialBannerMeta(
+        serializeSpecialBannerMeta(
+          refs.overlineInput?.value,
+          refs.ctaInput?.value
+        )
+      );
+      const hero = cards.slice(0, 3);
+      const count = cards.length;
+      refs.previewHost.innerHTML = `
+        <div class="curated-special-banner csba-preview-banner">
+          <div class="curated-special-banner__photos">
+            ${hero
+              .map(
+                (row, index) => `
+              <div class="curated-special-banner__photo" data-index="${index}">
+                <img class="curated-special-banner__photo-img" src="${escapeAttr(cloudinaryOptimized(row["Imagen Principal"], 240))}" alt="" loading="lazy">
+              </div>`
+              )
+              .join("")}
+          </div>
+          <div class="curated-special-banner__copy">
+            <span class="curated-special-banner__overline">${escapeHtml(meta.overline)}</span>
+            <h2 class="curated-special-banner__title">${escapeHtml(title)}</h2>
+            <p class="curated-special-banner__subtitle">${count} producto${count === 1 ? "" : "s"} seleccionado${count === 1 ? "" : "s"}</p>
+            <span class="curated-special-banner__cta">${escapeHtml(meta.ctaLabel)} →</span>
+          </div>
+        </div>
+      `;
       return;
     }
 
@@ -857,10 +959,15 @@ export async function initCuratedBannerAdmin({ supabase, root, messageEl = null 
       name: title,
       title,
       slug,
-      description: refs.descInput?.value?.trim() || null,
+      description: config.hasSpecialTextFields
+        ? serializeSpecialBannerMeta(
+            refs.overlineInput?.value,
+            refs.ctaInput?.value
+          )
+        : refs.descInput?.value?.trim() || null,
       enabled: refs.enabledInput?.checked !== false,
       sort_order: Number(refs.sortInput?.value) || 0,
-      ...CURATED_LEGACY_TAG_FIELDS,
+      ...TAG_FIELDS,
     };
 
     const submitBtn = refs.submitBtn;
@@ -906,7 +1013,7 @@ export async function initCuratedBannerAdmin({ supabase, root, messageEl = null 
         if (insErr) throw insErr;
       }
 
-      showMessage("Banner curado guardado", "success");
+      showMessage(config.labels.savedOk, "success");
       closeEditor();
       await loadBannerList();
     } catch (err) {
@@ -929,104 +1036,111 @@ export async function initCuratedBannerAdmin({ supabase, root, messageEl = null 
   async function onDeleteBanner() {
     const id = refs.bannerId?.value;
     if (!id) return;
-    if (!confirm("¿Eliminar este banner curado y todas sus variantes?")) return;
+    if (!confirm(config.labels.deleteConfirm)) return;
 
     const { error } = await supabase.from("custom_product_banners").delete().eq("id", id);
     if (error) {
       showMessage(error.message, "error");
       return;
     }
-    showMessage("Banner eliminado", "success");
+    showMessage(config.labels.deletedOk, "success");
     closeEditor();
     await loadBannerList();
   }
 }
 
-function buildShellHtml() {
+function buildShellHtml(config) {
+  const p = config.idPrefix;
+  const labels = config.labels;
+  const specialFields = config.hasSpecialTextFields
+    ? `
+              <div class="form-group">
+                <label for="${p}-overline">${labels.overlineLabel}</label>
+                <input type="text" id="${p}-overline" required maxlength="60" placeholder="${escapeAttr(labels.overlinePlaceholder)}" autocomplete="off">
+              </div>
+              <div class="form-group">
+                <label for="${p}-cta">${labels.ctaLabel}</label>
+                <input type="text" id="${p}-cta" maxlength="40" placeholder="${escapeAttr(labels.ctaPlaceholder)}" value="Ver selección" autocomplete="off">
+              </div>`
+    : `
+              <div class="form-group">
+                <label for="${p}-description">Descripción (opcional)</label>
+                <input type="text" id="${p}-description" maxlength="200" autocomplete="off">
+              </div>`;
+
   return `
     <div class="cba-panel">
       <div class="cba-toolbar">
-        <p class="cba-lead">
-          Banners curados por variante visual. El home público sigue usando el banner por tags hasta activar Fase 3.
-        </p>
-        <button type="button" id="cba-btn-new" class="btn btn-primary">Nuevo banner curado</button>
+        <p class="cba-lead">${escapeHtml(labels.lead)}</p>
+        <button type="button" id="${p}-btn-new" class="btn btn-primary">${escapeHtml(labels.btnNew)}</button>
       </div>
-      <div id="cba-banner-list" class="cba-banner-list" aria-live="polite">
+      <div id="${p}-banner-list" class="cba-banner-list" aria-live="polite">
         <p class="cba-muted">Cargando banners…</p>
       </div>
     </div>
 
-    <div id="cba-editor-modal" class="modal cba-editor-modal" role="dialog" aria-modal="true">
+    <div id="${p}-editor-modal" class="modal cba-editor-modal" role="dialog" aria-modal="true">
       <div class="modal-content cba-editor-content">
         <div class="modal-header">
-          <h2 id="cba-editor-title">Banner curado</h2>
-          <button type="button" class="modal-close" id="cba-editor-close" aria-label="Cerrar">&times;</button>
+          <h2 id="${p}-editor-title">Banner</h2>
+          <button type="button" class="modal-close" id="${p}-editor-close" aria-label="Cerrar">&times;</button>
         </div>
-        <form id="cba-editor-form">
-          <input type="hidden" id="cba-banner-id" value="">
+        <form id="${p}-editor-form">
+          <input type="hidden" id="${p}-banner-id" value="">
           <div class="cba-editor-grid">
             <section class="cba-section">
               <h3 class="cba-section-title">Datos del banner</h3>
               <div class="form-group">
-                <label for="cba-title">Título visible *</label>
-                <input type="text" id="cba-title" required maxlength="80" placeholder="Ej: Especiales para el frío" autocomplete="off">
+                <label for="${p}-title">${labels.titleLabel}</label>
+                <input type="text" id="${p}-title" required maxlength="80" placeholder="${escapeAttr(labels.titlePlaceholder)}" autocomplete="off">
               </div>
               <div class="form-group">
-                <label for="cba-slug">Slug URL</label>
-                <input type="text" id="cba-slug" maxlength="80" placeholder="especiales-para-el-frio" autocomplete="off" aria-describedby="cba-slug-error">
-                <small id="cba-slug-error" class="cba-slug-error" hidden>Este slug ya existe</small>
-                <button type="button" id="cba-slug-suggest" class="cba-slug-suggest" hidden></button>
-                <small class="cba-hint">Para Fase 3: #/banner/{slug}</small>
+                <label for="${p}-slug">Slug URL</label>
+                <input type="text" id="${p}-slug" maxlength="80" placeholder="dia-del-padre" autocomplete="off" aria-describedby="${p}-slug-error">
+                <small id="${p}-slug-error" class="cba-slug-error" hidden>Este slug ya existe</small>
+                <button type="button" id="${p}-slug-suggest" class="cba-slug-suggest" hidden></button>
+                <small class="cba-hint">Página de colección: /banner/{slug}</small>
               </div>
-              <div class="form-group">
-                <label for="cba-description">Descripción (opcional)</label>
-                <input type="text" id="cba-description" maxlength="200" autocomplete="off">
-              </div>
+              ${specialFields}
               <div class="cba-row-fields">
                 <div class="form-group">
-                  <label for="cba-sort-order">Orden entre banners</label>
-                  <input type="number" id="cba-sort-order" min="0" step="1" value="0">
+                  <label for="${p}-sort-order">Orden entre banners</label>
+                  <input type="number" id="${p}-sort-order" min="0" step="1" value="0">
                 </div>
                 <label class="cba-check">
-                  <input type="checkbox" id="cba-enabled" checked> Habilitado
+                  <input type="checkbox" id="${p}-enabled" checked> Habilitado
                 </label>
               </div>
             </section>
 
             <section class="cba-section">
-              <h3 class="cba-section-title">Variantes <span id="cba-items-count" class="cba-count">0 / ${MAX_VARIANTS}</span></h3>
+              <h3 class="cba-section-title">Variantes <span id="${p}-items-count" class="cba-count">0 / ${MAX_VARIANTS}</span></h3>
               <div class="form-group">
-                <label for="cba-search">Buscar variante</label>
-                <input type="search" id="cba-search" placeholder="Artículo, descripción o SKU…" autocomplete="off">
+                <label for="${p}-search">Buscar variante</label>
+                <input type="search" id="${p}-search" placeholder="Artículo, descripción o SKU…" autocomplete="off">
               </div>
-              <ul id="cba-search-results" class="cba-search-results"></ul>
-              <ul id="cba-items-list" class="cba-items-list"></ul>
+              <ul id="${p}-search-results" class="cba-search-results"></ul>
+              <ul id="${p}-items-list" class="cba-items-list"></ul>
             </section>
 
             <section class="cba-section cba-preview-section">
               <h3 class="cba-section-title">Vista previa (catálogo real)</h3>
               <div class="cba-phone-frame">
-                <div id="cba-preview-host" class="cba-preview-host"></div>
+                <div id="${p}-preview-host" class="cba-preview-host"></div>
               </div>
             </section>
           </div>
           <div class="cba-editor-actions">
-            <button type="button" class="btn btn-danger" id="cba-editor-delete" hidden>Eliminar banner</button>
+            <button type="button" class="btn btn-danger" id="${p}-editor-delete" hidden>Eliminar banner</button>
             <div class="cba-editor-actions-right">
-              <button type="button" class="btn btn-secondary" id="cba-editor-cancel">Cancelar</button>
-              <button type="submit" id="cba-editor-submit" class="btn btn-primary">Guardar</button>
+              <button type="button" class="btn btn-secondary" id="${p}-editor-cancel">Cancelar</button>
+              <button type="submit" id="${p}-editor-submit" class="btn btn-primary">Guardar</button>
             </div>
           </div>
         </form>
       </div>
     </div>
   `;
-}
-
-function isCuratedBannerRow(b) {
-  const tag = String(b?.tag_value || "");
-  const count = b?.custom_product_banner_items?.[0]?.count ?? 0;
-  return tag === LEGACY_TAG_PLACEHOLDER || count > 0;
 }
 
 function slugify(text) {

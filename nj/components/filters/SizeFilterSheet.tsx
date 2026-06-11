@@ -1,80 +1,406 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
-import { compareCatalogSizes } from "@/lib/utils/size-normalizer";
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import type { GroupedProduct } from "@/types/catalog";
+import {
+  buildSizeFilterSections,
+  extractSizesFromProducts,
+  productMatchesSizeCategory,
+  type SizeFilterSection,
+} from "@/lib/utils/size-filter-catalog";
+import {
+  buildInitialSizeAvailability,
+  fetchSizeAvailabilityForArticulos,
+  isPhysicalAlwaysAvailable,
+  sizeHasStock,
+} from "@/lib/utils/size-filter-stock";
+import {
+  isRopaSizeSelected,
+  ropaSelectionKey,
+  ROPA_PAIR_LABELS,
+  ROPA_UNIFIED_PAIRS,
+  type RopaMainEntry,
+} from "@/lib/utils/size-filter-ropa";
 
-// ─── Size sets ────────────────────────────────────────────────────────────────
-
-const CALZADO_SIZES = [
-  "18","19","20","21","22","23","24","25","26","27","28","29","30","31","32","33",
-  "34","35","36","37","38","39","40","41","42",
-];
-
-const ROPA_SIZES = [
-  // Niños/niñas
-  "1","2","3","4","6","8","10","12","14",
-  // Talle genérico
-  "XS","S","M","L","XL","2XL","3XL","4XL",
-  // Pantalones numéricos
-  "40","42","44","46",
-  // Único
-  "U",
-];
-
-const OTROS_SIZES = ["U", "XS", "S", "M", "L", "XL", "2XL"];
-
-type SizeGroup = "calzado" | "ropa" | "otros" | null;
+type SizeGroup = "calzado" | "ropa" | "lenceria" | "marroquineria" | "otros" | null;
 
 function groupFromCategoria(cat: string): SizeGroup {
   const c = cat.toLowerCase();
   if (c === "calzado") return "calzado";
-  if (c === "ropa" || c === "lenceria" || c === "marroquineria" || c === "accesorios") return "ropa";
+  if (c === "ropa") return "ropa";
+  if (c === "lenceria") return "lenceria";
+  if (c === "marroquineria") return "marroquineria";
   if (c === "otros") return "otros";
-  return null; // "all" → needs selection
+  return null;
 }
 
-function sizesForGroup(group: SizeGroup): string[] {
-  if (group === "calzado") return CALZADO_SIZES;
-  if (group === "ropa")    return ROPA_SIZES;
-  if (group === "otros")   return OTROS_SIZES;
-  return [];
-}
-
-// ─── Props ────────────────────────────────────────────────────────────────────
+const GROUP_LABELS: Record<Exclude<SizeGroup, null>, string> = {
+  calzado: "Calzado",
+  ropa: "Ropa",
+  lenceria: "Lencería",
+  marroquineria: "Marroquinería",
+  otros: "Otros",
+};
 
 interface SizeFilterSheetProps {
   activeSizes: string[];
   categoria: string;
-  /** Called when user taps Talles without a category selected */
+  products: GroupedProduct[];
   onNeedCategory?: () => void;
-  /** Pulse the button to invite the user to filter by size */
   highlight?: boolean;
 }
 
-// ─── Component ────────────────────────────────────────────────────────────────
+function isSizeSelected(
+  token: string,
+  selected: string[],
+  categoria: string
+): boolean {
+  if (categoria.toLowerCase() === "ropa") {
+    return isRopaSizeSelected(token, selected);
+  }
+  return selected.includes(token);
+}
+
+function entryHasStock(
+  entry: RopaMainEntry,
+  availability: Map<string, { exists: boolean; hasStock: boolean }>,
+  categoria: string
+): boolean {
+  if (isPhysicalAlwaysAvailable(entry.token, categoria)) return true;
+  if (entry.kind === "pair") return pairHasStock(entry.token, availability, categoria);
+  if (entry.kind === "unico") {
+    return (
+      sizeHasStock("Único", availability, categoria) ||
+      sizeHasStock("Unico", availability, categoria) ||
+      sizeHasStock("U", availability, categoria)
+    );
+  }
+  return sizeHasStock(entry.token, availability, categoria);
+}
+
+function pairHasStock(
+  token: string,
+  availability: Map<string, { exists: boolean; hasStock: boolean }>,
+  categoria: string
+): boolean {
+  if (isPhysicalAlwaysAvailable(token, categoria)) return true;
+  const pair = ROPA_UNIFIED_PAIRS.find((p) => p.label === token);
+  const filterValues = pair
+    ? pair.keys.map((k) => k.split(":").pop()!).filter(Boolean)
+    : [token];
+  return filterValues.some((p) => sizeHasStock(p, availability, categoria));
+}
+
+function parsePairDisplay(label: string): { top: string; bottom: string } {
+  const parts = label.split("/");
+  if (parts.length >= 2) {
+    return { top: parts[1].trim(), bottom: parts[0].trim() };
+  }
+  return { top: label, bottom: "" };
+}
+
+function formatSelectionLabel(
+  token: string,
+  pantSizes: Set<string>
+): string {
+  if (ROPA_PAIR_LABELS.has(token)) return token;
+  if (token === "Único") return "Único";
+  if (pantSizes.has(token)) return `Pantalón ${token}`;
+  return token;
+}
+
+function buildSelectionSummary(
+  selected: string[],
+  pantSizes: string[]
+): string {
+  if (selected.length === 0) return "";
+  const pantSet = new Set(pantSizes);
+  return selected.map((t) => formatSelectionLabel(t, pantSet)).join(" · ");
+}
+
+function SectionDivider({ title }: { title: string }) {
+  return (
+    <div className="size-section-divider" aria-hidden="true">
+      <span className="size-section-divider__line" />
+      <span className="size-section-divider__label">{title}</span>
+      <span className="size-section-divider__line" />
+    </div>
+  );
+}
+
+function CalzadoSizeButton({
+  size,
+  selected,
+  hasStock,
+  onToggle,
+}: {
+  size: string;
+  selected: boolean;
+  hasStock: boolean;
+  onToggle: (size: string) => void;
+}) {
+  const disabled = !hasStock;
+  return (
+    <button
+      type="button"
+      className={[
+        "size-option",
+        "size-option--calzado",
+        selected ? "is-selected" : "",
+        disabled ? "size-option--no-stock" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      disabled={disabled}
+      onClick={() => !disabled && onToggle(size)}
+    >
+      {size}
+    </button>
+  );
+}
+
+function RopaUnicoButton({
+  selected,
+  hasStock,
+  onToggle,
+}: {
+  selected: boolean;
+  hasStock: boolean;
+  onToggle: () => void;
+}) {
+  const disabled = !hasStock;
+  return (
+    <button
+      type="button"
+      className={[
+        "size-option",
+        "size-option--unico-wide",
+        selected ? "is-selected" : "",
+        disabled ? "size-option--no-stock" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      disabled={disabled}
+      onClick={() => !disabled && onToggle()}
+    >
+      {selected && (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
+          <polyline points="20 6 9 17 4 12" />
+        </svg>
+      )}
+      Único
+    </button>
+  );
+}
+
+function RopaDualButton({
+  entry,
+  selected,
+  hasStock,
+  onToggle,
+}: {
+  entry: RopaMainEntry;
+  selected: boolean;
+  hasStock: boolean;
+  onToggle: () => void;
+}) {
+  const disabled = !hasStock;
+  const { top, bottom } =
+    entry.kind === "pair"
+      ? parsePairDisplay(entry.token)
+      : { top: entry.token, bottom: "" };
+
+  return (
+    <button
+      type="button"
+      className={[
+        "size-option",
+        "size-option--dual",
+        selected ? "is-selected" : "",
+        disabled ? "size-option--no-stock" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      disabled={disabled}
+      onClick={() => !disabled && onToggle()}
+    >
+      <span className="size-option__top">{top}</span>
+      {bottom ? <span className="size-option__bottom">{bottom}</span> : null}
+    </button>
+  );
+}
+
+function SizeSectionBlock({
+  section,
+  categoria,
+  selected,
+  availability,
+  onToggle,
+}: {
+  section: SizeFilterSection;
+  categoria: string;
+  selected: string[];
+  availability: Map<string, { exists: boolean; hasStock: boolean }>;
+  onToggle: (token: string) => void;
+}) {
+  const cols = section.gridColumns ?? 5;
+  const gridStyle = { gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` };
+
+  if (section.ropaGeneralLayout && section.ropaEntries?.length) {
+    const unico = section.ropaEntries.find((e) => e.kind === "unico");
+    const gridEntries = section.ropaEntries.filter((e) => e.kind !== "unico");
+
+    return (
+      <section className="size-section size-section--ropa" data-key={section.key}>
+        <SectionDivider title={section.title} />
+        <div className="size-section__body">
+          {unico && (
+            <RopaUnicoButton
+              selected={isSizeSelected(unico.token, selected, categoria)}
+              hasStock={entryHasStock(unico, availability, categoria)}
+              onToggle={() => onToggle(unico.token)}
+            />
+          )}
+          {gridEntries.length > 0 && (
+            <div className="size-options-grid size-options-grid--ropa" style={gridStyle}>
+              {gridEntries.map((entry) => (
+                <RopaDualButton
+                  key={entry.token}
+                  entry={entry}
+                  selected={isSizeSelected(entry.token, selected, categoria)}
+                  hasStock={entryHasStock(entry, availability, categoria)}
+                  onToggle={() => onToggle(entry.token)}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+    );
+  }
+
+  const gridClass = section.measureLayout
+    ? "size-options-grid size-options-grid--measures"
+    : "size-options-grid";
+
+  return (
+    <section className="size-section" data-key={section.key}>
+      <SectionDivider title={section.title} />
+      <div className="size-section__body">
+        <div
+          className={gridClass}
+          style={section.measureLayout ? undefined : gridStyle}
+        >
+          {(section.sizes ?? []).map((size) => (
+            <CalzadoSizeButton
+              key={size}
+              size={size}
+              selected={isSizeSelected(size, selected, categoria)}
+              hasStock={sizeHasStock(size, availability, categoria)}
+              onToggle={onToggle}
+            />
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
 
 export default function SizeFilterSheet({
   activeSizes,
   categoria,
+  products,
   onNeedCategory,
   highlight,
 }: SizeFilterSheetProps) {
-  const [isOpen, setIsOpen]     = useState(false);
+  const [isOpen, setIsOpen] = useState(false);
   const [selected, setSelected] = useState<string[]>(activeSizes);
-  const [mounted, setMounted]   = useState(false);
+  const [mounted, setMounted] = useState(false);
+  const [availability, setAvailability] = useState<
+    Map<string, { exists: boolean; hasStock: boolean }>
+  >(new Map());
 
-  useEffect(() => { setMounted(true); }, []);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
-  const router       = useRouter();
-  const pathname     = usePathname();
+  useEffect(() => {
+    if (!isOpen) return;
+    document.body.classList.add("size-filter-open");
+    return () => document.body.classList.remove("size-filter-open");
+  }, [isOpen]);
+
+  const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  const group    = groupFromCategoria(categoria);
+  const group = groupFromCategoria(categoria);
   const needsCat = group === null;
-  const sizes    = sizesForGroup(group).sort(compareCatalogSizes);
   const hasActive = activeSizes.length > 0;
+  const groupLabel = group ? GROUP_LABELS[group] : "";
+
+  const categoryProducts = useMemo(
+    () => products.filter((p) => productMatchesSizeCategory(p, categoria)),
+    [products, categoria]
+  );
+
+  const catalogSizes = useMemo(
+    () => extractSizesFromProducts(products, categoria),
+    [products, categoria]
+  );
+
+  const sections = useMemo(
+    () => buildSizeFilterSections(catalogSizes, categoria),
+    [catalogSizes, categoria]
+  );
+
+  const pantSizes = useMemo(
+    () => sections.find((s) => s.key === "pants")?.sizes ?? [],
+    [sections]
+  );
+
+  const selectionSummary = useMemo(
+    () => buildSelectionSummary(selected, pantSizes),
+    [selected, pantSizes]
+  );
+
+  // Talles al instante + stock real en background (solo no-físicos).
+  useEffect(() => {
+    if (!isOpen) return;
+
+    if (catalogSizes.length === 0) {
+      setAvailability(new Map());
+      return;
+    }
+
+    setAvailability(buildInitialSizeAvailability(catalogSizes, categoria));
+
+    let cancelled = false;
+    const articulos = categoryProducts.map((p) => p.Articulo).filter(Boolean);
+
+    (async () => {
+      try {
+        if (articulos.length === 0) return;
+        const supabase = getSupabaseBrowserClient();
+        const map = await fetchSizeAvailabilityForArticulos(
+          supabase,
+          articulos,
+          catalogSizes,
+          categoria
+        );
+        if (!cancelled) setAvailability(map);
+      } catch (e) {
+        console.warn("[SizeFilterSheet] stock:", e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, catalogSizes, categoria, categoryProducts]);
 
   const open = useCallback(() => {
     if (needsCat) {
@@ -87,10 +413,22 @@ export default function SizeFilterSheet({
 
   const close = useCallback(() => setIsOpen(false), []);
 
-  const toggleSize = (size: string) =>
+  const toggleSize = (size: string) => {
+    if (categoria.toLowerCase() === "ropa") {
+      setSelected((prev) => {
+        const k = ropaSelectionKey(size);
+        const idx = prev.findIndex((s) => ropaSelectionKey(s) === k);
+        if (idx > -1) return prev.filter((_, i) => i !== idx);
+        return [...prev, size];
+      });
+      return;
+    }
     setSelected((prev) =>
       prev.includes(size) ? prev.filter((s) => s !== size) : [...prev, size]
     );
+  };
+
+  const clearSelection = () => setSelected([]);
 
   const apply = () => {
     const params = new URLSearchParams(searchParams.toString());
@@ -100,31 +438,24 @@ export default function SizeFilterSheet({
     close();
   };
 
-  const clear = () => {
-    setSelected([]);
-    const params = new URLSearchParams(searchParams.toString());
-    params.delete("talle");
-    router.push(`${pathname}?${params}`);
-    close();
-  };
-
-  const groupLabel = group === "calzado" ? "Calzado" : group === "otros" ? "Otros" : "Ropa";
-
   return (
     <>
-      {/* Trigger */}
       <button
         type="button"
-        className={`size-filter-chip${hasActive ? " size-filter-chip--active" : ""}`}
+        className={`size-filter-chip${hasActive ? " size-filter-chip--active is-active" : ""}`}
         id="size-filter-btn"
         aria-label="Filtrar por talle"
         onClick={open}
-        style={highlight ? {
-          animation: "fyl-talles-pulse 0.5s ease 3",
-          background: "#CD844D",
-          color: "#fff",
-          borderColor: "#B8703E",
-        } : undefined}
+        style={
+          highlight
+            ? {
+                animation: "fyl-talles-pulse 0.5s ease 3",
+                background: "#CD844D",
+                color: "#fff",
+                borderColor: "#B8703E",
+              }
+            : undefined
+        }
       >
         <span className="size-filter-chip__icon filter-icon" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -138,70 +469,70 @@ export default function SizeFilterSheet({
         </span>
       </button>
 
-      {/* Modal — portal so position:fixed escapes any sticky/transform ancestor */}
-      {mounted && createPortal(
-        <div
-          className={`size-filter-modal${isOpen ? " active" : ""}`}
-          role="dialog"
-          aria-modal="true"
-          aria-label={`Talles — ${groupLabel}`}
-          aria-hidden={!isOpen}
-        >
-          <div className="size-filter-overlay" onClick={close} aria-hidden="true" />
-          <div className="size-filter-panel">
-            <div className="size-filter-header">
-              <h2>Talles — {groupLabel}</h2>
-              <button className="size-filter-close" onClick={close} aria-label="Cerrar">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-              </button>
-            </div>
+      {mounted &&
+        createPortal(
+          <div
+            className={`size-filter-modal size-filter-modal--refined${isOpen ? " active" : ""}`}
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Talles · ${groupLabel}`}
+            aria-hidden={!isOpen}
+          >
+            <div className="size-filter-overlay" onClick={close} aria-hidden="true" />
+            <div className="size-filter-panel">
+              <div className="size-filter-panel__handle" aria-hidden="true" />
 
-            <div className="size-filter-body">
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, padding: "8px 0" }}>
-                {sizes.map((size) => (
-                  <button
-                    key={size}
-                    type="button"
-                    onClick={() => toggleSize(size)}
-                    className={`talle${selected.includes(size) ? " talle--selected" : ""}`}
-                    style={{
-                      minWidth: 44, height: 44, padding: "0 12px",
-                      borderRadius: 8,
-                      border: selected.includes(size) ? "2px solid #CD844D" : "1px solid #ddd",
-                      background: selected.includes(size) ? "#FFF5EE" : "#fff",
-                      cursor: "pointer", fontFamily: "inherit", fontSize: 14,
-                      fontWeight: selected.includes(size) ? 600 : 400,
-                      color: selected.includes(size) ? "#CD844D" : "#333",
-                    }}
-                  >
-                    {size}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="size-filter-footer">
-              <div className="size-filter-footer__actions">
+              <div className="size-filter-header">
+                <h2>Talles · {groupLabel}</h2>
                 <button
                   type="button"
-                  className="size-filter-clear-btn"
-                  onClick={clear}
-                  style={{ display: selected.length > 0 ? "block" : "none" }}
+                  className="size-filter-header-clear"
+                  onClick={clearSelection}
+                  disabled={selected.length === 0}
                 >
                   Limpiar
                 </button>
-                <button type="button" className="size-filter-apply-btn" onClick={apply}>
-                  Ver productos{selected.length > 0 ? ` (${selected.length})` : ""}
+              </div>
+
+              <div className="size-filter-body">
+                {sections.length === 0 ? (
+                  <div className="size-filter-empty">
+                    No hay talles disponibles para esta categoría
+                  </div>
+                ) : (
+                  <div className="size-filter-sections">
+                    {sections.map((sec) => (
+                      <SizeSectionBlock
+                        key={sec.key}
+                        section={sec}
+                        categoria={categoria}
+                        selected={selected}
+                        availability={availability}
+                        onToggle={toggleSize}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="size-filter-footer size-filter-footer--refined">
+                {selectionSummary ? (
+                  <p className="size-filter-summary">
+                    Seleccionados: {selectionSummary}
+                  </p>
+                ) : null}
+                <button
+                  type="button"
+                  className={`size-filter-apply-btn${selected.length > 0 ? " is-ready" : ""}`}
+                  onClick={apply}
+                >
+                  Ver productos
                 </button>
               </div>
             </div>
-          </div>
-        </div>,
-        document.body
-      )}
+          </div>,
+          document.body
+        )}
     </>
   );
 }

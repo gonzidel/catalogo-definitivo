@@ -60,7 +60,7 @@ export default function BottomNav() {
       </button>
 
       <Link
-        href="/dashboard"
+        href={cartCount > 0 ? "/dashboard?tab=cart" : "/dashboard?tab=active-order"}
         className={`bottom-nav-item${pathname?.startsWith("/dashboard") ? " active" : ""}`}
         id="nav-pedidos"
         style={{ position: "relative" }}

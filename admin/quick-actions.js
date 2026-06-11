@@ -724,5 +724,16 @@ if (curatedRoot) {
     supabase,
     root: curatedRoot,
     messageEl: document.getElementById("curated-banner-message"),
+    preset: "curated",
+  });
+}
+
+const specialBannerRoot = document.getElementById("special-banner-admin-root");
+if (specialBannerRoot) {
+  initCuratedBannerAdmin({
+    supabase,
+    root: specialBannerRoot,
+    messageEl: document.getElementById("special-banner-message"),
+    preset: "special",
   });
 }

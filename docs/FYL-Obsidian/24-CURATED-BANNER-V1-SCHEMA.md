@@ -239,7 +239,7 @@ const { data: variants } = await supabase
 
 | Componente | Tras Fase 3 (2026-05-18) |
 |------------|--------------------------|
-| `custom-banner.js` | Solo si flag OFF — loader condicional; matcher `tag_value` (excluye `__curated__`) |
+| `custom-banner.js` | Solo si flag OFF — loader condicional; matcher `tag_value` (excluye `__curated__` y `__curated_special__`) |
 | `curated-banner.js` | Siempre cargado; activo en UI solo con `FYL_CURATED_BANNER_V1` |
 | `admin/quick-actions.js` | Legacy tags + sección **Banner curado** (`curated-banner-admin.js`) |
 | `main-supabase.js` | `fylLoadHomeProductBanner` → curated o legacy, no ambos |
@@ -325,7 +325,17 @@ select id, name, tag_value, enabled from public.custom_product_banners limit 5;
 | `admin/quick-actions.html` | Sección + estilos `.cba-*` |
 | `admin/quick-actions.js` | `initCuratedBannerAdmin()` |
 
-**Legacy:** banner por tags sigue en la misma página; `tag_value = __curated__` en banners curados (no matchea catálogo).
+**Legacy:** banner por tags sigue en la misma página; placeholders curated no matchean catálogo por tags.
+
+### Convención `tag_value` (curated)
+
+| Valor | Uso |
+|-------|-----|
+| `__curated__` | Banner dinámico carrusel 2×2 (home NJ + admin preset `curated`) |
+| `__curated_special__` | Banner especial tarjeta oscura 3 fotos (home NJ + admin preset `special`) |
+| Otro valor | Banner legacy por tags comerciales (`custom-banner.js`) |
+
+Detalle implementación 2026-06-09: [[42-HOME-BANNERS-FEED-NJ-2026-06-09]] §3.
 
 **Preview:** `catalog_public_available_view` + clases `custom-banner-*` de `styles.css` (marco 430px).
 

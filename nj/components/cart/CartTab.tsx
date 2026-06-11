@@ -5,11 +5,10 @@ import Link from "next/link";
 import { useCartStore, type CartItem } from "@/store/cart";
 import { useCartSync, checkoutCart } from "@/hooks/useCart";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import LineItemRow, { formatItemARS } from "@/components/cart/LineItemRow";
 
 function formatARS(n: number) {
-  return new Intl.NumberFormat("es-AR", {
-    style: "currency", currency: "ARS", minimumFractionDigits: 0,
-  }).format(n);
+  return formatItemARS(n);
 }
 
 // ─── Stock check ──────────────────────────────────────────────────────────────
@@ -63,11 +62,13 @@ function useCartStock(items: CartItem[]) {
 interface CartTabProps {
   customerId: string;
   onOrderCreated: () => void;
+  activeOrderStatus?: string | null; // warn if "closed"
+  onGoToOrder?: () => void;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function CartTab({ customerId, onOrderCreated }: CartTabProps) {
+export default function CartTab({ customerId, onOrderCreated, activeOrderStatus, onGoToOrder }: CartTabProps) {
   const items            = useCartStore((s) => s.items);
   const removeItem       = useCartStore((s) => s.removeItem);
   const updateQty        = useCartStore((s) => s.updateQty);
@@ -186,97 +187,66 @@ export default function CartTab({ customerId, onOrderCreated }: CartTabProps) {
       }}>
         {itemsWithStock.map(({ item, stock, outOfStock, limitedStock }, idx) => (
           <div key={`${item.variant_id}__${item.size}`} style={{
-            display: "flex", gap: 10, padding: "14px 16px", alignItems: "flex-start",
             borderBottom: idx < items.length - 1 ? "1px solid #f5f5f5" : "none",
-            background: outOfStock ? "#fff5f5" : "transparent",
-            borderLeft: outOfStock ? "3px solid #fca5a5" : "3px solid transparent",
           }}>
-            {item.imagen && (
-              <img src={item.imagen} alt={item.product_name} style={{
-                width: 52, height: 52, borderRadius: 8,
-                objectFit: "cover", flexShrink: 0, background: "#f5f5f5",
-                opacity: outOfStock ? 0.5 : 1,
-                filter: outOfStock ? "grayscale(0.4)" : "none",
-              }} />
-            )}
-
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{
-                fontSize: 13, fontWeight: 600,
-                color: outOfStock ? "#991b1b" : "#222",
-              }}>
-                {item.product_name}
-              </div>
-              <div style={{ fontSize: 12, color: "#888", marginTop: 2 }}>
-                {[item.color, item.size && `Talle ${item.size}`].filter(Boolean).join(" · ")}
-              </div>
-              {/* Stock warnings */}
-              {outOfStock && (
-                <div style={{
-                  display: "inline-flex", alignItems: "center", gap: 4, marginTop: 5,
-                  fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 20,
-                  background: "#fee2e2", color: "#991b1b",
-                }}>
-                  Sin stock
-                </div>
-              )}
-              {limitedStock && !outOfStock && (
-                <div style={{
-                  display: "inline-flex", alignItems: "center", gap: 4, marginTop: 5,
-                  fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 20,
-                  background: "#fef3c7", color: "#92400e",
-                }}>
-                  Máx. {stock} disponibles
-                </div>
-              )}
-              {!outOfStock && (
-                <div style={{ fontSize: 13, fontWeight: 700, color: "#CD844D", marginTop: 4 }}>
-                  {formatARS(item.price_snapshot)}
-                  <span style={{ fontSize: 11, fontWeight: 400, color: "#aaa", marginLeft: 4 }}>c/u</span>
-                </div>
-              )}
-            </div>
-
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
-              <button onClick={() => handleRemove(item)} aria-label="Eliminar" style={{
-                background: "none", border: "none",
-                color: outOfStock ? "#fca5a5" : "#ccc",
-                cursor: "pointer", padding: 4,
-              }}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="3 6 5 6 21 6"/>
-                  <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-                  <path d="M10 11v6M14 11v6"/>
-                  <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
-                </svg>
-              </button>
-              {!outOfStock && (
+            <LineItemRow
+              imagen={item.imagen}
+              productName={item.product_name}
+              color={item.color}
+              size={item.size}
+              quantity={item.qty}
+              unitPrice={item.price_snapshot}
+              highlight={outOfStock ? "outOfStock" : null}
+              line2={outOfStock ? (
+                <span style={{ color: "#991b1b" }}>Cant. {item.qty} · sin stock</span>
+              ) : (
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <button onClick={() => handleQty(item, -1)} style={{
-                    width: 28, height: 28, borderRadius: 8, border: "1.5px solid #ddd",
-                    background: "#fff", cursor: "pointer", fontSize: 16, fontWeight: 700,
-                    display: "flex", alignItems: "center", justifyContent: "center", color: "#555",
-                  }}>−</button>
-                  <span style={{ fontSize: 14, fontWeight: 700, minWidth: 20, textAlign: "center" }}>
-                    {item.qty}
-                  </span>
-                  <button onClick={() => handleQty(item, +1)} style={{
-                    width: 28, height: 28, borderRadius: 8, border: "1.5px solid #ddd",
-                    background: "#fff", cursor: "pointer", fontSize: 16, fontWeight: 700,
-                    display: "flex", alignItems: "center", justifyContent: "center", color: "#555",
-                  }}>+</button>
+                  <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    <button onClick={() => handleQty(item, -1)} aria-label="Menos" style={{
+                      width: 26, height: 26, borderRadius: 7, border: "1.5px solid #ddd",
+                      background: "#fff", cursor: "pointer", fontSize: 15, fontWeight: 700,
+                      display: "flex", alignItems: "center", justifyContent: "center", color: "#555",
+                    }}>−</button>
+                    <span style={{ fontSize: 13, fontWeight: 700, minWidth: 16, textAlign: "center" }}>
+                      {item.qty}
+                    </span>
+                    <button onClick={() => handleQty(item, +1)} aria-label="Más" style={{
+                      width: 26, height: 26, borderRadius: 7, border: "1.5px solid #ddd",
+                      background: "#fff", cursor: "pointer", fontSize: 15, fontWeight: 700,
+                      display: "flex", alignItems: "center", justifyContent: "center", color: "#555",
+                    }}>+</button>
+                  </div>
+                  <span>· {formatARS(item.price_snapshot)} c/u</span>
                 </div>
               )}
-              {/* For out-of-stock: show qty grayed out, no controls */}
-              {outOfStock && (
-                <span style={{
-                  fontSize: 12, color: "#ccc", fontWeight: 500,
-                  padding: "4px 0",
+              trailing={
+                <button onClick={() => handleRemove(item)} aria-label="Eliminar" style={{
+                  background: "none", border: "none",
+                  color: outOfStock ? "#fca5a5" : "#ccc",
+                  cursor: "pointer", padding: 4, marginLeft: 2,
+                  display: "flex", alignItems: "center",
                 }}>
-                  Cant. {item.qty}
-                </span>
-              )}
-            </div>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="3 6 5 6 21 6"/>
+                    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                    <path d="M10 11v6M14 11v6"/>
+                    <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                  </svg>
+                </button>
+              }
+              below={
+                outOfStock || limitedStock ? (
+                  <span style={{
+                    display: "inline-flex", alignItems: "center",
+                    fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 20,
+                    background: outOfStock ? "#fee2e2" : "#fef3c7",
+                    color: outOfStock ? "#991b1b" : "#92400e",
+                  }}>
+                    {outOfStock ? "Sin stock" : `Máx. ${stock} disponibles`}
+                  </span>
+                ) : undefined
+              }
+            />
           </div>
         ))}
       </div>
@@ -310,23 +280,57 @@ export default function CartTab({ customerId, onOrderCreated }: CartTabProps) {
         </div>
       )}
 
-      {/* CTA */}
-      <button
-        onClick={handleCheckout}
-        disabled={isCheckingOut || checking}
-        style={{
-          width: "100%", padding: "16px", borderRadius: 14, border: "none",
-          background: isCheckingOut || checking ? "#e8a96b" : "#CD844D",
-          color: "#fff", fontSize: 16, fontWeight: 700,
-          cursor: isCheckingOut || checking ? "not-allowed" : "pointer",
-          boxShadow: "0 4px 14px rgba(205,132,77,0.35)",
-        }}
-      >
-        {checking ? "Verificando stock..." : isCheckingOut ? "Creando pedido..." : "Hacer pedido →"}
-      </button>
-      <p style={{ fontSize: 11, color: "#aaa", textAlign: "center", margin: "8px 0 0" }}>
-        Revisás el detalle antes de enviarlo
-      </p>
+      {/* Pedido en preparación — block "Hacer pedido" */}
+      {activeOrderStatus === "closed" ? (
+        <div>
+          <div style={{
+            padding: "14px", borderRadius: 12,
+            background: "#f5f5f5", border: "1.5px solid #e0d5cb",
+            textAlign: "center", marginBottom: 10,
+          }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "#555", marginBottom: 4 }}>
+              📦 Tenés un pedido en preparación
+            </div>
+            <div style={{ fontSize: 12, color: "#888", lineHeight: 1.5, marginBottom: 12 }}>
+              Para enviar un nuevo pedido primero cancelá la preparación del pedido actual.
+            </div>
+            {onGoToOrder && (
+              <button
+                onClick={onGoToOrder}
+                style={{
+                  padding: "10px 20px", borderRadius: 10, border: "none",
+                  background: "#CD844D", color: "#fff",
+                  fontSize: 13, fontWeight: 700, cursor: "pointer",
+                }}
+              >
+                Ver pedido en preparación →
+              </button>
+            )}
+          </div>
+          <p style={{ fontSize: 11, color: "#aaa", textAlign: "center", margin: "4px 0 0" }}>
+            Podés seguir agregando productos al carrito
+          </p>
+        </div>
+      ) : (
+        <>
+          <button
+            onClick={handleCheckout}
+            disabled={isCheckingOut || checking}
+            style={{
+              width: "100%", padding: "16px", borderRadius: 14, border: "none",
+              background: isCheckingOut || checking ? "#e8a96b" : "#CD844D",
+              color: "#fff", fontSize: 16, fontWeight: 700,
+              cursor: isCheckingOut || checking ? "not-allowed" : "pointer",
+              boxShadow: "0 4px 14px rgba(205,132,77,0.35)",
+            }}
+          >
+            {checking ? "Verificando stock..." : isCheckingOut ? "Creando pedido..." : "Hacer pedido →"}
+          </button>
+          <p style={{ fontSize: 11, color: "#aaa", textAlign: "center", margin: "8px 0 0" }}>
+            Revisás el detalle antes de enviarlo
+          </p>
+        </>
+      )}
     </div>
   );
 }

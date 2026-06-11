@@ -3,6 +3,8 @@ import { getCatalogPage } from "@/lib/supabase/queries";
 import CatalogShell from "@/components/catalog/CatalogShell";
 import SkeletonCard from "@/components/catalog/SkeletonCard";
 import FylOriginalsBanner from "@/components/banners/FylOriginalsBanner";
+import NuevosIngresosBanner from "@/components/banners/NuevosIngresosBanner";
+import CuratedSpecialBanner from "@/components/banners/CuratedSpecialBanner";
 import CuratedBanner from "@/components/banners/CuratedBanner";
 import InfoBanner from "@/components/banners/InfoBanner";
 
@@ -31,11 +33,13 @@ async function CatalogContent() {
       tags={[]}
       aboveGridSlot={
         <>
-          <FylOriginalsBanner key="fyl-originals" />
           <InfoBanner key="info-banner" />
+          <NuevosIngresosBanner key="nuevos-ingresos" />
+          <FylOriginalsBanner key="fyl-originals" />
+          <CuratedSpecialBanner key="curated-special-banner" />
+          <CuratedBanner key="curated-banner" />
         </>
       }
-      curatedSlot={<CuratedBanner key="curated-banner" />}
     />
   );
 }

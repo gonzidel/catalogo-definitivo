@@ -1,4 +1,11 @@
 {
+  "redirects": [
+    {
+      "source": "/",
+      "destination": "/catalogo",
+      "permanent": false
+    }
+  ],
   "rewrites": [
     {
       "source": "/((?!catalogo(?:/|$)).*)",

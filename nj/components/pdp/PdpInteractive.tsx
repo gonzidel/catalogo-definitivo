@@ -7,7 +7,7 @@ import PdpSizePicker from "./PdpSizePicker";
 import PdpGallery from "./PdpGallery";
 import PdpRecommended from "./PdpRecommended";
 import { useCartStore } from "@/store/cart";
-import { formatARS } from "@/lib/utils/catalog";
+import { formatARS, colorDetailHasImage } from "@/lib/utils/catalog";
 import type { GroupedProduct, ColorDetail } from "@/types/catalog";
 
 /** selections[variantId][size] = qty */
@@ -67,10 +67,15 @@ export default function PdpInteractive({
   initialColor,
   backUrl,
 }: PdpInteractiveProps) {
-  const firstColor = product.DetalleColor[0]?.color ?? "";
+  const visibleColors = useMemo(
+    () => (product.DetalleColor ?? []).filter(colorDetailHasImage),
+    [product.DetalleColor]
+  );
+
+  const firstColor = visibleColors[0]?.color ?? "";
   const [activeColor, setActiveColor] = useState(() => {
     const requested = (initialColor ?? firstColor).trim();
-    const exists = product.DetalleColor.some(
+    const exists = visibleColors.some(
       (dc) => dc.color.toLowerCase() === requested.toLowerCase()
     );
     return exists ? requested : firstColor;
@@ -85,19 +90,9 @@ export default function PdpInteractive({
 
   // Always resolve to a valid color — fallback to first if not found
   const colorDetail: ColorDetail | null =
-    product.DetalleColor.find(
+    visibleColors.find(
       (dc) => dc.color.toLowerCase() === activeColor.toLowerCase()
-    ) ?? product.DetalleColor[0] ?? null;
-
-  const allColors: ColorDetail[] = useMemo(() => {
-    return product.DetalleColor.map((dc) => {
-      if (dc.images.some(Boolean)) return dc;
-      return {
-        ...dc,
-        images: product.VariantePrincipal ? [product.VariantePrincipal] : [],
-      };
-    });
-  }, [product.DetalleColor, product.VariantePrincipal]);
+    ) ?? visibleColors[0] ?? null;
 
   const variantInfo = variantSizes.find(
     (v) => v.color.toLowerCase() === activeColor.toLowerCase()
@@ -132,7 +127,7 @@ export default function PdpInteractive({
     for (const [varId, sizeMap] of Object.entries(selections)) {
       const vi = variantSizes.find((v) => v.variantId === varId);
       if (!vi) continue;
-      const dc = product.DetalleColor.find(
+      const dc = visibleColors.find(
         (d) => d.color.toLowerCase() === vi.color.toLowerCase()
       );
       const imagen =
@@ -146,7 +141,7 @@ export default function PdpInteractive({
     // Sort by color then size for display
     items.sort((a, b) => a.color.localeCompare(b.color) || a.size.localeCompare(b.size));
     return items;
-  }, [selections, variantSizes, product.DetalleColor]);
+  }, [selections, variantSizes, visibleColors]);
 
   const totalSelectedQty = allSelectedItems.reduce((a, i) => a + i.qty, 0);
   const totalSelectedAmount = allSelectedItems.reduce(
@@ -324,11 +319,29 @@ export default function PdpInteractive({
       <div style={{ padding: "12px 16px" }}>
         {/* Gallery */}
         <PdpGallery
-          allColors={allColors}
+          allColors={visibleColors}
           activeColor={activeColor}
           onColorChange={onColorChange}
           altText={product.Articulo}
           onHeroSrcChange={setCurrentHeroSrc}
+          outOfStock={colorDetail?.hasStock === false}
+          onShareImage={async (url) => {
+            if (navigator.share) {
+              try {
+                await navigator.share({
+                  title: `Art. ${product.Articulo}`,
+                  url,
+                });
+                return;
+              } catch {
+                /* cancelado */
+              }
+            }
+            await navigator.clipboard.writeText(url);
+          }}
+          onDownloadImage={(url) =>
+            downloadHeroImage(url, product.Articulo)
+          }
         />
 
         <div style={{ marginTop: 16 }}>
@@ -351,7 +364,7 @@ export default function PdpInteractive({
 
           {/* Color picker */}
           <PdpColorPicker
-            colors={product.DetalleColor}
+            colors={visibleColors}
             activeColor={activeColor}
             onColorChange={onColorChange}
           />

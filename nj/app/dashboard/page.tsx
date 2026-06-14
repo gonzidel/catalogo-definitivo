@@ -29,6 +29,7 @@ export default async function DashboardPage() {
       payment_method,
       dismantle_at,
       expires_at,
+      notes,
       order_items (
         id,
         product_name,

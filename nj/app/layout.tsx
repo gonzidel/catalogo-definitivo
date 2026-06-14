@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Suspense } from "react";
+import Link from "next/link";
 import "@/styles/globals.css";
 import Header from "@/components/layout/Header";
 import BottomNav from "@/components/layout/BottomNav";
@@ -29,10 +30,10 @@ function HeaderFallback() {
   return (
     <header>
       <div className="header-left">
-        <a href="/" className="header-logo-btn" aria-label="Inicio">
+        <Link href="/" className="header-logo-btn" aria-label="Inicio">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/nj/logo.png" alt="Logo F&L" className="header-logo" />
-        </a>
+        </Link>
       </div>
       <div className="search-bar-wrapper" />
       <div className="header-right" />

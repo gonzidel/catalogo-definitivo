@@ -12,6 +12,7 @@
 | Lista de envíos — fecha por finalización (`sent_at`, migración 227) | `doc/shipping-list-sent-at-deploy-2026-05-26.md` (Obsidian: `docs/FYL-Obsidian/39-LISTA-ENVIOS-SENT-AT-2026-05-26.md`) |
 | PAU — panel móvil pedidos (WhatsApp, QR, borrador) | `doc/pau/README.md` (Obsidian: `docs/FYL-Obsidian/40-PAU-PANEL-ATENCION-UNIFICADO.md`) |
 | **Next.js `/nj` — arquitectura, auth, carrito, pedidos, buscador** | `doc/nj/README.md` + `doc/nj/cart-order-flow.md` + `doc/nj/smart-search.md` |
+| **Next.js `/catalogo1` — lanzamiento público sin auth, WhatsApp** | `doc/catalogo1/README.md` (Obsidian: `docs/FYL-Obsidian/44-CATALOGO1-LANZAMIENTO-2026-06-13.md`) |
 | Este resumen y flujo extremo a extremo | `doc/arquitectura-general.md` |
 
 ## Flujo de catalogo publico

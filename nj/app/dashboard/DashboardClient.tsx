@@ -93,6 +93,7 @@ interface Order {
   payment_method?: string;
   dismantle_at?: string | null;
   expires_at?: string | null;
+  notes?: string | null;
   order_items: OrderItem[];
 }
 
@@ -137,6 +138,16 @@ function formatARS(n: number) {
   return new Intl.NumberFormat("es-AR", {
     style: "currency", currency: "ARS", minimumFractionDigits: 0,
   }).format(n);
+}
+
+const OPERATIONAL_ITEM_STATUSES = new Set(["reserved", "picked", "waiting", "missing"]);
+
+function orderHasOperationalItems(order: Order): boolean {
+  return (order.order_items ?? []).some(
+    (i) =>
+      OPERATIONAL_ITEM_STATUSES.has((i.status ?? "reserved").toLowerCase()) &&
+      Number(i.quantity ?? 0) > 0
+  );
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -305,6 +316,7 @@ export default function DashboardClient({ user, customer, orders: initialOrders 
   const activeOrder = [...orders]
     .filter((o) => {
       if (!MY_ORDER_STATUSES.has(o.status)) return false;
+      if (!orderHasOperationalItems(o)) return false;
       // For "sent" orders: only show if user hasn't dismissed the notification
       if (o.status === "sent") {
         const key = `fyl-order-sent-dismissed-${o.id}`;
@@ -337,7 +349,7 @@ export default function DashboardClient({ user, customer, orders: initialOrders 
     const { data } = await supabase
       .from("orders")
       .select(`
-        id, order_number, status, total_amount, created_at, payment_method, dismantle_at, expires_at,
+        id, order_number, status, total_amount, created_at, payment_method, dismantle_at, expires_at, notes,
         order_items ( id, product_name, color, size, quantity, price_snapshot, imagen, sku, status )
       `)
       .eq("customer_id", user.id)
@@ -362,6 +374,18 @@ export default function DashboardClient({ user, customer, orders: initialOrders 
   // Revert closed → active: go to cart tab so user can add more
   function handleOrderCancelled() {
     refreshOrders().then(() => setTab("cart"));
+  }
+
+  const [showCancelSuccess, setShowCancelSuccess] = useState(false);
+
+  function handleOrderFullyCancelled() {
+    setShowCancelSuccess(true);
+    refreshOrders().then(() => setTab("active-order"));
+  }
+
+  function handleCancelSuccessDismiss() {
+    setShowCancelSuccess(false);
+    setTab("cart");
   }
 
   // Sync active order status + synthetic notifications to Zustand
@@ -536,10 +560,13 @@ export default function DashboardClient({ user, customer, orders: initialOrders 
         {tab === "active-order" && (
           <ActiveOrderTab
             order={activeOrder}
+            showCancelSuccess={showCancelSuccess}
+            onCancelSuccessDismiss={handleCancelSuccessDismiss}
             onOrderSent={handleOrderSent}
             onOrderRefresh={refreshOrders}
             onOrderDismissed={handleOrderDismissed}
             onOrderCancelled={handleOrderCancelled}
+            onOrderFullyCancelled={handleOrderFullyCancelled}
           />
         )}
 

@@ -485,9 +485,10 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=...
 - Banner FYL Originals original: [[22-BANNER-FYL-ORIGINALS]]
 - Banner curado operativo (Vanilla): [[37-CURATED-BANNER-FRONTEND-OPERATIVO-2026-05-18]]
 - **Home NJ banners + feed + republicaciones (2026-06-09):** [[42-HOME-BANNERS-FEED-NJ-2026-06-09]]
+- **NJ Dashboard prórroga 24h + cancelar pedido (2026-06-09):** [[43-NJ-DASHBOARD-PRORROGA-CANCELACION-2026-06-09]]
 - Arquitectura general (Vanilla): [[01-ARQUITECTURA-GENERAL]]
 
 ---
 
 *Creado: 2026-06-08. Última actualización: 2026-06-09. Autor: agente Cursor.*
-*Etapa 1: catálogo público solo lectura. Etapa 2: auth + dashboard cliente. Etapa 3: banners home + feed (ver nota 42).*
+*Etapa 1: catálogo público solo lectura. Etapa 2: auth + dashboard cliente (+ prórroga/cancelación vencidos, ver nota 43). Etapa 3: banners home + feed (ver nota 42).*

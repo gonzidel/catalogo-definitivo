@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import Link from "next/link";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { hasCustomerUsedOrderExtension } from "@/lib/order-notes";
 import { useCartStore } from "@/store/cart";
 import LineItemRow, { formatItemARS } from "@/components/cart/LineItemRow";
 
@@ -46,11 +47,37 @@ interface ActiveOrder {
   created_at: string;
   dismantle_at?: string | null;
   expires_at?: string | null;
+  notes?: string | null;
   order_items: OrderItem[];
 }
 
 const ORDER_DISMANTLE_DAYS = 7;
 const WHATSAPP_HREF = "https://wa.me/5493624118637";
+
+function WhatsAppIcon({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.7 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z" />
+    </svg>
+  );
+}
+
+const btnBase: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 8,
+  width: "100%",
+  minHeight: 40,
+  padding: "10px 14px",
+  borderRadius: 10,
+  fontSize: 13,
+  fontWeight: 600,
+  lineHeight: 1.2,
+  boxSizing: "border-box",
+  textDecoration: "none",
+  cursor: "pointer",
+};
 
 function orderDaysRemaining(createdAt: string, dismantleAt?: string | null): number {
   const oneDayMs = 1000 * 60 * 60 * 24;
@@ -221,19 +248,85 @@ interface ActiveOrderTabProps {
   onOrderRefresh: () => void;
   onOrderDismissed: () => void;
   onOrderCancelled: () => void; // revert closed → active
+  onOrderFullyCancelled: () => void;
+  showCancelSuccess?: boolean;
+  onCancelSuccessDismiss?: () => void;
 }
 
-export default function ActiveOrderTab({ order, onOrderSent, onOrderRefresh, onOrderDismissed, onOrderCancelled }: ActiveOrderTabProps) {
+export default function ActiveOrderTab({
+  order,
+  showCancelSuccess,
+  onCancelSuccessDismiss,
+  onOrderSent,
+  onOrderRefresh,
+  onOrderDismissed,
+  onOrderCancelled,
+  onOrderFullyCancelled,
+}: ActiveOrderTabProps) {
   const [sending, setSending]                   = useState(false);
   const [error, setError]                       = useState<string | null>(null);
   const [cancelingId, setCancelingId]           = useState<string | null>(null);
   const [altOpenFor, setAltOpenFor]             = useState<string | null>(null);
   const [menuOpenFor, setMenuOpenFor]           = useState<string | null>(null);
+  const [orderMenuOpen, setOrderMenuOpen]         = useState(false);
   const [showSendConfirm, setShowSendConfirm]   = useState(false);
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [cancelingPrep, setCancelingPrep]       = useState(false);
+  const [extending, setExtending]               = useState(false);
+  const [cancelingOrder, setCancelingOrder]     = useState(false);
   const [showAllItems, setShowAllItems]         = useState(false);
   const ITEMS_PREVIEW = 4;
   const addItem = useCartStore((s) => s.addItem);
+
+  if (showCancelSuccess) {
+    return (
+      <div style={{
+        background: "#fff", borderRadius: 20, padding: "32px 24px",
+        boxShadow: "0 1px 4px rgba(0,0,0,0.07)", textAlign: "center",
+        position: "relative",
+      }}>
+        <button
+          type="button"
+          onClick={onCancelSuccessDismiss}
+          aria-label="Cerrar"
+          style={{
+            position: "absolute", top: 14, right: 14,
+            background: "none", border: "none", cursor: "pointer",
+            fontSize: 20, color: "#ccc", lineHeight: 1,
+          }}
+        >
+          ×
+        </button>
+        <div style={{ fontSize: 52, marginBottom: 10 }}>✓</div>
+        <div style={{ fontSize: 18, fontWeight: 800, color: "#555", marginBottom: 6 }}>
+          Pedido cancelado
+        </div>
+        <p style={{ fontSize: 13, color: "#888", lineHeight: 1.5, margin: "0 0 24px" }}>
+          Liberamos los productos reservados. Podés armar un nuevo pedido cuando quieras.
+        </p>
+        <div style={{ display: "flex", gap: 10, flexDirection: "column" }}>
+          <button
+            type="button"
+            onClick={onCancelSuccessDismiss}
+            style={{
+              padding: "13px 20px", borderRadius: 12, border: "none",
+              background: "#CD844D", color: "#fff", fontSize: 15, fontWeight: 700,
+              cursor: "pointer", boxShadow: "0 4px 12px rgba(205,132,77,0.3)",
+            }}
+          >
+            Ir al carrito
+          </button>
+          <Link href="/" style={{
+            display: "block", padding: "11px 20px", borderRadius: 12,
+            border: "1.5px solid #e0d5cb", color: "#888",
+            textDecoration: "none", fontSize: 14, fontWeight: 500,
+          }}>
+            Seguir comprando
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   if (!order) {
     return (
@@ -526,10 +619,50 @@ export default function ActiveOrderTab({ order, onOrderSent, onOrderRefresh, onO
     if (err) {
       setError("No se pudo enviar el pedido. Intentá de nuevo.");
     } else {
-      // Refresh — order is now "closed" (En preparación screen will display)
       onOrderSent();
     }
   }
+
+  async function handleRequestExtension() {
+    if (!order || extending) return;
+    setExtending(true);
+    setError(null);
+    const supabase = getSupabaseBrowserClient();
+    const { error: err } = await supabase.rpc("rpc_customer_request_order_extension_24h", {
+      p_order_id: order.id,
+    });
+    setExtending(false);
+    if (err) {
+      const msg = err.message.includes("Ya usaste")
+        ? "Ya usaste la prórroga de 24 horas para este pedido."
+        : "No pudimos habilitar las 24 horas. Intentá de nuevo o escribinos por WhatsApp.";
+      setError(msg);
+      return;
+    }
+    onOrderRefresh();
+  }
+
+  async function handleCancelEntireOrder() {
+    if (!order || cancelingOrder) return;
+    setCancelingOrder(true);
+    setError(null);
+    const supabase = getSupabaseBrowserClient();
+    const { error: err } = await supabase.rpc("rpc_customer_cancel_order", {
+      p_order_id: order.id,
+    });
+    setCancelingOrder(false);
+    setShowCancelConfirm(false);
+    if (err) {
+      const msg = err.message?.includes("permiso")
+        ? "No tenés permiso para cancelar este pedido."
+        : err.message || "No se pudo cancelar el pedido. Intentá de nuevo.";
+      setError(msg);
+      return;
+    }
+    onOrderFullyCancelled();
+  }
+
+  const extensionUsed = hasCustomerUsedOrderExtension(order.notes);
 
   function renderItem(item: OrderItem, isMissing: boolean) {
     const ist       = ITEM_STATUS_INFO[item.status ?? "reserved"] ?? ITEM_STATUS_INFO.reserved;
@@ -640,38 +773,81 @@ export default function ActiveOrderTab({ order, onOrderSent, onOrderRefresh, onO
 
   return (
     <div>
-      {/* Expired overlay — full blocking banner */}
+      {/* Aviso: plazo vencido */}
       {isExpired && (
         <div style={{
-          background: "#fff", borderRadius: 16, padding: "20px",
+          background: "#fff", borderRadius: 16, padding: "16px",
           boxShadow: "0 1px 4px rgba(0,0,0,0.07)", marginBottom: 10,
           borderTop: "4px solid #CD844D",
         }}>
-          <div style={{ fontSize: 16, fontWeight: 700, color: "#222", marginBottom: 8, textAlign: "center" }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: "#222", marginBottom: 6, textAlign: "center" }}>
             Tu pedido alcanzó el plazo de 7 días
           </div>
-          <p style={{ fontSize: 13, color: "#555", textAlign: "center", margin: "0 0 8px", lineHeight: 1.5 }}>
+          <p style={{ fontSize: 13, color: "#555", textAlign: "center", margin: "0 0 12px", lineHeight: 1.45 }}>
             Ya no podés modificarlo desde la web, pero todavía no fue desarmado.
           </p>
-          <p style={{ fontSize: 13, color: "#555", textAlign: "center", margin: "0 0 16px", lineHeight: 1.5 }}>
-            Si querés que lo preparemos o tenés dudas, escribinos por WhatsApp y te ayudamos.
-          </p>
-          <a
-            href={WHATSAPP_HREF}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{
-              display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-              width: "100%", padding: "14px", borderRadius: 12, textDecoration: "none",
-              background: "#25D366", color: "#fff", fontSize: 15, fontWeight: 700,
-              boxShadow: "0 4px 12px rgba(37,211,102,0.35)",
-            }}
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
-            </svg>
-            Escribir por WhatsApp
-          </a>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {!extensionUsed && (
+              <button
+                type="button"
+                onClick={handleRequestExtension}
+                disabled={extending}
+                style={{
+                  ...btnBase,
+                  border: "none",
+                  background: extending ? "#e8a96b" : "#CD844D",
+                  color: "#fff",
+                  fontWeight: 700,
+                  cursor: extending ? "not-allowed" : "pointer",
+                }}
+              >
+                {extending ? "Habilitando..." : "Dame 24 hs más"}
+              </button>
+            )}
+
+            {extensionUsed && (
+              <p style={{
+                fontSize: 12, color: "#92400e", textAlign: "center", margin: 0,
+                padding: "8px 10px", background: "#fef3c7", borderRadius: 8,
+                lineHeight: 1.4,
+              }}>
+                Ya usaste tu prórroga. Para más tiempo, escribinos por WhatsApp.
+              </p>
+            )}
+
+            <a
+              href={WHATSAPP_HREF}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                ...btnBase,
+                background: "#25D366",
+                color: "#fff",
+                fontWeight: 700,
+                boxShadow: "0 2px 8px rgba(37,211,102,0.25)",
+              }}
+            >
+              <WhatsAppIcon size={17} />
+              Escribir por WhatsApp
+            </a>
+
+            <button
+              type="button"
+              onClick={() => setShowCancelConfirm(true)}
+              disabled={cancelingOrder}
+              style={{
+                ...btnBase,
+                background: "#fff",
+                border: "1.5px solid #fca5a5",
+                color: "#991b1b",
+                cursor: cancelingOrder ? "not-allowed" : "pointer",
+                opacity: cancelingOrder ? 0.7 : 1,
+              }}
+            >
+              Cancelar pedido
+            </button>
+          </div>
         </div>
       )}
 
@@ -685,8 +861,7 @@ export default function ActiveOrderTab({ order, onOrderSent, onOrderRefresh, onO
           <span style={{ fontSize: 14, fontWeight: 700, color: "#222" }}>
             Pedido #{order.order_number}
           </span>
-          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-            {/* Days remaining chip */}
+          <div style={{ display: "flex", gap: 6, alignItems: "center", position: "relative" }}>
             {!isExpired && (
               <span style={{
                 fontSize: 11, fontWeight: 600, padding: "3px 8px", borderRadius: 20,
@@ -702,6 +877,47 @@ export default function ActiveOrderTab({ order, onOrderSent, onOrderRefresh, onO
             }}>
               {orderStatusInfo.label}
             </span>
+            {!isReadOnly && (order.status === "active" || order.status === "closing_soon") && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setOrderMenuOpen((v) => !v)}
+                  aria-label="Opciones del pedido"
+                  style={{
+                    background: "none", border: "none", cursor: "pointer",
+                    fontSize: 18, color: "#aaa", padding: "2px 4px", lineHeight: 1,
+                  }}
+                >
+                  ⋯
+                </button>
+                {orderMenuOpen && (
+                  <>
+                    <div
+                      onClick={() => setOrderMenuOpen(false)}
+                      style={{ position: "fixed", inset: 0, zIndex: 40 }}
+                    />
+                    <div style={{
+                      position: "absolute", right: 0, top: "calc(100% + 6px)",
+                      background: "#fff", borderRadius: 12, zIndex: 50,
+                      boxShadow: "0 4px 20px rgba(0,0,0,0.15)",
+                      minWidth: 170, overflow: "hidden", border: "1px solid #f0f0f0",
+                    }}>
+                      <button
+                        type="button"
+                        onClick={() => { setOrderMenuOpen(false); setShowCancelConfirm(true); }}
+                        style={{
+                          display: "block", width: "100%", padding: "12px 16px",
+                          background: "none", border: "none", textAlign: "left",
+                          fontSize: 14, fontWeight: 500, color: "#e53e3e", cursor: "pointer",
+                        }}
+                      >
+                        Cancelar pedido
+                      </button>
+                    </div>
+                  </>
+                )}
+              </>
+            )}
           </div>
         </div>
         <div style={{ fontSize: 12, color: "#aaa" }}>
@@ -895,41 +1111,23 @@ export default function ActiveOrderTab({ order, onOrderSent, onOrderRefresh, onO
         </div>
       )}
 
-      {/* When expired: only show WhatsApp + send if 4+ */}
+      {/* Vencido: enviar solo si cumple mínimo (WhatsApp ya está en el aviso) */}
       {isExpired ? (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {canSend && (
-            <button
-              onClick={() => setShowSendConfirm(true)}
-              disabled={sending}
-              style={{
-                width: "100%", padding: "16px", borderRadius: 14, border: "none",
-                background: sending ? "#e8a96b" : "#CD844D",
-                color: "#fff", fontSize: 16, fontWeight: 700,
-                cursor: sending ? "not-allowed" : "pointer",
-                boxShadow: "0 4px 14px rgba(205,132,77,0.35)",
-              }}
-            >
-              {sending ? "Enviando..." : "✓ Enviar pedido"}
-            </button>
-          )}
-          <a
-            href={WHATSAPP_HREF}
-            target="_blank"
-            rel="noopener noreferrer"
+        canSend ? (
+          <button
+            onClick={() => setShowSendConfirm(true)}
+            disabled={sending}
             style={{
-              display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-              width: "100%", padding: "14px", borderRadius: 12, textDecoration: "none",
-              background: "#25D366", color: "#fff", fontSize: 15, fontWeight: 700,
-              boxShadow: "0 4px 12px rgba(37,211,102,0.3)",
+              width: "100%", padding: "16px", borderRadius: 14, border: "none",
+              background: sending ? "#e8a96b" : "#CD844D",
+              color: "#fff", fontSize: 16, fontWeight: 700,
+              cursor: sending ? "not-allowed" : "pointer",
+              boxShadow: "0 4px 14px rgba(205,132,77,0.35)",
             }}
           >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
-            </svg>
-            Escribir por WhatsApp
-          </a>
-        </div>
+            {sending ? "Enviando..." : "✓ Enviar pedido"}
+          </button>
+        ) : null
       ) : (
         /* Normal send button — opens confirmation dialog first */
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -1025,6 +1223,59 @@ export default function ActiveOrderTab({ order, onOrderSent, onOrderRefresh, onO
                 }}
               >
                 Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Cancel order modal ──────────────────────────────────────────────── */}
+      {showCancelConfirm && (
+        <div
+          onClick={() => setShowCancelConfirm(false)}
+          style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)",
+            zIndex: 9999, display: "flex", alignItems: "flex-end",
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: "#fff", borderRadius: "20px 20px 0 0",
+              padding: "28px 24px 36px", width: "100%",
+              boxShadow: "0 -4px 24px rgba(0,0,0,0.12)",
+            }}
+          >
+            <div style={{ fontSize: 17, fontWeight: 800, color: "#222", textAlign: "center", marginBottom: 8 }}>
+              ¿Cancelar todo el pedido?
+            </div>
+            <p style={{ fontSize: 13, color: "#666", textAlign: "center", lineHeight: 1.55, margin: "0 0 20px" }}>
+              Los productos reservados vuelven al stock. El pedido desaparece de tu cuenta pero queda registrado para administración.
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <button
+                type="button"
+                onClick={handleCancelEntireOrder}
+                disabled={cancelingOrder}
+                style={{
+                  padding: "16px", borderRadius: 14, border: "none",
+                  background: cancelingOrder ? "#fca5a5" : "#991b1b",
+                  color: "#fff", fontSize: 16, fontWeight: 700,
+                  cursor: cancelingOrder ? "not-allowed" : "pointer",
+                }}
+              >
+                {cancelingOrder ? "Cancelando..." : "Sí, cancelar pedido"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowCancelConfirm(false)}
+                style={{
+                  padding: "14px", borderRadius: 12, border: "1.5px solid #e0d5cb",
+                  background: "transparent", color: "#888", fontSize: 15, fontWeight: 500,
+                  cursor: "pointer",
+                }}
+              >
+                Volver
               </button>
             </div>
           </div>

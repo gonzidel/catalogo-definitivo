@@ -19,6 +19,10 @@ body {
   overflow-x: hidden;
 }
 
+:root {
+  --fyl-header-h: 52px;
+}
+
 /* Placeholder para futuras sobreescrituras sin tocar styles.css */
 
 /* Header mobile — evitar que la búsqueda desborde sobre campana/avatar */
@@ -150,4 +154,265 @@ body {
   .info-banner-top.info-banner-top--visual .info-banner-top__inner {
     padding: 0;
   }
+}
+
+/* ── Zona categoría (chips + head): sin solapamiento en /nj ───────────── */
+.catalog-category-zone {
+  display: flex;
+  flex-direction: column;
+  background: #e5e1dc;
+}
+
+.catalog-category-zone > .quick-actions-container {
+  position: sticky;
+  top: var(--fyl-header-h, 52px);
+  margin-top: 0 !important;
+  margin-bottom: 0;
+  z-index: 998;
+  box-shadow: none;
+  border-bottom: none;
+  flex-shrink: 0;
+}
+
+.catalog-category-zone > .category-context-bar {
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+/* Sin stock — overlay en cards y PDP */
+.card-stock-overlay,
+.pdp-stock-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.52);
+  pointer-events: none;
+}
+
+.card-stock-overlay__label,
+.pdp-stock-overlay__label {
+  font-size: 13px;
+  font-weight: 700;
+  color: #5c5c5c;
+  background: rgba(255, 255, 255, 0.94);
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  letter-spacing: 0.02em;
+}
+
+/* PDP — feedback al cambiar miniatura + hero Next.js */
+.pdp-main-image-wrap {
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.pdp-main-image-wrap:disabled {
+  cursor: default;
+}
+
+.pdp-main-image-wrap .pdp-hero-placeholder {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
+  filter: blur(14px);
+  transform: scale(1.05);
+  image-rendering: pixelated;
+  z-index: 0;
+}
+
+.pdp-main-image-wrap .pdp-hero-image {
+  position: absolute !important;
+  inset: 0;
+  z-index: 1;
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: contain !important;
+  object-position: center;
+  opacity: 0;
+  transition: opacity 0.22s ease;
+}
+
+.pdp-main-image-wrap .pdp-hero-image.is-ready {
+  opacity: 1;
+}
+
+.pdp-main-image-wrap .pdp-hero-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.pdp-main-image-wrap .pdp-hero-loading .spinner {
+  width: 28px;
+  height: 28px;
+  border-width: 2.5px;
+}
+
+.pdp-main-image-wrap .pdp-hero-skeleton {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* Next PDP: imagen un poco más grande dentro del mismo marco (no el contenedor) */
+.pdp-gallery .pdp-main-image-wrap .pdp-hero-image {
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+.pdp-gallery .pdp-main-image-wrap .pdp-hero-image.is-ready {
+  transform: scale(1.08);
+  transform-origin: center center;
+}
+
+.pdp-gallery .pdp-main-image-wrap .pdp-hero-placeholder {
+  transform: scale(1.13);
+}
+
+.pdp-thumb-btn {
+  flex-shrink: 0;
+  width: 60px;
+  height: 75px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 4px;
+  overflow: hidden;
+  cursor: pointer;
+  background: #f5f5f5;
+  position: relative;
+  transition: transform 0.12s ease, opacity 0.12s ease, border-color 0.12s ease;
+}
+
+.pdp-thumb-btn:active {
+  transform: scale(0.96);
+  opacity: 0.88;
+}
+
+.pdp-thumb-btn.is-active {
+  border-color: #cd844d;
+}
+
+.pdp-thumb-btn.is-loading {
+  border-color: #cd844d;
+  box-shadow: 0 0 0 2px rgba(205, 132, 77, 0.25);
+}
+
+/* PDP — selector de color (contraste en grises claros) */
+.pdp-colors {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pdp-colors__label {
+  font-size: 13px;
+  color: #666;
+  font-weight: 500;
+}
+
+.pdp-colors__value {
+  color: #333;
+  font-weight: 600;
+}
+
+.pdp-colors__swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pdp-color-btn {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  position: relative;
+  flex-shrink: 0;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.pdp-color-swatch {
+  position: absolute;
+  width: 28px;
+  height: 28px;
+  left: 50%;
+  top: 50%;
+  margin-left: -14px;
+  margin-top: -14px;
+  border-radius: 50%;
+  background: var(--swatch-color, #ccc);
+  border: 1px solid rgba(0, 0, 0, 0.16);
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.14),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.4);
+  pointer-events: none;
+  transition: transform 0.14s ease, box-shadow 0.18s ease;
+}
+
+.pdp-color-btn:active .pdp-color-swatch {
+  transform: scale(0.9);
+}
+
+.pdp-color-btn.is-selected .pdp-color-swatch {
+  box-shadow:
+    0 0 0 2px #cd844d,
+    0 1px 4px rgba(0, 0, 0, 0.16);
+  border-color: rgba(0, 0, 0, 0.14);
+}
+
+.pdp-color-btn.is-oos {
+  opacity: 0.55;
+}
+
+/* Hero PDP — tap para lightbox (hint en styles.css) */
+@media (hover: hover) and (pointer: fine) {
+  .pdp-main-image-wrap:not(:disabled) {
+    cursor: zoom-in;
+  }
+  .pdp-main-image-wrap:not(:disabled):hover .pdp-hero-image.is-ready {
+    transform: scale(1.015);
+    transition: opacity 0.22s ease, transform 0.25s ease;
+  }
+  .pdp-gallery .pdp-main-image-wrap:not(:disabled):hover .pdp-hero-image.is-ready {
+    transform: scale(1.095);
+  }
+}
+
+.card .main-image-wrapper {
+  position: relative;
+}
+
+.card .color-btn {
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.card .color-btn--selected {
+  box-shadow: 0 0 0 2px #cd844d;
+}
+
+.card .color-btn--no-stock {
+  opacity: 0.55;
 }

@@ -1,0 +1,426 @@
+/*
+ * globals.css — Punto de entrada de estilos para /catalogo1
+ *
+ * Reutiliza el sistema de diseño completo del proyecto raíz.
+ * Path relativo: nj/styles/globals.css → ../../styles.css (raíz del proyecto)
+ *
+ * Si hay conflictos de selectores con el layout Next.js, agregarlos
+ * debajo del @import para sobreescribir sin tocar styles.css.
+ */
+@import "../../styles.css";
+
+/* ── Ajustes específicos del shell Next.js ──────────────────────────────── */
+
+/* Next.js wrappea el contenido en un div — asegurar que el body no tenga
+   overflow-x oculto roto por el basePath */
+html,
+body {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+:root {
+  --fyl-header-h: 52px;
+}
+
+/* Placeholder para futuras sobreescrituras sin tocar styles.css */
+
+/* Header mobile — evitar que la búsqueda desborde sobre campana/avatar */
+@media (max-width: 767px) {
+  header {
+    gap: 6px;
+    padding: 8px 10px;
+    min-width: 0;
+  }
+
+  .header-logo {
+    height: 32px;
+  }
+
+  .header-right {
+    flex-shrink: 0;
+    gap: 4px;
+  }
+
+  .search-bar-wrapper {
+    flex: 1 1 0;
+    min-width: 0;
+    max-width: 100%;
+    padding: 0;
+    border: none;
+    background: transparent;
+    border-radius: 0;
+    gap: 0;
+  }
+
+  .search-bar-wrapper:focus-within {
+    box-shadow: none;
+    border-color: transparent;
+  }
+
+  .search-bar-wrapper .search-bar-inner {
+    min-width: 0;
+    width: 100%;
+  }
+}
+
+/* Banner compra mínima — compacto, altura cercana al ícono PNG (/nj) */
+.info-banner-top.info-banner-top--visual {
+  margin: 4px 0 6px;
+  border: 1px solid rgba(205, 132, 77, 0.45);
+  background: linear-gradient(180deg, #f6f1e8, #efe6d7);
+  border-radius: 12px;
+  padding: 8px 10px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+  box-sizing: border-box;
+}
+
+.info-banner-top--visual .info-banner-top__inner {
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  border-radius: 0;
+}
+
+.info-banner-top--visual .info-banner-top__inner::after {
+  display: none;
+}
+
+.info-banner-top--visual .info-banner-top__iconWrap {
+  flex: 0 0 52px;
+  width: 52px;
+  height: 52px;
+  border-radius: 12px;
+}
+
+.info-banner-top--visual .info-banner-top__iconWrap::before {
+  inset: -6px;
+}
+
+.info-banner-top--visual .info-banner-top__icon {
+  width: 58px;
+  transform: translate(-4px, 0);
+}
+
+.info-banner-top--visual .info-banner-top__wa-icon {
+  width: 46px;
+  height: 46px;
+  transform: none;
+  flex-shrink: 0;
+  filter: drop-shadow(0 2px 4px rgba(184, 114, 63, 0.25));
+}
+
+.info-banner-top--visual .info-banner-top__content {
+  padding-left: 0;
+}
+
+.info-banner-top--visual .info-banner-top__title {
+  margin: 0 0 2px;
+  font-size: 12px;
+  line-height: 1.08;
+}
+
+.info-banner-top--visual .info-banner-top__title-main {
+  font-size: 14px;
+  margin-bottom: 0;
+}
+
+.info-banner-top--visual .info-banner-top__line {
+  margin: 0 0 4px;
+  font-size: 11.5px;
+  line-height: 1.15;
+}
+
+.info-banner-top--visual .info-banner-top__cta {
+  margin-top: 0;
+  min-height: 28px;
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12.5px;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(217, 140, 74, 0.16);
+}
+
+.info-banner-top--visual .info-banner-top__cta-arrow {
+  font-size: 13px;
+}
+
+#info-banner-top-container .info-banner-top--visual .info-banner-top__inner {
+  border: none;
+}
+
+@media (max-width: 767px) {
+  #info-banner-top-container {
+    padding: 0 8px;
+  }
+}
+
+@media (min-width: 768px) {
+  .info-banner-top.info-banner-top--visual .info-banner-top__inner {
+    padding: 0;
+  }
+}
+
+/* ── Zona categoría (chips + head): sin solapamiento en /nj ───────────── */
+.catalog-category-zone {
+  display: flex;
+  flex-direction: column;
+  background: #e5e1dc;
+}
+
+.catalog-category-zone > .quick-actions-container {
+  position: sticky;
+  top: var(--fyl-header-h, 52px);
+  margin-top: 0 !important;
+  margin-bottom: 0;
+  z-index: 998;
+  box-shadow: none;
+  border-bottom: none;
+  flex-shrink: 0;
+}
+
+.catalog-category-zone > .category-context-bar {
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+/* Sin stock — overlay en cards y PDP */
+.card-stock-overlay,
+.pdp-stock-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.52);
+  pointer-events: none;
+}
+
+.card-stock-overlay__label,
+.pdp-stock-overlay__label {
+  font-size: 13px;
+  font-weight: 700;
+  color: #5c5c5c;
+  background: rgba(255, 255, 255, 0.94);
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  letter-spacing: 0.02em;
+}
+
+/* PDP — feedback al cambiar miniatura + hero Next.js */
+.pdp-main-image-wrap {
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.pdp-main-image-wrap:disabled {
+  cursor: default;
+}
+
+.pdp-main-image-wrap .pdp-hero-placeholder {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
+  filter: blur(14px);
+  transform: scale(1.05);
+  image-rendering: pixelated;
+  z-index: 0;
+}
+
+.pdp-main-image-wrap .pdp-hero-image {
+  position: absolute !important;
+  inset: 0;
+  z-index: 1;
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: contain !important;
+  object-position: center;
+  opacity: 0;
+  transition: opacity 0.22s ease;
+}
+
+.pdp-main-image-wrap .pdp-hero-image.is-ready {
+  opacity: 1;
+}
+
+.pdp-main-image-wrap .pdp-hero-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.pdp-main-image-wrap .pdp-hero-loading .spinner {
+  width: 28px;
+  height: 28px;
+  border-width: 2.5px;
+}
+
+.pdp-main-image-wrap .pdp-hero-skeleton {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* Next PDP: imagen un poco más grande dentro del mismo marco (no el contenedor) */
+.pdp-gallery .pdp-main-image-wrap .pdp-hero-image {
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+.pdp-gallery .pdp-main-image-wrap .pdp-hero-image.is-ready {
+  transform: scale(1.08);
+  transform-origin: center center;
+}
+
+.pdp-gallery .pdp-main-image-wrap .pdp-hero-placeholder {
+  transform: scale(1.13);
+}
+
+.pdp-thumb-btn {
+  flex-shrink: 0;
+  width: 60px;
+  height: 75px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 4px;
+  overflow: hidden;
+  cursor: pointer;
+  background: #f5f5f5;
+  position: relative;
+  transition: transform 0.12s ease, opacity 0.12s ease, border-color 0.12s ease;
+}
+
+.pdp-thumb-btn:active {
+  transform: scale(0.96);
+  opacity: 0.88;
+}
+
+.pdp-thumb-btn.is-active {
+  border-color: #cd844d;
+}
+
+.pdp-thumb-btn.is-loading {
+  border-color: #cd844d;
+  box-shadow: 0 0 0 2px rgba(205, 132, 77, 0.25);
+}
+
+/* PDP — selector de color (contraste en grises claros) */
+.pdp-colors {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pdp-colors__label {
+  font-size: 13px;
+  color: #666;
+  font-weight: 500;
+}
+
+.pdp-colors__value {
+  color: #333;
+  font-weight: 600;
+}
+
+.pdp-colors__swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pdp-color-btn {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  position: relative;
+  flex-shrink: 0;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.pdp-color-swatch {
+  position: absolute;
+  width: 28px;
+  height: 28px;
+  left: 50%;
+  top: 50%;
+  margin-left: -14px;
+  margin-top: -14px;
+  border-radius: 50%;
+  background: var(--swatch-color, #ccc);
+  border: 1px solid rgba(0, 0, 0, 0.16);
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.14),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.4);
+  pointer-events: none;
+  transition: transform 0.14s ease, box-shadow 0.18s ease;
+}
+
+.pdp-color-btn:active .pdp-color-swatch {
+  transform: scale(0.9);
+}
+
+.pdp-color-btn.is-selected .pdp-color-swatch {
+  box-shadow:
+    0 0 0 2px #cd844d,
+    0 1px 4px rgba(0, 0, 0, 0.16);
+  border-color: rgba(0, 0, 0, 0.14);
+}
+
+.pdp-color-btn.is-oos {
+  opacity: 0.55;
+}
+
+/* Hero PDP — tap para lightbox (hint en styles.css) */
+@media (hover: hover) and (pointer: fine) {
+  .pdp-main-image-wrap:not(:disabled) {
+    cursor: zoom-in;
+  }
+  .pdp-main-image-wrap:not(:disabled):hover .pdp-hero-image.is-ready {
+    transform: scale(1.015);
+    transition: opacity 0.22s ease, transform 0.25s ease;
+  }
+  .pdp-gallery .pdp-main-image-wrap:not(:disabled):hover .pdp-hero-image.is-ready {
+    transform: scale(1.095);
+  }
+}
+
+.card .main-image-wrapper {
+  position: relative;
+}
+
+.card .color-btn {
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.card .color-btn--selected {
+  box-shadow: 0 0 0 2px #cd844d;
+}
+
+.card .color-btn--no-stock {
+  opacity: 0.55;
+}

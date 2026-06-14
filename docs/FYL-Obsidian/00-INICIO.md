@@ -48,6 +48,7 @@ Nota importante: el usuario confirmo que los SQL analizados ya estan cargados y 
 | 40 | [[40-PAU-PANEL-ATENCION-UNIFICADO]] | PAU — panel móvil admin: buscar clienta, QR/manual, agregar pedido, cerrar (canónico `doc/pau/`) |
 | 41 | [[41-MIGRACION-NEXTJS-NJ-2026-06-08]] | Migración Next.js 15 App Router en `/nj` |
 | 42 | [[42-HOME-BANNERS-FEED-NJ-2026-06-09]] | Home NJ: banners (Nuevos ingresos, especial, curado), reingreso admin, orden feed |
+| 44 | [[44-CATALOGO1-LANZAMIENTO-2026-06-13]] | Fork `/catalogo1`: mismo Supabase, sin auth/carrito, WhatsApp; dev `:3002` |
 
 ## Auditorias modulares
 

@@ -1,6 +1,8 @@
 # FYL /nj — Carrito y Flujo de Pedidos
 
-> Última actualización: 2026-06-08
+> Última actualización: 2026-06-09
+
+> **Prórroga 24h + cancelar pedido (vencido):** ver [[43-NJ-DASHBOARD-PRORROGA-CANCELACION-2026-06-09]] y RPCs `234`/`235` en fyl-core.
 
 ## Conceptos clave
 
@@ -98,7 +100,7 @@ supabase.rpc("rpc_checkout_cart", {
 | `closing_soon` | Admin / cron | Tab "Mi pedido" — aviso de plazo próximo |
 | `closed` | Cliente (Enviar pedido) | Tab "Mi pedido" — "En preparación" o vista con faltantes |
 | `sent` | Admin (`rpc_mark_order_as_sent`) | Tab "Mi pedido" — "¡Enviado!" con dismiss |
-| `cancelled` | Admin / Sistema | Tab "Historial" |
+| `cancelled` | Admin / Sistema | **No usar en `orders.status`** (CHECK no lo admite en fyl-core). Cancelaciones = ítems `cancelled` |
 | `waiting` | Sistema | Tab "Historial" |
 | `stock_pending` | Sistema | Tab "Historial" |
 
@@ -138,9 +140,41 @@ Lógica portada de `dashboard-instant.js`:
 - `ORDER_DISMANTLE_DAYS = 7`
 - Si `dismantle_at` existe → usa esa fecha; si no → `created_at + 7 días`
 - `daysLeft === 1 || daysLeft === 2` → banner amarillo de advertencia
-- `isExpired (daysLeft === 0)` → vista bloqueada:
-  - Sólo muestra WhatsApp y, si tiene 4+ unidades, botón "Enviar pedido"
-  - No permite quitar/agregar ítems
+- `isExpired (now >= dismantle_at)` → vista bloqueada (solo lectura en ítems):
+  - Aviso con **Dame 24 hs más** (una vez; `rpc_customer_request_order_extension_24h`)
+  - **WhatsApp** + **Cancelar pedido** (`rpc_customer_cancel_order`)
+  - Si cumple mínimo 4 u → botón **Enviar pedido** (sin WhatsApp duplicado abajo)
+  - Tras prórroga usada: solo WhatsApp + cancelar; mensaje “Ya usaste tu prórroga”
+
+### Prórroga 24h (cliente)
+
+```typescript
+supabase.rpc("rpc_customer_request_order_extension_24h", { p_order_id: order.id })
+```
+
+- Registra `customer_enable_24h_uses: 1` en `orders.notes` (JSON).
+- Extiende `dismantle_at` +24h desde `now()`.
+- Frontend: `nj/lib/order-notes.ts` → `hasCustomerUsedOrderExtension(notes)`.
+
+### Cancelar pedido completo (cliente)
+
+```typescript
+supabase.rpc("rpc_customer_cancel_order", { p_order_id: order.id })
+```
+
+Alineado con `client/dashboard-instant.js` → `cancelEntireOrder()`:
+
+| Caso | Efecto en BD | Vista cliente |
+|------|----------------|---------------|
+| Solo ítems `reserved`/`waiting`/`missing` | Ítems → `cancelled`, stock devuelto (reserved/waiting) | Desaparece de Mi pedido |
+| Algún ítem `picked` | Ítems → `cancelled`, admin notificado, `orders.status = closed` | Desaparece de Mi pedido |
+| Admin | Pedido + ítems cancelled en pestaña Cancelaciones | — |
+
+**Importante:** `orders.status = 'cancelled'` **no es válido** en fyl-core (`orders_status_check`). Las cancelaciones se ven por `order_items.status`.
+
+`DashboardClient` oculta pedidos sin ítems operativos (`orderHasOperationalItems`).
+
+También disponible desde menú ⋯ en header del pedido (cuando no está en solo lectura).
 
 ---
 
@@ -177,5 +211,7 @@ Hook interno `useCartStock`:
 - [ ] `order_items` table: `id`, `order_id`, `variant_id`, `product_name`, `color`, `size`, `quantity`, `price_snapshot`, `status`, `imagen`
 - [ ] RPC `rpc_checkout_cart(p_operation_id, p_request)`
 - [ ] RPC `rpc_cancel_order_item(p_item_id)`
+- [ ] RPC `rpc_customer_request_order_extension_24h(p_order_id)` — fyl-core, migración 234
+- [ ] RPC `rpc_customer_cancel_order(p_order_id)` — fyl-core, migración 235 (fix CHECK status)
 - [ ] RPC `rpc_mark_order_as_sent(p_order_id)` (usado por admin)
 - [ ] Supabase Realtime habilitado en tablas `orders` y `order_items`

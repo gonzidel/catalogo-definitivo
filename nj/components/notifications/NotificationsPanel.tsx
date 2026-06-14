@@ -117,8 +117,13 @@ export default function NotificationsPanel({
   const [notifications, setNotifications] = useState<AnyNotification[]>([]);
   const channelRef = useRef<ReturnType<ReturnType<typeof getSupabaseBrowserClient>["channel"]> | null>(null);
   const [mounted, setMounted] = useState(false);
+  const syntheticRef = useRef(syntheticNotifications);
+  const onUnreadRef = useRef(onUnreadCountChange);
 
   useEffect(() => { setMounted(true); }, []);
+
+  syntheticRef.current = syntheticNotifications;
+  onUnreadRef.current = onUnreadCountChange;
 
   // ── Load from Supabase ─────────────────────────────────────────────────────
 
@@ -136,17 +141,17 @@ export default function NotificationsPanel({
       dbData = (data as DbNotification[]) ?? [];
     }
 
-    const merged = mergeAndSort(dbData, syntheticNotifications);
+    const merged = mergeAndSort(dbData, syntheticRef.current);
     setNotifications(merged);
     const unread = merged.filter((n) => !n.read).length;
-    onUnreadCountChange(unread);
-  }, [customerId, syntheticNotifications, onUnreadCountChange]);
+    onUnreadRef.current(unread);
+  }, [customerId]);
 
   // ── Initial load + reload when syntheticNotifications changes ─────────────
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); }, [load, syntheticNotifications]);
 
-  // ── Realtime subscription ──────────────────────────────────────────────────
+  // ── Realtime subscription (solo customerId; no re-suscribir en cada load) ─
 
   useEffect(() => {
     if (!customerId) return;
@@ -156,7 +161,7 @@ export default function NotificationsPanel({
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "customer_notifications", filter: `customer_id=eq.${customerId}` },
-        () => load()
+        () => { load(); }
       )
       .subscribe();
     channelRef.current = channel;

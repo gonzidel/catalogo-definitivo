@@ -7502,6 +7502,9 @@ body.modal-open {
   min-height: 0;
   scroll-behavior: smooth;
   scroll-snap-type: x mandatory;
+  /* pan-x + pan-y: carrusel horizontal sin bloquear scroll vertical de la página */
+  touch-action: pan-x pan-y;
+  overscroll-behavior-x: contain;
 }
 
 .fyl-originals-scroll.orig-carousel::-webkit-scrollbar {
@@ -8487,7 +8490,8 @@ body.modal-open {
   padding: 0 8px 4px;
   scroll-behavior: smooth;
   scroll-snap-type: x mandatory;
-  touch-action: pan-x;
+  /* pan-x solo bloqueaba el scroll vertical al tocar el banner dinámico en móvil */
+  touch-action: pan-x pan-y;
   overscroll-behavior-x: contain;
 }
 

@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import { Suspense } from "react";
 import Link from "next/link";
+import { Analytics } from "@vercel/analytics/next";
+import { SpeedInsights } from "@vercel/speed-insights/next";
 import "@/styles/globals.css";
 import Header from "@/components/layout/Header";
 import BottomNav from "@/components/layout/BottomNav";
@@ -70,6 +72,8 @@ export default function RootLayout({
         <Suspense fallback={null}>
           <BottomNav />
         </Suspense>
+        <Analytics />
+        <SpeedInsights />
       </body>
     </html>
   );

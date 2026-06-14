@@ -99,7 +99,7 @@ function mergeGroupedProducts(products: GroupedProduct[]): GroupedProduct[] {
 export function useCatalog({
   categoria = "all",
   tags = [] as string[],
-  basePath: _basePath = "/catalogo1", // kept for API compat, unused
+  basePath: _basePath = "/catalogo", // kept for API compat, unused
   enabled = true,
 }: {
   categoria?: string;

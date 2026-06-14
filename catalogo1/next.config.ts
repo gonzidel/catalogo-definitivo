@@ -8,7 +8,7 @@ if (process.env.NODE_ENV === "development") {
 }
 
 const nextConfig: NextConfig = {
-  basePath: "/catalogo1",
+  basePath: "/catalogo",
 
   // Fix workspace root detection when multiple package-lock.json exist
   outputFileTracingRoot: path.join(__dirname),

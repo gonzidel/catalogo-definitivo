@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/((?!catalogo(?:/|$)).*)",
+      "destination": "https://catalogo-fyl-test.web.app/$1"
+    }
+  ]
+}

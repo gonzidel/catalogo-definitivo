@@ -102,6 +102,14 @@ export default function RootLayout({
         </Suspense>
         <Analytics />
         <SpeedInsights />
+        {/* Unregister stale Firebase service workers left from previous hosting */}
+        <script dangerouslySetInnerHTML={{ __html: `
+          if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistrations().then(function(regs) {
+              regs.forEach(function(r) { r.unregister(); });
+            });
+          }
+        `}} />
       </body>
     </html>
   );

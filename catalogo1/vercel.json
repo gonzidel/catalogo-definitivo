@@ -3,7 +3,7 @@
     {
       "source": "/",
       "destination": "/catalogo",
-      "permanent": false
+      "permanent": true
     }
   ],
   "rewrites": [

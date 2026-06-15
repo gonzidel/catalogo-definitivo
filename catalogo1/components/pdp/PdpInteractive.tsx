@@ -3,10 +3,12 @@
 import { useState, useMemo, useCallback } from "react";
 import Link from "next/link";
 import PdpColorPicker from "./PdpColorPicker";
+import PdpSizePicker from "./PdpSizePicker";
 import PdpGallery from "./PdpGallery";
 import PdpRecommended from "./PdpRecommended";
 import WhatsAppButton from "@/components/contact/WhatsAppButton";
 import { formatARS, colorDetailHasImage } from "@/lib/utils/catalog";
+import { pickDisplayColorDetail } from "@/lib/utils/catalog-variant-enrich";
 import type { GroupedProduct, ColorDetail } from "@/types/catalog";
 
 interface VariantSizeInfo {
@@ -63,13 +65,16 @@ export default function PdpInteractive({
     [product.DetalleColor]
   );
 
-  const firstColor = visibleColors[0]?.color ?? "";
+  const preferredColor =
+    pickDisplayColorDetail({ ...product, DetalleColor: visibleColors })?.color ??
+    visibleColors[0]?.color ??
+    "";
   const [activeColor, setActiveColor] = useState(() => {
-    const requested = (initialColor ?? firstColor).trim();
+    const requested = (initialColor ?? preferredColor).trim();
     const exists = visibleColors.some(
       (dc) => dc.color.toLowerCase() === requested.toLowerCase()
     );
-    return exists ? requested : firstColor;
+    return exists ? requested : preferredColor;
   });
   const [currentHeroSrc, setCurrentHeroSrc] = useState<string | null>(null);
 
@@ -231,7 +236,9 @@ export default function PdpInteractive({
           onColorChange={onColorChange}
           altText={product.Articulo}
           onHeroSrcChange={setCurrentHeroSrc}
-          outOfStock={colorDetail?.hasStock === false}
+          outOfStock={
+            product.hasAnyStock === false || colorDetail?.hasStock === false
+          }
           onShareImage={async (url) => {
             if (navigator.share) {
               try {
@@ -273,6 +280,14 @@ export default function PdpInteractive({
             activeColor={activeColor}
             onColorChange={onColorChange}
           />
+
+          <div style={{ marginTop: 16 }}>
+            <PdpSizePicker
+              colorDetail={colorDetail}
+              sizesWithStock={variantInfo?.sizes}
+              readOnly
+            />
+          </div>
 
           {product.Descripcion && (
             <div style={{ marginTop: 20, fontSize: 14, color: "#555", lineHeight: 1.6 }}>

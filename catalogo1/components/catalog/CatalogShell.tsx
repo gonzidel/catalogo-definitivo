@@ -5,7 +5,6 @@ import { createPortal } from "react-dom";
 import { useSearchParams, usePathname } from "next/navigation";
 import { useCatalog } from "@/hooks/useCatalog";
 import { useEnrichedCatalog } from "@/hooks/useEnrichedCatalog";
-import { productHasAnyStock } from "@/lib/utils/catalog-variant-enrich";
 import { searchProducts, filterBySizes } from "@/lib/utils/search";
 import {
   inferCategoryFromProducts,
@@ -98,15 +97,11 @@ export default function CatalogShell({
 
   const canLoadMore = !fixedProductSet && hasMore;
 
-  const catalogPool = React.useMemo(() => {
-    const withImages = enrichedProducts.filter(
-      (p) => (p.DetalleColor?.length ?? 0) > 0
-    );
-    const browsing =
-      searchTerm.length < 2 && activeSizes.length === 0 && tags.length === 0;
-    if (fixedProductSet || !browsing) return withImages;
-    return withImages.filter(productHasAnyStock);
-  }, [enrichedProducts, searchTerm, activeSizes, tags, fixedProductSet]);
+  const catalogPool = React.useMemo(
+    () =>
+      enrichedProducts.filter((p) => (p.DetalleColor?.length ?? 0) > 0),
+    [enrichedProducts]
+  );
 
   const tagFiltered = React.useMemo(
     () => filterProductsByTags(catalogPool, tags),

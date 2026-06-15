@@ -1,5 +1,6 @@
 "use client";
 
+import type { CSSProperties } from "react";
 import { compareCatalogSizes } from "@/lib/utils/size-normalizer";
 import type { ColorDetail } from "@/types/catalog";
 
@@ -13,15 +14,18 @@ interface PdpSizePickerProps {
   colorDetail: ColorDetail | null;
   sizesWithStock?: SizeWithStock[];
   /** size → qty for the current variant */
-  selections: Record<string, number>;
-  onSelectionChange: (size: string, qty: number) => void;
+  selections?: Record<string, number>;
+  onSelectionChange?: (size: string, qty: number) => void;
+  /** Muestra talles y stock sin permitir selección (catálogo público / WhatsApp) */
+  readOnly?: boolean;
 }
 
 export default function PdpSizePicker({
   colorDetail,
   sizesWithStock,
-  selections,
+  selections = {},
   onSelectionChange,
+  readOnly = false,
 }: PdpSizePickerProps) {
   const stockMap = new Map((sizesWithStock ?? []).map((s) => [s.size, s.stock_qty]));
   const hasStockData = stockMap.size > 0;
@@ -33,15 +37,19 @@ export default function PdpSizePicker({
     : (colorDetail?.talles ?? []);
   const sortedTalles = [...talles].sort(compareCatalogSizes);
   if (sortedTalles.length === 0) return null;
-  const selectedSizes = sortedTalles.filter((t) => (selections[t] ?? 0) > 0);
-  const totalSelected = Object.values(selections).reduce((a, v) => a + v, 0);
+  const selectedSizes = readOnly
+    ? []
+    : sortedTalles.filter((t) => (selections[t] ?? 0) > 0);
+  const totalSelected = readOnly
+    ? 0
+    : Object.values(selections).reduce((a, v) => a + v, 0);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       {/* Label */}
       <div style={{ fontSize: 13, color: "#666", fontWeight: 500 }}>
         Talle
-        {totalSelected > 0 && (
+        {!readOnly && totalSelected > 0 && (
           <span style={{ marginLeft: 8, color: "#CD844D", fontWeight: 700 }}>
             · {totalSelected} seleccionado{totalSelected !== 1 ? "s" : ""}
           </span>
@@ -49,45 +57,51 @@ export default function PdpSizePicker({
       </div>
 
       {/* Chip grid — same aesthetic as before, fixed size */}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+      <div
+        style={{ display: "flex", flexWrap: "wrap", gap: 8 }}
+        role="group"
+        aria-label="Talles disponibles"
+      >
         {sortedTalles.map((talle) => {
           const stock = stockMap.get(talle);
           const outOfStock = hasStockData && stock !== undefined && stock <= 0;
-          const qty = selections[talle] ?? 0;
-          const isSelected = qty > 0;
+          const qty = readOnly ? 0 : (selections[talle] ?? 0);
+          const isSelected = !readOnly && qty > 0;
           const lowStock = hasStockData && stock !== undefined && stock > 0 && stock <= 3;
+          const stockHint =
+            outOfStock
+              ? "Sin stock"
+              : hasStockData && stock !== undefined
+                ? `${stock} disponible${stock === 1 ? "" : "s"}`
+                : "Disponibilidad por confirmar";
 
-          return (
-            <button
-              key={talle}
-              onClick={() => {
-                if (outOfStock) return;
-                onSelectionChange(talle, isSelected ? 0 : 1);
-              }}
-              aria-pressed={isSelected}
-              aria-label={`Talle ${talle}${outOfStock ? " (sin stock)" : ""}${isSelected ? ` (${qty} seleccionado${qty > 1 ? "s" : ""})` : ""}`}
-              disabled={outOfStock}
-              style={{
-                position: "relative",
-                minWidth: 48, height: 44, padding: "0 12px",
-                borderRadius: 8,
-                // selected → solid orange | with stock → dashed orange | no stock → solid gray
-                border: isSelected
-                  ? "2px solid #CD844D"
-                  : outOfStock
-                  ? "1.5px solid #ddd"
-                  : "2px dashed #f0b988",
-                background: isSelected ? "#FFF5EE" : "#fff",
-                cursor: outOfStock ? "not-allowed" : "pointer",
-                fontFamily: "inherit",
-                fontSize: 14,
-                fontWeight: isSelected ? 700 : 400,
-                color: outOfStock ? "#ccc" : isSelected ? "#CD844D" : "#555",
-                overflow: "visible",
-                transition: "border 0.12s, background 0.12s, color 0.12s",
-              }}
-            >
-              {/* Diagonal strikethrough for out-of-stock */}
+          const chipStyle: CSSProperties = {
+            position: "relative",
+            minWidth: 48,
+            height: 44,
+            padding: "0 12px",
+            borderRadius: 8,
+            border: isSelected
+              ? "2px solid #CD844D"
+              : outOfStock
+                ? "1.5px solid #ddd"
+                : "2px dashed #f0b988",
+            background: isSelected ? "#FFF5EE" : "#fff",
+            cursor: readOnly ? "default" : outOfStock ? "not-allowed" : "pointer",
+            fontFamily: "inherit",
+            fontSize: 14,
+            fontWeight: isSelected ? 700 : 400,
+            color: outOfStock ? "#ccc" : isSelected ? "#CD844D" : "#555",
+            overflow: "visible",
+            transition: readOnly ? undefined : "border 0.12s, background 0.12s, color 0.12s",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            boxSizing: "border-box",
+          };
+
+          const chipContent = (
+            <>
               {outOfStock && (
                 <span aria-hidden="true" style={{
                   position: "absolute", inset: 0, pointerEvents: "none", borderRadius: 8,
@@ -97,8 +111,7 @@ export default function PdpSizePicker({
 
               {talle}
 
-              {/* Quantity badge (qty > 1) */}
-              {qty > 1 && (
+              {!readOnly && qty > 1 && (
                 <span style={{
                   position: "absolute", top: -7, right: -7,
                   width: 18, height: 18, borderRadius: "50%",
@@ -112,7 +125,6 @@ export default function PdpSizePicker({
                 </span>
               )}
 
-              {/* Low stock dot */}
               {!isSelected && !outOfStock && lowStock && (
                 <span style={{
                   position: "absolute", top: -4, right: -4,
@@ -122,13 +134,42 @@ export default function PdpSizePicker({
                   pointerEvents: "none",
                 }} />
               )}
+            </>
+          );
+
+          if (readOnly) {
+            return (
+              <span
+                key={talle}
+                title={stockHint}
+                aria-label={`Talle ${talle} — ${stockHint}`}
+                style={chipStyle}
+              >
+                {chipContent}
+              </span>
+            );
+          }
+
+          return (
+            <button
+              key={talle}
+              onClick={() => {
+                if (outOfStock) return;
+                onSelectionChange?.(talle, isSelected ? 0 : 1);
+              }}
+              aria-pressed={isSelected}
+              aria-label={`Talle ${talle}${outOfStock ? " (sin stock)" : ""}${isSelected ? ` (${qty} seleccionado${qty > 1 ? "s" : ""})` : ""}`}
+              disabled={outOfStock}
+              style={chipStyle}
+            >
+              {chipContent}
             </button>
           );
         })}
       </div>
 
       {/* Quantity controls — only for selected sizes */}
-      {selectedSizes.length > 0 && (
+      {!readOnly && selectedSizes.length > 0 && (
         <div style={{
           background: "#faf7f4", borderRadius: 12,
           padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8,

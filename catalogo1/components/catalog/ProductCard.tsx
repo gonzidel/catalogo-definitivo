@@ -96,28 +96,49 @@ export default function ProductCard({
       ? `${href}${href.includes("?") ? "&" : "?"}color=${encodeURIComponent(activeColor)}`
       : href;
 
-  const activeDetail = useMemo(() => {
-    const visible = (product.DetalleColor ?? []).filter(colorDetailHasImage);
-    return (
-      visible.find((d) => d.color.toLowerCase() === activeColor.toLowerCase()) ??
-      visible[0] ??
-      null
-    );
-  }, [product.DetalleColor, activeColor]);
+  const visibleColors = useMemo(
+    () => (product.DetalleColor ?? []).filter(colorDetailHasImage),
+    [product.DetalleColor]
+  );
 
-  const showSinStock = activeDetail?.hasStock === false;
-  const mainImage = resolveImageSrc(activeDetail?.images?.[0]);
+  const displayDetail = useMemo(() => {
+    if (userPickedColor && activeColor) {
+      return (
+        visibleColors.find(
+          (d) => d.color.toLowerCase() === activeColor.toLowerCase()
+        ) ??
+        visibleColors[0] ??
+        null
+      );
+    }
+    return pickDisplayColorDetail(product, { activeSizes, categoria });
+  }, [
+    product,
+    activeColor,
+    userPickedColor,
+    activeSizes,
+    categoria,
+    visibleColors,
+  ]);
+
+  const showSinStock =
+    product.hasAnyStock === false ||
+    Boolean(userPickedColor && displayDetail?.hasStock === false);
+
+  const mainImage = resolveImageSrc(
+    displayDetail?.images?.[0] ?? product.VariantePrincipal
+  );
   const artCode = String(product.Articulo ?? "").trim();
 
   const colors = useMemo(() => {
-    const list = (product.DetalleColor ?? []).filter(colorDetailHasImage);
+    const list = visibleColors;
     if (!activeColor) return list;
     const idx = list.findIndex(
       (d) => d.color.toLowerCase() === activeColor.toLowerCase()
     );
     if (idx <= 0) return list;
     return [list[idx], ...list.filter((_, i) => i !== idx)];
-  }, [product.DetalleColor, activeColor]);
+  }, [visibleColors, activeColor]);
   const visible = colors.slice(0, 3);
   const overflow = colors.length - 3;
 

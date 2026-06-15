@@ -4,7 +4,7 @@ import { resolveImageSrc } from "@/lib/cloudinary";
 import { formatARS } from "@/lib/utils/catalog";
 import type { GroupedProduct } from "@/types/catalog";
 
-export function BannerCarouselCard({ product }: { product: GroupedProduct }) {
+export function BannerCarouselCard({ product, priority = false }: { product: GroupedProduct; priority?: boolean }) {
   const src = resolveImageSrc(product.VariantePrincipal);
   const colors = product.DetalleColor ?? [];
   const precio =
@@ -31,6 +31,7 @@ export function BannerCarouselCard({ product }: { product: GroupedProduct }) {
             fill
             sizes="110px"
             style={{ objectFit: "cover" }}
+            priority={priority}
           />
         ) : (
           <div className="skeleton-shimmer" style={{ width: "100%", height: "100%" }} />

@@ -51,8 +51,8 @@ export default function NuevosIngresosBanner() {
           ? Array.from({ length: 6 }).map((_, i) => (
               <BannerCarouselSkeleton key={i} />
             ))
-          : visible.map((p) => (
-              <BannerCarouselCard key={p.Articulo} product={p} />
+          : visible.map((p, i) => (
+              <BannerCarouselCard key={p.Articulo} product={p} priority={i === 0} />
             ))}
       </div>
     </section>

@@ -193,6 +193,11 @@ export default function CatalogShell({
   const showTagBar =
     searchTerm.length > 0 || activeSizes.length > 0 || tags.length > 0;
 
+  const showHomeBanners =
+    searchTerm.trim().length < 2 &&
+    activeSizes.length === 0 &&
+    tags.length === 0;
+
   return (
     <>
       {/* Zona categoría: chips (gris) + head (blanco), sin solapamiento */}
@@ -274,8 +279,8 @@ export default function CatalogShell({
         }
       `}</style>
 
-      {/* Banners above grid: FYL Originals + Promotional (home only, passed as slot) */}
-      {aboveGridSlot}
+      {/* Banners above grid: solo navegación normal, no en búsqueda/filtros */}
+      {showHomeBanners && aboveGridSlot}
 
       {/* Active filter bar */}
       {showTagBar && (
@@ -302,7 +307,7 @@ export default function CatalogShell({
               />
             );
             // Insert curated banner slot after the 4th product (index 3)
-            if (i === 3 && curatedSlot) {
+            if (i === 3 && showHomeBanners && curatedSlot) {
               return (
                 <React.Fragment key={product.Articulo}>
                   {card}

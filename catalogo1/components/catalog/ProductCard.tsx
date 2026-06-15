@@ -199,21 +199,28 @@ export default function ProductCard({
         </div>
         <div className="colors-row">
           {(() => {
+            const SIZE_ORDER: Record<string, number> = { XS: 0, S: 1, M: 2, L: 3, XL: 4, XXL: 5, XXXL: 6 };
             const allTalles = Array.from(
               new Set(
                 (product.DetalleColor ?? []).flatMap((dc) => dc.talles ?? [])
               )
             ).filter(Boolean);
             const nums = allTalles.map(Number).filter((n) => !isNaN(n)).sort((a, b) => a - b);
-            const sizeLabel =
-              nums.length >= 2
-                ? `${nums[0]} al ${nums[nums.length - 1]}`
-                : nums.length === 1
-                ? `T. ${nums[0]}`
-                : null;
-            return sizeLabel ? (
-              <span className="card-size-range">{sizeLabel}</span>
-            ) : null;
+            if (nums.length >= 2) {
+              return <span className="card-size-range">{nums[0]} al {nums[nums.length - 1]}</span>;
+            }
+            if (nums.length === 1) {
+              return <span className="card-size-range">T. {nums[0]}</span>;
+            }
+            const letters = allTalles.filter((t) => t.toUpperCase() in SIZE_ORDER)
+              .sort((a, b) => SIZE_ORDER[a.toUpperCase()] - SIZE_ORDER[b.toUpperCase()]);
+            if (letters.length >= 2) {
+              return <span className="card-size-range">{letters[0].toUpperCase()} al {letters[letters.length - 1].toUpperCase()}</span>;
+            }
+            if (letters.length === 1) {
+              return <span className="card-size-range">T. {letters[0].toUpperCase()}</span>;
+            }
+            return null;
           })()}
           <div className="colors">
             {visible.map((dc) => {

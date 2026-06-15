@@ -424,3 +424,11 @@ body {
 .card .color-btn--no-stock {
   opacity: 0.55;
 }
+
+.card-size-range {
+  font-size: 10px;
+  color: #888;
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-left: auto;
+}

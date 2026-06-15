@@ -198,6 +198,23 @@ export default function ProductCard({
           </div>
         </div>
         <div className="colors-row">
+          {(() => {
+            const allTalles = Array.from(
+              new Set(
+                (product.DetalleColor ?? []).flatMap((dc) => dc.talles ?? [])
+              )
+            ).filter(Boolean);
+            const nums = allTalles.map(Number).filter((n) => !isNaN(n)).sort((a, b) => a - b);
+            const sizeLabel =
+              nums.length >= 2
+                ? `${nums[0]} al ${nums[nums.length - 1]}`
+                : nums.length === 1
+                ? `T. ${nums[0]}`
+                : null;
+            return sizeLabel ? (
+              <span className="card-size-range">{sizeLabel}</span>
+            ) : null;
+          })()}
           <div className="colors">
             {visible.map((dc) => {
               const selected =

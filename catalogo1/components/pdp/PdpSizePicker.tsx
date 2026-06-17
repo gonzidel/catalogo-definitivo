@@ -195,7 +195,7 @@ export default function PdpSizePicker({
                 </span>
                 <div style={{ display: "flex", alignItems: "center", gap: 0 }}>
                   <button
-                    onClick={() => onSelectionChange(talle, Math.max(0, qty - 1))}
+                    onClick={() => onSelectionChange?.(talle, Math.max(0, qty - 1))}
                     aria-label={`Restar talle ${talle}`}
                     style={{
                       width: 36, height: 36, borderRadius: "8px 0 0 8px",
@@ -215,7 +215,7 @@ export default function PdpSizePicker({
                     {qty}
                   </div>
                   <button
-                    onClick={() => onSelectionChange(talle, Math.min(maxQty, qty + 1))}
+                    onClick={() => onSelectionChange?.(talle, Math.min(maxQty, qty + 1))}
                     disabled={qty >= maxQty}
                     aria-label={`Sumar talle ${talle}`}
                     style={{

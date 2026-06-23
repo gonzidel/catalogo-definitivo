@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Suspense } from "react";
 import HowtoTabs from "@/components/howto/HowtoTabs";
 import FaqSection from "@/components/howto/FaqSection";
+import FaqJsonLd from "./FaqJsonLd";
 import { BASE_PATH } from "@/lib/constants/app";
 
 export const metadata: Metadata = {
@@ -14,6 +15,7 @@ export const metadata: Metadata = {
 export default function ComoComprarPage() {
   return (
     <main className="howto" aria-label="Cómo usar el catálogo">
+      <FaqJsonLd />
       <section className="howto-hero" aria-labelledby="howto-title">
         <Suspense>
           <HowtoTabs />

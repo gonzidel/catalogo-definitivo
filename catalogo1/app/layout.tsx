@@ -7,15 +7,19 @@ import "@/styles/globals.css";
 import Header from "@/components/layout/Header";
 import BottomNav from "@/components/layout/BottomNav";
 import { BASE_PATH } from "@/lib/constants/app";
+import JsonLdScript from "@/lib/seo/JsonLdScript";
+import { organizationJsonLd, webSiteJsonLd } from "@/lib/seo/json-ld";
 
 export const metadata: Metadata = {
   title: "FYL Moda | Calzado e Indumentaria Femenina por Mayor",
   description:
     "Mayorista de calzado e indumentaria femenina con fábrica propia. Stock visible, surtido libre de talles desde 4 pares. Envíos a todo el país.",
+  metadataBase: new URL("https://fylmoda.com.ar"),
   openGraph: {
     type: "website",
     siteName: "FYL Moda",
     locale: "es_AR",
+    images: [{ url: "/icons/icon-192x192.png", width: 192, height: 192 }],
   },
   other: {
     "format-detection": "telephone=no",
@@ -90,6 +94,7 @@ export default function RootLayout({
         `}} />
       </head>
       <body>
+        <JsonLdScript data={[organizationJsonLd(), webSiteJsonLd()]} />
         {/* Header needs Suspense because SearchBar uses useSearchParams */}
         <Suspense fallback={<HeaderFallback />}>
           <Header />

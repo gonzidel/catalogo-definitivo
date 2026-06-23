@@ -77,6 +77,7 @@ Ver [[10-BACKLOG-NO-CRITICO]]: columnas legacy, RLS fino, helpers duplicados, `r
 - [[40-PAU-PANEL-ATENCION-UNIFICADO]] — PAU: panel móvil pedidos/WhatsApp (QR, borrador, cerrar); canónico `doc/pau/README.md`
 - [[41-MIGRACION-NEXTJS-NJ-2026-06-08]] — **Migración Next.js 15 App Router en `/nj`**: catálogo, banners, PDP, auth. Ver [[42-HOME-BANNERS-FEED-NJ-2026-06-09]] para banners home y feed 2026-06-09.
 - [[44-CATALOGO1-LANZAMIENTO-2026-06-13]] — **Fork `/catalogo1`**: mismo Supabase, sin login/carrito, consulta WhatsApp; dev `:3002`. Cutover desde `/nj` cuando esté listo.
+- [[45-GEO-OPTIMIZACION-IA-2026-06-23]] — **GEO (Generative Engine Optimization)**: JSON-LD, sitemap, robots, llms.txt, FAQ schema. Fase 1 implementada; fase 2 pendiente (PDP SSR, landing pages SEO, Product schema).
 
 ---
 
@@ -112,6 +113,8 @@ Ver [[10-BACKLOG-NO-CRITICO]]: columnas legacy, RLS fino, helpers duplicados, `r
 *Actualización 2026-06-13 — Fork `/catalogo1` para lanzamiento público (WhatsApp, sin auth/carrito). Misma base Supabase. Ver [[44-CATALOGO1-LANZAMIENTO-2026-06-13]].*
 
 *Actualización 2026-06-08 — Migración Next.js 15 App Router iniciada en `/nj`: catálogo público solo lectura, banners, PDP, como-comprar, quienes-somos. Ver [[41-MIGRACION-NEXTJS-NJ-2026-06-08]].*
+
+*Actualización 2026-06-23 — GEO fase 1: JSON-LD (Organization, WebSite, FAQPage, CollectionPage, Breadcrumb), sitemap.xml, robots.txt, llms.txt. Score 25→55. Ver [[45-GEO-OPTIMIZACION-IA-2026-06-23]].*
 
 *Actualización 2026-05-15 — Auditoría escrituras admin stock/pedidos (diagnóstico): [[34-ADMIN-WRITES-STOCK-ORDERS-AUDIT-2026-05-15]]; detalle en `doc/admin-writes-audit-stock-orders-2026-05-15.md`. RFC borrador RPC atómica alta pedido admin: [[35-RFC-RPC-CREATE-ADMIN-ORDER-ATOMIC-2026-05-15]] (`doc/rfc-rpc-create-admin-order-atomic-2026-05-15.md`). Revisión estrés concurrencia (sin SQL): `doc/rfc-create-admin-order-atomic-concurrency-stress-2026-05-15.md`. Contrato idempotencia v1 congelado: `doc/rfc-create-admin-order-atomic-idempotency-contract-v1-2026-05-15.md`. Plan implementación staging: `doc/plan-implementacion-rpc-create-admin-order-atomic-staging-2026-05-15.md`. Catálogo snapshot (refresh operativo web): [[36-CATALOGO-SNAPSHOT-REFRESH-2026-05-15]].*
 

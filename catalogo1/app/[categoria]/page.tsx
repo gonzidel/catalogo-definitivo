@@ -5,6 +5,9 @@ import { getCatalogPage, hasActiveOfertas } from "@/lib/supabase/queries";
 import { slugToCategoria } from "@/lib/utils/catalog";
 import CatalogShell from "@/components/catalog/CatalogShell";
 import SkeletonCard from "@/components/catalog/SkeletonCard";
+import JsonLdScript from "@/lib/seo/JsonLdScript";
+import { catalogCategoryJsonLd } from "@/lib/seo/json-ld";
+import { CATALOG_URL } from "@/lib/constants/seo";
 
 export const revalidate = 300;
 
@@ -58,8 +61,17 @@ export default async function CategoriaPage({ params }: PageProps) {
   if (!cat) notFound();
 
   return (
-    <Suspense fallback={<CatalogSkeleton />}>
-      <CatalogContent cat={cat} />
-    </Suspense>
+    <>
+      <JsonLdScript
+        data={catalogCategoryJsonLd({
+          name: `${cat} — FYL Moda`,
+          description: `Catálogo mayorista de ${cat.toLowerCase()} femenino. Stock visible, desde 4 pares.`,
+          url: `${CATALOG_URL}/${slug}`,
+        })}
+      />
+      <Suspense fallback={<CatalogSkeleton />}>
+        <CatalogContent cat={cat} />
+      </Suspense>
+    </>
   );
 }

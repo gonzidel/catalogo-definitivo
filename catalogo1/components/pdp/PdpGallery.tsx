@@ -215,7 +215,7 @@ export default function PdpGallery({
 
           {outOfStock && (
             <div className="pdp-stock-overlay" aria-hidden="true">
-              <span className="pdp-stock-overlay__label">Sin stock</span>
+              <span className="pdp-stock-overlay__label">Agotado</span>
             </div>
           )}
         </button>

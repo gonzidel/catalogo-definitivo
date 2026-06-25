@@ -5,7 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { resolveImageSrc } from "@/lib/cloudinary";
 import { formatARS, colorDetailHasImage } from "@/lib/utils/catalog";
-import { pickDisplayColorDetail } from "@/lib/utils/catalog-variant-enrich";
+import { pickDisplayColorDetail, productHasAnyStock } from "@/lib/utils/catalog-variant-enrich";
 import type { GroupedProduct } from "@/types/catalog";
 
 interface ProductCardProps {
@@ -122,7 +122,7 @@ export default function ProductCard({
   ]);
 
   const showSinStock =
-    product.hasAnyStock === false ||
+    !productHasAnyStock(product) ||
     Boolean(userPickedColor && displayDetail?.hasStock === false);
 
   const mainImage = resolveImageSrc(
@@ -178,7 +178,7 @@ export default function ProductCard({
         )}
         {showSinStock && (
           <div className="card-stock-overlay" aria-hidden="true">
-            <span className="card-stock-overlay__label">Sin stock</span>
+            <span className="card-stock-overlay__label">Agotado</span>
           </div>
         )}
         {artCode && (

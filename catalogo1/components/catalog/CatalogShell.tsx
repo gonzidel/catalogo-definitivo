@@ -269,8 +269,8 @@ export default function CatalogShell({
         }
       `}</style>
 
-      {/* Banners above grid: FYL Originals + Promotional (home only, passed as slot) */}
-      {aboveGridSlot}
+      {/* Banners above grid: hidden when there's an active search */}
+      {!searchTerm && aboveGridSlot}
 
       {/* Active filter bar */}
       {showTagBar && (

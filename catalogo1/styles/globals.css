@@ -25,6 +25,36 @@ body {
 
 /* Placeholder para futuras sobreescrituras sin tocar styles.css */
 
+/* El buscador vive siempre en el header — deshacer los display:none del styles.css heredado */
+.search-bar-wrapper {
+  display: flex !important;
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 480px;
+  align-items: center;
+}
+
+/* El input usa clase search-bar-mobile pero debe verse también en desktop */
+.search-bar-mobile {
+  display: block !important;
+}
+
+/* Header desktop */
+@media (min-width: 768px) {
+  header {
+    gap: 16px;
+    padding: 8px 24px;
+  }
+
+  .search-bar-wrapper {
+    max-width: 400px;
+  }
+
+  .header-logo {
+    height: 36px;
+  }
+}
+
 /* Header mobile — evitar que la búsqueda desborde sobre campana/avatar */
 @media (max-width: 767px) {
   header {

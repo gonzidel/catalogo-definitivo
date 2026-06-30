@@ -61,14 +61,18 @@ export default function SearchBar() {
   }, []);
 
   function navigate(q: string) {
-    const params = new URLSearchParams(searchParams.toString());
+    // If searching from a PDP, go back to catalog home instead of staying in the product page
+    const isPdp = pathname.includes("/producto/");
+    const targetPath = isPdp ? "/catalogo" : pathname;
+    const params = new URLSearchParams(isPdp ? "" : searchParams.toString());
     if (q.trim().length >= 2) {
       params.set("q", q.trim());
     } else {
       params.delete("q");
     }
+    const search = params.toString();
     startTransition(() => {
-      router.push(`${pathname}?${params}`, { scroll: false });
+      router.push(search ? `${targetPath}?${search}` : targetPath, { scroll: false });
     });
   }
 

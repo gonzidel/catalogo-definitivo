@@ -289,12 +289,12 @@ export default function CartTab({ customerId, onOrderCreated, activeOrderStatus,
             marginBottom: 10,
           }}>
             <div style={{ fontSize: 14, fontWeight: 700, color: "#7a4f2a", marginBottom: 6, display: "flex", alignItems: "center", gap: 8 }}>
-              <span>📦</span> Pedido en preparación
+              <span>📋</span> Ya tenés un pedido enviado
             </div>
             <div style={{ fontSize: 13, color: "#7a6050", lineHeight: 1.6, marginBottom: 14 }}>
-              Nuestro equipo ya está preparando tu pedido anterior. Cuando esté listo, podrás enviar uno nuevo.
+              Ya enviaste un pedido al equipo. Cuando lo confirmen y procesen, podrás hacer uno nuevo.
               <br /><br />
-              <strong>Mientras tanto podés seguir agregando productos acá</strong> para tenerlos listos en tu próximo pedido.
+              <strong>Mientras tanto podés seguir armando tu próximo carrito</strong> con los productos que querés pedir después.
             </div>
             {onGoToOrder && (
               <button

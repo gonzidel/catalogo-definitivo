@@ -464,7 +464,7 @@ export default function DashboardClient({ user, customer, orders: initialOrders 
 
   const PRIMARY_TABS = [
     { id: "cart" as TabId,         label: "Carrito",   sublabel: "Lo que querés pedir",      iconType: "cart" as const,  badge: cartCount > 0 ? String(cartCount) : null },
-    { id: "active-order" as TabId, label: "Mi pedido", sublabel: "Lo que está en preparación", iconType: "order" as const, badge: activeOrder && tab !== "active-order" ? "·" : null },
+    { id: "active-order" as TabId, label: "Mi pedido", sublabel: "Tu pedido enviado al equipo", iconType: "order" as const, badge: activeOrder && tab !== "active-order" ? "·" : null },
   ];
 
   return (

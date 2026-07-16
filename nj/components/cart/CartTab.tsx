@@ -333,6 +333,7 @@ export default function CartTab({ customerId, onOrderCreated, activeOrderStatus,
           position: "fixed", inset: 0, zIndex: 999,
           background: "rgba(0,0,0,0.45)",
           display: "flex", alignItems: "flex-end", justifyContent: "center",
+          paddingBottom: 60, /* altura del bottom nav */
         }}
           onClick={() => setShowConfirm(false)}
         >
@@ -342,8 +343,7 @@ export default function CartTab({ customerId, onOrderCreated, activeOrderStatus,
               width: "100%", maxWidth: 480,
               boxShadow: "0 -8px 32px rgba(0,0,0,0.15)",
               display: "flex", flexDirection: "column",
-              /* Limitar altura total: pantalla - bottom nav (60px) - margen top (32px) */
-              maxHeight: "calc(100dvh - 92px)",
+              maxHeight: "calc(100dvh - 60px - 40px)", /* pantalla - nav - margen superior */
             }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -404,7 +404,7 @@ export default function CartTab({ customerId, onOrderCreated, activeOrderStatus,
 
             {/* Botones fijos abajo */}
             <div style={{
-              padding: "16px 20px 32px", flexShrink: 0,
+              padding: "16px 20px 20px", flexShrink: 0,
               borderTop: "1px solid #f0ebe4",
               display: "flex", gap: 10,
             }}>

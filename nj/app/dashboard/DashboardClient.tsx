@@ -3,7 +3,10 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import { getCustomerFacingItemStatus } from "@/lib/orders/waiting-source";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { loadWarehouses } from "@/lib/supabase/order-queries";
+import type { WarehouseIds } from "@/types/orders";
 import CartTab from "@/components/cart/CartTab";
 import ActiveOrderTab from "@/components/cart/ActiveOrderTab";
 import ProfileShippingBlock from "@/components/profile/ProfileShippingBlock";
@@ -82,6 +85,7 @@ interface OrderItem {
   imagen?: string;
   sku?: string;
   status?: string;
+  order_item_stock_sources?: { warehouse_id: string; qty: number }[];
 }
 
 interface Order {
@@ -164,8 +168,8 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-function OrderCard({ order, expanded, onToggle }: {
-  order: Order; expanded: boolean; onToggle: () => void;
+function OrderCard({ order, expanded, onToggle, warehouseIds }: {
+  order: Order; expanded: boolean; onToggle: () => void; warehouseIds: WarehouseIds;
 }) {
   return (
     <div style={{
@@ -202,7 +206,8 @@ function OrderCard({ order, expanded, onToggle }: {
       {expanded && (
         <div style={{ borderTop: "1px solid #f0f0f0", padding: "0 16px 16px" }}>
           {order.order_items.map((item) => {
-            const ist = ITEM_STATUS_INFO[item.status ?? "reserved"] ?? ITEM_STATUS_INFO.reserved;
+            const displayKey = getCustomerFacingItemStatus(item, warehouseIds);
+            const ist = ITEM_STATUS_INFO[displayKey] ?? ITEM_STATUS_INFO.reserved;
             const isCancelled = item.status === "cancelled";
             return (
               <div key={item.id} style={{
@@ -292,6 +297,10 @@ export default function DashboardClient({ user, customer, orders: initialOrders 
   const [expandedOrder, setExpandedOrder] = useState<string | null>(null);
   const searchParams = useSearchParams();
   const [loggingOut, setLoggingOut] = useState(false);
+  const [warehouseIds, setWarehouseIds] = useState<WarehouseIds>({
+    general: null,
+    ventaPublico: null,
+  });
   const cartCount = useCartStore(selectCartCount);
   const setActiveOrderStatus      = useCartStore((s) => s.setActiveOrderStatus);
   const setSyntheticNotifications = useCartStore((s) => s.setSyntheticNotifications);
@@ -350,7 +359,7 @@ export default function DashboardClient({ user, customer, orders: initialOrders 
       .from("orders")
       .select(`
         id, order_number, status, total_amount, created_at, payment_method, dismantle_at, expires_at, notes,
-        order_items ( id, product_name, color, size, quantity, price_snapshot, imagen, sku, status )
+        order_items ( id, product_name, color, size, quantity, price_snapshot, imagen, sku, status, order_item_stock_sources(warehouse_id, qty) )
       `)
       .eq("customer_id", user.id)
       .order("created_at", { ascending: false })
@@ -394,36 +403,68 @@ export default function DashboardClient({ user, customer, orders: initialOrders 
     setSyntheticNotifications(buildDeadlineNotifications(activeOrder));
   }, [activeOrder?.id, activeOrder?.status, setActiveOrderStatus, setSyntheticNotifications]);
 
-  // Realtime: watch the active order for status changes (e.g. sent by admin)
-  // Realtime: watch the active order and its items for status changes
   useEffect(() => {
-    if (!activeOrder || !["active", "closing_soon", "closed"].includes(activeOrder.status)) return;
+    void loadWarehouses(getSupabaseBrowserClient()).then(setWarehouseIds);
+  }, []);
 
+  // Realtime + refresh al volver a la pestaña: estados (reservado/apartado) y pedidos nuevos.
+  // RLS limita eventos al cliente; no hace falta filtrar por order_id.
+  useEffect(() => {
     const supabase = getSupabaseBrowserClient();
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const scheduleRefresh = () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => {
+        void refreshOrders();
+      }, 200);
+    };
+
     const channel = supabase
-      .channel(`order-watch-${activeOrder.id}`)
+      .channel(`order-watch-${user.id}`)
       .on(
         "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "orders", filter: `id=eq.${activeOrder.id}` },
-        () => { refreshOrders(); }
+        {
+          event: "*",
+          schema: "public",
+          table: "orders",
+          filter: `customer_id=eq.${user.id}`,
+        },
+        scheduleRefresh
       )
       .on(
-        // Watch order_items for missing/picked status changes set by admin
         "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "order_items", filter: `order_id=eq.${activeOrder.id}` },
-        () => { refreshOrders(); }
+        { event: "*", schema: "public", table: "order_items" },
+        scheduleRefresh
       )
       .subscribe();
 
-    return () => { supabase.removeChannel(channel); };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refreshOrders();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+
+    // Respaldo liviano si Realtime se cae (solo con pestaña visible)
+    const pollId = window.setInterval(() => {
+      if (document.visibilityState === "visible") void refreshOrders();
+    }, 20000);
+
+    return () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      window.clearInterval(pollId);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+      supabase.removeChannel(channel);
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeOrder?.id, activeOrder?.status]);
+  }, [user.id]);
 
   const displayName = customer?.full_name ?? user.email.split("@")[0] ?? "Cliente";
 
   const PRIMARY_TABS = [
-    { id: "cart" as TabId,         label: "Carrito",   iconType: "cart" as const,  badge: cartCount > 0 ? String(cartCount) : null },
-    { id: "active-order" as TabId, label: "Mi pedido", iconType: "order" as const, badge: activeOrder && tab !== "active-order" ? "·" : null },
+    { id: "cart" as TabId,         label: "Carrito",   sublabel: "Lo que querés pedir",      iconType: "cart" as const,  badge: cartCount > 0 ? String(cartCount) : null },
+    { id: "active-order" as TabId, label: "Mi pedido", sublabel: "Lo que está en preparación", iconType: "order" as const, badge: activeOrder && tab !== "active-order" ? "·" : null },
   ];
 
   return (
@@ -508,21 +549,23 @@ export default function DashboardClient({ user, customer, orders: initialOrders 
                 key={t.id}
                 onClick={() => setTab(t.id)}
                 style={{
-                  flex: 1, padding: "8px 12px", borderRadius: 10, border: "none",
+                  flex: 1, padding: "10px 12px", borderRadius: 10, border: "none",
                   background: isActive ? "#CD844D" : "#fff",
                   color: isActive ? "#fff" : "#555",
-                  fontSize: 13, fontWeight: isActive ? 600 : 500,
                   cursor: "pointer",
                   boxShadow: isActive ? "0 2px 8px rgba(205,132,77,0.25)" : "0 1px 3px rgba(0,0,0,0.06)",
                   transition: "all 0.15s",
                   position: "relative",
-                  display: "flex", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6,
+                  display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2,
                 }}
               >
-                <span style={{ display: "flex", alignItems: "center" }}>
-                  {t.iconType === "cart" ? <IconCart size={17} /> : <IconOrder size={17} />}
+                <span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 13, fontWeight: isActive ? 700 : 500 }}>
+                  {t.iconType === "cart" ? <IconCart size={15} /> : <IconOrder size={15} />}
+                  {t.label}
                 </span>
-                <span>{t.label}</span>
+                <span style={{ fontSize: 10, fontWeight: 400, opacity: isActive ? 0.85 : 0.55, lineHeight: 1.2 }}>
+                  {t.sublabel}
+                </span>
                 {t.badge && (
                   <span style={{
                     position: "absolute", top: 4, right: 8,
@@ -599,6 +642,7 @@ export default function DashboardClient({ user, customer, orders: initialOrders 
                   key={order.id}
                   order={order}
                   expanded={expandedOrder === order.id}
+                  warehouseIds={warehouseIds}
                   onToggle={() =>
                     setExpandedOrder(expandedOrder === order.id ? null : order.id)
                   }

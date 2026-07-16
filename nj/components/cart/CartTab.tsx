@@ -284,32 +284,31 @@ export default function CartTab({ customerId, onOrderCreated, activeOrderStatus,
       {activeOrderStatus === "closed" ? (
         <div>
           <div style={{
-            padding: "14px", borderRadius: 12,
-            background: "#f5f5f5", border: "1.5px solid #e0d5cb",
-            textAlign: "center", marginBottom: 10,
+            padding: "16px", borderRadius: 12,
+            background: "#f5f0eb", border: "1.5px solid #e0c9b0",
+            marginBottom: 10,
           }}>
-            <div style={{ fontSize: 14, fontWeight: 700, color: "#555", marginBottom: 4 }}>
-              📦 Tenés un pedido en preparación
+            <div style={{ fontSize: 14, fontWeight: 700, color: "#7a4f2a", marginBottom: 6, display: "flex", alignItems: "center", gap: 8 }}>
+              <span>📦</span> Pedido en preparación
             </div>
-            <div style={{ fontSize: 12, color: "#888", lineHeight: 1.5, marginBottom: 12 }}>
-              Para enviar un nuevo pedido primero cancelá la preparación del pedido actual.
+            <div style={{ fontSize: 13, color: "#7a6050", lineHeight: 1.6, marginBottom: 14 }}>
+              Nuestro equipo ya está preparando tu pedido anterior. Cuando esté listo, podrás enviar uno nuevo.
+              <br /><br />
+              <strong>Mientras tanto podés seguir agregando productos acá</strong> para tenerlos listos en tu próximo pedido.
             </div>
             {onGoToOrder && (
               <button
                 onClick={onGoToOrder}
                 style={{
-                  padding: "10px 20px", borderRadius: 10, border: "none",
+                  width: "100%", padding: "11px 16px", borderRadius: 10, border: "none",
                   background: "#CD844D", color: "#fff",
                   fontSize: 13, fontWeight: 700, cursor: "pointer",
                 }}
               >
-                Ver pedido en preparación →
+                Ver mi pedido en preparación →
               </button>
             )}
           </div>
-          <p style={{ fontSize: 11, color: "#aaa", textAlign: "center", margin: "4px 0 0" }}>
-            Podés seguir agregando productos al carrito
-          </p>
         </div>
       ) : (
         <>

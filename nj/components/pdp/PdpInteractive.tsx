@@ -376,6 +376,24 @@ export default function PdpInteractive({
               selections={currentVariantSelections}
               onSelectionChange={handleSizeChange}
             />
+            {/* Hint visible cuando no hay nada seleccionado */}
+            {totalSelectedQty === 0 && !addedFlash && (
+              <div style={{
+                marginTop: 14,
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                padding: "13px 16px", borderRadius: 12,
+                background: "#f5f0eb", border: "1.5px dashed #e0c9b0",
+                color: "#a07040", fontSize: 14, fontWeight: 500,
+                cursor: "default",
+              }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="9" cy="21" r="1" /><circle cx="20" cy="21" r="1" />
+                  <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
+                </svg>
+                Tocá un talle para agregar al carrito
+              </div>
+            )}
           </div>
 
           {product.Descripcion && (

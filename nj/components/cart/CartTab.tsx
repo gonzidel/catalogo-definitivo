@@ -280,56 +280,51 @@ export default function CartTab({ customerId, onOrderCreated, activeOrderStatus,
         </div>
       )}
 
-      {/* Pedido en preparación — block "Hacer pedido" */}
-      {activeOrderStatus === "closed" ? (
-        <div>
-          <div style={{
-            padding: "16px", borderRadius: 12,
-            background: "#f5f0eb", border: "1.5px solid #e0c9b0",
-            marginBottom: 10,
-          }}>
-            <div style={{ fontSize: 14, fontWeight: 700, color: "#7a4f2a", marginBottom: 6, display: "flex", alignItems: "center", gap: 8 }}>
-              <span>📋</span> Ya tenés un pedido enviado
+      {/* Aviso informativo si ya hay un pedido enviado (no bloquea el CTA) */}
+      {activeOrderStatus === "closed" && (
+        <div style={{
+          padding: "12px 14px", borderRadius: 12,
+          background: "#f5f0eb", border: "1.5px solid #e0c9b0",
+          marginBottom: 10, display: "flex", gap: 10, alignItems: "flex-start",
+        }}>
+          <span style={{ fontSize: 16, flexShrink: 0 }}>📋</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#7a4f2a", marginBottom: 2 }}>
+              Ya tenés un pedido enviado
             </div>
-            <div style={{ fontSize: 13, color: "#7a6050", lineHeight: 1.6, marginBottom: 14 }}>
-              Ya enviaste un pedido al equipo. Cuando lo confirmen y procesen, podrás hacer uno nuevo.
-              <br /><br />
-              <strong>Mientras tanto podés seguir armando tu próximo carrito</strong> con los productos que querés pedir después.
+            <div style={{ fontSize: 12, color: "#7a6050", lineHeight: 1.5 }}>
+              El equipo lo está procesando.{" "}
+              {onGoToOrder && (
+                <button onClick={onGoToOrder} style={{
+                  background: "none", border: "none", padding: 0,
+                  color: "#CD844D", fontWeight: 600, fontSize: 12,
+                  cursor: "pointer", textDecoration: "underline",
+                }}>
+                  Ver pedido →
+                </button>
+              )}
             </div>
-            {onGoToOrder && (
-              <button
-                onClick={onGoToOrder}
-                style={{
-                  width: "100%", padding: "11px 16px", borderRadius: 10, border: "none",
-                  background: "#CD844D", color: "#fff",
-                  fontSize: 13, fontWeight: 700, cursor: "pointer",
-                }}
-              >
-                Ver mi pedido en preparación →
-              </button>
-            )}
           </div>
         </div>
-      ) : (
-        <>
-          <button
-            onClick={handleCheckout}
-            disabled={isCheckingOut || checking}
-            style={{
-              width: "100%", padding: "16px", borderRadius: 14, border: "none",
-              background: isCheckingOut || checking ? "#e8a96b" : "#CD844D",
-              color: "#fff", fontSize: 16, fontWeight: 700,
-              cursor: isCheckingOut || checking ? "not-allowed" : "pointer",
-              boxShadow: "0 4px 14px rgba(205,132,77,0.35)",
-            }}
-          >
-            {checking ? "Verificando stock..." : isCheckingOut ? "Creando pedido..." : "Hacer pedido →"}
-          </button>
-          <p style={{ fontSize: 11, color: "#aaa", textAlign: "center", margin: "8px 0 0" }}>
-            Revisás el detalle antes de enviarlo
-          </p>
-        </>
       )}
+
+      {/* Botón principal — siempre visible */}
+      <button
+        onClick={handleCheckout}
+        disabled={isCheckingOut || checking}
+        style={{
+          width: "100%", padding: "16px", borderRadius: 14, border: "none",
+          background: isCheckingOut || checking ? "#e8a96b" : "#CD844D",
+          color: "#fff", fontSize: 16, fontWeight: 700,
+          cursor: isCheckingOut || checking ? "not-allowed" : "pointer",
+          boxShadow: "0 4px 14px rgba(205,132,77,0.35)",
+        }}
+      >
+        {checking ? "Verificando stock..." : isCheckingOut ? "Creando pedido..." : "Hacer pedido →"}
+      </button>
+      <p style={{ fontSize: 11, color: "#aaa", textAlign: "center", margin: "8px 0 0" }}>
+        Revisás el detalle antes de enviarlo
+      </p>
     </div>
   );
 }

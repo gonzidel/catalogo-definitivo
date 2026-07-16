@@ -421,7 +421,10 @@ export default function CartTab({ customerId, onOrderCreated, activeOrderStatus,
               <button
                 onClick={async () => {
                   await handleCheckout();
-                  if (!useCartStore.getState().checkoutError) setShowConfirm(false);
+                  if (!useCartStore.getState().checkoutError) {
+                    setShowConfirm(false);
+                    onGoToOrder?.();
+                  }
                 }}
                 disabled={isCheckingOut}
                 style={{

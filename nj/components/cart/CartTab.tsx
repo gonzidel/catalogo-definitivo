@@ -77,6 +77,7 @@ export default function CartTab({ customerId, onOrderCreated, activeOrderStatus,
   const checkoutError    = useCartStore((s) => s.checkoutError);
   const setCheckingOut   = useCartStore((s) => s.setCheckingOut);
   const setCheckoutError = useCartStore((s) => s.setCheckoutError);
+  const [showConfirm, setShowConfirm] = useState(false);
 
   const { removeFromSupabase, syncNow } = useCartSync(customerId);
   const { getStock, checking } = useCartStock(items);
@@ -308,9 +309,9 @@ export default function CartTab({ customerId, onOrderCreated, activeOrderStatus,
         </div>
       )}
 
-      {/* Botón principal — siempre visible */}
+      {/* Botón principal — abre confirmación */}
       <button
-        onClick={handleCheckout}
+        onClick={() => setShowConfirm(true)}
         disabled={isCheckingOut || checking}
         style={{
           width: "100%", padding: "16px", borderRadius: 14, border: "none",
@@ -325,6 +326,104 @@ export default function CartTab({ customerId, onOrderCreated, activeOrderStatus,
       <p style={{ fontSize: 11, color: "#aaa", textAlign: "center", margin: "8px 0 0" }}>
         Revisás el detalle antes de enviarlo
       </p>
+
+      {/* Modal de confirmación */}
+      {showConfirm && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 999,
+          background: "rgba(0,0,0,0.45)",
+          display: "flex", alignItems: "flex-end", justifyContent: "center",
+        }}
+          onClick={() => setShowConfirm(false)}
+        >
+          <div
+            style={{
+              background: "#fff", borderRadius: "20px 20px 0 0",
+              padding: "24px 20px 36px",
+              width: "100%", maxWidth: 480,
+              boxShadow: "0 -8px 32px rgba(0,0,0,0.15)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ textAlign: "center", marginBottom: 20 }}>
+              <div style={{ fontSize: 32, marginBottom: 8 }}>🛒</div>
+              <div style={{ fontSize: 17, fontWeight: 700, color: "#222", marginBottom: 6 }}>
+                Confirmar pedido
+              </div>
+              <div style={{ fontSize: 14, color: "#777", lineHeight: 1.5 }}>
+                Estás por enviar{" "}
+                <strong style={{ color: "#222" }}>
+                  {totalItems} producto{totalItems !== 1 ? "s" : ""}
+                </strong>{" "}
+                por un total de{" "}
+                <strong style={{ color: "#CD844D" }}>{formatARS(total)}</strong>
+              </div>
+            </div>
+
+            {/* Lista resumida */}
+            <div style={{
+              background: "#f9f6f2", borderRadius: 12,
+              padding: "12px 14px", marginBottom: 20,
+              maxHeight: 200, overflowY: "auto",
+              display: "flex", flexDirection: "column", gap: 8,
+            }}>
+              {itemsWithStock.filter(x => !x.outOfStock).map(({ item }) => (
+                <div key={`${item.variant_id}__${item.size}`} style={{
+                  display: "flex", justifyContent: "space-between", alignItems: "center",
+                }}>
+                  <div style={{ fontSize: 13, color: "#444" }}>
+                    <span style={{ fontWeight: 600 }}>{item.product_name}</span>
+                    {" · "}{item.color}{" · T. "}{item.size}
+                    {item.qty > 1 && <span style={{ color: "#888" }}> ×{item.qty}</span>}
+                  </div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "#555", flexShrink: 0, marginLeft: 8 }}>
+                    {formatARS(item.price_snapshot * item.qty)}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {checkoutError && (
+              <div style={{
+                marginBottom: 14, padding: "10px 12px", borderRadius: 10,
+                background: "#fef2f2", border: "1px solid #fca5a5", color: "#991b1b", fontSize: 13,
+              }}>
+                {checkoutError}
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: 10 }}>
+              <button
+                onClick={() => { setShowConfirm(false); setCheckoutError(null); }}
+                style={{
+                  flex: 1, padding: "14px", borderRadius: 12,
+                  border: "1.5px solid #ddd", background: "#fff",
+                  fontSize: 15, fontWeight: 600, color: "#555", cursor: "pointer",
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={async () => {
+                  await handleCheckout();
+                  // Si no hubo error, handleCheckout llama onOrderCreated y clearCart — el modal queda abierto solo si hay error
+                  if (!useCartStore.getState().checkoutError) setShowConfirm(false);
+                }}
+                disabled={isCheckingOut}
+                style={{
+                  flex: 2, padding: "14px", borderRadius: 12, border: "none",
+                  background: isCheckingOut ? "#e8a96b" : "#CD844D",
+                  color: "#fff", fontSize: 15, fontWeight: 700,
+                  cursor: isCheckingOut ? "not-allowed" : "pointer",
+                  boxShadow: "0 4px 14px rgba(205,132,77,0.3)",
+                }}
+              >
+                {isCheckingOut ? "Enviando..." : "Sí, hacer pedido"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

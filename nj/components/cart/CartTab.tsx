@@ -339,60 +339,75 @@ export default function CartTab({ customerId, onOrderCreated, activeOrderStatus,
           <div
             style={{
               background: "#fff", borderRadius: "20px 20px 0 0",
-              padding: "24px 20px 36px",
               width: "100%", maxWidth: 480,
               boxShadow: "0 -8px 32px rgba(0,0,0,0.15)",
+              display: "flex", flexDirection: "column",
+              /* Limitar altura total: pantalla - bottom nav (60px) - margen top (32px) */
+              maxHeight: "calc(100dvh - 92px)",
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div style={{ textAlign: "center", marginBottom: 20 }}>
-              <div style={{ fontSize: 32, marginBottom: 8 }}>🛒</div>
-              <div style={{ fontSize: 17, fontWeight: 700, color: "#222", marginBottom: 6 }}>
-                Confirmar pedido
-              </div>
-              <div style={{ fontSize: 14, color: "#777", lineHeight: 1.5 }}>
-                Estás por enviar{" "}
-                <strong style={{ color: "#222" }}>
-                  {totalItems} producto{totalItems !== 1 ? "s" : ""}
-                </strong>{" "}
-                por un total de{" "}
-                <strong style={{ color: "#CD844D" }}>{formatARS(total)}</strong>
-              </div>
-            </div>
-
-            {/* Lista resumida */}
-            <div style={{
-              background: "#f9f6f2", borderRadius: 12,
-              padding: "12px 14px", marginBottom: 20,
-              maxHeight: 200, overflowY: "auto",
-              display: "flex", flexDirection: "column", gap: 8,
-            }}>
-              {itemsWithStock.filter(x => !x.outOfStock).map(({ item }) => (
-                <div key={`${item.variant_id}__${item.size}`} style={{
-                  display: "flex", justifyContent: "space-between", alignItems: "center",
-                }}>
-                  <div style={{ fontSize: 13, color: "#444" }}>
-                    <span style={{ fontWeight: 600 }}>{item.product_name}</span>
-                    {" · "}{item.color}{" · T. "}{item.size}
-                    {item.qty > 1 && <span style={{ color: "#888" }}> ×{item.qty}</span>}
-                  </div>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: "#555", flexShrink: 0, marginLeft: 8 }}>
-                    {formatARS(item.price_snapshot * item.qty)}
-                  </div>
+            {/* Cabecera fija */}
+            <div style={{ padding: "24px 20px 0", flexShrink: 0 }}>
+              <div style={{ textAlign: "center", marginBottom: 16 }}>
+                <div style={{ fontSize: 32, marginBottom: 8 }}>🛒</div>
+                <div style={{ fontSize: 17, fontWeight: 700, color: "#222", marginBottom: 6 }}>
+                  Confirmar pedido
                 </div>
-              ))}
+                <div style={{ fontSize: 14, color: "#777", lineHeight: 1.5 }}>
+                  Estás por enviar{" "}
+                  <strong style={{ color: "#222" }}>
+                    {totalItems} producto{totalItems !== 1 ? "s" : ""}
+                  </strong>{" "}
+                  por un total de{" "}
+                  <strong style={{ color: "#CD844D" }}>{formatARS(total)}</strong>
+                </div>
+              </div>
             </div>
 
-            {checkoutError && (
+            {/* Lista scrolleable */}
+            <div style={{
+              overflowY: "auto", flex: 1,
+              padding: "0 20px",
+              WebkitOverflowScrolling: "touch" as any,
+            }}>
               <div style={{
-                marginBottom: 14, padding: "10px 12px", borderRadius: 10,
-                background: "#fef2f2", border: "1px solid #fca5a5", color: "#991b1b", fontSize: 13,
+                background: "#f9f6f2", borderRadius: 12,
+                padding: "12px 14px", marginBottom: 12,
+                display: "flex", flexDirection: "column", gap: 10,
               }}>
-                {checkoutError}
+                {itemsWithStock.filter(x => !x.outOfStock).map(({ item }) => (
+                  <div key={`${item.variant_id}__${item.size}`} style={{
+                    display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8,
+                  }}>
+                    <div style={{ fontSize: 13, color: "#444", minWidth: 0 }}>
+                      <span style={{ fontWeight: 600 }}>{item.product_name}</span>
+                      {" · "}{item.color}{" · T. "}{item.size}
+                      {item.qty > 1 && <span style={{ color: "#888" }}> ×{item.qty}</span>}
+                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: "#555", flexShrink: 0 }}>
+                      {formatARS(item.price_snapshot * item.qty)}
+                    </div>
+                  </div>
+                ))}
               </div>
-            )}
 
-            <div style={{ display: "flex", gap: 10 }}>
+              {checkoutError && (
+                <div style={{
+                  marginBottom: 12, padding: "10px 12px", borderRadius: 10,
+                  background: "#fef2f2", border: "1px solid #fca5a5", color: "#991b1b", fontSize: 13,
+                }}>
+                  {checkoutError}
+                </div>
+              )}
+            </div>
+
+            {/* Botones fijos abajo */}
+            <div style={{
+              padding: "16px 20px 32px", flexShrink: 0,
+              borderTop: "1px solid #f0ebe4",
+              display: "flex", gap: 10,
+            }}>
               <button
                 onClick={() => { setShowConfirm(false); setCheckoutError(null); }}
                 style={{
@@ -406,7 +421,6 @@ export default function CartTab({ customerId, onOrderCreated, activeOrderStatus,
               <button
                 onClick={async () => {
                   await handleCheckout();
-                  // Si no hubo error, handleCheckout llama onOrderCreated y clearCart — el modal queda abierto solo si hay error
                   if (!useCartStore.getState().checkoutError) setShowConfirm(false);
                 }}
                 disabled={isCheckingOut}

@@ -17,11 +17,10 @@ const nextConfig: NextConfig = {
   images: {
     loader: "custom",
     loaderFile: "./lib/cloudinary.ts",
-    // Anchos acotados: el default de Next incluye 2048/3840 (4K), que en un
-    // catálogo de fotos de producto solo sirve para inflar bandwidth de Cloudinary
-    // sin beneficio visual real (ver auditoría de consumo, ago 2026).
-    deviceSizes: [640, 750, 828, 1080, 1200, 1920],
-    imageSizes: [16, 32, 48, 64, 96, 128, 256, 384],
+    // 3 anchos de viewport + 3 thumbs. Evita srcset de 14 variantes
+    // (w_1920/2048/3840 inflaban bandwidth; ver auditoría Cloudinary 2026-08-15).
+    deviceSizes: [400, 800, 1200],
+    imageSizes: [64, 200, 384],
     remotePatterns: [
       {
         protocol: "https",

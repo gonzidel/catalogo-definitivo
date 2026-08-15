@@ -26,7 +26,7 @@ interface FlatImage {
   idx: number;
 }
 
-const HERO_PROBE_WIDTH = 860;
+const HERO_PROBE_WIDTH = 800;
 const HERO_LOAD_TIMEOUT_MS = 8000;
 
 function heroProbeUrl(src: string): string {

@@ -1,8 +1,13 @@
 -- 235_fix_rpc_customer_cancel_order.sql
--- orders.status no admite 'cancelled' (orders_status_check). Alineado con client/dashboard-instant.js cancelEntireOrder:
--- - cancela ítems vía rpc_cancel_order_item
--- - si hubo picked → orders.status = 'closed' (admin + notificación)
--- - si no hubo picked → deja el pedido (ítems cancelled); el cliente oculta pedidos sin ítems operativos
+-- Amplía orders_status_check para admitir 'cancelled' y actualiza el RPC
+-- para usar 'cancelled' en lugar del workaround previo con 'closed'.
+
+ALTER TABLE public.orders
+  DROP CONSTRAINT IF EXISTS orders_status_check;
+
+ALTER TABLE public.orders
+  ADD CONSTRAINT orders_status_check
+  CHECK (status IN ('active','closing_soon','closed','sent','expired','devolución','cancelled'));
 
 CREATE OR REPLACE FUNCTION public.rpc_customer_cancel_order(p_order_id uuid)
 RETURNS json
@@ -73,15 +78,9 @@ BEGIN
     v_cancelled := v_cancelled + 1;
   END LOOP;
 
-  IF v_had_picked THEN
-    UPDATE public.orders
-    SET status = 'closed', updated_at = now()
-    WHERE id = p_order_id;
-  ELSE
-    UPDATE public.orders
-    SET updated_at = now()
-    WHERE id = p_order_id;
-  END IF;
+  UPDATE public.orders
+  SET status = 'cancelled', updated_at = now()
+  WHERE id = p_order_id;
 
   RETURN json_build_object(
     'ok', true,
@@ -89,13 +88,13 @@ BEGIN
     'order_number', v_order.order_number,
     'items_cancelled', v_cancelled,
     'had_picked', v_had_picked,
-    'order_status', CASE WHEN v_had_picked THEN 'closed' ELSE v_order.status END
+    'order_status', 'cancelled'
   );
 END;
 $$;
 
 COMMENT ON FUNCTION public.rpc_customer_cancel_order(uuid) IS
-  'Cliente: cancela ítems operativos (rpc_cancel_order_item). Si hubo picked → closed; si no, pedido queda con ítems cancelled para admin.';
+  'Cliente: cancela todos los ítems operativos y marca el pedido como cancelled.';
 
 GRANT EXECUTE ON FUNCTION public.rpc_customer_cancel_order(uuid) TO authenticated;
 

@@ -5,6 +5,7 @@ const CANONICAL_TRANSPORTS = Object.freeze({
   SNAIDER: "Snaider",
   SEDE: "SEDE",
   RETIRO_DE_LOCAL: "Retira local",
+  MYM: "MyM",
 });
 
 const TRANSPORT_ALIAS_TO_CANONICAL = Object.freeze({
@@ -19,6 +20,7 @@ const TRANSPORT_ALIAS_TO_CANONICAL = Object.freeze({
   "retiro del local": CANONICAL_TRANSPORTS.RETIRO_DE_LOCAL,
   "retiro local": CANONICAL_TRANSPORTS.RETIRO_DE_LOCAL,
   "retira local": CANONICAL_TRANSPORTS.RETIRO_DE_LOCAL,
+  "mym": CANONICAL_TRANSPORTS.MYM,
 });
 
 export const RESERVED_TRANSPORT_KEYS = Object.freeze(

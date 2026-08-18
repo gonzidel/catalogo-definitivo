@@ -99,10 +99,14 @@ export function resolveOrderItemUnitPrice(priceSnapshot, variantPrice) {
   const snap = parseARSNumber(priceSnapshot);
   const pv = parseARSNumber(variantPrice);
   if (pv <= 0) return snap;
-  if (snap <= 0) return pv;
-  if (snap >= 1000) return snap;
+  if (snap === 0) return pv;
+  // Signo negativo = línea de devolución. Se preserva: solo se corrige la
+  // magnitud si el snapshot está corrupto (ej. 18 en vez de 18000), nunca el signo.
+  const sign = snap < 0 ? -1 : 1;
+  const absSnap = Math.abs(snap);
+  if (absSnap >= 1000) return snap;
   const MIN_VARIANT_TO_TRUST = 1500;
   const MIN_RATIO = 75;
-  if (pv >= MIN_VARIANT_TO_TRUST && snap < 1000 && pv >= snap * MIN_RATIO) return pv;
+  if (pv >= MIN_VARIANT_TO_TRUST && absSnap < 1000 && pv >= absSnap * MIN_RATIO) return sign * pv;
   return snap;
 }

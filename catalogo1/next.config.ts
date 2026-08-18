@@ -16,6 +16,10 @@ const nextConfig: NextConfig = {
   images: {
     loader: "custom",
     loaderFile: "./lib/cloudinary.ts",
+    // 3 anchos de viewport + 3 thumbs. Evita srcset de 14 variantes
+    // (w_1920/2048/3840 inflaban bandwidth; ver auditoría Cloudinary 2026-08-15).
+    deviceSizes: [400, 800, 1200],
+    imageSizes: [64, 200, 384],
     remotePatterns: [
       {
         protocol: "https",

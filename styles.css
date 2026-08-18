@@ -2542,9 +2542,34 @@ body.pwa-install-modal-open {
 }
 
 .price-offer {
-  color: #d33;
+  color: #c62828;
   font-weight: bold;
   font-size: 1.1em;
+}
+
+.card-price--offer .price,
+.card-price--offer .price-offer {
+  color: #c62828;
+}
+
+/* Cartelito Oferta: esquina superior derecha de la imagen (grid catálogo) */
+.product-card-offer-label {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 6;
+  background: #c62828;
+  color: #fff;
+  padding: 3px 7px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+  text-transform: uppercase;
+  pointer-events: none;
+  user-select: none;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
 }
 
 .offer-badge, .promo-badge {
@@ -2908,7 +2933,7 @@ html.client-area .product-modal {
 }
 
 .pdp-price .price-offer {
-  color: #b86a33;
+  color: #c62828;
 }
 
 .pdp-header__row2 {
@@ -7604,11 +7629,24 @@ body.modal-open {
   font-weight: 600;
   letter-spacing: -0.1px;
   line-height: 1.2;
-  max-width: calc(100% - 12px);
+  max-width: calc(100% - 36px);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   z-index: 10;
+}
+
+/* Emoji fuego: misma fila que el nombre, arriba a la derecha (oferta activa) */
+.fyl-originals-offer-fire {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 10;
+  font-size: 16px;
+  line-height: 1;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.35));
+  pointer-events: none;
+  user-select: none;
 }
 
 .fyl-originals-card-image {
@@ -7719,6 +7757,10 @@ body.modal-open {
   margin-top: 0;
   margin-bottom: 0;
   line-height: 1.2;
+}
+
+.fyl-originals-card-price--offer {
+  color: #c62828;
 }
 
 @media (max-width: 480px) {
@@ -8586,11 +8628,31 @@ body.modal-open {
   font-weight: 600;
   letter-spacing: -0.1px;
   line-height: 1.2;
-  max-width: calc(100% - 12px);
+  max-width: calc(100% - 72px);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   z-index: 10;
+}
+
+/* Etiqueta Oferta: misma fila que el código, arriba a la derecha (banner dinámico) */
+.custom-banner-offer-label {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 10;
+  background: #c62828;
+  color: #fff;
+  padding: 3px 7px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+  text-transform: uppercase;
+  pointer-events: none;
+  user-select: none;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
 }
 
 .custom-banner-card-image {
@@ -8614,6 +8676,10 @@ body.modal-open {
   margin-bottom: 0;
   line-height: 1.2;
   padding-bottom: 0.2rem;
+}
+
+.custom-banner-card-price--offer {
+  color: #c62828;
 }
 
 .custom-banner-colors {

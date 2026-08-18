@@ -193,12 +193,10 @@ export async function emitirFactura(
           esFacturaA: esFacturaA_,
           montoFacturar: monto,
           totalAmount: Number(existing.total_amount),
-          importeNeto: esFacturaA_
-            ? Math.round((monto / 1.21) * 100) / 100
-            : monto,
-          importeIva: esFacturaA_
-            ? Math.round((monto - monto / 1.21) * 100) / 100
-            : 0,
+          // ARCA exige el desglose Neto/IVA siempre que ImpNeto > 0, sea
+          // Factura A o B (error 10070 si no se manda) — no depende de esFacturaA_.
+          importeNeto: Math.round((monto / 1.21) * 100) / 100,
+          importeIva: Math.round((monto - monto / 1.21) * 100) / 100,
           customerName: existing.customer_name,
           cuit: existing.cuit ?? "",
           address: existing.address ?? "",
@@ -223,12 +221,12 @@ export async function emitirFactura(
         totalAmount
       );
 
-      const importeNeto = esFacturaA
-        ? Math.round((montoFacturar / 1.21) * 100) / 100
-        : montoFacturar;
-      const importeIva = esFacturaA
-        ? Math.round((montoFacturar - importeNeto) * 100) / 100
-        : 0;
+      // ARCA exige el desglose Neto/IVA siempre que ImpNeto > 0, sea Factura
+      // A o B (rechaza con error 10070 "objeto IVA es obligatorio" si no se
+      // manda). La diferencia entre A y B es si se lo discrimina en el PDF
+      // al cliente, no si se le declara a ARCA.
+      const importeNeto = Math.round((montoFacturar / 1.21) * 100) / 100;
+      const importeIva = Math.round((montoFacturar - importeNeto) * 100) / 100;
 
       const date = getFechaArgentinaYYYYMMDD();
 
@@ -269,13 +267,26 @@ export async function emitirFactura(
         MonId: "PES",
         MonCotiz: 1,
         CondicionIVAReceptorId: esFacturaA ? 1 : 5,
-        ...(esFacturaA
-          ? { Iva: [{ Id: 5, BaseImp: importeNeto, Importe: importeIva }] }
-          : {}),
+        Iva: [{ Id: 5, BaseImp: importeNeto, Importe: importeIva }],
       };
 
       const result =
         await arca.electronicBillingService.createVoucher(wsfePayload);
+
+      // Guardia: ARCA puede devolver un CAE vacío (ej. si hubo una observación
+      // o rechazo parcial que no vino como excepción). No seguir adelante si
+      // no hay un CAE real — evita guardar una "factura" sin CAE válido.
+      if (!result.cae || !result.cae.trim()) {
+        console.error(
+          "[emitirFactura] ARCA devolvió CAE vacío. Respuesta cruda:",
+          JSON.stringify(result.response)
+        );
+        throw new Error(
+          `ARCA no devolvió un CAE válido para el comprobante ${nextNro} ` +
+          `(PtoVta ${ptoVta}, CbteTipo ${cbteTipo}). Revisar observaciones en ` +
+          `los logs del backend antes de reintentar — no se registró nada localmente.`
+        );
+      }
 
       const { data: invoiceRow, error: insertInvoiceErr } = await supabase
         .from("invoices")

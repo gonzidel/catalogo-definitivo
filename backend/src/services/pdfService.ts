@@ -82,14 +82,22 @@ export async function generatePdf(
       : {}),
     cae: cae.cae,
     caeFechaVencimiento: cae.caeFchVto.replace(/-/g, ""),
-    observaciones: `Factura parcial (30%) sobre pedido total $${Number(
-      invoice.totalAmount
-    ).toLocaleString("es-AR")}`,
+    // Sin observaciones: el comprobante no debe hacer referencia a ningún
+    // monto o porcentaje distinto del que efectivamente declara (importeTotal).
   };
+
+  const esHomologacion = process.env.ARCA_PRODUCTION !== "true";
 
   const generator = new InvoicePdfGenerator({
     includeQr: true,
     copies: ["ORIGINAL", "DUPLICADO"],
+    // Sello visible mientras se prueba contra el ambiente de homologación de
+    // ARCA, para que nunca se confunda con un comprobante real (el CAE de
+    // homologación tiene el mismo formato que uno de producción a simple vista,
+    // pero no existe en el registro fiscal real).
+    ...(esHomologacion && {
+      footerText: "AMBIENTE DE HOMOLOGACIÓN — SIN VALOR FISCAL",
+    }),
   });
 
   return generator.generate(data);

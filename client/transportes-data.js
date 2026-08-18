@@ -1,6 +1,6 @@
 /**
  * Asignación de transporte por provincia y localidad.
- * Transportes: SEDE, Expreso Norte, Credifin, Transporte Snaider, Via Cargo, Correo Argentino, Retiro de Local.
+ * Transportes: SEDE, Expreso Norte, Credifin, Transporte Snaider, Via Cargo, Correo Argentino, Retiro de Local, MyM (solo Corrientes Capital).
  */
 import { viaCargoLocalities } from "./data/via-cargo-localidades.js?v=m260607";
 import { snaiderLocalities } from "./data/snaider-localidades.js?v=m260607";
@@ -96,6 +96,11 @@ const via_cargo = viaCargoLocalities;
 
 /** Listado Transporte Snaider: scripts/import-snaider-xlsx.mjs */
 const snaider_cobertura = snaiderLocalities;
+
+// MyM — por ahora solo cubre Corrientes Capital.
+const mym_cobertura = [
+  { provincia: "Corrientes", localidad: "Corrientes", transporte: "MyM" },
+];
 
 const destinos_transporte = [
   { provincia: "Chaco", localidad: "Presidencia Roque Sáenz Peña", transporte: "SEDE" },
@@ -236,6 +241,7 @@ export function getTransportesDisponibles(provincia, localidad) {
   const credifinMatch = matchTransporte(credifin, p, l);
   const snaider = matchTransporte(snaider_cobertura, p, l);
   const via = matchTransporte(via_cargo, p, l);
+  const mym = matchTransporte(mym_cobertura, p, l);
 
   const opciones = [];
   if (retiro) opciones.push(canonicalizeTransportName(retiro.transporte));
@@ -248,6 +254,10 @@ export function getTransportesDisponibles(provincia, localidad) {
   const viaName = canonicalizeTransportName(via?.transporte);
   if (viaName && !opciones.includes(viaName)) {
     opciones.push(viaName);
+  }
+  const mymName = canonicalizeTransportName(mym?.transporte);
+  if (mymName && !opciones.includes(mymName)) {
+    opciones.push(mymName);
   }
   if (opciones.length === 0) opciones.push("Correo Argentino");
 

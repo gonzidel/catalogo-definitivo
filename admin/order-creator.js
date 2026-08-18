@@ -11,10 +11,61 @@ import {
   tokenizeCustomerSearch,
   rankCustomersForSearch,
   computeWarehouseQtySplitForOrderItem,
+  computeOrderItemsPromoDiscount,
 } from "./orders-domain.js?v=m260607";
 import { hasCatalogPrice, catalogPriceGuardMessage } from "../scripts/utils/price.js?v=m260607";
 
 console.log("📦 order-creator.js: Importación de supabase-client completada");
+
+/**
+ * Precio unitario efectivo (lista o oferta activa por color).
+ * Misma RPC que PAU / public-sales: `get_effective_price`.
+ */
+async function resolveEffectiveUnitPrice(variantId, listPrice) {
+  let unitPrice = Number(listPrice) || 0;
+  if (!variantId || !supabase) return unitPrice;
+  try {
+    const { data: effectivePrice, error } = await supabase.rpc(
+      "get_effective_price",
+      { p_variant_id: variantId }
+    );
+    if (!error && effectivePrice != null && Number(effectivePrice) > 0) {
+      unitPrice = Number(effectivePrice);
+    }
+  } catch (e) {
+    console.warn("get_effective_price falló; se usa precio de lista:", e);
+  }
+  return unitPrice;
+}
+
+/** Aplica precio efectivo a filas de búsqueda manual (`precio` por variant_id). */
+async function applyEffectivePricesToSearchRows(rows) {
+  if (!Array.isArray(rows) || rows.length === 0 || !supabase) return rows;
+  const ids = [...new Set(rows.map((r) => r.variant_id).filter(Boolean))];
+  if (ids.length === 0) return rows;
+
+  const map = new Map();
+  await Promise.all(
+    ids.map(async (id) => {
+      try {
+        const { data, error } = await supabase.rpc("get_effective_price", {
+          p_variant_id: id,
+        });
+        if (!error && data != null && Number(data) > 0) {
+          map.set(id, Number(data));
+        }
+      } catch (e) {
+        console.warn("get_effective_price (búsqueda):", e);
+      }
+    })
+  );
+
+  for (const row of rows) {
+    const effective = map.get(row.variant_id);
+    if (effective != null) row.precio = effective;
+  }
+  return rows;
+}
 
 // Validar formato UUID v4 (formato estándar PostgreSQL/Supabase)
 function isValidUUID(uuid) {
@@ -1458,7 +1509,9 @@ async function searchProducts(query) {
       })
     );
     
-    displayProductResults(productsWithStock.flat(), namePrefix);
+    const flatResults = productsWithStock.flat();
+    await applyEffectivePricesToSearchRows(flatResults);
+    displayProductResults(flatResults, namePrefix);
   } catch (error) {
     console.error("❌ Error en búsqueda de productos:", error);
   }
@@ -1655,14 +1708,15 @@ async function processQrCodeForOrder(qrCode) {
       qtyFromGeneral = Math.min(quantity, sizeStock.general.stock);
     }
     
-    // Agregar producto al pedido
+    // Agregar producto al pedido (precio efectivo: oferta por color si aplica)
     const hasConfirmedStock = (qtyFromGeneral + qtyFromVenta) >= quantity;
+    const unitPrice = await resolveEffectiveUnitPrice(variant.id, variant.price);
     const productToAdd = {
       product_name: product.name,
       color: variant.color,
       size: normalizedSize,
       quantity: quantity,
-      price_snapshot: variant.price,
+      price_snapshot: unitPrice,
       imagen: imageData?.url || null,
       variant_id: variant.id,
       qty_from_general: qtyFromGeneral,
@@ -2795,8 +2849,41 @@ window.removeExtraValue = function(type) {
   updateOrderItemsList();
 };
 
-// Actualizar total del pedido
-function updateOrderTotal() {
+/**
+ * Descuento de promociones 2x1/2xMonto para los variant_ids indicados.
+ * @param {Array<{variant_id: string, quantity: number, price_snapshot: number}>} items
+ * @returns {Promise<number>} descuento total (positivo)
+ */
+async function getPromoDiscountForItems(items) {
+  const variantIds = [...new Set(
+    (items || []).map((item) => item?.variant_id).filter(Boolean)
+  )];
+  if (variantIds.length === 0) return 0;
+
+  if (!supabase) {
+    supabase = await getSupabase();
+  }
+  if (!supabase) return 0;
+
+  try {
+    const { data: promotionsData, error } = await supabase.rpc(
+      "get_active_promotions_for_variants",
+      { p_variant_ids: variantIds }
+    );
+    if (error || !promotionsData) return 0;
+    return computeOrderItemsPromoDiscount(
+      items,
+      promotionsData,
+      (item) => Number(item?.price_snapshot) || 0
+    );
+  } catch (e) {
+    console.warn("⚠️ No se pudo calcular descuento de promociones:", e);
+    return 0;
+  }
+}
+
+// Actualizar total del pedido (vista previa en el modal, antes de guardar)
+async function updateOrderTotal() {
   const totalElement = document.getElementById("order-total");
   if (!totalElement) return;
   
@@ -2804,17 +2891,23 @@ function updateOrderTotal() {
   const subtotal = orderItems.reduce((sum, item) => {
     return sum + ((item.price_snapshot || 0) * (item.quantity || 0));
   }, 0);
+
+  // Descuento por promociones 2x1/2xMonto (solo sobre los items nuevos del modal;
+  // si se está editando un pedido existente, el total real y definitivo — que sí
+  // combina items existentes + nuevos — se recalcula en saveOrder()).
+  const promoDiscount = await getPromoDiscountForItems(orderItems);
   
   // Calcular extras por porcentaje si existe
   const extrasFromPercentage = extrasPercentage > 0 ? (subtotal * extrasPercentage / 100) : 0;
   
   // Calcular total final
-  const total = subtotal + shippingAmount - discountAmount + extrasAmount + extrasFromPercentage;
+  const total = subtotal - promoDiscount + shippingAmount - discountAmount + extrasAmount + extrasFromPercentage;
   
-  // Mostrar desglose si hay valores extra
-  if (shippingAmount > 0 || discountAmount > 0 || extrasAmount > 0 || extrasPercentage > 0) {
+  // Mostrar desglose si hay valores extra o descuento por promoción
+  if (shippingAmount > 0 || discountAmount > 0 || extrasAmount > 0 || extrasPercentage > 0 || promoDiscount > 0) {
     const breakdown = [];
     breakdown.push(`Subtotal: $${subtotal.toLocaleString('es-AR')}`);
+    if (promoDiscount > 0) breakdown.push(`Descuento (promoción): -$${promoDiscount.toLocaleString('es-AR')}`);
     if (shippingAmount > 0) breakdown.push(`Envío: $${shippingAmount.toLocaleString('es-AR')}`);
     if (discountAmount > 0) breakdown.push(`Descuento: -$${discountAmount.toLocaleString('es-AR')}`);
     if (extrasAmount > 0) breakdown.push(`Extras: $${extrasAmount.toLocaleString('es-AR')}`);
@@ -3018,62 +3111,43 @@ async function saveOrder() {
       return sum + ((item.price_snapshot || 0) * (item.quantity || 0));
     }, 0);
     
-    // Si estamos editando, necesitamos obtener el total actual del pedido
-    let currentOrderTotal = 0;
+    // Si estamos editando, necesitamos obtener el subtotal bruto de los items ya guardados
     let currentOrderSubtotal = 0;
+    let existingActiveItems = [];
     if (editingOrderId) {
-      const { data: currentOrder } = await supabase
-        .from("orders")
-        .select("total_amount, notes")
-        .eq("id", editingOrderId)
-        .maybeSingle();
+      // Obtener el subtotal de items existentes (bruto, sin promos: precio unitario * cantidad).
+      // NOTA (fix 2026-07-23): antes este subtotal se reconstruía a partir de total_amount
+      // menos envío/descuento/extras guardados en notes, confiando en el total ya persistido.
+      // Eso rompía el descuento por promociones 2x1/2xMonto: si total_amount ya tenía (o no)
+      // el descuento aplicado, no había forma de saberlo y se terminaba sumando o restando
+      // el descuento dos veces. Usar siempre la suma bruta de los items vivos es determinístico
+      // y permite calcular el descuento de promo una sola vez, de forma consistente, sobre el
+      // conjunto combinado (items existentes + nuevos).
+      const { data: existingItems } = await supabase
+        .from("order_items")
+        .select("variant_id, quantity, price_snapshot, status")
+        .eq("order_id", editingOrderId);
       
-      if (currentOrder) {
-        currentOrderTotal = parseFloat(currentOrder.total_amount) || 0;
-        
-        // Obtener el subtotal de items existentes
-        const { data: existingItems } = await supabase
-          .from("order_items")
-          .select("quantity, price_snapshot")
-          .eq("order_id", editingOrderId);
-        
-        if (existingItems) {
-          currentOrderSubtotal = existingItems.reduce((sum, item) => {
-            return sum + ((item.price_snapshot || 0) * (item.quantity || 0));
-          }, 0);
-        }
-        
-        // Si hay valores extra existentes, extraerlos para recalcular
-        if (currentOrder.notes) {
-          try {
-            const existingExtras = JSON.parse(currentOrder.notes);
-            // Restar los valores extra anteriores del total para obtener el subtotal real
-            const existingShipping = parseFloat(existingExtras.shipping) || 0;
-            const existingDiscount = parseFloat(existingExtras.discount) || 0;
-            const existingExtrasAmount = parseFloat(existingExtras.extras_amount) || 0;
-            const existingExtrasPercentage = parseFloat(existingExtras.extras_percentage) || 0;
-            const existingExtrasFromPercentage = existingExtrasPercentage > 0 ? (currentOrderSubtotal * existingExtrasPercentage / 100) : 0;
-            
-            // El subtotal real es el total menos los valores extra anteriores
-            currentOrderSubtotal = currentOrderTotal - existingShipping + existingDiscount - existingExtrasAmount - existingExtrasFromPercentage;
-          } catch (e) {
-            // Si no se pueden parsear notes, usar el total como subtotal aproximado
-            currentOrderSubtotal = currentOrderTotal;
-          }
-        } else {
-          currentOrderSubtotal = currentOrderTotal;
-        }
+      if (existingItems) {
+        existingActiveItems = existingItems.filter((item) => item.status !== "cancelled");
+        currentOrderSubtotal = existingActiveItems.reduce((sum, item) => {
+          return sum + ((item.price_snapshot || 0) * (item.quantity || 0));
+        }, 0);
       }
     }
     
-    // Calcular el nuevo subtotal (items existentes + items nuevos)
+    // Calcular el nuevo subtotal (items existentes + items nuevos, sin descuentos de promo)
     const totalSubtotal = currentOrderSubtotal + subtotalNewItems;
     
-    // Calcular extras por porcentaje si existe (sobre el subtotal total)
+    // Descuento por promociones 2x1/2xMonto sobre el conjunto combinado (existentes + nuevos),
+    // para que se detecten pares que se completan al agregar productos a un pedido ya existente.
+    const promoDiscount = await getPromoDiscountForItems([...existingActiveItems, ...orderItems]);
+    
+    // Calcular extras por porcentaje si existe (sobre el subtotal total, antes de descuentos de promo)
     const extrasFromPercentage = extrasPercentage > 0 ? (totalSubtotal * extrasPercentage / 100) : 0;
     
     // Calcular total final con valores extra
-    const total = totalSubtotal + shippingAmount - discountAmount + extrasAmount + extrasFromPercentage;
+    const total = totalSubtotal - promoDiscount + shippingAmount - discountAmount + extrasAmount + extrasFromPercentage;
     
     // Preparar datos de valores extra para guardar en notes
     const extraValues = {
@@ -3646,25 +3720,47 @@ async function createNewOrder(customerId, items, total, extraValues = {}) {
   console.log("🔵 createNewOrder: Creando pedido en base de datos...");
   console.log("🔵 createNewOrder: customer_id a insertar:", customerId, "tipo:", typeof customerId, "formato válido:", isValidUUID(customerId));
 
+  // Un pedido a la vez: `closed` (pendiente de envío) también cuenta como "abierto"
+  // desde 2026-07-18 (migración 251), no solo active/closing_soon.
+  // `stock_pending` NO integra el índice único de "un pedido abierto" en la BD
+  // (decisión explícita, ver migración 251) porque representa un pedido roto que
+  // requiere intervención manual, no una reserva vigente -- pero igual se avisa
+  // acá (a nivel UI) para que el admin no cree un segundo pedido sin darse cuenta
+  // de que ya hay uno sin resolver. Ver admin/orders-ops.js OPEN_ORDER_STATUSES.
   const { data: existingOpen, error: openErr } = await supabase
     .from("orders")
     .select("id, order_number, status")
     .eq("customer_id", customerId)
-    .in("status", ["active", "closing_soon"])
+    .in("status", ["active", "closing_soon", "closed", "stock_pending"])
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
   if (!openErr && existingOpen?.id) {
     const label = existingOpen.order_number || String(existingOpen.id).slice(0, 8);
-    const reuse = confirm(
-      `El cliente ya tiene un pedido abierto (#${label}). ¿Agregar estos productos a ese pedido en lugar de crear uno nuevo?\n\nAceptar = agregar al pedido existente.\nCancelar = no crear (revisá el pedido en el panel).`
-    );
-    if (reuse) {
-      await addItemsToExistingOrder(existingOpen.id, items, total, extraValues);
-      return { success: true, order: existingOpen, reusedExisting: true };
+
+    if (existingOpen.status === "stock_pending") {
+      // No se puede reusar: addItemsToExistingOrder rechaza pedidos en stock_pending.
+      // Solo se avisa y se deja elegir si igual se crea un pedido nuevo aparte.
+      const proceedAnyway = confirm(
+        `El cliente ya tiene un pedido en estado "Stock pendiente" (#${label}) sin resolver.\n\n` +
+        `No se puede agregar productos a ese pedido hasta resolverlo manualmente.\n\n` +
+        `Aceptar = crear igual un pedido nuevo aparte.\nCancelar = no crear (resolvé primero el pedido #${label}).`
+      );
+      if (!proceedAnyway) {
+        throw new Error("Creación cancelada: el cliente ya tiene un pedido en 'stock_pending' sin resolver.");
+      }
+    } else {
+      const statusLabel = existingOpen.status === "closed" ? "cerrado (pendiente de envío)" : "abierto";
+      const reuse = confirm(
+        `El cliente ya tiene un pedido ${statusLabel} (#${label}). ¿Agregar estos productos a ese pedido en lugar de crear uno nuevo?\n\nAceptar = agregar al pedido existente.\nCancelar = no crear (revisá el pedido en el panel).`
+      );
+      if (reuse) {
+        await addItemsToExistingOrder(existingOpen.id, items, total, extraValues);
+        return { success: true, order: existingOpen, reusedExisting: true };
+      }
+      throw new Error("Creación cancelada: el cliente ya tiene un pedido abierto.");
     }
-    throw new Error("Creación cancelada: el cliente ya tiene un pedido abierto.");
   }
 
   const { data: order, error: orderError } = await supabase
@@ -4182,6 +4278,9 @@ export async function resolveQrCodeToOrderItem(qrCode) {
     throw new Error(catalogPriceGuardMessage(product.name));
   }
 
+  // Precio efectivo: oferta activa por color (`color_price_offers`) si existe.
+  const unitPrice = await resolveEffectiveUnitPrice(variant.id, variant.price);
+
   const normalizedSize = normalizeSize(variant.size);
   let stockGeneral = 0;
   let stockVenta = 0;
@@ -4220,7 +4319,7 @@ export async function resolveQrCodeToOrderItem(qrCode) {
     color: variant.color,
     size: normalizedSize,
     quantity: 1,
-    price_snapshot: variant.price,
+    price_snapshot: unitPrice,
     imagen: imageData?.url || null,
     variant_id: variant.id,
     qty_from_general: qtyFromGeneral,

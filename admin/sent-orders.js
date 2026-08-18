@@ -1,6 +1,12 @@
 // Importar dinámicamente para asegurar que se cargue después
 import { qzConnect } from "./qz-printing.js?v=m260607";
 import { parseARSNumber, resolveOrderItemUnitPrice } from "../scripts/utils/price.js?v=m260607";
+import { formatDniDisplay } from "../scripts/utils/dni.js?v=m260607";
+import {
+  buildCustomerLabelNamePoolDetailed,
+  getOrderActiveLabelButtonIndex,
+  getOrderLabelDisplayName,
+} from "../scripts/utils/label-names.js?v=m260607";
 
 function generateOperationId() {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -202,7 +208,7 @@ function renderSearchEmptyState() {
   customersContent.innerHTML = `
     <div class="empty-state">
       <h2>Buscá un cliente</h2>
-      <p>Escribí un nombre y presioná Enter, Buscar o seleccioná una sugerencia.</p>
+      <p>Solo aparecen clientes que ya tienen pedidos enviados. Escribí un nombre y elegí una sugerencia.</p>
     </div>
   `;
 }
@@ -258,6 +264,8 @@ async function loadSentOrders(customerIds = []) {
             transport_id,
             status,
             payment_method,
+            label_customer_name,
+            label_customer_dni,
             invoice_status,
             facturante_id,
             invoice_prefix,
@@ -344,11 +352,23 @@ async function loadSentOrders(customerIds = []) {
     // Obtener customer_ids únicos para cargar datos de clientes
     const uniqueCustomerIds = [...new Set(orders.map(order => order.customer_id).filter(Boolean))];
 
-    // Obtener información de customers (incluyendo transport_id)
-    const { data: customersData, error: customersError } = await supabase
+    // Obtener información de customers (incluyendo transport_id y sub-nombres)
+    let customerSelectFields =
+      "id, customer_number, full_name, phone, city, province, dni, email, address, transport_id, additional_names, label_name_cursor";
+    let { data: customersData, error: customersError } = await supabase
       .from("customers")
-      .select("id, customer_number, full_name, phone, city, province, dni, email, address, transport_id")
+      .select(customerSelectFields)
       .in("id", uniqueCustomerIds);
+
+    if (customersError) {
+      console.warn("⚠️ Reintentando customers sin additional_names:", customersError.message || customersError);
+      customerSelectFields =
+        "id, customer_number, full_name, phone, city, province, dni, email, address, transport_id";
+      ({ data: customersData, error: customersError } = await supabase
+        .from("customers")
+        .select(customerSelectFields)
+        .in("id", uniqueCustomerIds));
+    }
 
     if (customersError) {
       console.error("❌ Error obteniendo datos de customers:", customersError);
@@ -416,12 +436,50 @@ async function loadSentOrders(customerIds = []) {
   }
 }
 
+/**
+ * Deja solo clientes que tienen al menos un pedido enviado (o en devolución).
+ * Así el buscador de "Pedidos Enviados" no sugiere clientas sin envíos.
+ */
+async function filterCustomersWithSentOrders(customers) {
+  const list = Array.isArray(customers) ? customers.filter((c) => c?.id) : [];
+  if (!list.length) return [];
+
+  if (!supabase) supabase = await getSupabase();
+  if (!supabase) return [];
+
+  const ids = [...new Set(list.map((c) => c.id))];
+  const withSent = new Set();
+  const BATCH = 100;
+
+  for (let i = 0; i < ids.length; i += BATCH) {
+    const batch = ids.slice(i, i + BATCH);
+    const { data, error } = await supabase
+      .from("orders")
+      .select("customer_id")
+      .in("customer_id", batch)
+      .in("status", ["sent", "devolución"]);
+
+    if (error) {
+      console.error("❌ Error filtrando clientes con pedidos enviados:", error);
+      throw error;
+    }
+
+    for (const row of data || []) {
+      if (row?.customer_id) withSent.add(row.customer_id);
+    }
+  }
+
+  return list.filter((c) => withSent.has(c.id));
+}
+
 async function resolveCustomerIdsForSearch(rawTerm) {
   const term = (rawTerm || "").trim();
   if (!term) return [];
 
   if (selectedCustomerId) {
-    return [selectedCustomerId];
+    // Igual validamos: si la clienta no tiene enviados, no devolvemos el id.
+    const filtered = await filterCustomersWithSentOrders([{ id: selectedCustomerId }]);
+    return filtered.map((c) => c.id);
   }
 
   const safeTerm = term.replace(/[%_]/g, "").slice(0, 80);
@@ -435,7 +493,8 @@ async function resolveCustomerIdsForSearch(rawTerm) {
     throw customerSearchError;
   }
 
-  return (matchedCustomers || []).map((c) => c.id).filter(Boolean);
+  const withSent = await filterCustomersWithSentOrders(matchedCustomers || []);
+  return withSent.map((c) => c.id).filter(Boolean);
 }
 
 async function runSentOrdersSearch() {
@@ -560,12 +619,13 @@ function setupSearch() {
     const token = ++autocompleteRequestToken;
     const safeTerm = term.replace(/[%_]/g, "").slice(0, 80);
 
+    // Pedimos de más y después filtramos a quienes tienen pedidos enviados.
     const { data, error } = await supabase
       .from("customers")
       .select("id, customer_number, full_name")
       .or(`full_name.ilike.%${safeTerm}%,customer_number.ilike.%${safeTerm}%`)
       .order("full_name", { ascending: true })
-      .limit(12);
+      .limit(40);
 
     if (token !== autocompleteRequestToken) return;
     if (error) {
@@ -574,7 +634,16 @@ function setupSearch() {
       return;
     }
 
-    renderSuggestions(data || []);
+    let withSent = [];
+    try {
+      withSent = await filterCustomersWithSentOrders(data || []);
+    } catch (_) {
+      renderSuggestions([]);
+      return;
+    }
+    if (token !== autocompleteRequestToken) return;
+
+    renderSuggestions(withSent.slice(0, 12));
   };
 
   searchInput.addEventListener("input", async (e) => {
@@ -660,19 +729,34 @@ function openCustomerModal(customer) {
   ).join('');
   
   modalCustomerInfo.innerHTML = `
-    <p><strong>Número de Cliente:</strong> #${customer.customer_number || "N/A"}</p>
-    <p><strong>Email:</strong> ${customer.email || "Sin email"}</p>
-    <p><strong>Teléfono:</strong> ${customer.phone || "Sin teléfono"}</p>
-    <p><strong>DNI:</strong> ${customer.dni || "Sin DNI"}</p>
-    <p><strong>Ubicación:</strong> ${location}</p>
-    <div class="transport-section" style="margin-top: 16px; padding: 12px; background: #f8f9fa; border-radius: 8px;">
-      <strong>🚚 Transporte:</strong>
-      <div class="transport-selector" style="margin-top: 8px;">
-        <select class="transport-select" data-customer-id="${customer.id}" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px;">
-          <option value="">Sin transporte</option>
-          ${transportOptions}
-        </select>
+    <div class="modal-customer-meta">
+      <div class="modal-customer-meta__item">
+        <span class="modal-customer-meta__label">Nº cliente</span>
+        <span class="modal-customer-meta__value">#${customer.customer_number || "N/A"}</span>
       </div>
+      <div class="modal-customer-meta__item">
+        <span class="modal-customer-meta__label">DNI</span>
+        <span class="modal-customer-meta__value">${customer.dni || "—"}</span>
+      </div>
+      <div class="modal-customer-meta__item modal-customer-meta__item--full">
+        <span class="modal-customer-meta__label">Email</span>
+        <span class="modal-customer-meta__value">${customer.email || "Sin email"}</span>
+      </div>
+      <div class="modal-customer-meta__item">
+        <span class="modal-customer-meta__label">Teléfono</span>
+        <span class="modal-customer-meta__value">${customer.phone || "—"}</span>
+      </div>
+      <div class="modal-customer-meta__item">
+        <span class="modal-customer-meta__label">Ubicación</span>
+        <span class="modal-customer-meta__value">${location}</span>
+      </div>
+    </div>
+    <div class="transport-section">
+      <label class="transport-section__label" for="transport-select-${customer.id}">🚚 Transporte</label>
+      <select id="transport-select-${customer.id}" class="transport-select" data-customer-id="${customer.id}">
+        <option value="">Sin transporte</option>
+        ${transportOptions}
+      </select>
     </div>
   `;
 
@@ -760,6 +844,10 @@ function openCustomerModal(customer) {
         // Usar total_amount del pedido (que incluye extras) o calcularlo
         const hasStoredTotal = order.total_amount != null && String(order.total_amount).trim() !== "";
         const total = hasStoredTotal ? parseARSNumber(order.total_amount) : (subtotal + extrasTotal);
+        const totalProducts = validItems.reduce(
+          (sum, item) => sum + Number(item.quantity || 0),
+          0
+        );
 
         // Generar HTML de items del pedido
         const itemsHtml = orderItems.length > 0
@@ -775,11 +863,16 @@ function openCustomerModal(customer) {
                 <div class="${itemClass}">
                   <img src="${itemImage}" alt="${item.product_name || 'Producto'}" class="order-item-detail-image" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'64\\' height=\\'64\\' viewBox=\\'0 0 64 64\\'%3E%3Crect width=\\'64\\' height=\\'64\\' fill=\\'%23f2f2f2\\'/%3E%3Ctext x=\\'50%25\\' y=\\'50%25\\' text-anchor=\\'middle\\' dy=\\'.3em\\' fill=\\'%23999\\' font-size=\\'12\\'%3ESin imagen%3C/text%3E%3C/svg%3E'">
                   <div class="order-item-detail-info">
-                    <div class="order-item-detail-name">${item.product_name || "Producto sin nombre"} ${isMissing ? '<span style="color: #dc3545; font-size: 12px;">(Faltante)</span>' : ''}</div>
-                    <div class="order-item-detail-meta">Color: ${item.color || "-"} • Talle: ${item.size || "-"}</div>
-                    <div class="order-item-detail-quantity">Cantidad: ${itemQuantity}</div>
+                    <div class="order-item-detail-name">${item.product_name || "Producto sin nombre"} ${isMissing ? '<span class="order-item-detail-missing-tag">(Faltante)</span>' : ''}</div>
+                    <div class="order-item-detail-meta">
+                      <span>${item.color || "-"}</span>
+                      <span class="order-item-detail-sep">·</span>
+                      <span>T${item.size || "-"}</span>
+                      <span class="order-item-detail-sep">·</span>
+                      <span>×${itemQuantity}</span>
+                    </div>
                   </div>
-                  <div style="display: flex; align-items: center; gap: 8px;">
+                  <div class="order-item-detail-side">
                     <div class="order-item-detail-price" style="${isMissing ? 'text-decoration: line-through; opacity: 0.5;' : ''}">$${itemSubtotal.toLocaleString("es-AR")}</div>
                     ${!isMissing ? `<button class="delete-item-btn" data-delete-item="${item.id}" data-order-id="${order.id}" title="Eliminar producto">🗑️</button>` : ''}
                   </div>
@@ -797,19 +890,23 @@ function openCustomerModal(customer) {
             <div class="order-card-layout">
               <div class="order-card-left">
                 <div class="order-date-item-header" data-order-toggle="${order.id}">
-                  <span class="order-date">${formattedDate} <span class="order-expand-icon">▼</span></span>
-                  <span class="order-number">#${orderNumber}</span>
+                  <div class="order-date-item-header-main">
+                    <span class="order-number">#${orderNumber}</span>
+                    <span class="order-date">${formattedDate}</span>
+                  </div>
+                  <span class="order-expand-icon" aria-hidden="true">▼</span>
                 </div>
-                <div class="order-total">Total: $${total.toLocaleString("es-AR")}</div>
-                <div style="display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap;">
+                <div class="order-total">
+                  <span>Total: $${total.toLocaleString("es-AR")}</span>
+                  <span class="order-total-products">· ${totalProducts} producto${totalProducts === 1 ? "" : "s"}</span>
+                </div>
+                <div class="order-card-actions">
                   <button class="modify-order-btn" data-modify-order="${order.id}">✏️ Modificar</button>
-                  <button class="btn btn-warning" data-print-labels="${order.id}" style="background: #ffc107; color: #000; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: background 0.2s; white-space: nowrap;">Imprimir rótulos</button>
-                  <button class="btn btn-primary" data-print-ticket="${order.id}" style="background: #17a2b8; color: #000; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: background 0.2s; white-space: nowrap;">Imprimir ticket</button>
+                  <button class="devolucion-btn" data-devolucion-order="${order.id}" ${isDevolucion ? 'style="opacity: 0.5; cursor: not-allowed;"' : ''}>Devolución</button>
+                  <button class="btn btn-warning order-action--desktop-only" data-print-labels="${order.id}" style="background: #ffc107; color: #000; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: background 0.2s;">Imprimir rótulos</button>
+                  <button class="btn btn-primary order-action--desktop-only" data-print-ticket="${order.id}" style="background: #17a2b8; color: #000; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: background 0.2s;">Imprimir ticket</button>
                   ${renderInvoiceButton(order)}
                 </div>
-              </div>
-              <div class="order-card-right">
-                <button class="devolucion-btn" data-devolucion-order="${order.id}" ${isDevolucion ? 'style="opacity: 0.5; cursor: not-allowed;"' : ''}>Devolución</button>
               </div>
             </div>
             <div class="order-items-detail" id="order-items-${order.id}">
@@ -897,7 +994,7 @@ function renderInvoiceButton(order) {
   switch (status) {
     case "sin_facturar":
       return `<button
-        class="btn-invoice"
+        class="btn-invoice order-action--desktop-only"
         data-facturar="${orderId}"
         style="${baseStyle} background: #6c757d; color: #fff;"
         title="Emitir Factura B para este pedido">
@@ -906,7 +1003,7 @@ function renderInvoiceButton(order) {
 
     case "processing":
       return `<button
-        class="btn-invoice-processing"
+        class="btn-invoice-processing order-action--desktop-only"
         disabled
         style="${baseStyle} background: #b8d4f0; color: #555; cursor: not-allowed; opacity: 0.8;"
         title="Esperando autorización de AFIP...">
@@ -918,7 +1015,7 @@ function renderInvoiceButton(order) {
         ? `${invoicePrefix}-${String(invoiceNumber).padStart(8, "0")}`
         : "Facturado";
       return `<button
-        class="btn-invoice-approved"
+        class="btn-invoice-approved order-action--desktop-only"
         data-invoice-pdf="${encodeURIComponent(pdfUrl)}"
         style="${baseStyle} background: #28a745; color: #fff;"
         title="Factura ${numDisplay} — clic para ver PDF">
@@ -928,7 +1025,7 @@ function renderInvoiceButton(order) {
 
     case "error":
       return `<button
-        class="btn-invoice-error"
+        class="btn-invoice-error order-action--desktop-only"
         data-invoice-error="${encodeURIComponent(invoiceError)}"
         data-facturar-retry="${orderId}"
         style="${baseStyle} background: #dc3545; color: #fff;"
@@ -1573,7 +1670,7 @@ function prepareShippingLabelFromOrder(order, customer) {
   const amount = total.toLocaleString("es-AR", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 
   return {
-    fullName: customer.full_name || "Cliente sin nombre",
+    fullName: getOrderLabelDisplayName(order, customer),
     address: customer.address || "Sin dirección",
     locality: customer.city || "Sin localidad",
     province: customer.province || "Sin provincia",
@@ -1742,6 +1839,132 @@ async function createPaymentMethod(name) {
     console.error("❌ Error al crear método de pago:", err);
     return null;
   }
+}
+
+/**
+ * Muestra modal web para elegir titular o sub-nombre del rótulo.
+ * @returns {Promise<{buttonIndex: number, entry: object}|null>}
+ */
+function showLabelNameModalForPrint(order, customer) {
+  return new Promise((resolve) => {
+    const pool = buildCustomerLabelNamePoolDetailed(customer);
+    if (pool.length <= 1) {
+      resolve({ buttonIndex: 1, entry: pool[0] });
+      return;
+    }
+
+    const modal = document.getElementById("label-name-modal");
+    const optionsEl = document.getElementById("label-name-options");
+    const subtitleEl = document.getElementById("label-name-modal-subtitle");
+    const closeBtn = document.getElementById("close-label-name-modal");
+    const cancelBtn = document.getElementById("cancel-label-name-btn");
+    const confirmBtn = document.getElementById("confirm-label-name-btn");
+
+    if (!modal || !optionsEl) {
+      resolve({ buttonIndex: 1, entry: pool[0] });
+      return;
+    }
+
+    let selectedIndex = getOrderActiveLabelButtonIndex(order, customer);
+
+    const closeModal = (result = null) => {
+      modal.style.display = "none";
+      modal.classList.remove("active");
+      modal.onclick = null;
+      resolve(result);
+    };
+
+    const renderOptions = () => {
+      optionsEl.innerHTML = pool
+        .map((entry) => {
+          const isActive = entry.button === selectedIndex;
+          const tag = entry.isMain ? "Titular" : `Sub-nombre ${entry.button - 1}`;
+          const dniLine = entry.dni ? `DNI: ${formatDniDisplay(entry.dni)}` : "";
+          return `
+            <button type="button" class="label-name-option${isActive ? " is-selected" : ""}" data-name-index="${entry.button}">
+              <span class="label-name-option-num">${entry.button}</span>
+              <span class="label-name-option-body">
+                <strong>${escapeHtmlLabel(entry.full_name)}</strong>
+                <span class="label-name-option-tag">${tag}</span>
+                ${dniLine ? `<span class="label-name-option-dni">${escapeHtmlLabel(dniLine)}</span>` : ""}
+              </span>
+            </button>
+          `;
+        })
+        .join("");
+
+      optionsEl.querySelectorAll(".label-name-option").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          selectedIndex = Number(btn.dataset.nameIndex);
+          renderOptions();
+        });
+      });
+    };
+
+    closeBtn.onclick = () => closeModal(null);
+    cancelBtn.onclick = () => closeModal(null);
+    confirmBtn.onclick = () => {
+      const entry = pool.find((item) => item.button === selectedIndex) || pool[0];
+      closeModal({ buttonIndex: entry.button, entry });
+    };
+    modal.onclick = (e) => {
+      if (e.target === modal) closeModal(null);
+    };
+
+    if (subtitleEl) {
+      const orderCode = order.order_number || order.id.substring(0, 8);
+      subtitleEl.textContent = `Pedido #${orderCode}`;
+    }
+
+    renderOptions();
+    modal.style.display = "flex";
+    modal.classList.add("active");
+  });
+}
+
+function escapeHtmlLabel(text) {
+  return String(text || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+async function setOrderLabelNameSelection(orderId, buttonIndex, customer) {
+  const pool = buildCustomerLabelNamePoolDetailed(customer);
+  const entry = pool.find((item) => item.button === buttonIndex);
+  if (!entry) throw new Error("Nombre no disponible para este cliente.");
+
+  if (!supabase) supabase = await getSupabase();
+  if (!supabase) throw new Error("No se pudo conectar con la base de datos.");
+
+  const { error } = await supabase
+    .from("orders")
+    .update({
+      label_customer_name: entry.full_name,
+      label_customer_dni: entry.dni || null,
+    })
+    .eq("id", orderId);
+
+  if (error) throw error;
+
+  for (const cust of allCustomersData) {
+    const order = cust.orders.find((o) => o.id === orderId);
+    if (order) {
+      order.label_customer_name = entry.full_name;
+      order.label_customer_dni = entry.dni || null;
+      break;
+    }
+  }
+}
+
+function buildShippingLabelFromSelection(order, customer, entry) {
+  const base = prepareShippingLabelFromOrder(order, customer);
+  if (!entry) return base;
+  return {
+    ...base,
+    fullName: entry.full_name,
+  };
 }
 
 /**
@@ -1941,7 +2164,25 @@ function setupPrintLabelsButtons() {
         return;
       }
 
-      // Verificar si hay transporte asignado
+      let nameSelection;
+      try {
+        nameSelection = await showLabelNameModalForPrint(order, customer);
+      } catch (error) {
+        console.error("Error en selector de nombre:", error);
+        alert("Error al elegir el nombre: " + (error.message || "Error desconocido"));
+        return;
+      }
+      if (!nameSelection) return;
+
+      try {
+        await setOrderLabelNameSelection(order.id, nameSelection.buttonIndex, customer);
+      } catch (error) {
+        console.error("Error guardando nombre del rótulo:", error);
+        alert("No se pudo guardar el nombre elegido: " + (error.message || "Error desconocido"));
+        return;
+      }
+
+      const selectedLabelEntry = nameSelection.entry;
       const transportId = customer.transport_id || order.transport_id;
       const transport = transportId ? scheduledTransports.find(t => t.id === transportId) : null;
       
@@ -2032,8 +2273,8 @@ function setupPrintLabelsButtons() {
           }
         }
 
-        // Preparar datos del rótulo
-        const shippingLabel = prepareShippingLabelFromOrder(order, customer);
+        // Preparar datos del rótulo con el nombre elegido (titular o sub-nombre)
+        const shippingLabel = buildShippingLabelFromSelection(order, customer, selectedLabelEntry);
 
         // Validar datos mínimos
         if (!shippingLabel.fullName || shippingLabel.fullName === "Cliente sin nombre") {

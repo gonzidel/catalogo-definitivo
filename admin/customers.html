@@ -293,6 +293,101 @@
       max-height: 90vh;
       overflow-y: auto;
       box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+      transition: max-width 0.2s ease;
+    }
+    .modal-content.is-expanded {
+      max-width: 980px;
+    }
+    .customer-form-layout {
+      display: flex;
+      gap: 24px;
+      align-items: flex-start;
+    }
+    .customer-form-main {
+      flex: 1;
+      min-width: 0;
+    }
+    .additional-names-trigger {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 12px;
+      margin-top: 8px;
+      margin-bottom: 8px;
+    }
+    .additional-names-hint {
+      font-size: 13px;
+      color: #666;
+    }
+    .additional-names-panel {
+      flex: 0 0 340px;
+      background: #f8f9fa;
+      border: 1px solid #e9ecef;
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .additional-names-panel[hidden] {
+      display: none !important;
+    }
+    .additional-names-title {
+      margin: 0 0 8px 0;
+      font-size: 16px;
+      color: #333;
+    }
+    .additional-names-subtitle {
+      margin: 0 0 16px 0;
+      font-size: 12px;
+      color: #666;
+      line-height: 1.4;
+    }
+    .additional-name-entry {
+      background: #fff;
+      border: 1px solid #e9ecef;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+    .additional-name-entry:last-child {
+      margin-bottom: 0;
+    }
+    .additional-name-entry-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #555;
+    }
+    .additional-name-remove {
+      background: none;
+      border: none;
+      color: #c62828;
+      font-size: 22px;
+      line-height: 1;
+      cursor: pointer;
+      padding: 0 4px;
+      min-width: 32px;
+      min-height: 32px;
+    }
+    .additional-name-entry .form-group {
+      margin-bottom: 10px;
+    }
+    .additional-name-entry .form-group label {
+      font-size: 13px;
+    }
+    .additional-name-entry .form-group input {
+      font-size: 14px;
+      padding: 8px 10px;
+    }
+    .additional-name-entry .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 0;
+    }
+    .additional-name-entry .form-row .form-group {
+      margin-bottom: 10px;
     }
     .modal-header {
       display: flex;
@@ -413,6 +508,19 @@
       .form-row {
         grid-template-columns: 1fr;
       }
+      .additional-name-entry .form-row {
+        grid-template-columns: 1fr;
+      }
+      .customer-form-layout {
+        flex-direction: column;
+      }
+      .additional-names-panel {
+        flex: 1 1 auto;
+        width: 100%;
+      }
+      .modal-content.is-expanded {
+        max-width: 600px;
+      }
       .phone-container {
         flex-direction: column;
         align-items: stretch;
@@ -460,12 +568,14 @@
 
   <!-- Modal para crear/editar cliente -->
   <div id="customer-modal" class="modal">
-    <div class="modal-content">
+    <div class="modal-content" id="customer-modal-content">
       <div class="modal-header">
         <h2 id="modal-title">Crear Nuevo Cliente</h2>
         <button type="button" class="modal-close" id="modal-close">&times;</button>
       </div>
-      <form id="customer-form" autocomplete="off">
+      <form id="customer-form" autocomplete="off" data-lpignore="true" data-1p-ignore="true">
+        <div class="customer-form-layout">
+          <div class="customer-form-main">
         <div class="form-row">
           <div class="form-group">
             <label for="customer-first-name">
@@ -474,8 +584,13 @@
             <input 
               type="text" 
               id="customer-first-name" 
+              name="fyl-customer-given-name"
               placeholder="Ej: Juan"
-              autocomplete="off"
+              autocomplete="new-password"
+              autocapitalize="off"
+              spellcheck="false"
+              data-lpignore="true"
+              data-1p-ignore="true"
               required
             />
           </div>
@@ -486,22 +601,33 @@
             <input 
               type="text" 
               id="customer-last-name" 
+              name="fyl-customer-family-name"
               placeholder="Ej: Pérez"
-              autocomplete="off"
+              autocomplete="new-password"
+              autocapitalize="off"
+              spellcheck="false"
+              data-lpignore="true"
+              data-1p-ignore="true"
               required
             />
           </div>
         </div>
         <div class="form-row">
           <div class="form-group">
-            <label for="customer-dni">DNI (opcional)</label>
+            <label for="customer-dni">DNI / CUIT (opcional)</label>
             <input 
               type="text" 
               id="customer-dni" 
-              placeholder="Ej: 12345678"
-              pattern="[0-9]{7,8}"
-              title="El DNI debe tener entre 7 y 8 dígitos"
-              autocomplete="off"
+              name="fyl-customer-doc-id"
+              inputmode="numeric"
+              placeholder="Ej: 12345678 o 20-37262546-6"
+              pattern="[0-9\-]{7,13}"
+              title="El documento debe tener 7 u 8 dígitos (DNI) o 11 dígitos (CUIT/CUIL, ej. 20-37262546-6)"
+              autocomplete="new-password"
+              autocapitalize="off"
+              spellcheck="false"
+              data-lpignore="true"
+              data-1p-ignore="true"
             />
           </div>
           <div class="form-group">
@@ -513,9 +639,15 @@
               <input 
                 type="text" 
                 id="customer-phone" 
+                name="fyl-customer-phone"
                 class="phone-input"
+                inputmode="tel"
                 placeholder="9 362 472-0762"
-                autocomplete="off"
+                autocomplete="new-password"
+                autocapitalize="off"
+                spellcheck="false"
+                data-lpignore="true"
+                data-1p-ignore="true"
                 required
               />
             </div>
@@ -524,10 +656,16 @@
         <div class="form-group">
           <label for="customer-email">Email (opcional)</label>
           <input 
-            type="email" 
+            type="text" 
             id="customer-email" 
+            name="fyl-customer-email"
+            inputmode="email"
             placeholder="Ej: juan@example.com"
-            autocomplete="off"
+            autocomplete="new-password"
+            autocapitalize="off"
+            spellcheck="false"
+            data-lpignore="true"
+            data-1p-ignore="true"
           />
         </div>
         <div class="form-group">
@@ -537,8 +675,13 @@
           <input 
             type="text" 
             id="customer-address" 
+            name="fyl-customer-street"
             placeholder="Ej: Av. Corrientes 1234"
-            autocomplete="off"
+            autocomplete="new-password"
+            autocapitalize="off"
+            spellcheck="false"
+            data-lpignore="true"
+            data-1p-ignore="true"
             required
           />
         </div>
@@ -550,8 +693,13 @@
             <input 
               type="text" 
               id="customer-province" 
+              name="fyl-customer-region"
               placeholder="Escriba para buscar provincia..."
-              autocomplete="off"
+              autocomplete="new-password"
+              autocapitalize="off"
+              spellcheck="false"
+              data-lpignore="true"
+              data-1p-ignore="true"
               required
             />
             <div id="province-dropdown" class="custom-dropdown" style="display: none;"></div>
@@ -563,13 +711,41 @@
             <input 
               type="text" 
               id="customer-city" 
+              name="fyl-customer-locality"
               placeholder="Seleccione provincia primero..."
-              autocomplete="off"
+              autocomplete="new-password"
+              autocapitalize="off"
+              spellcheck="false"
+              data-lpignore="true"
+              data-1p-ignore="true"
               required
               disabled
             />
             <div id="city-dropdown" class="custom-dropdown" style="display: none;"></div>
           </div>
+        </div>
+        <div class="additional-names-trigger">
+          <button type="button" class="btn-secondary" id="add-additional-name-btn">
+            + Agregar nombre
+          </button>
+          <span class="additional-names-hint" id="additional-names-hint">Hasta 3 sub-nombres (nombre, apellido y DNI)</span>
+        </div>
+          </div>
+          <aside id="additional-names-panel" class="additional-names-panel" hidden aria-label="Sub-nombres del cliente">
+            <h3 class="additional-names-title">Sub-nombres del cliente</h3>
+            <p class="additional-names-subtitle">Personas vinculadas al mismo cliente (no reemplazan el titular)</p>
+            <div id="additional-names-list"></div>
+          </aside>
+        </div>
+        <div class="form-group" style="border-top: 1px solid #e0e0e0; padding-top: 16px; margin-top: 8px;">
+          <label style="display: flex; align-items: center; gap: 8px; font-weight: normal; cursor: pointer;">
+            <input type="checkbox" id="customer-invoice-full-amount" style="width: auto; margin: 0;" />
+            Facturar 100% del pedido (en vez del 30% por defecto)
+          </label>
+          <label style="display: flex; align-items: center; gap: 8px; font-weight: normal; cursor: pointer; margin-top: 8px;">
+            <input type="checkbox" id="customer-invoice-always-a" style="width: auto; margin: 0;" />
+            Siempre Factura A (sin importar el DNI/CUIT cargado)
+          </label>
         </div>
         <div id="customer-form-error" class="message error" style="display: none;"></div>
         <div class="actions" style="margin-top: 24px;">

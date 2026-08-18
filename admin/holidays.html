@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex" />
+  <title>📅 Feriados | Admin</title>
+  <link rel="stylesheet" href="../styles.css" />
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #f5f5f5;
+    }
+    .admin-container {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 40px 20px;
+    }
+    .page-header {
+      background: white;
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 24px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    .page-header h1 {
+      margin: 0 0 8px 0;
+      font-size: 28px;
+      color: #333;
+    }
+    .page-header p {
+      margin: 0 0 16px 0;
+      color: #666;
+      font-size: 14px;
+    }
+    .nav-bar {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+      padding-top: 16px;
+      border-top: 1px solid #e9ecef;
+    }
+    .nav-bar a {
+      padding: 8px 16px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      text-decoration: none;
+      color: #333;
+      font-size: 14px;
+      transition: all 0.2s ease;
+    }
+    .nav-bar a:hover {
+      border-color: #CD844D;
+      color: #CD844D;
+    }
+    .section-card {
+      background: white;
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 24px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    .section-card h2 {
+      margin: 0 0 20px 0;
+      font-size: 22px;
+      color: #333;
+    }
+    .add-form {
+      display: flex;
+      gap: 12px;
+      align-items: flex-end;
+      flex-wrap: wrap;
+    }
+    .form-group {
+      margin-bottom: 0;
+    }
+    .form-group label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: 500;
+      color: #333;
+      font-size: 14px;
+    }
+    .form-group input {
+      padding: 10px 12px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      font-size: 15px;
+      box-sizing: border-box;
+    }
+    .form-group input:focus {
+      outline: none;
+      border-color: #CD844D;
+      box-shadow: 0 0 0 3px rgba(205, 132, 77, 0.1);
+    }
+    #holiday-date-input { width: 170px; }
+    #holiday-reason-input { width: 280px; }
+    button {
+      padding: 10px 20px;
+      border: none;
+      border-radius: 6px;
+      font-size: 15px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .btn-primary {
+      background: #CD844D;
+      color: white;
+    }
+    .btn-primary:hover:not(:disabled) {
+      background: #B8734A;
+    }
+    .btn-primary:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .btn-danger {
+      background: transparent;
+      color: #e74c3c;
+      border: 1px solid #e74c3c;
+      padding: 6px 14px;
+      font-size: 13px;
+    }
+    .btn-danger:hover {
+      background: #e74c3c;
+      color: white;
+    }
+    .holidays-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    .holidays-table th {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 2px solid #e9ecef;
+      color: #666;
+      font-size: 13px;
+      text-transform: uppercase;
+    }
+    .holidays-table td {
+      padding: 12px;
+      border-bottom: 1px solid #f0f0f0;
+      font-size: 14px;
+      color: #333;
+    }
+    .holidays-table tr:last-child td {
+      border-bottom: none;
+    }
+    .holiday-year-badge {
+      display: inline-block;
+      background: #f0f0f0;
+      color: #666;
+      border-radius: 10px;
+      padding: 2px 10px;
+      font-size: 12px;
+      margin-left: 8px;
+    }
+    .message {
+      padding: 12px 16px;
+      border-radius: 6px;
+      margin-bottom: 16px;
+      font-size: 14px;
+    }
+    .message.success {
+      background: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+    .message.error {
+      background: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+    }
+    .loading, .empty-state {
+      text-align: center;
+      padding: 40px;
+      color: #666;
+    }
+    .info-box {
+      background: #fff8f0;
+      border: 1px solid #f0dcc4;
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin-bottom: 20px;
+      font-size: 13px;
+      color: #7a5a35;
+      line-height: 1.5;
+    }
+    @media (max-width: 640px) {
+      .admin-container { padding: 20px 12px; }
+      .add-form { flex-direction: column; align-items: stretch; }
+      #holiday-date-input, #holiday-reason-input { width: 100%; }
+      .holidays-table { font-size: 13px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="admin-container">
+    <div class="page-header">
+      <h1>Feriados y días no hábiles</h1>
+      <p>Fechas que se excluyen del cálculo de vencimiento de pedidos. El pedido nunca vence sábado, domingo ni en una fecha marcada acá: pasa automáticamente al siguiente día hábil.</p>
+      <div class="nav-bar">
+        <a href="./index.html">← Volver al panel</a>
+        <span style="flex:1 1 auto"></span>
+        <a href="./orders.html">Pedidos</a>
+      </div>
+    </div>
+
+    <div id="message-container"></div>
+
+    <section class="section-card">
+      <h2>Agregar feriado</h2>
+      <div class="info-box">
+        Cada pedido vence a las 17:00 (hora Argentina) del día 7 desde su creación. Si ese día cae sábado, domingo o una fecha marcada como feriado, el vencimiento pasa al siguiente día hábil (por ejemplo: feriado un martes → vence el miércoles). El cálculo es automático, no requiere ninguna acción manual además de mantener esta lista actualizada.
+      </div>
+      <form id="add-holiday-form" class="add-form">
+        <div class="form-group">
+          <label for="holiday-date-input">Fecha</label>
+          <input type="date" id="holiday-date-input" required />
+        </div>
+        <div class="form-group" style="flex: 1 1 220px;">
+          <label for="holiday-reason-input">Motivo</label>
+          <input type="text" id="holiday-reason-input" placeholder="Ej: Día de la Independencia" required />
+        </div>
+        <div class="form-group">
+          <button type="submit" class="btn-primary" id="add-holiday-btn">Agregar</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="section-card">
+      <h2>Feriados registrados</h2>
+      <div id="holidays-container">
+        <div class="loading">Cargando feriados...</div>
+      </div>
+    </section>
+  </div>
+
+  <script type="module" src="../scripts/config.js"></script>
+  <script defer src="../scripts/vendor/supabase-js.bundle.min.js?v=m260607"></script>
+  <script type="module" src="../scripts/supabase-client.js?v=m260607"></script>
+  <script type="module" src="./holidays.js?v=m260607"></script>
+</body>
+</html>

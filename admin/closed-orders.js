@@ -6,6 +6,7 @@ import {
   normalizeTransportKey,
 } from "../scripts/transport-canonical.js";
 import { parseARSNumber, resolveOrderItemUnitPrice } from "../scripts/utils/price.js?v=m260607";
+import { formatDniDisplay } from "../scripts/utils/dni.js?v=m260607";
 
 const TIMEZONE_BUENOS_AIRES = "America/Argentina/Buenos_Aires";
 
@@ -218,6 +219,12 @@ function center(text, width = TICKET_WIDTH) {
 // Generación de TSPL para rótulos de envío
 // ============================================================================
 
+/** Monto del pedido para rótulo: 7 dígitos con cero a la izquierda (ej. 210500 → 0210500). */
+function formatShippingLabelCodAmount(total) {
+  const value = Math.round(Math.abs(parseARSNumber(total) || 0));
+  return String(value).padStart(7, "0");
+}
+
 function buildTsplShippingLabel(shippingLabel, packageNumber = 1, totalPackages = 1) {
   const clean = (v) =>
     (v ?? "")
@@ -333,9 +340,9 @@ function buildTsplShippingLabel(shippingLabel, packageNumber = 1, totalPackages 
   currentY += 50; // Espacio después del transporte
   lines.push(`TEXT 20,${currentY},"2",0,2.5,2.5,"Productos: ${itemsCount}"`);
 
-  // Total (en línea separada)
+  // Cod (en línea separada)
   currentY += 50; // Espacio después de productos
-  lines.push(`TEXT 20,${currentY},"2",0,2.5,2.5,"Total: $${amount}"`);
+  lines.push(`TEXT 20,${currentY},"2",0,2.5,2.5,"Cod: ${amount}"`);
 
   // Paquetes - 2 espacios después del total
   currentY += 100; // Espacio doble (50 * 2) después del total
@@ -479,7 +486,49 @@ async function printTscShippingLabel(shippingLabel, copies = 1) {
 }
 
 // Función para preparar objeto shippingLabel desde un pedido
-function prepareShippingLabelFromOrder(order) {
+function getOrderLabelDisplayName(order, customer) {
+  const fromOrder = String(order?.label_customer_name || "").trim();
+  if (fromOrder) return fromOrder;
+  return String(customer?.full_name || "").trim() || "Cliente sin nombre";
+}
+
+async function resolveOrderLabelIdentity(orderId) {
+  if (!supabase) supabase = await getSupabase();
+  if (!supabase) throw new Error("No se pudo conectar con la base de datos");
+
+  const { data, error } = await supabase.rpc("rpc_resolve_order_label_identity", {
+    p_order_id: orderId,
+  });
+
+  if (error) throw error;
+  if (!data?.success) {
+    throw new Error(data?.message || "No se pudo resolver el nombre del rótulo");
+  }
+
+  return data;
+}
+
+function applyLabelIdentityToOrder(order, identity) {
+  if (!order || !identity) return;
+  order.label_customer_name = identity.customer_name || order.label_customer_name;
+  order.label_customer_dni = identity.customer_dni || order.label_customer_dni || "";
+}
+
+async function prepareOrderShippingLabel(orderId) {
+  const order = orders.find((o) => o.id === orderId);
+  if (!order) throw new Error("Pedido no encontrado.");
+
+  const preselected = String(order?.label_customer_name || "").trim();
+  if (preselected) {
+    return await prepareShippingLabelFromOrder(order);
+  }
+
+  const identity = await resolveOrderLabelIdentity(orderId);
+  applyLabelIdentityToOrder(order, identity);
+  return await prepareShippingLabelFromOrder(order);
+}
+
+async function prepareShippingLabelFromOrder(order) {
   let customer = {};
   if (Array.isArray(order.customers)) {
     customer = order.customers[0] || {};
@@ -499,17 +548,42 @@ function prepareShippingLabelFromOrder(order) {
     0
   );
 
-  // Obtener monto total
-  const hasStoredTotal = order.total_amount != null && String(order.total_amount).trim() !== "";
-  const total = hasStoredTotal
-    ? parseARSNumber(order.total_amount)
-    : (order.order_items || []).reduce(
-      (sum, item) => sum + (item.quantity || 0) * getClosedOrderUnitPrice(item),
-      0
-    );
+  // Parsear valores extra desde notes (mismo criterio que ticket/detalle)
+  let shippingAmount = 0;
+  let discountAmount = 0;
+  let extrasAmount = 0;
+  let extrasPercentage = 0;
+  if (order.notes) {
+    try {
+      const extraValues = JSON.parse(order.notes);
+      shippingAmount = parseFloat(extraValues.shipping) || 0;
+      discountAmount = parseFloat(extraValues.discount) || 0;
+      extrasAmount = parseFloat(extraValues.extras_amount) || 0;
+      extrasPercentage = parseFloat(extraValues.extras_percentage) || 0;
+    } catch (e) {
+      console.warn('Error parseando valores extra del pedido (rótulo):', e);
+    }
+  }
 
-  // Formatear monto sin símbolo de moneda para el rótulo
-  const amount = total.toLocaleString("es-AR", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  // Monto a cobrar en el rótulo (contra reembolso): SIEMPRE recalculado en vivo, igual que en
+  // el ticket y el detalle del pedido. No usar order.total_amount directo: puede no tener
+  // aplicado el descuento de promociones 2x1/2xMonto (bug corregido 2026-07-23 en
+  // order-creator.js/rpc_checkout_cart, aún pendiente en pedidos históricos).
+  const offersData = await getOffersAndPromotionsForOrder(order);
+  const productsSubtotal = (order.order_items || [])
+    .filter((item) => item.status !== 'cancelled')
+    .reduce((sum, item) => sum + (item.quantity || 0) * getClosedOrderUnitPrice(item), 0);
+  const extrasPercentAmount = extrasPercentage > 0 ? (productsSubtotal * extrasPercentage / 100) : 0;
+  const total =
+    productsSubtotal
+    + shippingAmount
+    - discountAmount
+    + extrasAmount
+    + extrasPercentAmount
+    - offersData.totalDiscount;
+
+  // Formatear monto para rótulo (ej. 210500 → 0210500)
+  const amount = formatShippingLabelCodAmount(total);
 
   // Debug: Verificar datos del customer
   console.log("🔍 Preparando shippingLabel - customer data:", {
@@ -522,7 +596,7 @@ function prepareShippingLabelFromOrder(order) {
   });
 
   return {
-    fullName: customer.full_name || "Cliente sin nombre",
+    fullName: getOrderLabelDisplayName(order, customer),
     address: customer.address || "Sin dirección",
     locality: customer.city || "Sin localidad",
     province: customer.province || "Sin provincia",
@@ -536,14 +610,246 @@ function prepareShippingLabelFromOrder(order) {
 }
 
 // Función para formatear nombre de cliente
-function formatCustomerDisplayName(customer) {
-  const full = (customer?.full_name || customer?.name || '').trim();
-  if (!full) return 'Cliente sin nombre';
+function formatPersonDisplayName(fullName) {
+  const full = String(fullName || "").trim();
+  if (!full) return "Cliente sin nombre";
   const parts = full.split(/\s+/);
   if (parts.length === 1) return full;
   const last = parts.pop();
-  const first = parts.join(' ');
+  const first = parts.join(" ");
   return `${last}, ${first}`;
+}
+
+function formatCustomerDisplayName(customer) {
+  return formatPersonDisplayName(customer?.full_name || customer?.name || "");
+}
+
+function normalizeLabelNameCompare(name) {
+  return String(name || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function normalizeOrderCustomerRecord(order) {
+  if (!order) return {};
+  if (Array.isArray(order.customers)) return order.customers[0] || {};
+  if (order.customers && typeof order.customers === "object") return order.customers;
+  return {};
+}
+
+function parseCustomerAdditionalNamesForLabels(raw) {
+  if (!raw) return [];
+  let parsed = raw;
+  if (typeof raw === "string") {
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed
+    .slice(0, 3)
+    .map((entry) => {
+      const full =
+        String(entry?.full_name || "").trim() ||
+        String(`${entry?.first_name || ""} ${entry?.last_name || ""}`).trim() ||
+        String(entry?.name || "").trim();
+      const dni = String(entry?.dni || "").trim();
+      return full ? { full_name: full, dni } : null;
+    })
+    .filter(Boolean);
+}
+
+function buildCustomerLabelNamePoolDetailed(customer) {
+  const mainName = String(customer?.full_name || customer?.name || "").trim() || "Sin nombre";
+  const mainDni = String(customer?.dni || "").trim();
+  const pool = [{ button: 1, full_name: mainName, dni: mainDni, isMain: true }];
+  for (const entry of parseCustomerAdditionalNamesForLabels(customer?.additional_names)) {
+    pool.push({
+      button: pool.length + 1,
+      full_name: entry.full_name,
+      dni: entry.dni || "",
+      isMain: false,
+    });
+  }
+  return pool;
+}
+
+function buildCustomerLabelNamePool(customer) {
+  return buildCustomerLabelNamePoolDetailed(customer).map((entry) => ({
+    full_name: entry.full_name,
+    isMain: entry.isMain,
+  }));
+}
+
+function getOrderActiveLabelButtonIndex(order, customer) {
+  const pool = buildCustomerLabelNamePoolDetailed(customer);
+  if (pool.length <= 1) return 1;
+
+  const assigned = String(order?.label_customer_name || "").trim();
+  if (assigned) {
+    const match = pool.find(
+      (entry) => normalizeLabelNameCompare(entry.full_name) === normalizeLabelNameCompare(assigned)
+    );
+    if (match) return match.button;
+  }
+
+  return 1;
+}
+
+function getOrderCardDisplayIdentity(order, customer) {
+  const pool = buildCustomerLabelNamePoolDetailed(customer);
+  const activeButton = getOrderActiveLabelButtonIndex(order, customer);
+  const entry = pool.find((item) => item.button === activeButton) || pool[0];
+
+  return {
+    displayName: formatPersonDisplayName(entry?.full_name),
+    displayDni: entry?.dni || "",
+    activeButton,
+    pool,
+  };
+}
+
+function buildLabelNameSwitcherHtml(order, customer) {
+  const { pool, activeButton } = getOrderCardDisplayIdentity(order, customer);
+  if (pool.length <= 1) return "";
+
+  const buttons = pool
+    .map((entry) => {
+      const isActive = entry.button === activeButton;
+      return `<button type="button" class="label-name-btn${isActive ? " is-active" : ""}" data-order-id="${order.id}" data-name-index="${entry.button}" title="${escapeHtml(entry.full_name)}" aria-label="Usar nombre ${entry.button}: ${escapeHtml(entry.full_name)}" aria-pressed="${isActive}">${entry.button}</button>`;
+    })
+    .join("");
+
+  return `<span class="label-name-switcher">${buttons}</span>`;
+}
+
+function getOrderLabelNamePreview(order, customer) {
+  const mainName = String(customer?.full_name || customer?.name || "").trim();
+  const assigned = String(order?.label_customer_name || "").trim();
+
+  if (assigned) {
+    if (mainName && assigned.toLowerCase() !== mainName.toLowerCase()) {
+      return { name: assigned, isSubName: true };
+    }
+    return null;
+  }
+
+  const pool = buildCustomerLabelNamePool(customer);
+  if (pool.length <= 1) return null;
+
+  const cursor = Number(customer?.label_name_cursor) || 0;
+  const entry = pool[cursor % pool.length];
+  if (!entry || entry.isMain) return null;
+  return { name: entry.full_name, isSubName: true };
+}
+
+function buildLabelSubNameHintHtml(order, customer) {
+  const pool = buildCustomerLabelNamePoolDetailed(customer);
+  if (pool.length > 1) return "";
+  const preview = getOrderLabelNamePreview(order, customer);
+  if (!preview?.isSubName || !preview.name) return "";
+  return `<span class="label-subname-hint" style="color:#c62828;font-weight:600;margin-left:10px;">Sub nombre: ${escapeHtml(preview.name)}</span>`;
+}
+
+async function setOrderLabelNameSelection(orderId, buttonIndex) {
+  const order = orders.find((o) => o.id === orderId);
+  if (!order) throw new Error("Pedido no encontrado.");
+
+  const customer = normalizeOrderCustomerRecord(order);
+  const pool = buildCustomerLabelNamePoolDetailed(customer);
+  const entry = pool.find((item) => item.button === buttonIndex);
+  if (!entry) throw new Error("Nombre no disponible para este cliente.");
+
+  if (!supabase) supabase = await getSupabase();
+  if (!supabase) throw new Error("No se pudo conectar con la base de datos.");
+
+  const { error } = await supabase
+    .from("orders")
+    .update({
+      label_customer_name: entry.full_name,
+      label_customer_dni: entry.dni || null,
+    })
+    .eq("id", orderId);
+
+  if (error) throw error;
+
+  order.label_customer_name = entry.full_name;
+  order.label_customer_dni = entry.dni || null;
+  refreshOrderCardLabelNameUI(orderId);
+}
+
+function refreshOrderCardLabelNameUI(orderId) {
+  const order = orders.find((o) => o.id === orderId);
+  if (!order) return;
+
+  const card = document.querySelector(`.order-card[data-order-id="${orderId}"]`);
+  if (!card) return;
+
+  const customer = normalizeOrderCustomerRecord(order);
+  const identity = getOrderCardDisplayIdentity(order, customer);
+  const nameRow = card.querySelector(".customer-name");
+  if (nameRow) {
+    const nameText = nameRow.querySelector(".customer-name-text");
+    if (nameText) nameText.textContent = identity.displayName;
+
+    nameRow.querySelectorAll(".label-name-btn").forEach((btn) => {
+      const idx = Number(btn.dataset.nameIndex);
+      const isActive = idx === identity.activeButton;
+      btn.classList.toggle("is-active", isActive);
+      btn.setAttribute("aria-pressed", String(isActive));
+    });
+  }
+
+  const dniSpan = card.querySelector(".customer-label-dni");
+  if (dniSpan) {
+    if (identity.displayDni) {
+      dniSpan.textContent = `🆔 DNI: ${formatDniDisplay(identity.displayDni)}`;
+      dniSpan.style.display = "";
+    } else {
+      dniSpan.style.display = "none";
+    }
+  }
+}
+
+async function syncCustomerLabelRotationState(customerId) {
+  if (!customerId) return;
+  if (!supabase) supabase = await getSupabase();
+  if (!supabase) return;
+
+  const { data } = await supabase
+    .from("customers")
+    .select("label_name_cursor, additional_names")
+    .eq("id", customerId)
+    .maybeSingle();
+
+  if (!data) return;
+
+  orders.forEach((order) => {
+    if (order.customer_id !== customerId) return;
+    const customer = normalizeOrderCustomerRecord(order);
+    if (!customer || typeof customer !== "object") return;
+    customer.label_name_cursor = data.label_name_cursor;
+    customer.additional_names = data.additional_names;
+  });
+}
+
+function refreshOrderCardSubNameHint(orderId) {
+  refreshOrderCardLabelNameUI(orderId);
+}
+
+function refreshCustomerOrdersSubNameHints(customerId) {
+  orders
+    .filter((order) => order.customer_id === customerId)
+    .forEach((order) => refreshOrderCardLabelNameUI(order.id));
+}
+
+async function afterLabelPrintSuccess(order) {
+  if (!order?.customer_id) {
+    refreshOrderCardLabelNameUI(order?.id);
+    return;
+  }
+  await syncCustomerLabelRotationState(order.customer_id);
+  refreshCustomerOrdersSubNameHints(order.customer_id);
 }
 
 // Función para obtener nombre de cliente
@@ -686,7 +992,82 @@ function populateExtractTransportSelect() {
 }
 
 // Función para obtener ofertas y promociones (reutilizada de orders.js)
-async function getOffersAndPromotionsForOrder(order) {
+// Resuelve promociones activas (2x1/2xMonto) para un set de variantes, en una fecha de
+// referencia concreta (no siempre "hoy"). Necesario porque el RPC get_active_promotions_for_variants
+// fija internamente current_date: sirve para vistas en vivo (tarjeta, detalle, ticket, rótulo)
+// pero es incorrecto para reimprimir/recalcular una lista de envíos de OTRO día — aplicaría
+// promos de hoy a pedidos viejos que nunca las tuvieron (o viceversa, con promos ya vencidas).
+// Fix 2026-07-23.
+async function getActivePromotionsForVariantsAtDate(variantIds, referenceDateStr) {
+  if (!supabase || !Array.isArray(variantIds) || variantIds.length === 0) return [];
+
+  const todayStr = new Date().toLocaleDateString("en-CA", {
+    timeZone: "America/Argentina/Buenos_Aires",
+  });
+  const refDate = referenceDateStr || todayStr;
+
+  // Fecha de referencia = hoy: el RPC ya resuelve esto correctamente y es más eficiente.
+  if (refDate === todayStr) {
+    const { data, error } = await supabase.rpc('get_active_promotions_for_variants', {
+      p_variant_ids: variantIds
+    });
+    return error ? [] : (data || []);
+  }
+
+  // Fecha distinta de hoy: resolver manualmente contra esa fecha (no contra la de hoy).
+  const { data: variantRows, error: variantsError } = await supabase
+    .from('product_variants')
+    .select('id, product_id')
+    .in('id', variantIds);
+  if (variantsError || !variantRows || variantRows.length === 0) return [];
+
+  const productIds = [...new Set(variantRows.map((v) => v.product_id).filter(Boolean))];
+  const orFilters = [`variant_id.in.(${variantIds.join(',')})`];
+  if (productIds.length > 0) orFilters.push(`product_id.in.(${productIds.join(',')})`);
+
+  const { data: piRows, error: piError } = await supabase
+    .from('promotion_items')
+    .select('promotion_id, product_id, variant_id')
+    .or(orFilters.join(','));
+  if (piError || !piRows || piRows.length === 0) return [];
+
+  const promotionIds = [...new Set(piRows.map((pi) => pi.promotion_id))];
+  const { data: promos, error: promosError } = await supabase
+    .from('promotions')
+    .select('id, promo_type, fixed_amount, status, start_date, end_date')
+    .in('id', promotionIds)
+    .eq('status', 'active')
+    .lte('start_date', refDate)
+    .gte('end_date', refDate);
+  if (promosError || !promos || promos.length === 0) return [];
+
+  const productIdByVariant = new Map(variantRows.map((v) => [v.id, v.product_id]));
+
+  return promos.map((promo) => {
+    const relevantVariantIds = new Set();
+    for (const pi of piRows) {
+      if (pi.promotion_id !== promo.id) continue;
+      if (pi.variant_id && variantIds.includes(pi.variant_id)) {
+        relevantVariantIds.add(pi.variant_id);
+      } else if (pi.product_id) {
+        for (const vId of variantIds) {
+          if (productIdByVariant.get(vId) === pi.product_id) relevantVariantIds.add(vId);
+        }
+      }
+    }
+    return {
+      promotion_id: promo.id,
+      promo_type: promo.promo_type,
+      fixed_amount: promo.fixed_amount,
+      variant_ids: Array.from(relevantVariantIds)
+    };
+  });
+}
+
+// referenceDate (opcional, formato 'YYYY-MM-DD'): fecha contra la que evaluar promociones
+// activas. Por defecto "hoy" (uso normal: tarjeta/detalle/ticket/rótulo, vistas en vivo).
+// La lista de envíos pasa la fecha filtrada del pedido, no la de hoy.
+async function getOffersAndPromotionsForOrder(order, referenceDate) {
   if (!supabase || !order.order_items || order.order_items.length === 0) {
     return { offers: [], promotions: [], totalDiscount: 0, itemOffers: new Map(), itemPromos: new Map() };
   }
@@ -712,12 +1093,7 @@ async function getOffersAndPromotionsForOrder(order) {
     return { offers: [], promotions: [], totalDiscount: 0, itemOffers: new Map(), itemPromos: new Map() };
   }
 
-  const { data: promotionsData, error: promotionsError } = await supabase
-    .rpc('get_active_promotions_for_variants', {
-      p_variant_ids: variantIds
-    });
-
-  const promotions = promotionsError ? [] : (promotionsData || []);
+  const promotions = await getActivePromotionsForVariantsAtDate(variantIds, referenceDate);
   const itemOffersMap = new Map();
   const itemPromosMap = new Map();
 
@@ -765,13 +1141,15 @@ async function getOffersAndPromotionsForOrder(order) {
 
     if (totalQuantity > 0) {
       const groups = Math.floor(totalQuantity / 2);
+      const averagePrice = totalPrice / totalQuantity;
       let discount = 0;
 
       if (promo.promo_type === '2x1') {
-        const averagePrice = totalPrice / totalQuantity;
         discount = groups * averagePrice;
       } else if (promo.promo_type === '2xMonto' && promo.fixed_amount) {
-        const promoPrice = groups * promo.fixed_amount;
+        // Items que no completan un par pagan precio normal (no se descuentan).
+        const remainderQty = totalQuantity - groups * 2;
+        const promoPrice = groups * promo.fixed_amount + remainderQty * averagePrice;
         discount = totalPrice - promoPrice;
       }
 
@@ -813,6 +1191,8 @@ async function loadClosedOrders() {
       labels_count,
       transport_id,
       payment_method,
+      label_customer_name,
+      label_customer_dni,
       order_items (
         id,
         product_name,
@@ -873,11 +1253,21 @@ async function loadClosedOrders() {
 
     if (customerIds.length > 0) {
       // Intentar cargar transport_id de customers, pero si no existe, continuar sin él
-      let customerSelectFields = "id, customer_number, full_name, address, phone, city, province, dni, email, transport_id";
+      let customerSelectFields = "id, customer_number, full_name, address, phone, city, province, dni, email, transport_id, additional_names, label_name_cursor";
       let customersResponse = await supabase
         .from("customers")
         .select(customerSelectFields)
         .in("id", customerIds);
+
+      // Si columnas nuevas no existen, intentar sin ellas
+      if (customersResponse.error && (customersResponse.error.code === '42703' || customersResponse.error.message?.includes('does not exist'))) {
+        console.warn("⚠️ Columnas additional_names/label_name_cursor no disponibles en customers.");
+        customerSelectFields = "id, customer_number, full_name, address, phone, city, province, dni, email, transport_id";
+        customersResponse = await supabase
+          .from("customers")
+          .select(customerSelectFields)
+          .in("id", customerIds);
+      }
 
       // Si transport_id no existe en customers, intentar sin él
       if (customersResponse.error && (customersResponse.error.code === '42703' || customersResponse.error.message?.includes('does not exist'))) {
@@ -1002,14 +1392,6 @@ async function renderOrderCard(order) {
   const customerEmail = customer.email || "Sin email";
   const offersData = await getOffersAndPromotionsForOrder(order);
 
-  const hasStoredTotal = order.total_amount != null && String(order.total_amount).trim() !== "";
-  const total = hasStoredTotal
-    ? parseARSNumber(order.total_amount)
-    : (order.order_items || []).reduce(
-      (sum, item) => sum + (item.quantity || 0) * getClosedOrderUnitPrice(item),
-      0
-    );
-
   // Calcular cantidad total de productos
   const totalProducts = (order.order_items || []).reduce(
     (sum, item) => sum + (item.quantity || 0),
@@ -1033,6 +1415,21 @@ async function renderOrderCard(order) {
       console.warn('Error parseando valores extra del pedido:', e);
     }
   }
+
+  // Total SIEMPRE recalculado en vivo (bruto + extras - descuento de ofertas/promos).
+  // NO usar order.total_amount directamente: puede haber quedado sin el descuento de
+  // promociones 2x1/2xMonto aplicado (bug corregido 2026-07-23 en order-creator.js/rpc_checkout_cart
+  // aún pendiente en pedidos históricos), lo que mostraba un total mayor al que corresponde
+  // aunque la línea "Descuentos (ofertas/promos)" sí apareciera con el monto correcto.
+  const productsSubtotalForTotal = (order.order_items || [])
+    .filter((item) => item.status !== 'cancelled')
+    .reduce((sum, item) => sum + (item.quantity || 0) * getClosedOrderUnitPrice(item), 0);
+  const total = productsSubtotalForTotal
+    + shippingAmount
+    - discountAmount
+    + extrasAmount
+    + (productsSubtotalForTotal * extrasPercentage / 100)
+    - offersData.totalDiscount;
 
   // Obtener transporte asignado (manejar si no existe la columna)
   // Priorizar transport_id del customer sobre el del order
@@ -1100,6 +1497,7 @@ async function renderOrderCard(order) {
   const ticketPrinted = order.ticket_printed !== undefined ? order.ticket_printed : false;
 
   const orderDisplayNumber = order.order_number || order.id.substring(0, 8);
+  const labelIdentity = getOrderCardDisplayIdentity(order, customer);
 
   return `
     <div class="order-card" data-order-id="${order.id}">
@@ -1109,12 +1507,14 @@ async function renderOrderCard(order) {
       </div>
       <div class="customer-info">
         <div class="customer-name">
-          ${customer.customer_number ? `<span style="color: #CD844D; font-weight: 600; margin-right: 8px;">#${customer.customer_number}</span>` : ""}
-          ${formatCustomerDisplayName(customer)}
-          ${transport ? `<span style="margin-left: 12px; padding: 4px 8px; background: #e3f2fd; color: #1565c0; border-radius: 4px; font-size: 12px; font-weight: 500;">🚚 ${transportName}</span>` : ''}
+          ${customer.customer_number ? `<span style="color: #CD844D; font-weight: 600;">#${customer.customer_number}</span>` : ""}
+          <span class="customer-name-text">${labelIdentity.displayName}</span>
+          ${buildLabelNameSwitcherHtml(order, customer)}
+          ${buildLabelSubNameHintHtml(order, customer)}
+          ${transport ? `<span style="padding: 4px 8px; background: #e3f2fd; color: #1565c0; border-radius: 4px; font-size: 12px; font-weight: 500;">🚚 ${transportName}</span>` : ''}
         </div>
         <div class="customer-details">
-          ${customer.dni ? `<span>🆔 DNI: ${customer.dni}</span>` : ""}
+          ${labelIdentity.displayDni ? `<span class="customer-label-dni">🆔 DNI: ${formatDniDisplay(labelIdentity.displayDni)}</span>` : ""}
           <span>📞 ${customer.phone || "Sin teléfono"}</span>
           <span>📧 ${customerEmail}</span>
           ${customer.address ? `<span>🏠 ${customer.address}</span>` : ""}
@@ -1738,16 +2138,17 @@ async function showOrderDetail(orderId) {
     `;
   }).join('');
 
-  const hasStoredDetailTotal = order.total_amount != null && String(order.total_amount).trim() !== "";
-  const total = hasStoredDetailTotal
-    ? parseARSNumber(order.total_amount)
-    : productsSubtotal + shippingAmount - discountAmount + extrasAmount + (productsSubtotal * extrasPercentage / 100) - offersData.totalDiscount;
+  // Total SIEMPRE recalculado en vivo, no desde order.total_amount (ver nota en renderOrderCard):
+  // así el descuento de ofertas/promos que se muestra abajo siempre coincide con el total final.
+  const total = productsSubtotal + shippingAmount - discountAmount + extrasAmount + (productsSubtotal * extrasPercentage / 100) - offersData.totalDiscount;
+
+  const labelIdentity = getOrderCardDisplayIdentity(order, customer);
 
   const detailHtml = `
     <div>
       <h3>Cliente</h3>
-      <p><strong>Nombre:</strong> ${formatCustomerDisplayName(customer)}</p>
-      ${customer.dni ? `<p><strong>DNI:</strong> ${customer.dni}</p>` : ''}
+      <p><strong>Nombre:</strong> ${labelIdentity.displayName}</p>
+      ${labelIdentity.displayDni ? `<p><strong>DNI:</strong> ${formatDniDisplay(labelIdentity.displayDni)}</p>` : ""}
       ${customer.phone ? `<p><strong>Teléfono:</strong> ${customer.phone}</p>` : ''}
       ${customer.email ? `<p><strong>Email:</strong> ${customer.email}</p>` : ''}
       ${customer.address ? `<p><strong>Dirección:</strong> ${customer.address}</p>` : ''}
@@ -1947,12 +2348,15 @@ async function buildEscposTicketOrder(order) {
   ticket.push("-".repeat(TICKET_WIDTH));
   ticket.push("");
 
-  // Subtotal productos
-  const productsSubtotal = items.reduce((sum, item) => {
-    const price = getClosedOrderUnitPrice(item);
-    const qty = parseInt(item.quantity || 0);
-    return sum + (price * qty);
-  }, 0);
+  // Subtotal productos (excluye cancelados, igual criterio que el descuento de ofertas/promos
+  // calculado en offersData, para que el TOTAL de abajo sea consistente)
+  const productsSubtotal = items
+    .filter((item) => item.status !== 'cancelled')
+    .reduce((sum, item) => {
+      const price = getClosedOrderUnitPrice(item);
+      const qty = parseInt(item.quantity || 0);
+      return sum + (price * qty);
+    }, 0);
 
   // Envío (si existe)
   if (shippingAmount > 0) {
@@ -1985,8 +2389,16 @@ async function buildEscposTicketOrder(order) {
     ticket.push("");
   }
 
-  // TOTAL alineado a la derecha
-  const totalAmount = parseARSNumber(order.total_amount || 0);
+  // TOTAL alineado a la derecha — recalculado en vivo (no order.total_amount directo) para
+  // que siempre coincida con la línea "Descuentos (ofertas)" impresa arriba.
+  const extrasPercentAmountForTotal = extrasPercentage > 0 ? (productsSubtotal * extrasPercentage / 100) : 0;
+  const totalAmount =
+    productsSubtotal
+    + shippingAmount
+    - discountAmount
+    + extrasAmount
+    + extrasPercentAmountForTotal
+    - offersData.totalDiscount;
   const totalStr = `$${totalAmount.toLocaleString('es-AR')}`;
   ticket.push(padLeft(`TOTAL: ${totalStr}`, TICKET_WIDTH));
   ticket.push("");
@@ -2101,6 +2513,27 @@ async function printOrderTicketDirectly(order) {
 
 // Función para adjuntar manejadores de eventos
 function attachEventHandlers() {
+  document.querySelectorAll(".label-name-btn").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const orderId = btn.dataset.orderId;
+      const nameIndex = Number(btn.dataset.nameIndex);
+      if (!orderId || !nameIndex) return;
+
+      btn.disabled = true;
+      try {
+        await setOrderLabelNameSelection(orderId, nameIndex);
+      } catch (error) {
+        console.error("Error al cambiar nombre del rótulo:", error);
+        alert("Error al cambiar el nombre: " + (error.message || "Error desconocido"));
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  });
+
   // Selector de transporte - usar event delegation para evitar problemas con recargas
   document.querySelectorAll('.transport-select').forEach(select => {
     // Remover listeners anteriores si existen
@@ -2252,8 +2685,7 @@ function attachEventHandlers() {
       }
 
       try {
-        // Preparar datos del rótulo
-        const shippingLabel = prepareShippingLabelFromOrder(order);
+        const shippingLabel = await prepareOrderShippingLabel(orderId);
 
         // Validar datos mínimos
         if (!shippingLabel.fullName || shippingLabel.fullName === "Cliente sin nombre") {
@@ -2266,9 +2698,8 @@ function attachEventHandlers() {
         const printSuccess = await printTscShippingLabel(shippingLabel, labelsCount);
 
         if (printSuccess) {
-          // Marcar como impresos si la impresión fue exitosa
           await markLabelsPrinted(orderId);
-          // Alert eliminado - no es necesario mostrar confirmación
+          await afterLabelPrintSuccess(order);
         }
       } catch (error) {
         console.error("❌ Error al imprimir rótulos:", error);
@@ -2384,12 +2815,13 @@ function attachEventHandlers() {
             throw new Error("QZ Tray no está disponible.");
           }
 
-          const shippingLabel = prepareShippingLabelFromOrder(order);
+          const shippingLabel = await prepareOrderShippingLabel(orderId);
           labelsSuccess = await printTscShippingLabel(shippingLabel, labelsCount);
 
           if (labelsSuccess) {
             await markLabelsPrinted(orderId);
             order.labels_printed = true;
+            await afterLabelPrintSuccess(order);
             
             // Actualizar badge de rótulos
             if (orderCard) {
@@ -2732,6 +3164,359 @@ window.addEventListener("beforeunload", () => {
 let currentOrdersList = [];
 let currentTransportName = "";
 let currentFilterDate = "";
+let currentFilterTransportId = "";
+
+const SHIPPING_LIST_CHECKS_STORAGE_PREFIX = "fyl-shipping-list-checks";
+
+// En producción reemplazar por la URL real del servidor Express (ver backend/README)
+const INVOICE_BACKEND_URL = "http://localhost:3636";
+
+function calcularMontoFacturar(totalAmount, invoiceFullAmount) {
+  const total = Number(totalAmount);
+  if (invoiceFullAmount) {
+    // Cliente marcado para facturar el 100% del pedido: se declara el total real,
+    // redondeado a 2 decimales (sin el redondeo hacia arriba a la centena del 30%).
+    return Math.round(total * 100) / 100;
+  }
+  const monto30 = total * 0.30;
+  return Math.ceil(monto30 / 100) * 100;
+}
+
+function detectarTipoFactura(docStr, invoiceAlwaysA) {
+  if (invoiceAlwaysA) return "A";
+  const digits = String(docStr || "").replace(/\D/g, "");
+  return digits.length === 11 ? "A" : "B";
+}
+
+function setBtnFacturarState(btn, state) {
+  if (!btn) return;
+  btn.disabled = state === "loading";
+  btn.classList.remove("state-loading", "state-success", "state-error");
+  btn.classList.add(`state-${state}`);
+  const icons = { loading: "⏳", success: "✅", error: "❌" };
+  const labels = { loading: "Generando...", success: "Facturado", error: "Error" };
+  btn.innerHTML = `${icons[state]} ${labels[state]}`;
+  // "success" queda en verde de forma permanente (marca visual de "ya facturado").
+  // Solo "error" se revierte, para permitir reintentar.
+  if (state === "error") {
+    setTimeout(() => {
+      btn.disabled = false;
+      btn.classList.remove("state-loading", "state-success", "state-error");
+      btn.innerHTML = "Facturar";
+    }, 4000);
+  }
+}
+
+// Consulta qué pedidos de la lista ya tienen factura emitida (tabla invoices) y
+// pinta esos botones en verde desde el renderizado, sin esperar a que alguien
+// clickee. Así el estado "ya facturado" es visible para cualquier admin/dispositivo,
+// no solo en el navegador donde se facturó.
+async function markAlreadyInvoicedButtons(orderIds) {
+  const ids = (orderIds || []).filter(Boolean).map(String);
+  if (ids.length === 0 || !supabase) return;
+
+  const { data, error } = await supabase
+    .from("invoices")
+    .select("order_id")
+    .in("order_id", ids);
+
+  if (error || !data) return;
+
+  data.forEach((row) => {
+    const btn = document.querySelector(`[data-facturar-id="${row.order_id}"]`);
+    if (btn) setBtnFacturarState(btn, "success");
+  });
+}
+
+async function generarYDescargarFacturaPDF(payload) {
+  const session = await supabase.auth.getSession();
+  const token = session?.data?.session?.access_token || "";
+
+  const resp = await fetch(`${INVOICE_BACKEND_URL}/api/invoices/generate`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!resp.ok) {
+    const errText = await resp.text();
+    let message = errText || `HTTP ${resp.status}`;
+    try {
+      const parsed = JSON.parse(errText);
+      if (parsed?.error) message = parsed.error;
+    } catch {
+      // mantener errText crudo
+    }
+    throw new Error(message);
+  }
+
+  const blob = await resp.blob();
+  const disposition = resp.headers.get("Content-Disposition") || "";
+  const match = disposition.match(/filename="([^"]+)"/);
+  const filename = match ? match[1] : `Factura_${payload.orderNumber}.pdf`;
+
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+
+  // El respaldo en Drive es best-effort: si falló, avisamos pero la
+  // descarga local ya se hizo igual, no es un error de la facturación.
+  if (resp.headers.get("X-Drive-Upload") === "failed") {
+    alert("La factura se descargó bien, pero no se pudo subir el respaldo a Google Drive. Revisá la conexión o los permisos y probá de nuevo más tarde (no hace falta refacturar).");
+  }
+}
+
+async function handleFacturarClick(orderId) {
+  const order = currentOrdersList.find((o) => String(o.id) === String(orderId));
+  if (!order) {
+    alert("Pedido no encontrado en la lista activa.");
+    return;
+  }
+
+  const btn = document.querySelector(`[data-facturar-id="${orderId}"]`);
+  setBtnFacturarState(btn, "loading");
+
+  const docStr = order.dni || "";
+
+  try {
+    const { data: orderData, error: itemsError } = await supabase
+      .from("orders")
+      .select("order_items(id, product_name, quantity, price_snapshot, status)")
+      .eq("id", orderId)
+      .single();
+
+    if (itemsError) {
+      throw new Error(`No se pudieron cargar los items: ${itemsError.message}`);
+    }
+
+    const activeItems = (orderData?.order_items || [])
+      .filter((i) => i.status !== "cancelled")
+      .map((i) => ({
+        productName: i.product_name,
+        quantity: Number(i.quantity),
+        priceSnapshot: Number(i.price_snapshot),
+        subtotalBase: Number(i.quantity) * Number(i.price_snapshot),
+      }));
+
+    // Si no hay items activos, igual llamamos al backend: puede ser reimpresión
+    // de una factura ya emitida (usa invoice_items congelados).
+
+    const payload = {
+      orderId: order.id,
+      orderNumber: order.order_number,
+      customerName: order.customer_name || "",
+      cuit: docStr,
+      tipoFactura: detectarTipoFactura(docStr, order.invoice_always_a),
+      address: order.address || "",
+      locality: order.city || "",
+      province: order.province || "",
+      totalAmount: order.total_amount,
+      montoFacturar: calcularMontoFacturar(order.total_amount, order.invoice_full_amount),
+      orderItems: activeItems,
+    };
+
+    await generarYDescargarFacturaPDF(payload);
+    setBtnFacturarState(btn, "success");
+  } catch (err) {
+    setBtnFacturarState(btn, "error");
+    alert(`Error al facturar: ${err.message}`);
+  }
+}
+
+function getShippingListChecksStorageKey(transportId, date) {
+  if (!transportId || !date) return null;
+  return `${SHIPPING_LIST_CHECKS_STORAGE_PREFIX}:${transportId}:${date}`;
+}
+
+function loadShippingListChecks(transportId, date) {
+  const key = getShippingListChecksStorageKey(transportId, date);
+  if (!key) return {};
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveShippingListCheck(transportId, date, orderId, checked) {
+  const key = getShippingListChecksStorageKey(transportId, date);
+  if (!key || !orderId) return;
+  const state = loadShippingListChecks(transportId, date);
+  if (checked) state[orderId] = true;
+  else delete state[orderId];
+  localStorage.setItem(key, JSON.stringify(state));
+}
+
+function getShippingListPrimaryName(order) {
+  return String(
+    order?.primary_customer_name ||
+    order?.customer_primary_name ||
+    order?.customer_name ||
+    ""
+  ).trim();
+}
+
+function shippingListOrderUsesSubName(order) {
+  const primary = String(order?.primary_customer_name || order?.customer_primary_name || "").trim();
+  const shown = String(order?.customer_name || "").trim();
+  if (!primary || !shown) return false;
+  return normalizeLabelNameCompare(primary) !== normalizeLabelNameCompare(shown);
+}
+
+async function enrichShippingListOrdersPrimaryNames(orders) {
+  if (!Array.isArray(orders) || orders.length === 0) return orders;
+
+  const needsEnrich = orders.some((order) => !String(order?.primary_customer_name || "").trim());
+  if (!needsEnrich) return orders;
+
+  if (!supabase) supabase = await getSupabase();
+  if (!supabase) return orders;
+
+  const orderIds = orders.map((o) => o.id).filter(Boolean);
+  if (orderIds.length === 0) return orders;
+
+  const primaryByOrderId = new Map();
+  const BATCH = 100;
+  for (let i = 0; i < orderIds.length; i += BATCH) {
+    const batch = orderIds.slice(i, i + BATCH);
+    const { data, error } = await supabase
+      .from("orders")
+      .select("id, customers(full_name)")
+      .in("id", batch);
+
+    if (error) {
+      console.warn("⚠️ No se pudo cargar titular de clientes para la lista:", error.message || error);
+      break;
+    }
+
+    (data || []).forEach((row) => {
+      const customer = Array.isArray(row.customers) ? row.customers[0] : row.customers;
+      const fullName = String(customer?.full_name || "").trim();
+      if (row.id && fullName) primaryByOrderId.set(row.id, fullName);
+    });
+  }
+
+  return orders.map((order) => {
+    if (String(order?.primary_customer_name || "").trim()) return order;
+    const primary = primaryByOrderId.get(order.id);
+    if (!primary) return order;
+    return { ...order, primary_customer_name: primary };
+  });
+}
+
+function setupShippingListCheckHandlers(transportId, date) {
+  const content = document.getElementById("orders-list-content");
+  if (!content) return;
+
+  content.onchange = (e) => {
+    const checkbox = e.target.closest(".shipping-list-check");
+    if (!checkbox) return;
+    saveShippingListCheck(transportId, date, checkbox.dataset.orderId, checkbox.checked);
+  };
+}
+
+function isFormosaShippingOrder(order) {
+  const province = String(order.province || "").trim().toLowerCase();
+  const city = String(order.city || "").trim().toLowerCase();
+  return province === "formosa" || city === "formosa";
+}
+
+/** Formosa primero; dentro de Formosa, el último finalizado arriba (RPC devuelve sent_at ASC). */
+function sortShippingListOrders(orders) {
+  if (!Array.isArray(orders) || orders.length <= 1) return orders || [];
+  const formosa = [];
+  const others = [];
+  for (const order of orders) {
+    if (isFormosaShippingOrder(order)) formosa.push(order);
+    else others.push(order);
+  }
+  formosa.reverse();
+  return [...formosa, ...others];
+}
+
+/**
+ * Recalcula order.total_amount para pedidos de la lista de envíos (rpc_get_shipping_orders),
+ * aplicando envío/descuento/extras guardados en notes y el descuento de ofertas/promos
+ * 2x1/2xMonto — igual criterio que el ticket y el rótulo de cada pedido individual.
+ *
+ * rpc_get_shipping_orders devuelve o.total_amount tal cual está en la base, que puede no
+ * tener el descuento de promociones aplicado en pedidos históricos (bug corregido 2026-07-23
+ * en order-creator.js/rpc_checkout_cart). Se recalcula acá en el cliente para no depender de
+ * un cambio de RPC en producción.
+ *
+ * @param {Array<{id: string, total_amount: number}>} list
+ * @returns {Promise<Array>} misma lista, con total_amount corregido
+ */
+// referenceDate: fecha filtrada de la lista de envíos ('YYYY-MM-DD'), NO la de hoy.
+// Todos los pedidos de este batch fueron enviados ese día (filtro de rpc_get_shipping_orders),
+// así que las promociones a aplicar son las que estaban activas ESE día, no las de hoy — evitar
+// que al reimprimir una lista vieja se le apliquen promos actuales que no existían en ese momento
+// (o se le quiten promos que sí estaban vigentes entonces y ya vencieron). Fix 2026-07-23.
+async function enrichShippingListOrdersWithCorrectedTotal(list, referenceDate) {
+  if (!supabase || !Array.isArray(list) || list.length === 0) return list;
+  const orderIds = list.map((o) => o.id).filter(Boolean);
+  if (orderIds.length === 0) return list;
+
+  const [{ data: itemsData, error: itemsError }, { data: notesData, error: notesError }] = await Promise.all([
+    supabase.from("order_items").select("order_id, variant_id, quantity, price_snapshot, status").in("order_id", orderIds),
+    supabase.from("orders").select("id, notes").in("id", orderIds),
+  ]);
+
+  if (itemsError || notesError) {
+    console.warn("⚠️ No se pudo recalcular el total de la lista de envíos con promos:", itemsError || notesError);
+    return list;
+  }
+
+  const itemsByOrder = new Map();
+  for (const item of itemsData || []) {
+    if (!itemsByOrder.has(item.order_id)) itemsByOrder.set(item.order_id, []);
+    itemsByOrder.get(item.order_id).push(item);
+  }
+  const notesByOrder = new Map((notesData || []).map((o) => [o.id, o.notes]));
+
+  return Promise.all(
+    list.map(async (order) => {
+      const orderItems = (itemsByOrder.get(order.id) || []).filter((item) => item.status !== "cancelled");
+      const offersData = await getOffersAndPromotionsForOrder({ order_items: orderItems }, referenceDate);
+      const productsSubtotal = orderItems.reduce(
+        (sum, item) => sum + (item.quantity || 0) * getClosedOrderUnitPrice(item),
+        0
+      );
+
+      let shippingAmount = 0;
+      let discountAmount = 0;
+      let extrasAmount = 0;
+      let extrasPercentage = 0;
+      const notes = notesByOrder.get(order.id);
+      if (notes) {
+        try {
+          const extraValues = JSON.parse(notes);
+          shippingAmount = parseFloat(extraValues.shipping) || 0;
+          discountAmount = parseFloat(extraValues.discount) || 0;
+          extrasAmount = parseFloat(extraValues.extras_amount) || 0;
+          extrasPercentage = parseFloat(extraValues.extras_percentage) || 0;
+        } catch (e) {
+          console.warn("Error parseando valores extra del pedido (lista de envíos):", e);
+        }
+      }
+
+      const extrasPercentAmount = extrasPercentage > 0 ? (productsSubtotal * extrasPercentage / 100) : 0;
+      const correctedTotal =
+        productsSubtotal + shippingAmount - discountAmount + extrasAmount + extrasPercentAmount - offersData.totalDiscount;
+
+      return { ...order, total_amount: correctedTotal };
+    })
+  );
+}
 
 // Función para cargar pedidos para la lista de impresión.
 // Usa RPC rpc_get_shipping_orders para evitar el límite de filas de PostgREST y alinear con el criterio del día.
@@ -2757,7 +3542,9 @@ async function loadOrdersForList(transportId, date) {
     const list = Array.isArray(orders) ? orders : [];
     console.log(`✅ Pedidos devueltos por rpc_get_shipping_orders: ${list.length}`);
 
-    return list;
+    const withCorrectedTotals = await enrichShippingListOrdersWithCorrectedTotal(list, date);
+    const enriched = await enrichShippingListOrdersPrimaryNames(withCorrectedTotals);
+    return sortShippingListOrders(enriched);
   } catch (error) {
     console.error("❌ Error en loadOrdersForList:", error);
     throw error;
@@ -2831,11 +3618,14 @@ function downloadExtractExcel(orders, startDate, endDate) {
       }
 
       const monto = amountForExcelExport(order.total_amount);
+      const pagoLabel = order.status === "devolución"
+        ? "Devolución"
+        : (order.payment_method || "Sin especificar");
 
       return {
         "Fecha de envío": fechaEnvio,
         "Nombre del cliente del envío": order.customer_name || "Sin nombre",
-        "Pagos": order.payment_method || "Sin especificar",
+        "Pagos": pagoLabel,
         "Monto de este pedido": monto,
         "Transporte que fue enviado": order.transport_name || "Sin transporte asignado"
       };
@@ -2874,12 +3664,13 @@ function downloadExtractExcel(orders, startDate, endDate) {
 }
 
 // Función para renderizar la lista de pedidos
-function renderOrdersList(orders, transportName, date) {
+function renderOrdersList(orders, transportName, date, transportId = null) {
   const container = document.getElementById("orders-list-container");
   const content = document.getElementById("orders-list-content");
   const empty = document.getElementById("orders-list-empty");
   const title = document.getElementById("orders-list-title");
   const printBtn = document.getElementById("print-pdf-btn");
+  const resolvedTransportId = transportId || currentFilterTransportId || "";
 
   if (!orders || orders.length === 0) {
     container.style.display = "none";
@@ -2906,11 +3697,15 @@ function renderOrdersList(orders, transportName, date) {
 
   title.textContent = `${orders.length} pedido(s) - ${transportName} - ${formattedDate}`;
 
+  const checkedState = loadShippingListChecks(resolvedTransportId, date);
+
   // Crear tabla
   let tableHTML = `
     <table class="orders-list-table">
       <thead>
         <tr>
+          <th class="col-check" title="Control interno">✓</th>
+          <th class="col-primary-name">Titular</th>
           <th>Cliente</th>
           <th>DNI</th>
           <th>Dirección</th>
@@ -2919,6 +3714,7 @@ function renderOrdersList(orders, transportName, date) {
           <th>Productos</th>
           <th>Paquetes</th>
           <th>Total</th>
+          <th>Factura</th>
         </tr>
       </thead>
       <tbody>
@@ -2931,17 +3727,42 @@ function renderOrdersList(orders, transportName, date) {
       currency: "ARS",
       minimumFractionDigits: 0
     }).format(order.total_amount);
+    const orderId = order.id || "";
+    const isChecked = !!(orderId && checkedState[orderId]);
+    const primaryName = getShippingListPrimaryName(order);
+    const usesSubName = shippingListOrderUsesSubName(order);
+    const primaryCell = primaryName
+      ? `<span class="primary-name-label${usesSubName ? "" : " is-same-as-client"}">${escapeHtml(primaryName)}</span>`
+      : "";
 
     tableHTML += `
-      <tr>
+      <tr data-order-id="${escapeHtml(orderId)}">
+        <td class="col-check">
+          <input
+            type="checkbox"
+            class="shipping-list-check"
+            data-order-id="${escapeHtml(orderId)}"
+            ${isChecked ? "checked" : ""}
+            aria-label="Marcar pedido ${escapeHtml(order.order_number || orderId.substring(0, 8))}"
+          />
+        </td>
+        <td class="col-primary-name">${primaryCell}</td>
         <td>${escapeHtml(order.customer_name)}</td>
-        <td>${escapeHtml(order.dni || "-")}</td>
+        <td>${escapeHtml(formatDniDisplay(order.dni) || "-")}</td>
         <td>${escapeHtml(order.address)}</td>
         <td>${escapeHtml(locality)}</td>
         <td>${escapeHtml(order.phone)}</td>
         <td>${order.items_count}</td>
         <td>${order.packages_count}</td>
         <td>${totalFormatted}</td>
+        <td>
+          <button
+            class="btn-facturar"
+            data-facturar-id="${escapeHtml(orderId)}"
+            title="Generar factura (${order.invoice_full_amount ? "100%" : "30%"})">
+            Facturar
+          </button>
+        </td>
       </tr>
     `;
   });
@@ -2952,6 +3773,8 @@ function renderOrdersList(orders, transportName, date) {
   `;
 
   content.innerHTML = tableHTML;
+  setupShippingListCheckHandlers(resolvedTransportId, date);
+  markAlreadyInvoicedButtons(orders.map((o) => o.id));
 }
 
 // Función para generar PDF (y guardar la lista)
@@ -3288,8 +4111,9 @@ function setupPrintListsModal() {
         const selectedTransport = scheduledTransports.find(t => t.id === transportId);
         currentTransportName = selectedTransport?.name || "Desconocido";
         currentFilterDate = date;
+        currentFilterTransportId = transportId;
 
-        renderOrdersList(orders, currentTransportName, date);
+        renderOrdersList(orders, currentTransportName, date, transportId);
       } catch (error) {
         console.error("❌ Error buscando pedidos:", error);
         alert("Error al buscar pedidos: " + (error.message || "Error desconocido"));
@@ -3317,6 +4141,15 @@ function setupPrintListsModal() {
 
       const transportId = filterTransport?.value;
       await generateShippingListPDF(currentOrdersList, currentTransportName, currentFilterDate, transportId);
+    });
+  }
+
+  const ordersListContent = document.getElementById("orders-list-content");
+  if (ordersListContent && !ordersListContent.dataset.facturarBound) {
+    ordersListContent.dataset.facturarBound = "1";
+    ordersListContent.addEventListener("click", (e) => {
+      const btn = e.target.closest(".btn-facturar");
+      if (btn) handleFacturarClick(btn.dataset.facturarId);
     });
   }
 
@@ -3442,11 +4275,13 @@ function setupPrintListsModal() {
       const listId = e.target.dataset.listId;
       try {
         const list = await loadSavedList(listId);
-        const orders = list.orders_data || [];
+        const orders = await enrichShippingListOrdersPrimaryNames(list.orders_data || []);
 
         // Cambiar a tab de nueva lista y mostrar los datos
         document.querySelector('[data-tab="new-list"]').click();
-        renderOrdersList(orders, list.transport_name, list.list_date);
+        currentFilterTransportId = list.transport_id || "";
+        currentFilterDate = list.list_date || "";
+        renderOrdersList(orders, list.transport_name, list.list_date, list.transport_id);
 
         // Mostrar el contenedor
         const container = document.getElementById("orders-list-container");

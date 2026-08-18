@@ -174,6 +174,75 @@ export function clampIncidentPoints(value) {
   return Math.min(3, Math.floor(n));
 }
 
+/**
+ * Calcula el descuento total de promociones 2x1/2xMonto para un conjunto de items de pedido.
+ * Función pura (sin I/O): recibe las promociones activas ya resueltas
+ * (rpc get_active_promotions_for_variants) y una función para resolver el precio unitario
+ * de cada item (ya con oferta por color aplicada, ej. price_snapshot).
+ *
+ * Misma fórmula que orders.js / closed-orders.js / orders-ops.js (fix 2026-07-21/23: las
+ * unidades que no completan pareja en 2xMonto pagan precio normal, no se descuentan como si
+ * formaran un par completo).
+ *
+ * @param {Array<{variant_id: string, quantity: number}>} items
+ * @param {Array<{promotion_id: string, variant_ids: string[], promo_type: string, fixed_amount?: number}>} promotions
+ * @param {(item: object) => number} getUnitPrice
+ * @returns {number} descuento total (positivo) a restar del subtotal bruto
+ */
+export function computeOrderItemsPromoDiscount(items, promotions, getUnitPrice) {
+  if (!Array.isArray(items) || items.length === 0 || !Array.isArray(promotions) || promotions.length === 0) {
+    return 0;
+  }
+
+  const itemVariantMap = new Map();
+  for (const item of items) {
+    const variantId = item?.variant_id;
+    if (!variantId) continue;
+    if (!itemVariantMap.has(variantId)) itemVariantMap.set(variantId, []);
+    itemVariantMap.get(variantId).push(item);
+  }
+  if (itemVariantMap.size === 0) return 0;
+
+  let totalDiscount = 0;
+
+  for (const promo of promotions) {
+    const variantIdsInPromo = promo?.variant_ids || [];
+    const itemsInPromo = [];
+    for (const variantId of variantIdsInPromo) {
+      const variantItems = itemVariantMap.get(variantId) || [];
+      itemsInPromo.push(...variantItems);
+    }
+    if (itemsInPromo.length === 0) continue;
+
+    let totalQuantity = 0;
+    let totalPrice = 0;
+    for (const item of itemsInPromo) {
+      const qty = Number(item?.quantity) || 0;
+      const price = Number(getUnitPrice(item)) || 0;
+      totalQuantity += qty;
+      totalPrice += qty * price;
+    }
+    if (totalQuantity < 2) continue;
+
+    const groups = Math.floor(totalQuantity / 2);
+    const averagePrice = totalPrice / totalQuantity;
+    let discount = 0;
+
+    if (promo.promo_type === "2x1") {
+      discount = groups * averagePrice;
+    } else if (promo.promo_type === "2xMonto" && promo.fixed_amount) {
+      // Unidades que no completan un par de 2 pagan precio normal (no se descuentan).
+      const remainderQty = totalQuantity - groups * 2;
+      const promoPrice = groups * Number(promo.fixed_amount) + remainderQty * averagePrice;
+      discount = totalPrice - promoPrice;
+    }
+
+    if (discount > 0) totalDiscount += discount;
+  }
+
+  return totalDiscount;
+}
+
 // Reparto depósito general vs venta (misma prioridad que grilla / RPC).
 export function computeWarehouseQtySplitForOrderItem(quantity, stockGeneral, stockVenta) {
   const q = Math.max(0, Number(quantity) || 0);

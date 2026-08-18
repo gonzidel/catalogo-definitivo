@@ -137,9 +137,38 @@ async function initDailySales() {
     
     // Cargar ventas del día actual
     await loadSales();
+
+    // Monto facturado (hoy/semana/mes) — solo informativo, independiente del
+    // filtro de fecha de arriba y de los totales de ventas.
+    loadInvoicedSummary();
   } catch (error) {
     console.error("❌ Error inicializando ventas diarias:", error);
     window.location.href = "index.html";
+  }
+}
+
+// Carga el monto facturado (CAE emitidos) de hoy/semana/mes, solo para mostrar.
+// No participa en ningún cálculo de "Monto Total" ni de las demás tarjetas.
+async function loadInvoicedSummary() {
+  try {
+    const { data, error } = await supabase.rpc("rpc_get_invoiced_summary");
+    if (error) {
+      console.error("❌ Error obteniendo monto facturado:", error);
+      return;
+    }
+
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) return;
+
+    const todayEl = document.getElementById("invoiced-today");
+    const weekEl = document.getElementById("invoiced-week");
+    const monthEl = document.getElementById("invoiced-month");
+
+    if (todayEl) todayEl.textContent = formatCurrency(row.monto_hoy);
+    if (weekEl) weekEl.textContent = formatCurrency(row.monto_semana);
+    if (monthEl) monthEl.textContent = formatCurrency(row.monto_mes);
+  } catch (error) {
+    console.error("❌ Error en loadInvoicedSummary:", error);
   }
 }
 

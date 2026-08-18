@@ -13,7 +13,13 @@ import {
 let supabase = supabaseClient;
 
 const OPERATIONAL_ITEM_STATUSES = new Set(["reserved", "picked", "waiting", "missing"]);
-const OPEN_ORDER_STATUSES = ["active", "closing_soon", "stock_pending"];
+// Un pedido a la vez: `closed` (pendiente de envío) cuenta como "abierto" desde
+// 2026-07-18 (migración 251). `stock_pending` ya estaba incluido y se deja igual.
+// Usado para detectar pedido existente / evitar duplicados (findActiveOrderForCustomer).
+const OPEN_ORDER_STATUSES = ["active", "closing_soon", "closed", "stock_pending"];
+// Subconjunto usado solo para el chip "en curso" de la lista de clientas — `closed`
+// queda afuera para no perder el chip dedicado "Cerrado" (ver getOrderStatusChipForCustomers).
+const ACTIVE_STYLE_CHIP_STATUSES = ["active", "closing_soon", "stock_pending"];
 
 /** Nombres en `payment_methods` — mismos que al cerrar en orders.html */
 export const ORDER_PAYMENT_METHOD = {
@@ -112,9 +118,13 @@ export async function getOrderStatusChipForCustomers(customerIds) {
 
   for (const cid of customerIds) {
     const orders = data.filter((o) => o.customer_id === cid);
+    // Nota: `closed` queda fuera de este chip "en curso" a propósito — un pedido
+    // cerrado se ve mejor identificado con su propio chip "Cerrado" (rama de abajo)
+    // que mezclado con Pedido/Apartado/Espera, aunque sí cuenta como "abierto" para
+    // evitar pedidos duplicados (OPEN_ORDER_STATUSES en findActiveOrderForCustomer).
     const active = orders.find(
       (o) =>
-        OPEN_ORDER_STATUSES.includes(normStatus(o.status)) &&
+        ACTIVE_STYLE_CHIP_STATUSES.includes(normStatus(o.status)) &&
         (orderHasOperationalItems(o) || normStatus(o.status) === "active")
     );
     if (active) {
@@ -208,6 +218,245 @@ export async function enrichDraftItemsWithStock(items) {
   return out;
 }
 
+/**
+ * Precio efectivo de una variante (lista o oferta activa por color).
+ * Usa RPC `get_effective_price` (tabla `color_price_offers`).
+ */
+export async function getEffectivePrice(variantId) {
+  if (!isValidUUID(variantId)) return null;
+  const sb = await getSb();
+  const { data, error } = await sb.rpc("get_effective_price", {
+    p_variant_id: variantId,
+  });
+  if (error) {
+    console.warn("get_effective_price:", error.message);
+    return null;
+  }
+  const n = Number(data);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/**
+ * Mapa variant_id → precio efectivo (oferta por color si aplica).
+ */
+export async function getEffectivePricesMap(variantIds) {
+  const unique = [...new Set((variantIds || []).filter((id) => isValidUUID(id)))];
+  const map = new Map();
+  if (!unique.length) return map;
+  await Promise.all(
+    unique.map(async (id) => {
+      const price = await getEffectivePrice(id);
+      if (price != null) map.set(id, price);
+    })
+  );
+  return map;
+}
+
+/**
+ * Ofertas por color + promociones 2x1/2xMonto sobre ítems de un pedido.
+ * Misma regla que `orders.js` / `public-sales.js`:
+ * - 2xMonto: suma cantidades de TODOS los productos/variantes de la promo;
+ *   groups = floor(qty / 2); cobrar groups * fixed_amount.
+ * - Promos tienen prioridad sobre ofertas por color.
+ */
+export async function computeOffersAndPromotionsForItems(items) {
+  const empty = {
+    offers: [],
+    promotions: [],
+    totalDiscount: 0,
+    itemOffers: new Map(),
+    itemPromos: new Map(),
+    subtotal: 0,
+    payable: 0,
+  };
+
+  const list = (items || []).filter(
+    (item) => normStatus(item?.status) !== "cancelled"
+  );
+  if (!list.length) return empty;
+
+  const subtotal = list.reduce(
+    (sum, item) =>
+      sum + (Number(item.price_snapshot) || 0) * (Number(item.quantity) || 0),
+    0
+  );
+
+  const variantIds = [];
+  const itemVariantMap = new Map();
+
+  for (const item of list) {
+    const variantId = item.variant_id;
+    if (!variantId) continue;
+    variantIds.push(variantId);
+    if (!itemVariantMap.has(variantId)) itemVariantMap.set(variantId, []);
+    itemVariantMap.get(variantId).push(item);
+  }
+
+  if (variantIds.length === 0) {
+    return { ...empty, subtotal, payable: subtotal };
+  }
+
+  const sb = await getSb();
+  const { data: promotionsData, error: promotionsError } = await sb.rpc(
+    "get_active_promotions_for_variants",
+    { p_variant_ids: variantIds }
+  );
+  const promotions = promotionsError ? [] : promotionsData || [];
+
+  const itemOffersMap = new Map();
+  const itemPromosMap = new Map();
+  const validPromotions = new Map();
+
+  for (const promo of promotions) {
+    const variantIdsInPromo = promo.variant_ids || [];
+    const itemsInPromo = [];
+    for (const variantId of variantIdsInPromo) {
+      itemsInPromo.push(...(itemVariantMap.get(variantId) || []));
+    }
+    if (!itemsInPromo.length) continue;
+
+    let totalQuantity = 0;
+    for (const item of itemsInPromo) totalQuantity += item.quantity || 0;
+
+    const groups = Math.floor(totalQuantity / 2);
+    if (groups <= 0) continue;
+
+    const promoText =
+      promo.promo_type === "2x1"
+        ? "2x1"
+        : promo.promo_type === "2xMonto" && promo.fixed_amount
+          ? `2x$${promo.fixed_amount}`
+          : null;
+    if (!promoText) continue;
+
+    validPromotions.set(promo, { promoText, itemsInPromo, totalQuantity });
+    for (const item of itemsInPromo) {
+      itemPromosMap.set(item.id, promoText);
+    }
+  }
+
+  const today = new Date().toISOString().split("T")[0];
+  for (const item of list) {
+    if (!item?.id || itemPromosMap.has(item.id)) continue;
+    if (!item.product_name || !item.color) continue;
+
+    const { data: productData } = await sb
+      .from("products")
+      .select("id")
+      .eq("name", item.product_name)
+      .in("status", ["active", "pending_stock", "draft"])
+      .limit(1)
+      .maybeSingle();
+    if (!productData) continue;
+
+    const { data: offerData } = await sb
+      .from("color_price_offers")
+      .select("offer_price")
+      .eq("product_id", productData.id)
+      .eq("color", item.color)
+      .eq("status", "active")
+      .lte("start_date", today)
+      .gte("end_date", today)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (!offerData) continue;
+
+    const originalPrice = Number(item.price_snapshot) || 0;
+    const offerPrice = Number(offerData.offer_price) || 0;
+    if (offerPrice <= 0) continue;
+
+    itemOffersMap.set(item.id, {
+      offerPrice,
+      originalPrice,
+      promoText: "🔥 Oferta",
+    });
+  }
+
+  let totalDiscount = 0;
+  const appliedPromotions = new Map();
+
+  for (const [promo, promoData] of validPromotions.entries()) {
+    const { itemsInPromo, totalQuantity } = promoData;
+    let totalPrice = 0;
+    for (const item of itemsInPromo) {
+      totalPrice +=
+        (Number(item.quantity) || 0) * (Number(item.price_snapshot) || 0);
+    }
+    const groups = Math.floor(totalQuantity / 2);
+    const averagePrice = totalQuantity > 0 ? totalPrice / totalQuantity : 0;
+    let discount = 0;
+    if (promo.promo_type === "2x1") {
+      discount = groups * averagePrice;
+    } else if (promo.promo_type === "2xMonto" && promo.fixed_amount) {
+      // Ítems que no completan un par de 2 pagan precio normal (no entran en el descuento).
+      const remainderQty = totalQuantity - groups * 2;
+      const chargedAmount =
+        groups * Number(promo.fixed_amount) + remainderQty * averagePrice;
+      discount = totalPrice - chargedAmount;
+    }
+    if (discount > 0) totalDiscount += discount;
+
+    const promoKey =
+      promo.promo_type === "2x1" ? "2x1" : `2x$${promo.fixed_amount}`;
+    if (!appliedPromotions.has(promoKey)) {
+      appliedPromotions.set(promoKey, { count: 0, discount: 0, groups: 0 });
+    }
+    const info = appliedPromotions.get(promoKey);
+    info.count += totalQuantity;
+    info.discount += Math.max(0, discount);
+    info.groups += groups;
+  }
+
+  for (const [itemId, offerInfo] of itemOffersMap.entries()) {
+    const item = list.find((i) => i.id === itemId);
+    if (!item) continue;
+    const delta = offerInfo.originalPrice - offerInfo.offerPrice;
+    if (delta > 0) {
+      totalDiscount += delta * (Number(item.quantity) || 0);
+    }
+  }
+
+  const payable = subtotal - totalDiscount;
+
+  return {
+    offers: Array.from(itemOffersMap.values()),
+    promotions: Array.from(appliedPromotions.entries()).map(([type, info]) => ({
+      type,
+      ...info,
+    })),
+    totalDiscount,
+    itemOffers: itemOffersMap,
+    itemPromos: itemPromosMap,
+    subtotal,
+    payable,
+  };
+}
+
+/**
+ * Recalcula `orders.total_amount` aplicando ofertas por color + promos 2x.
+ * Llamar tras agregar/quitar ítems desde PAU.
+ */
+export async function recalculateOrderTotalWithOffersAndPromos(orderId) {
+  if (!isValidUUID(orderId)) return null;
+  const order = await fetchOrderById(orderId);
+  if (!order) return null;
+
+  const breakdown = await computeOffersAndPromotionsForItems(
+    order.order_items || []
+  );
+  const sb = await getSb();
+  const { error } = await sb
+    .from("orders")
+    .update({ total_amount: breakdown.payable })
+    .eq("id", orderId);
+  if (error) throw error;
+
+  order.total_amount = breakdown.payable;
+  return { order, breakdown };
+}
+
 export async function addItemsToOrder(orderId, items) {
   if (!items?.length) {
     return { success: true, skipped: true };
@@ -220,6 +469,7 @@ export async function addItemsToOrder(orderId, items) {
   }
   const enriched = await enrichDraftItemsWithStock(items);
   await addItemsToExistingOrder(orderId, enriched, null, {});
+  await recalculateOrderTotalWithOffersAndPromos(orderId);
   const refreshed = await fetchOrderById(orderId);
   return { success: true, order: refreshed };
 }
@@ -302,6 +552,14 @@ export async function removeOrderItemRestoreStock(orderItemId) {
   if (error) throw error;
   if (!data || data.ok !== true) {
     throw new Error("No se pudo quitar el producto del pedido");
+  }
+  // Tras quitar una línea, las promos 2x pueden dejar de aplicar (o aplicar menos grupos).
+  if (!data.order_deleted && data.order_id) {
+    try {
+      await recalculateOrderTotalWithOffersAndPromos(data.order_id);
+    } catch (e) {
+      console.warn("No se pudo recalcular total tras quitar ítem:", e);
+    }
   }
   return data;
 }
@@ -395,6 +653,18 @@ export async function searchProductsGroupedByPrefix(prefix) {
     }
   }
 
+  // Aplicar precio efectivo (ofertas por color) a las variantes encontradas.
+  const allVariantIds = grouped.flatMap((g) =>
+    g.variants.map((v) => v.variant_id)
+  );
+  const effectiveMap = await getEffectivePricesMap(allVariantIds);
+  for (const g of grouped) {
+    for (const v of g.variants) {
+      const effective = effectiveMap.get(v.variant_id);
+      if (effective != null) v.price_snapshot = effective;
+    }
+  }
+
   return grouped;
 }
 
@@ -455,6 +725,14 @@ export async function searchProductsByPrefix(prefix) {
         });
       }
     }
+  }
+
+  const effectiveMap = await getEffectivePricesMap(
+    results.map((r) => r.variant_id)
+  );
+  for (const row of results) {
+    const effective = effectiveMap.get(row.variant_id);
+    if (effective != null) row.price_snapshot = effective;
   }
 
   return results.slice(0, 40);

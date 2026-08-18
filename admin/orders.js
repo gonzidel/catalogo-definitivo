@@ -205,8 +205,7 @@ const STATUS = {
   DEVOLUCION_ALT: "devolucion",
 };
 
-const WORKFLOW_STATUSES = ["active", "closed", "cancelled"];
-const FINAL_STATUSES = ["sent", "devolución", "devolucion"];
+const FINAL_STATUSES = ["sent", "devolución", "devolucion", "expired"];
 
 const TAB_FILTER_MODE = {
   active: "client", // Activos se define por order_items (reserved/missing, no todos picked), no por orders.status; la BD no usa status='active'
@@ -287,12 +286,17 @@ function hasAllItemsPicked(order) {
   if (!order || !Array.isArray(order.order_items) || order.order_items.length === 0) {
     return false;
   }
-  const items = isOrders2Page()
+  const baseItems = isOrders2Page()
     ? order.order_items.filter((item) => {
         const status = String(item?.status || "").trim().toLowerCase();
         return status !== "missing" || isManualMissingOrderItem(item);
       })
     : order.order_items;
+  // Los ítems cancelados (p. ej. la clienta quitó del pedido uno que ya estaba
+  // "sin stock") no cuentan para esta cuenta: no deben impedir que un pedido con
+  // el resto ya apartado siga clasificando como Apartados. Se muestran aparte, en
+  // el panel de "cancelado por la clienta" dentro de la misma tarjeta.
+  const items = baseItems.filter((item) => String(item?.status || "").trim().toLowerCase() !== "cancelled");
   const totalItems = items.length;
   const norm = (s) => String(s ?? "").trim().toLowerCase();
   const pickedItems = items.filter(item => {
@@ -364,10 +368,17 @@ function hasOperationalItems(order) {
   return order.order_items.some((item) => OPERATIONAL_ITEM_STATUSES.has(String(item?.status || "").trim().toLowerCase()));
 }
 
+// Estados terminales de pedido (paridad con FINAL_STATUSES + "cancelled" en isExpiredPendingAdminDisassembly).
+// Centraliza el chequeo para que "expired" y "devolucion" (sin tilde) no falten en algún filtro suelto.
+function isFinalOrderStatus(order) {
+  const status = String(order?.status || "").trim().toLowerCase();
+  return status === "sent" || status === "devolución" || status === "devolucion" || status === "expired";
+}
+
 function isExpiredPendingAdminDisassembly(order) {
   if (!order) return false;
   const status = String(order.status || "").trim().toLowerCase();
-  if (status === "sent" || status === "cancelled" || status === "devolución" || status === "devolucion") {
+  if (status === "cancelled" || isFinalOrderStatus(order)) {
     return false;
   }
   return hasOrderPassedCustomerEditWindow(order) && hasOperationalItems(order);
@@ -1748,7 +1759,8 @@ async function loadOrders(resetPagination = true) {
           province,
           dni,
           email,
-          transport_id
+          transport_id,
+          additional_names
         )
       `,
       { count: 'exact' }
@@ -1796,7 +1808,7 @@ async function loadOrders(resetPagination = true) {
             .select(`
               id, order_number, status, total_amount, created_at, expires_at, dismantle_at, transport_id, updated_at, sent_at, customer_id, notes, source,
               order_items ( id, product_name, color, size, quantity, price_snapshot, status, admin_confirmed_missing, imagen, variant_id, order_item_stock_sources ( qty, warehouse_id ) ),
-              customers:customer_id!left ( id, customer_number, full_name, phone, city, province, dni, email, transport_id )
+              customers:customer_id!left ( id, customer_number, full_name, phone, city, province, dni, email, transport_id, additional_names )
             `)
             .in("id", pageIds)
             .order("created_at", { ascending: false }),
@@ -1815,7 +1827,7 @@ async function loadOrders(resetPagination = true) {
   } else {
     if (filterMode === "sql") {
       if (currentFilter === "all") {
-        query = query.not("status", "in", '("sent","devolución","devolucion")');
+        query = query.not("status", "in", '("sent","devolución","devolucion","expired")');
       } else {
         query = query.eq("status", currentFilter);
       }
@@ -1850,7 +1862,7 @@ async function loadOrders(resetPagination = true) {
         let lightQuery = supabase
           .from("orders")
           .select("id, created_at, expires_at, dismantle_at, status, order_items(status)")
-          .not("status", "in", '("sent","devolución","devolucion")');
+          .not("status", "in", '("sent","devolución","devolucion","expired")');
 
         if (currentFilter === STATUS.ACTIVE || currentFilter === STATUS.PICKED || currentFilter === STATUS.WAITING) {
           lightQuery = lightQuery.neq("status", "stock_pending");
@@ -1938,7 +1950,8 @@ async function loadOrders(resetPagination = true) {
               province,
               dni,
               email,
-              transport_id
+              transport_id,
+              additional_names
             )
           `;
           const fullRes = await wrapSupabase(
@@ -2249,7 +2262,7 @@ async function searchOrdersInDatabase(searchTerm) {
         const custFullRes = await wrapSupabase(
           () => supabase
             .from("customers")
-            .select("id, customer_number, full_name, phone, city, province, dni, email, transport_id")
+            .select("id, customer_number, full_name, phone, city, province, dni, email, transport_id, additional_names")
             .in("id", allCustomerIds),
           { retries: 1, signal, label: "orders.search.customers_full" }
         );
@@ -2374,7 +2387,7 @@ async function loadBadgeCountsInBackground() {
     const { data: ordersForCounting } = await supabase
       .from("orders")
       .select("id, status, created_at, dismantle_at, order_items(status)")
-      .not("status", "in", '("sent","devolución","devolucion")');
+      .not("status", "in", '("sent","devolución","devolucion","expired")');
     
     if (ordersForCounting) {
       const list = ordersForCounting;
@@ -2594,7 +2607,7 @@ async function fetchOrderById(orderId) {
   if (order.customer_id) {
     const { data: cust, error: err2 } = await supabase
       .from("customers")
-      .select("id, customer_number, full_name, name, email, phone, dni, city, province, transport_id")
+      .select("id, customer_number, full_name, name, email, phone, dni, city, province, transport_id, additional_names")
       .eq("id", order.customer_id)
       .single();
     if (!err2 && cust) {
@@ -3014,16 +3027,18 @@ async function getOffersAndPromotionsForOrder(order) {
     
     // Ya verificamos que groups > 0 antes de agregar a validPromotions
     const groups = Math.floor(totalQuantity / 2);
+    const averagePrice = totalQuantity > 0 ? totalPrice / totalQuantity : 0;
     let discount = 0;
     
     if (promo.promo_type === '2x1') {
       // En 2x1, se cobra solo la mitad (redondeando hacia arriba)
       // Descuento = precio de la mitad de los items
-      const averagePrice = totalPrice / totalQuantity;
       discount = groups * averagePrice;
     } else if (promo.promo_type === '2xMonto' && promo.fixed_amount) {
-      // En 2xMonto, se cobra el monto fijo por cada grupo de 2
-      const promoPrice = groups * promo.fixed_amount;
+      // En 2xMonto, se cobra el monto fijo por cada grupo de 2.
+      // Los items que no completan un par pagan precio normal (no se descuentan).
+      const remainderQty = totalQuantity - groups * 2;
+      const promoPrice = groups * promo.fixed_amount + remainderQty * averagePrice;
       discount = totalPrice - promoPrice;
     }
     
@@ -4390,7 +4405,7 @@ function filterOrders(list) {
 
   if (currentFilter === "waiting") {
     return list.filter((order) => {
-      if (order.status === STATUS.CLOSED || order.status === STATUS.SENT || order.status === STATUS.DEVOLUCION) return false;
+      if (order.status === STATUS.CLOSED || isFinalOrderStatus(order)) return false;
       if (!hasWaitingItems(order)) return false;
       // Prioridad Activos: pedidos mixtos (p. ej. reservado + espera) solo en Activos, no duplicar en Espera
       if (filterOrdersForTab([order], STATUS.ACTIVE).length === 1) return false;
@@ -4410,7 +4425,7 @@ function filterOrders(list) {
       const orders2AllowClosedWithReserved =
         isOrders2Page() && statusNorm === STATUS.CLOSED && hasReservedItems(order);
 
-      if (!orders2AllowClosedWithReserved && (statusNorm === STATUS.CLOSED || statusNorm === STATUS.SENT || statusNorm === STATUS.DEVOLUCION || statusNorm === STATUS.DEVOLUCION_ALT)) {
+      if (!orders2AllowClosedWithReserved && (statusNorm === STATUS.CLOSED || isFinalOrderStatus(order))) {
         excludedBy = "order.status=" + (order.status ?? "null");
       }
       else if (isExpiredPendingAdminDisassembly(order)) excludedBy = "pedido vencido pendiente de desarme (va en Cancelaciones)";
@@ -4450,7 +4465,7 @@ function filterOrders(list) {
   if (currentFilter === STATUS.PICKED) {
     // Apartados: todos los items "picked" (sin items en espera)
     return list.filter((order) => {
-      if (order.status === STATUS.CLOSED || order.status === STATUS.SENT || order.status === STATUS.DEVOLUCION) return false;
+      if (order.status === STATUS.CLOSED || isFinalOrderStatus(order)) return false;
       if (hasWaitingItems(order)) return false;
       if (!hasAllItemsPicked(order)) return false;
       if (hasReservedItems(order)) return false;
@@ -5100,34 +5115,15 @@ function attachOrderEventHandlers() {
       btn.dataset.processing = "1";
       btn.textContent = "Habilitando...";
       try {
-        const { data: currentOrderNotesRow, error: notesError } = await supabase
-          .from("orders")
-          .select("notes")
-          .eq("id", orderId)
-          .maybeSingle();
-        if (notesError) {
-          alert(notesError.message || "No se pudo leer el estado de habilitaciones del pedido.");
-          return;
-        }
-
-        const currentUses = getEnable24hUsesFromOrder({ notes: currentOrderNotesRow?.notes || "" });
-        const nextNotes = applyOrderNotesPatch(currentOrderNotesRow?.notes || "", {
-          [ADMIN_ENABLE_24H_USES_KEY]: currentUses + 1,
+        // Antes calculaba `dismantle_at` acá con `Date.now() + 24h` y hacía
+        // un update() directo -- mismo bug que now() + interval '24 hours'
+        // literal que ya se había corregido en el resto del sistema (258):
+        // podía vencer un fin de semana/feriado a cualquier hora. Ahora
+        // delega en rpc_admin_extend_order_24h, que calcula el próximo día
+        // hábil a las 17:00 Arg en el servidor (fn_compute_order_deadline).
+        const { error } = await supabase.rpc("rpc_admin_extend_order_24h", {
+          p_order_id: orderId,
         });
-        if (nextNotes === null) {
-          alert("No se pudo registrar la habilitación porque notes del pedido no es JSON válido.");
-          return;
-        }
-
-        const newDismantleAtIso = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-        const { error } = await supabase
-          .from("orders")
-          .update({
-            dismantle_at: newDismantleAtIso,
-            notes: nextNotes,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", orderId);
 
         if (error) {
           alert(error.message || "No se pudo habilitar el pedido por 24 horas.");
@@ -5885,6 +5881,181 @@ async function pickAllItems(orderId) {
 // Variable para almacenar el orderId pendiente de cerrar
 let pendingCloseOrderId = null;
 
+const FORMOSA_NO_SUBNAME_ALERT_STORAGE_KEY = "fyl_formosa_no_subname_alert_dismissed";
+
+function getFormosaNoSubnameDismissedCustomerIds() {
+  try {
+    const raw = localStorage.getItem(FORMOSA_NO_SUBNAME_ALERT_STORAGE_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed.map(String));
+  } catch {
+    return new Set();
+  }
+}
+
+function setFormosaNoSubnameDismissedCustomerId(customerId) {
+  if (!customerId) return;
+  const dismissed = getFormosaNoSubnameDismissedCustomerIds();
+  dismissed.add(String(customerId));
+  localStorage.setItem(FORMOSA_NO_SUBNAME_ALERT_STORAGE_KEY, JSON.stringify([...dismissed]));
+}
+
+function isFormosaNoSubnameAlertDismissed(customerId) {
+  if (!customerId) return false;
+  return getFormosaNoSubnameDismissedCustomerIds().has(String(customerId));
+}
+
+function normalizeOrderCustomer(order) {
+  if (!order) return {};
+  if (Array.isArray(order.customers)) return order.customers[0] || {};
+  if (order.customers && typeof order.customers === "object") return order.customers;
+  return {};
+}
+
+function isFormosaLocalityCustomer(customer) {
+  const province = String(customer?.province || "").trim().toLowerCase();
+  const city = String(customer?.city || "").trim().toLowerCase();
+  return province === "formosa" || city === "formosa";
+}
+
+function parseCustomerSubNames(raw) {
+  if (!raw) return [];
+  let parsed = raw;
+  if (typeof raw === "string") {
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter((entry) => {
+    const first = String(entry?.first_name || "").trim();
+    const last = String(entry?.last_name || "").trim();
+    const full = String(entry?.full_name || entry?.name || "").trim();
+    const dni = String(entry?.dni || "").trim();
+    return full || first || last || dni;
+  });
+}
+
+function customerHasScheduledDni(dni) {
+  return String(dni || "").trim().length > 0;
+}
+
+function customerHasScheduledSubNames(additionalNames) {
+  return parseCustomerSubNames(additionalNames).length > 0;
+}
+
+function getFormosaCloseOrderAlertType(customer) {
+  const hasDni = customerHasScheduledDni(customer.dni);
+  const hasSubNames = customerHasScheduledSubNames(customer.additional_names);
+  if (!hasDni && !hasSubNames) return "missing_both";
+  if (hasDni && !hasSubNames) return "missing_subnames_only";
+  if (!hasDni && hasSubNames) return "missing_dni_only";
+  return null;
+}
+
+function shouldAlertFormosaCustomerOnClose(customer, customerId) {
+  if (!isFormosaLocalityCustomer(customer)) return false;
+  const alertType = getFormosaCloseOrderAlertType(customer);
+  if (!alertType) return false;
+  if (alertType === "missing_subnames_only" && isFormosaNoSubnameAlertDismissed(customerId)) {
+    return false;
+  }
+  return true;
+}
+
+function getFormosaCloseOrderAlertMessage(customer) {
+  const hasDni = customerHasScheduledDni(customer.dni);
+  const hasSubNames = customerHasScheduledSubNames(customer.additional_names);
+
+  if (!hasDni && !hasSubNames) {
+    return "Aviso: este cliente es de Formosa y no tiene DNI ni sub-nombres cargados. Podés completarlos en Clientes. El pedido se cerrará al confirmar.";
+  }
+  if (hasDni && !hasSubNames) {
+    return "Este cliente es de Formosa, tiene DNI pero no tiene sub-nombres cargados. Si no los necesita, podés continuar. También podés agregarlos en Clientes.";
+  }
+  if (!hasDni && hasSubNames) {
+    return "Aviso: este cliente es de Formosa y no tiene DNI cargado. Podés completarlo en Clientes. El pedido se cerrará al confirmar.";
+  }
+  return "";
+}
+
+function showFormosaCloseOrderAlertModal(message, { showDismissCheckbox = false } = {}) {
+  return new Promise((resolve) => {
+    const modal = document.getElementById("formosa-close-alert-modal");
+    if (!modal) {
+      alert(message);
+      resolve(false);
+      return;
+    }
+
+    const messageEl = document.getElementById("formosa-close-alert-message");
+    const dismissWrap = document.getElementById("formosa-close-alert-dismiss-wrap");
+    const dismissCheckbox = document.getElementById("formosa-close-alert-dismiss");
+    const confirmBtn = document.getElementById("formosa-close-alert-confirm");
+
+    if (messageEl) messageEl.textContent = message;
+    if (dismissWrap) dismissWrap.style.display = showDismissCheckbox ? "block" : "none";
+    if (dismissCheckbox) dismissCheckbox.checked = false;
+
+    modal.style.display = "flex";
+    modal.classList.add("active");
+
+    const cleanup = () => {
+      modal.style.display = "none";
+      modal.classList.remove("active");
+      confirmBtn?.removeEventListener("click", onConfirm);
+    };
+
+    const onConfirm = () => {
+      const dismissed = Boolean(showDismissCheckbox && dismissCheckbox?.checked);
+      cleanup();
+      resolve(dismissed);
+    };
+
+    confirmBtn?.addEventListener("click", onConfirm, { once: true });
+  });
+}
+
+async function maybeAlertFormosaCustomerBeforeClose(order) {
+  if (!order) return;
+
+  let customer = normalizeOrderCustomer(order);
+  if (!isFormosaLocalityCustomer(customer)) return;
+
+  if (customer.additional_names === undefined && order.customer_id) {
+    if (!supabase) supabase = await getSupabase();
+    if (supabase) {
+      const { data } = await supabase
+        .from("customers")
+        .select("dni, city, province, additional_names")
+        .eq("id", order.customer_id)
+        .maybeSingle();
+      if (data) customer = { ...customer, ...data };
+    }
+  }
+
+  const customerId = order.customer_id || customer.id;
+  if (!shouldAlertFormosaCustomerOnClose(customer, customerId)) return;
+
+  const alertType = getFormosaCloseOrderAlertType(customer);
+  const message = getFormosaCloseOrderAlertMessage(customer);
+  if (!message) return;
+
+  if (alertType === "missing_subnames_only") {
+    const dismissed = await showFormosaCloseOrderAlertModal(message, { showDismissCheckbox: true });
+    if (dismissed && customerId) {
+      setFormosaNoSubnameDismissedCustomerId(customerId);
+    }
+    return;
+  }
+
+  alert(message);
+}
+
 // Función para cargar métodos de pago desde la base de datos
 async function loadPaymentMethods() {
   if (!supabase) {
@@ -6033,7 +6204,10 @@ async function confirmCloseOrderWithPayment() {
 
   // Guardar el orderId antes de cerrar el modal (que limpia pendingCloseOrderId)
   const orderIdToClose = pendingCloseOrderId;
-  
+  const orderToClose = orders.find((o) => o.id === orderIdToClose);
+
+  await maybeAlertFormosaCustomerBeforeClose(orderToClose);
+
   // Cerrar el modal
   hidePaymentMethodModal();
 

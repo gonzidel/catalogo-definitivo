@@ -60,12 +60,12 @@ function fileToBase64(file) {
 
 // Función auxiliar: obtener thumbnail de imagen
 function getImgThumb(img) {
-  if (img.secure_url) return img.secure_url;
-  if (img.url) return img.url;
   if (img.public_id) {
-    // Construir URL de Cloudinary para thumbnail
+    // Construir URL de Cloudinary para thumbnail (optimizada, evita servir el original crudo)
     return `https://res.cloudinary.com/dnuedzuzm/image/upload/w_100,h_100,c_fill/${img.public_id}`;
   }
+  if (img.secure_url) return img.secure_url;
+  if (img.url) return img.url;
   return "";
 }
 

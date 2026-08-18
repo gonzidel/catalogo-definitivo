@@ -1757,6 +1757,27 @@
         </div>
     </div>
 
+    <!-- Aviso Formosa al cerrar pedido (solo sub-nombres opcional con checkbox) -->
+    <div id="formosa-close-alert-modal" class="order-modal" style="display: none; z-index: 11000;">
+        <div class="order-modal-content" style="max-width: 480px;">
+            <div class="order-modal-header">
+                <h2>⚠️ Aviso — Cliente Formosa</h2>
+            </div>
+            <div class="order-modal-body">
+                <p id="formosa-close-alert-message" style="margin: 0 0 16px 0; line-height: 1.5; color: #333;"></p>
+                <div id="formosa-close-alert-dismiss-wrap" style="display: none; padding: 12px; background: #f8f9fa; border-radius: 6px; border: 1px solid #e9ecef;">
+                    <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; font-size: 14px; color: #444;">
+                        <input type="checkbox" id="formosa-close-alert-dismiss" style="width: 18px; height: 18px; margin-top: 2px; flex-shrink: 0;">
+                        <span>No volver a mostrar este aviso para este cliente</span>
+                    </label>
+                </div>
+            </div>
+            <div class="order-modal-footer">
+                <button type="button" id="formosa-close-alert-confirm" class="btn" style="background: #28a745; color: white;">Continuar</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Modal de confirmación sin stock -->
     <div class="modal" id="no-stock-confirm-modal">
       <div class="modal-content" style="max-width: 400px; text-align: center;">

@@ -100,6 +100,46 @@
             font-weight: 600;
             font-size: 15px;
             margin-bottom: 6px;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .label-name-switcher {
+            display: inline-flex;
+            gap: 4px;
+            align-items: center;
+        }
+
+        .label-name-btn {
+            min-width: 28px;
+            height: 28px;
+            padding: 0 6px;
+            border: 1px solid #bdbdbd;
+            border-radius: 6px;
+            background: #fff;
+            color: #333;
+            font-size: 12px;
+            font-weight: 700;
+            cursor: pointer;
+            line-height: 1;
+        }
+
+        .label-name-btn:hover:not(.is-active):not(:disabled) {
+            background: #f5f5f5;
+            border-color: #9e9e9e;
+        }
+
+        .label-name-btn.is-active {
+            background: #2e7d32;
+            border-color: #2e7d32;
+            color: #fff;
+        }
+
+        .label-name-btn:disabled {
+            opacity: 0.6;
+            cursor: wait;
         }
 
         .customer-details {
@@ -455,6 +495,45 @@
         }
 
         /* Estilos para modal de Imprimir Listas */
+        .print-lists-modal-content {
+            max-width: min(96vw, 1320px);
+            width: 100%;
+        }
+
+        .btn-facturar {
+            padding: 4px 10px;
+            font-size: 12px;
+            background: #6f42c1;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            white-space: nowrap;
+            min-width: 100px;
+            transition: background 0.2s;
+        }
+
+        .btn-facturar:hover {
+            background: #5a2d9e;
+        }
+
+        .btn-facturar:disabled {
+            background: #aaa;
+            cursor: default;
+        }
+
+        .btn-facturar.state-loading {
+            background: #888;
+        }
+
+        .btn-facturar.state-success {
+            background: #198754;
+        }
+
+        .btn-facturar.state-error {
+            background: #dc3545;
+        }
+
         .print-lists-filters {
             display: flex;
             gap: 16px;
@@ -495,8 +574,41 @@
         }
 
         #orders-list-container {
-            max-height: 500px;
+            max-height: min(62vh, 620px);
             overflow-y: auto;
+            overflow-x: auto;
+        }
+
+        .orders-list-table th.col-check,
+        .orders-list-table td.col-check {
+            width: 44px;
+            min-width: 44px;
+            text-align: center;
+            padding: 8px;
+        }
+
+        .orders-list-table th.col-primary-name,
+        .orders-list-table td.col-primary-name {
+            min-width: 140px;
+            max-width: 180px;
+        }
+
+        .orders-list-table td.col-primary-name .primary-name-label {
+            color: #1565c0;
+            font-weight: 600;
+            word-break: break-word;
+        }
+
+        .orders-list-table td.col-primary-name .primary-name-label.is-same-as-client {
+            color: #546e7a;
+            font-weight: 500;
+        }
+
+        .shipping-list-check {
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+            accent-color: #17a2b8;
         }
 
         .orders-list-table {
@@ -715,7 +827,7 @@
 
     <!-- Modal de Imprimir Listas -->
     <div id="print-lists-modal" class="modal">
-        <div class="modal-content" style="max-width: 1000px;">
+        <div class="modal-content print-lists-modal-content">
             <div class="modal-header">
                 <h2>📄 Imprimir Lista de Envíos</h2>
                 <button class="modal-close" id="close-print-lists-modal">&times;</button>
@@ -803,7 +915,7 @@
                         <button id="download-excel-btn" class="btn btn-success">📥 Descargar Excel</button>
                     </div>
                     <p class="extract-hint" style="margin-top: 12px; font-size: 13px; color: #666; line-height: 1.4;">
-                        El Excel incluye todos los pedidos finalizados (<strong>enviados</strong>) en el rango. Si un pedido es antiguo y no tiene fecha de finalización, se usa la fecha de cierre. La lista diaria del día sigue usando solo la fecha de finalización.
+                        El Excel incluye todos los pedidos finalizados (<strong>enviados</strong>) en el rango, incluyendo los que luego se marcaron como <strong>devolución</strong> (en ese caso la columna "Pagos" muestra "Devolución" en vez del método de pago). Si un pedido es antiguo y no tiene fecha de finalización, se usa la fecha de cierre. La lista diaria del día sigue usando solo la fecha de finalización.
                     </p>
                     <div id="extract-message" style="margin-top: 24px; text-align: center; padding: 16px; color: #666; display: none;">
                         <!-- Mensajes de estado se mostrarán aquí -->

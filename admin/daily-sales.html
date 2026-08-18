@@ -311,9 +311,30 @@
         </div>
 
         <div style="background: #e7f3ff; border: 1px solid #3a6df0; border-radius: 8px; padding: 12px; margin-bottom: 16px; font-size: 14px; color: #0066cc;">
-            <strong>ℹ️ Información:</strong> Este módulo muestra un control de caja diario consolidado. 
+            <strong>ℹ️ Información:</strong> Este módulo muestra un control de caja diario consolidado.
             Las ventas "Local" provienen de <strong>Venta al Público</strong> y los "Envíos" de <strong>Pedidos</strong> marcados como terminados.
             Los datos se registran automáticamente cuando se finaliza una venta o se marca un pedido como enviado.
+        </div>
+
+        <div style="margin-bottom: 8px; font-size: 13px; color: #7a5b00; background: #fff8e1; border: 1px solid #ffe082; border-radius: 8px; padding: 10px 12px;">
+            <strong>💵 Monto Facturado:</strong> solo a modo de muestra — es el monto real declarado en cada factura
+            (30% o 100% del pedido, según el cliente). No se suma a "Monto Total" ni a ningún otro total de esta página.
+            Siempre refleja hoy/esta semana/este mes actuales, sin importar la fecha que elijas arriba. El mes se reinicia
+            solo el día 1 de cada mes.
+        </div>
+        <div class="summary-cards" style="margin-bottom: 24px;">
+            <div class="summary-card" style="border-color: #ffe082;">
+                <h3>Facturado Hoy</h3>
+                <p class="value" id="invoiced-today" style="color: #a67c00;">$0</p>
+            </div>
+            <div class="summary-card" style="border-color: #ffe082;">
+                <h3>Facturado esta Semana</h3>
+                <p class="value" id="invoiced-week" style="color: #a67c00;">$0</p>
+            </div>
+            <div class="summary-card" style="border-color: #ffe082;">
+                <h3>Facturado este Mes</h3>
+                <p class="value" id="invoiced-month" style="color: #a67c00;">$0</p>
+            </div>
         </div>
 
         <div id="sales-content">

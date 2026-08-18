@@ -9,6 +9,60 @@ let currentProduct = null;
 let currentProductVariants = [];
 let selectedPromoItems = []; // Array de {type: 'product'|'variant', id: uuid, name: string}
 
+// --- Utilidades de búsqueda por similitud ---
+// El buscador de Supabase (ilike %term%) matchea cualquier substring, por lo que
+// buscar "90" también trae "R690". Estas funciones re-priorizan/filtran los
+// resultados en el cliente para que la coincidencia sea más específica.
+
+function normalizeSearchText(str) {
+  return (str || '')
+    .toString()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+function tokenizeSearchText(str) {
+  return normalizeSearchText(str).split(/[^a-z0-9]+/).filter(Boolean);
+}
+
+// Devuelve un puntaje de relevancia (mayor = mejor) o -1 si no es una coincidencia válida.
+function scoreSearchMatch(text, term) {
+  const normalizedTerm = normalizeSearchText(term);
+  if (!normalizedTerm) return -1;
+
+  const normalizedText = normalizeSearchText(text);
+  if (!normalizedText) return -1;
+
+  if (normalizedText === normalizedTerm) return 100;
+
+  const tokens = tokenizeSearchText(text);
+  if (tokens.includes(normalizedTerm)) return 90;
+  if (tokens.some(token => token.startsWith(normalizedTerm))) return 75;
+  if (normalizedText.startsWith(normalizedTerm)) return 60;
+
+  const isNumericTerm = /^\d+$/.test(normalizedTerm);
+  if (isNumericTerm) {
+    // Para términos numéricos exigimos que el número no esté "pegado" a otros
+    // dígitos, para evitar que "90" matchee "R690".
+    const boundaryRegex = new RegExp(`(^|[^0-9])${normalizedTerm}($|[^0-9])`);
+    return boundaryRegex.test(normalizedText) ? 50 : -1;
+  }
+
+  // Términos alfabéticos: mantenemos el substring como fallback, pero con menor prioridad.
+  return normalizedText.includes(normalizedTerm) ? 30 : -1;
+}
+
+// Filtra y ordena una lista de items por relevancia contra `term`, usando `getText`
+// para obtener el texto a comparar de cada item.
+function rankSearchMatches(items, term, getText) {
+  return items
+    .map(item => ({ item, score: scoreSearchMatch(getText(item), term) }))
+    .filter(({ score }) => score >= 0)
+    .sort((a, b) => b.score - a.score)
+    .map(({ item }) => item);
+}
+
 // Variables para elementos del DOM (se inicializarán cuando el DOM esté listo)
 let tabs, tabContents, productSearch, productSuggestions, searchProductBtn;
 let productInfo, productName, colorsList, offersList;
@@ -155,13 +209,15 @@ async function searchProducts(term) {
       .select('id, name, category')
       .ilike('name', `%${term}%`)
       .eq('status', 'active')
-      .limit(10);
+      .limit(30);
     
     if (error) throw error;
     
+    const ranked = rankSearchMatches(data || [], term, p => p.name).slice(0, 10);
+    
     productSuggestions.innerHTML = '';
-    if (data && data.length > 0) {
-      data.forEach(product => {
+    if (ranked.length > 0) {
+      ranked.forEach(product => {
         const option = document.createElement('option');
         option.value = product.name;
         option.setAttribute('data-product-id', product.id);
@@ -348,28 +404,8 @@ async function uploadOfferImage(file) {
   if (!file) return null;
   
   try {
-    // Verificar/crear bucket
+    // Bucket creado por migración SQL (no se puede crear desde el browser por RLS).
     const bucketName = 'offer-images';
-    
-    // Intentar crear el bucket si no existe (esto puede fallar si ya existe, está bien)
-    try {
-      const { data: buckets } = await supabase.storage.listBuckets();
-      const bucketExists = buckets?.some(b => b.name === bucketName);
-      
-      if (!bucketExists) {
-        const { error: createError } = await supabase.storage.createBucket(bucketName, {
-          public: true,
-          fileSizeLimit: 10485760, // 10MB
-          allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp']
-        });
-        
-        if (createError && createError.message !== 'duplicate key value violates unique constraint') {
-          console.warn('No se pudo crear bucket (puede que ya exista):', createError);
-        }
-      }
-    } catch (e) {
-      console.warn('Error verificando bucket:', e);
-    }
     
     // Generar nombre único para el archivo
     const fileExt = file.name.split('.').pop();
@@ -394,7 +430,13 @@ async function uploadOfferImage(file) {
     return urlData?.publicUrl || null;
   } catch (error) {
     console.error('Error subiendo imagen:', error);
-    throw new Error('No se pudo subir la imagen: ' + error.message);
+    const msg = String(error?.message || error || '');
+    if (/bucket not found/i.test(msg)) {
+      throw new Error(
+        'Falta el bucket de Storage "offer-images". Hay que crearlos en Supabase (migración 252).'
+      );
+    }
+    throw new Error('No se pudo subir la imagen: ' + msg);
   }
 }
 
@@ -403,28 +445,8 @@ async function uploadPromoImage(file) {
   if (!file) return null;
   
   try {
-    // Verificar/crear bucket
+    // Bucket creado por migración SQL (no se puede crear desde el browser por RLS).
     const bucketName = 'promo-images';
-    
-    // Intentar crear el bucket si no existe (esto puede fallar si ya existe, está bien)
-    try {
-      const { data: buckets } = await supabase.storage.listBuckets();
-      const bucketExists = buckets?.some(b => b.name === bucketName);
-      
-      if (!bucketExists) {
-        const { error: createError } = await supabase.storage.createBucket(bucketName, {
-          public: true,
-          fileSizeLimit: 10485760, // 10MB
-          allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp']
-        });
-        
-        if (createError && createError.message !== 'duplicate key value violates unique constraint') {
-          console.warn('No se pudo crear bucket (puede que ya exista):', createError);
-        }
-      }
-    } catch (e) {
-      console.warn('Error verificando bucket:', e);
-    }
     
     // Generar nombre único para el archivo
     const fileExt = file.name.split('.').pop();
@@ -449,7 +471,13 @@ async function uploadPromoImage(file) {
     return urlData?.publicUrl || null;
   } catch (error) {
     console.error('Error subiendo imagen de promoción:', error);
-    throw new Error('No se pudo subir la imagen: ' + error.message);
+    const msg = String(error?.message || error || '');
+    if (/bucket not found/i.test(msg)) {
+      throw new Error(
+        'Falta el bucket de Storage "promo-images". Hay que crearlos en Supabase (migración 252).'
+      );
+    }
+    throw new Error('No se pudo subir la imagen: ' + msg);
   }
 }
 
@@ -917,6 +945,17 @@ function initPromoForm() {
       clearTimeout(searchTimeout);
       const term = e.target.value.trim();
       
+      // Si el valor coincide exactamente con una sugerencia ya listada, el usuario
+      // acaba de seleccionarla del desplegable (esto también dispara "input").
+      // No relanzamos la búsqueda: el texto de la sugerencia incluye " (Producto)"
+      // o " (Variante)", que no matchea ningún nombre real y vaciaba la lista
+      // de opciones antes de poder presionar "Agregar".
+      const isExactSuggestion = promoItemSuggestions &&
+        Array.from(promoItemSuggestions.options).some(opt => opt.value === term);
+      if (isExactSuggestion) {
+        return;
+      }
+      
       if (term.length < 2) {
         if (promoItemSuggestions) promoItemSuggestions.innerHTML = '';
         return;
@@ -948,58 +987,70 @@ async function searchPromoItems(term) {
   try {
     if (!promoItemSuggestions) return;
     
-    // Buscar productos
-    const { data: products, error: productsError } = await supabase
+    // Buscar productos (traemos más candidatos de lo necesario para poder
+    // filtrar/ordenar por similitud en el cliente antes de recortar la lista final)
+    const { data: productsRaw, error: productsError } = await supabase
       .from('products')
       .select('id, name, category, cost')
       .ilike('name', `%${term}%`)
       .eq('status', 'active')
-      .limit(5);
+      .limit(30);
     
     if (productsError) {
       console.error('Error buscando productos:', productsError);
       throw productsError;
     }
     
+    const products = rankSearchMatches(productsRaw || [], term, p => p.name).slice(0, 5);
+    
     // Buscar variantes por SKU (sin size, ya que está en variant_sizes)
-    const { data: variantsBySku, error: variantsSkuError } = await supabase
+    const { data: variantsBySkuRaw, error: variantsSkuError } = await supabase
       .from('product_variants')
       .select('id, sku, color, products!inner(id, name, cost)')
       .ilike('sku', `%${term}%`)
       .eq('active', true)
-      .limit(5);
+      .limit(30);
     
-    // Buscar productos que coincidan con el término
-    const { data: matchingProducts, error: productsMatchError } = await supabase
+    // Buscar productos que coincidan con el término (para luego traer sus variantes)
+    const { data: matchingProductsRaw, error: productsMatchError } = await supabase
       .from('products')
-      .select('id')
+      .select('id, name')
       .ilike('name', `%${term}%`)
       .eq('status', 'active')
-      .limit(10);
+      .limit(30);
+    
+    const matchingProducts = rankSearchMatches(matchingProductsRaw || [], term, p => p.name);
     
     // Buscar variantes de productos que coincidan
     let variantsByName = [];
-    if (!productsMatchError && matchingProducts && matchingProducts.length > 0) {
-      const productIds = matchingProducts.map(p => p.id);
+    if (!productsMatchError && matchingProducts.length > 0) {
+      const productIds = matchingProducts.slice(0, 10).map(p => p.id);
       const { data: variantsData, error: variantsNameError } = await supabase
         .from('product_variants')
         .select('id, sku, color, products!inner(id, name, cost)')
         .in('product_id', productIds)
         .eq('active', true)
-        .limit(5);
+        .limit(30);
       
       if (!variantsNameError && variantsData) {
         variantsByName = variantsData;
       }
     }
     
-    // Combinar resultados, evitando duplicados
+    const variantsBySku = rankSearchMatches(variantsBySkuRaw || [], term, v => v.sku);
+    
+    // Combinar resultados, evitando duplicados, y reordenar por similitud
+    // (contra SKU o nombre del producto, lo que mejor matchee)
     const variantMap = new Map();
     if (!variantsSkuError && variantsBySku) {
       variantsBySku.forEach(v => variantMap.set(v.id, v));
     }
     variantsByName.forEach(v => variantMap.set(v.id, v));
-    const variants = Array.from(variantMap.values()).slice(0, 5);
+    const variants = rankSearchMatches(
+      Array.from(variantMap.values()),
+      term,
+      v => `${v.sku || ''} ${v.products?.name || ''}`
+    ).slice(0, 5);
     
     if (variantsSkuError && productsMatchError) {
       console.error('Error buscando variantes:', variantsSkuError || productsMatchError);

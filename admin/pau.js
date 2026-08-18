@@ -28,6 +28,7 @@ import {
   resolveQrCodeToOrderItem,
   searchProductsGroupedByPrefix,
   mergeDraftItem,
+  computeOffersAndPromotionsForItems,
 } from "./orders-ops.js?v=m260607";
 import {
   validateNewCustomerForm,
@@ -90,6 +91,8 @@ const els = {
   manualBack: document.getElementById("pau-manual-back"),
   manualStepLabel: document.getElementById("pau-manual-step-label"),
   manualChoices: document.getElementById("pau-manual-choices"),
+  manualActions: document.getElementById("pau-manual-actions"),
+  manualClearPicks: document.getElementById("pau-manual-clear-picks"),
   manualAddPicks: document.getElementById("pau-manual-add-picks"),
   draftList: document.getElementById("pau-draft-list"),
   scannedCount: document.getElementById("pau-scanned-count"),
@@ -176,6 +179,8 @@ const state = {
 let customerSearchTimer = null;
 let productInputTimer = null;
 let manualSearchTimer = null;
+/** Incrementa en cada búsqueda manual nueva o al elegir producto; evita que respuestas tardías pisen colores/talles. */
+let manualSearchGeneration = 0;
 let toastTimer = null;
 
 function parseMoneyInput(rawValue) {
@@ -724,13 +729,26 @@ function formatItemPriceForCopy(item) {
   return signedUnit;
 }
 
-/** Texto listo para pegar en WhatsApp (negritas con *). */
-function buildPauOrderWhatsAppText() {
+/** Texto listo para pegar en WhatsApp (negritas con *). Incluye ofertas/promos. */
+async function buildPauOrderWhatsAppText() {
   const order = state.order;
   const items = (order?.order_items || []).filter(
     (i) => normOrderStatus({ status: i.status }) !== "cancelled"
   );
   if (!items.length) return "";
+
+  let breakdown = {
+    totalDiscount: 0,
+    payable: Number(order?.total_amount) || 0,
+    promotions: [],
+    itemPromos: new Map(),
+    itemOffers: new Map(),
+  };
+  try {
+    breakdown = await computeOffersAndPromotionsForItems(items);
+  } catch (e) {
+    console.warn("PAU WhatsApp: no se pudieron calcular ofertas/promos", e);
+  }
 
   const lines = [];
 
@@ -738,6 +756,9 @@ function buildPauOrderWhatsAppText() {
     const isSpecial = isSpecialAdjustmentItem(item);
     const qty = Number(item.quantity) || 0;
     const pricePart = formatItemPriceForCopy(item);
+    const promoLabel =
+      breakdown.itemPromos?.get(item.id) ||
+      (breakdown.itemOffers?.has(item.id) ? "Oferta" : "");
 
     if (isSpecial) {
       const desc = (item.product_name || "Ajuste").trim();
@@ -748,14 +769,33 @@ function buildPauOrderWhatsAppText() {
     const name = (item.product_name || "Producto").trim();
     const color = (item.color || "-").trim();
     const size = (item.size || "-").trim();
-    lines.push(`• ${name} — ${color} — Talle ${size} — x${qty} — ${pricePart}`);
+    const promoPart = promoLabel ? ` — _${promoLabel}_` : "";
+    lines.push(
+      `• ${name} — ${color} — Talle ${size} — x${qty} — ${pricePart}${promoPart}`
+    );
   });
 
   const totalQty = items.reduce((s, i) => s + (Number(i.quantity) || 0), 0);
-  const total = Number(order?.total_amount) || 0;
+  const total =
+    Number.isFinite(breakdown.payable)
+      ? breakdown.payable
+      : Number(order?.total_amount) || 0;
 
   lines.push("");
   lines.push(`*Cantidad de productos:* ${totalQty}`);
+  if (breakdown.totalDiscount > 0) {
+    const promoBits = (breakdown.promotions || [])
+      .map((p) => {
+        const groups =
+          p.groups > 0 ? ` (${p.groups} grupo${p.groups === 1 ? "" : "s"})` : "";
+        return `${p.type}${groups}`;
+      })
+      .filter(Boolean);
+    if (promoBits.length) {
+      lines.push(`*Promo aplicada:* ${promoBits.join(", ")}`);
+    }
+    lines.push(`*Descuento:* -${formatMoneyAr(breakdown.totalDiscount)}`);
+  }
   lines.push(`*Total:* ${formatMoneyAr(total)}`);
 
   return `*Pedido FYL*\n\n${lines.join("\n")}`.trim();
@@ -792,7 +832,7 @@ async function handleCopyOrder() {
     return;
   }
 
-  const text = buildPauOrderWhatsAppText();
+  const text = await buildPauOrderWhatsAppText();
   if (!text) {
     showToast("No hay productos para copiar");
     return;
@@ -938,7 +978,7 @@ function resetManualPicker() {
   els.manualChoices.innerHTML = "";
   els.manualPicker.hidden = true;
   els.manualBack.hidden = true;
-  els.manualAddPicks.hidden = true;
+  els.manualActions.hidden = true;
   els.manualStepLabel.textContent = "";
   syncManualPickerHead();
   syncManualChoicesScroll();
@@ -987,11 +1027,26 @@ function decorateChoiceButton(btn, label, qty) {
 function updateManualAddButton() {
   const qty = getManualPendingTotalQty();
   if (qty > 0) {
-    els.manualAddPicks.hidden = false;
-    els.manualAddPicks.textContent = `Agregar seleccionados (${qty})`;
+    els.manualActions.hidden = false;
+    els.manualClearPicks.textContent = "Limpiar selección";
+    els.manualAddPicks.textContent = `Agregar (${qty})`;
   } else {
-    els.manualAddPicks.hidden = true;
+    els.manualActions.hidden = true;
   }
+}
+
+function clearManualPending() {
+  if (getManualPendingTotalQty() === 0) return;
+  state.manual.pending.clear();
+  state.manual.pendingProductId = null;
+  if (state.manual.step === "sizes") {
+    renderManualSizes();
+  } else if (state.manual.step === "colors") {
+    renderManualColors();
+  } else {
+    updateManualAddButton();
+  }
+  showToast("Selección manual limpiada");
 }
 
 function syncManualPickerHead() {
@@ -1041,6 +1096,8 @@ function renderManualProducts() {
     btn.title = p.product_name;
     btn.textContent = p.product_name;
     btn.addEventListener("click", () => {
+      clearTimeout(manualSearchTimer);
+      manualSearchGeneration += 1;
       if (
         state.manual.pendingProductId &&
         state.manual.pendingProductId !== p.product_id &&
@@ -1170,10 +1227,16 @@ async function runManualProductSearch(query) {
     resetManualPicker();
     return;
   }
+  const gen = ++manualSearchGeneration;
   try {
-    state.manual.products = await searchProductsGroupedByPrefix(val);
+    const products = await searchProductsGroupedByPrefix(val);
+    if (gen !== manualSearchGeneration) return;
+    if (els.productInput.value.trim() !== val) return;
+    if (state.manual.step === "colors" || state.manual.step === "sizes") return;
+    state.manual.products = products;
     renderManualProducts();
   } catch (e) {
+    if (gen !== manualSearchGeneration) return;
     console.error(e);
     showToast("Error buscando productos");
   }
@@ -1239,6 +1302,11 @@ async function onProductInput() {
   }
 
   clearTimeout(manualSearchTimer);
+  if (state.manual.step === "colors" || state.manual.step === "sizes") {
+    state.manual.step = "search";
+    state.manual.product = null;
+    state.manual.variant = null;
+  }
   manualSearchTimer = setTimeout(() => runManualProductSearch(val), 300);
 }
 
@@ -1342,8 +1410,28 @@ async function refreshOrderUi() {
 
   const items = state.order.order_items || [];
   const qty = items.reduce((s, i) => s + (Number(i.quantity) || 0), 0);
-  const total = Number(state.order.total_amount) || 0;
-  els.orderSummary.textContent = `Pedido: ${qty} producto(s) · $${total.toLocaleString("es-AR")}`;
+
+  let breakdown = {
+    payable: Number(state.order.total_amount) || 0,
+    totalDiscount: 0,
+    itemPromos: new Map(),
+    itemOffers: new Map(),
+    promotions: [],
+  };
+  try {
+    breakdown = await computeOffersAndPromotionsForItems(items);
+  } catch (e) {
+    console.warn("PAU: no se pudieron calcular ofertas/promos", e);
+  }
+
+  const total = Number.isFinite(breakdown.payable)
+    ? breakdown.payable
+    : Number(state.order.total_amount) || 0;
+  const discountNote =
+    breakdown.totalDiscount > 0
+      ? ` · promo -$${breakdown.totalDiscount.toLocaleString("es-AR")}`
+      : "";
+  els.orderSummary.textContent = `Pedido: ${qty} producto(s) · $${total.toLocaleString("es-AR")}${discountNote}`;
 
   const canRemoveSaved = PAU_PERMISSIONS.ordersEdit;
   const orderStatus = normOrderStatus(state.order);
@@ -1371,6 +1459,12 @@ async function refreshOrderUi() {
       : (item.product_name || "Producto");
     const detailColor = isSpecial ? "Ajuste" : (item.color || "-");
     const detailSize = isSpecial ? "—" : `Talle ${item.size || "-"}`;
+    const promoText =
+      breakdown.itemPromos?.get(item.id) ||
+      (breakdown.itemOffers?.has(item.id) ? "Oferta" : "");
+    const promoBadge = promoText
+      ? `<span class="pau-item-promo">${escapeHtml(promoText)}</span>`
+      : "";
     const li = document.createElement("li");
     li.className = "pau-item-row";
     li.innerHTML = `
@@ -1379,6 +1473,7 @@ async function refreshOrderUi() {
         <span class="pau-item-detail">${escapeHtml(detailColor)}</span>
         <span class="pau-item-detail">${escapeHtml(detailSize)}</span>
         <span class="pau-item-qty">x${item.quantity}</span>
+        ${promoBadge}
       </div>
       ${
         removable
@@ -1418,7 +1513,7 @@ async function handleCloseOrderWithPayment(paymentMethod) {
     await closeOrder(state.order.id, paymentMethod);
     els.closeActionDialog.close();
     showToast("Pedido cerrado");
-    await refreshOrderUi();
+    goToCustomerSearchLanding();
   } catch (err) {
     console.error(err);
     alert(err.message || "No se pudo cerrar el pedido.");
@@ -1487,8 +1582,11 @@ async function handleAddToOrder() {
     }
 
     state.draft = [];
+    resetManualPicker();
+    els.productInput.value = "";
     saveSession();
-    goToCustomerSearchLanding();
+    await refreshOrderUi();
+    focusScanInput();
   } catch (err) {
     console.error(err);
     const msg = err?.message || "No se pudieron agregar los productos.";
@@ -1695,6 +1793,7 @@ els.productInput.addEventListener("keydown", (e) => {
 
 els.manualToggle.addEventListener("click", () => setManualMode(!state.manualMode));
 els.manualBack.addEventListener("click", manualGoBack);
+els.manualClearPicks.addEventListener("click", clearManualPending);
 els.manualAddPicks.addEventListener("click", flushManualPendingToDraft);
 els.addBtn.addEventListener("click", handleAddToOrder);
 els.copyOrderBtn?.addEventListener("click", () => void handleCopyOrder());

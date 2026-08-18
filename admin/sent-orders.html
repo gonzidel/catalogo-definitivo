@@ -12,10 +12,30 @@
         window.skipPanelRedirect = true;
     </script>
     <style>
+        /* Evita que padding/ancho estiren la página (causa del “sale a un costado”) */
+        .sent-orders-container,
+        .sent-orders-header,
+        .search-container,
+        .search-input,
+        .modal,
+        .modal-content,
+        .order-modal,
+        .order-modal-content,
+        .customer-card,
+        .order-date-item {
+            box-sizing: border-box;
+        }
+
         .sent-orders-container {
             max-width: 1200px;
             margin: 0 auto;
             padding: 16px;
+            width: 100%;
+        }
+
+        .search-input {
+            max-width: 100%;
+            box-sizing: border-box;
         }
 
         .sent-orders-header {
@@ -32,6 +52,20 @@
         .sent-orders-header h1 {
             font-size: 22px;
             margin: 0;
+        }
+
+        .sent-orders-header-nav {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            justify-content: flex-end;
+        }
+
+        .order-card-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 8px;
+            flex-wrap: wrap;
         }
 
         .search-container {
@@ -296,6 +330,69 @@
             color: #666;
         }
 
+        .modal-customer-meta {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px 12px;
+        }
+
+        .modal-customer-meta__item {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            min-width: 0;
+        }
+
+        .modal-customer-meta__item--full {
+            grid-column: 1 / -1;
+        }
+
+        .modal-customer-meta__label {
+            font-size: 11px;
+            font-weight: 600;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 0.02em;
+        }
+
+        .modal-customer-meta__value {
+            font-size: 14px;
+            color: #333;
+            font-weight: 600;
+            word-break: break-word;
+        }
+
+        .transport-section {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid #e5e7eb;
+        }
+
+        .transport-section__label {
+            display: block;
+            margin-bottom: 6px;
+            font-size: 13px;
+            font-weight: 700;
+            color: #444;
+        }
+
+        .transport-select {
+            width: 100%;
+            padding: 8px 10px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+            background: #fff;
+        }
+
+        .order-date-item-header-main {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            min-width: 0;
+            flex: 1;
+        }
+
         .orders-list {
             display: flex;
             flex-direction: column;
@@ -340,11 +437,14 @@
         }
 
         .order-expand-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
             margin-left: 8px;
             font-size: 12px;
             color: #CD844D;
             transition: transform 0.2s;
-            display: inline-block;
         }
 
         .order-date-item.expanded .order-expand-icon {
@@ -361,6 +461,15 @@
             color: #666;
             font-size: 14px;
             margin-top: 8px;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: baseline;
+            gap: 6px;
+        }
+
+        .order-total-products {
+            color: #888;
+            font-size: 13px;
         }
 
         .order-items-detail {
@@ -376,6 +485,7 @@
 
         .order-item-detail {
             display: flex;
+            align-items: center;
             gap: 12px;
             padding: 12px;
             background: #f8f9fa;
@@ -397,6 +507,7 @@
 
         .order-item-detail-info {
             flex: 1;
+            min-width: 0;
         }
 
         .order-item-detail-name {
@@ -406,16 +517,37 @@
             color: #333;
         }
 
+        .order-item-detail-missing-tag {
+            color: #dc3545;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
         .order-item-detail-meta {
             font-size: 12px;
             color: #666;
-            margin-bottom: 4px;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .order-item-detail-sep {
+            opacity: 0.55;
+        }
+
+        .order-item-detail-side {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-shrink: 0;
         }
 
         .order-item-detail-price {
             font-weight: 600;
             font-size: 14px;
             color: #CD844D;
+            white-space: nowrap;
         }
 
         .order-item-detail-quantity {
@@ -575,12 +707,8 @@
 
         .order-card-left {
             flex: 1;
-        }
-
-        .order-card-right {
-            display: flex;
-            flex-direction: column;
-            align-items: flex-end;
+            min-width: 0;
+            width: 100%;
         }
 
         /* Modal para crear/editar pedido */
@@ -690,6 +818,78 @@
             padding: 20px 24px;
             border-top: 1px solid #e9ecef;
             background: #f8f9fa;
+        }
+
+        .label-name-options {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .label-name-option {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            width: 100%;
+            padding: 12px 14px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            background: #fff;
+            cursor: pointer;
+            text-align: left;
+            transition: border-color 0.15s, background 0.15s;
+        }
+
+        .label-name-option:hover {
+            border-color: #bdbdbd;
+            background: #fafafa;
+        }
+
+        .label-name-option.is-selected {
+            border-color: #2e7d32;
+            background: #e8f5e9;
+        }
+
+        .label-name-option-num {
+            flex-shrink: 0;
+            min-width: 32px;
+            height: 32px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 8px;
+            background: #eee;
+            color: #333;
+            font-weight: 700;
+            font-size: 14px;
+        }
+
+        .label-name-option.is-selected .label-name-option-num {
+            background: #2e7d32;
+            color: #fff;
+        }
+
+        .label-name-option-body {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            min-width: 0;
+        }
+
+        .label-name-option-body strong {
+            font-size: 15px;
+            color: #222;
+            word-break: break-word;
+        }
+
+        .label-name-option-tag {
+            font-size: 12px;
+            color: #666;
+        }
+
+        .label-name-option-dni {
+            font-size: 12px;
+            color: #555;
         }
 
         .customer-result-item,
@@ -851,6 +1051,406 @@
             from { opacity: 0; transform: translateY(8px); }
             to   { opacity: 1; transform: translateY(0); }
         }
+
+        /*
+         * Mobile AL FINAL: las reglas base de .modal/.modal-content están arriba;
+         * si el @media va antes, el desktop las pisa y la card “se sale” del teléfono.
+         */
+        @media (max-width: 767px) {
+            html,
+            body {
+                width: 100%;
+                max-width: 100%;
+                overflow-x: hidden;
+                padding-bottom: 0 !important;
+                background: #f3f4f6;
+            }
+
+            .sent-orders-container {
+                width: 100%;
+                max-width: 100%;
+                margin: 0;
+                padding: 10px;
+                overflow-x: hidden;
+            }
+
+            .sent-orders-header {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 10px;
+                margin-bottom: 12px;
+                padding: 12px;
+                width: 100%;
+            }
+
+            .sent-orders-header h1 {
+                font-size: 1.1rem;
+            }
+
+            .sent-orders-header-nav {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 8px;
+                width: 100%;
+            }
+
+            .sent-orders-header-nav .btn {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 100%;
+                min-height: 40px;
+                margin: 0 !important;
+                padding: 8px 6px;
+                font-size: 0.78rem;
+                box-sizing: border-box;
+            }
+
+            .search-container {
+                width: 100%;
+                max-width: 100%;
+                margin-bottom: 12px;
+                padding: 10px;
+                overflow: hidden;
+            }
+
+            .search-input {
+                display: block;
+                width: 100% !important;
+                max-width: 100% !important;
+                min-width: 0;
+                padding: 10px 12px;
+                font-size: 16px;
+                box-sizing: border-box !important;
+            }
+
+            .search-btn {
+                width: 100%;
+                min-height: 42px;
+            }
+
+            .customers-grid {
+                grid-template-columns: 1fr !important;
+                gap: 10px;
+                width: 100%;
+            }
+
+            .customer-card {
+                width: 100%;
+                max-width: 100%;
+                padding: 12px;
+            }
+
+            .customer-card:hover {
+                transform: none;
+            }
+
+            /* Modal cliente: sheet a todo el teléfono, sin overflow lateral */
+            .modal {
+                width: 100vw !important;
+                max-width: 100vw !important;
+                left: 0 !important;
+                right: 0 !important;
+                overflow-x: hidden !important;
+            }
+
+            .modal.active {
+                display: block !important;
+                padding: 0 !important;
+                align-items: stretch !important;
+                justify-content: stretch !important;
+            }
+
+            .modal-content {
+                width: 100% !important;
+                max-width: 100% !important;
+                min-width: 0 !important;
+                height: 100dvh !important;
+                max-height: 100dvh !important;
+                margin: 0 !important;
+                border-radius: 0 !important;
+                padding: 12px !important;
+                box-sizing: border-box !important;
+                overflow-x: hidden !important;
+                overflow-y: auto !important;
+            }
+
+            .modal-header {
+                position: sticky;
+                top: 0;
+                z-index: 2;
+                background: #fff;
+                margin: -12px -12px 10px;
+                padding: 10px 12px;
+                border-bottom: 1px solid #eee;
+                gap: 8px;
+                width: auto;
+            }
+
+            .modal-header h2 {
+                font-size: 0.95rem;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                min-width: 0;
+            }
+
+            .modal-close {
+                width: 36px;
+                height: 36px;
+                flex-shrink: 0;
+            }
+
+            .modal-customer-info {
+                width: 100%;
+                max-width: 100%;
+                padding: 10px;
+                margin-bottom: 10px;
+                overflow: hidden;
+            }
+
+            .modal-customer-meta {
+                grid-template-columns: 1fr 1fr;
+                gap: 6px 8px;
+            }
+
+            .modal-customer-meta__value {
+                font-size: 0.8rem;
+            }
+
+            .transport-select {
+                width: 100% !important;
+                max-width: 100% !important;
+                box-sizing: border-box !important;
+                font-size: 16px;
+                min-height: 40px;
+            }
+
+            .orders-list {
+                width: 100%;
+                gap: 8px;
+            }
+
+            .order-date-item {
+                width: 100%;
+                max-width: 100%;
+                padding: 10px;
+                overflow: hidden;
+            }
+
+            .order-card-layout {
+                flex-direction: column;
+                gap: 8px;
+                width: 100%;
+            }
+
+            .order-card-left {
+                width: 100%;
+                max-width: 100%;
+                min-width: 0;
+            }
+
+            /* Mobile: sin rótulos / ticket / facturar */
+            .order-action--desktop-only {
+                display: none !important;
+            }
+
+            .order-date-item-header {
+                width: 100%;
+                gap: 10px;
+                margin-bottom: 4px;
+                align-items: center;
+                min-height: 48px;
+                padding: 2px 0;
+            }
+
+            .order-expand-icon {
+                width: 44px;
+                height: 44px;
+                margin: 0;
+                font-size: 1.05rem;
+                color: #c2410c;
+                background: #fff7ed;
+                border: 1px solid #fdba74;
+                border-radius: 10px;
+            }
+
+            .order-number {
+                font-size: 0.9rem;
+            }
+
+            .order-date {
+                font-size: 0.72rem;
+                font-weight: 500;
+                color: #666;
+            }
+
+            .order-total {
+                font-size: 0.8rem;
+            }
+
+            .order-card-actions {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 8px;
+                width: 100%;
+                margin-top: 8px;
+            }
+
+            .order-card-actions .modify-order-btn,
+            .order-card-actions .devolucion-btn {
+                width: 100% !important;
+                max-width: 100% !important;
+                min-height: 42px;
+                margin: 0 !important;
+                padding: 8px 6px !important;
+                font-size: 0.8rem !important;
+                box-sizing: border-box !important;
+            }
+
+            /* Productos desplegados: thumbs chicos + fila compacta */
+            .order-items-detail {
+                margin-top: 10px;
+                padding-top: 10px;
+            }
+
+            .order-item-detail {
+                gap: 8px;
+                padding: 8px;
+                margin-bottom: 6px;
+            }
+
+            .order-item-detail-image {
+                width: 44px;
+                height: 44px;
+                border-radius: 6px;
+            }
+
+            .order-item-detail-name {
+                font-size: 0.82rem;
+                margin-bottom: 2px;
+                line-height: 1.2;
+            }
+
+            .order-item-detail-meta {
+                font-size: 0.72rem;
+                gap: 3px;
+                line-height: 1.25;
+            }
+
+            .order-item-detail-price {
+                font-size: 0.8rem;
+            }
+
+            .order-item-detail-side {
+                gap: 4px;
+                flex-direction: column;
+                align-items: flex-end;
+            }
+
+            .order-item-detail-side .delete-item-btn {
+                min-width: 32px;
+                min-height: 32px;
+                padding: 4px;
+            }
+
+            .order-items-summary {
+                margin-top: 8px;
+                padding-top: 8px;
+                font-size: 0.82rem;
+            }
+
+            /* Modales crear pedido / cliente */
+            .order-modal {
+                padding: 0 !important;
+                width: 100vw !important;
+                max-width: 100vw !important;
+                overflow-x: hidden !important;
+            }
+
+            .order-modal.active {
+                display: block !important;
+                align-items: stretch !important;
+            }
+
+            .order-modal-content {
+                width: 100% !important;
+                max-width: 100% !important;
+                min-width: 0 !important;
+                height: 100dvh !important;
+                max-height: 100dvh !important;
+                margin: 0 !important;
+                border-radius: 0 !important;
+                box-sizing: border-box !important;
+                overflow-x: hidden !important;
+            }
+
+            .order-modal-header {
+                padding: 12px;
+            }
+
+            .order-modal-header h2 {
+                font-size: 1rem;
+            }
+
+            .order-modal-body {
+                padding: 12px;
+                overflow-x: hidden;
+            }
+
+            .order-modal-footer {
+                flex-direction: column-reverse;
+                gap: 8px;
+                padding: 12px;
+            }
+
+            .order-modal-footer .btn {
+                width: 100%;
+                min-height: 44px;
+            }
+
+            .sent-order-customer-pick {
+                flex-direction: column !important;
+                gap: 10px !important;
+                width: 100%;
+            }
+
+            .sent-order-create-customer-wrap label {
+                display: none;
+            }
+
+            #create-customer-btn {
+                width: 100%;
+                min-height: 42px;
+            }
+
+            .sent-order-extras-grid,
+            .sent-order-form-grid-2 {
+                grid-template-columns: 1fr !important;
+                gap: 12px !important;
+                width: 100%;
+            }
+
+            .product-search-row {
+                width: 100%;
+                max-width: 100%;
+            }
+
+            .product-search-row #product-search {
+                width: 100% !important;
+                max-width: 100% !important;
+                min-width: 0 !important;
+                box-sizing: border-box !important;
+            }
+
+            .invoice-error-popover {
+                left: 8px !important;
+                right: 8px !important;
+                width: auto !important;
+                max-width: none !important;
+                min-width: 0 !important;
+            }
+        }
     </style>
     <script src="../config.local.js"></script>
 </head>
@@ -859,14 +1459,15 @@
     <div class="sent-orders-container">
         <div class="sent-orders-header">
             <h1>📦 Pedidos Enviados</h1>
-            <div>
-                <a href="orders.html" class="btn btn-secondary">← Gestión de Pedidos</a>
-                <a href="index.html" class="btn btn-secondary" style="margin-left: 10px;">← Panel Admin</a>
+            <div class="sent-orders-header-nav">
+                <a href="orders.html" class="btn btn-secondary">← Pedidos</a>
+                <a href="index.html" class="btn btn-secondary">← Admin</a>
             </div>
         </div>
 
         <div class="search-container">
-            <input type="text" id="search-input" class="search-input" placeholder="Buscar por nombre de cliente..."
+            <input type="text" id="search-input" class="search-input"
+                placeholder="Buscar cliente con pedidos enviados..."
                 autocomplete="off" />
             <div class="search-actions">
                 <button id="search-btn" class="search-btn" type="button">Buscar</button>
@@ -877,7 +1478,7 @@
         <div id="customers-content">
             <div class="empty-state">
                 <h2>Buscá un cliente</h2>
-                <p>Escribí un nombre y presioná Enter, Buscar o seleccioná una sugerencia.</p>
+                <p>Solo aparecen clientes que ya tienen pedidos enviados. Escribí un nombre y elegí una sugerencia.</p>
             </div>
         </div>
     </div>
@@ -909,8 +1510,8 @@
                 <!-- Selección de Cliente -->
                 <div class="order-form-section">
                     <h3>👤 Cliente</h3>
-                    <div style="display: flex; gap: 12px; margin-bottom: 16px;">
-                        <div style="flex: 1;">
+                    <div class="sent-order-customer-pick" style="display: flex; gap: 12px; margin-bottom: 16px;">
+                        <div style="flex: 1; min-width: 0;">
                             <label for="customer-search">Buscar Cliente:</label>
                             <input type="text" id="customer-search" placeholder="Buscar por nombre, DNI, email..."
                                 style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
@@ -918,7 +1519,7 @@
                                 style="max-height: 200px; overflow-y: auto; border: 1px solid #ddd; border-radius: 6px; margin-top: 8px; display: none; background: white; position: absolute; z-index: 1000; width: 100%; max-width: 400px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
                             </div>
                         </div>
-                        <div>
+                        <div class="sent-order-create-customer-wrap">
                             <label>&nbsp;</label>
                             <button id="create-customer-btn" class="btn"
                                 style="background: #17a2b8; color: white; padding: 8px 16px;">➕ Crear Cliente</button>
@@ -935,7 +1536,7 @@
                 <!-- Valores Extra del Pedido -->
                 <div class="order-form-section">
                     <h3>💰 Valores Extra</h3>
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+                    <div class="sent-order-extras-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
                         <div>
                             <label for="shipping-amount">🚚 Envío ($):</label>
                             <input type="number" id="shipping-amount" placeholder="Ej: 4000" min="0" step="0.01"
@@ -1008,7 +1609,7 @@
             </div>
             <div class="order-modal-body">
                 <form id="customer-form" style="display: flex; flex-direction: column; gap: 16px;">
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                    <div class="sent-order-form-grid-2" style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
                         <div>
                             <label for="customer-first-name">Nombre <span style="color: red;">*</span>:</label>
                             <input type="text" id="customer-first-name" required placeholder="Ej: Juan"
@@ -1043,7 +1644,7 @@
                             autocomplete="off"
                             style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;">
                     </div>
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                    <div class="sent-order-form-grid-2" style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
                         <div style="position: relative;">
                             <label for="customer-province">Provincia <span style="color: red;">*</span>:</label>
                             <input type="text" id="customer-province" required
@@ -1072,6 +1673,25 @@
                 <button id="cancel-customer-btn" class="btn btn-secondary">Cancelar</button>
                 <button id="save-customer-btn" class="btn" style="background: #28a745; color: white;">Guardar
                     Cliente</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal para elegir nombre del rótulo -->
+    <div id="label-name-modal" class="order-modal" style="display: none; z-index: 26000;">
+        <div class="order-modal-content" style="max-width: 520px;">
+            <div class="order-modal-header">
+                <h2>🏷️ Nombre para el rótulo</h2>
+                <button type="button" id="close-label-name-modal" class="order-modal-close">&times;</button>
+            </div>
+            <div class="order-modal-body">
+                <p id="label-name-modal-subtitle" style="margin: 0 0 8px; color: #666; font-size: 14px;"></p>
+                <p style="margin: 0 0 16px; color: #444; font-size: 14px;">Elegí qué nombre imprimir en el rótulo. El botón verde indica la selección actual.</p>
+                <div id="label-name-options" class="label-name-options"></div>
+            </div>
+            <div class="order-modal-footer">
+                <button type="button" id="cancel-label-name-btn" class="btn btn-secondary">Cancelar</button>
+                <button type="button" id="confirm-label-name-btn" class="btn" style="background: #28a745; color: white;">Continuar</button>
             </div>
         </div>
     </div>

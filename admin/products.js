@@ -466,6 +466,178 @@ function formatARS(value) {
   return `$${s}`;
 }
 
+/** Fecha local YYYY-MM-DD (evita desfase UTC en ofertas). */
+function todayISODateLocal() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+const OFFER_OPEN_END_DATE = "2099-12-31";
+
+function isOfferCurrentlyActive(offer, today = todayISODateLocal()) {
+  if (!offer) return false;
+  if (offer.status !== "active") return false;
+  const start = offer.start_date || "";
+  const end = offer.end_date || "";
+  return (!start || start <= today) && (!end || end >= today);
+}
+
+/**
+ * Carga la oferta más reciente por color para un producto.
+ * @returns {Promise<Map<string, { id, offer_price, status, start_date, end_date, active }>>}
+ */
+async function loadOffersByColor(productId) {
+  const map = new Map();
+  if (!productId) return map;
+  const { data, error } = await supabase
+    .from("color_price_offers")
+    .select("id, color, offer_price, status, start_date, end_date, created_at")
+    .eq("product_id", productId)
+    .order("created_at", { ascending: false });
+  if (error) {
+    console.warn("Error cargando ofertas del producto:", error);
+    return map;
+  }
+  const today = todayISODateLocal();
+  (data || []).forEach((row) => {
+    const colorKey = String(row.color || "").trim();
+    if (!colorKey || map.has(colorKey)) return;
+    map.set(colorKey, {
+      id: row.id,
+      offer_price: row.offer_price,
+      status: row.status,
+      start_date: row.start_date,
+      end_date: row.end_date,
+      active: isOfferCurrentlyActive(row, today),
+    });
+  });
+  return map;
+}
+
+/**
+ * Upsert / desactiva oferta por color según el checkbox de la fila.
+ * El precio base (recomendado) se conserva en product_variants.price;
+ * el catálogo usa PrecioOferta cuando la oferta está activa.
+ */
+async function syncColorOffer(productId, color, offerActive, offerPriceRaw) {
+  const colorKey = String(color || "").trim();
+  if (!productId || !colorKey) {
+    return { ok: true };
+  }
+
+  const offerPrice = parseARS(offerPriceRaw || "0");
+  const { data: existing, error: findErr } = await supabase
+    .from("color_price_offers")
+    .select("id, status, offer_price, start_date, end_date")
+    .eq("product_id", productId)
+    .eq("color", colorKey)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (findErr && findErr.code !== "PGRST116") {
+    return { ok: false, error: findErr.message };
+  }
+
+  if (offerActive) {
+    if (offerPrice <= 0) {
+      return {
+        ok: false,
+        error: `La oferta de "${colorKey}" está activa pero el precio de oferta debe ser mayor a 0.`,
+      };
+    }
+    const today = todayISODateLocal();
+    const payload = {
+      offer_price: offerPrice,
+      status: "active",
+      start_date:
+        existing?.start_date && existing.start_date <= today
+          ? existing.start_date
+          : today,
+      end_date:
+        existing?.end_date && existing.end_date >= today
+          ? existing.end_date
+          : OFFER_OPEN_END_DATE,
+    };
+
+    if (existing?.id) {
+      const { error } = await supabase
+        .from("color_price_offers")
+        .update(payload)
+        .eq("id", existing.id);
+      if (error) return { ok: false, error: error.message };
+    } else {
+      const { error } = await supabase.from("color_price_offers").insert({
+        product_id: productId,
+        color: colorKey,
+        ...payload,
+      });
+      if (error) return { ok: false, error: error.message };
+    }
+    return { ok: true };
+  }
+
+  // Checkbox off: desactivar oferta activa (si existe)
+  if (existing?.id && existing.status === "active") {
+    const { error } = await supabase
+      .from("color_price_offers")
+      .update({ status: "inactive" })
+      .eq("id", existing.id);
+    if (error) return { ok: false, error: error.message };
+  }
+  return { ok: true };
+}
+
+/** Desactiva ofertas activas de colores que ya no están en el producto. */
+async function deactivateOrphanOffers(productId, keptColors) {
+  if (!productId) return;
+  const kept = new Set(
+    (keptColors || []).map((c) => String(c || "").trim()).filter(Boolean)
+  );
+  const { data: offers, error } = await supabase
+    .from("color_price_offers")
+    .select("id, color, status")
+    .eq("product_id", productId)
+    .eq("status", "active");
+  if (error || !offers?.length) return;
+
+  const orphanIds = offers
+    .filter((o) => !kept.has(String(o.color || "").trim()))
+    .map((o) => o.id);
+  if (!orphanIds.length) return;
+
+  const { error: updErr } = await supabase
+    .from("color_price_offers")
+    .update({ status: "inactive" })
+    .in("id", orphanIds);
+  if (updErr) {
+    console.warn("No se pudieron desactivar ofertas huérfanas:", updErr);
+  }
+}
+
+function bindOfferControls(tr) {
+  const offerActiveEl = tr.querySelector(".v-offer-active");
+  const offerPriceEl = tr.querySelector(".v-offer-price");
+  if (!offerActiveEl || !offerPriceEl) return;
+
+  attachPriceFormatter(offerPriceEl);
+
+  const syncOfferUi = () => {
+    const on = !!offerActiveEl.checked;
+    offerPriceEl.disabled = !on;
+    offerPriceEl.style.opacity = on ? "1" : "0.55";
+    offerPriceEl.title = on
+      ? "Precio que verá el cliente en el catálogo"
+      : "Activá el check para usar precio de oferta";
+  };
+
+  offerActiveEl.addEventListener("change", syncOfferUi);
+  syncOfferUi();
+}
+
 /**
  * Helpers para imágenes: generan URL optimizada desde public_id si existe, sino usan url
  */
@@ -985,6 +1157,73 @@ function calculateRecommendedPrice(cost, percentage, logisticAmount) {
   
   // Redondear hacia arriba al múltiplo de 100 más cercano
   return roundToNearest100(calculated);
+}
+
+/** Inversa: precio_venta = costo * (1 + %/100) + envío → costo = (precio - envío) / (1 + %/100) */
+function calculateCostFromSalePrice(salePrice, percentage, logisticAmount) {
+  const priceNum = Number(parseARS(salePrice)) || 0;
+  const percentageNum = Number(percentage) || 0;
+  const logisticNum = Number(parseARS(logisticAmount)) || 0;
+  if (priceNum <= 0) return 0;
+  const factor = 1 + percentageNum / 100;
+  if (factor <= 0) return 0;
+  const raw = (priceNum - logisticNum) / factor;
+  if (!Number.isFinite(raw) || raw <= 0) return 0;
+  return Math.round(raw);
+}
+
+function getProductPricingInputs() {
+  const percentage = parseFloat(document.getElementById("price-percentage")?.value || "30") || 30;
+  const logisticAmount = document.getElementById("logistic-amount")?.value || "500";
+  return { percentage, logisticAmount };
+}
+
+function markCostAsEstimated(costEl, estimated) {
+  if (!costEl) return;
+  if (estimated) {
+    costEl.dataset.autoFromPrice = "true";
+    costEl.title = "Costo estimado desde el precio de venta, el % de ganancia y el monto de envío";
+  } else {
+    delete costEl.dataset.autoFromPrice;
+    costEl.removeAttribute("title");
+  }
+}
+
+function isCostEstimatedFromPrice(costEl) {
+  return costEl?.dataset?.autoFromPrice === "true";
+}
+
+function getFirstVariantSalePrice() {
+  const rows = variantsTable?.querySelectorAll("tr") || [];
+  for (const row of rows) {
+    const price = parseARS(row.querySelector(".v-price")?.value || "0");
+    if (price > 0) return price;
+  }
+  return 0;
+}
+
+function applyCostToAllVariantRows(costFormatted, estimated) {
+  variantsTable?.querySelectorAll("tr").forEach((row) => {
+    const costEl = row.querySelector(".v-cost");
+    if (!costEl) return;
+    costEl.value = costFormatted;
+    markCostAsEstimated(costEl, estimated);
+  });
+}
+
+function fillEstimatedCostFromSalePrice({ force = false } = {}) {
+  if (!canViewCostFields) return 0;
+  const firstCostEl = variantsTable?.querySelector("tr .v-cost");
+  const currentCost = parseARS(firstCostEl?.value || "0");
+  const isEstimated = isCostEstimatedFromPrice(firstCostEl);
+  if (!force && currentCost > 0 && !isEstimated) return currentCost;
+
+  const { percentage, logisticAmount } = getProductPricingInputs();
+  const derived = calculateCostFromSalePrice(getFirstVariantSalePrice(), percentage, logisticAmount);
+  if (derived > 0) {
+    applyCostToAllVariantRows(formatARS(derived), true);
+  }
+  return derived;
 }
 
 // ========== FUNCIÓN PARA ASEGURAR VARIANT_ID (SOLO COLOR) ==========
@@ -2949,6 +3188,24 @@ function addVariantRow(prefill = {}) {
     <td><input class="v-price" type="text" inputmode="numeric" value="${
       prefill.price ?? 0
     }" style="padding:4px;font-size:11px" autocomplete="off"/></td>
+    <td>
+      <div style="display:flex;gap:4px;align-items:center;flex-wrap:nowrap;">
+        <label style="display:flex;align-items:center;gap:3px;margin:0;font-size:10px;white-space:nowrap;cursor:pointer;" title="Al activar, el catálogo usa este precio en lugar del recomendado">
+          <input class="v-offer-active" type="checkbox" ${
+            prefill.offerActive ? "checked" : ""
+          } />
+          Oferta
+        </label>
+        <input class="v-offer-price" type="text" inputmode="numeric" value="${
+          prefill.offerPrice != null && prefill.offerPrice !== ""
+            ? prefill.offerPrice
+            : ""
+        }" placeholder="$0" style="padding:4px;font-size:11px;min-width:72px;flex:1;" autocomplete="off" ${
+          prefill.offerActive ? "" : "disabled"
+        }/>
+      </div>
+      <small style="color:#666;font-size:9px;line-height:1.2;display:block;margin-top:2px">Reemplaza el precio en catálogo</small>
+    </td>
     <td style="text-align:center;"><input class="v-active" type="checkbox" ${
       prefill.active === false ? "" : "checked"
     }/></td>
@@ -3485,6 +3742,9 @@ function addVariantRow(prefill = {}) {
   // Price formatter
   const priceEl = tr.querySelector(".v-price");
   if (priceEl) attachPriceFormatter(priceEl);
+
+  // Precio de oferta (+ check que lo activa en catálogo)
+  bindOfferControls(tr);
   
   // Función para recalcular precio recomendado
   const recalculatePrice = () => {
@@ -3522,6 +3782,7 @@ function addVariantRow(prefill = {}) {
       // Sincronizar costo
       if (otherCostEl && costValue) {
         otherCostEl.value = costValue;
+        markCostAsEstimated(otherCostEl, isCostEstimatedFromPrice(sourceCostEl));
       }
       
       // Sincronizar precio siempre que se especifique
@@ -3537,6 +3798,7 @@ function addVariantRow(prefill = {}) {
   
   // Event listeners para recalcular precio
   costEl?.addEventListener("input", () => {
+    markCostAsEstimated(costEl, false);
     const calculatedPrice = recalculatePrice();
     // Sincronizar costo y precio recalculado con todas las variantes
     if (calculatedPrice) {
@@ -3546,6 +3808,7 @@ function addVariantRow(prefill = {}) {
     }
   });
   costEl?.addEventListener("blur", () => {
+    if (!isCostEstimatedFromPrice(costEl)) markCostAsEstimated(costEl, false);
     const calculatedPrice = recalculatePrice();
     // Sincronizar costo y precio recalculado con todas las variantes
     if (calculatedPrice) {
@@ -3557,10 +3820,13 @@ function addVariantRow(prefill = {}) {
   
   // Marcar precio como editado manualmente cuando el usuario lo modifica
   priceEl?.addEventListener("input", () => {
-    // Si el usuario está editando, desmarcar como auto-calculado
-    // pero solo si realmente está cambiando el valor
     const currentValue = parseARS(priceEl.value || "0");
     const cost = parseARS(costEl?.value || "0");
+    if (canViewCostFields && (isCostEstimatedFromPrice(costEl) || cost <= 0) && currentValue > 0) {
+      fillEstimatedCostFromSalePrice({ force: true });
+      syncCostAndPrice(costEl, priceEl);
+      return;
+    }
     if (cost > 0) {
       const percentage = parseFloat(document.getElementById("price-percentage")?.value || "30");
       const logisticAmount = document.getElementById("logistic-amount")?.value || "500";
@@ -3785,6 +4051,11 @@ function addVariantRow(prefill = {}) {
 
   variantsTable.appendChild(tr);
   applyCostVisibilityToRow(tr);
+  const sourceCostEl = variantsTable.querySelector("tr .v-cost");
+  const newCostEl = tr.querySelector(".v-cost");
+  if (sourceCostEl && newCostEl && sourceCostEl !== newCostEl && isCostEstimatedFromPrice(sourceCostEl)) {
+    markCostAsEstimated(newCostEl, true);
+  }
   return tr; // Retornar la fila para poder llamar loadVariantImages después
 }
 
@@ -3808,6 +4079,13 @@ function ensureDefaultVariant() {
 // Función para recalcular todos los precios recomendados
 function recalculateAllRecommendedPrices() {
   if (!canViewCostFields) return;
+  const firstCostEl = variantsTable.querySelector("tr .v-cost");
+  const currentCost = parseARS(firstCostEl?.value || "0");
+  if (isCostEstimatedFromPrice(firstCostEl) || currentCost <= 0) {
+    fillEstimatedCostFromSalePrice({ force: true });
+    return;
+  }
+
   const percentage = parseFloat(document.getElementById("price-percentage")?.value || "30");
   const logisticAmount = document.getElementById("logistic-amount")?.value || "500";
   
@@ -5664,12 +5942,23 @@ async function loadProductById(id) {
     }
   }
   
+  // Ofertas por color (color_price_offers) — precio efectivo en catálogo
+  const offersByColor = await loadOffersByColor(id);
+
   // Agregar stock_qty a cada variante (para compatibilidad con estructura antigua)
   variants.forEach(v => {
     v.stock_qty = stockMap.get(v.id) || 0;
     // Agregar talles desde variant_sizes si existen
     const sizesForVariant = variantSizesMap.get(v.id) || [];
     v.sizes = sizesForVariant;
+    const offer = offersByColor.get(String(v.color || "").trim());
+    if (offer) {
+      v.offerActive = offer.active;
+      v.offerPrice = offer.offer_price ? formatARS(offer.offer_price) : "";
+    } else {
+      v.offerActive = false;
+      v.offerPrice = "";
+    }
     console.log(`🔧 Variante ${v.id} (${v.color}): ${sizesForVariant.length} talles asignados:`, sizesForVariant);
   });
   
@@ -5741,6 +6030,7 @@ async function loadProductById(id) {
   }
   document.getElementById("name").value = productName;
   document.getElementById("description").value = prod.description || "";
+  clearDescriptionSpellResults();
   const validStatuses = ["active", "draft", "pending_stock", "missing_tags", "archived"];
   const statusToShow = (prod.status && validStatuses.includes(prod.status)) ? prod.status : "active";
   document.getElementById("status").value = statusToShow;
@@ -5784,7 +6074,13 @@ async function loadProductById(id) {
     const sizesData = v.sizes || [];
     console.log(`🔧 Cargando variante ${v.id} (${v.color}) con ${sizesData.length} talles:`, sizesData);
     const showCost = canViewCostFields && prod.cost;
-    const row = addVariantRow({ ...v, cost: showCost ? formatARS(prod.cost) : "", sizes: sizesData });
+    const row = addVariantRow({
+      ...v,
+      cost: showCost ? formatARS(prod.cost) : "",
+      sizes: sizesData,
+      offerActive: v.offerActive === true,
+      offerPrice: v.offerPrice || "",
+    });
     
     // Cargar imágenes desde DB después de crear la fila
     if (v.id) {
@@ -5798,12 +6094,20 @@ async function loadProductById(id) {
 
   // Verificar si los precios cargados coinciden con el cálculo esperado y marcarlos como auto-calculados
   if (canViewCostFields) {
-    const percentage = prod.price_percentage || 30;
-    const logisticAmount = prod.logistic_amount || 500;
-    const cost = prod.cost || 0;
-    
-    if (cost > 0) {
-      const expectedPrice = calculateRecommendedPrice(cost, percentage, logisticAmount);
+    const percentage = parseFloat(pricePercentageEl?.value || prod.price_percentage || 30);
+    const logisticAmount = logisticAmountEl?.value || prod.logistic_amount || 500;
+    const storedCost = Number(prod.cost) || 0;
+    const costIsEstimated = prod.cost_is_estimated === true || storedCost <= 0;
+
+    if (costIsEstimated) {
+      const derived = fillEstimatedCostFromSalePrice({ force: true });
+      if (derived > 0) {
+        variantsTable.querySelectorAll("tr .v-price").forEach((priceEl) => {
+          priceEl.dataset.autoCalculated = "false";
+        });
+      }
+    } else {
+      const expectedPrice = calculateRecommendedPrice(storedCost, percentage, logisticAmount);
       const rows = variantsTable.querySelectorAll("tr");
       rows.forEach((row) => {
         const priceEl = row.querySelector(".v-price");
@@ -5815,6 +6119,7 @@ async function loadProductById(id) {
             priceEl.dataset.autoCalculated = "false";
           }
         }
+        markCostAsEstimated(row.querySelector(".v-cost"), false);
       });
     }
   }
@@ -5823,7 +6128,10 @@ async function loadProductById(id) {
   ensureDefaultVariant();
 
   currentProductId = prod.id;
-  statusEl.textContent = `Producto cargado: ${prod.name}`;
+  const estimatedHint = canViewCostFields && isCostEstimatedFromPrice(variantsTable.querySelector("tr .v-cost"));
+  statusEl.textContent = estimatedHint
+    ? `Producto cargado: ${prod.name} (costo estimado desde precio de venta)`
+    : `Producto cargado: ${prod.name}`;
   updateCloneProductButtonVisibility();
 }
 
@@ -5847,6 +6155,7 @@ pNew.addEventListener("click", async () => {
   originalVariantIds = new Set();
   removedVariantIds = new Set();
   form.reset();
+  clearDescriptionSpellResults();
   
   // Restaurar categoría después de resetear
   if (categoryEl && currentCategory) {
@@ -5913,10 +6222,13 @@ async function cloneCurrentProductAsDraft() {
       const color = row.querySelector(".v-color")?.value?.trim() || "";
       const sizesText = row.querySelector(".v-sizes")?.value?.trim() || "";
       const cost = row.querySelector(".v-cost")?.value || "";
+      const costEstimated = isCostEstimatedFromPrice(row.querySelector(".v-cost"));
       const price = row.querySelector(".v-price")?.value || "0";
+      const offerActive = row.querySelector(".v-offer-active")?.checked === true;
+      const offerPrice = row.querySelector(".v-offer-price")?.value || "";
       const active = row.querySelector(".v-active")?.checked ?? true;
       if (!color) return null;
-      return { color, sizesText, cost, price, active };
+      return { color, sizesText, cost, costEstimated, price, offerActive, offerPrice, active };
     })
     .filter(Boolean);
 
@@ -5947,11 +6259,16 @@ async function cloneCurrentProductAsDraft() {
       color: variantData.color,
       cost: variantData.cost,
       price: variantData.price,
+      offerActive: variantData.offerActive === true,
+      offerPrice: variantData.offerPrice || "",
       active: variantData.active,
       skuBase: "",
       sku: "",
       images: [],
     });
+    if (variantData.costEstimated) {
+      markCostAsEstimated(row.querySelector(".v-cost"), true);
+    }
 
     const sizesInput = row.querySelector(".v-sizes");
     const generateBtn = row.querySelector(".sizes-generate");
@@ -6020,9 +6337,19 @@ async function saveProduct(shouldReset = true) {
   
   // Obtener costo de la primera variante (todas comparten el mismo costo del producto)
   const firstRow = variantsTable.querySelector("tr");
-  const costValue = firstRow ? parseARS(firstRow.querySelector(".v-cost")?.value || "0") : 0;
+  let costValue = firstRow ? parseARS(firstRow.querySelector(".v-cost")?.value || "0") : 0;
   const pricePercentageValue = parseFloat(document.getElementById("price-percentage")?.value || "30");
   const logisticAmountValue = parseARS(document.getElementById("logistic-amount")?.value || "500");
+  let costIsEstimated = isCostEstimatedFromPrice(firstRow?.querySelector(".v-cost"));
+  if (allowSensitiveProductPricing && costValue <= 0) {
+    costValue = calculateCostFromSalePrice(
+      getFirstVariantSalePrice(),
+      pricePercentageValue,
+      logisticAmountValue
+    );
+    costIsEstimated = costValue > 0;
+    if (costIsEstimated) applyCostToAllVariantRows(formatARS(costValue), true);
+  }
   
   // Normalizar handle (lowercase + slug)
   const handleRaw = (
@@ -6085,6 +6412,7 @@ async function saveProduct(shouldReset = true) {
     ...(allowSensitiveProductPricing
       ? {
           cost: costValue > 0 ? costValue : null,
+          cost_is_estimated: costValue > 0 ? !!costIsEstimated : false,
           price_percentage: pricePercentageValue || 30,
           logistic_amount: logisticAmountValue || 500,
         }
@@ -6336,7 +6664,31 @@ async function saveProduct(shouldReset = true) {
         console.warn(`⚠️ Verificación: No se encontraron talles en VSW(general) para variante ${finalVariantId} después de guardar`);
       }
     }
+
+    // Sincronizar precio de oferta por color (color_price_offers)
+    const offerActive = row.querySelector(".v-offer-active")?.checked === true;
+    const offerPriceValue = row.querySelector(".v-offer-price")?.value || "";
+    const offerSync = await syncColorOffer(
+      prodId,
+      color,
+      offerActive,
+      offerPriceValue
+    );
+    if (!offerSync.ok) {
+      statusEl.textContent = `Error en oferta de "${color}": ${offerSync.error}`;
+      statusEl.style.color = "#c00";
+      if (saveBtn) saveBtn.disabled = false;
+      if (preSaveBtn) preSaveBtn.disabled = false;
+      isSaving = false;
+      return;
+    }
   }
+
+  // Desactivar ofertas de colores que ya no existen en el producto
+  const keptColors = rows
+    .map((row) => row.querySelector(".v-color")?.value?.trim())
+    .filter(Boolean);
+  await deactivateOrphanOffers(prodId, keptColors);
 
   // Verificar que al menos una variante esté activa
   const activeRows = rows.filter(row => row.querySelector(".v-active")?.checked === true);
@@ -7462,3 +7814,178 @@ async function handleAutoTagsClick() {
 // Event listener para botón auto-tags
 const autoTagsBtn = document.getElementById("auto-tags-btn");
 autoTagsBtn?.addEventListener("click", handleAutoTagsClick);
+
+const DESC_SPELL_API = "https://api.languagetool.org/v2/check";
+const DESC_SPELL_SKIP_CATEGORIES = new Set(["STYLE", "REDUNDANCY", "WIKIPEDIA"]);
+let descSpellMatches = [];
+let descSpellTextSnapshot = "";
+
+function escapeSpellHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function getDescriptionSpellEls() {
+  return {
+    input: document.getElementById("description"),
+    btn: document.getElementById("desc-spell-btn"),
+    results: document.getElementById("desc-spell-results"),
+  };
+}
+
+function clearDescriptionSpellResults() {
+  descSpellMatches = [];
+  descSpellTextSnapshot = "";
+  const { results } = getDescriptionSpellEls();
+  if (results) {
+    results.hidden = true;
+    results.innerHTML = "";
+  }
+}
+
+function filterSpellMatches(matches) {
+  return (Array.isArray(matches) ? matches : []).filter((match) => {
+    const categoryId = match?.rule?.category?.id;
+    if (categoryId && DESC_SPELL_SKIP_CATEGORIES.has(categoryId)) return false;
+    return Number.isFinite(match?.offset) && Number.isFinite(match?.length) && match.length > 0;
+  });
+}
+
+function applySpellReplacement(offset, length, replacement) {
+  const { input } = getDescriptionSpellEls();
+  if (!input) return false;
+  const text = input.value;
+  if (offset < 0 || offset + length > text.length) return false;
+  input.value = text.slice(0, offset) + replacement + text.slice(offset + length);
+  const delta = replacement.length - length;
+  descSpellTextSnapshot = input.value;
+  descSpellMatches = descSpellMatches.filter((match) => {
+    if (match.offset === offset && match.length === length) return false;
+    if (match.offset + match.length <= offset) return true;
+    if (match.offset >= offset + length) {
+      match.offset += delta;
+      return true;
+    }
+    return false;
+  });
+  return true;
+}
+
+function renderDescriptionSpellResults() {
+  const { input, results } = getDescriptionSpellEls();
+  if (!results) return;
+
+  if (!descSpellMatches.length) {
+    results.hidden = false;
+    results.innerHTML = `<div class="desc-spell-ok">No se encontraron errores de ortografía.</div>`;
+    return;
+  }
+
+  const items = descSpellMatches.map((match, matchIndex) => {
+    const original = (input?.value || "").slice(match.offset, match.offset + match.length);
+    const message = match.message || match.shortMessage || "Posible error";
+    const replacements = (match.replacements || []).slice(0, 4);
+    const suggestions = replacements
+      .map((repl, replIndex) => {
+        const value = repl?.value ?? "";
+        if (!value) return "";
+        return `<button type="button" class="btn desc-spell-sug" data-spell-apply="${matchIndex}" data-repl="${replIndex}">${escapeSpellHtml(value)}</button>`;
+      })
+      .join("");
+    return `<div class="desc-spell-item" data-spell-focus="${matchIndex}">
+      <span class="desc-spell-word">${escapeSpellHtml(original)}</span>
+      <span class="desc-spell-msg">${escapeSpellHtml(message)}</span>
+      ${suggestions}
+    </div>`;
+  }).join("");
+
+  results.hidden = false;
+  results.innerHTML = items;
+}
+
+async function checkDescriptionSpelling() {
+  const { input, btn, results } = getDescriptionSpellEls();
+  if (!input || !btn) return;
+
+  const text = input.value.trim();
+  if (!text) {
+    if (results) {
+      results.hidden = false;
+      results.innerHTML = `<div class="desc-spell-err">Escribí una descripción para revisarla.</div>`;
+    }
+    return;
+  }
+
+  const originalLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Revisando…";
+  if (results) {
+    results.hidden = false;
+    results.innerHTML = `<div class="hint">Revisando ortografía en español…</div>`;
+  }
+
+  try {
+    const response = await fetch(DESC_SPELL_API, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
+      body: new URLSearchParams({
+        text: input.value,
+        language: "es",
+        enabledOnly: "false",
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(`LanguageTool respondió ${response.status}`);
+    }
+    const data = await response.json();
+    descSpellTextSnapshot = input.value;
+    descSpellMatches = filterSpellMatches(data.matches);
+    renderDescriptionSpellResults();
+  } catch (error) {
+    console.warn("Error en corrector de descripción:", error);
+    descSpellMatches = [];
+    if (results) {
+      results.hidden = false;
+      results.innerHTML = `<div class="desc-spell-err">No se pudo revisar ahora. Podés usar el corrector del navegador (clic derecho sobre la palabra subrayada).</div>`;
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalLabel;
+  }
+}
+
+function initDescriptionSpellChecker() {
+  const { input, btn, results } = getDescriptionSpellEls();
+  if (!input || !btn) return;
+
+  btn.addEventListener("click", checkDescriptionSpelling);
+  input.addEventListener("input", () => {
+    if (!results || results.hidden) return;
+    if (input.value !== descSpellTextSnapshot) clearDescriptionSpellResults();
+  });
+  results?.addEventListener("click", (event) => {
+    const applyBtn = event.target.closest("[data-spell-apply]");
+    if (applyBtn) {
+      const matchIndex = Number(applyBtn.dataset.spellApply);
+      const replIndex = Number(applyBtn.dataset.repl);
+      const match = descSpellMatches[matchIndex];
+      const replacement = match?.replacements?.[replIndex]?.value;
+      if (!match || replacement == null) return;
+      if (applySpellReplacement(match.offset, match.length, replacement)) {
+        renderDescriptionSpellResults();
+      }
+      return;
+    }
+    const item = event.target.closest("[data-spell-focus]");
+    if (!item) return;
+    const match = descSpellMatches[Number(item.dataset.spellFocus)];
+    if (!match) return;
+    input.focus();
+    input.setSelectionRange(match.offset, match.offset + match.length);
+  });
+}
+
+initDescriptionSpellChecker();

@@ -130,6 +130,20 @@ function center(text, width = TICKET_WIDTH) {
 }
 
 /**
+ * Detecta líneas de producto "absorbidas" por una oferta 2x1/2xMonto (precio_snapshot = 0
+ * porque su valor ya está representado en la línea sintética "N ofertas 2x..."). Estas líneas
+ * no deben imprimirse individualmente en el ticket para no mostrar "$0" junto a un producto real.
+ * @param {Object} item - Item devuelto por rpc_get_public_sale_details
+ * @returns {boolean}
+ */
+function isPromoAbsorbedTicketLine(item) {
+  const price = parseARSNumber(item.price ?? item.price_snapshot ?? 0);
+  if (price !== 0) return false;
+  const hasVariantInfo = Boolean(item.color) || Boolean(item.size) || (item.sku && item.sku !== 'EXTRA-ESPECIAL');
+  return hasVariantInfo && Number(item.qty) > 0;
+}
+
+/**
  * Construye el ticket en formato ESC/POS a partir de los datos de la venta
  * @param {Object} saleDetails - Detalles de la venta
  * @param {Object} customer - Datos del cliente (opcional)
@@ -138,7 +152,7 @@ function center(text, width = TICKET_WIDTH) {
  */
 function buildEscposTicket(saleDetails, customer, finalTotal) {
   const sale = saleDetails.sale;
-  const items = saleDetails.items || [];
+  const items = (saleDetails.items || []).filter(item => !isPromoAbsorbedTicketLine(item));
 
   // Formatear fecha y hora
   const saleDate = new Date(sale.created_at);
@@ -478,6 +492,13 @@ const reservasModal = document.getElementById("reservas-modal");
 const closeReservasModalBtn = document.getElementById("close-reservas-modal");
 const reservasList = document.getElementById("reservas-list");
 const reservasRefreshBtn = document.getElementById("reservas-refresh-btn");
+const reservaImageModal = document.getElementById("reserva-image-modal");
+const reservaImageModalImg = document.getElementById("reserva-image-modal-img");
+const reservaImageModalStatus = document.getElementById("reserva-image-modal-status");
+const closeReservaImageModalBtn = document.getElementById("close-reserva-image-modal");
+/** Ítems del modal campana indexados por id (para lupa / imagen). */
+const reservaItemsById = new Map();
+let reservaVentaPublicoId = null;
 let reservasRealtimeChannel = null;
 let reservasRefreshDebounceTimer = null;
 const manualProduct = document.getElementById("manual-product");
@@ -523,6 +544,102 @@ let manualSelectedColor = null;
 let manualSelectedSizes = {};
 let manualSelectedSizesSource = {}; // { size: { ventaPublico: qty, general: qty } }
 let manualSelectedSizesConfirmedWithoutStock = {}; // { size: true } - talles confirmados para agregar sin stock
+/** Selección pendiente multi-color (como PAU): key variantId|talle → fila con cantidad y fuente de stock */
+let manualPending = new Map();
+
+function manualPendingKey(variantId, size) {
+  return `${variantId}|${normalizeSize(size)}`;
+}
+
+function getManualPendingTotalQty() {
+  let n = 0;
+  for (const row of manualPending.values()) {
+    n += Number(row.quantity) || 0;
+  }
+  return n;
+}
+
+function getColorPendingQty(color) {
+  let n = 0;
+  for (const row of manualPending.values()) {
+    if (row.color === color) n += Number(row.quantity) || 0;
+  }
+  return n;
+}
+
+function setManualPendingForSize(variant, size, quantity, source, confirmedWithoutStock) {
+  if (!variant) return;
+  const key = manualPendingKey(variant.id, size);
+  if (!quantity || quantity <= 0) {
+    manualPending.delete(key);
+    return;
+  }
+  manualPending.set(key, {
+    variantId: variant.id,
+    color: variant.color,
+    size,
+    quantity,
+    source: {
+      ventaPublico: source?.ventaPublico || 0,
+      general: source?.general || 0,
+    },
+    confirmedWithoutStock: !!confirmedWithoutStock,
+  });
+}
+
+function syncManualViewFromPending(color) {
+  manualSelectedSizes = {};
+  manualSelectedSizesSource = {};
+  manualSelectedSizesConfirmedWithoutStock = {};
+  if (!color) return;
+  for (const row of manualPending.values()) {
+    if (row.color !== color) continue;
+    manualSelectedSizes[row.size] = row.quantity;
+    manualSelectedSizesSource[row.size] = {
+      ventaPublico: row.source?.ventaPublico || 0,
+      general: row.source?.general || 0,
+    };
+    if (row.confirmedWithoutStock) {
+      manualSelectedSizesConfirmedWithoutStock[row.size] = true;
+    }
+  }
+}
+
+function syncPendingFromCurrentSize(size) {
+  const variant = manualCurrentVariants.find(
+    (v) => v.color === manualSelectedColor && normalizeSize(v.size) === normalizeSize(size)
+  );
+  if (!variant) return;
+  const qty = manualSelectedSizes[size] || 0;
+  const source = manualSelectedSizesSource[size] || { ventaPublico: 0, general: 0 };
+  const confirmed = !!manualSelectedSizesConfirmedWithoutStock[size];
+  setManualPendingForSize(variant, size, qty, source, confirmed);
+}
+
+function clearManualPending() {
+  manualPending.clear();
+  manualSelectedSizes = {};
+  manualSelectedSizesSource = {};
+  manualSelectedSizesConfirmedWithoutStock = {};
+}
+
+function decorateManualColorButton(btn, qty) {
+  const existingBadge = btn.querySelector(".color-counter");
+  if (existingBadge) existingBadge.remove();
+  if (qty > 0) {
+    const badge = document.createElement("span");
+    badge.className = "color-counter";
+    badge.textContent = String(qty);
+    btn.appendChild(badge);
+  }
+}
+
+function refreshManualColorBadges() {
+  if (!manualColorButtons) return;
+  manualColorButtons.querySelectorAll(".color-btn").forEach((btn) => {
+    decorateManualColorButton(btn, getColorPendingQty(btn.dataset.color));
+  });
+}
 
 // Control de versiones para evitar race conditions en renderizado de talles
 let renderSizeButtonsVersion = 0;
@@ -597,6 +714,8 @@ async function fetchLocalReservations() {
         "size",
         "quantity",
         "status",
+        "variant_id",
+        "imagen",
         "created_at",
         "orders(id, order_number, status, customer_id, customers(full_name))",
         "order_item_stock_sources(qty, warehouse_id)"
@@ -606,7 +725,7 @@ async function fetchLocalReservations() {
 
   if (error) throw error;
 
-  const finalStatuses = new Set(["closed", "sent", "devolucion", "devolución", "devolucion_alt", "cancelled"]);
+  const finalStatuses = new Set(["closed", "sent", "devolucion", "devolución", "cancelled", "expired"]);
   const rows = Array.isArray(data) ? data : [];
 
   const filtered = rows.filter((oi) => {
@@ -630,8 +749,8 @@ async function fetchLocalReservations() {
     if (ventaQty <= 0) return false;
 
     const st = _safeText(oi.status).trim().toLowerCase();
-    if (st === "waiting") return true;
-    // Legado: una sola línea reserved con todo el stock en venta-público
+    if (st === "waiting") return ventaQty > 0 && generalQty === 0;
+    // Legado checkout: reserved con todo el stock en venta-público
     if (st === "reserved" && generalQty === 0 && ventaQty === qty) return true;
     return false;
   });
@@ -653,6 +772,30 @@ function sumVentaUnitsForBell(items, ventaId) {
   }, 0);
 }
 
+function getReservaVentaQty(oi, ventaPublicoId) {
+  const sources = Array.isArray(oi?.order_item_stock_sources) ? oi.order_item_stock_sources : [];
+  if (ventaPublicoId) {
+    let ventaQty = 0;
+    sources.forEach((s) => {
+      if (s?.warehouse_id === ventaPublicoId) ventaQty += Number(s?.qty || 0) || 0;
+    });
+    if (ventaQty > 0) return ventaQty;
+  }
+  return Math.max(0, Number(oi?.quantity || 0) || 0);
+}
+
+/** Una fila por unidad en venta-público (qty 3 → 3 filas ×1). */
+function expandReservaDisplayUnits(items, ventaPublicoId) {
+  const rows = [];
+  (items || []).forEach((oi) => {
+    const units = getReservaVentaQty(oi, ventaPublicoId);
+    for (let i = 0; i < units; i++) {
+      rows.push({ oi, unitIndex: i + 1, units });
+    }
+  });
+  return rows;
+}
+
 function groupReservationsByOrder(items) {
   const map = new Map();
   (items || []).forEach((oi) => {
@@ -671,8 +814,98 @@ function groupReservationsByOrder(items) {
   return Array.from(map.values());
 }
 
-function renderReservations(items) {
+function reservaCloudinaryUrl(url, w = 800) {
+  if (!url || typeof url !== "string") return "";
+  let u = url.trim();
+  if (!u) return "";
+  if (u.startsWith("//")) u = `https:${u}`;
+  if (u.startsWith("http://")) u = u.replace("http://", "https://");
+  if (u.includes("/upload/")) {
+    return u.replace("/upload/", `/upload/f_auto,q_auto,c_scale,w_${w}/`);
+  }
+  return u;
+}
+
+async function fetchReservaItemImageUrl(item) {
+  const cached = String(item?.imagen || "").trim();
+  if (cached) return reservaCloudinaryUrl(cached, 800);
+
+  const variantId = String(item?.variant_id || "").trim();
+  if (!variantId || !supabase) return null;
+
+  const { data: primary } = await supabase
+    .from("variant_images")
+    .select("url")
+    .eq("variant_id", variantId)
+    .eq("position", 1)
+    .maybeSingle();
+  if (primary?.url) return reservaCloudinaryUrl(primary.url, 800);
+
+  const { data: fallback } = await supabase
+    .from("variant_images")
+    .select("url")
+    .eq("variant_id", variantId)
+    .order("position", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  return fallback?.url ? reservaCloudinaryUrl(fallback.url, 800) : null;
+}
+
+function toggleReservaImageModal(open) {
+  if (!reservaImageModal) return;
+  reservaImageModal.classList.toggle("active", !!open);
+  reservaImageModal.setAttribute("aria-hidden", open ? "false" : "true");
+  if (!open && reservaImageModalImg) {
+    reservaImageModalImg.removeAttribute("src");
+    reservaImageModalImg.style.display = "none";
+  }
+  if (!open && reservaImageModalStatus) {
+    reservaImageModalStatus.textContent = "";
+    reservaImageModalStatus.style.display = "none";
+  }
+}
+
+async function openReservaItemImage(item) {
+  if (!reservaImageModal) return;
+  const label = `${item?.product_name || "Producto"} · ${item?.color || "-"}`;
+  toggleReservaImageModal(true);
+  if (reservaImageModalStatus) {
+    reservaImageModalStatus.textContent = "Cargando imagen…";
+    reservaImageModalStatus.style.display = "block";
+  }
+  if (reservaImageModalImg) {
+    reservaImageModalImg.style.display = "none";
+    reservaImageModalImg.alt = label;
+  }
+  try {
+    const url = await fetchReservaItemImageUrl(item);
+    if (!url) {
+      if (reservaImageModalStatus) {
+        reservaImageModalStatus.textContent = "Sin imagen disponible";
+      }
+      return;
+    }
+    if (reservaImageModalStatus) reservaImageModalStatus.style.display = "none";
+    if (reservaImageModalImg) {
+      reservaImageModalImg.src = url;
+      reservaImageModalImg.style.display = "block";
+    }
+  } catch (err) {
+    console.warn("openReservaItemImage:", err?.message || err);
+    if (reservaImageModalStatus) {
+      reservaImageModalStatus.textContent = "No se pudo cargar la imagen";
+      reservaImageModalStatus.style.display = "block";
+    }
+  }
+}
+
+function renderReservations(items, ventaPublicoId = reservaVentaPublicoId) {
   if (!reservasList) return;
+  reservaItemsById.clear();
+  (items || []).forEach((oi) => {
+    if (oi?.id) reservaItemsById.set(oi.id, oi);
+  });
   const groups = groupReservationsByOrder(items);
   if (groups.length === 0) {
     reservasList.innerHTML = `<div style="color:#666;font-size:13px;padding:8px 0;">No hay productos pendientes de retirar en local.</div>`;
@@ -683,46 +916,82 @@ function renderReservations(items) {
     .map((g) => {
       const header = `
         <div class="reserva-order__meta">
-          <div>
-            <div class="reserva-order__customer">${_safeText(g.customerName) || "Cliente"}</div>
-            <div style="font-size:12px;color:#666;">Pedido ${_safeText(g.orderNumber) || ""}</div>
+          <div class="reserva-order__meta-main">
+            <span class="reserva-order__customer">${_safeText(g.customerName) || "Cliente"}</span>
+            <span class="reserva-order__number">${g.orderNumber ? `· ${_safeText(g.orderNumber)}` : ""}</span>
           </div>
-          <div style="font-size:12px;color:#666; font-weight:700;">en local</div>
+          <span class="reserva-order__chip">Local</span>
         </div>
       `;
 
-      const itemsHtml = (g.items || [])
-        .map((oi) => {
+      const displayUnits = expandReservaDisplayUnits(g.items || [], ventaPublicoId);
+      const itemsHtml = displayUnits
+        .map(({ oi, unitIndex, units }) => {
           const name = _safeText(oi.product_name) || "Producto";
           const color = _safeText(oi.color) || "-";
           const size = _safeText(oi.size) || "-";
-          const qty = Number(oi.quantity || 0) || 0;
+          const unitLabel = units > 1 ? ` <span class="reserva-item-row__unit-tag">(${unitIndex}/${units})</span>` : "";
           return `
-            <div class="reserva-item">
-              <div>
-                <div class="reserva-item__name">${name}</div>
-                <div class="reserva-item__meta">Color: <strong>${color}</strong> • Talle: <strong>${size}</strong> • Cant: <strong>${qty}</strong></div>
+            <li class="reserva-item-row">
+              <span class="reserva-item-row__text">${name} · ${color} · ${size} ×1${unitLabel}</span>
+              <button type="button" class="reserva-image-btn" data-reserva-image="1" data-order-item-id="${oi.id}" aria-label="Ver imagen de ${name}" title="Ver imagen">
+                <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                  <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"></circle>
+                  <line x1="16.5" y1="16.5" x2="21" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round"></line>
+                </svg>
+              </button>
+              <div class="reserva-item-row__actions">
+                <button type="button" class="reserva-icon-btn reserva-icon-btn--ok" data-reserva-action="confirm" data-order-item-id="${oi.id}" aria-label="Apartar 1 unidad" title="Apartar">✓</button>
+                <button type="button" class="reserva-icon-btn reserva-icon-btn--wait" data-reserva-action="factory" data-order-item-id="${oi.id}" aria-label="Pasar a espera de fábrica (1 unidad)" title="Espera de fábrica">
+                  <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                    <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"></circle>
+                    <polyline points="12 7 12 12 16 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></polyline>
+                  </svg>
+                </button>
+                <button type="button" class="reserva-icon-btn reserva-icon-btn--no" data-reserva-action="reject" data-order-item-id="${oi.id}" aria-label="Sin stock (1 unidad)" title="Sin stock">✕</button>
               </div>
-              <div class="reserva-item__actions">
-                <button type="button" class="reserva-action-btn reserva-action-btn--ok" data-reserva-action="confirm" data-order-item-id="${oi.id}">Apartado</button>
-                <button type="button" class="reserva-action-btn reserva-action-btn--no" data-reserva-action="reject" data-order-item-id="${oi.id}">Faltante</button>
-              </div>
-            </div>
+            </li>
           `;
         })
         .join("");
 
-      return `<div class="reserva-order">${header}${itemsHtml}</div>`;
+      return `<div class="reserva-order">${header}<ul class="reserva-items">${itemsHtml}</ul></div>`;
     })
     .join("");
+}
+
+async function emitReservaCustomerNotification({ customerId, orderId, type, message, payload, dedupeTypes }) {
+  if (!supabase || !customerId || !type || !message) return;
+  try {
+    if (Array.isArray(dedupeTypes) && dedupeTypes.length) {
+      await supabase
+        .from("customer_notifications")
+        .delete()
+        .eq("customer_id", customerId)
+        .eq("order_id", orderId)
+        .in("type", dedupeTypes);
+    }
+    await supabase.from("customer_notifications").insert({
+      customer_id: customerId,
+      order_id: orderId || null,
+      type: String(type),
+      message: String(message),
+      payload: payload && typeof payload === "object" ? payload : {},
+      read: false,
+      read_at: null,
+    });
+  } catch (e) {
+    console.warn("emitReservaCustomerNotification:", e?.message || e);
+  }
 }
 
 async function refreshReservas() {
   if (!supabase) return;
   const { items, ventaPublicoId } = await fetchLocalReservations();
+  reservaVentaPublicoId = ventaPublicoId;
   setBellCount(sumVentaUnitsForBell(items, ventaPublicoId));
   if (reservasModal?.classList.contains("active")) {
-    renderReservations(items);
+    renderReservations(items, ventaPublicoId);
   }
 }
 
@@ -749,6 +1018,11 @@ function setupReservasRealtime() {
         { event: "UPDATE", schema: "public", table: "orders" },
         () => scheduleReservasRefreshFromRealtime()
       )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "order_item_stock_sources" },
+        () => scheduleReservasRefreshFromRealtime()
+      )
       .subscribe((status) => {
         if (status === "CHANNEL_ERROR") {
           console.warn("Campana pendientes: error de canal Realtime (¿tabla en publicación?)");
@@ -762,6 +1036,31 @@ function setupReservasRealtime() {
 async function handleReservaAction(action, orderItemId) {
   if (!supabase) throw new Error("Supabase no disponible");
   const a = _safeText(action).trim().toLowerCase();
+
+  // Botón de reloj: la unidad reservada de venta-público en realidad no está
+  // físicamente a mano en el local -> se pasa a "espera de fábrica" en vez de
+  // marcarla "sin stock", así el pedido sigue vivo esperando que fábrica la
+  // resuelva. No usa rpc_split_order_item_status porque ese solo redistribuye
+  // fuentes de stock existentes, nunca asigna un depósito distinto al actual.
+  if (a === "factory") {
+    const {
+      data: { user },
+      error: userErr,
+    } = await supabase.auth.getUser();
+    if (userErr || !user?.id) throw new Error("Sesión no disponible");
+
+    const { error } = await supabase.rpc("rpc_split_order_item_unit_to_waiting_source", {
+      p_item_id: orderItemId,
+      p_qty: 1,
+      p_source_code: "general",
+      p_checked_by: user.id,
+    });
+    if (error) throw error;
+
+    await refreshReservas();
+    return;
+  }
+
   const nextStatus = a === "confirm" ? "picked" : a === "reject" ? "missing" : null;
   if (!nextStatus) return;
 
@@ -771,13 +1070,102 @@ async function handleReservaAction(action, orderItemId) {
   } = await supabase.auth.getUser();
   if (userErr || !user?.id) throw new Error("Sesión no disponible");
 
-  const { error } = await supabase.rpc("rpc_update_order_item_status", {
-    p_item_id: orderItemId,
-    p_status: nextStatus,
-    p_checked_by: user.id,
-  });
-  if (error) throw error;
+  const { data: itemRow, error: itemErr } = await supabase
+    .from("order_items")
+    .select("id, quantity, order_id, status, variant_id, size, orders(customer_id)")
+    .eq("id", orderItemId)
+    .maybeSingle();
+  if (itemErr || !itemRow) throw new Error("Ítem no encontrado");
+
+  const qty = Math.max(0, Number(itemRow.quantity || 0) || 0);
+  if (qty <= 0) throw new Error("Ítem sin unidades");
+
+  let customerId = itemRow.orders?.customer_id || null;
+  let orderId = itemRow.order_id || null;
+
+  if (qty > 1) {
+    const pPicked = nextStatus === "picked" ? 1 : 0;
+    const pMissing = nextStatus === "missing" ? 1 : 0;
+    const pWaiting = qty - pPicked - pMissing;
+    const { error } = await supabase.rpc("rpc_split_order_item_status", {
+      p_item_id: orderItemId,
+      p_n_picked: pPicked,
+      p_n_waiting: pWaiting,
+      p_n_missing: pMissing,
+      p_checked_by: user.id,
+    });
+    if (error) throw error;
+  } else if (nextStatus === "picked") {
+    const { error } = await supabase.rpc("rpc_mark_order_items_picked", {
+      p_order_item_ids: [orderItemId],
+      p_operation_id: crypto.randomUUID?.() || String(Date.now()),
+      p_request: { source: "admin/public-sales", action: "reserva_confirm" },
+    });
+    if (error) throw error;
+  } else {
+    const { error } = await supabase.rpc("rpc_update_order_item_status", {
+      p_item_id: orderItemId,
+      p_status: nextStatus,
+      p_checked_by: user.id,
+    });
+    if (error) throw error;
+  }
+
+  if (nextStatus === "missing" && customerId && orderId) {
+    await emitReservaCustomerNotification({
+      customerId,
+      orderId,
+      type: "ORDER_MISSING_ITEMS",
+      message: "1 producto no está disponible. Por favor revisalo en tu pedido.",
+      payload: { missingCount: 1, action_url: "/nj/dashboard?tab=active-order" },
+      dedupeTypes: ["ORDER_MISSING_ITEMS", "ORDER_ALL_RESERVED"],
+    });
+  }
+
+  if (nextStatus === "missing" && itemRow.variant_id && itemRow.size) {
+    await checkAndOfferZeroStock(itemRow.variant_id, itemRow.size, orderItemId);
+  }
+
   await refreshReservas();
+}
+
+/**
+ * Al marcar "sin stock" desde el local: si la web todavía figura con existencias
+ * para esa variante+talle, se le avisa al admin y, si confirma, se llevan a 0
+ * (el local ya confirmó en el momento que no hay stock real).
+ */
+async function checkAndOfferZeroStock(variantId, size, orderItemId) {
+  try {
+    const normalized = normalizeSize(size);
+    if (!normalized) return;
+
+    const { data: sizeRow, error } = await supabase
+      .from("variant_sizes")
+      .select("stock_qty")
+      .eq("variant_id", variantId)
+      .eq("size", normalized)
+      .maybeSingle();
+    if (error || !sizeRow) return;
+
+    const stockQty = Number(sizeRow.stock_qty) || 0;
+    if (stockQty <= 0) return;
+
+    const ok = confirm(
+      `En la web todavía figuran ${stockQty} en existencia de este producto (talle ${normalized}).\n` +
+        "Como ya confirmaste que no hay stock real, ¿querés llevarlas a 0?"
+    );
+    if (!ok) return;
+
+    const { error: zeroError } = await supabase.rpc("rpc_admin_zero_variant_size_stock", {
+      p_variant_id: variantId,
+      p_size: normalized,
+      p_order_item_id: orderItemId || null,
+    });
+    if (zeroError) throw zeroError;
+  } catch (e) {
+    console.warn("checkAndOfferZeroStock:", e?.message || e);
+    alert("No se pudieron llevar a 0 las existencias. Revisalo manualmente en el stock.");
+  }
 }
 
 // Cache y sistema de cola para QR
@@ -906,8 +1294,11 @@ function selectAutocompleteProduct(product) {
   hideAutocompleteDropdown();
   autocompleteSelectedIndex = -1;
 
-  // Buscar y cargar el producto
-  searchManualProduct();
+  // Cargar directamente por id (ya sabemos exactamente qué producto se eligió).
+  // Antes se volvía a disparar una búsqueda por texto (searchManualProduct), que
+  // podía re-matchear varios productos con "contains" y devolver al usuario al
+  // mismo mensaje de ambigüedad, impidiendo seleccionar nada de la lista.
+  loadManualProductVariants(product.id);
 }
 
 // Función para resaltar el término de búsqueda en el texto
@@ -917,7 +1308,11 @@ function highlightSearchTerm(text, term) {
   return text.replace(regex, '<span class="highlight">$1</span>');
 }
 
-// Ordenar productos: primero coincidencia exacta, luego "empieza por", luego "contiene"
+// Ordenar productos: primero coincidencia exacta, luego "empieza por", luego "contiene".
+// Los nombres de producto en FYL suelen ser códigos numéricos cortos (ej: "85", "850", "8500"),
+// por lo que puede haber muchos empates dentro de cada grupo. Para esos empates, ordenamos por
+// longitud de código (el más corto/parecido a lo tipeado primero) y luego alfabéticamente, para
+// que el resultado sea siempre el mismo y no dependa del orden interno (no garantizado) de Postgres.
 function sortProductsByRelevance(products, term) {
   if (!term) return products;
   const t = term.trim().toLowerCase();
@@ -932,18 +1327,21 @@ function sortProductsByRelevance(products, term) {
     const bStarts = bName.startsWith(t);
     if (aStarts && !bStarts) return -1;
     if (!aStarts && bStarts) return 1;
-    return 0;
+    if (aName.length !== bName.length) return aName.length - bName.length;
+    return aName.localeCompare(bName);
   });
 }
 
 // Cargar sugerencias de productos y renderizar en el dropdown
 async function loadProductSuggestions(term) {
   try {
+    // Prefijo, no "contiene" (ver comentario en searchManualProduct): evita que
+    // términos cortos como "80" traigan productos no relacionados (A800, F680, etc.).
     const safeTerm = escapeForIlikeContains(term);
     const { data: products, error } = await supabase
       .from("products")
       .select("id, name, category")
-      .ilike("name", `%${safeTerm}%`)
+      .ilike("name", `${safeTerm}%`)
       .in("status", ["active", "pending_stock", "draft"]) // Incluir productos activos, con stock pendiente y en borrador
       .limit(50);
 
@@ -1345,23 +1743,56 @@ async function searchManualProduct() {
   }
 
   try {
+    // Prefijo ("empieza con"), no "contiene": igual que en el buscador manual de PAU.
+    // Con "contains" un término como "80" matcheaba también códigos no relacionados
+    // que solo lo tienen en el medio o al final (ej: A800, F680), generando listas
+    // enormes de productos irrelevantes.
     const safeName = escapeForIlikeContains(productName);
     const { data: productRows, error: productsError } = await supabase
       .from("products")
       .select("id, name")
-      .ilike("name", `%${safeName}%`)
+      .ilike("name", `${safeName}%`)
       .in("status", ["active", "pending_stock", "draft"])
       .limit(25);
 
     if (productsError) throw productsError;
+
     const ranked = sortProductsByRelevance(productRows || [], productName);
-    const products = ranked[0];
-    if (!products) {
+
+    if (ranked.length === 0) {
       showMessage("No se encontró el producto", "error");
       return;
     }
 
-    await loadManualProductVariants(products.id);
+    // Muchos productos de FYL se nombran solo con un código corto (ej: "85", "850", "8500"),
+    // así que un texto parcial puede matchear varios códigos distintos. Solo cargamos
+    // automáticamente cuando hay una coincidencia exacta o cuando es la única opción posible;
+    // si hay ambigüedad real, mostramos la lista en vez de adivinar y cargar el producto
+    // equivocado (bug reportado: tipear "85" cargaba "8500").
+    const termLower = productName.toLowerCase();
+    const exactMatches = ranked.filter(
+      (p) => (p.name || "").trim().toLowerCase() === termLower
+    );
+
+    if (exactMatches.length === 1) {
+      hideAutocompleteDropdown();
+      await loadManualProductVariants(exactMatches[0].id);
+      return;
+    }
+
+    if (ranked.length === 1) {
+      hideAutocompleteDropdown();
+      await loadManualProductVariants(ranked[0].id);
+      return;
+    }
+
+    // Ambiguo: refrescar el dropdown con las coincidencias reales y pedir que elija una,
+    // en vez de cargar a ciegas la primera de la lista.
+    await loadProductSuggestions(productName);
+    showMessage(
+      `Hay ${ranked.length} productos que coinciden con "${productName}". Elegí uno de la lista.`,
+      "error"
+    );
   } catch (error) {
     console.error("Error buscando producto manual:", error);
     showMessage("Error al buscar producto: " + error.message, "error");
@@ -1374,10 +1805,8 @@ async function loadManualProductVariants(productId) {
     // Nuevo producto: invalidar renders async previos y limpiar UI de talles/cantidades
     // (si no, manualSelectedColor sigue seteado y renderManualColorButtons no vuelve a llamar renderManualSizeButtons)
     renderManualSizeButtonsVersion++;
+    clearManualPending();
     manualSelectedColor = null;
-    manualSelectedSizes = {};
-    manualSelectedSizesSource = {};
-    manualSelectedSizesConfirmedWithoutStock = {};
     if (manualSizeButtons) manualSizeButtons.innerHTML = "";
     if (manualLoadBtn) manualLoadBtn.disabled = true;
 
@@ -1659,9 +2088,7 @@ async function renderManualColorButtons() {
       });
       btn.classList.add("active");
       manualSelectedColor = color;
-      manualSelectedSizes = {};
-      manualSelectedSizesSource = {}; // Limpiar fuente de stock al cambiar de color
-      manualSelectedSizesConfirmedWithoutStock = {};
+      syncManualViewFromPending(color);
 
       // Actualizar precio e información de oferta para el color seleccionado
       const variantsByColor = manualCurrentVariants.filter(v => v.color === color);
@@ -1673,7 +2100,9 @@ async function renderManualColorButtons() {
       }
 
       await renderManualSizeButtons();
+      refreshManualColorBadges();
     });
+    decorateManualColorButton(btn, getColorPendingQty(color));
     manualColorButtons.appendChild(btn);
   });
 
@@ -1696,6 +2125,7 @@ async function renderManualColorButtons() {
     }
 
     await renderManualSizeButtons();
+    refreshManualColorBadges();
   }
 }
 
@@ -1764,7 +2194,9 @@ function updateManualSizeButton(size, generalStock, ventaPublicoStock, totalStoc
           if (manualSelectedSizes[size] === 0) {
             delete manualSelectedSizes[size];
             delete manualSelectedSizesSource[size];
+            delete manualSelectedSizesConfirmedWithoutStock[size];
           }
+          syncPendingFromCurrentSize(size);
           // Obtener stock actualizado para este talle (comparar talles normalizados para evitar fallos por formato)
           const variant = manualCurrentVariants.find(v => v.color === manualSelectedColor && normalizeSize(v.size) === normalizeSize(size));
           if (variant) {
@@ -1987,7 +2419,9 @@ async function renderManualSizeButtons() {
           if (manualSelectedSizes[size] === 0) {
             delete manualSelectedSizes[size];
             delete manualSelectedSizesSource[size];
+            delete manualSelectedSizesConfirmedWithoutStock[size];
           }
+          syncPendingFromCurrentSize(size);
           updateManualSizeButton(size, generalStock, ventaPublicoStock, totalStock);
           updateManualLoadButton();
         }
@@ -2019,6 +2453,7 @@ async function renderManualSizeButtons() {
             manualSelectedSizesSource[size] = { ventaPublico: 0, general: 0 };
           }
 
+          syncPendingFromCurrentSize(size);
           updateManualSizeButton(size, generalStock, ventaPublicoStock, totalStock);
           updateManualLoadButton();
         } else {
@@ -2045,6 +2480,7 @@ async function renderManualSizeButtons() {
               manualSelectedSizesSource[size].general++;
             }
 
+            syncPendingFromCurrentSize(size);
             updateManualSizeButton(size, generalStock, ventaPublicoStock, totalStock);
             updateManualLoadButton();
           } else {
@@ -2106,6 +2542,7 @@ async function renderManualSizeButtons() {
               // Esto indica que el usuario aceptó agregar sin descontar de ningún warehouse
               manualSelectedSizesSource[size] = { ventaPublico: 0, general: 0 };
 
+              syncPendingFromCurrentSize(size);
               updateManualSizeButton(size, generalStock, ventaPublicoStock, totalStock);
               updateManualLoadButton();
             }
@@ -2158,6 +2595,7 @@ async function renderManualSizeButtons() {
           // Esto indica que el usuario aceptó agregar sin descontar de ningún warehouse
           manualSelectedSizesSource[size] = { ventaPublico: 0, general: 0 };
 
+          syncPendingFromCurrentSize(size);
           // Obtener stock para actualizar el botón
           const variant = manualCurrentVariants.find(
             (v) => v.color === manualSelectedColor && normalizeSize(v.size) === normalizeSize(size)
@@ -2207,28 +2645,31 @@ async function renderManualSizeButtons() {
 
 // Actualizar botón de cargar para modo manual
 function updateManualLoadButton() {
-  const hasSelections = Object.keys(manualSelectedSizes).some(size => manualSelectedSizes[size] > 0);
+  const totalQty = getManualPendingTotalQty();
   if (manualLoadBtn) {
-    manualLoadBtn.disabled = !hasSelections || !manualSelectedColor;
+    manualLoadBtn.disabled = totalQty === 0;
+    manualLoadBtn.textContent = totalQty > 0 ? `Agregar (${totalQty})` : "Agregar";
   }
+  refreshManualColorBadges();
 }
 
 // Cargar a lista de venta desde modo manual
 if (manualLoadBtn) {
   manualLoadBtn.addEventListener("click", async () => {
-    if (!manualSelectedColor || Object.keys(manualSelectedSizes).length === 0) return;
+    if (getManualPendingTotalQty() === 0) return;
 
-    const variantsByColor = manualCurrentVariants.filter(v => v.color === manualSelectedColor);
     const isReturn = returnMode.checked;
 
     // Validar stock antes de agregar
     let hasStockError = false;
     
-    for (const size of Object.keys(manualSelectedSizes)) {
-      const quantity = manualSelectedSizes[size];
+    for (const row of manualPending.values()) {
+      const quantity = row.quantity;
       if (quantity <= 0) continue;
 
-      const variant = variantsByColor.find(v => normalizeSize(v.size) === normalizeSize(size));
+      const variant = manualCurrentVariants.find(
+        (v) => v.id === row.variantId && normalizeSize(v.size) === normalizeSize(row.size)
+      );
       if (!variant) continue;
 
       if (!hasCatalogPrice(variant.price)) {
@@ -2237,12 +2678,13 @@ if (manualLoadBtn) {
         break;
       }
 
-      const sizeStock = await getVariantSizeStockByWarehouse(variant.id, size);
+      const sizeStock = await getVariantSizeStockByWarehouse(variant.id, row.size);
       const totalStock = sizeStock.total || 0;
 
       // Validar stock solo si el talle NO fue confirmado para agregar sin stock
-      if (!isReturn && quantity > totalStock && !manualSelectedSizesConfirmedWithoutStock[size]) {
-        showMessage(`Error: La cantidad seleccionada (${quantity}) para talle ${size} excede el stock disponible (${totalStock})`, "error");
+      if (!isReturn && quantity > totalStock && !row.confirmedWithoutStock) {
+        const colorLabel = row.color ? `${row.color}, ` : "";
+        showMessage(`Error: La cantidad seleccionada (${quantity}) para ${colorLabel}talle ${row.size} excede el stock disponible (${totalStock})`, "error");
         hasStockError = true;
         break;
       }
@@ -2250,44 +2692,41 @@ if (manualLoadBtn) {
 
     if (hasStockError) return;
 
-    Object.keys(manualSelectedSizes).forEach(size => {
-      const quantity = manualSelectedSizes[size];
-      if (quantity <= 0) return;
+    for (const row of manualPending.values()) {
+      const quantity = row.quantity;
+      if (quantity <= 0) continue;
 
-      const variant = variantsByColor.find(v => normalizeSize(v.size) === normalizeSize(size));
-      if (!variant) return;
+      const color = row.color;
+      const size = row.size;
+      const variant = manualCurrentVariants.find(
+        (v) => v.id === row.variantId && normalizeSize(v.size) === normalizeSize(size)
+      );
+      if (!variant) continue;
 
       // Obtener stock disponible para este talle
       const stock = variant.stockData || { general: { stock: 0 }, ventaPublico: { stock: 0 } };
       const ventaPublicoStock = stock.ventaPublico?.stock || 0;
       const generalStock = stock.general?.stock || 0;
 
-      // Obtener fuente del stock para este talle
-      // Si manualSelectedSizesSource existe y tiene valores válidos, usarlo
-      // Si no existe o tiene valores 0,0 (confirmado sin stock), calcular basándose en stock disponible
-      const existingSource = manualSelectedSizesSource[size];
-      const wasConfirmedWithoutStock = existingSource && 
-        existingSource.ventaPublico === 0 && 
-        existingSource.general === 0 &&
-        manualSelectedSizesConfirmedWithoutStock[size];
+      const existingSource = row.source;
+      const wasConfirmedWithoutStock = row.confirmedWithoutStock &&
+        existingSource &&
+        existingSource.ventaPublico === 0 &&
+        existingSource.general === 0;
 
       let source;
       if (wasConfirmedWithoutStock) {
-        // Si fue confirmado sin stock, establecer source en 0,0 explícitamente
         source = {
           ventaPublico: 0,
           general: 0
         };
-      } else if (existingSource && 
+      } else if (existingSource &&
           (existingSource.ventaPublico > 0 || existingSource.general > 0)) {
-        // Usar fuente existente si es válida
         source = {
           ventaPublico: existingSource.ventaPublico || 0,
           general: existingSource.general || 0
         };
       } else {
-        // Calcular fuente basándose en stock disponible (mismo patrón que processQrCodeFast)
-        // Priorizar venta-publico, luego general
         let ventaPublicoQty = Math.min(quantity, ventaPublicoStock);
         let generalQty = 0;
         
@@ -2305,12 +2744,11 @@ if (manualLoadBtn) {
       // Buscar si ya existe este producto/color con el mismo tipo (devolución o venta) en la lista
       const existingIndex = saleItems.findIndex(item =>
         item.productId === manualCurrentProduct.id &&
-        item.color === manualSelectedColor &&
+        item.color === color &&
         item.isReturn === isReturn
       );
 
       if (existingIndex >= 0) {
-        // Agregar talle a item existente
         const existingSize = saleItems[existingIndex].sizes.find(s => s.size === size);
         if (existingSize) {
           existingSize.quantity += quantity;
@@ -2328,7 +2766,6 @@ if (manualLoadBtn) {
         }
         saleItems[existingIndex].totalQuantity += quantity;
 
-        // Actualizar información de oferta/promoción y precio base si no existe
         if (!saleItems[existingIndex].basePrice) {
           saleItems[existingIndex].basePrice = variant.price;
         }
@@ -2339,16 +2776,13 @@ if (manualLoadBtn) {
           saleItems[existingIndex].promotionInfo = variant.promotionInfo;
         }
 
-        // Actualizar isReturn según el modo actual
         const previousIsReturn = saleItems[existingIndex].isReturn;
         saleItems[existingIndex].isReturn = isReturn;
 
-        // Si cambió el modo de devolución, recalcular totalValue completo
         if (previousIsReturn !== isReturn) {
-          // Recalcular totalValue desde cero basándose en todos los talles
           let recalculatedTotal = 0;
           saleItems[existingIndex].sizes.forEach(s => {
-            const sizeVariant = manualCurrentVariants.find(v => v.size === s.size && v.color === manualSelectedColor);
+            const sizeVariant = manualCurrentVariants.find(v => v.size === s.size && v.color === color);
             if (sizeVariant) {
               const effectivePrice = sizeVariant.effectivePrice || sizeVariant.price;
               if (isReturn) {
@@ -2360,7 +2794,6 @@ if (manualLoadBtn) {
           });
           saleItems[existingIndex].totalValue = recalculatedTotal;
         } else {
-          // Si no cambió el modo, solo ajustar la nueva cantidad
           const effectivePrice = variant.effectivePrice || variant.price;
           if (isReturn) {
             saleItems[existingIndex].totalValue -= effectivePrice * quantity;
@@ -2369,18 +2802,16 @@ if (manualLoadBtn) {
           }
         }
       } else {
-        // Crear nuevo item
-        // Si es devolución, totalValue debe ser negativo
         const effectivePrice = variant.effectivePrice || variant.price;
-        const basePrice = variant.price; // Precio base sin ofertas
+        const basePrice = variant.price;
         const itemTotalValue = isReturn ? -(effectivePrice * quantity) : (effectivePrice * quantity);
         saleItems.push({
           productId: manualCurrentProduct.id,
           productName: manualCurrentProduct.name,
           sku: variant.sku.split('-')[0],
-          color: manualSelectedColor,
+          color: color,
           price: effectivePrice,
-          basePrice: basePrice, // Guardar precio base para calcular descuentos
+          basePrice: basePrice,
           offerInfo: variant.offerInfo || null,
           promotionInfo: variant.promotionInfo || null,
           sizes: [{
@@ -2394,12 +2825,10 @@ if (manualLoadBtn) {
           isReturn: isReturn
         });
       }
-    });
+    }
 
     // Limpiar selección
-    manualSelectedSizes = {};
-    manualSelectedSizesSource = {};
-    manualSelectedSizesConfirmedWithoutStock = {};
+    clearManualPending();
     manualSelectedColor = null;
     manualCurrentProduct = null;
     manualCurrentVariants = [];
@@ -2407,6 +2836,7 @@ if (manualLoadBtn) {
     if (manualProductInfo) {
       manualProductInfo.style.display = "none";
     }
+    updateManualLoadButton();
     renderSaleList();
     await calculateTotals();
     // Mensaje eliminado - no es necesario mostrar aviso al agregar productos
@@ -2794,8 +3224,10 @@ async function processVariantFoundByQrCode(variant) {
           general: generalQty
         };
         
-        const effectivePrice = variant.price;
-        const basePrice = variant.price;
+        const basePrice = Number(variant.price) || 0;
+        const rpcPrice = await getEffectivePrice(variant.id);
+        const effectivePrice =
+          rpcPrice != null && Number(rpcPrice) > 0 ? Number(rpcPrice) : basePrice;
         const itemTotalValue = isReturn ? -(effectivePrice * quantity) : (effectivePrice * quantity);
         
         if (existingIndex >= 0) {
@@ -4571,13 +5003,23 @@ async function getActivePromotionsForVariants(variantIds) {
   }
 }
 
-// Calcular totales con ofertas y promociones
-async function calculateTotals() {
-  const totalItemsCount = saleItems.reduce((sum, item) => sum + item.totalQuantity, 0);
-
+/**
+ * Calcula el subtotal de productos considerando ofertas por color y promociones 2x1/2xMonto,
+ * y devuelve además la información necesaria para representar cada promo aplicada como una
+ * línea propia en el ticket ("N ofertas 2x...") en lugar de mostrar cada producto agrupado
+ * con su precio individual.
+ *
+ * IMPORTANTE: esta es la ÚNICA fuente de verdad para el subtotal con promos. La usan tanto
+ * calculateTotals() (vista previa en pantalla) como el handler de "Finalizar Venta" (venta real
+ * guardada en Supabase). Si se toca la fórmula, hay que tocarla acá para que ambos coincidan.
+ *
+ * @param {Array} allSaleItems - saleItems completo (incluye extras, que tienen sizes: [] y se ignoran solos)
+ * @returns {Promise<{subtotal: number, promoLines: Array<{label: string, amount: number, isReturn: boolean}>, unitOverrides: Map<string, number>}>}
+ */
+async function computeSalePromoGrouping(allSaleItems) {
   // Obtener todos los variant_ids de los items
   const variantIds = [];
-  saleItems.forEach(item => {
+  allSaleItems.forEach(item => {
     item.sizes.forEach(size => {
       if (size.variantId) {
         variantIds.push(size.variantId);
@@ -4615,11 +5057,20 @@ async function calculateTotals() {
   // Calcular subtotal considerando ofertas y promociones
   let subtotal = 0;
   const itemsInPromos = new Set();
+  const promoLines = [];
+  // Cantidad (por línea producto+color+talle) que quedó "absorbida" dentro de un grupo 2x
+  // completo y por lo tanto debe representarse en promoLines en vez de en su propia línea.
+  const unitOverrides = new Map();
+
+  const addUnitOverride = (key, qty) => {
+    if (qty <= 0) return;
+    unitOverrides.set(key, (unitOverrides.get(key) || 0) + qty);
+  };
 
   // Primero procesar promociones (prioridad)
   const promoGroups = new Map(); // promotion_id -> items[]
 
-  saleItems.forEach(item => {
+  allSaleItems.forEach(item => {
     item.sizes.forEach(size => {
       if (!size.variantId) return;
 
@@ -4666,7 +5117,12 @@ async function calculateTotals() {
       // Cobrar solo la mitad (redondear hacia arriba si impar)
       const toCharge = Math.ceil(totalItems / 2);
       let charged = 0;
+      let promoChargedTotal = 0;
       items.forEach(({ item, size, variantId, quantity }) => {
+        const itemKey = `${item.productId}-${item.color}-${size.size}`;
+        // Todo el grupo 2x1 (pagas + gratis) se representa en una sola línea de oferta.
+        addUnitOverride(itemKey, quantity);
+
         if (charged >= toCharge) return;
         // Usar precio efectivo del variant (con ofertas) para promociones
         // Si no está en effectivePrices, usar item.price que ya contiene el precio efectivo
@@ -4675,11 +5131,19 @@ async function calculateTotals() {
         const qtyToCharge = Math.min(quantity, remainingToCharge);
         const itemValue = price * qtyToCharge;
         charged += qtyToCharge;
+        promoChargedTotal += itemValue;
         if (!isReturn) {
           subtotal += itemValue;
         } else {
           subtotal -= itemValue;
         }
+      });
+
+      const remainder = totalItems - groups * 2;
+      promoLines.push({
+        label: `${groups} oferta${groups === 1 ? '' : 's'} 2x1${remainder > 0 ? ' + 1 unidad extra' : ''}`,
+        amount: promoChargedTotal,
+        isReturn,
       });
     } else if (promo.promo_type === '2xMonto' && promo.fixed_amount) {
       // Cobrar monto fijo por cada grupo de 2 (solo si hay al menos 1 grupo completo)
@@ -4689,6 +5153,46 @@ async function calculateTotals() {
           subtotal += promoValue;
         } else {
           subtotal -= promoValue;
+        }
+
+        promoLines.push({
+          label: `${groups} oferta${groups === 1 ? '' : 's'} 2x$${Number(promo.fixed_amount).toLocaleString('es-AR')}`,
+          amount: promoValue,
+          isReturn,
+        });
+
+        // Asignar (en orden) qué unidades quedan cubiertas por los grupos completos;
+        // las que sobran (remainder) NO se absorben: pagan precio normal y mantienen su propia línea.
+        let coveredSoFar = 0;
+        const totalToCover = groups * 2;
+        items.forEach(({ item, size, quantity }) => {
+          if (coveredSoFar >= totalToCover) return;
+          const itemKey = `${item.productId}-${item.color}-${size.size}`;
+          const qtyForThisGroup = Math.min(quantity, totalToCover - coveredSoFar);
+          addUnitOverride(itemKey, qtyForThisGroup);
+          coveredSoFar += qtyForThisGroup;
+        });
+
+        // Unidades que no completan un par de 2: pagan precio normal (no forman parte del descuento).
+        const remainderQty = totalItems - groups * 2;
+        if (remainderQty > 0) {
+          let remaining = remainderQty;
+          for (const { item, size, variantId, quantity } of items) {
+            if (remaining <= 0) break;
+            const itemKey = `${item.productId}-${item.color}-${size.size}`;
+            const alreadyCovered = unitOverrides.get(itemKey) || 0;
+            const availableAsRemainder = quantity - alreadyCovered;
+            if (availableAsRemainder <= 0) continue;
+            const price = effectivePrices.get(variantId) || item.price || 0;
+            const qtyToCharge = Math.min(availableAsRemainder, remaining);
+            const itemValue = price * qtyToCharge;
+            remaining -= qtyToCharge;
+            if (!isReturn) {
+              subtotal += itemValue;
+            } else {
+              subtotal -= itemValue;
+            }
+          }
         }
       } else {
         // Si no hay grupos completos, remover de itemsInPromos para procesar como normal
@@ -4702,7 +5206,7 @@ async function calculateTotals() {
 
   // Procesar items que NO están en promociones
   // Usar directamente item.price que ya contiene el precio efectivo (con ofertas aplicadas)
-  saleItems.forEach(item => {
+  allSaleItems.forEach(item => {
     // Saltar extras que se procesan después
     if (item.isExtra) return;
 
@@ -4725,6 +5229,16 @@ async function calculateTotals() {
       }
     });
   });
+
+  return { subtotal, promoLines, unitOverrides };
+}
+
+// Calcular totales con ofertas y promociones
+async function calculateTotals() {
+  const totalItemsCount = saleItems.reduce((sum, item) => sum + item.totalQuantity, 0);
+
+  const { subtotal: computedSubtotal } = await computeSalePromoGrouping(saleItems);
+  let subtotal = computedSubtotal;
 
   // Aplicar crédito solo si el subtotal es positivo
   const credit = customerCredits.reduce((sum, c) => sum + c.amount, 0);
@@ -5165,6 +5679,14 @@ finalizeSaleBtn.addEventListener("click", async () => {
     // Preparar items para RPC
     const items = [];
 
+    // Ofertas/promos 2x1-2xMonto: mismo cálculo que la vista previa en pantalla (computeSalePromoGrouping),
+    // para que el total guardado y el ticket impreso coincidan exactamente con lo que se le mostró al cajero.
+    const promoGrouping = await computeSalePromoGrouping(saleItems);
+    const promoUnitOverrides = promoGrouping.unitOverrides;
+    // Copia mutable: se va descontando a medida que se reparte cada línea producto+talle,
+    // para no "absorber" más unidades de las que realmente correspondan por variante/talle.
+    const promoUnitOverridesRemaining = new Map(promoUnitOverrides);
+
     const whFin = await getWarehousesCached();
     const generalWarehouseId = whFin?.generalId ?? null;
     const ventaPublicoWarehouseId = whFin?.ventaPublicoId ?? null;
@@ -5299,31 +5821,77 @@ finalizeSaleBtn.addEventListener("click", async () => {
         // Confirmación "agregar sin stock" → rpc_create_public_sale no descuenta depósitos (conteo desfasado, producto físico existe)
         const sellWithoutStock = size.quantity > 0 && srcVp === 0 && srcGen === 0;
 
-        items.push({
-          variant_id: variant.id,
-          qty: size.quantity,
-          price: item.price,
-          size: size.size ? String(size.size) : null, // Incluir tamaño como string para descontar stock por talle
-          is_return: item.isReturn || false,
-          from_local_order: item.fromLocalOrder || false, // Flag para indicar que viene de pedido local
-          sell_without_stock: sellWithoutStock,
-          source: {
-            venta_publico: srcVp,
-            general: srcGen
-          }
-        });
+        // Si esta línea (producto+color+talle) forma parte de un grupo 2x completo, esas unidades
+        // se cobran a $0 acá (su valor ya está incluido en la línea sintética "N ofertas 2x...").
+        // El resto (si sobra alguna unidad que no completó pareja) se cobra a precio normal.
+        const promoKey = `${item.productId}-${item.color}-${size.size}`;
+        const availableOverride = promoUnitOverridesRemaining.get(promoKey) || 0;
+        const qtyAbsorbedByPromo = Math.min(availableOverride, size.quantity);
+        if (qtyAbsorbedByPromo > 0) {
+          promoUnitOverridesRemaining.set(promoKey, availableOverride - qtyAbsorbedByPromo);
+        }
+        const qtyAtNormalPrice = size.quantity - qtyAbsorbedByPromo;
+
+        // Repartir el stock de origen (venta_publico/general) entre ambos tramos sin alterar el total.
+        const vpForPromo = Math.min(srcVp, qtyAbsorbedByPromo);
+        const genForPromo = qtyAbsorbedByPromo - vpForPromo;
+        const vpForNormal = srcVp - vpForPromo;
+        const genForNormal = srcGen - genForPromo;
+
+        if (qtyAbsorbedByPromo > 0) {
+          items.push({
+            variant_id: variant.id,
+            qty: qtyAbsorbedByPromo,
+            price: 0,
+            size: size.size ? String(size.size) : null,
+            is_return: item.isReturn || false,
+            from_local_order: item.fromLocalOrder || false,
+            sell_without_stock: sellWithoutStock,
+            source: {
+              venta_publico: vpForPromo,
+              general: genForPromo
+            }
+          });
+        }
+
+        if (qtyAtNormalPrice > 0) {
+          items.push({
+            variant_id: variant.id,
+            qty: qtyAtNormalPrice,
+            price: item.price,
+            size: size.size ? String(size.size) : null, // Incluir tamaño como string para descontar stock por talle
+            is_return: item.isReturn || false,
+            from_local_order: item.fromLocalOrder || false, // Flag para indicar que viene de pedido local
+            sell_without_stock: sellWithoutStock,
+            source: {
+              venta_publico: vpForNormal,
+              general: genForNormal
+            }
+          });
+        }
       }
     }
 
-    // Separar items de productos de extras
-    const productItems = saleItems.filter(item => !item.isExtra);
+    // Agregar líneas sintéticas de ofertas 2x1/2xMonto aplicadas (se muestran en el ticket
+    // como si fuesen un producto más: "N ofertas 2x...").
+    promoGrouping.promoLines.forEach(promoLine => {
+      if (!promoLine.amount) return;
+      items.push({
+        is_special_extra: true,
+        product_name: promoLine.label,
+        qty: 1,
+        price: promoLine.amount,
+        is_return: promoLine.isReturn || false,
+      });
+    });
+
+    // Separar extras de productos (los productos ya se procesaron arriba al armar `items`)
     const extraItems = saleItems.filter(item => item.isExtra);
 
-    // Calcular el total antes de crear la venta (solo productos)
-    // totalValue ya tiene el signo correcto (negativo para devoluciones, positivo para ventas)
-    const subtotal = productItems.reduce((sum, item) => {
-      return sum + item.totalValue;
-    }, 0);
+    // Subtotal de productos ya con ofertas/promos 2x aplicadas (computeSalePromoGrouping),
+    // igual al que se le mostró al cajero en pantalla. NO usar item.totalValue acá: no contempla
+    // el descuento de promos agrupadas entre varios productos.
+    const subtotal = promoGrouping.subtotal;
     const credit = customerCredits.reduce((sum, c) => sum + c.amount, 0);
     const creditToApply = subtotal > 0 ? Math.min(credit, subtotal) : 0;
     let finalTotal = subtotal - creditToApply;
@@ -5477,9 +6045,8 @@ finalizeSaleBtn.addEventListener("click", async () => {
       selectedColor = null;
       currentProduct = null;
       currentVariants = [];
-      manualSelectedSizes = {};
-      manualSelectedSizesSource = {};
-      manualSelectedSizesConfirmedWithoutStock = {};
+      clearManualPending();
+      if (manualLoadBtn) manualLoadBtn.textContent = "Agregar";
       productSelection.classList.remove("active");
       customerInfo.classList.remove("active");
       customerSearch.value = "";
@@ -5707,7 +6274,7 @@ async function printDirectly(saleDetails, customer, finalTotal = null) {
   }
 
   const sale = saleDetails.sale;
-  const items = saleDetails.items || [];
+  const items = (saleDetails.items || []).filter(item => !isPromoAbsorbedTicketLine(item));
 
   // Formatear fecha y hora
   const saleDate = new Date(sale.created_at);
@@ -5880,7 +6447,7 @@ async function showPrintModal(saleDetails, customer, creditAmount) {
   if (!printModal || !printContent) return;
 
   const sale = saleDetails.sale;
-  const items = saleDetails.items || [];
+  const items = (saleDetails.items || []).filter(item => !isPromoAbsorbedTicketLine(item));
 
   // Formatear fecha y hora
   const saleDate = new Date(sale.created_at);
@@ -6313,6 +6880,10 @@ if (reservasModal) {
 }
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
+  if (reservaImageModal?.classList.contains("active")) {
+    toggleReservaImageModal(false);
+    return;
+  }
   if (reservasModal?.classList.contains("active")) toggleReservasPanel(false);
 });
 if (reservasRefreshBtn) {
@@ -6320,9 +6891,34 @@ if (reservasRefreshBtn) {
     refreshReservas().catch((e) => console.warn("refreshReservas:", e?.message || e));
   });
 }
+if (closeReservaImageModalBtn) {
+  closeReservaImageModalBtn.addEventListener("click", () => toggleReservaImageModal(false));
+}
+const reservaImageModalCloseBtn = document.getElementById("reserva-image-modal-close-btn");
+if (reservaImageModalCloseBtn) {
+  reservaImageModalCloseBtn.addEventListener("click", () => toggleReservaImageModal(false));
+}
+if (reservaImageModal) {
+  reservaImageModal.addEventListener("click", (e) => {
+    if (e.target === reservaImageModal) toggleReservaImageModal(false);
+  });
+}
 
-// Delegación acciones confirmar/rechazar
 document.addEventListener("click", (e) => {
+  const imgBtn = e.target?.closest?.("[data-reserva-image]");
+  if (imgBtn) {
+    e.preventDefault();
+    e.stopPropagation();
+    const itemId = imgBtn.getAttribute("data-order-item-id");
+    const item = itemId ? reservaItemsById.get(itemId) : null;
+    if (item) {
+      openReservaItemImage(item).catch((err) => {
+        console.warn("openReservaItemImage:", err?.message || err);
+      });
+    }
+    return;
+  }
+
   const btn = e.target?.closest?.("[data-reserva-action]");
   if (!btn) return;
   const action = btn.getAttribute("data-reserva-action");
@@ -7411,7 +8007,10 @@ document.getElementById("order-edit-manual-product")?.addEventListener("input", 
   drop.style.display = "none";
   if (q.length < 2) return;
   orderEditSearchTimeout = setTimeout(async () => {
-    const { data: products } = await supabase.from("products").select("id, name").ilike("name", `%${q}%`).in("status", ["active", "pending_stock", "draft"]).limit(50);
+    // Prefijo ("empieza con"), no "contiene": evita matchear códigos no relacionados
+    // que solo comparten dígitos en el medio/final (ej: buscar "80" no debe traer "A800").
+    const safeQ = escapeForIlikeContains(q);
+    const { data: products } = await supabase.from("products").select("id, name").ilike("name", `${safeQ}%`).in("status", ["active", "pending_stock", "draft"]).limit(50);
     if (!products?.length) return;
     const sorted = sortProductsByRelevance(products, q).slice(0, 8);
     drop.innerHTML = sorted.map((p) => `<div class="autocomplete-item" data-id="${p.id}" data-name="${escapeHtml(p.name)}">${escapeHtml(p.name)}</div>`).join("");

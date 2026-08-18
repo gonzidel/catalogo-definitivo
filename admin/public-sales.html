@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
@@ -190,6 +190,27 @@
       align-items: center;
       justify-content: center;
       text-align: center;
+      position: relative;
+    }
+    .color-counter {
+      position: absolute;
+      top: -8px;
+      right: -8px;
+      min-width: 20px;
+      height: 20px;
+      padding: 0 5px;
+      border-radius: 10px;
+      background: #14532d;
+      color: #fff;
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 20px;
+      text-align: center;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+    }
+    .color-btn.active .color-counter {
+      background: #fff;
+      color: #CD844D;
     }
     .color-btn:hover {
       border-color: #CD844D;
@@ -651,7 +672,6 @@
     .autocomplete-item .highlight {
       background: #fff3cd;
       font-weight: 700;
-      padding: 0 2px;
     }
     .extra-item {
       background: #f0f8ff;
@@ -978,115 +998,235 @@
     }
     /* Modal campana: pendientes en local */
     #reservas-modal .reservas-modal-content {
-      max-width: min(540px, 96vw);
+      max-width: min(420px, 96vw);
       width: 100%;
       padding: 0;
       overflow: hidden;
       display: flex;
       flex-direction: column;
-      max-height: min(90vh, 760px);
+      max-height: min(88vh, 720px);
+    }
+    #reservas-modal .modal-close {
+      top: 8px;
+      right: 10px;
+      font-size: 20px;
+      line-height: 1;
+      z-index: 2;
     }
     #reservas-modal .reservas-modal__head {
-      padding: 14px 48px 14px 18px;
+      padding: 10px 36px 10px 12px;
       border-bottom: 1px solid #eee;
       background: linear-gradient(180deg, #fff, #fff8f0);
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 12px;
+      gap: 8px;
       flex-shrink: 0;
     }
     #reservas-modal .reservas-modal__head h2 {
       margin: 0;
-      font-size: 16px;
+      font-size: 14px;
       font-weight: 800;
       color: #333;
-      line-height: 1.25;
+      line-height: 1.2;
       flex: 1;
       min-width: 0;
     }
+    #reservas-modal .reservas-modal__head .btn {
+      padding: 4px 10px;
+      font-size: 11px;
+      line-height: 1.2;
+      flex-shrink: 0;
+    }
     #reservas-modal .reservas-modal__body {
-      padding: 14px 16px 20px;
+      padding: 8px 10px 12px;
       overflow-y: auto;
       flex: 1;
       min-height: 0;
       -webkit-overflow-scrolling: touch;
     }
     #reservas-modal .reserva-order {
-      border: 1px solid #e8e8e8;
-      border-radius: 12px;
-      padding: 14px 14px 12px;
-      margin-bottom: 14px;
-      background: #fafafa;
-      box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+      border: 1px solid #bbf7d0;
+      border-radius: 8px;
+      padding: 6px 8px;
+      margin-bottom: 6px;
+      background: #f0fdf4;
+      box-shadow: none;
     }
     #reservas-modal .reserva-order:last-child {
       margin-bottom: 0;
     }
     #reservas-modal .reserva-order__meta {
-      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      margin-bottom: 4px;
+      padding-bottom: 4px;
+      border-bottom: 1px solid #bbf7d0;
+    }
+    #reservas-modal .reserva-order__meta-main {
+      display: flex;
+      align-items: baseline;
+      gap: 5px;
+      min-width: 0;
+      flex: 1;
     }
     #reservas-modal .reserva-order__customer {
-      font-size: 16px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #111;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    #reservas-modal .reserva-order__number {
+      font-size: 10px;
+      color: #666;
+      flex-shrink: 0;
+      white-space: nowrap;
+    }
+    #reservas-modal .reserva-order__chip {
+      flex-shrink: 0;
+      font-size: 9px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      color: #15803d;
+      background: #dcfce7;
+      border: 1px solid #86efac;
+      border-radius: 999px;
+      padding: 2px 6px;
+      line-height: 1.1;
     }
     .reserva-order__meta {
       display: flex;
       justify-content: space-between;
-      gap: 10px;
-      flex-wrap: wrap;
-      margin-bottom: 8px;
+      gap: 8px;
+      flex-wrap: nowrap;
+      margin-bottom: 4px;
     }
     .reserva-order__customer {
-      font-weight: 800;
+      font-weight: 700;
       color: #333;
     }
-    #reservas-modal .reserva-item {
-      display: flex;
-      flex-direction: column;
-      align-items: stretch;
-      gap: 12px;
-      padding: 12px 0;
-      border-top: 1px dashed #ddd;
+    #reservas-modal .reserva-items {
+      list-style: none;
+      margin: 0;
+      padding: 0;
     }
-    #reservas-modal .reserva-item:first-of-type {
-      border-top: none;
-      padding-top: 4px;
-    }
-    #reservas-modal .reserva-item__name {
-      font-weight: 700;
-      color: #222;
-      font-size: 15px;
-      line-height: 1.3;
-    }
-    #reservas-modal .reserva-item__meta {
-      font-size: 13px;
-      color: #555;
-      margin-top: 4px;
-      line-height: 1.4;
-    }
-    #reservas-modal .reserva-item__actions {
-      display: flex;
-      gap: 10px;
+    #reservas-modal .reserva-item-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 28px auto;
+      gap: 4px 6px;
       align-items: center;
-      justify-content: flex-start;
-      flex-wrap: wrap;
+      padding: 5px 0;
+      border-top: 1px dashed #d1fae5;
     }
-    #reservas-modal .reserva-action-btn {
-      border: none;
-      border-radius: 10px;
-      padding: 10px 16px;
-      font-size: 13px;
+    #reservas-modal .reserva-item-row:first-child {
+      border-top: none;
+      padding-top: 2px;
+    }
+    #reservas-modal .reserva-item-row__text {
+      font-size: 14px;
       font-weight: 700;
+      color: #111;
+      line-height: 1.25;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-width: 0;
+    }
+    #reservas-modal .reserva-item-row__unit-tag {
+      font-size: 10px;
+      font-weight: 600;
+      color: #6b7280;
+    }
+    #reservas-modal .reserva-image-btn {
+      width: 26px;
+      height: 26px;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      background: #fff;
+      color: #374151;
       cursor: pointer;
-      min-height: 42px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      flex-shrink: 0;
     }
-    .reserva-action-btn--ok {
-      background: #28a745;
-      color: white;
+    #reservas-modal .reserva-image-btn:hover {
+      background: #f3f4f6;
+      border-color: #9ca3af;
     }
-    .reserva-action-btn--no {
-      background: #dc3545;
-      color: white;
+    #reservas-modal .reserva-image-btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+    #reservas-modal .reserva-item-row__actions {
+      display: flex;
+      gap: 4px;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    #reservas-modal .reserva-icon-btn {
+      width: 26px;
+      height: 26px;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 800;
+      line-height: 1;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+    }
+    #reservas-modal .reserva-icon-btn--ok {
+      background: #dcfce7;
+      color: #15803d;
+    }
+    #reservas-modal .reserva-icon-btn--no {
+      background: #fee2e2;
+      color: #b42318;
+    }
+    #reservas-modal .reserva-icon-btn--wait {
+      background: #fef9c3;
+      color: #a16207;
+    }
+    #reservas-modal .reserva-icon-btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    /* Preview imagen ítem (campana local) */
+    #reserva-image-modal {
+      z-index: 10050;
+    }
+    #reserva-image-modal .reserva-image-modal-content {
+      max-width: min(420px, 94vw);
+      width: 100%;
+      padding: 14px;
+      text-align: center;
+    }
+    #reserva-image-modal .reserva-image-modal__status {
+      margin: 24px 8px;
+      font-size: 14px;
+      color: #666;
+    }
+    #reserva-image-modal .reserva-image-modal__img {
+      display: block;
+      max-width: 100%;
+      max-height: min(70vh, 520px);
+      margin: 0 auto;
+      border-radius: 8px;
+      object-fit: contain;
+    }
+    #reserva-image-modal .reserva-image-modal__close {
+      margin-top: 12px;
+      width: 100%;
     }
   </style>
 </head>
@@ -1096,7 +1236,7 @@
       <h1>Venta al Público - Caja 1</h1>
       <div class="header-actions">
         <button type="button" class="reservas-bell-btn" id="reservas-bell-btn" aria-label="Pendientes en local (pedidos web)" title="Pendientes en local (pedidos web)">
-          <span aria-hidden="true">🔔</span>
+          <span aria-hidden="true">??</span>
           <span class="reservas-bell-badge" id="reservas-bell-badge">0</span>
         </button>
         <button class="btn btn-secondary" id="caja2-btn">Caja 2</button>
@@ -1191,7 +1331,7 @@
               
               <!-- Extra Especial -->
               <div class="search-group" style="min-width: 180px; margin: 0;">
-                <label style="font-size: 12px; margin-bottom: 4px;">⭐ Nombre del Extra</label>
+                <label style="font-size: 12px; margin-bottom: 4px;">? Nombre del Extra</label>
                 <input type="text" id="special-extra-name" placeholder="Ej: Caja de regalo" style="margin: 0; font-size: 14px;" />
               </div>
               <div class="search-group" style="min-width: 120px; margin: 0;">
@@ -1199,7 +1339,7 @@
                 <input type="number" id="special-extra-amount" placeholder="Ej: 1500" min="0" step="0.01" style="margin: 0; font-size: 14px;" />
               </div>
               <button class="btn" id="add-special-extra-btn" style="background: #9c27b0; color: white; padding: 8px 16px; white-space: nowrap; font-size: 12px; font-weight: 600; border: none; cursor: pointer;">
-                ➕ Agregar Especial
+                ? Agregar Especial
               </button>
             </div>
             <div id="payment-method-indicator" style="display: none; margin-top: 8px; padding: 8px; background: #e7f3ff; border: 1px solid #b3d9ff; border-radius: 6px; font-size: 12px; color: #0066cc;">
@@ -1338,6 +1478,16 @@
       <div class="reservas-modal__body" id="reservas-modal-body">
         <div id="reservas-list" aria-live="polite"></div>
       </div>
+    </div>
+  </div>
+
+  <!-- Preview imagen producto (campana local) -->
+  <div class="modal" id="reserva-image-modal" role="dialog" aria-modal="true" aria-label="Imagen del producto" aria-hidden="true">
+    <div class="modal-content reserva-image-modal-content">
+      <span class="modal-close" id="close-reserva-image-modal" role="button" tabindex="0" aria-label="Cerrar">&times;</span>
+      <p class="reserva-image-modal__status" id="reserva-image-modal-status" style="display:none;"></p>
+      <img class="reserva-image-modal__img" id="reserva-image-modal-img" alt="" style="display:none;" />
+      <button type="button" class="btn btn-secondary reserva-image-modal__close" id="reserva-image-modal-close-btn">Cerrar</button>
     </div>
   </div>
 

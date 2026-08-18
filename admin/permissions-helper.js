@@ -162,12 +162,18 @@ const ALL_PERMISSIONS = {
   publications: { can_view: true, can_edit: true, can_delete: true },
   'move-stock': { can_view: true, can_edit: true, can_delete: true },
   'public-sales': { can_view: true, can_edit: true, can_delete: true },
+  proveedores: { can_view: true, can_edit: true, can_delete: true },
   offers: { can_view: true, can_edit: true, can_delete: true },
   search: { can_view: true, can_edit: true, can_delete: true },
   labels: { can_view: true, can_edit: true, can_delete: true },
   customers: { can_view: true, can_edit: true, can_delete: true },
+  'missing-images': { can_view: true, can_edit: true, can_delete: true },
+  'complete-tags': { can_view: true, can_edit: true, can_delete: true },
+  'incomplete-products': { can_view: true, can_edit: true, can_delete: true },
+  'product-status': { can_view: true, can_edit: true, can_delete: true },
   'meta-feed': { can_view: true, can_edit: true, can_delete: true },
-  proveedores: { can_view: true, can_edit: true, can_delete: true },
+  'quick-actions': { can_view: true, can_edit: true, can_delete: true },
+  holidays: { can_view: true, can_edit: true, can_delete: true },
 };
 
 async function _doGetUserPermissions() {

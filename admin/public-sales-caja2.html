@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
@@ -204,6 +204,27 @@
       align-items: center;
       justify-content: center;
       text-align: center;
+      position: relative;
+    }
+    .color-counter {
+      position: absolute;
+      top: -8px;
+      right: -8px;
+      min-width: 20px;
+      height: 20px;
+      padding: 0 5px;
+      border-radius: 10px;
+      background: #14532d;
+      color: #fff;
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 20px;
+      text-align: center;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+    }
+    .color-btn.active .color-counter {
+      background: #fff;
+      color: #CD844D;
     }
     .color-btn:hover {
       border-color: #CD844D;
@@ -638,7 +659,6 @@
     .autocomplete-item .highlight {
       background: #fff3cd;
       font-weight: 700;
-      padding: 0 2px;
     }
     .extra-item {
       background: #f0f8ff;
@@ -938,7 +958,7 @@
               
               <!-- Extra Especial -->
               <div class="search-group" style="min-width: 180px; margin: 0;">
-                <label style="font-size: 12px; margin-bottom: 4px;">⭐ Nombre del Extra</label>
+                <label style="font-size: 12px; margin-bottom: 4px;">? Nombre del Extra</label>
                 <input type="text" id="special-extra-name" placeholder="Ej: Caja de regalo" style="margin: 0; font-size: 14px;" />
               </div>
               <div class="search-group" style="min-width: 120px; margin: 0;">
@@ -946,7 +966,7 @@
                 <input type="number" id="special-extra-amount" placeholder="Ej: 1500" min="0" step="0.01" style="margin: 0; font-size: 14px;" />
               </div>
               <button class="btn" id="add-special-extra-btn" style="background: #9c27b0; color: white; padding: 8px 16px; white-space: nowrap; font-size: 12px; font-weight: 600; border: none; cursor: pointer;">
-                ➕ Agregar Especial
+                ? Agregar Especial
               </button>
             </div>
             <div id="payment-method-indicator" style="display: none; margin-top: 8px; padding: 8px; background: #e7f3ff; border: 1px solid #b3d9ff; border-radius: 6px; font-size: 12px; color: #0066cc;">

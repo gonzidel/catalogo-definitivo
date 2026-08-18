@@ -422,6 +422,33 @@
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
 }
 
+.pau-manual-actions {
+  display: flex;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.pau-manual-actions[hidden] {
+  display: none !important;
+}
+
+.pau-manual-actions .pau-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 11px 8px;
+  font-size: 14px;
+}
+
+.pau-btn-manual-clear {
+  color: #b91c1c;
+  border: 1px solid #fecaca;
+  background: #fff;
+}
+
+.pau-btn-manual-clear:active {
+  background: #fef2f2;
+}
+
 .pau-manual-add-hint {
   font-size: 12px;
   color: #666;
@@ -527,6 +554,17 @@
   flex-shrink: 0;
   font-weight: 700;
   color: #111;
+}
+
+.pau-item-promo {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  background: #ff9800;
+  padding: 2px 6px;
+  border-radius: 4px;
+  line-height: 1.2;
 }
 
 .pau-item-row:last-child {

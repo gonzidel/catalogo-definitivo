@@ -65,9 +65,21 @@ let allProducts = [];
 let selectedForPublication = []; // Array de { productId, color }
 let selectedForOffer = []; // Array de { productId, color } — requiere también publicación seleccionada
 let selectedForNuevosIngresosHighlight = []; // Array de productId — reingreso destacado (solo ya publicados)
+/** Keys `productId|color` con oferta activa en color_price_offers (precio efectivo en catálogo). */
+let activeDbOfferKeys = new Set();
+/** Map key → offer_price numérico */
+let activeDbOfferPrices = new Map();
 
 function publicationSelectionKey(productId, color) {
-  return `${String(productId)}|${String(color ?? "")}`;
+  return `${String(productId)}|${String(color ?? "").trim()}`;
+}
+
+function todayISODateLocal() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 function isPublicationSelected(productId, color) {
@@ -75,9 +87,120 @@ function isPublicationSelected(productId, color) {
   return selectedForPublication.some(s => publicationSelectionKey(s.productId, s.color) === key);
 }
 
+function hasActiveDbOffer(productId, color) {
+  return activeDbOfferKeys.has(publicationSelectionKey(productId, color));
+}
+
 function isOfferSelected(productId, color) {
   const key = publicationSelectionKey(productId, color);
+  if (hasActiveDbOffer(productId, color)) return true;
   return selectedForOffer.some(s => publicationSelectionKey(s.productId, s.color) === key);
+}
+
+/**
+ * Carga ofertas activas vigentes y las adjunta a items (offerActive / offerPrice).
+ * Actualiza activeDbOfferKeys / activeDbOfferPrices.
+ */
+async function enrichItemsWithActiveOffers(items) {
+  if (!Array.isArray(items) || items.length === 0) return items;
+
+  const productIds = [
+    ...new Set(items.map((i) => i?.productId).filter(Boolean).map(String)),
+  ];
+  if (productIds.length === 0) return items;
+
+  const today = todayISODateLocal();
+  const { data: offers, error } = await supabase
+    .from("color_price_offers")
+    .select("product_id, color, offer_price, status, start_date, end_date, created_at")
+    .in("product_id", productIds)
+    .eq("status", "active")
+    .lte("start_date", today)
+    .gte("end_date", today)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    console.warn("⚠️ Error cargando ofertas activas para publicaciones:", error);
+    return items;
+  }
+
+  const offerMap = new Map();
+  (offers || []).forEach((o) => {
+    const key = publicationSelectionKey(o.product_id, o.color);
+    if (offerMap.has(key)) return;
+    const price = getNumericPrice(o.offer_price);
+    if (price === null || price <= 0) return;
+    offerMap.set(key, price);
+  });
+
+  // Merge en caches globales (no borrar otras keys: pueden pertenecer a otras pestañas)
+  offerMap.forEach((price, key) => {
+    activeDbOfferKeys.add(key);
+    activeDbOfferPrices.set(key, price);
+  });
+
+  // Limpiar keys de estos productIds que ya no tienen oferta activa
+  const productIdSet = new Set(productIds);
+  for (const key of [...activeDbOfferKeys]) {
+    const pid = key.split("|")[0];
+    if (!productIdSet.has(pid)) continue;
+    if (!offerMap.has(key)) {
+      activeDbOfferKeys.delete(key);
+      activeDbOfferPrices.delete(key);
+    }
+  }
+
+  items.forEach((item) => {
+    if (!item) return;
+    const key = publicationSelectionKey(item.productId, item.color);
+    if (offerMap.has(key)) {
+      item.offerActive = true;
+      item.offerPrice = offerMap.get(key);
+    } else {
+      item.offerActive = false;
+      item.offerPrice = null;
+    }
+  });
+
+  return items;
+}
+
+function getEffectiveDisplayPrice(item) {
+  if (item?.offerActive) {
+    const offerPrice = getNumericPrice(item.offerPrice);
+    if (offerPrice !== null) return offerPrice;
+    const cached = activeDbOfferPrices.get(
+      publicationSelectionKey(item.productId, item.color)
+    );
+    if (cached != null) return cached;
+  } else if (hasActiveDbOffer(item?.productId, item?.color)) {
+    const cached = activeDbOfferPrices.get(
+      publicationSelectionKey(item.productId, item.color)
+    );
+    if (cached != null) return cached;
+  }
+  return getNumericPrice(item?.price);
+}
+
+function formatPriceLineHtml(item) {
+  const base = getNumericPrice(item?.price);
+  const effective = getEffectiveDisplayPrice(item);
+  const isOffer =
+    item?.offerActive === true || hasActiveDbOffer(item?.productId, item?.color);
+
+  if (effective === null) {
+    return '<p><strong>Precio:</strong> N/A</p>';
+  }
+
+  const effectiveStr = formatCurrency(effective);
+  if (isOffer && base !== null && base !== effective) {
+    const baseStr = formatCurrency(base);
+    return `<p><strong>Precio:</strong> <span style="text-decoration:line-through;color:#888;margin-right:6px;">${baseStr}</span><span style="color:#c2410c;font-weight:600;">${effectiveStr}</span></p>`;
+  }
+  if (isOffer) {
+    return `<p><strong>Precio:</strong> <span style="color:#c2410c;font-weight:600;">${effectiveStr}</span></p>`;
+  }
+  return `<p><strong>Precio:</strong> ${effectiveStr}</p>`;
 }
 
 function buildManualOfferKeySet(publicationSelection = selectedForPublication, offerSelection = selectedForOffer) {
@@ -119,9 +242,16 @@ function renderCardCheckboxes(productId, color, item = null) {
   const productIdEscaped = String(productId).replace(/'/g, "&#39;");
   const colorEscaped = String(color ?? "").replace(/'/g, "&#39;");
   const pubSelected = isPublicationSelected(productId, color);
-  const offerSelected = isOfferSelected(productId, color);
+  const dbOffer =
+    item?.offerActive === true || hasActiveDbOffer(productId, color);
+  const offerSelected = isOfferSelected(productId, color) || dbOffer;
   const showRehighlight = item ? wasColorPublishedBefore(item) : false;
   const rehighlightSelected = isNuevosIngresosHighlightSelected(productId);
+  const offerTitle = dbOffer
+    ? "Oferta activa (precio de oferta en catálogo)"
+    : "Marcar como oferta";
+  // Oferta de DB se muestra aunque no esté seleccionada para publicar
+  const offerDisabled = dbOffer ? false : !pubSelected;
 
   const rehighlightBlock = showRehighlight
     ? `
@@ -140,9 +270,10 @@ function renderCardCheckboxes(productId, color, item = null) {
         <input type="checkbox" ${pubSelected ? "checked" : ""}
                onchange="togglePublication('${productIdEscaped}', '${colorEscaped}')" />
       </div>
-      <div class="checkbox-wrapper checkbox-wrapper--offer" title="Marcar como oferta">
+      <div class="checkbox-wrapper checkbox-wrapper--offer" title="${offerTitle}">
         <label class="checkbox-offer-label">
-          <input type="checkbox" ${offerSelected ? "checked" : ""} ${pubSelected ? "" : "disabled"}
+          <input type="checkbox" ${offerSelected ? "checked" : ""} ${offerDisabled ? "disabled" : ""}
+                 data-db-offer="${dbOffer ? "1" : "0"}"
                  onchange="toggleOffer('${productIdEscaped}', '${colorEscaped}')" />
           <span>Oferta</span>
         </label>
@@ -763,6 +894,7 @@ async function groupProductsByColor(products, batchSize = 10) {
     console.warn(`   Esto puede indicar que no hay stock > 0 en variant_size_warehouse_stock (general).`);
   }
   
+  await enrichItemsWithActiveOffers(grouped);
   return grouped;
 }
 
@@ -1559,6 +1691,7 @@ async function groupProductsByColorLowStock(products, batchSize = 10) {
     console.warn(`⚠️ ADVERTENCIA: Se encontraron ${products.length} productos con poco stock pero ninguno tiene stock por talle entre 1 y 10 en depósito general`);
   }
   
+  await enrichItemsWithActiveOffers(grouped);
   return grouped;
 }
 
@@ -2268,9 +2401,8 @@ function createProductCard(item) {
   const productIdEscaped = String(item.productId).replace(/'/g, "&#39;");
   const colorEscaped = String(item.color).replace(/'/g, "&#39;");
   const productNameEscaped = String(item.productName).replace(/"/g, "&quot;");
-  const numericPrice = getNumericPrice(item.price);
-  const formattedPrice = numericPrice !== null ? formatCurrency(numericPrice) : null;
-  const editPriceArg = numericPrice !== null ? numericPrice : "null";
+  const basePrice = getNumericPrice(item.price);
+  const editPriceArg = basePrice !== null ? basePrice : "null";
   
   return `
     <div class="product-color-card ${isSelected ? 'selected' : ''}" data-product-id="${productIdEscaped}" data-color="${colorEscaped}">
@@ -2280,7 +2412,7 @@ function createProductCard(item) {
         <span class="product-color-badge">${colorEscaped}</span>
         <h3>${productNameEscaped}</h3>
         <p><strong>Categoría:</strong> ${item.category || 'N/A'}</p>
-        ${formattedPrice ? `<p><strong>Precio:</strong> ${formattedPrice}</p>` : '<p><strong>Precio:</strong> N/A</p>'}
+        ${formatPriceLineHtml(item)}
         <p><strong>Creado:</strong> ${new Date(item.created_at).toLocaleDateString('es-AR')}</p>
         <div class="sizes-info">Talles: ${formatCardSizesLabel(item)}</div>
         <div class="card-actions">
@@ -2318,9 +2450,8 @@ function renderRecommendedProducts(filtered = null) {
     const productIdEscaped = String(item.productId).replace(/'/g, "&#39;");
     const colorEscaped = String(item.color).replace(/'/g, "&#39;");
     const productNameEscaped = String(item.productName).replace(/"/g, "&quot;");
-    const numericPrice = getNumericPrice(item.price);
-    const formattedPrice = numericPrice !== null ? formatCurrency(numericPrice) : null;
-    const editPriceArg = numericPrice !== null ? numericPrice : "null";
+    const basePrice = getNumericPrice(item.price);
+    const editPriceArg = basePrice !== null ? basePrice : "null";
     
     return `
       <div class="product-color-card ${isSelected ? 'selected' : ''}" data-product-id="${productIdEscaped}" data-color="${colorEscaped}">
@@ -2330,7 +2461,7 @@ function renderRecommendedProducts(filtered = null) {
           <span class="product-color-badge">${colorEscaped}</span>
           <h3>${productNameEscaped}</h3>
           <p><strong>Categoría:</strong> ${item.category || 'N/A'}</p>
-          ${formattedPrice ? `<p><strong>Precio:</strong> ${formattedPrice}</p>` : '<p><strong>Precio:</strong> N/A</p>'}
+          ${formatPriceLineHtml(item)}
           <p><strong>Última publicación:</strong> Hace ${days} días</p>
           <div class="sizes-info">Talles: ${formatCardSizesLabel(item)}</div>
           <div class="card-actions">
@@ -2375,9 +2506,8 @@ function renderAllProducts(filtered = null) {
     const productIdEscaped = String(item.productId).replace(/'/g, "&#39;");
     const colorEscaped = String(item.color).replace(/'/g, "&#39;");
     const productNameEscaped = String(item.productName).replace(/"/g, "&quot;");
-    const numericPrice = getNumericPrice(item.price);
-    const formattedPrice = numericPrice !== null ? formatCurrency(numericPrice) : null;
-    const editPriceArg = numericPrice !== null ? numericPrice : "null";
+    const basePrice = getNumericPrice(item.price);
+    const editPriceArg = basePrice !== null ? basePrice : "null";
     
     let publicationInfo = '';
     if (item.last_published_at) {
@@ -2394,7 +2524,7 @@ function renderAllProducts(filtered = null) {
           <span class="product-color-badge">${colorEscaped}</span>
           <h3>${productNameEscaped}</h3>
           <p><strong>Categoría:</strong> ${item.category || 'N/A'}</p>
-          ${formattedPrice ? `<p><strong>Precio:</strong> ${formattedPrice}</p>` : '<p><strong>Precio:</strong> N/A</p>'}
+          ${formatPriceLineHtml(item)}
           <p><strong>Creado:</strong> ${new Date(item.created_at).toLocaleDateString('es-AR')}</p>
           ${publicationInfo}
           <div class="sizes-info">Talles: ${formatCardSizesLabel(item)}</div>
@@ -2436,9 +2566,8 @@ function renderLowStockProducts(filtered = null) {
     const productIdEscaped = String(item.productId).replace(/'/g, "&#39;");
     const colorEscaped = String(item.color).replace(/'/g, "&#39;");
     const productNameEscaped = String(item.productName).replace(/"/g, "&quot;");
-    const numericPrice = getNumericPrice(item.price);
-    const formattedPrice = numericPrice !== null ? formatCurrency(numericPrice) : null;
-    const editPriceArg = numericPrice !== null ? numericPrice : "null";
+    const basePrice = getNumericPrice(item.price);
+    const editPriceArg = basePrice !== null ? basePrice : "null";
     
     // Formatear información de stock
     const stockInfoText = item.stockInfo && item.stockInfo.length > 0
@@ -2453,7 +2582,7 @@ function renderLowStockProducts(filtered = null) {
           <span class="product-color-badge">${colorEscaped}</span>
           <h3>${productNameEscaped}</h3>
           <p><strong>Categoría:</strong> ${item.category || 'N/A'}</p>
-          ${formattedPrice ? `<p><strong>Precio:</strong> ${formattedPrice}</p>` : '<p><strong>Precio:</strong> N/A</p>'}
+          ${formatPriceLineHtml(item)}
           <div class="sizes-info">Talles: ${formatCardSizesLabel(item)}</div>
           <div class="sizes-info" style="background:#fff3cd;color:#856404;margin-top:8px;">
             <strong>⚠️ Stock:</strong> ${stockInfoText}
@@ -2552,6 +2681,8 @@ async function renderPublicationTable(filtered = null) {
     const loadedItems = await Promise.all(loadPromises);
     validItems.push(...loadedItems.filter(Boolean));
   }
+
+  await enrichItemsWithActiveOffers(validItems);
   
   const itemsToRender = publicationQuery
     ? validItems.filter(item => matchesProductSearch(item, publicationQuery))
@@ -2569,9 +2700,10 @@ async function renderPublicationTable(filtered = null) {
       const imageUrlEscaped = thumbSrc ? String(thumbSrc).replace(/"/g, "&quot;") : "";
       const productNameEscaped = String(item.productName).replace(/"/g, "&quot;");
       const categoryEscaped = String(item.category || 'N/A').replace(/"/g, "&quot;");
-      const numericPrice = getNumericPrice(item.price);
-      const formattedPrice = numericPrice !== null ? formatCurrency(numericPrice) : "N/A";
-      const editPriceArg = numericPrice !== null ? numericPrice : "null";
+      const basePrice = getNumericPrice(item.price);
+      const displayPrice = getEffectiveDisplayPrice(item);
+      const formattedPrice = displayPrice !== null ? formatCurrency(displayPrice) : "N/A";
+      const editPriceArg = basePrice !== null ? basePrice : "null";
       
       return `
         <tr>
@@ -2651,6 +2783,19 @@ window.togglePublication = function(productId, color) {
 window.toggleOffer = function(productId, color) {
   const pid = String(productId);
   const col = String(color ?? "");
+  const dbOffer = hasActiveDbOffer(pid, col);
+
+  // Oferta activa en DB: solo lectura acá (se gestiona en Productos).
+  // Si el usuario intenta destildar, reponer el check.
+  if (dbOffer) {
+    const card = document.querySelector(
+      `.product-color-card[data-product-id="${CSS.escape(pid)}"][data-color="${CSS.escape(col)}"]`
+    );
+    const input = card?.querySelector('.checkbox-wrapper--offer input[type="checkbox"]');
+    if (input) input.checked = true;
+    return;
+  }
+
   if (!isPublicationSelected(pid, col)) return;
 
   const index = selectedForOffer.findIndex(
@@ -2913,6 +3058,7 @@ async function resolveOrderedPublicationItems(selection) {
     orderedItems.push(...(await Promise.all(loadPromises)).filter(Boolean));
   }
 
+  await enrichItemsWithActiveOffers(orderedItems);
   return orderedItems;
 }
 
@@ -2958,7 +3104,16 @@ async function buildPublicationExportRows(selection, offerSelection = selectedFo
   for (const [, items] of byProduct) {
     const first = items[0];
     const isNew = first.publication_status === "nuevo" || !first.last_published_at;
-    const numericPrice = getNumericPrice(first.price);
+    // Precio efectivo: oferta activa (DB o item) si existe
+    const offerItem = items.find(
+      (i) =>
+        i.offerActive ||
+        inOfferSet.has(`${i.productId}|${(i.color || "").trim()}`) ||
+        hasActiveDbOffer(i.productId, i.color)
+    );
+    const numericPrice = offerItem
+      ? getEffectiveDisplayPrice(offerItem) ?? getNumericPrice(first.price)
+      : getNumericPrice(first.price);
     const priceValue = numericPrice !== null ? formatCurrency(numericPrice) : "";
     const hasManualOffer = items.some(i =>
       manualOfferKeys.has(publicationSelectionKey(i.productId, i.color))

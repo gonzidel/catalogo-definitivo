@@ -79,11 +79,18 @@ const PERMISSIONS = [
   { key: 'publications', label: 'Publicaciones', description: 'Gestionar productos para publicar en redes sociales' },
   { key: 'move-stock', label: 'Mover Stock', description: 'Mover productos entre almacenes' },
   { key: 'public-sales', label: 'Venta al público', description: 'Gestionar stock de venta al público' },
+  { key: 'proveedores', label: 'Proveedores', description: 'Pedidos a proveedores (Telegram/n8n) y compras a proveedores (temporadas, recepciones, arqueo)' },
   { key: 'offers', label: 'OFERTA', description: 'Gestionar ofertas por color y promociones 2x1/2xMonto' },
   { key: 'search', label: 'Búsqueda', description: 'Búsqueda avanzada de productos y stock' },
   { key: 'labels', label: 'ETIQUETAS', description: 'Imprimir etiquetas para productos' },
   { key: 'customers', label: 'Clientes', description: 'Gestionar clientes y sus datos' },
-  { key: 'meta-feed', label: 'Meta (Catálogo)', description: 'Feed CSV para Facebook/Instagram Catalog' }
+  { key: 'missing-images', label: 'Imágenes Faltantes', description: 'Detectar y cargar imágenes para variantes sin fotos' },
+  { key: 'complete-tags', label: 'Completar Tags', description: 'Completar tags jerárquicos y detalles de productos' },
+  { key: 'incomplete-products', label: 'Productos Incompletos', description: 'Completar stock y tags de productos pendientes' },
+  { key: 'product-status', label: 'Estado de Productos', description: 'Gestionar visibilidad de productos en el catálogo' },
+  { key: 'meta-feed', label: 'Meta (Catálogo)', description: 'Feed CSV para Facebook/Instagram Catalog' },
+  { key: 'quick-actions', label: 'Acciones Rápidas', description: 'Gestionar acciones rápidas del catálogo móvil' },
+  { key: 'holidays', label: 'Feriados', description: 'Gestionar feriados y días no hábiles para el vencimiento de pedidos' }
 ];
 
 // Configurar event listeners
@@ -279,7 +286,9 @@ async function handleAddCollaborator(e) {
   const emailInput = document.getElementById("collaborator-email");
   const passwordInput = document.getElementById("collaborator-password");
   const createAccountCheckbox = document.getElementById("create-account");
-  const email = emailInput.value.trim();
+  // Normalizar a minúsculas: Supabase Auth guarda los emails normalizados,
+  // por lo que una búsqueda exacta con mayúsculas fallaría aunque la cuenta exista.
+  const email = emailInput.value.trim().toLowerCase();
   const password = passwordInput?.value || "";
   const createAccount = createAccountCheckbox?.checked || false;
   const btn = document.getElementById("add-collaborator-btn");

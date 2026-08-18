@@ -69,6 +69,18 @@
     .modal-body .hint{color:#6b7280;font-size:12px;margin-top:8px;line-height:1.5}
     .modal-footer{display:flex;gap:12px;justify-content:flex-end;padding-top:16px;border-top:2px solid #e5e7eb}
     .modal-footer .btn{min-width:100px}
+    /* Corrector de ortografía en descripción */
+    #description{min-height:52px;resize:vertical;font-family:inherit;line-height:1.4}
+    .desc-spell-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:2px;font-weight:400}
+    .desc-spell-results{margin-top:6px;padding:8px;border:1px solid #e5e5e5;border-radius:6px;background:#fafafa;font-weight:400}
+    .desc-spell-item{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:6px 0;border-bottom:1px solid #eee;font-size:12px}
+    .desc-spell-item:last-child{border-bottom:none}
+    .desc-spell-word{text-decoration:underline wavy #c33;font-weight:600}
+    .desc-spell-msg{color:#555;flex:1 1 180px}
+    .desc-spell-ok{color:#15803d;font-size:12px}
+    .desc-spell-err{color:#c00;font-size:12px}
+    .desc-spell-sug{padding:3px 8px;font-size:11px}
+    .v-cost[data-auto-from-price="true"]{background:#fff8e1}
     /* Evita flash de costos antes de que el módulo resuelva super_admin */
     html.js-cost-visibility-pending [data-cost-sensitive],
     html.js-cost-visibility-pending th[data-cost-sensitive="cost-col-header"],
@@ -124,7 +136,12 @@
             <input id="name" placeholder="Zapatilla 343" autocomplete="off" />
           </label>
           <label>Descripción
-            <input id="description" autocomplete="off" />
+            <textarea id="description" rows="3" lang="es" spellcheck="true" autocomplete="off" placeholder="Descripción del producto en español"></textarea>
+            <div class="desc-spell-toolbar">
+              <button type="button" id="desc-spell-btn" class="btn">Revisar ortografía</button>
+              <small class="hint">Español. El navegador también puede subrayar errores si tenés el diccionario instalado. Corrector: <a href="https://languagetool.org" target="_blank" rel="noopener">LanguageTool</a></small>
+            </div>
+            <div id="desc-spell-results" class="desc-spell-results" hidden></div>
           </label>
           <label>Proveedor
             <div style="display:flex;gap:6px;align-items:flex-start;">
@@ -294,6 +311,7 @@
                 <th style="min-width:120px">SKU base</th>
                 <th data-cost-sensitive="cost-col-header" style="min-width:90px">Costo</th>
                 <th style="min-width:120px">Precio recomendado</th>
+                <th style="min-width:140px" title="Si está activo, este precio reemplaza al recomendado en el catálogo">Precio de oferta</th>
                 <th style="min-width:60px">Activa</th>
                 <th style="min-width:200px">Imágenes (URLs)</th>
                 <th style="min-width:30px"></th>
@@ -357,7 +375,7 @@
   <script type="module" src="../scripts/config.js"></script>
   <script defer src="../scripts/vendor/supabase-js.bundle.min.js?v=m260607"></script>
   <script type="module" src="../scripts/supabase-client.js?v=m260607"></script>
-  <script type="module" src="./products.js?v=m260607"></script>
+  <script type="module" src="./products.js?v=m260818"></script>
   <datalist id="colors-datalist"></datalist>
   <datalist id="products-datalist"></datalist>
 </body>

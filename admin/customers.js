@@ -7,6 +7,12 @@ import { supabase as supabaseClient } from "../scripts/supabase-client.js?v=m260
 import { preloadAuthState, can, isAdminUser } from "./auth-state.js?v=m260607";
 import { createScreenScope } from "../scripts/net/screen-scope.js";
 import { wrapSupabase, createAbortScope, FYL_ERROR_KIND, classifyError } from "../scripts/net/fyl-fetch.js";
+import {
+  normalizeDniInput,
+  isValidDni,
+  formatDniDisplay,
+  DNI_VALIDATION_MESSAGE,
+} from "../scripts/utils/dni.js?v=m260607";
 
 /**
  * Scope de clientes: libera el estado "usable" cuando el buscador está
@@ -62,6 +68,345 @@ import { PROVINCE_CITIES_DATA } from './argentina-cities-data.js';
 const PROVINCE_CITIES = PROVINCE_CITIES_DATA;
 
 const ARGENTINA_PROVINCES = Object.keys(PROVINCE_CITIES).sort();
+
+const MAX_ADDITIONAL_NAMES = 3;
+
+/**
+ * Normaliza texto de ubicación (provincia/ciudad) para comparar sin
+ * distinguir tildes ni mayúsculas/minúsculas. Esto evita que clientes ya
+ * guardados con acentos (ej. "Córdoba") queden bloqueados porque el listado
+ * de ciudades usa las claves sin acentos (ej. "Cordoba").
+ */
+function normalizeLocationText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+/** Busca la clave real de PROVINCE_CITIES que corresponde a un valor guardado, ignorando tildes/mayúsculas. */
+function findProvinceKey(provinceValue) {
+  if (!provinceValue) return null;
+  const target = normalizeLocationText(provinceValue);
+  return ARGENTINA_PROVINCES.find((key) => normalizeLocationText(key) === target) || null;
+}
+
+/** Verifica si una ciudad pertenece a la lista de una provincia, ignorando tildes/mayúsculas. */
+function cityBelongsToProvince(cityValue, provinceKey) {
+  if (!cityValue || !provinceKey) return false;
+  const cities = PROVINCE_CITIES[provinceKey] || [];
+  const target = normalizeLocationText(cityValue);
+  return cities.some((city) => normalizeLocationText(city) === target);
+}
+
+/** Evita autocompletado y aviso "Guardar dirección" de Chrome en el modal de clientes. */
+function armCustomerFormAntiAutofill(root, { skipReadonly = false } = {}) {
+  const scope = root || document.getElementById("customer-form");
+  if (!scope) return;
+
+  scope.querySelectorAll("input:not([type='hidden']):not([type='button']):not([type='submit']), textarea, select").forEach((el) => {
+    el.setAttribute("autocomplete", "new-password");
+    el.setAttribute("data-lpignore", "true");
+    el.setAttribute("data-1p-ignore", "true");
+    el.setAttribute("data-form-type", "other");
+
+    if (typeof el._fylAutofillUnlock === "function") {
+      el.removeEventListener("focus", el._fylAutofillUnlock);
+      el.removeEventListener("pointerdown", el._fylAutofillUnlock);
+      el._fylAutofillUnlock = null;
+    }
+
+    if (skipReadonly) {
+      el.readOnly = false;
+      return;
+    }
+
+    el.readOnly = true;
+    const unlock = () => {
+      el.readOnly = false;
+    };
+    el._fylAutofillUnlock = unlock;
+    el.addEventListener("focus", unlock, { once: true });
+    el.addEventListener("pointerdown", unlock, { once: true });
+  });
+}
+
+function resetCustomerFormInputLocks(form) {
+  const scope = form || document.getElementById("customer-form");
+  if (!scope) return;
+
+  scope.querySelectorAll("input, textarea, select").forEach((el) => {
+    el.readOnly = false;
+    if (typeof el._fylAutofillUnlock === "function") {
+      el.removeEventListener("focus", el._fylAutofillUnlock);
+      el.removeEventListener("pointerdown", el._fylAutofillUnlock);
+      el._fylAutofillUnlock = null;
+    }
+  });
+}
+
+function dismissCustomerFormAutofillPrompt() {
+  document.activeElement?.blur?.();
+  const form = document.getElementById("customer-form");
+  if (form) form.reset();
+}
+
+function splitPersonFullName(fullName) {
+  const full = String(fullName || "").trim();
+  if (!full) return { firstName: "", lastName: "" };
+  const parts = full.split(/\s+/);
+  if (parts.length === 1) return { firstName: parts[0], lastName: "" };
+  const lastName = parts.pop();
+  return { firstName: parts.join(" "), lastName };
+}
+
+function parseAdditionalNames(raw) {
+  if (!raw) return [];
+  let parsed = raw;
+  if (typeof raw === "string") {
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed
+    .slice(0, MAX_ADDITIONAL_NAMES)
+    .map((entry) => {
+      let firstName = String(entry?.first_name || "").trim();
+      let lastName = String(entry?.last_name || "").trim();
+      if (!firstName && !lastName) {
+        const legacyName = String(entry?.name || entry?.full_name || "").trim();
+        if (legacyName) {
+          const split = splitPersonFullName(legacyName);
+          firstName = split.firstName;
+          lastName = split.lastName;
+        }
+      }
+      return {
+        firstName,
+        lastName,
+        dni: String(entry?.dni || "").trim(),
+      };
+    })
+    .filter((entry) => entry.firstName || entry.lastName || entry.dni);
+}
+
+function getAdditionalNamesElements() {
+  return {
+    modalContent: document.getElementById("customer-modal-content"),
+    panel: document.getElementById("additional-names-panel"),
+    list: document.getElementById("additional-names-list"),
+    addBtn: document.getElementById("add-additional-name-btn"),
+    hint: document.getElementById("additional-names-hint"),
+  };
+}
+
+function resetAdditionalNamesPanel() {
+  const { modalContent, panel, list, addBtn, hint } = getAdditionalNamesElements();
+  if (list) list.innerHTML = "";
+  if (panel) panel.hidden = true;
+  if (modalContent) modalContent.classList.remove("is-expanded");
+  if (addBtn) {
+    addBtn.disabled = false;
+    addBtn.textContent = "+ Agregar nombre";
+  }
+  if (hint) hint.textContent = "Hasta 3 sub-nombres (nombre, apellido y DNI)";
+}
+
+function updateAdditionalNamesControls() {
+  const { modalContent, panel, list, addBtn, hint } = getAdditionalNamesElements();
+  const count = list?.children.length || 0;
+  const hasEntries = count > 0;
+
+  if (panel) panel.hidden = !hasEntries;
+  if (modalContent) modalContent.classList.toggle("is-expanded", hasEntries);
+  if (addBtn) {
+    addBtn.disabled = count >= MAX_ADDITIONAL_NAMES;
+    addBtn.textContent = count >= MAX_ADDITIONAL_NAMES
+      ? "Máximo alcanzado (3)"
+      : "+ Agregar nombre";
+  }
+  if (hint) {
+    hint.textContent = hasEntries
+      ? `${count} de ${MAX_ADDITIONAL_NAMES} sub-nombres`
+      : "Hasta 3 sub-nombres (nombre, apellido y DNI)";
+  }
+}
+
+function addAdditionalNameEntry(firstName = "", lastName = "", dni = "") {
+  const { list } = getAdditionalNamesElements();
+  if (!list || list.children.length >= MAX_ADDITIONAL_NAMES) return;
+
+  const index = list.children.length + 1;
+  const entry = document.createElement("div");
+  entry.className = "additional-name-entry";
+  entry.innerHTML = `
+    <div class="additional-name-entry-header">
+      <span>Sub-nombre ${index}</span>
+      <button type="button" class="additional-name-remove" aria-label="Quitar sub-nombre ${index}">&times;</button>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Nombre</label>
+        <input
+          type="text"
+          class="additional-first-name-input"
+          name="fyl-additional-given-name"
+          placeholder="Ej: María"
+          value="${escapeAttr(firstName)}"
+          autocomplete="new-password"
+          autocapitalize="off"
+          spellcheck="false"
+          data-lpignore="true"
+          data-1p-ignore="true"
+        />
+      </div>
+      <div class="form-group">
+        <label>Apellido</label>
+        <input
+          type="text"
+          class="additional-last-name-input"
+          name="fyl-additional-family-name"
+          placeholder="Ej: Gómez"
+          value="${escapeAttr(lastName)}"
+          autocomplete="new-password"
+          autocapitalize="off"
+          spellcheck="false"
+          data-lpignore="true"
+          data-1p-ignore="true"
+        />
+      </div>
+    </div>
+    <div class="form-group">
+      <label>DNI / CUIT (opcional)</label>
+      <input
+        type="text"
+        class="additional-dni-input"
+        name="fyl-additional-doc-id"
+        inputmode="numeric"
+        placeholder="Ej: 12345678 o 20-37262546-6"
+        value="${escapeAttr(formatDniDisplay(dni))}"
+        pattern="[0-9\\-]{7,13}"
+        title="${escapeAttr(DNI_VALIDATION_MESSAGE)}"
+        autocomplete="new-password"
+        autocapitalize="off"
+        spellcheck="false"
+        data-lpignore="true"
+        data-1p-ignore="true"
+      />
+    </div>
+  `;
+
+  list.appendChild(entry);
+  bindDniInputFormatting(entry.querySelector(".additional-dni-input"));
+  armCustomerFormAntiAutofill(entry);
+  updateAdditionalNamesControls();
+  entry.querySelector(".additional-first-name-input")?.focus();
+}
+
+function renumberAdditionalNameEntries() {
+  const { list } = getAdditionalNamesElements();
+  if (!list) return;
+  list.querySelectorAll(".additional-name-entry").forEach((entry, idx) => {
+    const label = entry.querySelector(".additional-name-entry-header span");
+    const removeBtn = entry.querySelector(".additional-name-remove");
+    const number = idx + 1;
+    if (label) label.textContent = `Sub-nombre ${number}`;
+    if (removeBtn) removeBtn.setAttribute("aria-label", `Quitar sub-nombre ${number}`);
+  });
+}
+
+function collectAdditionalNamesFromForm() {
+  const { list } = getAdditionalNamesElements();
+  if (!list) return [];
+
+  const entries = [];
+  list.querySelectorAll(".additional-name-entry").forEach((entry) => {
+    const firstName = entry.querySelector(".additional-first-name-input")?.value?.trim() || "";
+    const lastName = entry.querySelector(".additional-last-name-input")?.value?.trim() || "";
+    const dni = entry.querySelector(".additional-dni-input")?.value?.trim() || "";
+    if (!firstName && !lastName && !dni) return;
+    entries.push({
+      first_name: firstName,
+      last_name: lastName,
+      full_name: `${firstName} ${lastName}`.trim(),
+      dni: dni ? normalizeDniInput(dni) : null,
+    });
+  });
+  return entries;
+}
+
+function validateAdditionalNames(entries, errorDiv) {
+  if (entries.length > MAX_ADDITIONAL_NAMES) {
+    if (errorDiv) {
+      errorDiv.textContent = `Solo se permiten hasta ${MAX_ADDITIONAL_NAMES} nombres adicionales`;
+      errorDiv.style.display = "block";
+    }
+    return false;
+  }
+
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    if (!entry.first_name || !entry.last_name) {
+      if (errorDiv) {
+        errorDiv.textContent = `El sub-nombre ${i + 1} requiere nombre y apellido`;
+        errorDiv.style.display = "block";
+      }
+      return false;
+    }
+    if (entry.dni && !isValidDni(entry.dni)) {
+      if (errorDiv) {
+        errorDiv.textContent = `El documento del sub-nombre ${i + 1} no es válido. ${DNI_VALIDATION_MESSAGE}`;
+        errorDiv.style.display = "block";
+      }
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function bindDniInputFormatting(input) {
+  if (!input || input.dataset.dniFormatBound === "1") return;
+  input.dataset.dniFormatBound = "1";
+  input.addEventListener("blur", () => {
+    const normalized = normalizeDniInput(input.value);
+    input.value = normalized ? formatDniDisplay(normalized) : "";
+  });
+}
+
+function bindAllCustomerDniInputs() {
+  bindDniInputFormatting(document.getElementById("customer-dni"));
+  document.querySelectorAll(".additional-dni-input").forEach(bindDniInputFormatting);
+}
+
+function setupAdditionalNamesUI() {
+  const { addBtn, list } = getAdditionalNamesElements();
+  if (addBtn && !addBtn.dataset.bound) {
+    addBtn.dataset.bound = "1";
+    addBtn.addEventListener("click", () => addAdditionalNameEntry());
+  }
+  if (list && !list.dataset.bound) {
+    list.dataset.bound = "1";
+    list.addEventListener("click", (e) => {
+      const removeBtn = e.target.closest(".additional-name-remove");
+      if (!removeBtn) return;
+      removeBtn.closest(".additional-name-entry")?.remove();
+      renumberAdditionalNameEntries();
+      updateAdditionalNamesControls();
+    });
+  }
+}
+
+function loadAdditionalNamesIntoForm(raw) {
+  resetAdditionalNamesPanel();
+  parseAdditionalNames(raw).forEach((entry) => {
+    addAdditionalNameEntry(entry.firstName, entry.lastName, entry.dni || "");
+  });
+}
 
 // Funciones de formato de teléfono
 function validatePhone(phone) {
@@ -431,7 +776,7 @@ async function loadCustomers(searchQuery = "") {
             </span>
           </h3>
           <p>
-            ${customer.dni ? `DNI: ${customer.dni} • ` : ""}
+            ${customer.dni ? `DNI: ${formatDniDisplay(customer.dni)} • ` : ""}
             ${customer.phone ? `Tel: ${customer.phone}` : ""}
           </p>
           <p>
@@ -498,8 +843,12 @@ function openCreateCustomerModal() {
     cityInput.placeholder = "Seleccione provincia primero...";
   }
 
+  resetAdditionalNamesPanel();
+
   if (modal) modal.classList.add("active");
+  armCustomerFormAntiAutofill(form);
   initializeAutocomplete();
+  bindAllCustomerDniInputs();
 }
 
 // Abrir modal para editar cliente
@@ -558,25 +907,35 @@ async function editCustomer(customerId) {
 
     if (firstNameInput) firstNameInput.value = first;
     if (lastNameInput) lastNameInput.value = last;
-    if (dniInput) dniInput.value = customer.dni || "";
+    if (dniInput) dniInput.value = formatDniDisplay(customer.dni || "");
     if (phoneInput) phoneInput.value = unformatPhone(customer.phone || "");
     if (emailInput) emailInput.value = customer.email || "";
     if (addressInput) addressInput.value = customer.address || "";
     if (provinceInput) provinceInput.value = customer.province || "";
     if (cityInput) {
       cityInput.value = customer.city || "";
-      if (customer.province && PROVINCE_CITIES[customer.province]) {
+      const matchedProvinceKey = findProvinceKey(customer.province);
+      if (matchedProvinceKey) {
         cityInput.disabled = false;
         cityInput.placeholder = "Escriba para buscar ciudad...";
-        updateCitiesList(customer.province);
+        updateCitiesList(matchedProvinceKey);
       } else {
         cityInput.disabled = true;
         cityInput.placeholder = "Seleccione provincia primero...";
       }
     }
 
+    loadAdditionalNamesIntoForm(customer.additional_names);
+
+    const invoiceFullAmountInput = document.getElementById("customer-invoice-full-amount");
+    const invoiceAlwaysAInput = document.getElementById("customer-invoice-always-a");
+    if (invoiceFullAmountInput) invoiceFullAmountInput.checked = !!customer.invoice_full_amount;
+    if (invoiceAlwaysAInput) invoiceAlwaysAInput.checked = !!customer.invoice_always_a;
+
     if (modal) modal.classList.add("active");
+    armCustomerFormAntiAutofill(form, { skipReadonly: true });
     initializeAutocomplete();
+    bindAllCustomerDniInputs();
 
   } catch (error) {
     console.error("Error cargando cliente:", error);
@@ -588,12 +947,17 @@ async function editCustomer(customerId) {
 function closeCustomerModal() {
   const modal = document.getElementById("customer-modal");
   const errorDiv = document.getElementById("customer-form-error");
+  const form = document.getElementById("customer-form");
 
+  dismissCustomerFormAutofillPrompt();
+  resetCustomerFormInputLocks(form);
   if (modal) modal.classList.remove("active");
   if (errorDiv) {
     errorDiv.style.display = "none";
     errorDiv.textContent = "";
   }
+
+  resetAdditionalNamesPanel();
 
   editingCustomerId = null;
 }
@@ -610,7 +974,8 @@ async function saveCustomer() {
 
   const firstName = document.getElementById("customer-first-name")?.value?.trim();
   const lastName = document.getElementById("customer-last-name")?.value?.trim();
-  const dni = document.getElementById("customer-dni")?.value?.trim();
+  const dniRaw = document.getElementById("customer-dni")?.value?.trim();
+  const dni = dniRaw ? normalizeDniInput(dniRaw) : "";
   const phone = document.getElementById("customer-phone")?.value?.trim();
   const email = document.getElementById("customer-email")?.value?.trim();
   const address = document.getElementById("customer-address")?.value?.trim();
@@ -658,7 +1023,8 @@ async function saveCustomer() {
     return;
   }
 
-  if (!ARGENTINA_PROVINCES.includes(province)) {
+  const matchedProvinceKey = findProvinceKey(province);
+  if (!matchedProvinceKey) {
     if (errorDiv) {
       errorDiv.textContent = "La provincia seleccionada no es válida";
       errorDiv.style.display = "block";
@@ -674,8 +1040,7 @@ async function saveCustomer() {
     return;
   }
 
-  const cities = PROVINCE_CITIES[province] || [];
-  if (!cities.includes(city)) {
+  if (!cityBelongsToProvince(city, matchedProvinceKey)) {
     if (errorDiv) {
       errorDiv.textContent = "La ciudad seleccionada no es válida para la provincia elegida";
       errorDiv.style.display = "block";
@@ -683,11 +1048,16 @@ async function saveCustomer() {
     return;
   }
 
-  if (dni && (dni.length < 7 || dni.length > 8 || !/^\d+$/.test(dni))) {
+  if (dni && !isValidDni(dni)) {
     if (errorDiv) {
-      errorDiv.textContent = "El DNI debe tener entre 7 y 8 dígitos numéricos";
+      errorDiv.textContent = DNI_VALIDATION_MESSAGE;
       errorDiv.style.display = "block";
     }
+    return;
+  }
+
+  const additionalNames = collectAdditionalNamesFromForm();
+  if (!validateAdditionalNames(additionalNames, errorDiv)) {
     return;
   }
 
@@ -714,6 +1084,8 @@ async function saveCustomer() {
   try {
     const fullName = `${firstName} ${lastName}`.trim();
     const formattedPhone = formatPhone(phone);
+    const invoiceFullAmount = !!document.getElementById("customer-invoice-full-amount")?.checked;
+    const invoiceAlwaysA = !!document.getElementById("customer-invoice-always-a")?.checked;
 
     if (editingCustomerId) {
       // Editar cliente existente usando función RPC para evitar problemas de permisos
@@ -725,7 +1097,10 @@ async function saveCustomer() {
         p_dni: dni || null,
         p_address: address,
         p_city: city,
-        p_province: province
+        p_province: province,
+        p_additional_names: additionalNames,
+        p_invoice_full_amount: invoiceFullAmount,
+        p_invoice_always_a: invoiceAlwaysA
       });
 
       if (error) throw error;
@@ -744,7 +1119,10 @@ async function saveCustomer() {
         p_dni: dni || null,
         p_address: address,
         p_city: city,
-        p_province: province
+        p_province: province,
+        p_additional_names: additionalNames,
+        p_invoice_full_amount: invoiceFullAmount,
+        p_invoice_always_a: invoiceAlwaysA
       });
 
       if (error) throw error;
@@ -756,6 +1134,7 @@ async function saveCustomer() {
       showMessage("Cliente creado correctamente", "success");
     }
 
+    dismissCustomerFormAutofillPrompt();
     closeCustomerModal();
     await loadCustomers(lastCustomerSearchQuery);
 
@@ -976,6 +1355,8 @@ async function initializeCustomersModule() {
     }
 
     console.log("✅ Todos los event listeners configurados");
+
+    setupAdditionalNamesUI();
 
     // Primer paint: buscador operativo + listeners activos. Auth ya fue
     // verificado antes de llegar aquí, así que markFirstPaint coincide con

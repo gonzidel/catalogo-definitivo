@@ -159,3 +159,61 @@ SQL relevante:
 3. Agregar check DB granular para acciones de caja: `public-sales:view`, `public-sales:create`, `public-sales:void`, `public-sales:credit`, `public-sales:local-orders`.
 4. Encapsular la finalizacion de local order en una RPC unica: crear venta + marcar local order completed en una transaccion.
 5. Revisar si las policies publicas `using (true)` pueden acotarse sin romper QR/RPCs.
+
+## 10. Actualizacion 2026-07-23 - Bug fix critico: promos 2x1/2xMonto no se aplicaban al finalizar venta (dinero real)
+
+**Hallazgo:** el handler de `finalizeSaleBtn` (click en "Finalizar Venta", `admin/public-sales.js`) armaba el `subtotal`/`p_total_amount` enviado a `rpc_create_public_sale` sumando `item.totalValue` de cada producto (precio de lista/oferta por color * cantidad), **sin aplicar el descuento de promociones 2x1/2xMonto**. Esa logica de descuento solo vivia dentro de `calculateTotals()` (usada unicamente para pintar el total en pantalla) y se descartaba al confirmar. Consecuencia: el total efectivamente guardado en `public_sales.total_amount` (y por lo tanto el ticket impreso, via `rpc_get_public_sale_details` -> `price_snapshot` por linea) no reflejaba la promo aplicada; cada producto quedaba a su precio individual y el total real registrado era mayor al que se le mostro al cajero antes de confirmar.
+
+**Fix aplicado:**
+- Se extrajo la logica de agrupacion de promos a una funcion unica `computeSalePromoGrouping(saleItems)` (fuente de verdad compartida) que devuelve `{ subtotal, promoLines, unitOverrides }`. La usan tanto `calculateTotals()` (vista previa) como el handler de `finalizeSaleBtn` (venta real), para que ambos coincidan siempre.
+- Al armar `p_items` para `rpc_create_public_sale`, las unidades que completan un grupo 2x (2x1 o 2xMonto) se envian a precio `0` (su valor ya esta representado por una linea sintetica `is_special_extra` con `product_name` = `"N ofertas 2x$MONTO"` o `"N ofertas 2x1"` y `price` = el monto correspondiente). Las unidades que no completan pareja (remainder) se cobran a precio normal, en su propia linea — mismo criterio que el fix previo de 2026-07-21 para el bug del remainder impar.
+- El split se hace por linea producto+color+talle preservando el reparto de stock `venta_publico`/`general` (no cambia cuanto stock se descuenta, solo como se reparte el precio entre las 2 sub-lineas).
+- `buildEscposTicket`, el fallback HTML de `printDirectly` y `showPrintModal` ahora filtran (`isPromoAbsorbedTicketLine`) las lineas de producto absorbidas por una promo (precio 0 con variante real) para no imprimir un producto en "$0"; en su lugar se ve la linea sintetica de la oferta, como pidio el usuario ("1 oferta 2x... / 2 ofertas 2x...", con su monto, como si fuese un producto mas).
+- Cache-busting de `public-sales.js` subido a `?v=m260723` en `public-sales.html`, `public-sales-caja2.html`, `public-sales-caja3.html`.
+
+**Alcance del fix:** aplica a Caja 1 (venta directa), y a Caja 2/3 (el payload que mandan a `pending_sales` ya sale bien armado, pero la creacion real de la venta ocurre cuando Caja 1 carga la pendiente en el formulario y vuelve a confirmar "Finalizar Venta", ejecutando el mismo handler corregido). Tambien beneficia la reimpresion desde el historial (`reprintHistorySale` -> `printDirectly`), que usa el mismo helper de filtro.
+
+**Riesgo/deuda pendiente:** el fix corrige lo hacia adelante; las ventas ya registradas antes de este cambio con promos 2x en `public_sales`/`public_sale_items` quedaron con el total sin descuento (dinero de mas registrado, no necesariamente cobrado de mas si el cajero se guio por el total en pantalla al dar el cambio). No se hizo backfill retroactivo — evaluar si hace falta una auditoria de ventas historicas con promos activas.
+
+## 11. Actualizacion 2026-08-01 - Bug fix critico: Modo Devoluciones en "Editar pedido" sumaba en vez de restar
+
+**Hallazgo:** en el modal "Editar pedido" (`admin/public-sales.js`, `openOrderEditModal` / `order-edit-manual-add-btn`), al activar el checkbox "Modo Devoluciones" (`order-edit-return-mode`) y agregar un producto, el item se guardaba correctamente con `price_snapshot` negativo (`isReturnMode ? -unitPrice : unitPrice`, linea ~8553). El problema estaba en la funcion compartida `resolveOrderItemUnitPrice(priceSnapshot, variantPrice)` (`scripts/utils/price.js`), usada tanto para pintar el total en el modal (`getEditOrderUnitPrice`) como para armar el payload real enviado a `rpc_update_local_order` (`buildEditOrderPayload`):
+
+```js
+if (snap <= 0) return pv; // BUG: snap negativo (devolucion) tambien entraba aca
+```
+
+Como casi todas las variantes tienen precio de catalogo (`pv > 0`), cualquier `price_snapshot` negativo (devolucion) quedaba atrapado en `snap <= 0` y la funcion devolvia `pv` (precio de catalogo, siempre positivo), **invirtiendo el signo**. Efecto en cascada:
+- El modal mostraba el item de devolucion como venta normal (sin tag `[DEV]`, sin `-` en el monto) y el total del pedido sumaba en vez de restar.
+- `buildEditOrderPayload()` mandaba `price_snapshot` positivo a `rpc_update_local_order`, que decide si una linea es devolucion exclusivamente por el signo de `price_snapshot` (`78_rpc_update_local_order.sql:131` `if price_snapshot < 0 then continue` para no tocar stock). Con el signo invertido, la RPC trataba la devolucion como una venta nueva y **descontaba stock** en vez de reingresarlo.
+- En el handler de "Finalizar pedido" (`order-edit-finalize-btn`), `isReturn = rawPrice < 0` tambien se evaluaba sobre el payload ya corrompido (siempre positivo), asi que al finalizar como venta publica la linea de devolucion se enviaba a `rpc_create_public_sale` con `is_return: false` y `from_local_order: true`, sumando el monto al total cobrado y sin reingresar stock.
+
+Esto coincide exactamente con el reporte de usuario: "cuando el modo devolucion esta activado en los pedidos, el monto no se esta descontando sino que se esta sumando".
+
+**Fix aplicado (`scripts/utils/price.js`, `resolveOrderItemUnitPrice`):** se preserva el signo del snapshot y solo se corrige la magnitud (para el caso legacy de snapshot corrupto tipo `18` en vez de `18000`), nunca se fuerza a positivo:
+
+```js
+export function resolveOrderItemUnitPrice(priceSnapshot, variantPrice) {
+  const snap = parseARSNumber(priceSnapshot);
+  const pv = parseARSNumber(variantPrice);
+  if (pv <= 0) return snap;
+  if (snap === 0) return pv;
+  const sign = snap < 0 ? -1 : 1;
+  const absSnap = Math.abs(snap);
+  if (absSnap >= 1000) return snap;
+  const MIN_VARIANT_TO_TRUST = 1500;
+  const MIN_RATIO = 75;
+  if (pv >= MIN_VARIANT_TO_TRUST && absSnap < 1000 && pv >= absSnap * MIN_RATIO) return sign * pv;
+  return snap;
+}
+```
+
+`resolveOrderItemUnitPrice` es compartida por `admin/public-sales.js`, `admin/closed-orders.js`, `admin/sent-orders.js` y `client/dashboard-instant.js`, asi que el fix corrige el mismo riesgo de signo en todos esos consumidores (vistas de pedidos cerrados/enviados y dashboard de cliente), no solo en "Editar pedido".
+
+**Riesgo/deuda pendiente:** el fix corrige lo hacia adelante. Si hubo pedidos locales editados con "Modo Devoluciones" antes de este fix, sus `local_order_items.price_snapshot` pueden haber quedado guardados en positivo (tratados como venta) y el stock ya pudo haberse descontado en vez de reingresado — requiere auditoria puntual (lectura, sin mutar) de `local_order_items` con sospecha de devolucion antes de decidir si hace falta correccion manual de stock/monto.
+
+## 12. Hallazgo adicional 2026-08-01 - Emojis corruptos ("??") en las 3 pantallas de Caja
+
+**Hallazgo:** `admin/public-sales.html`, `admin/public-sales-caja2.html` y `admin/public-sales-caja3.html` tenian varios emojis guardados como `?`/`??`/`???` literales (titulo de pestaña, boton "Pedidos", aviso de "Modo Devoluciones activado", label "Monto ($)", modal "Producto Sin Stock", "Pedidos Locales" y "Editar pedido"). Se confirmo via `git show` de un commit previo (`adf657cc`) que el archivo tenia los emojis correctos (`🛍️`, `📦`, `⚠️`, `💵`, `✏️`) y se corrompieron en un guardado posterior (probablemente por un editor/encoding no-UTF8). Se restauraron los emojis originales en las 3 vistas.
+
+**Hallazgo relacionado, no corregido:** `admin/admin-auth.js` (cargado por `public-sales.html` para el login) tiene una corrupcion mas profunda y **preexistente desde el commit inicial del repo** — no solo emojis (`??`) sino tambien acentos (`�` en palabras como "administracion", "sesion", "pagina"). La misma corrupcion de acentos existe en `scripts/curated-banner.js` y `admin/argentina-cities-data.js`. No se toco en esta pasada porque requiere reconstruir manualmente cada palabra corrompida (no hay una version limpia en el historial de git para diffear) y es un problema mas amplio que el modulo de venta publica — se recomienda una tarea dedicada para ese cleanup.

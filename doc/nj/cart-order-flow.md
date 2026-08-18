@@ -1,6 +1,6 @@
 # FYL /nj — Carrito y Flujo de Pedidos
 
-> Última actualización: 2026-06-09
+> Última actualización: 2026-08-04
 
 > **Prórroga 24h + cancelar pedido (vencido):** ver [[43-NJ-DASHBOARD-PRORROGA-CANCELACION-2026-06-09]] y RPCs `234`/`235` en fyl-core.
 
@@ -51,13 +51,21 @@ supabase.rpc("rpc_checkout_cart", {
 [CARRITO]
   └── Usuario agrega productos (cualquier cantidad)
   └── CartTab muestra items + stock en tiempo real (variant_sizes.stock_qty)
-      ├── Stock 0: ítem marcado rojo, excluido del total, botón bloqueado con aviso
+      ├── Probe de stock es advisory (no bloquea el CTA; con red lenta solo cambia el hint)
+      ├── Stock 0: ítem marcado rojo, excluido del total
       └── Stock < cantidad: badge de advertencia "Stock limitado"
+      └── Promos 2x1 / 2xMonto: fila agrupada (`PromoGroupRow`) vía RPC
+          `get_active_promotions_for_variants` + `lib/cart/promo-groups.ts`
+          ├── Solo pares completos dentro del banner; unidades sueltas afuera
+          ├── Miniaturas superpuestas, título `promo 2x…` / `N promo 2x…`
+          ├── Precio de promo en rojo (sin c/u); total del carrito promo-aware
+          └── Expandir → cada ítem cubierto con −/+ y basura (sin precio unitario)
   └── Botón "Hacer pedido" → llama rpc_checkout_cart → crea order con status "active"
   └── Redirect automático a tab "Mi pedido"
 
 [MI PEDIDO — active / closing_soon]
   └── ActiveOrderTab muestra items con status badges
+  └── Misma agrupación de promo 2x; al expandir: cantidad + basura (sin −/+)
   └── Mínimo 4 unidades para habilitar "Enviar pedido"
   └── Si hay items "missing" → botón bloqueado + aviso rojo
   └── Botón "Enviar pedido" → abre MODAL DE CONFIRMACIÓN

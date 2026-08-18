@@ -157,7 +157,7 @@ Cabecera (`renderCustomerHeader`): nombre, teléfono, localidad, estado pedido (
 | `QR_DEBOUNCE_MS` | 50 |
 
 - Código numérico completo → `enqueueQr` → cola serial `processQrQueue`.
-- `resolveQrCodeToOrderItem(code)` (`order-creator.js`).
+- `resolveQrCodeToOrderItem(code)` (`order-creator.js`) — usa `get_effective_price` (oferta por color si hay).
 - `mergeDraftItem(state.draft, item)` — fusiona misma variante+talle+status; al fusionar **borra** `qty_from_general` / `qty_from_venta` para recalcular split.
 - `enrichDraftItemsWithStock(state.draft)` — reparto depósito general / venta público.
 - `saveSession` + `renderDraft` + toast.
@@ -194,9 +194,22 @@ UX: cabecera del picker oculta si no hay “Volver”; scroll solo con muchas op
 ### `handleAddToOrder`
 
 1. Si no hay `state.order.id` → `createApartadoOrder` (reusa pedido activo o `createNewOrder` con `{ pau_source: true }`).
-2. `addItemsToOrder(orderId, items)` → enrich + `addItemsToExistingOrder`.
+2. `addItemsToOrder(orderId, items)` → enrich + `addItemsToExistingOrder` + **`recalculateOrderTotalWithOffersAndPromos`**.
 3. Limpia borrador, `saveSession`.
-4. **`goToCustomerSearchLanding()`** — vuelve al buscador (comportamiento operativo acordado).
+4. **Permanece en compose** con la clienta y el pedido cargado (`refreshOrderUi`) para poder cerrar o seguir operando.
+
+### Ofertas y promociones (desde `offers.html`)
+
+PAU aplica ambos sistemas al armar / mostrar / copiar el pedido:
+
+| Sistema | Fuente | Comportamiento en PAU |
+|---------|--------|------------------------|
+| **Oferta por color** | `color_price_offers` vía RPC `get_effective_price` | Precio unitario al escanear / elegir manual |
+| **Promo 2x1 / 2xMonto** | `promotions` + `promotion_items` vía `get_active_promotions_for_variants` | Se suman cantidades de **todos** los productos de la promo; `groups = floor(qty/2)`; total = `groups * fixed_amount` (+ ítems fuera de promo) |
+
+Ejemplo 2xMonto `$34000` con 4 productos en la promo: 2 unidades (cualquiera de esos 4) → 1 grupo → `$34000`; 4 unidades → 2 grupos → `$68000`.
+
+Helpers en `orders-ops.js`: `computeOffersAndPromotionsForItems`, `recalculateOrderTotalWithOffersAndPromos`. El resumen UI, WhatsApp y `orders.total_amount` usan el total **pagable** (con descuento).
 
 **Errores:**
 
@@ -227,7 +240,7 @@ Sección `#pau-existing-order`:
 | Pagado | `closeOrder(id, "Pagado")` |
 | Enviar al local | Confirmación → `sendOrderToLocal` → `rpc_send_order_to_local` |
 
-Mismos strings que `ORDER_PAYMENT_METHOD` / Pedidos. Tras cerrar o enviar: toast + `refreshOrderUi` (permanece en compose con esa clienta).
+Mismos strings que `ORDER_PAYMENT_METHOD` / Pedidos. Tras **Contra Rem.** o **Pagado**: toast + `goToCustomerSearchLanding()`. Tras **Enviar al local**: toast + `refreshOrderUi` (permanece en compose).
 
 ---
 
@@ -315,7 +328,7 @@ node --check admin/customer-create-shared.js
 ## Cambios futuros (deuda documentada)
 
 - [ ] Decidir si `tryRestoreSession` debe activarse (hoy dead code respecto al init).
-- [ ] Unificar “cerrar y volver a landing” vs quedarse en compose (hoy solo **Agregar al pedido** vuelve a buscador).
+- [ ] Unificar “cerrar y volver a landing” vs quedarse en compose (hoy **Agregar al pedido** y **Cerrar** con pago vuelven al buscador; **Enviar al local** queda en compose).
 - [ ] Tests E2E escáner + `addItemsToOrder` mock.
 
 ---
@@ -324,4 +337,6 @@ node --check admin/customer-create-shared.js
 
 | Fecha | Cambio |
 |-------|--------|
+| 2026-07-21 (2) | **Bug fix crítico 2xMonto:** con cantidad total impar en la promo, el ítem sin pareja quedaba **sin cobrarse** (discount = totalPrice − groups×fixed_amount, ignoraba el resto). Corregido en `orders-ops.js` (PAU), `orders.js`, `closed-orders.js` (resumen) y **`public-sales.js` (caja — dinero real cobrado)**. Fórmula correcta: cobrar `groups × fixed_amount + remainderQty × precio_promedio`. |
+| 2026-07-21 | PAU aplica ofertas por color (`get_effective_price`) y promos 2x1/2xMonto al total, UI y WhatsApp |
 | 2026-05-26 | Nota inicial: módulo completo PAU, flujos, permisos, storage, orders-ops |

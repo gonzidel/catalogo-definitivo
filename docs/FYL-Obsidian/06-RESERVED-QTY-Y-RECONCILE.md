@@ -218,6 +218,27 @@ Es exactamente la misma condición que ya gobierna la restauración de stock fí
 
 Mientras se validaba 246, la auditoría mostró nuevas filas `reserved_qty_inflated` apareciendo en tiempo real (crecimiento de 0 → 28 → 39 en ~15 min) sobre pedidos creados por la nueva feature `nj/order-edit` (aún sin commitear, en pruebas activas el mismo día). Se rastreó un caso puntual (pedido `4ca9ec56`, variante `M821` Cobre): sus filas de `order_item_stock_sources` desaparecieron sin dejar ningún registro en `stock_history` y sin que el `order_item` fuera borrado ni su status cambiara — patrón que **no coincide** con ninguna RPC auditada (`rpc_remove_order_item_restore_stock`, `rpc_cancel_order_item`, `rpc_cancel_order_full`) ni con código de `nj/lib/supabase/order-edit.ts` u `order-queries.ts` (ninguno escribe/borra `order_item_stock_sources` directamente salvo dentro de esas RPCs). Hipótesis más probable: edición manual de datos en Supabase Studio durante las pruebas, no un bug de aplicación — pero no se pudo confirmar. **Pendiente:** re-auditar `vw_stock_audit_reserved_qty_diff` cuando terminen las pruebas de `nj/order-edit` para confirmar si el drift se estabiliza tras 246 o si sigue creciendo por esta causa no identificada.
 
+## Migración 260 — choque `reserved_qty` en vencimiento automático vs trigger 188 (producción, 2026-08-01)
+
+### Motivo del fix
+
+`rpc_orders_daily_maintenance()` (introducida en 257, ver [[47-VENCIMIENTO-PEDIDOS-DIA-HABIL-2026-08-01]]) vaciaba `order_item_stock_sources` (`qty = 0` + `DELETE`) **antes** de marcar `orders.status = 'expired'`, y además sumaba `reserved_qty` a mano con una lógica errónea. El trigger 188 (`trg_orders_release_reserved_qty_on_final_status`), que libera `reserved_qty` leyendo `order_item_stock_sources` al detectar la transición a un status final, se disparaba con las fuentes ya en 0 — no liberaba nada. El problema pasó de latente a activo porque el cron de mantenimiento (255) recién se reactivó el mismo día y ahora corre cada 15 minutos.
+
+### Cambio aplicado
+
+`supabase/canonical/260_fix_orders_daily_maintenance_reserved_qty_release_order.sql`:
+
+1. Elimina el `UPDATE product_variants SET reserved_qty = reserved_qty + sum_qty` erróneo.
+2. Captura una vez (`v_expiring_order_ids`) el conjunto de pedidos elegibles a vencer en esta corrida, antes de mutar cualquier status (evita re-derivar elegibilidad a mitad de bloque).
+3. Reordena las operaciones: primero marca `order_items` y `orders` como `expired` (dispara el trigger 188 con las fuentes todavía pobladas, liberando `reserved_qty` correctamente), **recién después** pone `qty = 0` y borra las filas de `order_item_stock_sources` de esos pedidos.
+
+### Estado
+
+- Migración aplicada en producción (`fyl-core`) el 2026-08-01 con aprobación explícita del usuario.
+- El fix corta la generación de **drift nuevo** en cada corrida futura del cron, pero no corrige retroactivamente el drift ya acumulado por sí solo. `SELECT count(*) FROM vw_stock_audit_reserved_qty_diff` post-deploy (antes de reconciliar): **945** filas (vs. 555 en el cierre de 246/249) — el salto se explica en gran parte por los pedidos que expiraron sin liberar `reserved_qty` mientras el cron corrió cada 15 min con el bug activo, sumado al drift histórico ya documentado.
+- **Reconciliación histórica ejecutada el mismo día (2026-08-01), con aprobación explícita del usuario:** `SET LOCAL request.jwt.claim.role = 'service_role'; SELECT public.rpc_reconcile_stock(true);` (necesario porque la sesión MCP no tenía JWT de usuario admin, mismo patrón que 246). Antes de correrlo se verificó la dirección del drift: **944 de 945 filas eran `reserved_qty_inflated`** (stock bloqueado sin motivo real, delta 1–59 u., total 5.107 u. "fantasma") y **1 sola `reserved_qty_deflated`** (-5, riesgo latente de sobreventa). Resultado del JSON de salida: `reserved_qty.fixed = 945`, `remaining_diffs = 0`. Efecto lateral menor dentro del mismo call (bloques 1/2, no relacionados a `reserved_qty`): 13 filas huérfanas de `variant_sizes` resueltas. Verificación posterior: `SELECT count(*) FROM vw_stock_audit_reserved_qty_diff` → `0`. También se confirmó que el trigger `trigger_update_status_on_product_variants` (dispara con cualquier `UPDATE` en `product_variants`) no depende de `reserved_qty` para calcular `products.status` — solo usa `variant_sizes.stock_qty`/imágenes/tags — así que la corrida no tuvo efecto secundario sobre la visibilidad de productos en el catálogo.
+- Detalle completo de la auditoría que originó este fix (incluye hallazgo hermano de `stock_pending` fuera del `CHECK` de `orders.status`, fix 259): [[48-AUDITORIA-ESTADOS-PEDIDOS-Y-FIXES-2026-08-01]].
+
 ## Enlaces
 
-- [[07-RELEASE-GATE-Y-AUDITORIA]] · [[04-RPCS-CRITICAS]] · [[24-AUDITORIA-STOCK-2026-05-04]] · `docs/STOCK_GOVERNANCE.md` §3
+- [[07-RELEASE-GATE-Y-AUDITORIA]] · [[04-RPCS-CRITICAS]] · [[24-AUDITORIA-STOCK-2026-05-04]] · [[48-AUDITORIA-ESTADOS-PEDIDOS-Y-FIXES-2026-08-01]] · `docs/STOCK_GOVERNANCE.md` §3

@@ -15,9 +15,12 @@ import {
 interface ProfileShippingBlockProps {
   province?: string | null;
   city?: string | null;
+  /** Se llama cuando el cliente elige otro transporte, para que el header
+   * del dashboard (que muestra el transporte activo) se actualice también. */
+  onTransportChange?: (transporte: string) => void;
 }
 
-export default function ProfileShippingBlock({ province, city }: ProfileShippingBlockProps) {
+export default function ProfileShippingBlock({ province, city, onTransportChange }: ProfileShippingBlockProps) {
   const provinceTrim = (province || "").trim();
   const cityTrim = (city || "").trim();
   const hasLocation = Boolean(provinceTrim && cityTrim);
@@ -56,28 +59,24 @@ export default function ProfileShippingBlock({ province, city }: ProfileShipping
     setSelected(transporte);
     if (provinceTrim && cityTrim && transporte) {
       guardarTransporteElegido(provinceTrim, cityTrim, transporte);
+      onTransportChange?.(transporte);
     }
   }
 
   return (
-    <div style={{
-      marginTop: 20, paddingTop: 16, borderTop: "1px solid #eee",
-    }}>
-      <h3 style={{ margin: "0 0 4px", fontSize: 16, fontWeight: 700, color: "#222" }}>
-        Método de envío
-      </h3>
+    <div>
       <p style={{ margin: "0 0 12px", fontSize: 12, color: "#888", lineHeight: 1.45 }}>
         Según tu provincia y localidad se asigna el transporte. Si hay más de uno disponible, podés elegirlo.
       </p>
 
       {!hasLocation ? (
         <p style={{ margin: 0, fontSize: 13, color: "#b45309" }}>
-          Completá provincia y localidad en tu perfil para ver las opciones de envío.
+          Completá provincia y localidad en tu perfil para ver las opciones de retiro o envío.
         </p>
       ) : (
         <>
           <label style={{ display: "block", fontSize: 12, color: "#888", marginBottom: 6 }}>
-            Transporte asignado
+            Retiro/envío asignado
           </label>
 
           {showSelect ? (

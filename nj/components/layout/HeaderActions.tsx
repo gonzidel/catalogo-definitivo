@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState, useCallback } from "react";
+import { usePathname } from "next/navigation";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useCartStore } from "@/store/cart";
 import NotificationsPanel from "@/components/notifications/NotificationsPanel";
@@ -19,6 +20,8 @@ export default function HeaderActions() {
   const [panelOpen, setPanelOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const syntheticNotifications = useCartStore((s) => s.syntheticNotifications);
+  const pathname = usePathname();
+  const isDashboard = pathname?.includes("/dashboard");
 
   useEffect(() => {
     const supabase = getSupabaseBrowserClient();
@@ -87,47 +90,49 @@ export default function HeaderActions() {
           )}
         </button>
 
-        {/* ── Perfil ── */}
-        <Link
-          href={isLoggedIn ? "/dashboard" : "/login"}
-          aria-label={isLoggedIn ? "Mi cuenta" : "Iniciar sesión"}
-          style={{
-            display: "flex", alignItems: "center", justifyContent: "center",
-            width: 34, height: 34, borderRadius: "50%",
-            textDecoration: "none", overflow: "hidden",
-            border: isLoggedIn ? "2px solid #CD844D" : "none",
-            flexShrink: 0,
-          }}
-        >
-          {isLoggedIn && userInfo?.avatarUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={userInfo.avatarUrl}
-              alt="Foto de perfil"
-              width={34} height={34}
-              style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "50%" }}
-              referrerPolicy="no-referrer"
-            />
-          ) : isLoggedIn ? (
-            <div style={{
-              width: "100%", height: "100%",
-              background: "#CD844D", color: "#fff",
+        {/* ── Perfil — oculto en el dashboard (la foto aparece en el header propio) ── */}
+        {!isDashboard && (
+          <Link
+            href={isLoggedIn ? "/dashboard" : "/login"}
+            aria-label={isLoggedIn ? "Mi cuenta" : "Iniciar sesión"}
+            style={{
               display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 13, fontWeight: 700, borderRadius: "50%",
-            }}>
-              {userInfo?.initials}
-            </div>
-          ) : (
-            <svg
-              width="22" height="22" viewBox="0 0 24 24"
-              fill="none" stroke="#555" strokeWidth="1.8"
-              strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
-            >
-              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-              <circle cx="12" cy="7" r="4" />
-            </svg>
-          )}
-        </Link>
+              width: 34, height: 34, borderRadius: "50%",
+              textDecoration: "none", overflow: "hidden",
+              border: isLoggedIn ? "2px solid #CD844D" : "none",
+              flexShrink: 0,
+            }}
+          >
+            {isLoggedIn && userInfo?.avatarUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={userInfo.avatarUrl}
+                alt="Foto de perfil"
+                width={34} height={34}
+                style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "50%" }}
+                referrerPolicy="no-referrer"
+              />
+            ) : isLoggedIn ? (
+              <div style={{
+                width: "100%", height: "100%",
+                background: "#CD844D", color: "#fff",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 13, fontWeight: 700, borderRadius: "50%",
+              }}>
+                {userInfo?.initials}
+              </div>
+            ) : (
+              <svg
+                width="22" height="22" viewBox="0 0 24 24"
+                fill="none" stroke="#555" strokeWidth="1.8"
+                strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+              >
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                <circle cx="12" cy="7" r="4" />
+              </svg>
+            )}
+          </Link>
+        )}
       </div>
 
       {/* ── Notifications panel (portal) ── */}

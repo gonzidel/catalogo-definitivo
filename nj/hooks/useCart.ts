@@ -208,11 +208,27 @@ export function useCartSync(customerId: string | null) {
     loadCartFromSupabase(customerId).then(({ cartId: cid, items: serverItems }) => {
       if (cid) setCartId(cid);
       if (serverItems.length > 0) {
-        const serverKeys = new Set(serverItems.map((i) => `${i.variant_id}__${i.size}`));
-        const localOnly  = itemsRef.current.filter(
-          (i) => i.id.startsWith("local_") && !serverKeys.has(`${i.variant_id}__${i.size}`)
+        const localByKey = new Map(
+          itemsRef.current.map((i) => [
+            `${i.variant_id}__${String(i.size).toLowerCase()}`,
+            i,
+          ])
         );
-        setItems([...serverItems, ...localOnly]);
+        const serverKeys = new Set(
+          serverItems.map((i) => `${i.variant_id}__${String(i.size).toLowerCase()}`)
+        );
+        const mergedServer = serverItems.map((si) => {
+          const local = localByKey.get(
+            `${si.variant_id}__${String(si.size).toLowerCase()}`
+          );
+          return local?.is_offer ? { ...si, is_offer: true } : si;
+        });
+        const localOnly = itemsRef.current.filter(
+          (i) =>
+            i.id.startsWith("local_") &&
+            !serverKeys.has(`${i.variant_id}__${String(i.size).toLowerCase()}`)
+        );
+        setItems([...mergedServer, ...localOnly]);
       }
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps

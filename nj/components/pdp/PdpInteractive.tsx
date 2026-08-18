@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import Link from "next/link";
 import PdpColorPicker from "./PdpColorPicker";
 import PdpSizePicker from "./PdpSizePicker";
 import PdpGallery from "./PdpGallery";
 import PdpRecommended from "./PdpRecommended";
 import { useCartStore } from "@/store/cart";
+import { useProfileGate } from "@/components/profile/ProfileGateProvider";
 import { formatARS, colorDetailHasImage } from "@/lib/utils/catalog";
 import type { GroupedProduct, ColorDetail } from "@/types/catalog";
 
@@ -25,6 +26,42 @@ interface PdpInteractiveProps {
   variantSizes: VariantSizeInfo[];
   initialColor?: string;
   backUrl: string;
+}
+
+function normalizeProductText(value: string | null | undefined) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function usesMeasureLabel(product: GroupedProduct) {
+  const text = [
+    product.Articulo,
+    product.Categoria,
+    product.Filtro1,
+    product.Filtro2,
+    product.Filtro3,
+    product.Descripcion,
+  ]
+    .map(normalizeProductText)
+    .join(" ");
+
+  if (text.includes("marroquineria")) return true;
+  return [
+    "cinto",
+    "cinturon",
+    "cartera",
+    "bolso",
+    "bandolera",
+    "billetera",
+    "mochila",
+    "panu",
+    "panuelo",
+    "pañuelo",
+    "chalina",
+  ].some((term) => text.includes(normalizeProductText(term)));
 }
 
 // ─── Share / Download helpers ─────────────────────────────────────────────────
@@ -85,8 +122,11 @@ export default function PdpInteractive({
   // Multi-selection: { variantId: { size: qty } }
   const [selections, setSelections] = useState<MultiSelection>({});
   const [addedFlash, setAddedFlash] = useState(false);
+  const qtyListRef = useRef<HTMLDivElement | null>(null);
 
   const addItem = useCartStore((s) => s.addItem);
+  const setPdpOwnBarActive = useCartStore((s) => s.setPdpOwnBarActive);
+  const { requireProfileComplete } = useProfileGate();
 
   // Always resolve to a valid color — fallback to first if not found
   const colorDetail: ColorDetail | null =
@@ -100,56 +140,107 @@ export default function PdpInteractive({
   const sizesWithStock = variantInfo?.sizes ?? [];
   const resolvedVariantId = variantInfo?.variantId ?? "";
 
-  // Selections for the current color/variant
-  const currentVariantSelections: Record<string, number> =
-    resolvedVariantId ? (selections[resolvedVariantId] ?? {}) : {};
-
-  const handleSizeChange = useCallback((size: string, qty: number) => {
-    if (!resolvedVariantId) return;
+  // Talle puede tocarse para CUALQUIER variante (no solo la del color que
+  // está en pantalla) — así la fila "38 Beige" en el resumen sigue siendo
+  // editable aunque ahora estemos mirando el negro.
+  const handleSizeChange = useCallback((variantId: string, size: string, qty: number) => {
+    if (!variantId) return;
     setSelections((prev) => {
-      const variant = { ...(prev[resolvedVariantId] ?? {}) };
-      if (qty <= 0) {
+      const variant = { ...(prev[variantId] ?? {}) };
+      if (qty < 0) {
+        // -1 = deselect (quitar del mapa)
         delete variant[size];
       } else {
         variant[size] = qty;
       }
-      return { ...prev, [resolvedVariantId]: variant };
+      return { ...prev, [variantId]: variant };
     });
-  }, [resolvedVariantId]);
+    const activeElement = document.activeElement;
+    const cameFromQtyList =
+      activeElement instanceof HTMLElement &&
+      Boolean(qtyListRef.current?.contains(activeElement));
+
+    if (qty >= 0 && !cameFromQtyList) {
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          qtyListRef.current?.scrollIntoView({
+            behavior: "smooth",
+            block: "center",
+          });
+        });
+      });
+    }
+  }, []);
 
   const onColorChange = useCallback((color: string) => {
     setActiveColor(color);
   }, []);
 
-  // Build flat list of all selected items across all variants
-  const allSelectedItems = useMemo(() => {
-    const items: Array<{ variantId: string; color: string; size: string; qty: number; imagen?: string }> = [];
+  // Todas las filas talle+color con selección activa, incluyendo las que
+  // todavía están en 0 (recién tocadas) — esto es lo que necesita el
+  // selector de talles para mostrar "38 Beige" apenas se toca, sin esperar
+  // a que se sume una cantidad.
+  const allSelectedRows = useMemo(() => {
+    const rows: Array<{ variantId: string; color: string; size: string; qty: number }> = [];
     for (const [varId, sizeMap] of Object.entries(selections)) {
       const vi = variantSizes.find((v) => v.variantId === varId);
       if (!vi) continue;
-      const dc = visibleColors.find(
-        (d) => d.color.toLowerCase() === vi.color.toLowerCase()
-      );
-      const imagen =
-        typeof dc?.images?.[0] === "string"
-          ? dc.images[0]
-          : (dc?.images?.[0] as any)?.url ?? undefined;
       for (const [size, qty] of Object.entries(sizeMap)) {
-        if (qty > 0) items.push({ variantId: varId, color: vi.color, size, qty, imagen });
+        rows.push({ variantId: varId, color: vi.color, size, qty });
       }
     }
-    // Sort by color then size for display
-    items.sort((a, b) => a.color.localeCompare(b.color) || a.size.localeCompare(b.size));
-    return items;
-  }, [selections, variantSizes, visibleColors]);
+    rows.sort((a, b) => a.color.localeCompare(b.color) || a.size.localeCompare(b.size));
+    return rows;
+  }, [selections, variantSizes]);
+
+  // Subconjunto con cantidad > 0 — lo que realmente se va a agregar al
+  // carrito (para el CTA, el total y el armado del pedido).
+  const allSelectedItems = useMemo(() => {
+    return allSelectedRows
+      .filter((row) => row.qty > 0)
+      .map((row) => {
+        const dc = visibleColors.find(
+          (d) => d.color.toLowerCase() === row.color.toLowerCase()
+        );
+        const imagen =
+          typeof dc?.images?.[0] === "string"
+            ? dc.images[0]
+            : (dc?.images?.[0] as { url?: string } | undefined)?.url ?? undefined;
+        return { ...row, imagen };
+      });
+  }, [allSelectedRows, visibleColors]);
+
+  const hasOffer = Boolean(product.OfertaActiva && product.PrecioOferta);
+  const unitPriceNum = (() => {
+    const raw = hasOffer ? product.PrecioOferta : product.Precio;
+    if (raw == null || raw === "") return 0;
+    const n =
+      typeof raw === "string"
+        ? parseFloat(raw.replace(/[^\d.]/g, ""))
+        : Number(raw);
+    return Number.isFinite(n) ? n : 0;
+  })();
 
   const totalSelectedQty = allSelectedItems.reduce((a, i) => a + i.qty, 0);
   const totalSelectedAmount = allSelectedItems.reduce(
-    (a, i) => a + i.qty * Number(product.Precio ?? 0), 0
+    (a, i) => a + i.qty * unitPriceNum,
+    0
   );
 
-  function handleAddAllToCart() {
+  // Le avisa a CartFloatingBar (barra global) que esta barra propia del PDP
+  // está ocupando el lugar, para que no se superpongan. Cuando no hay
+  // selección en curso en este producto, se limpia y la barra global vuelve
+  // a mostrarse acá también (si ya hay algo en el carrito).
+  useEffect(() => {
+    setPdpOwnBarActive(totalSelectedQty > 0 || addedFlash);
+    return () => setPdpOwnBarActive(false);
+  }, [totalSelectedQty, addedFlash, setPdpOwnBarActive]);
+
+  async function handleAddAllToCart() {
     if (totalSelectedQty === 0) return;
+    // Cuenta Google/nueva sin datos: exigir perfil antes de armar carrito.
+    const profileOk = await requireProfileComplete();
+    if (!profileOk) return;
     for (const item of allSelectedItems) {
       addItem({
         variant_id: item.variantId,
@@ -157,167 +248,96 @@ export default function PdpInteractive({
         color: item.color,
         size: item.size,
         qty: item.qty,
-        price_snapshot: Number(product.Precio ?? 0),
+        price_snapshot: unitPriceNum,
+        is_offer: hasOffer,
         imagen: item.imagen,
       });
     }
     setSelections({});
     setAddedFlash(true);
-    setTimeout(() => setAddedFlash(false), 2500);
+    setTimeout(() => setAddedFlash(false), 1400);
   }
 
   const price = formatARS(product.Precio);
-  const offerPrice = product.OfertaActiva ? formatARS(product.PrecioOferta) : null;
+  const offerPrice = hasOffer ? formatARS(product.PrecioOferta) : null;
   const displayPrice = offerPrice ?? price;
+  const selectionLabel = usesMeasureLabel(product) ? "medida" : "talle";
+  const selectionArticle = selectionLabel === "medida" ? "una" : "un";
+  const selectionPlural = selectionLabel === "medida" ? "medidas" : "talles";
 
-  const tags = [product.Filtro1, product.Filtro2, product.Filtro3].filter(Boolean);
+  const tags = Array.from(
+    new Set(
+      [product.Filtro1, product.Filtro2, product.Filtro3]
+        .map((tag) => String(tag ?? "").trim())
+        .filter(Boolean)
+    )
+  );
+  const stickyVisible = totalSelectedQty > 0 || addedFlash;
+  const hasAnySelectionRows = allSelectedRows.length > 0;
+
+  // Controles flotantes sobre la imagen principal. Volver y Cerrar hacían
+  // exactamente lo mismo (misma URL) — nos quedamos con un solo botón (X),
+  // ahora más grande porque es la acción principal. Descargar + Compartir
+  // van separados, abajo del todo en la misma columna — lejos de la X para
+  // que no se toquen sin querer uno por otro (evita falsos clics).
+  const heroOverlay = (
+    <>
+      {hasOffer && (
+        <span className="pdp-hero-offer-label" aria-label="Oferta">
+          Oferta
+        </span>
+      )}
+      <Link
+        href={backUrl}
+        aria-label="Cerrar"
+        className="pdp-icon-btn pdp-hero-round-btn pdp-hero-round-btn--lg pdp-hero-close-btn"
+      >
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+          strokeLinejoin="round" aria-hidden="true">
+          <line x1="18" y1="6" x2="6" y2="18" />
+          <line x1="6" y1="6" x2="18" y2="18" />
+        </svg>
+      </Link>
+
+      <div className="pdp-hero-controls-bottom">
+        <button
+          type="button"
+          onClick={() => downloadHeroImage(currentHeroSrc, product.Articulo)}
+          aria-label="Descargar imagen"
+          className="pdp-icon-btn pdp-hero-round-btn pdp-hero-round-btn--sm"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+            strokeLinejoin="round" aria-hidden="true">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" y1="15" x2="12" y2="3" />
+          </svg>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => shareProduct(product.Articulo, displayPrice)}
+          aria-label="Compartir"
+          className="pdp-icon-btn pdp-hero-round-btn pdp-hero-round-btn--sm"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+            strokeLinejoin="round" aria-hidden="true">
+            <circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" />
+            <circle cx="18" cy="19" r="3" />
+            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+            <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+          </svg>
+        </button>
+      </div>
+    </>
+  );
 
   return (
-    <div className="product-modal-body" style={{ paddingBottom: 80 }}>
-
-      {/* ── Sticky header ─────────────────────────────────────────────── */}
-      <div
-        className="pdp-sticky-header"
-        style={{
-          position: "sticky",
-          top: 0,
-          zIndex: 50,
-          background: "#fff",
-          borderBottom: "1px solid #eee",
-        }}
-      >
-        {/* Row 1 — navigation + identity + price + close */}
-        <div style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          padding: "10px 12px 6px",
-        }}>
-          {/* Back arrow — touch target 44px */}
-          <Link
-            href={backUrl}
-            aria-label="Volver"
-            style={{
-              display: "flex", alignItems: "center", justifyContent: "center",
-              width: 36, height: 36, marginLeft: -4,
-              color: "#444", textDecoration: "none", flexShrink: 0,
-            }}
-          >
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
-              stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"
-              strokeLinejoin="round" aria-hidden="true">
-              <path d="M15 18l-6-6 6-6" />
-            </svg>
-          </Link>
-
-          {/* Article number — primary identity */}
-          <span style={{
-            flex: 1, fontSize: 15, fontWeight: 700, color: "#222",
-            letterSpacing: "-0.01em",
-          }}>
-            Art. {product.Articulo}
-          </span>
-
-          {/* Price — most important commercial info */}
-          <span style={{
-            fontSize: 17, fontWeight: 800, color: "#CD844D",
-            letterSpacing: "-0.02em", flexShrink: 0,
-          }}>
-            {displayPrice}
-          </span>
-
-          {/* Close */}
-          <Link
-            href={backUrl}
-            aria-label="Cerrar"
-            style={{
-              display: "flex", alignItems: "center", justifyContent: "center",
-              width: 36, height: 36, marginRight: -4,
-              color: "#aaa", textDecoration: "none", flexShrink: 0,
-            }}
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-              stroke="currentColor" strokeWidth="2" strokeLinecap="round"
-              strokeLinejoin="round" aria-hidden="true">
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </Link>
-        </div>
-
-        {/* Row 2 — tags (context) + actions */}
-        {(tags.length > 0) && (
-          <div style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            padding: "0 12px 8px",
-            overflowX: "auto",
-          }}>
-            {/* Tag chips */}
-            {tags.map((tag) => (
-              <Link
-                key={tag}
-                href={`/tags/${encodeURIComponent(tag!)}`}
-                className="talle tag-chip pdp-tag-chip"
-                style={{ textDecoration: "none", fontSize: 11, whiteSpace: "nowrap", flexShrink: 0 }}
-              >
-                {tag}
-              </Link>
-            ))}
-
-            {/* Spacer */}
-            <div style={{ flex: 1 }} />
-
-            {/* Download */}
-            <button
-              onClick={() => downloadHeroImage(currentHeroSrc, product.Articulo)}
-              aria-label="Descargar imagen"
-              style={{
-                display: "flex", alignItems: "center", gap: 4,
-                background: "none", border: "none", cursor: "pointer",
-                color: "#555", padding: "4px 8px", fontSize: 12,
-                flexShrink: 0,
-              }}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-                stroke="currentColor" strokeWidth="2" strokeLinecap="round"
-                strokeLinejoin="round" aria-hidden="true">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                <polyline points="7 10 12 15 17 10" />
-                <line x1="12" y1="15" x2="12" y2="3" />
-              </svg>
-              Descargar
-            </button>
-
-            {/* Share */}
-            <button
-              onClick={() => shareProduct(product.Articulo, displayPrice)}
-              aria-label="Compartir"
-              style={{
-                display: "flex", alignItems: "center", gap: 4,
-                background: "none", border: "none", cursor: "pointer",
-                color: "#555", padding: "4px 8px", fontSize: 12,
-                flexShrink: 0,
-              }}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-                stroke="currentColor" strokeWidth="2" strokeLinecap="round"
-                strokeLinejoin="round" aria-hidden="true">
-                <circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" />
-                <circle cx="18" cy="19" r="3" />
-                <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
-                <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
-              </svg>
-              Compartir
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* ── Body ──────────────────────────────────────────────────────── */}
-      <div style={{ padding: "12px 16px" }}>
-        {/* Gallery */}
+    <div className="product-modal-body pdp-page">
+      <div className="pdp-page__body">
         <PdpGallery
           allColors={visibleColors}
           activeColor={activeColor}
@@ -325,6 +345,7 @@ export default function PdpInteractive({
           altText={product.Articulo}
           onHeroSrcChange={setCurrentHeroSrc}
           outOfStock={colorDetail?.hasStock === false}
+          heroOverlay={heroOverlay}
           onShareImage={async (url) => {
             if (navigator.share) {
               try {
@@ -344,69 +365,121 @@ export default function PdpInteractive({
           }
         />
 
-        <div style={{ marginTop: 16 }}>
-          {/* Price (full detail, below gallery) */}
-          <div style={{ marginBottom: 16 }}>
-            {offerPrice ? (
-              <>
-                <span style={{ fontSize: 14, color: "#999", textDecoration: "line-through", marginRight: 8 }}>
-                  {price}
-                </span>
-                <span style={{ fontSize: 22, fontWeight: 700, color: "#CD844D" }}>
-                  {offerPrice}
-                </span>
-              </>
-            ) : (
-              <span style={{ fontSize: 22, fontWeight: 700, color: "#333" }}>{price}</span>
-            )}
-            <div style={{ fontSize: 12, color: "#888", marginTop: 2 }}>Precio por mayor</div>
+        <div className="pdp-page__content">
+          <div className="pdp-identity">
+            <div className="pdp-identity__row">
+              <div className="pdp-identity__left">
+                <div className="pdp-identity__title">
+                  Art. {product.Articulo}
+                </div>
+                <div className="pdp-identity__color">
+                  Color seleccionado:{" "}
+                  <span className="pdp-identity__color-value">{activeColor}</span>
+                </div>
+              </div>
+              <div className="pdp-identity__price-col">
+                {offerPrice ? (
+                  <>
+                    <div className="pdp-identity__price-old">{price}</div>
+                    <div className="pdp-identity__price pdp-identity__price--offer">
+                      {offerPrice}
+                    </div>
+                  </>
+                ) : (
+                  <div className="pdp-identity__price">{price}</div>
+                )}
+                <div className="pdp-identity__price-hint">Precio por mayor</div>
+              </div>
+            </div>
           </div>
 
-          {/* Color picker */}
-          <PdpColorPicker
-            colors={visibleColors}
+          <div className="pdp-colors-block">
+            <div className="pdp-colors-block__label">
+              Elegí color
+              <span className="pdp-colors-block__selected">
+                {activeColor}
+              </span>
+            </div>
+            <div className="pdp-colors-block__hint">
+              {selectionPlural.charAt(0).toUpperCase() + selectionPlural.slice(1)} de abajo
+              corresponden al color seleccionado.
+            </div>
+            <PdpColorPicker
+              colors={visibleColors}
+              activeColor={activeColor}
+              onColorChange={onColorChange}
+              hideLabel
+            />
+          </div>
+
+          <PdpSizePicker
+            colorDetail={colorDetail}
             activeColor={activeColor}
-            onColorChange={onColorChange}
+            selectionLabel={selectionLabel}
+            sizesWithStock={sizesWithStock}
+            activeVariantId={resolvedVariantId}
+            variantSizes={variantSizes}
+            colors={visibleColors}
+            allSelections={allSelectedRows}
+            onSelectionChange={handleSizeChange}
+            qtyListRef={qtyListRef}
           />
 
-          <div style={{ marginTop: 16 }}>
-            <PdpSizePicker
-              colorDetail={colorDetail}
-              sizesWithStock={sizesWithStock}
-              selections={currentVariantSelections}
-              onSelectionChange={handleSizeChange}
-            />
-            {/* Hint visible cuando no hay nada seleccionado */}
-            {totalSelectedQty === 0 && !addedFlash && (
-              <div style={{
-                marginTop: 14,
-                display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-                padding: "13px 16px", borderRadius: 12,
-                background: "#f5f0eb", border: "1.5px dashed #e0c9b0",
-                color: "#a07040", fontSize: 14, fontWeight: 500,
-                cursor: "default",
-              }}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-                  stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="9" cy="21" r="1" /><circle cx="20" cy="21" r="1" />
-                  <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
-                </svg>
-                Tocá un talle para agregar al carrito
-              </div>
-            )}
-          </div>
-
-          {product.Descripcion && (
-            <div style={{ marginTop: 20, fontSize: 14, color: "#555", lineHeight: 1.6 }}>
-              <div style={{ fontWeight: 600, marginBottom: 4 }}>Descripción</div>
-              <p style={{ margin: 0 }}>{product.Descripcion}</p>
+          {/* Hint solo antes del primer talle tocado; al seleccionar, desaparece. */}
+          {!hasAnySelectionRows && !addedFlash && (
+            <div className="pdp-hint">
+              <svg
+                className="pdp-hint__icon"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <circle cx="9" cy="21" r="1" /><circle cx="20" cy="21" r="1" />
+                <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
+              </svg>
+              <span className="pdp-hint__text">
+                Tocá {selectionArticle} {selectionLabel} y después ajustá la cantidad
+              </span>
             </div>
           )}
 
-          {/* Space for the sticky cart bar */}
-          <div style={{ height: totalSelectedQty > 0 ? 96 : 0, transition: "height 0.2s" }} />
+          {product.Descripcion && (
+            <div className="pdp-description">
+              <div className="pdp-description__title">Descripción</div>
+              <p className="pdp-description__text">{product.Descripcion}</p>
+            </div>
+          )}
 
-          {/* Recommended products */}
+          {/* Tags — al final: son contexto de navegación (categorías relacionadas),
+              no información de compra, por eso no compiten arriba y van discretos. */}
+          {tags.length > 0 && (
+            <div className="pdp-tags">
+              {tags.map((tag) => (
+                <Link
+                  key={tag}
+                  href={`/tags/${encodeURIComponent(tag)}`}
+                  className="pdp-tag-chip pdp-tag-chip--link"
+                >
+                  {tag}
+                </Link>
+              ))}
+            </div>
+          )}
+
+          <div
+            className={[
+              "pdp-sticky-spacer",
+              totalSelectedQty > 0 ? "is-open" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+          />
+
           <PdpRecommended
             articulo={product.Articulo}
             filtro1={product.Filtro1}
@@ -417,56 +490,41 @@ export default function PdpInteractive({
         </div>
       </div>
 
-      {/* ── Sticky cart summary bar — sits above BottomNav ───────────── */}
-      <div style={{
-        position: "fixed", bottom: 60, left: 0, right: 0,
-        zIndex: 60,
-        transform: totalSelectedQty > 0 || addedFlash ? "translateY(0)" : "translateY(calc(100% + 60px))",
-        transition: "transform 0.25s cubic-bezier(0.4,0,0.2,1)",
-      }}>
-        <div style={{
-          background: "#fff",
-          borderTop: "1px solid #f0ebe4",
-          padding: "10px 16px 12px",
-          boxShadow: "0 -4px 20px rgba(0,0,0,0.1)",
-        }}>
-          {/* Success flash */}
+      <div
+        className={[
+          "pdp-sticky-bar",
+          stickyVisible ? "is-visible" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
+      >
+        <div className="pdp-sticky-bar__inner">
           {addedFlash && totalSelectedQty === 0 ? (
-            <div style={{
-              display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
-              padding: "14px", borderRadius: 14,
-              background: "#f0fdf4", border: "1.5px solid #86efac",
-            }}>
+            <div className="pdp-sticky-flash">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
                 stroke="#16a34a" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="20 6 9 17 4 12" />
               </svg>
-              <span style={{ fontSize: 15, fontWeight: 700, color: "#16a34a" }}>
-                ¡Agregado al carrito!
+              <span className="pdp-sticky-flash__text">
+                Agregado al carrito
               </span>
             </div>
           ) : (
             <button
+              type="button"
               onClick={handleAddAllToCart}
-              style={{
-                width: "100%", padding: "14px 16px",
-                borderRadius: 14, border: "none",
-                background: "#CD844D", color: "#fff",
-                fontSize: 15, fontWeight: 700, cursor: "pointer",
-                boxShadow: "0 4px 14px rgba(205,132,77,0.35)",
-                display: "flex", alignItems: "center", justifyContent: "space-between",
-              }}
+              className="pdp-sticky-cta"
             >
-              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-                  stroke="currentColor" strokeWidth="2" strokeLinecap="round"
-                  strokeLinejoin="round">
-                  <circle cx="9" cy="21" r="1" /><circle cx="20" cy="21" r="1" />
-                  <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
-                </svg>
-                Agregar {totalSelectedQty} par{totalSelectedQty !== 1 ? "es" : ""} al carrito
+              <span className="pdp-sticky-cta__label">
+                <span className="pdp-sticky-cta__plus" aria-hidden="true">+</span>
+                <span className="pdp-sticky-cta__text">
+                  <span className="pdp-sticky-cta__title">Agregar al carrito</span>
+                  <span className="pdp-sticky-cta__sub">
+                    {totalSelectedQty} producto{totalSelectedQty !== 1 ? "s" : ""}
+                  </span>
+                </span>
               </span>
-              <span style={{ fontWeight: 600, opacity: 0.9 }}>
+              <span className="pdp-sticky-cta__amount">
                 {formatARS(totalSelectedAmount)}
               </span>
             </button>

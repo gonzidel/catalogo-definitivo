@@ -3,16 +3,19 @@ export type OrderItemStatus =
   | "picked"
   | "waiting"
   | "missing"
-  | "cancelled";
+  | "cancelled"
+  | "expired";
 
 export type OrderStatus =
   | "active"
+  | "closing_soon"
   | "closed"
   | "sent"
   | "stock_pending"
   | "devolución"
   | "devolucion"
-  | "cancelled";
+  | "cancelled"
+  | "expired";
 
 export type WarehouseLabel = "General" | "Local" | "Mixto" | null;
 
@@ -36,6 +39,8 @@ export interface AdminOrderCustomer {
   email: string | null;
   dni: string | null;
   transport_id?: string | null;
+  city: string | null;
+  province: string | null;
 }
 
 export interface AdminOrderItem {
@@ -47,12 +52,15 @@ export interface AdminOrderItem {
   size: string | null;
   quantity: number;
   price_snapshot: number | null;
+  imagen?: string | null;
   status: OrderItemStatus | string;
   admin_confirmed_missing?: boolean | null;
   checked_by?: string | null;
   checked_at?: string | null;
   order_item_stock_sources?: OrderItemStockSource[];
   warehouseLabel?: WarehouseLabel;
+  /** Enrichment: promo 2x1/2xMonto o oferta por color activa (ver offer-badges.ts). */
+  isOffer?: boolean;
 }
 
 export interface AdminTransport {

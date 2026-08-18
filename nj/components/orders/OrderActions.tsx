@@ -13,19 +13,54 @@ import {
 import { loadPaymentMethods } from "@/lib/supabase/order-queries";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useOrdersStore } from "@/hooks/useOrders";
-import type { AdminOrder, PaymentMethod } from "@/types/orders";
+import type { AdminOrder, KanbanColumnId, PaymentMethod } from "@/types/orders";
+import OrderEditModal from "./OrderEditModal";
 
 interface OrderActionsProps {
   order: AdminOrder;
+  /** Mobile/Activos en modo borrador: oculta acciones que aplicarían cambios de inmediato. */
+  draftMode?: boolean;
 }
 
-export default function OrderActions({ order }: OrderActionsProps) {
+const EDITABLE_COLUMNS = new Set<KanbanColumnId>(["picked"]);
+
+/** "Pagado" = verde, "Contra Reembolso" (o variantes de escritura) = amarillo. Cualquier otro método futuro cae en gris neutro en vez de romper. */
+function getPaymentMethodColorClass(name: string): "green" | "yellow" | "neutral" {
+  const key = name.trim().toLowerCase();
+  if (key.startsWith("pagad")) return "green";
+  if (key.includes("reembolso") || key.includes("contrarreembolso") || key.includes("contrarrembolso")) return "yellow";
+  return "neutral";
+}
+
+function PaymentMethodIcon({ color }: { color: "green" | "yellow" | "neutral" }) {
+  if (color === "green") {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M20 6 9 17l-5-5" />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="2" y="6" width="20" height="12" rx="2" />
+      <circle cx="12" cy="12" r="2.5" />
+    </svg>
+  );
+}
+
+function canEditOrder(column: KanbanColumnId, order: AdminOrder): boolean {
+  if (!EDITABLE_COLUMNS.has(column)) return false;
+  const status = String(order.status || "").trim().toLowerCase();
+  return status !== "sent";
+}
+
+export default function OrderActions({ order, draftMode = false }: OrderActionsProps) {
   const column = getPrimaryColumnForActions(order);
   const loadingAction = useOrdersStore((s) => s.loadingAction);
   const pickAllReserved = useOrdersStore((s) => s.pickAllReserved);
   const closeOrder = useOrdersStore((s) => s.closeOrder);
   const sendToLocal = useOrdersStore((s) => s.sendToLocal);
-  const reopenOrder = useOrdersStore((s) => s.reopenOrder);
+  const revertOrderToPicked = useOrdersStore((s) => s.revertOrderToPicked);
   const resolveStockPending = useOrdersStore((s) => s.resolveStockPending);
   const cancelStockPendingOrder = useOrdersStore((s) => s.cancelStockPendingOrder);
   const dismantleOrder = useOrdersStore((s) => s.dismantleOrder);
@@ -35,9 +70,12 @@ export default function OrderActions({ order }: OrderActionsProps) {
   const [resolveModalOpen, setResolveModalOpen] = useState(false);
   const [dismantleModalOpen, setDismantleModalOpen] = useState(false);
   const [extendModalOpen, setExtendModalOpen] = useState(false);
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [sendLocalConfirmOpen, setSendLocalConfirmOpen] = useState(false);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
   const [selectedPayment, setSelectedPayment] = useState("");
   const busy = loadingAction === order.id;
+  const showEdit = canEditOrder(column, order);
 
   useEffect(() => {
     if (!closeModalOpen) return;
@@ -78,66 +116,86 @@ export default function OrderActions({ order }: OrderActionsProps) {
     setExtendModalOpen(false);
   };
 
+  const handleSendLocalConfirm = async () => {
+    setSendLocalConfirmOpen(false);
+    await sendToLocal(order.id);
+  };
+
+  const editButton = showEdit ? (
+    <button
+      type="button"
+      className="order-card__btn order-card__btn--edit"
+      disabled={busy}
+      onClick={() => setEditModalOpen(true)}
+    >
+      Editar
+    </button>
+  ) : null;
+
   return (
     <>
-      <div className="order-card__actions">
-        {column === "active" ? (
-          <button
-            type="button"
-            className="order-card__btn order-card__btn--primary"
-            disabled={busy}
-            onClick={() => pickAllReserved(order.id)}
-          >
-            Apartar todos
-          </button>
+      <div
+        className={`order-card__actions${
+          column === "picked" ? " order-card__actions--picked" : ""
+        }`}
+      >
+        {column === "active" && !draftMode ? (
+          <>
+            <button
+              type="button"
+              className="order-card__btn order-card__btn--primary order-card__btn--grow"
+              disabled={busy}
+              onClick={() => pickAllReserved(order.id)}
+            >
+              Apartar todos
+            </button>
+          </>
         ) : null}
 
         {column === "picked" ? (
           <>
             <button
               type="button"
-              className="order-card__btn order-card__btn--primary"
+              className="order-card__btn order-card__btn--primary order-card__btn--grow"
               disabled={busy}
               onClick={() => setCloseModalOpen(true)}
             >
               Cerrar pedido
             </button>
+            {editButton}
             <button
               type="button"
-              className="order-card__btn"
+              className="order-card__btn order-card__btn--mini"
               disabled={busy}
-              onClick={() => sendToLocal(order.id)}
+              title="Enviar al local"
+              aria-label="Enviar al local"
+              onClick={() => setSendLocalConfirmOpen(true)}
             >
-              Enviar al local
+              Local
             </button>
           </>
         ) : null}
 
         {column === "closed" ? (
-          <>
-            <button
-              type="button"
-              className="order-card__btn"
-              disabled={busy}
-              onClick={() => reopenOrder(order.id)}
-            >
-              Reabrir
-            </button>
-            <button type="button" className="order-card__btn order-card__btn--muted" disabled>
-              Finalizado
-            </button>
-          </>
+          <button
+            type="button"
+            className="order-card__btn order-card__btn--grow"
+            disabled={busy}
+            onClick={() => revertOrderToPicked(order.id)}
+          >
+            Volver a apartado
+          </button>
         ) : null}
 
         {column === "stock_pending" ? (
           <>
             <button
               type="button"
-              className="order-card__btn order-card__btn--primary"
+              className="order-card__btn order-card__btn--primary order-card__btn--grow"
               disabled={busy}
               onClick={() => setResolveModalOpen(true)}
             >
-              Resolver conflicto
+              Resolver
             </button>
             <button
               type="button"
@@ -145,34 +203,77 @@ export default function OrderActions({ order }: OrderActionsProps) {
               disabled={busy}
               onClick={() => cancelStockPendingOrder(order.id)}
             >
-              Cancelar pedido
+              Cancelar
             </button>
           </>
         ) : null}
 
-        {column === "cancelled" ? (
+        {column === "cancelled" && (isExpiredPendingAdminDisassembly(order) || order.status === "cancelled") ? (
           <>
-            {isExpiredPendingAdminDisassembly(order) ? (
+            {isExpiredPendingAdminDisassembly(order) && (
               <button
                 type="button"
-                className="order-card__btn"
+                className="order-card__btn order-card__btn--grow"
                 disabled={busy}
                 onClick={() => setExtendModalOpen(true)}
               >
-                Dar prórroga +24hs
+                +24hs
               </button>
-            ) : null}
+            )}
             <button
               type="button"
-              className="order-card__btn order-card__btn--danger"
+              className="order-card__btn order-card__btn--danger order-card__btn--grow"
               disabled={busy}
               onClick={() => setDismantleModalOpen(true)}
             >
-              Desarmar pedido
+              Desarmar
             </button>
           </>
         ) : null}
       </div>
+
+      {editModalOpen ? (
+        <OrderEditModal order={order} onClose={() => setEditModalOpen(false)} />
+      ) : null}
+
+      {sendLocalConfirmOpen ? (
+        <div
+          className="order-modal-backdrop"
+          role="presentation"
+          onClick={() => setSendLocalConfirmOpen(false)}
+        >
+          <div
+            className="order-modal order-modal--compact"
+            role="dialog"
+            aria-labelledby={`send-local-${order.id}`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="order-modal__title" id={`send-local-${order.id}`}>
+              Enviar al local
+            </h3>
+            <p className="order-modal__text">
+              ¿Confirmar envío al local? El pedido saldrá de esta lista.
+            </p>
+            <div className="order-modal__actions">
+              <button
+                type="button"
+                className="order-card__btn"
+                onClick={() => setSendLocalConfirmOpen(false)}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="order-card__btn order-card__btn--primary"
+                disabled={busy}
+                onClick={() => void handleSendLocalConfirm()}
+              >
+                Confirmar
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {closeModalOpen ? (
         <div
@@ -190,17 +291,24 @@ export default function OrderActions({ order }: OrderActionsProps) {
               Cerrar pedido
             </h3>
             <p className="order-modal__text">Seleccioná el método de pago</p>
-            <select
-              className="order-modal__select"
-              value={selectedPayment}
-              onChange={(e) => setSelectedPayment(e.target.value)}
-            >
-              {paymentMethods.map((m) => (
-                <option key={m.id} value={m.name}>
-                  {m.name}
-                </option>
-              ))}
-            </select>
+            <div className="order-modal__payment-options">
+              {paymentMethods.map((m) => {
+                const color = getPaymentMethodColorClass(m.name);
+                const isSelected = selectedPayment === m.name;
+                return (
+                  <button
+                    key={m.id}
+                    type="button"
+                    className={`order-modal__payment-btn order-modal__payment-btn--${color}${isSelected ? " order-modal__payment-btn--selected" : ""}`}
+                    onClick={() => setSelectedPayment(m.name)}
+                    aria-pressed={isSelected}
+                  >
+                    <PaymentMethodIcon color={color} />
+                    {m.name}
+                  </button>
+                );
+              })}
+            </div>
             <div className="order-modal__actions">
               <button
                 type="button"
@@ -280,7 +388,7 @@ export default function OrderActions({ order }: OrderActionsProps) {
             <p className="order-modal__text">
               ¿Confirmar desarme? Todo el stock regresa al sistema.
             </p>
-            <div className="order-modal__actions">
+            <div className="order-modal__actions order-modal__actions--big">
               <button
                 type="button"
                 className="order-card__btn"

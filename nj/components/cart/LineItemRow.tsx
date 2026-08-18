@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 
 export function formatItemARS(n: number) {
   return new Intl.NumberFormat("es-AR", {
@@ -23,19 +23,50 @@ interface LineItemRowProps {
   size?: string;
   quantity: number;
   unitPrice: number;
+  /** Oferta activa: 🔥 tras el talle y precio en rojo. */
+  isOffer?: boolean;
   status?: StatusChip;
+  onStatusClick?: () => void;
   highlight?: "missing" | "outOfStock" | null;
-  strikePrice?: boolean;
+  mutedPrice?: boolean;
   line2?: ReactNode;
   trailing?: ReactNode;
   below?: ReactNode;
 }
 
-function buildTitle(productName: string, color?: string, size?: string) {
+function buildTitle(
+  productName: string,
+  color?: string,
+  size?: string,
+  isOffer?: boolean
+) {
   const parts = [productName];
   if (color) parts.push(color);
   if (size) parts.push(`T. ${size}`);
-  return parts.join(" · ");
+  const base = parts.join(" · ");
+  return isOffer ? `${base} 🔥` : base;
+}
+
+export function QuantityUnitLabel({ quantity }: { quantity: number }) {
+  return (
+    <span className="line-item-qty-label">
+      {quantity} uni
+    </span>
+  );
+}
+
+function defaultLine2(quantity: number, unitPrice: number) {
+  // Con 1 unidad, el precio unitario es igual al total ya visible a la derecha:
+  // repetirlo desperdicia espacio y es lo que provoca el wrap en pantallas de 360px.
+  if (quantity <= 1) {
+    return <QuantityUnitLabel quantity={quantity} />;
+  }
+  return (
+    <span className="line-item-default-line2">
+      <QuantityUnitLabel quantity={quantity} />
+      <span className="line-item-unit-price">{formatItemARS(unitPrice)} c/u</span>
+    </span>
+  );
 }
 
 export default function LineItemRow({
@@ -45,113 +76,90 @@ export default function LineItemRow({
   size,
   quantity,
   unitPrice,
+  isOffer = false,
   status,
+  onStatusClick,
   highlight = null,
-  strikePrice = false,
+  mutedPrice = false,
   line2,
   trailing,
   below,
 }: LineItemRowProps) {
   const isWarn = highlight === "missing" || highlight === "outOfStock";
   const lineTotal = unitPrice * quantity;
+  const statusStyle = status
+    ? ({
+        "--status-color": status.color,
+        "--status-bg": status.bg,
+      } as CSSProperties)
+    : undefined;
 
   return (
     <div>
-      <div style={{
-        display: "flex",
-        gap: 10,
-        padding: "10px 12px",
-        alignItems: "center",
-        background: isWarn ? "#fff5f5" : "transparent",
-        borderLeft: isWarn ? "3px solid #fca5a5" : "3px solid transparent",
-      }}>
+      <div
+        className={[
+          "line-item-row__main",
+          isWarn ? "is-warn" : "",
+          isOffer ? "is-offer" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
+      >
         {imagen ? (
+          // eslint-disable-next-line @next/next/no-img-element
           <img
             src={imagen}
             alt={productName}
-            style={{
-              width: 48,
-              height: 48,
-              borderRadius: 8,
-              objectFit: "cover",
-              flexShrink: 0,
-              background: "#f5f5f5",
-              opacity: isWarn ? 0.55 : 1,
-              filter: isWarn ? "grayscale(0.25)" : "none",
-            }}
+            className="line-item-row__img"
           />
         ) : (
-          <div style={{
-            width: 48,
-            height: 48,
-            borderRadius: 8,
-            flexShrink: 0,
-            background: "#f0f0f0",
-          }} />
+          <div className="line-item-row__img-ph" />
         )}
 
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{
-            fontSize: 13,
-            fontWeight: 600,
-            color: isWarn ? "#991b1b" : "#222",
-            lineHeight: 1.25,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}>
-            {buildTitle(productName, color, size)}
+        <div className="line-item-row__body">
+          <div className="line-item-row__title">
+            {buildTitle(productName, color, size, isOffer)}
           </div>
-          <div style={{
-            fontSize: 11,
-            color: "#888",
-            marginTop: 3,
-            lineHeight: 1.3,
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            flexWrap: "wrap",
-          }}>
-            {line2 ?? (
-              <span>{quantity} uni · {formatItemARS(unitPrice)} c/u</span>
-            )}
+          <div className="line-item-row__meta">
+            {line2 ?? defaultLine2(quantity, unitPrice)}
           </div>
         </div>
 
-        <div style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 4,
-          flexShrink: 0,
-          alignSelf: "center",
-        }}>
+        <div className="line-item-row__side">
           {status && (
-            <span style={{
-              fontSize: 10,
-              fontWeight: 600,
-              padding: "2px 6px",
-              borderRadius: 20,
-              color: status.color,
-              background: status.bg,
-              whiteSpace: "nowrap",
-            }}>
-              {status.label}
-            </span>
+            onStatusClick ? (
+              <button
+                type="button"
+                onClick={onStatusClick}
+                className="line-item-status line-item-status--btn"
+                style={statusStyle}
+              >
+                {status.label}
+              </button>
+            ) : (
+              <span className="line-item-status" style={statusStyle}>
+                {status.label}
+              </span>
+            )
           )}
-          <span style={{
-            fontSize: 13,
-            fontWeight: 700,
-            color: strikePrice ? "#ccc" : "#555",
-            textDecoration: strikePrice ? "line-through" : "none",
-            whiteSpace: "nowrap",
-          }}>
-            {formatItemARS(lineTotal)}
-          </span>
-          {trailing}
+          <div className="line-item-row__price-wrap">
+            <span
+              className={[
+                "line-item-row__price",
+                mutedPrice ? "is-muted" : "",
+                isOffer ? "is-offer" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+            >
+              {formatItemARS(lineTotal)}
+            </span>
+            {trailing}
+          </div>
         </div>
       </div>
       {below && (
-        <div style={{ padding: "0 12px 8px 70px" }}>
+        <div className="line-item-row__below">
           {below}
         </div>
       )}

@@ -49,7 +49,6 @@ interface SizeFilterSheetProps {
   activeSizes: string[];
   categoria: string;
   products: GroupedProduct[];
-  onNeedCategory?: () => void;
   highlight?: boolean;
 }
 
@@ -313,7 +312,6 @@ export default function SizeFilterSheet({
   activeSizes,
   categoria,
   products,
-  onNeedCategory,
   highlight,
 }: SizeFilterSheetProps) {
   const [isOpen, setIsOpen] = useState(false);
@@ -338,7 +336,6 @@ export default function SizeFilterSheet({
   const searchParams = useSearchParams();
 
   const group = groupFromCategoria(categoria);
-  const needsCat = group === null;
   const hasActive = activeSizes.length > 0;
   const groupLabel = group ? GROUP_LABELS[group] : "";
 
@@ -403,13 +400,10 @@ export default function SizeFilterSheet({
   }, [isOpen, catalogSizes, categoria, categoryProducts]);
 
   const open = useCallback(() => {
-    if (needsCat) {
-      onNeedCategory?.();
-      return;
-    }
+    if (!group) return;
     setSelected(activeSizes);
     setIsOpen(true);
-  }, [needsCat, activeSizes, onNeedCategory]);
+  }, [group, activeSizes]);
 
   const close = useCallback(() => setIsOpen(false), []);
 
@@ -437,6 +431,9 @@ export default function SizeFilterSheet({
     router.push(`${pathname}?${params}`);
     close();
   };
+
+  // Sin categoría (home / ofertas): no mostrar el chip.
+  if (!group) return null;
 
   return (
     <>

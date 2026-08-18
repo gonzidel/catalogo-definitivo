@@ -9,9 +9,7 @@ export default function LoginClient() {
   const searchParams = useSearchParams();
   const next = searchParams.get("next") ?? "/dashboard";
 
-  const [email, setEmail] = useState("");
-  const [magicSent, setMagicSent] = useState(false);
-  const [loading, setLoading] = useState<"google" | "magic" | null>(null);
+  const [loading, setLoading] = useState<"google" | null>(null);
   const [error, setError] = useState("");
 
   const supabase = getSupabaseBrowserClient();
@@ -34,23 +32,6 @@ export default function LoginClient() {
       setLoading(null);
     }
     // On success, browser redirects to Google — no need to setLoading(null)
-  }
-
-  async function sendMagicLink(e: React.FormEvent) {
-    e.preventDefault();
-    if (!email.trim()) return;
-    setError("");
-    setLoading("magic");
-    const { error } = await supabase.auth.signInWithOtp({
-      email: email.trim(),
-      options: { emailRedirectTo: callbackUrl },
-    });
-    setLoading(null);
-    if (error) {
-      setError(error.message);
-    } else {
-      setMagicSent(true);
-    }
   }
 
   return (
@@ -103,7 +84,6 @@ export default function LoginClient() {
             fontWeight: 600,
             color: "#333",
             transition: "all 0.15s",
-            marginBottom: 20,
           }}
         >
           {loading === "google" ? (
@@ -121,63 +101,6 @@ export default function LoginClient() {
             </>
           )}
         </button>
-
-        {/* Divider */}
-        <div style={{
-          display: "flex", alignItems: "center", gap: 12, marginBottom: 20,
-        }}>
-          <div style={{ flex: 1, height: 1, background: "#eee" }} />
-          <span style={{ fontSize: 12, color: "#aaa" }}>o con email</span>
-          <div style={{ flex: 1, height: 1, background: "#eee" }} />
-        </div>
-
-        {/* Magic link */}
-        {magicSent ? (
-          <div style={{
-            padding: "16px", borderRadius: 12, background: "#f0fdf4",
-            border: "1px solid #86efac", color: "#166534", fontSize: 14,
-          }}>
-            ✅ Te enviamos un link a <strong>{email}</strong>. Revisá tu bandeja de entrada.
-          </div>
-        ) : (
-          <form onSubmit={sendMagicLink} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="tu@email.com"
-              required
-              disabled={loading !== null}
-              style={{
-                width: "100%",
-                padding: "13px 14px",
-                borderRadius: 12,
-                border: "1.5px solid #ddd",
-                fontSize: 15,
-                outline: "none",
-                boxSizing: "border-box",
-                background: loading !== null ? "#f9f9f9" : "#fff",
-              }}
-            />
-            <button
-              type="submit"
-              disabled={loading !== null || !email.trim()}
-              style={{
-                padding: "13px 16px",
-                borderRadius: 12,
-                border: "none",
-                background: loading === "magic" ? "#e8a96b" : "#CD844D",
-                color: "#fff",
-                fontSize: 15,
-                fontWeight: 600,
-                cursor: loading !== null ? "not-allowed" : "pointer",
-                transition: "background 0.15s",
-              }}
-            >
-              {loading === "magic" ? "Enviando..." : "Enviar link de acceso"}
-            </button>
-          </form>
-        )}
 
         {/* Error */}
         {error && (

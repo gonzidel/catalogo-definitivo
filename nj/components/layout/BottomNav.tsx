@@ -4,15 +4,39 @@ import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { useCartStore, selectCartCount } from "@/store/cart";
 
+/** Rutas donde "Pedido" es el tab activo. */
+function isPedidoPath(pathname: string | null | undefined): boolean {
+  if (!pathname) return false;
+  return pathname === "/dashboard" || pathname.startsWith("/dashboard/");
+}
+
+/**
+ * "Inicio" activo solo en catálogo (home, categoría, tags, etc.).
+ * usePathname() ya viene sin basePath (/nj).
+ */
+function isHomePath(pathname: string | null | undefined): boolean {
+  if (!pathname) return false;
+  if (pathname === "/") return true;
+
+  const excludedPrefixes = [
+    "/dashboard",
+    "/admin",
+    "/login",
+    "/producto",
+    "/como-comprar",
+    "/quienes-somos",
+  ];
+  return !excludedPrefixes.some(
+    (p) => pathname === p || pathname.startsWith(`${p}/`)
+  );
+}
+
 export default function BottomNav() {
   const pathname = usePathname();
   const cartCount = useCartStore(selectCartCount);
 
-  const isHome =
-    pathname === "/" ||
-    pathname === "/nj" ||
-    pathname === "/nj/" ||
-    (!pathname.startsWith("/nj/producto") && !pathname.startsWith("/nj/tags"));
+  const isHome = isHomePath(pathname);
+  const isPedido = isPedidoPath(pathname);
 
   return (
     <nav className="bottom-nav bottom-nav--three" id="bottom-nav">
@@ -34,6 +58,7 @@ export default function BottomNav() {
       </Link>
 
       <button
+        type="button"
         className="bottom-nav-item"
         id="nav-buscar"
         onClick={() => {
@@ -61,7 +86,7 @@ export default function BottomNav() {
 
       <Link
         href={cartCount > 0 ? "/dashboard?tab=cart" : "/dashboard?tab=active-order"}
-        className={`bottom-nav-item${pathname?.startsWith("/dashboard") ? " active" : ""}`}
+        className={`bottom-nav-item${isPedido ? " active" : ""}`}
         id="nav-pedidos"
         style={{ position: "relative" }}
       >
@@ -79,40 +104,29 @@ export default function BottomNav() {
             <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
           </svg>
           {cartCount > 0 && (
-            <span style={{
-              position: "absolute", top: -6, right: -6,
-              background: "#CD844D", color: "#fff",
-              borderRadius: "50%", width: 16, height: 16,
-              fontSize: 10, fontWeight: 700,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              lineHeight: 1,
-            }}>
+            <span
+              style={{
+                position: "absolute",
+                top: -6,
+                right: -6,
+                background: "#CD844D",
+                color: "#fff",
+                borderRadius: "50%",
+                width: 16,
+                height: 16,
+                fontSize: 10,
+                fontWeight: 700,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                lineHeight: 1,
+              }}
+            >
               {cartCount > 9 ? "9+" : cartCount}
             </span>
           )}
         </div>
         <span className="label">Pedido</span>
-      </Link>
-
-      <Link
-        href="/dashboard"
-        className={`bottom-nav-item${pathname?.startsWith("/dashboard") ? " active" : ""}`}
-        id="nav-perfil"
-      >
-        <div className="icon">
-          <svg
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
-            <circle cx="12" cy="8" r="4" />
-          </svg>
-        </div>
-        <span className="label">Perfil</span>
       </Link>
     </nav>
   );

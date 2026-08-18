@@ -13,6 +13,8 @@ export interface CartItem {
   size: string;
   qty: number;
   price_snapshot: number;
+  /** Precio de oferta activo al agregar (para UI: 🔥 + precio rojo). */
+  is_offer?: boolean;
   imagen?: string;
   sku?: string;
   // Supabase sync state
@@ -27,6 +29,12 @@ interface CartState {
   checkoutSuccess: boolean;
   activeOrderStatus: string | null; // current order status, set by dashboard
   syntheticNotifications: Array<{ id: string; type: string; message: string; read: boolean; created_at: string }>;
+  lastAddedAt: number | null; // timestamp of last addItem call — used for global flash
+  // true mientras el PDP muestra su propia barra "Agregar N pares al carrito"
+  // (hay talles elegidos en ESE producto) — le avisa a CartFloatingBar que
+  // se tape, para no superponer dos barras. Fuera de ese momento puntual,
+  // CartFloatingBar debe verse también en el PDP si ya hay ítems en el carrito.
+  pdpOwnBarActive: boolean;
 
   // Actions
   setCartId: (id: string | null) => void;
@@ -40,6 +48,7 @@ interface CartState {
   setCheckoutSuccess: (v: boolean) => void;
   setActiveOrderStatus: (s: string | null) => void;
   setSyntheticNotifications: (n: Array<{ id: string; type: string; message: string; read: boolean; created_at: string }>) => void;
+  setPdpOwnBarActive: (active: boolean) => void;
 }
 
 // ─── Store ────────────────────────────────────────────────────────────────────
@@ -54,6 +63,8 @@ export const useCartStore = create<CartState>()(
       checkoutSuccess: false,
       activeOrderStatus: null,
       syntheticNotifications: [],
+      lastAddedAt: null,
+      pdpOwnBarActive: false,
 
       setCartId: (id) => set({ cartId: id }),
 
@@ -70,13 +81,20 @@ export const useCartStore = create<CartState>()(
           set({
             items: items.map((i) =>
               key(i) === incoming
-                ? { ...i, qty: i.qty + newItem.qty, synced: false }
+                ? {
+                    ...i,
+                    qty: i.qty + newItem.qty,
+                    price_snapshot: newItem.price_snapshot,
+                    is_offer: newItem.is_offer ?? i.is_offer,
+                    synced: false,
+                  }
                 : i
             ),
+            lastAddedAt: Date.now(),
           });
         } else {
           const tempId = `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-          set({ items: [...items, { ...newItem, id: tempId, synced: false }] });
+          set({ items: [...items, { ...newItem, id: tempId, synced: false }], lastAddedAt: Date.now() });
         }
       },
 
@@ -108,6 +126,7 @@ export const useCartStore = create<CartState>()(
       setCheckoutSuccess: (v) => set({ checkoutSuccess: v }),
       setActiveOrderStatus: (s) => set({ activeOrderStatus: s }),
       setSyntheticNotifications: (n) => set({ syntheticNotifications: n }),
+      setPdpOwnBarActive: (active) => set({ pdpOwnBarActive: active }),
     }),
     {
       name: "fyl-nj-cart",

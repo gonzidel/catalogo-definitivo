@@ -18,6 +18,8 @@ interface PdpGalleryProps {
   outOfStock?: boolean;
   onShareImage?: (url: string) => void;
   onDownloadImage?: (url: string) => void;
+  /** Controles flotantes (volver/cerrar/descargar/compartir) sobre la imagen principal. */
+  heroOverlay?: React.ReactNode;
 }
 
 interface FlatImage {
@@ -26,7 +28,7 @@ interface FlatImage {
   idx: number;
 }
 
-const HERO_PROBE_WIDTH = 860;
+const HERO_PROBE_WIDTH = 800;
 const HERO_LOAD_TIMEOUT_MS = 8000;
 
 function heroProbeUrl(src: string): string {
@@ -42,6 +44,7 @@ export default function PdpGallery({
   outOfStock = false,
   onShareImage,
   onDownloadImage,
+  heroOverlay,
 }: PdpGalleryProps) {
   const flatImages: FlatImage[] = useMemo(() => {
     const result: FlatImage[] = [];
@@ -171,66 +174,66 @@ export default function PdpGallery({
   return (
     <>
       <div className="pdp-gallery">
-        <button
-          type="button"
-          className="pdp-main-image-wrap"
-          aria-label="Tocar para ampliar imagen"
-          aria-busy={heroLoading}
-          disabled={!heroReady}
-          onClick={openLightbox}
-        >
-          {heroSrc && heroLoading && placeholderSrc && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={placeholderSrc}
-              alt=""
-              aria-hidden
-              className="pdp-hero-placeholder"
-              decoding="async"
-            />
-          )}
+        <div className="pdp-gallery-hero-wrap">
+          <button
+            type="button"
+            className="pdp-main-image-wrap"
+            aria-label="Tocar para ampliar imagen"
+            aria-busy={heroLoading}
+            disabled={!heroReady}
+            onClick={openLightbox}
+          >
+            {heroSrc && heroLoading && placeholderSrc && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={placeholderSrc}
+                alt=""
+                aria-hidden
+                className="pdp-hero-placeholder"
+                decoding="async"
+              />
+            )}
 
-          {heroSrc ? (
-            <Image
-              key={heroKey}
-              src={heroSrc}
-              alt={altText}
-              fill
-              sizes="(max-width: 480px) 100vw, (max-width: 1024px) 60vw, 50vw"
-              className={`pdp-hero-image pdp-main-image product-modal-main-image${heroReady ? " is-ready" : ""}`}
-              style={{ pointerEvents: "none" }}
-              priority={activeIdx === defaultIdx}
-              onLoad={() => setHeroReady(true)}
-              onError={() => setHeroReady(true)}
-            />
-          ) : (
-            <div className="skeleton-shimmer pdp-hero-skeleton" aria-hidden />
-          )}
+            {heroSrc ? (
+              <Image
+                key={heroKey}
+                src={heroSrc}
+                alt={altText}
+                fill
+                sizes="(max-width: 480px) 100vw, (max-width: 1024px) 60vw, 50vw"
+                className={`pdp-hero-image pdp-main-image product-modal-main-image${heroReady ? " is-ready" : ""}`}
+                priority={activeIdx === defaultIdx}
+                onLoad={() => setHeroReady(true)}
+                onError={() => setHeroReady(true)}
+              />
+            ) : (
+              <div className="skeleton-shimmer pdp-hero-skeleton" aria-hidden />
+            )}
 
-          {heroLoading && (
-            <div className="pdp-hero-loading" aria-hidden>
-              <div className="spinner" />
+            {heroLoading && (
+              <div className="pdp-hero-loading" aria-hidden>
+                <div className="spinner" />
+              </div>
+            )}
+
+            {outOfStock && (
+              <div className="pdp-stock-overlay" aria-hidden="true">
+                <span className="pdp-stock-overlay__label">Sin stock</span>
+              </div>
+            )}
+          </button>
+
+          {/* Controles flotantes — capa no-interactiva por defecto: los botones
+              individuales reactivan pointer-events para no tapar el tap-to-zoom. */}
+          {heroOverlay && (
+            <div className="pdp-hero-overlay">
+              {heroOverlay}
             </div>
           )}
-
-          {outOfStock && (
-            <div className="pdp-stock-overlay" aria-hidden="true">
-              <span className="pdp-stock-overlay__label">Sin stock</span>
-            </div>
-          )}
-        </button>
+        </div>
 
         {flatImages.length > 1 && (
-          <div
-            className="pdp-thumbnails"
-            style={{
-              display: "flex",
-              gap: 8,
-              marginTop: 8,
-              overflowX: "auto",
-              padding: "4px 0",
-            }}
-          >
+          <div className="pdp-thumbnails">
             {flatImages.map((img) => {
               const isActive = img.idx === activeIdx;
               const isLoadingThumb = isActive && heroLoading;
@@ -255,7 +258,7 @@ export default function PdpGallery({
                     alt={img.color}
                     fill
                     sizes="60px"
-                    style={{ objectFit: "cover" }}
+                    className="pdp-thumb-img"
                   />
                 </button>
               );

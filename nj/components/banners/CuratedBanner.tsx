@@ -61,14 +61,17 @@ function VariantCard({ card }: { card: CuratedVariantCardEnriched }) {
   const imageSrc = resolveImageSrc(
     card["Imagen Principal"] as Parameters<typeof resolveImageSrc>[0]
   );
-  const precio =
-    card.OfertaActiva && card.PrecioOferta ? card.PrecioOferta : card.Precio;
+  const hasOffer =
+    (card.OfertaActiva === true ||
+      (card.OfertaActiva as unknown) === "true") &&
+    Boolean(card.PrecioOferta);
+  const precio = hasOffer ? card.PrecioOferta : card.Precio;
   const colors = card.colors ?? [];
 
   return (
     <Link
       href={`/producto/${encodeURIComponent(card.Articulo)}`}
-      className="custom-banner-card"
+      className={`custom-banner-card${hasOffer ? " custom-banner-card--offer" : ""}`}
       style={{ textDecoration: "none", color: "inherit" }}
     >
       <div className="custom-banner-card-image-wrap">
@@ -85,6 +88,11 @@ function VariantCard({ card }: { card: CuratedVariantCardEnriched }) {
           <div className="custom-banner-card-image skeleton-shimmer" aria-hidden="true" />
         )}
         <div className="custom-banner-badge">{card.Articulo}</div>
+        {hasOffer && (
+          <span className="custom-banner-offer-label" aria-label="Oferta">
+            Oferta
+          </span>
+        )}
       </div>
       {colors.length > 0 && (
         <div className="custom-banner-colors">
@@ -104,7 +112,11 @@ function VariantCard({ card }: { card: CuratedVariantCardEnriched }) {
         </div>
       )}
       <div className="custom-banner-card-content">
-        <div className="custom-banner-card-price">{formatARS(precio)}</div>
+        <div
+          className={`custom-banner-card-price${hasOffer ? " custom-banner-card-price--offer" : ""}`}
+        >
+          {formatARS(precio)}
+        </div>
         <div className="custom-banner-card-wholesale">Precio por Mayor</div>
       </div>
     </Link>

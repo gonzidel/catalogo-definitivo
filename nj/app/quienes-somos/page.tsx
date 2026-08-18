@@ -67,7 +67,7 @@ export default function QuienesSomosPage() {
           </li>
           <li className="about-fyl__li">
             <span className="about-fyl__check" aria-hidden="true">✔</span>
-            Confirmación de stock antes del envío
+            Stock visible por color y talle
           </li>
           <li className="about-fyl__li">
             <span className="about-fyl__check" aria-hidden="true">✔</span>

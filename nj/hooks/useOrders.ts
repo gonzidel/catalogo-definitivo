@@ -1,7 +1,11 @@
 "use client";
 
 import { create } from "zustand";
-import { filterOrdersForColumn } from "@/lib/orders/classification";
+import {
+  filterOrdersForColumn,
+  isFinalOrderStatus,
+  shouldAutoCloseAfterCustomerRequest,
+} from "@/lib/orders/classification";
 import {
   ADMIN_ENABLE_24H_USES_KEY,
   applyOrderNotesPatch,
@@ -12,16 +16,24 @@ import {
 import { normalizeSize } from "@/lib/utils/size-normalizer";
 import {
   fetchOrderById,
+  fetchOrdersInitial,
+  fetchVariantSizeStockQty,
+  emitCustomerOrderNotification,
+  loadWarehouses,
   resolveStockPendingOrderRpc,
   rpcCancelOrderFull,
   rpcCloseOrder,
+  rpcMarkOrderItemWaitingSource,
   rpcMarkOrderItemsPicked,
   rpcRemoveOrderItemRestoreStock,
-  rpcReopenOrder,
+  rpcRevertOrderToPicked,
   rpcSendOrderToLocal,
+  rpcSplitOrderItemStatus,
+  rpcUpdateOrderItemStatus,
+  rpcZeroVariantSizeStock,
 } from "@/lib/supabase/order-queries";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
-import type { AdminOrder, KanbanColumnId } from "@/types/orders";
+import type { AdminOrder, KanbanColumnId, WarehouseIds } from "@/types/orders";
 import type { RealtimeChannel, RealtimePostgresInsertPayload } from "@supabase/supabase-js";
 
 export type ToastKind = "success" | "error" | "info";
@@ -33,11 +45,13 @@ export interface OrdersToastState {
 
 interface OrdersState {
   orders: AdminOrder[];
+  warehouseIds: WarehouseIds;
   hydrated: boolean;
   toast: OrdersToastState | null;
   loadingAction: string | null;
 
   hydrate: (orders: AdminOrder[]) => void;
+  refreshAll: () => Promise<void>;
   showToast: (message: string, kind?: ToastKind) => void;
   clearToast: () => void;
   getColumnOrders: (columnId: KanbanColumnId) => AdminOrder[];
@@ -47,9 +61,51 @@ interface OrdersState {
 
   pickAllReserved: (orderId: string) => Promise<void>;
   cancelItem: (orderId: string, itemId: string) => Promise<void>;
+  confirmCancelledItem: (orderId: string, itemId: string) => Promise<void>;
+  markItemMissing: (orderId: string, itemId: string) => Promise<void>;
+  /** Existencias que figuran hoy en la web para variante+talle (para el aviso al presionar ✕). */
+  getVariantSizeStockQty: (variantId: string, size: string) => Promise<number>;
+  /** Lleva a 0 el stock de variante+talle: admin confirmó que no hay existencia real. */
+  zeroVariantSizeStock: (
+    variantId: string,
+    size: string,
+    itemId?: string | null
+  ) => Promise<void>;
+  markItemPicked: (orderId: string, itemId: string) => Promise<void>;
+  markItemWaiting: (
+    orderId: string,
+    itemId: string,
+    source: "fabrica" | "local"
+  ) => Promise<void>;
+  /** Reparte un ítem con varias unidades entre apartado/espera/sin stock (flujo "¿Cuántas hay disponibles?"). */
+  splitReservedItem: (
+    orderId: string,
+    itemId: string,
+    nPicked: number,
+    nWaiting: number,
+    nMissing: number,
+    waitingSource?: "fabrica" | "local"
+  ) => Promise<void>;
+  /**
+   * Igual que splitReservedItem, pero permite que la espera se reparta entre
+   * fábrica Y local en la misma acción (reparto por unidad). rpc_split_order_item_status
+   * solo genera un ítem "waiting" por llamada, así que esto encadena dos llamadas:
+   * primero separa el grupo "local" (dejando apartado real + fábrica agrupados como
+   * "picked" intermedio), y después vuelve a repartir ese intermedio en apartado real
+   * + espera fábrica. Un solo refresh al final.
+   */
+  splitReservedItemMixed: (
+    orderId: string,
+    itemId: string,
+    nPicked: number,
+    nFabrica: number,
+    nLocal: number,
+    nMissing: number
+  ) => Promise<void>;
   closeOrder: (orderId: string, paymentMethod: string) => Promise<void>;
   sendToLocal: (orderId: string) => Promise<void>;
-  reopenOrder: (orderId: string) => Promise<void>;
+  /** Cerrados -> Apartados: solo admin (rpc_revert_order_to_picked) */
+  revertOrderToPicked: (orderId: string) => Promise<void>;
   resolveStockPending: (orderId: string) => Promise<void>;
   cancelStockPendingOrder: (orderId: string) => Promise<void>;
   dismantleOrder: (orderId: string) => Promise<void>;
@@ -79,13 +135,78 @@ function getErrorMessage(err: unknown): string {
 
 let realtimeChannel: RealtimeChannel | null = null;
 
+/** Checkout inserta order y luego items: reintentar hasta que haya ítems operativos. */
+async function fetchOrderWhenReady(
+  supabase: ReturnType<typeof getSupabaseBrowserClient>,
+  orderId: string,
+  attempts = 5
+): Promise<AdminOrder | null> {
+  let last: AdminOrder | null = null;
+  for (let i = 0; i < attempts; i++) {
+    last = await fetchOrderById(supabase, orderId);
+    if (last && (last.order_items?.length ?? 0) > 0) return last;
+    if (i < attempts - 1) {
+      await new Promise((r) => setTimeout(r, 250 * (i + 1)));
+    }
+  }
+  return last;
+}
+
+/**
+ * Refresca el pedido después de resolver un ítem (apartar, marcar sin stock, dividir,
+ * confirmar cancelado, etc.) y, si la clienta ya había pedido cerrar (`customer_requested_close`)
+ * y el pedido quedó totalmente apartado, lo cierra automáticamente en vez de dejarlo
+ * esperando en Apartados. Centralizado acá para que TODAS las acciones que puedan dejar
+ * un pedido "listo" lo chequeen igual, no solo "Apartar todos" (ver `shouldAutoCloseAfterCustomerRequest`).
+ *
+ * Si el intento de auto-cierre falla (ej. `rpc_close_order` rechaza por `dismantle_at`
+ * ya vencido, carrera con el cron de mantenimiento), la acción que sí tuvo éxito
+ * (apartar/dividir/confirmar) NO se revierte: solo queda sin auto-cerrar, para que
+ * el admin lo cierre a mano. El caller no debe volver a lanzar este error.
+ */
+/**
+ * Exportada (no solo de uso interno del store) porque cualquier flujo que pueda
+ * dejar un pedido "todo apartado" mientras la clienta ya pidió cerrar necesita
+ * este mismo chequeo -- no solo las acciones del store. Ver bug real: agregar un
+ * producto desde "Editar pedido"/"Crear pedido" (admin) marcándolo apartado de
+ * una podía completar el pedido sin que nadie consumiera `customer_requested_close`,
+ * dejándolo trabado en Apartados con el botón "Cerrar pedido" pendiente para siempre.
+ */
+export async function refreshAndMaybeAutoClose(
+  supabase: ReturnType<typeof getSupabaseBrowserClient>,
+  orderId: string
+): Promise<{ order: AdminOrder | null; autoClosed: boolean }> {
+  const refreshed = await fetchOrderById(supabase, orderId);
+  if (!refreshed) return { order: null, autoClosed: false };
+  if (!shouldAutoCloseAfterCustomerRequest(refreshed)) {
+    return { order: refreshed, autoClosed: false };
+  }
+  try {
+    await rpcCloseOrder(supabase, orderId, "Pendiente");
+  } catch {
+    return { order: refreshed, autoClosed: false };
+  }
+  const closed = await fetchOrderById(supabase, orderId);
+  return { order: closed ?? refreshed, autoClosed: true };
+}
+
 export const useOrdersStore = create<OrdersState>((set, get) => ({
   orders: [],
+  warehouseIds: { general: null, ventaPublico: null },
   hydrated: false,
   toast: null,
   loadingAction: null,
 
   hydrate: (orders) => set({ orders, hydrated: true }),
+
+  refreshAll: async () => {
+    const supabase = getSupabaseBrowserClient();
+    const [orders, warehouseIds] = await Promise.all([
+      fetchOrdersInitial(supabase),
+      loadWarehouses(supabase),
+    ]);
+    set({ orders, warehouseIds, hydrated: true });
+  },
 
   showToast: (message, kind = "info") => set({ toast: { message, kind } }),
 
@@ -94,11 +215,19 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
   getColumnOrders: (columnId) => filterOrdersForColumn(get().orders, columnId),
 
   patchOrder: (order) =>
-    set((state) => ({
-      orders: state.orders.some((o) => o.id === order.id)
-        ? state.orders.map((o) => (o.id === order.id ? order : o))
-        : [...state.orders, order],
-    })),
+    set((state) => {
+      // Pedido llegó (o pasó) a un estado terminal (sent/devolución/expired) vía
+      // realtime: sacarlo del store en vez de dejarlo colgado. Sin esto quedaba
+      // en memoria para siempre (bloat + podía matchear mal alguna columna).
+      if (isFinalOrderStatus(order)) {
+        return { orders: state.orders.filter((o) => o.id !== order.id) };
+      }
+      return {
+        orders: state.orders.some((o) => o.id === order.id)
+          ? state.orders.map((o) => (o.id === order.id ? order : o))
+          : [...state.orders, order],
+      };
+    }),
 
   removeOrder: (orderId) =>
     set((state) => ({
@@ -125,16 +254,24 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
       return;
     }
 
+    // Predicción optimista: cómo quedaría el pedido con estos ítems ya apartados,
+    // para saber de una si el cierre automático va a aplicar (evita flash en
+    // Espera/Apartados antes de que vuelva la respuesta del server).
+    const predictedOrder: AdminOrder = {
+      ...order,
+      order_items: (order.order_items || []).map((item) =>
+        reservedIds.includes(item.id) ? { ...item, status: "picked" } : item
+      ),
+    };
+    const willAutoClose = shouldAutoCloseAfterCustomerRequest(predictedOrder);
+
     set((state) => ({
       orders: state.orders.map((o) =>
         o.id !== orderId
           ? o
-          : {
-              ...o,
-              order_items: (o.order_items || []).map((item) =>
-                reservedIds.includes(item.id) ? { ...item, status: "picked" } : item
-              ),
-            }
+          : willAutoClose
+            ? { ...predictedOrder, status: "closed" }
+            : predictedOrder
       ),
       loadingAction: orderId,
     }));
@@ -142,9 +279,12 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
     try {
       const supabase = getSupabaseBrowserClient();
       await rpcMarkOrderItemsPicked(supabase, reservedIds, "pick_all");
-      const refreshed = await fetchOrderById(supabase, orderId);
+      const { order: refreshed, autoClosed } = await refreshAndMaybeAutoClose(supabase, orderId);
       if (refreshed) get().patchOrder(refreshed);
-      get().showToast("Ítems apartados", "success");
+      get().showToast(
+        autoClosed ? "Pedido cerrado — el cliente ya había pedido el cierre" : "Ítems apartados",
+        "success"
+      );
     } catch (err) {
       set({ orders: snapshot });
       get().showToast(getErrorMessage(err), "error");
@@ -181,7 +321,304 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
 
       const refreshed = await fetchOrderById(supabase, orderId);
       if (refreshed) get().patchOrder(refreshed);
+      else get().removeOrder(orderId);
       get().showToast("Ítem quitado del pedido", "success");
+    } catch (err) {
+      set({ orders: snapshot });
+      get().showToast(getErrorMessage(err), "error");
+    } finally {
+      set({ loadingAction: null });
+    }
+  },
+
+  confirmCancelledItem: async (orderId, itemId) => {
+    const snapshot = cloneOrders(get().orders);
+    const order = findOrder(get(), orderId);
+    if (!order) return;
+
+    const target = (order.order_items || []).find((i) => i.id === itemId);
+    if (!target || String(target.status || "").toLowerCase() !== "cancelled") {
+      get().showToast("Este producto no está cancelado", "error");
+      return;
+    }
+
+    const remainingItems = (order.order_items || []).filter((item) => item.id !== itemId);
+
+    set((state) => ({
+      orders: state.orders
+        .map((o) =>
+          o.id !== orderId ? o : { ...o, order_items: remainingItems }
+        )
+        .filter((o) => o.id !== orderId || (o.order_items || []).length > 0),
+      loadingAction: itemId,
+    }));
+
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const result = await rpcRemoveOrderItemRestoreStock(supabase, itemId);
+
+      if (result?.order_deleted || remainingItems.length === 0) {
+        get().removeOrder(orderId);
+        get().showToast("Cancelación confirmada — pedido actualizado", "success");
+        return;
+      }
+
+      const { order: refreshed, autoClosed } = await refreshAndMaybeAutoClose(supabase, orderId);
+      if (refreshed) get().patchOrder(refreshed);
+      else get().removeOrder(orderId);
+      get().showToast(
+        autoClosed
+          ? "Pedido cerrado — el cliente ya había pedido el cierre"
+          : "Cancelación confirmada — stock actualizado",
+        "success"
+      );
+    } catch (err) {
+      set({ orders: snapshot });
+      get().showToast(getErrorMessage(err), "error");
+    } finally {
+      set({ loadingAction: null });
+    }
+  },
+
+  markItemMissing: async (orderId, itemId) => {
+    const snapshot = cloneOrders(get().orders);
+    const order = findOrder(get(), orderId);
+    if (!order) return;
+
+    set((state) => ({
+      orders: state.orders.map((o) =>
+        o.id !== orderId
+          ? o
+          : {
+              ...o,
+              order_items: (o.order_items || []).map((item) =>
+                item.id === itemId ? { ...item, status: "missing" } : item
+              ),
+            }
+      ),
+      loadingAction: itemId,
+    }));
+
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user?.id) throw new Error("Sesión admin no disponible");
+
+      await rpcUpdateOrderItemStatus(supabase, itemId, "missing", user.id);
+
+      await emitCustomerOrderNotification(supabase, {
+        customerId: order.customer_id,
+        orderId,
+        type: "ORDER_MISSING_ITEMS",
+        message: "1 producto no está disponible. Por favor revisalo en tu pedido.",
+        payload: { missingCount: 1, action_url: "/nj/dashboard?tab=active-order" },
+        dedupeTypes: ["ORDER_MISSING_ITEMS", "ORDER_ALL_RESERVED"],
+      });
+
+      const refreshed = await fetchOrderById(supabase, orderId);
+      if (refreshed) get().patchOrder(refreshed);
+      get().showToast("Producto marcado sin stock", "success");
+    } catch (err) {
+      set({ orders: snapshot });
+      get().showToast(getErrorMessage(err), "error");
+    } finally {
+      set({ loadingAction: null });
+    }
+  },
+
+  getVariantSizeStockQty: async (variantId, size) => {
+    if (!variantId || !size) return 0;
+    try {
+      const supabase = getSupabaseBrowserClient();
+      return await fetchVariantSizeStockQty(supabase, variantId, size);
+    } catch {
+      return 0;
+    }
+  },
+
+  zeroVariantSizeStock: async (variantId, size, itemId) => {
+    if (!variantId || !size) return;
+    try {
+      const supabase = getSupabaseBrowserClient();
+      await rpcZeroVariantSizeStock(supabase, variantId, size, itemId ?? null);
+      get().showToast("Existencias llevadas a 0", "success");
+    } catch (err) {
+      get().showToast(getErrorMessage(err), "error");
+    }
+  },
+
+  markItemPicked: async (orderId, itemId) => {
+    const snapshot = cloneOrders(get().orders);
+    set((state) => ({
+      orders: state.orders.map((o) =>
+        o.id !== orderId
+          ? o
+          : {
+              ...o,
+              order_items: (o.order_items || []).map((item) =>
+                item.id === itemId ? { ...item, status: "picked" } : item
+              ),
+            }
+      ),
+      loadingAction: itemId,
+    }));
+
+    try {
+      const supabase = getSupabaseBrowserClient();
+      await rpcMarkOrderItemsPicked(supabase, [itemId], "pick_one");
+      const { order: refreshed, autoClosed } = await refreshAndMaybeAutoClose(supabase, orderId);
+      if (refreshed) get().patchOrder(refreshed);
+      get().showToast(
+        autoClosed ? "Pedido cerrado — el cliente ya había pedido el cierre" : "Producto apartado",
+        "success"
+      );
+    } catch (err) {
+      set({ orders: snapshot });
+      get().showToast(getErrorMessage(err), "error");
+    } finally {
+      set({ loadingAction: null });
+    }
+  },
+
+  markItemWaiting: async (orderId, itemId, source) => {
+    const snapshot = cloneOrders(get().orders);
+    const sourceCode = source === "local" ? "venta-publico" : "general";
+
+    set((state) => ({
+      orders: state.orders.map((o) =>
+        o.id !== orderId
+          ? o
+          : {
+              ...o,
+              order_items: (o.order_items || []).map((item) =>
+                item.id === itemId ? { ...item, status: "waiting" } : item
+              ),
+            }
+      ),
+      loadingAction: itemId,
+    }));
+
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user?.id) throw new Error("Sesión admin no disponible");
+
+      await rpcMarkOrderItemWaitingSource(supabase, itemId, sourceCode, user.id);
+      const refreshed = await fetchOrderById(supabase, orderId);
+      if (refreshed) get().patchOrder(refreshed);
+      get().showToast(
+        source === "local" ? "En espera (local)" : "En espera (fábrica)",
+        "success"
+      );
+    } catch (err) {
+      set({ orders: snapshot });
+      get().showToast(getErrorMessage(err), "error");
+    } finally {
+      set({ loadingAction: null });
+    }
+  },
+
+  splitReservedItem: async (orderId, itemId, nPicked, nWaiting, nMissing, waitingSource) => {
+    const snapshot = cloneOrders(get().orders);
+    set({ loadingAction: itemId });
+
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user?.id) throw new Error("Sesión admin no disponible");
+
+      const result = await rpcSplitOrderItemStatus(
+        supabase,
+        itemId,
+        nPicked,
+        nWaiting,
+        nMissing,
+        user.id
+      );
+
+      const newWaitingItemId = (result as { split_item_ids?: { waiting?: string | null } } | null)
+        ?.split_item_ids?.waiting;
+      if (nWaiting > 0 && waitingSource && newWaitingItemId) {
+        const sourceCode = waitingSource === "local" ? "venta-publico" : "general";
+        await rpcMarkOrderItemWaitingSource(supabase, newWaitingItemId, sourceCode, user.id);
+      }
+
+      const { order: refreshed, autoClosed } = await refreshAndMaybeAutoClose(supabase, orderId);
+      if (refreshed) get().patchOrder(refreshed);
+      get().showToast(
+        autoClosed
+          ? "Pedido cerrado — el cliente ya había pedido el cierre"
+          : `Apartados: ${nPicked} · Espera: ${nWaiting} · Sin stock: ${nMissing}`,
+        "success"
+      );
+    } catch (err) {
+      set({ orders: snapshot });
+      get().showToast(getErrorMessage(err), "error");
+    } finally {
+      set({ loadingAction: null });
+    }
+  },
+
+  splitReservedItemMixed: async (orderId, itemId, nPicked, nFabrica, nLocal, nMissing) => {
+    const snapshot = cloneOrders(get().orders);
+    set({ loadingAction: itemId });
+
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user?.id) throw new Error("Sesión admin no disponible");
+
+      // Paso 1: separar ya el grupo "local". El resto (apartado real + fábrica)
+      // queda agrupado momentáneamente como "picked" para volver a repartirlo.
+      const step1 = await rpcSplitOrderItemStatus(
+        supabase,
+        itemId,
+        nPicked + nFabrica,
+        nLocal,
+        nMissing,
+        user.id
+      );
+      const step1Ids = (step1 as {
+        split_item_ids?: { picked?: string | null; waiting?: string | null };
+      } | null)?.split_item_ids;
+
+      if (nLocal > 0 && step1Ids?.waiting) {
+        await rpcMarkOrderItemWaitingSource(supabase, step1Ids.waiting, "venta-publico", user.id);
+      }
+
+      // Paso 2: del intermedio "picked" (apartado real + fábrica), separar la fábrica.
+      if (nFabrica > 0 && step1Ids?.picked) {
+        const step2 = await rpcSplitOrderItemStatus(
+          supabase,
+          step1Ids.picked,
+          nPicked,
+          nFabrica,
+          0,
+          user.id
+        );
+        const step2WaitingId = (step2 as { split_item_ids?: { waiting?: string | null } } | null)
+          ?.split_item_ids?.waiting;
+        if (step2WaitingId) {
+          await rpcMarkOrderItemWaitingSource(supabase, step2WaitingId, "general", user.id);
+        }
+      }
+
+      const { order: refreshed, autoClosed } = await refreshAndMaybeAutoClose(supabase, orderId);
+      if (refreshed) get().patchOrder(refreshed);
+      get().showToast(
+        autoClosed
+          ? "Pedido cerrado — el cliente ya había pedido el cierre"
+          : `Apartados: ${nPicked} · Espera fábrica: ${nFabrica} · Espera local: ${nLocal} · Sin stock: ${nMissing}`,
+        "success"
+      );
     } catch (err) {
       set({ orders: snapshot });
       get().showToast(getErrorMessage(err), "error");
@@ -230,7 +667,7 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
     }
   },
 
-  reopenOrder: async (orderId) => {
+  revertOrderToPicked: async (orderId) => {
     const snapshot = cloneOrders(get().orders);
     set((state) => ({
       orders: state.orders.map((o) =>
@@ -241,10 +678,10 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
 
     try {
       const supabase = getSupabaseBrowserClient();
-      await rpcReopenOrder(supabase, orderId);
+      await rpcRevertOrderToPicked(supabase, orderId);
       const refreshed = await fetchOrderById(supabase, orderId);
       if (refreshed) get().patchOrder(refreshed);
-      get().showToast("Pedido reabierto", "success");
+      get().showToast("Pedido vuelto a Apartados", "success");
     } catch (err) {
       set({ orders: snapshot });
       get().showToast(getErrorMessage(err), "error");
@@ -319,17 +756,14 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
   cancelStockPendingOrder: async (orderId) => {
     const snapshot = cloneOrders(get().orders);
     set((state) => ({
-      orders: state.orders.map((o) =>
-        o.id === orderId ? { ...o, status: "cancelled" } : o
-      ),
+      orders: state.orders.filter((o) => o.id !== orderId),
       loadingAction: orderId,
     }));
 
     try {
       const supabase = getSupabaseBrowserClient();
       await rpcCancelOrderFull(supabase, orderId);
-      const refreshed = await fetchOrderById(supabase, orderId);
-      if (refreshed) get().patchOrder(refreshed);
+      get().removeOrder(orderId);
       get().showToast("Pedido cancelado", "success");
     } catch (err) {
       set({ orders: snapshot });
@@ -363,36 +797,32 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
     const order = findOrder(get(), orderId);
     if (!order) return;
 
-    const newDismantleAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    // El nuevo vencimiento (17:00 hora Argentina, próximo día hábil) se
+    // calcula en el servidor vía rpc_admin_extend_order_24h — no se puede
+    // calcular acá sin duplicar la lógica de fn_compute_order_deadline
+    // (ver supabase/canonical/258_extension_24h_business_day.sql).
     const nextNotes = applyOrderNotesPatch(order.notes, {
       [ADMIN_ENABLE_24H_USES_KEY]: getEnable24hUsesFromOrder(order) + 1,
     });
 
     set((state) => ({
       orders: state.orders.map((o) =>
-        o.id === orderId
-          ? { ...o, dismantle_at: newDismantleAt, notes: nextNotes }
-          : o
+        o.id === orderId ? { ...o, notes: nextNotes } : o
       ),
       loadingAction: orderId,
     }));
 
     try {
       const supabase = getSupabaseBrowserClient();
-      const { error } = await supabase
-        .from("orders")
-        .update({
-          dismantle_at: newDismantleAt,
-          notes: nextNotes,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", orderId);
+      const { error } = await supabase.rpc("rpc_admin_extend_order_24h", {
+        p_order_id: orderId,
+      });
 
       if (error) throw error;
 
       const refreshed = await fetchOrderById(supabase, orderId);
       if (refreshed) get().patchOrder(refreshed);
-      get().showToast("Prórroga +24hs aplicada", "success");
+      get().showToast("Prórroga aplicada", "success");
     } catch (err) {
       set({ orders: snapshot });
       get().showToast(getErrorMessage(err), "error");
@@ -409,16 +839,50 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
       realtimeChannel = null;
     }
 
+    const pullOrder = async (orderId: string) => {
+      const full = await fetchOrderWhenReady(supabase, orderId);
+      if (full) get().patchOrder(full);
+    };
+
     realtimeChannel = supabase
-      .channel("orders-new")
+      .channel("orders-kanban")
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "orders" },
         async (payload: RealtimePostgresInsertPayload<{ id: string }>) => {
           const newId = (payload.new as { id?: string })?.id;
           if (!newId) return;
-          const full = await fetchOrderById(supabase, newId);
-          if (full) get().addOrderIfMissing(full);
+          await pullOrder(newId);
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "order_items" },
+        async (payload: RealtimePostgresInsertPayload<{ order_id?: string }>) => {
+          const orderId = (payload.new as { order_id?: string })?.order_id;
+          if (!orderId) return;
+          await pullOrder(orderId);
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "orders" },
+        async (payload: { new: { id?: string } }) => {
+          const orderId = payload.new?.id;
+          if (!orderId) return;
+          const full = await fetchOrderById(supabase, orderId);
+          if (full) get().patchOrder(full);
+          else get().removeOrder(orderId);
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "order_items" },
+        async (payload: { new: { order_id?: string } }) => {
+          const orderId = payload.new?.order_id;
+          if (!orderId) return;
+          const full = await fetchOrderById(supabase, orderId);
+          if (full) get().patchOrder(full);
         }
       )
       .subscribe();

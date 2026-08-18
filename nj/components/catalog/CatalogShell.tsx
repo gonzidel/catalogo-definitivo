@@ -1,7 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import React, { useEffect, useRef, useState } from "react";
 import { useSearchParams, usePathname } from "next/navigation";
 import { useCatalog } from "@/hooks/useCatalog";
 import { useEnrichedCatalog } from "@/hooks/useEnrichedCatalog";
@@ -21,6 +20,14 @@ import type { GroupedProduct } from "@/types/catalog";
 
 const INITIAL_DISPLAY = 14;
 const DISPLAY_INCREMENT = 14;
+
+type CatalogScrollState = {
+  displayCount: number;
+  scrollY: number;
+  anchorArticulo?: string;
+  anchorTop?: number;
+  savedAt?: number;
+};
 
 interface CatalogShellProps {
   initialProducts: GroupedProduct[];
@@ -59,10 +66,7 @@ export default function CatalogShell({
     : pathname;
 
   const [displayCount, setDisplayCount] = useState(INITIAL_DISPLAY);
-  const [highlightCats, setHighlightCats] = useState(false);
   const [highlightTalles, setHighlightTalles] = useState(false);
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => { setMounted(true); }, []);
 
   const prevCategoriaRef = useRef(categoria);
   useEffect(() => {
@@ -74,10 +78,14 @@ export default function CatalogShell({
     }
   }, [categoria]);
 
-  const handleNeedCategory = useCallback(() => {
-    setHighlightCats(true);
-    setTimeout(() => setHighlightCats(false), 2200);
-  }, []);
+  // Talles solo con categoría real (Calzado, Ropa, …) — no en home / ofertas / tags.
+  const showSizeFilter = [
+    "calzado",
+    "ropa",
+    "lenceria",
+    "marroquineria",
+    "otros",
+  ].includes(categoria.toLowerCase());
 
   const { allProducts, hasMore, isLoadingMore, loadMore } = useCatalog({
     categoria,
@@ -91,7 +99,7 @@ export default function CatalogShell({
       ? allProducts
       : initialProducts;
 
-  const { products: enrichedProducts } = useEnrichedCatalog(
+  const { products: enrichedProducts, isEnriching } = useEnrichedCatalog(
     baseProducts,
     searchTerm
   );
@@ -104,9 +112,11 @@ export default function CatalogShell({
     );
     const browsing =
       searchTerm.length < 2 && activeSizes.length === 0 && tags.length === 0;
-    if (fixedProductSet || !browsing) return withImages;
+    // No filtrar por stock mientras el enriquecimiento está en curso para evitar
+    // el flash de productos sin stock que luego desaparecen.
+    if (fixedProductSet || !browsing || isEnriching) return withImages;
     return withImages.filter(productHasAnyStock);
-  }, [enrichedProducts, searchTerm, activeSizes, tags, fixedProductSet]);
+  }, [enrichedProducts, searchTerm, activeSizes, tags, fixedProductSet, isEnriching]);
 
   const tagFiltered = React.useMemo(
     () => filterProductsByTags(catalogPool, tags),
@@ -160,6 +170,104 @@ export default function CatalogShell({
   const displayCountRef = useRef(displayCount);
   displayCountRef.current = displayCount;
 
+  // ─── Restaurar scroll + cantidad cargada al volver del PDP ────────────────
+  // Sin esto, volver del PDP con el botón atrás arranca siempre desde arriba
+  // con solo 14 productos. La clave: esto no dispara ningún fetch — SWR ya
+  // tiene los productos en caché (revalidateOnFocus:false), así que subir
+  // displayCount es solo un slice() más largo sobre datos ya en memoria, y
+  // sessionStorage es síncrono. Cero latencia extra en la vuelta.
+  const scrollStorageKey = `fyl-nj-catalog-scroll:${currentUrl}`;
+  const scrollSaveTimeoutRef = useRef<number | null>(null);
+  const restoreStateRef = useRef<CatalogScrollState | null>(null);
+  const restoredKeyRef = useRef<string | null>(null);
+
+  const saveCatalogState = React.useCallback(
+    (anchorArticulo?: string, anchorTop?: number) => {
+      try {
+        sessionStorage.setItem(
+          scrollStorageKey,
+          JSON.stringify({
+            displayCount: displayCountRef.current,
+            scrollY: window.scrollY,
+            anchorArticulo,
+            anchorTop,
+            savedAt: Date.now(),
+          } satisfies CatalogScrollState)
+        );
+      } catch { /* ignore */ }
+    },
+    [scrollStorageKey]
+  );
+
+  useEffect(() => {
+    try {
+      restoreStateRef.current = null;
+      restoredKeyRef.current = null;
+      const raw = sessionStorage.getItem(scrollStorageKey);
+      if (!raw) return;
+      const saved = JSON.parse(raw) as CatalogScrollState;
+      restoreStateRef.current = saved;
+      restoredKeyRef.current = null;
+      if (saved.displayCount > INITIAL_DISPLAY) {
+        setDisplayCount(saved.displayCount);
+      }
+    } catch { /* sessionStorage no disponible o dato corrupto — no bloquea nada */ }
+    // Solo depende de la identidad de esta vista (filtros/búsqueda actuales).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrollStorageKey]);
+
+  useEffect(() => {
+    const saved = restoreStateRef.current;
+    if (!saved || restoredKeyRef.current === scrollStorageKey) return;
+
+    let cancelled = false;
+    const restore = () => {
+      if (cancelled) return;
+
+      if (saved.anchorArticulo) {
+        const anchor = Array.from(
+          document.querySelectorAll<HTMLElement>("[data-articulo]")
+        ).find((el) => el.dataset.articulo === saved.anchorArticulo);
+
+        if (anchor) {
+          const targetY =
+            window.scrollY + anchor.getBoundingClientRect().top - (saved.anchorTop ?? 0);
+          window.scrollTo(0, Math.max(0, targetY));
+          restoredKeyRef.current = scrollStorageKey;
+          return;
+        }
+      }
+
+      const expectedCount = Math.min(saved.displayCount, filtered.length || saved.displayCount);
+      if (displayProducts.length >= expectedCount || !isEnriching) {
+        window.scrollTo(0, saved.scrollY);
+        restoredKeyRef.current = scrollStorageKey;
+      }
+    };
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(restore);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [displayProducts.length, filtered.length, isEnriching, scrollStorageKey]);
+
+  useEffect(() => {
+    // Debounce de 200ms tras dejar de scrollear — no escribimos en
+    // sessionStorage en cada frame para no meter jank en el scroll real.
+    const handleScroll = () => {
+      if (scrollSaveTimeoutRef.current) window.clearTimeout(scrollSaveTimeoutRef.current);
+      scrollSaveTimeoutRef.current = window.setTimeout(() => saveCatalogState(), 200);
+    };
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", handleScroll);
+      if (scrollSaveTimeoutRef.current) window.clearTimeout(scrollSaveTimeoutRef.current);
+    };
+  }, [scrollStorageKey, saveCatalogState]);
+
   // Sentinel is always in the DOM — never conditionally removed.
   // The observer callback decides whether to act, so the element stays mounted
   // and the observer never loses its target.
@@ -207,12 +315,6 @@ export default function CatalogShell({
             className="category-bar"
             id="category-bar"
             aria-label="Categorías del catálogo"
-            style={highlightCats ? {
-              animation: "fyl-blink 0.4s ease 3",
-              outline: "2px solid #CD844D",
-              outlineOffset: 2,
-              borderRadius: 8,
-            } : undefined}
           >
             <div className="quick-actions" id="quick-actions">
               <CategoryTabs
@@ -221,13 +323,14 @@ export default function CatalogShell({
             />
             </div>
           </div>
-          <SizeFilterSheet
-            activeSizes={activeSizes}
-            categoria={effectiveCategoria}
-            products={searched}
-            onNeedCategory={handleNeedCategory}
-            highlight={highlightTalles}
-          />
+          {showSizeFilter && (
+            <SizeFilterSheet
+              activeSizes={activeSizes}
+              categoria={categoria}
+              products={searched}
+              highlight={highlightTalles}
+            />
+          )}
         </div>
 
         {contextCategoria && contextCategoria !== "all" && (
@@ -239,40 +342,7 @@ export default function CatalogShell({
         )}
       </div>
 
-      {/* Tooltip: renderizado debajo del contenedor sticky, fuera de él */}
-      {highlightCats && mounted && createPortal(
-        <div style={{
-          position: "fixed",
-          top: 108,   /* header (~56px) + sticky bar (~44px) + gap */
-          left: "50%",
-          transform: "translateX(-50%)",
-          background: "#222",
-          color: "#fff",
-          fontSize: 12,
-          fontWeight: 500,
-          padding: "7px 14px",
-          borderRadius: 20,
-          whiteSpace: "nowrap",
-          pointerEvents: "none",
-          zIndex: 999,
-          boxShadow: "0 4px 12px rgba(0,0,0,0.25)",
-          animation: "fyl-tooltip-in 0.15s ease",
-        }}>
-          Seleccioná una categoría primero
-        </div>,
-        document.body
-      )}
-
-      {/* Keyframes para el blink, tooltip y pulse */}
       <style>{`
-        @keyframes fyl-blink {
-          0%, 100% { opacity: 1; }
-          50%       { opacity: 0.4; }
-        }
-        @keyframes fyl-tooltip-in {
-          from { opacity: 0; transform: translateX(-50%) translateY(-4px); }
-          to   { opacity: 1; transform: translateX(-50%) translateY(0); }
-        }
         @keyframes fyl-talles-pulse {
           0%, 100% { transform: scale(1);    box-shadow: 0 0 0 0 rgba(205,132,77,0.4); }
           50%       { transform: scale(1.08); box-shadow: 0 0 0 6px rgba(205,132,77,0); }
@@ -304,6 +374,9 @@ export default function CatalogShell({
                 priority={i < 4}
                 activeSizes={activeSizes}
                 categoria={effectiveCategoria}
+                onNavigate={(element) =>
+                  saveCatalogState(product.Articulo, element.getBoundingClientRect().top)
+                }
               />
             );
             // Insert curated banner slot after the 4th product (index 3)

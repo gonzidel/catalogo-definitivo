@@ -2,6 +2,7 @@ import {
   getTransportBadgeClass,
   parseOrderNotesObject,
 } from "@/lib/orders/domain";
+import { enrichOrderItemsWithOfferFlags } from "@/lib/orders/offer-badges";
 import { enrichOrderItemsWithWarehouseLabels } from "@/lib/orders/warehouse-labels";
 import type {
   AdminOrder,
@@ -15,10 +16,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 export const ORDER_SELECT = `
   id, order_number, status, customer_id, total_amount, notes, source,
   created_at, sent_at, expires_at, dismantle_at, transport_id,
-  customers(id, full_name, phone, email, dni, transport_id),
+  customers(id, full_name, phone, email, dni, transport_id, city, province),
   order_items(
     id, order_id, variant_id, product_name, color, size, quantity,
-    price_snapshot, status, admin_confirmed_missing, checked_by, checked_at,
+    price_snapshot, imagen, status, admin_confirmed_missing, checked_by, checked_at,
     order_item_stock_sources(warehouse_id, qty)
   )
 `;
@@ -87,7 +88,8 @@ export async function enrichOrders(
     orders,
     warehouseIds
   );
-  return withWarehouses.map((o) => attachTransportMeta(o, transports));
+  const withOffers = await enrichOrderItemsWithOfferFlags(supabase, withWarehouses);
+  return withOffers.map((o) => attachTransportMeta(o, transports));
 }
 
 export async function fetchOrdersInitial(
@@ -98,10 +100,16 @@ export async function fetchOrdersInitial(
     loadTransports(supabase),
   ]);
 
+  // Estados finales: no viven en el Kanban operativo (paridad con "sent"/"devolución").
+  // "expired" (pedido desarmado automáticamente por rpc_orders_daily_maintenance) no
+  // tiene columna propia ni ítems operacionales -- si se incluyera, getOrderKanbanColumn
+  // devuelve null y el pedido queda flotando sin poder clasificarse en ninguna columna.
+  // Nota: "cancelled" (a nivel pedido) SÍ debe seguir incluido -- se resuelve vía
+  // orderHasCancelledItems() y aparece en la columna "Cancelados" con acción "Desarmar".
   const { data, error } = await supabase
     .from("orders")
     .select(ORDER_SELECT)
-    .not("status", "in", '("sent","devolución")')
+    .not("status", "in", '("sent","devolución","devolucion","expired")')
     .order("created_at", { ascending: false })
     .limit(200);
 
@@ -162,6 +170,89 @@ export async function rpcMarkOrderItemsPicked(
   return data;
 }
 
+export async function rpcUpdateOrderItemStatus(
+  supabase: SupabaseClient,
+  itemId: string,
+  status: string,
+  checkedBy: string
+) {
+  const { data, error } = await supabase.rpc("rpc_update_order_item_status", {
+    p_item_id: itemId,
+    p_status: status,
+    p_checked_by: checkedBy,
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function rpcSplitOrderItemStatus(
+  supabase: SupabaseClient,
+  itemId: string,
+  nPicked: number,
+  nWaiting: number,
+  nMissing: number,
+  checkedBy: string
+) {
+  const { data, error } = await supabase.rpc("rpc_split_order_item_status", {
+    p_item_id: itemId,
+    p_n_picked: nPicked,
+    p_n_waiting: nWaiting,
+    p_n_missing: nMissing,
+    p_checked_by: checkedBy,
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function rpcMarkOrderItemWaitingSource(
+  supabase: SupabaseClient,
+  itemId: string,
+  sourceCode: "general" | "venta-publico",
+  checkedBy: string
+) {
+  const { data, error } = await supabase.rpc("rpc_mark_order_item_waiting_source", {
+    p_item_id: itemId,
+    p_source_code: sourceCode,
+    p_checked_by: checkedBy,
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function emitCustomerOrderNotification(
+  supabase: SupabaseClient,
+  params: {
+    customerId: string;
+    orderId: string;
+    type: string;
+    message: string;
+    payload?: Record<string, unknown>;
+    dedupeTypes?: string[];
+  }
+) {
+  const { customerId, orderId, type, message, payload, dedupeTypes } = params;
+  if (!customerId || !type || !message) return;
+
+  if (dedupeTypes?.length) {
+    await supabase
+      .from("customer_notifications")
+      .delete()
+      .eq("customer_id", customerId)
+      .eq("order_id", orderId)
+      .in("type", dedupeTypes);
+  }
+
+  await supabase.from("customer_notifications").insert({
+    customer_id: customerId,
+    order_id: orderId,
+    type,
+    message,
+    payload: payload ?? {},
+    read: false,
+    read_at: null,
+  });
+}
+
 export async function rpcCloseOrder(
   supabase: SupabaseClient,
   orderId: string,
@@ -185,11 +276,16 @@ export async function rpcSendOrderToLocal(
   return data;
 }
 
-export async function rpcReopenOrder(
+/**
+ * Revierte un pedido "closed" a "active" (columna Apartados). Solo admin
+ * (a diferencia de rpc_reopen_order, que es exclusiva de la propia clienta).
+ * Ya en uso probado en admin/closed-orders.js.
+ */
+export async function rpcRevertOrderToPicked(
   supabase: SupabaseClient,
   orderId: string
 ) {
-  const { error } = await supabase.rpc("rpc_reopen_order", {
+  const { error } = await supabase.rpc("rpc_revert_order_to_picked", {
     p_order_id: orderId,
   });
   if (error) throw error;
@@ -256,4 +352,53 @@ export async function resolveStockPendingOrderRpc(
   if (updateError) throw updateError;
 
   return fetchOrderById(supabase, order.id);
+}
+
+/**
+ * Existencias que figuran hoy en la web (catálogo público) para una variante+talle.
+ * Fuente: variant_sizes.stock_qty — el mismo total que ve la clienta, sincronizado
+ * automáticamente desde variant_size_warehouse_stock (trigger 84).
+ */
+export async function fetchVariantSizeStockQty(
+  supabase: SupabaseClient,
+  variantId: string,
+  size: string
+): Promise<number> {
+  const normalized = normalizeSizeForStockLookup(size);
+  if (!variantId || !normalized) return 0;
+
+  const { data, error } = await supabase
+    .from("variant_sizes")
+    .select("stock_qty")
+    .eq("variant_id", variantId)
+    .eq("size", normalized)
+    .maybeSingle();
+
+  if (error || !data) return 0;
+  return Number(data.stock_qty) || 0;
+}
+
+function normalizeSizeForStockLookup(size: string | null | undefined): string {
+  const trimmed = String(size ?? "").trim();
+  if (!trimmed) return "";
+  return /^\d+(\.\d+)?$/.test(trimmed) ? trimmed.split(".")[0] : trimmed;
+}
+
+/**
+ * Lleva a 0 el stock de una variante+talle (todos los depósitos) cuando el admin
+ * confirma que no hay existencia real, aunque el sistema mostrara > 0.
+ */
+export async function rpcZeroVariantSizeStock(
+  supabase: SupabaseClient,
+  variantId: string,
+  size: string,
+  orderItemId?: string | null
+) {
+  const { data, error } = await supabase.rpc("rpc_admin_zero_variant_size_stock", {
+    p_variant_id: variantId,
+    p_size: size,
+    p_order_item_id: orderItemId ?? null,
+  });
+  if (error) throw error;
+  return data;
 }

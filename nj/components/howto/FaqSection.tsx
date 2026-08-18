@@ -14,21 +14,15 @@ const FAQ_ITEMS: FaqItem[] = [
   },
   {
     q: "¿Qué pasa si un producto no hay en stock?",
-    a: "Te avisamos al confirmar y podés reemplazarlo por otro disponible.",
+    a: "Te avisamos por WhatsApp y podés reemplazarlo por otro disponible.",
   },
   {
-    q: "¿Cómo sé si mi pedido está confirmado?",
-    a: (
-      <>
-        En la sección «Mi pedido» verás{" "}
-        <span className="howto-status-badge--listo">Listo</span> en los
-        productos ya separados.
-      </>
-    ),
+    q: "¿Qué pasa después de cerrar mi pedido?",
+    a: "Lo preparamos para coordinar pago y envío. Si surge algún faltante, te avisamos por WhatsApp.",
   },
   {
     q: "¿Hay cambios o devoluciones?",
-    a: "Consultalo con nosotros al confirmar; te pasamos la política según el producto y el caso.",
+    a: "Consultalo con nosotros por WhatsApp; te pasamos la política según el producto y el caso.",
   },
 ];
 

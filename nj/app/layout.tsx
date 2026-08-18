@@ -4,6 +4,8 @@ import Link from "next/link";
 import "@/styles/globals.css";
 import Header from "@/components/layout/Header";
 import BottomNav from "@/components/layout/BottomNav";
+import CartFloatingBar from "@/components/cart/CartFloatingBar";
+import ProfileGateProvider from "@/components/profile/ProfileGateProvider";
 
 export const metadata: Metadata = {
   title: "FYL Moda | Calzado e Indumentaria Femenina por Mayor",
@@ -52,6 +54,7 @@ export default function RootLayout({
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link rel="preconnect" href="https://res.cloudinary.com" crossOrigin="anonymous" />
+        <link rel="icon" href="/nj/favicon.ico" sizes="any" />
         <link
           rel="stylesheet"
           href="https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,400;0,600&display=swap"
@@ -59,16 +62,19 @@ export default function RootLayout({
         <meta name="theme-color" content="#CD844D" />
       </head>
       <body>
-        {/* Header needs Suspense because SearchBar uses useSearchParams */}
-        <Suspense fallback={<HeaderFallback />}>
-          <Header />
-        </Suspense>
-        <div id="catalog-view">
-          {children}
-        </div>
-        <Suspense fallback={null}>
-          <BottomNav />
-        </Suspense>
+        <ProfileGateProvider>
+          {/* Header needs Suspense because SearchBar uses useSearchParams */}
+          <Suspense fallback={<HeaderFallback />}>
+            <Header />
+          </Suspense>
+          <div id="catalog-view">
+            {children}
+          </div>
+          <CartFloatingBar />
+          <Suspense fallback={null}>
+            <BottomNav />
+          </Suspense>
+        </ProfileGateProvider>
       </body>
     </html>
   );

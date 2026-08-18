@@ -13,9 +13,22 @@ export default async function DashboardPage() {
   // Load customer profile
   const { data: customer } = await supabase
     .from("customers")
-    .select("id, full_name, email, phone, city, province, customer_number, created_at")
+    .select("id, full_name, email, phone, address, dni, city, province, customer_number, transport_id, created_at")
     .eq("id", user.id)
     .maybeSingle();
+
+  // Nombre del transporte asignado manualmente (si el admin le puso uno
+  // puntual como MyM/SEDE al cliente, tiene prioridad sobre el que se
+  // calcularía automáticamente por provincia/localidad -- ver DashboardClient).
+  let assignedTransportName: string | null = null;
+  if (customer?.transport_id) {
+    const { data: transport } = await supabase
+      .from("transports")
+      .select("name")
+      .eq("id", customer.transport_id)
+      .maybeSingle();
+    assignedTransportName = transport?.name ?? null;
+  }
 
   // Load orders with items
   const { data: orders } = await supabase
@@ -41,7 +54,8 @@ export default async function DashboardPage() {
         sku,
         status,
         created_at,
-        variant_id
+        variant_id,
+        order_item_stock_sources ( warehouse_id, qty )
       )
     `)
     .eq("customer_id", user.id)
@@ -53,6 +67,7 @@ export default async function DashboardPage() {
       user={{ id: user.id, email: user.email ?? "" }}
       customer={customer ?? null}
       orders={orders ?? []}
+      assignedTransportName={assignedTransportName}
     />
   );
 }

@@ -23,21 +23,27 @@ export function useEnrichedCatalog(
 
   const [enriched, setEnriched] = useState<GroupedProduct[]>(products);
   const [extraSearch, setExtraSearch] = useState<GroupedProduct[]>([]);
+  const [isEnriching, setIsEnriching] = useState(false);
 
   // Reset + enriquecer cuando cambia el set de artículos (solo baseKey, no la ref del array).
   useEffect(() => {
     const snapshot = productsRef.current;
-    setEnriched(snapshot);
     setExtraSearch([]);
 
-    if (snapshot.length === 0) return;
+    if (snapshot.length === 0) {
+      setEnriched(snapshot);
+      return;
+    }
 
+    // No resetear a snapshot sin enriquecer — mantener la lista anterior (o la inicial del servidor)
+    // para evitar el flash de productos sin stock antes de que llegue el enriquecimiento.
+    setIsEnriching(true);
     let cancelled = false;
     enrichGroupedProductsWithVariants(getSupabaseBrowserClient(), snapshot)
       .then((next) => {
-        if (!cancelled) setEnriched(next);
+        if (!cancelled) { setEnriched(next); setIsEnriching(false); }
       })
-      .catch(() => {});
+      .catch(() => { if (!cancelled) setIsEnriching(false); });
 
     return () => {
       cancelled = true;
@@ -81,5 +87,5 @@ export function useEnrichedCatalog(
     return add.length ? [...enriched, ...add] : enriched;
   }, [enriched, extraSearch]);
 
-  return { products: merged };
+  return { products: merged, isEnriching };
 }

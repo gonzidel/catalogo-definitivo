@@ -55,6 +55,16 @@ function tokenMatches(haystackToken: string, queryToken: string): boolean {
   return false;
 }
 
+// ─── Tag field splitter ──────────────────────────────────────────────────────
+
+/** Filtro1/2/3 a veces traen varios tags en un solo string ("Gummi,Importada"). */
+function splitTagField(raw: string): string[] {
+  return String(raw ?? "")
+    .split(/[,;|/]+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 2);
+}
+
 // ─── Haystack builder ────────────────────────────────────────────────────────
 
 interface SearchEntry {
@@ -78,16 +88,20 @@ function buildHaystack(product: GroupedProduct): SearchEntry {
   const normedCategoria = normalizeText(product.Categoria ?? "");
   const colors          = (product.DetalleColor ?? []).map((d) => normalizeText(d.color));
   const tags            = (product.CommercialTags ?? []).map(normalizeText);
+  // Separar "Gummi,Importada" en tokens sueltos para que "gummi" matchee bien
+  const filtroTokens = [product.Filtro1, product.Filtro2, product.Filtro3]
+    .flatMap((f) => splitTagField(f ?? ""))
+    .map(normalizeText);
 
   const haystack = [
     normedArticulo, normedDesc, normedFiltro1, normedFiltro2, normedFiltro3,
-    normedCategoria, ...colors, ...tags,
+    normedCategoria, ...colors, ...tags, ...filtroTokens,
   ].filter(Boolean).join(" ");
 
   return {
     product,
     haystack,
-    haystackTokens: haystack.split(/\s+/).filter(Boolean),
+    haystackTokens: haystack.split(/[\s,;|/]+/).filter(Boolean),
     normedArticulo, normedDesc, normedFiltro1, normedFiltro2, normedFiltro3, normedCategoria,
   };
 }
@@ -163,6 +177,8 @@ export interface SearchSuggestion {
   type: "product" | "tag" | "categoria";
   label: string;
   query: string;
+  /** Navegación directa (PDP / tags / categoría). Si falta, se usa `query` como `?q=`. */
+  href?: string;
 }
 
 export function buildSuggestions(
@@ -191,29 +207,58 @@ export function buildSuggestions(
   const candidates: Array<{ s: SearchSuggestion; score: number }> = [];
 
   for (const p of products) {
-    // Product name
-    const artScore = scoreLabel(p.Articulo ?? "");
-    if (artScore > 0 && !seen.has(p.Articulo)) {
-      seen.add(p.Articulo);
-      candidates.push({ s: { type: "product", label: p.Articulo, query: p.Articulo }, score: artScore + 50 });
+    // Product name → va directo al PDP
+    const art = (p.Articulo ?? "").trim();
+    const artScore = scoreLabel(art);
+    if (art && artScore > 0 && !seen.has(`art:${art.toLowerCase()}`)) {
+      seen.add(`art:${art.toLowerCase()}`);
+      candidates.push({
+        s: {
+          type: "product",
+          label: art,
+          query: art,
+          href: `/producto/${encodeURIComponent(art)}`,
+        },
+        score: artScore + 50,
+      });
     }
 
-    // Tags (Filtro1/2/3)
-    for (const tag of [p.Filtro1, p.Filtro2, p.Filtro3].filter(Boolean) as string[]) {
-      if (seen.has(tag)) continue;
-      const ts = scoreLabel(tag);
-      if (ts > 0) {
-        seen.add(tag);
-        candidates.push({ s: { type: "tag", label: tag, query: tag }, score: ts });
+    // Tags (Filtro1/2/3) — cada valor separado, nunca "A,B" como un solo tag
+    for (const field of [p.Filtro1, p.Filtro2, p.Filtro3].filter(Boolean) as string[]) {
+      for (const tag of splitTagField(field)) {
+        const key = `tag:${tag.toLowerCase()}`;
+        if (seen.has(key)) continue;
+        const ts = scoreLabel(tag);
+        if (ts > 0) {
+          seen.add(key);
+          candidates.push({
+            s: {
+              type: "tag",
+              label: tag,
+              query: tag,
+              href: `/tags/${encodeURIComponent(tag)}`,
+            },
+            score: ts,
+          });
+        }
       }
     }
 
     // Categoría
-    if (p.Categoria && !seen.has(`cat:${p.Categoria}`)) {
-      const cs = scoreLabel(p.Categoria);
+    const cat = (p.Categoria ?? "").trim();
+    if (cat && !seen.has(`cat:${cat.toLowerCase()}`)) {
+      const cs = scoreLabel(cat);
       if (cs > 0) {
-        seen.add(`cat:${p.Categoria}`);
-        candidates.push({ s: { type: "categoria", label: p.Categoria, query: p.Categoria }, score: cs - 10 });
+        seen.add(`cat:${cat.toLowerCase()}`);
+        candidates.push({
+          s: {
+            type: "categoria",
+            label: cat,
+            query: cat,
+            href: `/${encodeURIComponent(cat.toLowerCase())}`,
+          },
+          score: cs - 10,
+        });
       }
     }
   }

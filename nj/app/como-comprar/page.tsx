@@ -3,6 +3,8 @@ import Link from "next/link";
 import { Suspense } from "react";
 import HowtoTabs from "@/components/howto/HowtoTabs";
 import FaqSection from "@/components/howto/FaqSection";
+import { PurchaseFlowInline } from "@/components/guide/PurchaseFlowGuide";
+import { PurchaseGuideButton } from "@/components/guide/PurchaseGuideClient";
 
 export const metadata: Metadata = {
   title: "Cómo comprar | FYL Moda",
@@ -19,9 +21,13 @@ export default function ComoComprarPage() {
         </Suspense>
         <h2 id="howto-title">Cómo comprar por mayor</h2>
         <p className="howto-hero__lead">
-          Mínimo 4 productos combinables. Armás tu pedido, lo enviás para
-          reserva y te confirmamos stock.
+          Mínimo 4 productos combinables. Armás tu pedido, lo cerrás
+          cuando esté listo y coordinamos pago, envío o retiro por fuera de la web.
         </p>
+        <div className="howto-quick-guide">
+          <PurchaseFlowInline current="cart" />
+          <PurchaseGuideButton />
+        </div>
       </section>
 
       <section
@@ -32,7 +38,7 @@ export default function ComoComprarPage() {
         <div className="howto-section__head">
           <h2 id="howto-steps-title">Comprá en 4 pasos</h2>
           <p className="muted">
-            No pagás por la web: enviás el pedido y coordinamos después.
+            No pagás por la web: cerrás el pedido y coordinamos después.
           </p>
         </div>
         <ol className="steps" aria-label="Pasos para comprar">
@@ -46,11 +52,10 @@ export default function ComoComprarPage() {
           <li className="step">
             <div className="step__num">2</div>
             <div className="step__body">
-              <h3>Enviá el pedido para reserva</h3>
+              <h3>Armá tu pedido</h3>
               <p>
-                Para reservar tu carrito, presioná "Hacer pedido" y así
-                separamos tus productos. (Te avisamos si algo no queda en
-                stock).
+                Para pasar el carrito a tu cuenta, presioná "Armar mi pedido".
+                Todavía no se envía ni se paga.
               </p>
             </div>
           </li>
@@ -60,15 +65,16 @@ export default function ComoComprarPage() {
               <h3>Sumá productos hasta 7 días</h3>
               <p>
                 Podés seguir agregando productos a tu pedido durante 7 días sin
-                costo. (Recordá que el mínimo de compra es de 4 productos).
+                costo. Cuando llegues al mínimo de 4 unidades, cerralo para que
+                lo preparemos.
               </p>
             </div>
           </li>
           <li className="step">
             <div className="step__num">4</div>
             <div className="step__body">
-              <h3>Coordinamos envío y pago</h3>
-              <p>Una vez finalizado tu pedido, coordinamos el envío y el pago.</p>
+              <h3>Coordinamos pago y retiro/envío</h3>
+              <p>Una vez cerrado tu pedido, coordinamos el pago y cómo lo recibís o retirás.</p>
             </div>
           </li>
         </ol>
@@ -90,18 +96,18 @@ export default function ComoComprarPage() {
         </div>
         <div className="cards">
           <article className="info-card">
-            <h3>Reserva y stock</h3>
+            <h3>Pedido y stock</h3>
             <p>
-              El pedido se reserva al presionar "Hacer pedido". Si algún
-              producto no tiene stock, te avisamos para que puedas cambiarlo o
-              quitarlo.
+              El pedido queda abierto al presionar "Armar mi pedido".
+              Si algún producto no tiene stock, te avisamos para que puedas
+              cambiarlo o quitarlo.
             </p>
           </article>
           <article className="info-card">
             <h3>Envíos y retiro</h3>
             <p>
               Hacemos envíos a todo el país. También podés retirar en el local,
-              pero esperá nuestra confirmación antes de venir.
+              pero coordiná con nosotros antes de venir.
             </p>
             <p>Av. Alberdi 1099, Resistencia, Chaco.</p>
           </article>
@@ -109,7 +115,7 @@ export default function ComoComprarPage() {
             <h3>Medios de pago</h3>
             <p>
               Transferencia o contra reembolso según localidad. Si pagás con
-              tarjeta puede haber un recargo; te lo indicamos al confirmar.
+              tarjeta puede haber un recargo; te lo indicamos por WhatsApp.
             </p>
           </article>
         </div>
@@ -120,7 +126,7 @@ export default function ComoComprarPage() {
       <section className="howto-final" aria-label="Acción final">
         <h2>¿Lista para armar tu pedido?</h2>
         <p className="muted">
-          Entrá al catálogo, elegí tus productos y enviá el pedido cuando
+          Entrá al catálogo, elegí tus productos y cerrá el pedido cuando
           llegues al mínimo.
         </p>
         <Link href="/" className="btn btn-primary btn-wide">

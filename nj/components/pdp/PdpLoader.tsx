@@ -5,6 +5,7 @@ import { useMemo } from "react";
 import Link from "next/link";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { CATALOG_SOURCE, CATALOG_SELECT, agruparProductos } from "@/lib/utils/catalog";
+import { calculateRecommendedPrice } from "@/lib/products/pricing";
 import {
   enrichGroupedProductsWithVariants,
   pickDisplayColorDetail,
@@ -26,17 +27,23 @@ async function stubFromProductsTable(
 ): Promise<GroupedProduct | null> {
   const { data: row } = await supabase
     .from("products")
-    .select("name, description, category, price")
+    .select("name, description, category, cost, price_percentage, logistic_amount")
     .eq("name", articulo.trim())
     .eq("status", "active")
     .maybeSingle();
 
   if (!row) return null;
 
+  const precio = calculateRecommendedPrice(
+    Number(row.cost ?? 0),
+    Number(row.price_percentage ?? 0),
+    Number(row.logistic_amount ?? 0)
+  );
+
   return {
     Articulo: String(row.name ?? articulo).trim(),
     Descripcion: String(row.description ?? ""),
-    Precio: row.price ?? "",
+    Precio: precio || "",
     VariantePrincipal: null,
     Oferta: "",
     FechaIngreso: "",
@@ -146,32 +153,94 @@ async function fetchVariantSizes(articulo: string) {
 
   const { data: variants } = await supabase
     .from("product_variants")
-    .select("id, color, sku, products!inner(name)")
+    .select("id, color, sku, reserved_qty, products!inner(name)")
     .eq("active", true)
     .eq("products.name", articulo.trim())
     .limit(30);
 
   if (!variants || variants.length === 0) return [];
 
-  const results = await Promise.all(
-    variants.map(async (v: { id: string; color?: string; sku?: string }) => {
-      const { data: sizes } = await supabase
-        .from("variant_sizes")
-        .select("size, sku, stock_qty")
-        .eq("variant_id", v.id)
-        .order("size");
+  const variantIds = variants.map((v: { id: string }) => v.id);
+  const [
+    { data: sizeRows },
+    { data: sizeWarehouseRows },
+    { data: warehouseRows },
+  ] = await Promise.all([
+    supabase
+      .from("variant_sizes")
+      .select("variant_id, size, sku")
+      .in("variant_id", variantIds)
+      .order("size"),
+    supabase
+      .from("variant_size_warehouse_stock")
+      .select("variant_id, size, stock_qty")
+      .in("variant_id", variantIds),
+    supabase
+      .from("variant_warehouse_stock")
+      .select("variant_id, stock_qty")
+      .in("variant_id", variantIds),
+  ]);
+
+  const normalizeSizeKey = (size: string) => {
+    const trimmed = String(size ?? "").trim();
+    if (/^\d+(\.0+)?$/.test(trimmed)) return String(Number(trimmed));
+    return trimmed.toLowerCase();
+  };
+
+  const sizeSkuByVariant = new Map<string, Array<{ size: string; sku: string }>>();
+  for (const row of sizeRows ?? []) {
+    const variantId = String(row.variant_id ?? "");
+    if (!variantId) continue;
+    const entry = sizeSkuByVariant.get(variantId) ?? [];
+    entry.push({
+      size: String(row.size ?? ""),
+      sku: row.sku ?? "",
+    });
+    sizeSkuByVariant.set(variantId, entry);
+  }
+
+  const sizeStock = new Map<string, number>();
+  for (const row of sizeWarehouseRows ?? []) {
+    const variantId = String(row.variant_id ?? "");
+    if (!variantId) continue;
+    const key = `${variantId}__${normalizeSizeKey(String(row.size ?? ""))}`;
+    sizeStock.set(key, (sizeStock.get(key) ?? 0) + Number(row.stock_qty ?? 0));
+  }
+
+  const totalByVariant = new Map<string, number>();
+  for (const row of warehouseRows ?? []) {
+    const variantId = String(row.variant_id ?? "");
+    if (!variantId) continue;
+    totalByVariant.set(
+      variantId,
+      (totalByVariant.get(variantId) ?? 0) + Number(row.stock_qty ?? 0)
+    );
+  }
+
+  const results = variants.map(
+    (v: { id: string; color?: string; sku?: string; reserved_qty?: number }) => {
+      const totalStock = totalByVariant.get(v.id);
+      const totalAvailable =
+        totalStock === undefined
+          ? null
+          : Math.max(0, totalStock - Number(v.reserved_qty ?? 0));
 
       return {
         variantId: v.id,
         color: v.color ?? "",
         sku: v.sku ?? "",
-        sizes: (sizes ?? []).map((s: { size?: string; sku?: string; stock_qty?: number }) => ({
-          size: String(s.size ?? ""),
-          sku: s.sku ?? "",
-          stock_qty: Number(s.stock_qty ?? 0),
-        })),
+        sizes: (sizeSkuByVariant.get(v.id) ?? []).map((s) => {
+          const bySize = sizeStock.get(`${v.id}__${normalizeSizeKey(s.size)}`) ?? 0;
+          const available =
+            totalAvailable === null ? bySize : Math.min(bySize, totalAvailable);
+          return {
+            size: s.size,
+            sku: s.sku,
+            stock_qty: Math.max(0, available),
+          };
+        }),
       };
-    })
+    }
   );
 
   return results;
@@ -179,21 +248,9 @@ async function fetchVariantSizes(articulo: string) {
 
 function PdpNotFound({ backUrl }: { backUrl: string }) {
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        minHeight: "60vh",
-        padding: "32px 16px",
-        textAlign: "center",
-      }}
-    >
-      <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 8, color: "#333" }}>
-        Producto no encontrado
-      </h2>
-      <p style={{ fontSize: 14, color: "#888", marginBottom: 24 }}>
+    <div className="pdp-not-found">
+      <h2 className="pdp-not-found__title">Producto no encontrado</h2>
+      <p className="pdp-not-found__text">
         Este producto no está disponible o fue retirado del catálogo.
       </p>
       <Link href={backUrl} className="btn btn-primary">

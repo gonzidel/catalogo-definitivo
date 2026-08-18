@@ -30,8 +30,14 @@ export async function middleware(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
 
-  // Protect /dashboard routes — redirect to /login if not authenticated
-  if (pathname.startsWith("/dashboard") && !user) {
+  // Protect /dashboard and /admin routes — redirect to /login if not authenticated.
+  // /admin also requires the user to be present in public.admins (checked in
+  // lib/auth/admin.ts per-page, since middleware can't easily join tables) —
+  // this only guarantees a logged-in session reaches /admin, not that they're staff.
+  if (
+    (pathname.startsWith("/dashboard") || pathname.startsWith("/admin")) &&
+    !user
+  ) {
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = "/login";
     loginUrl.searchParams.set("next", pathname);
@@ -50,5 +56,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/login"],
+  matcher: ["/dashboard/:path*", "/admin/:path*", "/login"],
 };

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
+import { useRouter } from "next/navigation";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -33,7 +34,7 @@ type AnyNotification = DbNotification | SyntheticNotification;
 
 const TYPE_LABELS: Record<string, string> = {
   ORDER_MISSING_ITEMS: "Faltantes",
-  ORDER_ALL_RESERVED: "Reservado",
+  ORDER_ALL_RESERVED: "Pedido",
   ORDER_PACKAGED_TODAY: "Envío",
   ORDER_DEADLINE_REMINDER: "Pedido",
   ORDER_EXPIRED_PENDING_DISASSEMBLY: "Pedido",
@@ -48,7 +49,6 @@ const CHIP_COLOR: Record<string, { bg: string; color: string }> = {
 };
 
 function chipKind(type: string) {
-  if (type === "ORDER_ALL_RESERVED") return "reserved";
   if (type === "ORDER_MISSING_ITEMS") return "missing";
   return "default";
 }
@@ -94,6 +94,44 @@ function mergeAndSort(db: DbNotification[], synth: SyntheticNotification[]): Any
   return merged;
 }
 
+/** Destino NJ al tocar una notificación (respeta basePath vía router). */
+function resolveNotificationHref(n: AnyNotification): string {
+  const payload =
+    n.payload && typeof n.payload === "object"
+      ? (n.payload as Record<string, unknown>)
+      : null;
+  const actionUrl = String(payload?.action_url ?? "").trim();
+
+  // URLs legacy del HTML (dashboard.html#section-active-order, etc.)
+  if (actionUrl) {
+    if (/historial|history|orders/i.test(actionUrl) && !/active/i.test(actionUrl)) {
+      return "/dashboard?tab=orders";
+    }
+    if (/perfil|profile/i.test(actionUrl)) {
+      return "/dashboard?tab=profile";
+    }
+    if (/cart|carrito/i.test(actionUrl)) {
+      return "/dashboard?tab=cart";
+    }
+    // Cualquier link a dashboard / mi pedido → tab active-order
+    if (/dashboard|active-order|mi-?pedido|section-active/i.test(actionUrl)) {
+      return "/dashboard?tab=active-order";
+    }
+  }
+
+  // Tipos de pedido (y cualquier ORDER_*) → Mi pedido
+  if (
+    n.type.startsWith("ORDER_") ||
+    ("order_id" in n && Boolean(n.order_id)) ||
+    isSynthetic(n.id)
+  ) {
+    return "/dashboard?tab=active-order";
+  }
+
+  // Default: la mayoría de avisos son del pedido activo
+  return "/dashboard?tab=active-order";
+}
+
 // ─── Props ────────────────────────────────────────────────────────────────────
 
 interface NotificationsPanelProps {
@@ -114,6 +152,7 @@ export default function NotificationsPanel({
   onClose,
   onUnreadCountChange,
 }: NotificationsPanelProps) {
+  const router = useRouter();
   const [notifications, setNotifications] = useState<AnyNotification[]>([]);
   const channelRef = useRef<ReturnType<ReturnType<typeof getSupabaseBrowserClient>["channel"]> | null>(null);
   const [mounted, setMounted] = useState(false);
@@ -220,15 +259,9 @@ export default function NotificationsPanel({
     }
     onClose();
 
-    // Navigate to dashboard active-order tab for order-related notifications
-    const ORDER_TYPES = new Set([
-      "ORDER_MISSING_ITEMS", "ORDER_ALL_RESERVED", "ORDER_PACKAGED_TODAY",
-      "ORDER_DEADLINE_REMINDER", "ORDER_EXPIRED_PENDING_DISASSEMBLY",
-      "ORDER_DISMANTLED_TIMEOUT",
-    ]);
-    if (ORDER_TYPES.has(n.type)) {
-      window.location.href = "/dashboard?tab=active-order";
-    }
+    // router.push respeta basePath (/nj); window.location a "/dashboard" iba a ningún lado.
+    const href = resolveNotificationHref(n);
+    router.push(href);
   }
 
   if (!mounted) return null;

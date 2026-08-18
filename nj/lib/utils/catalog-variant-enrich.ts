@@ -3,6 +3,7 @@ import type { CatalogImage, ColorDetail, GroupedProduct } from "@/types/catalog"
 import { agruparProductos, CATALOG_SELECT, colorDetailHasImage } from "@/lib/utils/catalog";
 import { colorDetailMatchesSizes } from "@/lib/utils/search";
 import type { CatalogRow } from "@/types/catalog";
+import { calculateRecommendedPrice } from "@/lib/products/pricing";
 
 function normColor(c: string): string {
   return String(c ?? "").trim().toLowerCase();
@@ -309,7 +310,7 @@ export async function searchProductsIncludingOutOfStock(
 
   const { data: matches, error } = await supabase
     .from("products")
-    .select("name, description, category, price")
+    .select("name, description, category, cost, price_percentage, logistic_amount")
     .eq("status", "active")
     .or(`name.ilike.%${q}%,description.ilike.%${q}%`)
     .limit(40);
@@ -342,10 +343,16 @@ export async function searchProductsIncludingOutOfStock(
       continue;
     }
 
+    const precio = calculateRecommendedPrice(
+      Number(m.cost ?? 0),
+      Number(m.price_percentage ?? 0),
+      Number(m.logistic_amount ?? 0)
+    );
+
     built.push({
       Articulo: art,
       Descripcion: String(m.description ?? ""),
-      Precio: m.price ?? "",
+      Precio: precio || "",
       VariantePrincipal: null,
       Oferta: "",
       FechaIngreso: "",

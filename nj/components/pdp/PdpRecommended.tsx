@@ -90,44 +90,20 @@ export default function PdpRecommended({
   const verMasTag = filtro1 || filtro2 || filtro3;
 
   return (
-    <div style={{ marginTop: 32 }}>
-      {/* Header */}
-      <div style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        marginBottom: 12,
-        padding: "0 2px",
-      }}>
-        <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "#222" }}>
-          Recomendados
-        </h3>
+    <div className="pdp-recommended">
+      <div className="pdp-recommended__header">
+        <h3 className="pdp-recommended__title">Recomendados</h3>
         {verMasTag && (
           <Link
             href={`/tags/${encodeURIComponent(verMasTag)}`}
-            style={{
-              fontSize: 13,
-              color: "#555",
-              textDecoration: "none",
-              border: "1px solid #ddd",
-              borderRadius: 20,
-              padding: "4px 12px",
-              whiteSpace: "nowrap",
-            }}
+            className="pdp-recommended__more"
           >
             Ver más
           </Link>
         )}
       </div>
 
-      {/* Horizontal scroll */}
-      <div style={{
-        display: "flex",
-        gap: 10,
-        overflowX: "auto",
-        paddingBottom: 8,
-        WebkitOverflowScrolling: "touch" as const,
-      }}>
+      <div className="pdp-recommended__scroller">
         {products.map((p) => {
           const imgSrc = resolveImageSrc(p.VariantePrincipal);
           const price = formatARS(p.Precio);
@@ -137,50 +113,33 @@ export default function PdpRecommended({
             <Link
               key={p.Articulo}
               href={`/producto/${encodeURIComponent(p.Articulo)}`}
-              style={{ textDecoration: "none", color: "inherit", flexShrink: 0 }}
+              className="pdp-recommended__card-link"
             >
-              <div style={{ width: 140 }}>
-                {/* Image */}
-                <div style={{
-                  position: "relative",
-                  width: 140,
-                  height: 140,
-                  borderRadius: 8,
-                  overflow: "hidden",
-                  background: "#f5f5f5",
-                }}>
+              <div className="pdp-recommended__card">
+                <div className="pdp-recommended__img-wrap">
                   {imgSrc ? (
                     <Image
                       src={imgSrc}
                       alt={p.Articulo}
                       fill
                       sizes="140px"
-                      style={{ objectFit: "cover" }}
+                      className="pdp-recommended__img"
                     />
                   ) : (
-                    <div className="skeleton-shimmer" style={{ width: "100%", height: "100%" }} />
+                    <div className="skeleton-shimmer pdp-recommended__img-skel" />
                   )}
                 </div>
 
-                {/* Info */}
-                <div style={{ marginTop: 6, padding: "0 2px" }}>
-                  <div style={{ fontSize: 12, color: "#888", marginBottom: 2 }}>
-                    {p.Articulo}
-                  </div>
-                  <div style={{ display: "flex", alignItems: "baseline", gap: 4 }}>
+                <div className="pdp-recommended__info">
+                  <div className="pdp-recommended__sku">{p.Articulo}</div>
+                  <div className="pdp-recommended__prices">
                     {offerPrice ? (
                       <>
-                        <span style={{ fontSize: 13, color: "#999", textDecoration: "line-through" }}>
-                          {price}
-                        </span>
-                        <span style={{ fontSize: 14, fontWeight: 700, color: "#CD844D" }}>
-                          {offerPrice}
-                        </span>
+                        <span className="pdp-recommended__price-old">{price}</span>
+                        <span className="pdp-recommended__price">{offerPrice}</span>
                       </>
                     ) : (
-                      <span style={{ fontSize: 14, fontWeight: 700, color: "#CD844D" }}>
-                        {price}
-                      </span>
+                      <span className="pdp-recommended__price">{price}</span>
                     )}
                   </div>
                 </div>

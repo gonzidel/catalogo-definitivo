@@ -1,5 +1,6 @@
 "use client";
 
+import type { CSSProperties, RefObject } from "react";
 import { compareCatalogSizes } from "@/lib/utils/size-normalizer";
 import type { ColorDetail } from "@/types/catalog";
 
@@ -9,21 +10,53 @@ interface SizeWithStock {
   stock_qty: number;
 }
 
+interface VariantSizeInfo {
+  variantId: string;
+  color: string;
+  sizes: SizeWithStock[];
+}
+
+interface SelectedItem {
+  variantId: string;
+  color: string;
+  size: string;
+  qty: number;
+}
+
 interface PdpSizePickerProps {
   colorDetail: ColorDetail | null;
+  activeColor: string;
+  selectionLabel?: string;
   sizesWithStock?: SizeWithStock[];
-  /** size → qty for the current variant */
-  selections: Record<string, number>;
-  onSelectionChange: (size: string, qty: number) => void;
+  /** Variante actualmente en pantalla (según el color elegido arriba). */
+  activeVariantId: string;
+  /** Todas las variantes de color, con su stock por talle — para calcular
+      el máximo permitido en las filas de otros colores ya elegidos. */
+  variantSizes: VariantSizeInfo[];
+  /** Colores del producto — para pintar el punto de color en cada fila. */
+  colors: ColorDetail[];
+  /** Selección acumulada de TODOS los colores (no solo el que está activo). */
+  allSelections: SelectedItem[];
+  onSelectionChange: (variantId: string, size: string, qty: number) => void;
+  qtyListRef?: RefObject<HTMLDivElement | null>;
 }
 
 export default function PdpSizePicker({
   colorDetail,
+  activeColor,
+  selectionLabel = "talle",
   sizesWithStock,
-  selections,
+  activeVariantId,
+  variantSizes,
+  colors,
+  allSelections,
   onSelectionChange,
+  qtyListRef,
 }: PdpSizePickerProps) {
   const stockMap = new Map((sizesWithStock ?? []).map((s) => [s.size, s.stock_qty]));
+  const capitalizedSelectionLabel =
+    selectionLabel.charAt(0).toUpperCase() + selectionLabel.slice(1);
+  const selectionArticle = selectionLabel === "medida" ? "una" : "un";
   const hasStockData = stockMap.size > 0;
 
   // Use variant_sizes as the canonical source (includes out-of-stock talles).
@@ -32,160 +65,154 @@ export default function PdpSizePicker({
     ? (sizesWithStock ?? []).map((s) => s.size)
     : (colorDetail?.talles ?? []);
   const sortedTalles = [...talles].sort(compareCatalogSizes);
-  if (sortedTalles.length === 0) return null;
-  const selectedSizes = sortedTalles.filter((t) => (selections[t] ?? 0) > 0);
-  const totalSelected = Object.values(selections).reduce((a, v) => a + v, 0);
+
+  // Selección del color activo (para resaltar los chips de arriba).
+  const activeSelections: Record<string, number> = {};
+  for (const item of allSelections) {
+    if (item.variantId === activeVariantId) activeSelections[item.size] = item.qty;
+  }
+
+  const totalSelectedAllColors = allSelections.reduce((a, i) => a + Math.max(0, i.qty), 0);
+
+  // Stock por variante+talle, para los steppers de las filas de otros colores.
+  const stockByVariant = new Map<string, Map<string, number>>();
+  for (const v of variantSizes) {
+    stockByVariant.set(v.variantId, new Map(v.sizes.map((s) => [s.size, s.stock_qty])));
+  }
+
+  const hexByColor = new Map(colors.map((c) => [c.color.toLowerCase(), c.hex_color]));
+
+  if (sortedTalles.length === 0 && allSelections.length === 0) return null;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      {/* Label */}
-      <div style={{ fontSize: 13, color: "#666", fontWeight: 500 }}>
-        Talle
-        {totalSelected > 0 && (
-          <span style={{ marginLeft: 8, color: "#CD844D", fontWeight: 700 }}>
-            · {totalSelected} seleccionado{totalSelected !== 1 ? "s" : ""}
+    <div className="pdp-sizes">
+      <div className="pdp-sizes__label">
+        Elegí {selectionLabel} en {activeColor}
+        {totalSelectedAllColors > 0 && (
+          <span className="pdp-sizes__count">
+            · {totalSelectedAllColors} seleccionado{totalSelectedAllColors !== 1 ? "s" : ""}
           </span>
         )}
       </div>
-
-      {/* Chip grid — same aesthetic as before, fixed size */}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-        {sortedTalles.map((talle) => {
-          const stock = stockMap.get(talle);
-          const outOfStock = hasStockData && stock !== undefined && stock <= 0;
-          const qty = selections[talle] ?? 0;
-          const isSelected = qty > 0;
-          const lowStock = hasStockData && stock !== undefined && stock > 0 && stock <= 3;
-
-          return (
-            <button
-              key={talle}
-              onClick={() => {
-                if (outOfStock) return;
-                onSelectionChange(talle, isSelected ? 0 : 1);
-              }}
-              aria-pressed={isSelected}
-              aria-label={`Talle ${talle}${outOfStock ? " (sin stock)" : ""}${isSelected ? ` (${qty} seleccionado${qty > 1 ? "s" : ""})` : ""}`}
-              disabled={outOfStock}
-              style={{
-                position: "relative",
-                minWidth: 48, height: 44, padding: "0 12px",
-                borderRadius: 8,
-                // selected → solid orange | with stock → dashed orange | no stock → solid gray
-                border: isSelected
-                  ? "2px solid #CD844D"
-                  : outOfStock
-                  ? "1.5px solid #ddd"
-                  : "2px dashed #f0b988",
-                background: isSelected ? "#FFF5EE" : "#fff",
-                cursor: outOfStock ? "not-allowed" : "pointer",
-                fontFamily: "inherit",
-                fontSize: 14,
-                fontWeight: isSelected ? 700 : 400,
-                color: outOfStock ? "#ccc" : isSelected ? "#CD844D" : "#555",
-                overflow: "visible",
-                transition: "border 0.12s, background 0.12s, color 0.12s",
-              }}
-            >
-              {/* Diagonal strikethrough for out-of-stock */}
-              {outOfStock && (
-                <span aria-hidden="true" style={{
-                  position: "absolute", inset: 0, pointerEvents: "none", borderRadius: 8,
-                  background: "linear-gradient(to top right, transparent calc(50% - 0.7px), #d0d0d0 calc(50% - 0.7px), #d0d0d0 calc(50% + 0.7px), transparent calc(50% + 0.7px))",
-                }} />
-              )}
-
-              {talle}
-
-              {/* Quantity badge (qty > 1) */}
-              {qty > 1 && (
-                <span style={{
-                  position: "absolute", top: -7, right: -7,
-                  width: 18, height: 18, borderRadius: "50%",
-                  background: "#CD844D", color: "#fff",
-                  fontSize: 10, fontWeight: 800,
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  lineHeight: 1, pointerEvents: "none",
-                  border: "1.5px solid #fff",
-                }}>
-                  {qty}
-                </span>
-              )}
-
-              {/* Low stock dot */}
-              {!isSelected && !outOfStock && lowStock && (
-                <span style={{
-                  position: "absolute", top: -4, right: -4,
-                  width: 8, height: 8, borderRadius: "50%",
-                  background: "#f59e0b",
-                  border: "1.5px solid #fff",
-                  pointerEvents: "none",
-                }} />
-              )}
-            </button>
-          );
-        })}
+      <div className="pdp-sizes__help">
+        Tocá {selectionArticle} {selectionLabel} para abrir el selector de cantidad.
       </div>
 
-      {/* Quantity controls — only for selected sizes */}
-      {selectedSizes.length > 0 && (
-        <div style={{
-          background: "#faf7f4", borderRadius: 12,
-          padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8,
-        }}>
-          <div style={{ fontSize: 11, color: "#aaa", fontWeight: 500, marginBottom: 2 }}>
-            Cantidad por talle
-          </div>
-          {selectedSizes.map((talle) => {
-            const qty = selections[talle] ?? 1;
+      {sortedTalles.length > 0 && (
+        <div className="pdp-sizes__chips">
+          {sortedTalles.map((talle) => {
             const stock = stockMap.get(talle);
-            const maxQty = hasStockData && stock !== undefined ? stock : 99;
+            const outOfStock = hasStockData && stock !== undefined && stock <= 0;
+            const qty = activeSelections[talle] ?? 0;
+            const isSelected = talle in activeSelections;
+
             return (
-              <div key={talle} style={{
-                display: "flex", alignItems: "center", justifyContent: "space-between",
-              }}>
-                <span style={{ fontSize: 14, color: "#555", fontWeight: 600, minWidth: 60 }}>
-                  T. {talle}
-                  {hasStockData && stock !== undefined && stock <= 5 && (
-                    <span style={{ fontSize: 10, color: "#f59e0b", marginLeft: 6 }}>
-                      ({stock} disp.)
-                    </span>
-                  )}
-                </span>
-                <div style={{ display: "flex", alignItems: "center", gap: 0 }}>
+              <button
+                key={talle}
+                type="button"
+                onClick={() => {
+                  if (outOfStock) return;
+                  onSelectionChange(activeVariantId, talle, isSelected ? -1 : 0);
+                }}
+                aria-pressed={isSelected}
+                aria-label={`${capitalizedSelectionLabel} ${talle}${outOfStock ? " (sin stock)" : ""}${isSelected ? ` (${qty} seleccionado${qty > 1 ? "s" : ""})` : ""}`}
+                disabled={outOfStock}
+                className={[
+                  "pdp-size-chip",
+                  isSelected ? "is-selected" : "",
+                  outOfStock ? "is-oos" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+              >
+                {outOfStock && <span aria-hidden="true" className="pdp-size-chip__strike" />}
+                {talle}
+                {qty > 1 && <span className="pdp-size-chip__qty-badge">{qty}</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Quantity controls — junta TODOS los colores elegidos, no solo el que
+          está en pantalla. Cada fila muestra talle + color para que, si el
+          cliente eligió 38 en beige y después pasa a negro, el 38 beige siga
+          visible acá (antes desaparecía y parecía que el carrito se había
+          "roto" al cambiar de color). */}
+      {allSelections.length > 0 && (
+        <div className="pdp-qty-list" ref={qtyListRef}>
+          <div className="pdp-qty-list__title">Ahora elegí cantidad</div>
+          {allSelections.map((item) => {
+            const qty = item.qty;
+            const stock = stockByVariant.get(item.variantId)?.get(item.size);
+            const hasStockForRow = Boolean(stockByVariant.get(item.variantId)?.size);
+            const maxQty = hasStockForRow && stock !== undefined ? stock : 99;
+            const hex = hexByColor.get(item.color.toLowerCase()) ?? "#ccc";
+            const isActiveColorRow = item.variantId === activeVariantId;
+            const atMax = qty >= maxQty;
+
+            return (
+              <div
+                key={`${item.variantId}:${item.size}`}
+                className={[
+                  "pdp-qty-row",
+                  isActiveColorRow ? "is-active-color" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+              >
+                <div className="pdp-qty-row__left">
                   <button
-                    onClick={() => onSelectionChange(talle, Math.max(0, qty - 1))}
-                    aria-label={`Restar talle ${talle}`}
-                    style={{
-                      width: 36, height: 36, borderRadius: "8px 0 0 8px",
-                      border: "1.5px solid #e0d5cb", borderRight: "none",
-                      background: "#fff", cursor: "pointer",
-                      fontSize: 18, color: "#CD844D", fontWeight: 700,
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                    }}
+                    type="button"
+                    onClick={() => onSelectionChange(item.variantId, item.size, -1)}
+                    aria-label={`Quitar ${selectionLabel} ${item.size} en ${item.color}`}
+                    className="pdp-qty-btn pdp-qty-row__remove"
+                  >
+                    ×
+                  </button>
+                  <span className="pdp-qty-row__size">{item.size}</span>
+                  <span className="pdp-qty-row__meta">
+                    <span className="pdp-qty-row__color">
+                      <span
+                        aria-hidden
+                        className="pdp-qty-row__swatch"
+                        style={{ "--row-color": hex } as CSSProperties}
+                      />
+                      <span className="pdp-qty-row__color-name">{item.color}</span>
+                    </span>
+                  </span>
+                </div>
+
+                <div className="pdp-stepper">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onSelectionChange(item.variantId, item.size, qty <= 1 ? -1 : qty - 1)
+                    }
+                    aria-label={`Restar ${selectionLabel} ${item.size} en ${item.color}`}
+                    className="pdp-qty-btn pdp-stepper__btn"
                   >
                     −
                   </button>
-                  <div style={{
-                    width: 42, height: 36, border: "1.5px solid #e0d5cb",
-                    background: "#fff", display: "flex", alignItems: "center",
-                    justifyContent: "center", fontSize: 15, fontWeight: 700, color: "#222",
-                  }}>
-                    {qty}
-                  </div>
+                  <div className="pdp-stepper__value">{qty}</div>
                   <button
-                    onClick={() => onSelectionChange(talle, Math.min(maxQty, qty + 1))}
-                    disabled={qty >= maxQty}
-                    aria-label={`Sumar talle ${talle}`}
-                    style={{
-                      width: 36, height: 36, borderRadius: "0 8px 8px 0",
-                      border: "1.5px solid #e0d5cb", borderLeft: "none",
-                      background: qty >= maxQty ? "#f9f9f9" : "#fff",
-                      cursor: qty >= maxQty ? "not-allowed" : "pointer",
-                      fontSize: 18, color: qty >= maxQty ? "#ccc" : "#CD844D",
-                      fontWeight: 700,
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                    }}
+                    type="button"
+                    onClick={() =>
+                      onSelectionChange(
+                        item.variantId,
+                        item.size,
+                        Math.min(maxQty, qty + 1)
+                      )
+                    }
+                    disabled={atMax}
+                    aria-label={`Sumar ${selectionLabel} ${item.size} en ${item.color}`}
+                    className={[
+                      "pdp-qty-btn",
+                      "pdp-stepper__btn",
+                      atMax ? "is-max" : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" ")}
                   >
                     +
                   </button>

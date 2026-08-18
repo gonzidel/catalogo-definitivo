@@ -2,6 +2,39 @@ import type { CatalogImage } from "@/types/catalog";
 
 const CLOUD_NAME = "dnuedzuzm";
 
+/** Anchos canónicos = named transformations en Cloudinary (t_fyl_*). */
+const FYL_WIDTHS = [64, 200, 384, 400, 800, 1200] as const;
+const FYL_NAMED: Record<(typeof FYL_WIDTHS)[number], string> = {
+  64: "fyl_mini",
+  200: "fyl_thumb",
+  384: "fyl_sm",
+  400: "fyl_card",
+  800: "fyl_pdp",
+  1200: "fyl_hero",
+};
+
+function snapFylWidth(width: number): (typeof FYL_WIDTHS)[number] {
+  for (const w of FYL_WIDTHS) {
+    if (width <= w) return w;
+  }
+  return 1200;
+}
+
+function fylDeliveryTransform(width: number, quality?: number | string): string {
+  const w = snapFylWidth(width);
+  const q = quality ?? "auto";
+  return `t_${FYL_NAMED[w]}/f_auto/q_${q}`;
+}
+
+function withUploadTransform(src: string, transform: string): string {
+  if (src.startsWith("http") || src.startsWith("//")) {
+    const clean = src.startsWith("//") ? `https:${src}` : src;
+    if (!clean.includes("res.cloudinary.com")) return clean;
+    return clean.replace("/upload/", `/upload/${transform}/`);
+  }
+  return `https://res.cloudinary.com/${CLOUD_NAME}/image/upload/${transform}/${src}`;
+}
+
 // ─── Next.js custom image loader ─────────────────────────────────────────────
 // Used in next.config.ts as `loaderFile: "./lib/cloudinary.ts"`
 // Exported as default — Next.js calls this at build + runtime
@@ -15,28 +48,18 @@ export default function cloudinaryLoader({
   width: number;
   quality?: number;
 }): string {
-  const q = quality ?? "auto";
-  // If src is already a full URL (legacy), transform the /upload/ segment
-  if (src.startsWith("http")) {
-    return src.replace(
-      "/upload/",
-      `/upload/f_auto,q_${q},c_scale,w_${width}/`
-    );
-  }
-  // Otherwise treat as public_id
-  return `https://res.cloudinary.com/${CLOUD_NAME}/image/upload/f_auto,q_${q},c_scale,w_${width}/${src}`;
+  return withUploadTransform(src, fylDeliveryTransform(width, quality));
 }
 
 // ─── Helpers for use outside next/image ─────────────────────────────────────
 
 export function cloudinaryUrl(publicId: string, width: number): string {
-  return `https://res.cloudinary.com/${CLOUD_NAME}/image/upload/f_auto,q_auto,c_scale,w_${width}/${publicId}`;
+  return withUploadTransform(publicId, fylDeliveryTransform(width));
 }
 
 export function cloudinaryUrlFromLegacy(url: string, width: number): string {
   if (!url || typeof url !== "string") return "";
-  const clean = url.startsWith("//") ? `https:${url}` : url;
-  return clean.replace("/upload/", `/upload/f_auto,q_auto,c_scale,w_${width}/`);
+  return withUploadTransform(url, fylDeliveryTransform(width));
 }
 
 /**
@@ -71,18 +94,11 @@ export function resolveImageSrc(img: CatalogImage): string {
 /** URL alta resolución para lightbox PDP (~pantalla completa). */
 export function lightboxImageUrl(src: string): string {
   if (!src) return "";
-  return cloudinaryLoader({ src, width: 1600 });
+  return cloudinaryLoader({ src, width: 1200 });
 }
 
 /** Miniatura muy liviana + blur para feedback instantáneo en PDP al cambiar foto. */
 export function cloudinaryPlaceholderSrc(src: string): string {
   if (!src) return "";
-  const transform = "f_auto,q_10,c_scale,w_56,e_blur:400";
-  if (src.startsWith("http")) {
-    if (src.includes("res.cloudinary.com")) {
-      return src.replace("/upload/", `/upload/${transform}/`);
-    }
-    return src;
-  }
-  return `https://res.cloudinary.com/${CLOUD_NAME}/image/upload/${transform}/${src}`;
+  return withUploadTransform(src, "t_fyl_blur/f_auto");
 }

@@ -4,18 +4,20 @@ import { resolveImageSrc } from "@/lib/cloudinary";
 import { formatARS } from "@/lib/utils/catalog";
 import type { GroupedProduct } from "@/types/catalog";
 
+function isOfferActive(product: GroupedProduct): boolean {
+  return product.OfertaActiva === true;
+}
+
 export function BannerCarouselCard({ product }: { product: GroupedProduct }) {
   const src = resolveImageSrc(product.VariantePrincipal);
   const colors = product.DetalleColor ?? [];
-  const precio =
-    product.OfertaActiva && product.PrecioOferta
-      ? product.PrecioOferta
-      : product.Precio;
+  const hasOffer = isOfferActive(product) && Boolean(product.PrecioOferta);
+  const precio = hasOffer ? product.PrecioOferta : product.Precio;
 
   return (
     <Link
       href={`/producto/${encodeURIComponent(product.Articulo)}`}
-      className="fyl-originals-card"
+      className={`fyl-originals-card${hasOffer ? " fyl-originals-card--offer" : ""}`}
       style={{
         display: "flex",
         flexDirection: "column",
@@ -36,6 +38,15 @@ export function BannerCarouselCard({ product }: { product: GroupedProduct }) {
           <div className="skeleton-shimmer" style={{ width: "100%", height: "100%" }} />
         )}
         <div className="fyl-originals-badge">{product.Articulo}</div>
+        {hasOffer && (
+          <span
+            className="fyl-originals-offer-fire"
+            title="Oferta"
+            aria-label="Oferta"
+          >
+            🔥
+          </span>
+        )}
       </div>
       {colors.length > 0 && (
         <div className="fyl-originals-colors">
@@ -61,7 +72,11 @@ export function BannerCarouselCard({ product }: { product: GroupedProduct }) {
         </div>
       )}
       <div className="fyl-originals-card-content">
-        <div className="fyl-originals-card-price">{formatARS(precio)}</div>
+        <div
+          className={`fyl-originals-card-price${hasOffer ? " fyl-originals-card-price--offer" : ""}`}
+        >
+          {formatARS(precio)}
+        </div>
         <div className="fyl-originals-card-wholesale">Precio por Mayor</div>
       </div>
     </Link>

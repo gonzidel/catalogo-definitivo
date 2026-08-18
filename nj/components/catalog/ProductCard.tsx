@@ -14,6 +14,7 @@ interface ProductCardProps {
   priority?: boolean;
   activeSizes?: string[];
   categoria?: string;
+  onNavigate?: (element: HTMLElement) => void;
 }
 
 function pickCardColor(
@@ -27,17 +28,11 @@ function pickCardColor(
 }
 
 function renderBadges(product: GroupedProduct) {
+  // Oferta se muestra como cartelito sobre la imagen (no barra debajo).
   if (product.PromoActiva) {
     return (
       <div className="tags">
         <div className="talle tag-chip promo-chip">{product.PromoActiva}</div>
-      </div>
-    );
-  }
-  if (product.OfertaActiva) {
-    return (
-      <div className="tags">
-        <div className="talle tag-chip oferta-chip">Oferta</div>
       </div>
     );
   }
@@ -70,6 +65,7 @@ export default function ProductCard({
   priority = false,
   activeSizes = [],
   categoria = "all",
+  onNavigate,
 }: ProductCardProps) {
   const [activeColor, setActiveColor] = useState(() =>
     pickCardColor(product, activeSizes, categoria)
@@ -137,6 +133,7 @@ export default function ProductCard({
       data-filtro2={product.Filtro2 ?? ""}
       data-filtro3={product.Filtro3 ?? ""}
       style={{ display: "block", textDecoration: "none", color: "inherit" }}
+      onClick={(e) => onNavigate?.(e.currentTarget)}
     >
       <div className="main-image-wrapper">
         {mainImage ? (
@@ -165,13 +162,20 @@ export default function ProductCard({
             Art. {artCode}
           </div>
         )}
+        {product.OfertaActiva && (
+          <span className="product-card-offer-label" aria-label="Oferta">
+            Oferta
+          </span>
+        )}
       </div>
 
       {renderBadges(product)}
 
       <div className="card-footer">
         <div className="card-footer-top">
-          <div className="card-price">
+          <div
+            className={`card-price${product.OfertaActiva ? " card-price--offer" : ""}`}
+          >
             {renderPrice(product)}
             <div className="price-wholesale">Precio por mayor</div>
           </div>

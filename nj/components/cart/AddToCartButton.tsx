@@ -9,6 +9,7 @@ interface AddToCartButtonProps {
   color: string;
   size: string | null;
   priceSnapshot: number;
+  isOffer?: boolean;
   imagen?: string;
   disabled?: boolean;
 }
@@ -19,6 +20,7 @@ export default function AddToCartButton({
   color,
   size,
   priceSnapshot,
+  isOffer = false,
   imagen,
   disabled,
 }: AddToCartButtonProps) {
@@ -34,6 +36,7 @@ export default function AddToCartButton({
       size,
       qty: 1,
       price_snapshot: priceSnapshot,
+      is_offer: isOffer,
       imagen,
     });
     setAdded(true);
@@ -44,24 +47,16 @@ export default function AddToCartButton({
 
   return (
     <button
+      type="button"
       onClick={handleAdd}
       disabled={disabled || noSize || added}
-      style={{
-        width: "100%",
-        padding: "15px 20px",
-        borderRadius: 14,
-        border: "none",
-        background: added ? "#5a9e6f" : noSize ? "#e0e0e0" : "#CD844D",
-        color: noSize ? "#aaa" : "#fff",
-        fontSize: 16,
-        fontWeight: 700,
-        cursor: disabled || noSize ? "not-allowed" : "pointer",
-        transition: "background 0.2s",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 8,
-      }}
+      className={[
+        "add-to-cart-btn",
+        added ? "is-added" : "",
+        noSize || disabled ? "is-disabled" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
     >
       {added ? (
         <>

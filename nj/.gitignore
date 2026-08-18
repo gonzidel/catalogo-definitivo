@@ -3,6 +3,7 @@ node_modules/
 
 # next.js
 .next/
+.next-broken*/
 out/
 
 # env (secrets)
@@ -15,3 +16,6 @@ yarn-error.log*
 
 # typescript
 *.tsbuildinfo
+
+.vercel
+.env*

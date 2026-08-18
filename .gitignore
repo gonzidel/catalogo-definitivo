@@ -66,6 +66,9 @@ node_modules/
 .env
 .env.local
 .env.local.example
+backend/.env
+backend/node_modules/
+backend/dist/
 
 # dataconnect generated files
 .dataconnect
@@ -108,3 +111,15 @@ audit-output/
 # Artefactos locales de scripts (evidencia MCP, payloads, smokes)
 scripts/outputs/*
 !scripts/outputs/.gitkeep
+
+# Cachés rotos de Next.js (copias de .next, no versionar)
+**/.next-broken*/
+
+# Config local de Vercel
+.vercel/
+
+# Temporales y basura local de Windows
+tmp/
+*.lnk
+nul
+backend/nul

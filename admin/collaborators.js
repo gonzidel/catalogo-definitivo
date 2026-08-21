@@ -74,6 +74,7 @@ const PERMISSIONS = [
   { key: 'daily-sales', label: 'Ventas Diarias', description: 'Registrar y consultar ventas diarias' },
   { key: 'statistics', label: 'Estadísticas', description: 'KPIs, gráficos y rankings de ventas' },
   { key: 'closed-orders', label: 'Pedidos Cerrados', description: 'Gestionar pedidos cerrados, transporte y rótulos' },
+  { key: 'conciliacion-reembolso', label: 'Conciliación reembolso', description: 'Rendiciones COD, pendientes, irregularidades y pagos sin identificar' },
   { key: 'import', label: 'Importar', description: 'Importar datos CSV' },
   { key: 'export', label: 'Exportar', description: 'Exportar datos CSV' },
   { key: 'publications', label: 'Publicaciones', description: 'Gestionar productos para publicar en redes sociales' },

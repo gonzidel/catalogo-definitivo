@@ -1,0 +1,522 @@
+-- 287_rpc_cod_correct_confirmed_assignment.sql
+--
+-- Fase 6C — Corregir asignación de una fila YA confirmada (Pedido A → Pedido B).
+-- EFECTO FINANCIERO: A vuelve a pendiente; B queda conciliado.
+-- Cantidad neta de conciliados/pendientes NO cambia (sí puede cambiar el monto pendiente).
+--
+-- NO reabre la cabecera (status permanece 'confirmed').
+-- NO modifica 279/280/286.
+-- NO es Fase 6D (anulación de rendición).
+--
+-- Firma:
+--   rpc_cod_correct_confirmed_assignment(
+--     p_remittance_id uuid,
+--     p_row_id uuid,
+--     p_new_order_id uuid,
+--     p_reason text,
+--     p_force boolean DEFAULT false,
+--     p_matched_name_snapshot text DEFAULT NULL,
+--     p_matched_name_source text DEFAULT NULL
+--   ) → jsonb
+--
+-- Concurrencia: FOR UPDATE de ambos pedidos en orden UUID ascendente (anti-deadlock).
+-- Post-lock: SELECT * INTO v_row FOR UPDATE + revalidación (no solo v_row en memoria).
+-- UPDATE fila: WHERE matched_order_id=old + confirmed_*; IF NOT FOUND → rollback.
+-- Irregularidad previa open/in_review → superseded (assignment_corrected).
+-- Irregularidad resolved → intacta (solo auditada en previous_state del evento).
+-- Evento: assignment_corrected (ya en CHECK). Diff → irregularity_created adicional.
+-- amount_diff = reported - expected_new (paridad 280/286).
+
+CREATE OR REPLACE FUNCTION public.rpc_cod_correct_confirmed_assignment(
+  p_remittance_id uuid,
+  p_row_id uuid,
+  p_new_order_id uuid,
+  p_reason text,
+  p_force boolean DEFAULT false,
+  p_matched_name_snapshot text DEFAULT NULL,
+  p_matched_name_source text DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'pg_catalog'
+AS $fn$
+DECLARE
+  v_uid uuid := auth.uid();
+  v_rem public.cod_remittances%ROWTYPE;
+  v_row public.cod_remittance_rows%ROWTYPE;
+  v_snap record;
+  v_warnings jsonb := '[]'::jsonb;
+  v_day_diff int;
+  v_name_source text;
+  v_matched_name text;
+  v_name_ok boolean;
+  v_reported numeric(12,2);
+  v_expected_new numeric(12,2);
+  v_diff numeric(12,2);
+  v_diff_pct numeric(6,3);
+  v_new_status text;
+  v_new_irreg_id uuid;
+  v_old_order_id uuid;
+  v_lock_id uuid;
+  v_ord_id uuid;
+  v_ord_number text;
+  v_ord_status text;
+  v_ord_payment text;
+  v_ord_sent_at timestamptz;
+  v_ord_closed_at timestamptz;
+  v_live_amount numeric(12,2);
+  v_conflicting text;
+  v_reason text;
+  v_old_irreg public.cod_irregularities%ROWTYPE;
+  v_resolved_irreg_id uuid;
+  v_resolved_irreg_status text;
+  v_prev_state jsonb;
+  v_new_state jsonb;
+  v_superseded_ids uuid[] := ARRAY[]::uuid[];
+BEGIN
+  IF v_uid IS NULL THEN RAISE EXCEPTION 'not_authenticated'; END IF;
+  IF NOT public.has_permission(v_uid, 'conciliacion-reembolso', 'edit') THEN
+    RAISE EXCEPTION 'forbidden';
+  END IF;
+  IF p_remittance_id IS NULL OR p_row_id IS NULL OR p_new_order_id IS NULL THEN
+    RAISE EXCEPTION 'params_required';
+  END IF;
+
+  v_reason := NULLIF(trim(COALESCE(p_reason, '')), '');
+  IF v_reason IS NULL THEN
+    RAISE EXCEPTION 'reason_required';
+  END IF;
+
+  SELECT * INTO v_rem
+  FROM public.cod_remittances
+  WHERE id = p_remittance_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN RAISE EXCEPTION 'remittance_not_found'; END IF;
+  IF v_rem.status <> 'confirmed' THEN
+    RAISE EXCEPTION 'remittance_not_confirmed status=%', v_rem.status;
+  END IF;
+
+  SELECT * INTO v_row
+  FROM public.cod_remittance_rows
+  WHERE id = p_row_id AND remittance_id = p_remittance_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN RAISE EXCEPTION 'row_not_in_remittance'; END IF;
+  IF v_row.row_status NOT IN ('confirmed_matched', 'confirmed_with_irregularity') THEN
+    RAISE EXCEPTION 'row_not_confirmed_assignment status=%', v_row.row_status;
+  END IF;
+  IF v_row.matched_order_id IS NULL THEN
+    RAISE EXCEPTION 'row_missing_matched_order';
+  END IF;
+  IF v_row.parsed_amount IS NULL THEN
+    RAISE EXCEPTION 'row_missing_parsed_amount row_id=%', v_row.id;
+  END IF;
+
+  v_old_order_id := v_row.matched_order_id;
+  IF p_new_order_id = v_old_order_id THEN
+    RAISE EXCEPTION 'same_order order_id=%', p_new_order_id;
+  END IF;
+
+  -- Capturar previous_state ANTES de mutar (historial obligatorio)
+  v_prev_state := jsonb_build_object(
+    'row_status', v_row.row_status,
+    'old_order_id', v_old_order_id,
+    'old_order_number', v_row.order_number_snapshot,
+    'old_expected_amount', v_row.expected_amount_snapshot,
+    'old_order_sent_date', v_row.order_sent_date_snapshot,
+    'old_order_sent_date_origin', v_row.order_sent_date_origin,
+    'old_transport_name', v_row.transport_name_snapshot,
+    'old_matched_name_snapshot', v_row.matched_name_snapshot,
+    'old_matched_name_source', v_row.matched_name_source,
+    'old_assignment_method', v_row.assignment_method,
+    'reported_amount', round(v_row.parsed_amount::numeric, 2)
+  );
+
+  -- Irregularidades previas del pedido A (active → supersede; resolved → solo audit)
+  SELECT id, status INTO v_resolved_irreg_id, v_resolved_irreg_status
+  FROM public.cod_irregularities
+  WHERE remittance_row_id = p_row_id
+    AND order_id = v_old_order_id
+    AND status = 'resolved'
+  ORDER BY created_at DESC
+  LIMIT 1;
+
+  IF v_resolved_irreg_id IS NOT NULL THEN
+    v_prev_state := v_prev_state || jsonb_build_object(
+      'old_resolved_irregularity_id', v_resolved_irreg_id,
+      'old_resolved_irregularity_status', v_resolved_irreg_status,
+      'resolved_kept_intact', true
+    );
+  END IF;
+
+  -- Locks determinísticos de A y B (UUID asc) ANTES de revalidar disponibilidad
+  FOR v_lock_id IN
+    SELECT x FROM unnest(ARRAY[v_old_order_id, p_new_order_id]) AS t(x) ORDER BY 1
+  LOOP
+    SELECT o.id INTO v_ord_id
+    FROM public.orders o
+    WHERE o.id = v_lock_id
+    FOR UPDATE;
+    IF NOT FOUND THEN
+      IF v_lock_id = p_new_order_id THEN
+        RAISE EXCEPTION 'matched_order_not_found order_id=%', p_new_order_id;
+      ELSE
+        RAISE EXCEPTION 'old_order_not_found order_id=%', v_old_order_id;
+      END IF;
+    END IF;
+  END LOOP;
+
+  -- Releer fila post-lock (asociación actual intacta)
+  SELECT * INTO v_row
+  FROM public.cod_remittance_rows
+  WHERE id = p_row_id AND remittance_id = p_remittance_id
+  FOR UPDATE;
+
+  IF NOT FOUND
+     OR v_row.matched_order_id IS DISTINCT FROM v_old_order_id
+     OR v_row.row_status NOT IN ('confirmed_matched', 'confirmed_with_irregularity') THEN
+    RAISE EXCEPTION 'row_assignment_changed_concurrently';
+  END IF;
+
+  -- Datos LIVE del pedido B
+  SELECT
+    o.id,
+    o.order_number,
+    round(COALESCE(o.total_amount, 0)::numeric, 2),
+    o.status,
+    o.payment_method,
+    o.sent_at,
+    o.closed_at
+  INTO
+    v_ord_id,
+    v_ord_number,
+    v_live_amount,
+    v_ord_status,
+    v_ord_payment,
+    v_ord_sent_at,
+    v_ord_closed_at
+  FROM public.orders o
+  WHERE o.id = p_new_order_id;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'matched_order_not_found order_id=%', p_new_order_id;
+  END IF;
+
+  -- Universo COD (hard — NO forceable)
+  IF v_ord_status <> 'sent'
+     OR v_ord_payment <> 'Contra Reembolso'
+     OR COALESCE(v_ord_sent_at, v_ord_closed_at)::date < DATE '2026-05-01'
+     OR EXISTS (SELECT 1 FROM public.local_orders lo WHERE lo.source_order_id = p_new_order_id)
+  THEN
+    RAISE EXCEPTION 'matched_order_not_in_cod_universe order_id=%', p_new_order_id;
+  END IF;
+
+  -- Pedido B ya conciliado confirmed_* (post-lock)
+  IF EXISTS (
+    SELECT 1 FROM public.cod_remittance_rows r
+    WHERE r.matched_order_id = p_new_order_id
+      AND r.row_status IN ('confirmed_matched', 'confirmed_with_irregularity')
+      AND r.id IS DISTINCT FROM p_row_id
+  ) THEN
+    v_conflicting := COALESCE(v_ord_number, p_new_order_id::text);
+    RAISE EXCEPTION
+      'order_confirmed_elsewhere order=% msg=%',
+      v_conflicting,
+      format('El pedido %s ya está conciliado.', v_conflicting);
+  END IF;
+
+  SELECT * INTO v_snap FROM public._cod_load_order_financial_snapshots(p_new_order_id);
+  IF NOT FOUND OR v_snap.sent_date IS NULL THEN
+    RAISE EXCEPTION 'matched_order_not_in_cod_universe order_id=%', p_new_order_id;
+  END IF;
+
+  v_expected_new := v_live_amount;
+  v_reported := round(v_row.parsed_amount::numeric, 2);
+  v_diff := round((v_reported - v_expected_new)::numeric, 2);
+
+  -- Warnings forceables (paridad 286)
+  IF v_snap.transport_id IS DISTINCT FROM v_rem.transport_id THEN
+    v_warnings := v_warnings || jsonb_build_array(jsonb_build_object(
+      'code', 'transport_mismatch',
+      'message', 'Transporte efectivo distinto al de la rendición'
+    ));
+  END IF;
+
+  IF v_row.parsed_transport_date IS NOT NULL THEN
+    v_day_diff := abs(v_row.parsed_transport_date - v_snap.sent_date);
+    IF v_day_diff > 3 THEN
+      v_warnings := v_warnings || jsonb_build_array(jsonb_build_object(
+        'code', 'date_far',
+        'message', format('Fecha alejada (%s días)', v_day_diff),
+        'day_diff', v_day_diff
+      ));
+    END IF;
+  END IF;
+
+  IF abs(v_diff) >= 0.005 THEN
+    v_warnings := v_warnings || jsonb_build_array(jsonb_build_object(
+      'code', 'amount_diff',
+      'message', 'Monto informado distinto al esperado del pedido',
+      'amount_diff', v_diff
+    ));
+  END IF;
+
+  v_name_source := NULLIF(trim(COALESCE(p_matched_name_source, '')), '');
+  v_matched_name := NULLIF(trim(COALESCE(p_matched_name_snapshot, '')), '');
+  IF (v_name_source IS NULL) <> (v_matched_name IS NULL) THEN
+    RAISE EXCEPTION 'matched_name_source_snapshot_mismatch';
+  END IF;
+  IF v_name_source IS NOT NULL THEN
+    IF v_name_source NOT IN ('label', 'titular', 'sub_name') THEN
+      RAISE EXCEPTION 'invalid_matched_name_source';
+    END IF;
+    v_name_ok := false;
+    IF v_name_source = 'label' THEN
+      v_name_ok := public._cod_normalize_match_name(v_matched_name)
+                = public._cod_normalize_match_name(v_snap.label_name);
+    ELSIF v_name_source = 'titular' THEN
+      v_name_ok := public._cod_normalize_match_name(v_matched_name)
+                = public._cod_normalize_match_name(v_snap.titular_name);
+    ELSE
+      SELECT EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements(COALESCE(v_snap.additional_names, '[]'::jsonb)) e
+        WHERE public._cod_normalize_match_name(v_matched_name)
+            = public._cod_normalize_match_name(
+                COALESCE(
+                  NULLIF(trim(e.value->>'full_name'), ''),
+                  NULLIF(trim(COALESCE(e.value->>'first_name','') || ' ' || COALESCE(e.value->>'last_name','')), ''),
+                  NULLIF(trim(e.value->>'name'), '')
+                )
+              )
+      ) INTO v_name_ok;
+    END IF;
+    IF NOT COALESCE(v_name_ok, false) THEN
+      v_warnings := v_warnings || jsonb_build_array(jsonb_build_object(
+        'code', 'name_weak',
+        'message', 'Nombre informado no coincide con la identidad declarada del pedido'
+      ));
+    END IF;
+  ELSE
+    v_warnings := v_warnings || jsonb_build_array(jsonb_build_object(
+      'code', 'name_unverified',
+      'message', 'Corrección sin validación explícita de nombre'
+    ));
+  END IF;
+
+  IF jsonb_array_length(v_warnings) > 0 AND NOT COALESCE(p_force, false) THEN
+    RETURN jsonb_build_object(
+      'ok', false,
+      'code', 'needs_force',
+      'warnings', v_warnings,
+      'old_order_id', v_old_order_id,
+      'new_order_id', p_new_order_id,
+      'expected_amount', v_expected_new,
+      'reported_amount', v_reported,
+      'amount_diff', v_diff,
+      'order_number', v_snap.order_number,
+      'will_create_irregularity', abs(v_diff) >= 0.005
+    );
+  END IF;
+
+  -- Superseder irregularidades activas del pedido A (open / in_review)
+  FOR v_old_irreg IN
+    SELECT *
+    FROM public.cod_irregularities
+    WHERE remittance_row_id = p_row_id
+      AND order_id = v_old_order_id
+      AND status IN ('open', 'in_review')
+    FOR UPDATE
+  LOOP
+    UPDATE public.cod_irregularities SET
+      status = 'superseded',
+      superseded_reason = 'assignment_corrected',
+      superseded_at = now(),
+      superseded_by = v_uid,
+      updated_at = now()
+    WHERE id = v_old_irreg.id;
+
+    v_superseded_ids := array_append(v_superseded_ids, v_old_irreg.id);
+  END LOOP;
+
+  IF cardinality(v_superseded_ids) > 0 THEN
+    v_prev_state := v_prev_state || jsonb_build_object(
+      'superseded_irregularity_ids', to_jsonb(v_superseded_ids),
+      'superseded_reason', 'assignment_corrected'
+    );
+  END IF;
+
+  IF abs(v_diff) < 0.005 THEN
+    v_new_status := 'confirmed_matched';
+
+    UPDATE public.cod_remittance_rows SET
+      row_status = 'confirmed_matched',
+      matched_order_id = p_new_order_id,
+      assignment_method = 'manual',
+      order_number_snapshot = v_snap.order_number,
+      expected_amount_snapshot = v_expected_new,
+      order_sent_date_snapshot = v_snap.sent_date,
+      order_sent_date_origin = v_snap.sent_origin,
+      transport_name_snapshot = v_snap.transport_name,
+      matched_name_snapshot = v_matched_name,
+      matched_name_source = v_name_source,
+      transport_mismatch = (v_snap.transport_id IS DISTINCT FROM v_rem.transport_id),
+      will_create_irregularity = false,
+      matched_via_broadened_search = COALESCE(matched_via_broadened_search, false)
+        OR (v_snap.transport_id IS DISTINCT FROM v_rem.transport_id),
+      assigned_by = v_uid,
+      assigned_at = now(),
+      corrected_by = v_uid,
+      corrected_at = now(),
+      updated_at = now()
+    WHERE id = p_row_id
+      AND remittance_id = p_remittance_id
+      AND matched_order_id = v_old_order_id
+      AND row_status IN ('confirmed_matched', 'confirmed_with_irregularity');
+
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'row_update_failed_concurrently';
+    END IF;
+  ELSE
+    v_new_status := 'confirmed_with_irregularity';
+    v_diff_pct := CASE
+      WHEN abs(v_expected_new) < 0.005 THEN NULL
+      ELSE round((v_diff / abs(v_expected_new) * 100)::numeric, 3)
+    END;
+
+    UPDATE public.cod_remittance_rows SET
+      row_status = 'confirmed_with_irregularity',
+      matched_order_id = p_new_order_id,
+      assignment_method = 'manual',
+      order_number_snapshot = v_snap.order_number,
+      expected_amount_snapshot = v_expected_new,
+      order_sent_date_snapshot = v_snap.sent_date,
+      order_sent_date_origin = v_snap.sent_origin,
+      transport_name_snapshot = v_snap.transport_name,
+      matched_name_snapshot = v_matched_name,
+      matched_name_source = v_name_source,
+      transport_mismatch = (v_snap.transport_id IS DISTINCT FROM v_rem.transport_id),
+      will_create_irregularity = true,
+      matched_via_broadened_search = COALESCE(matched_via_broadened_search, false)
+        OR (v_snap.transport_id IS DISTINCT FROM v_rem.transport_id),
+      assigned_by = v_uid,
+      assigned_at = now(),
+      corrected_by = v_uid,
+      corrected_at = now(),
+      updated_at = now()
+    WHERE id = p_row_id
+      AND remittance_id = p_remittance_id
+      AND matched_order_id = v_old_order_id
+      AND row_status IN ('confirmed_matched', 'confirmed_with_irregularity');
+
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'row_update_failed_concurrently';
+    END IF;
+
+    INSERT INTO public.cod_irregularities (
+      remittance_row_id,
+      order_id,
+      remittance_id,
+      transport_id,
+      order_sent_date_snapshot,
+      remittance_date_snapshot,
+      expected_amount,
+      reported_amount,
+      amount_diff,
+      amount_diff_pct,
+      status,
+      created_by
+    ) VALUES (
+      p_row_id,
+      p_new_order_id,
+      p_remittance_id,
+      v_rem.transport_id,
+      v_snap.sent_date,
+      v_rem.remittance_date,
+      v_expected_new,
+      v_reported,
+      v_diff,
+      v_diff_pct,
+      'open',
+      v_uid
+    )
+    RETURNING id INTO v_new_irreg_id;
+
+    INSERT INTO public.cod_reconciliation_events (
+      remittance_id, remittance_row_id, irregularity_id, event_type, actor_id, new_state, reason
+    ) VALUES (
+      p_remittance_id,
+      p_row_id,
+      v_new_irreg_id,
+      'irregularity_created',
+      v_uid,
+      jsonb_build_object(
+        'amount_diff', v_diff,
+        'expected_amount', v_expected_new,
+        'reported_amount', v_reported,
+        'order_id', p_new_order_id,
+        'phase', '6c',
+        'from_correction', true
+      ),
+      'Irregularidad creada al corregir asignación post-confirmación'
+    );
+  END IF;
+
+  v_new_state := jsonb_build_object(
+    'row_status', v_new_status,
+    'new_order_id', p_new_order_id,
+    'new_order_number', v_snap.order_number,
+    'new_expected_amount', v_expected_new,
+    'reported_amount', v_reported,
+    'amount_diff', v_diff,
+    'new_irregularity_id', v_new_irreg_id,
+    'superseded_irregularity_ids', to_jsonb(v_superseded_ids),
+    'financial_effect', true,
+    'phase', '6c',
+    'forced', COALESCE(p_force, false),
+    'warnings', v_warnings
+  );
+
+  INSERT INTO public.cod_reconciliation_events (
+    remittance_id, remittance_row_id, irregularity_id, event_type, actor_id,
+    previous_state, new_state, reason
+  ) VALUES (
+    p_remittance_id,
+    p_row_id,
+    v_new_irreg_id,
+    'assignment_corrected',
+    v_uid,
+    v_prev_state,
+    v_new_state,
+    v_reason
+  );
+
+  -- Cabecera: solo touch updated_at; status sigue confirmed
+  UPDATE public.cod_remittances SET updated_at = now() WHERE id = p_remittance_id;
+
+  RETURN jsonb_build_object(
+    'ok', true,
+    'remittance_id', p_remittance_id,
+    'row_id', p_row_id,
+    'old_order_id', v_old_order_id,
+    'new_order_id', p_new_order_id,
+    'row_status', v_new_status,
+    'expected_amount', v_expected_new,
+    'reported_amount', v_reported,
+    'amount_diff', v_diff,
+    'irregularity_id', v_new_irreg_id,
+    'superseded_irregularity_ids', to_jsonb(v_superseded_ids),
+    'warnings', v_warnings
+  );
+END;
+$fn$;
+
+REVOKE ALL ON FUNCTION public.rpc_cod_correct_confirmed_assignment(uuid, uuid, uuid, text, boolean, text, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.rpc_cod_correct_confirmed_assignment(uuid, uuid, uuid, text, boolean, text, text) FROM anon;
+GRANT EXECUTE ON FUNCTION public.rpc_cod_correct_confirmed_assignment(uuid, uuid, uuid, text, boolean, text, text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.rpc_cod_correct_confirmed_assignment(uuid, uuid, uuid, text, boolean, text, text) TO service_role;
+
+COMMENT ON FUNCTION public.rpc_cod_correct_confirmed_assignment(uuid, uuid, uuid, text, boolean, text, text) IS
+  'Fase 6C: corrige asignación confirmed A→B. Locks UUID-ordered + relectura post-lock. UPDATE defensivo FOUND. Supersede irreg open/in_review. Resolved intacta. No reabre cabecera. No muta orders.';

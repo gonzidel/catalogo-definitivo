@@ -157,6 +157,7 @@ const ALL_PERMISSIONS = {
   'daily-sales': { can_view: true, can_edit: true, can_delete: true },
   statistics: { can_view: true, can_edit: true, can_delete: true },
   'closed-orders': { can_view: true, can_edit: true, can_delete: true },
+  'conciliacion-reembolso': { can_view: true, can_edit: true, can_delete: true },
   import: { can_view: true, can_edit: true, can_delete: true },
   export: { can_view: true, can_edit: true, can_delete: true },
   publications: { can_view: true, can_edit: true, can_delete: true },

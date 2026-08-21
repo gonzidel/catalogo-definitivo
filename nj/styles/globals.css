@@ -25,6 +25,22 @@ body {
   --cfb-bar-h: 50px;
 }
 
+/* logo.png es ~544×459; sin height el header se come el viewport en desktop. */
+.header-logo {
+  height: 40px;
+  width: auto;
+  max-height: 40px;
+  display: block;
+  object-fit: contain;
+}
+
+.header-logo-btn {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  line-height: 0;
+}
+
 /* Filtros activos (talle/tags) en /nj. En búsqueda simple se compacta en una
    barra de una fila; con chips de talle/tags mantiene dos zonas para envolver
    sin romper el cierre. */
@@ -248,6 +264,7 @@ body {
 
   .header-logo {
     height: 32px;
+    max-height: 32px;
   }
 
   .header-right {
@@ -5024,6 +5041,31 @@ body {
 
 .card .color-btn--no-stock {
   opacity: 0.55;
+}
+
+/* ── Admin genérico (productos, COD, etc.): scroll de documento natural ── */
+/* Sin chrome del catálogo (logo / buscar / perfil / bottom-nav / carrito). */
+.admin-app-shell {
+  width: 100%;
+  min-height: 0;
+  background: transparent;
+}
+
+body:has(.admin-app-shell) {
+  padding-bottom: 0 !important;
+}
+
+body:has(.admin-app-shell) header,
+body:has(.admin-app-shell) .bottom-nav,
+body:has(.admin-app-shell) nav.bottom-nav,
+body:has(.admin-app-shell) .cfb-bar {
+  display: none !important;
+}
+
+body:has(.admin-app-shell) #catalog-view {
+  padding: 0;
+  max-width: none;
+  min-height: 100dvh;
 }
 
 /* ── Admin Kanban (/nj/admin/orders) ─────────────────────────────────────── */

@@ -9,6 +9,7 @@ import type {
   IrregularityListItem,
   IrregularityFilters,
 } from "@/lib/reconciliation/irregularity-queries";
+import { amountDiffLabel } from "@/lib/reconciliation/match-presentation";
 import styles from "@/app/admin/conciliacion-reembolso/conciliacion.module.css";
 
 function formatDateAr(iso: string | null): string {
@@ -94,8 +95,8 @@ export default function IrregularitiesPanel({
         <p className={styles.eyebrow}>Admin · Contra reembolso</p>
         <h1 className={styles.title}>Irregularidades / Reclamos</h1>
         <p className={styles.subtitle}>
-          Reclamos por diferencia de monto en rendiciones confirmadas. Resolver cierra el reclamo
-          sin cambiar la conciliación del pedido.
+          Reclamos al transporte por diferencia de monto en rendiciones ya confirmadas.
+          Resolver cierra el reclamo sin deshacer la conciliación del pedido.
         </p>
         <div className={styles.headerActions}>
           <Link href="/admin/conciliacion-reembolso" className={styles.btn}>
@@ -208,18 +209,22 @@ export default function IrregularitiesPanel({
               <tr>
                 <th>Pedido</th>
                 <th>Cliente</th>
+                <th>Nº</th>
                 <th>Transporte</th>
                 <th>Fecha salida</th>
                 <th>Fecha rendición</th>
                 <th className={styles.tdNum}>Esperado</th>
                 <th className={styles.tdNum}>Rendido</th>
+                <th>Tipo</th>
                 <th className={styles.tdNum}>Diferencia</th>
                 <th>Estado</th>
                 <th className={styles.tdNum}>Antigüedad</th>
               </tr>
             </thead>
             <tbody>
-              {items.map((r) => (
+              {items.map((r) => {
+                const diffLab = amountDiffLabel(r.amountDiff);
+                return (
                 <tr key={r.id}>
                   <td className={styles.orderCell}>
                     <Link href={`/admin/conciliacion-reembolso/irregularidades/${r.id}`}>
@@ -227,16 +232,33 @@ export default function IrregularitiesPanel({
                     </Link>
                   </td>
                   <td>{r.customerName ?? "—"}</td>
+                  <td className={styles.mono}>{r.customerNumber ? `#${r.customerNumber}` : "—"}</td>
                   <td>{r.transportName ?? "—"}</td>
                   <td className={styles.mono}>{formatDateAr(r.orderSentDate)}</td>
                   <td className={styles.mono}>{formatDateAr(r.remittanceDate)}</td>
                   <td className={styles.tdNum}>{formatPriceAr(r.expectedAmount)}</td>
                   <td className={styles.tdNum}>{formatPriceAr(r.reportedAmount)}</td>
+                  <td>
+                    <span
+                      className={`${styles.badge} ${
+                        diffLab.kind === "faltante"
+                          ? styles.badgeDanger
+                          : diffLab.kind === "sobrante"
+                            ? styles.badgeWarn
+                            : styles.badgeMuted
+                      }`}
+                    >
+                      {diffLab.kind === "faltante"
+                        ? "Faltante"
+                        : diffLab.kind === "sobrante"
+                          ? "Sobrante"
+                          : "Exacto"}
+                    </span>
+                  </td>
                   <td
                     className={`${styles.tdNum} ${r.amountDiff !== 0 ? styles.diffAlert : ""}`}
                   >
-                    {r.amountDiff > 0 ? "+" : ""}
-                    {formatPriceAr(r.amountDiff)}
+                    {diffLab.short}
                   </td>
                   <td>
                     <span className={`${styles.badge} ${statusClass(r.status)}`}>
@@ -247,7 +269,8 @@ export default function IrregularitiesPanel({
                     {r.ageDays} {r.ageDays === 1 ? "día" : "días"}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

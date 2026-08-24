@@ -30,20 +30,28 @@ function assert(cond: boolean, msg: string) {
 }
 
 function baseCandidate(over: Partial<CodCandidateOrder> & { id: string }): CodCandidateOrder {
+  const identities =
+    over.identities ??
+    buildIdentities({
+      labelCustomerName: null,
+      titularFullName: "ANA LOPEZ",
+      additionalNames: null,
+    });
+  const titular = identities.find((i) => i.source === "titular")?.raw ?? null;
+  const label = identities.find((i) => i.source === "label")?.raw ?? null;
   return {
     id: over.id,
     orderNumber: over.orderNumber ?? "A00001",
     customerId: over.customerId ?? "cust-1",
+    customerDisplayName: over.customerDisplayName ?? titular,
+    customerNumber: over.customerNumber ?? null,
+    labelCustomerName: over.labelCustomerName ?? label,
     expectedAmount: over.expectedAmount ?? 150000,
     effectiveSentDate: over.effectiveSentDate ?? "2026-07-20",
     sentDateOrigin: over.sentDateOrigin ?? "sent_at",
     effectiveTransportId: over.effectiveTransportId ?? "tr-1",
     transportName: over.transportName ?? "Transporte 1",
-    identities: over.identities ?? buildIdentities({
-      labelCustomerName: null,
-      titularFullName: "ANA LOPEZ",
-      additionalNames: null,
-    }),
+    identities,
   };
 }
 
@@ -618,6 +626,60 @@ assert(scoreAmount(145000, 150000).points === 8, "monto -$5000 → 8");
   const result = classifyRowFromCandidates(row(), ranked, false);
   assert(result.rowStatus === "auto_matched", "Vía A intacta → auto_matched");
   assert(result.autoMatchReason === "strong_identity", "Vía A → strong_identity (no Vía B)");
+}
+
+// Pago parcial / digitación: nombre parcial + fecha exacta + monto lejos → needs_review (no unassigned)
+{
+  const c = baseCandidate({
+    id: "o-bentancurt-synth",
+    orderNumber: "A54946",
+    expectedAmount: 160700,
+    effectiveSentDate: "2026-07-13",
+    identities: buildIdentities({
+      labelCustomerName: "BENTANCURT MARIELA",
+      titularFullName: "BENTANCURT MARIELA",
+      additionalNames: null,
+    }),
+  });
+  const r = row({
+    id: "row-partial-amt",
+    rawCustomerNameText: "BENTANCURT M",
+    parsedAmount: 16700,
+    parsedTransportDate: "2026-07-13",
+  });
+  const ranked = rankCandidatesForRow(r, [c], "tr-1", "A", new Map());
+  const best = ranked[0]!;
+  assert(best.score < 50, "synth: score < 50 por monto lejos");
+  assert(best.name.points >= 12, "synth: nombre parcial ≥12");
+  assert(best.date.dayDiff === 0, "synth: fecha exacta");
+  assert(!best.amount.exact, "synth: monto no exacto");
+  const result = classifyRowFromCandidates(r, ranked, false);
+  assert(result.rowStatus === "needs_review", "synth: rescate → needs_review");
+  assert(result.matchedOrderId === "o-bentancurt-synth", "synth: pedido propuesto");
+  assert(result.willCreateIrregularity === true, "synth: marcará irregularidad");
+  assert(result.autoMatchReason === null, "synth: nunca auto");
+}
+
+// Nombre 0 + fecha exacta + monto lejos → sigue unassigned (sin identidad)
+{
+  const c = baseCandidate({
+    id: "o-no-name",
+    expectedAmount: 160700,
+    effectiveSentDate: "2026-07-13",
+    identities: buildIdentities({
+      labelCustomerName: "OTRO CLIENTE",
+      titularFullName: "OTRO CLIENTE",
+      additionalNames: null,
+    }),
+  });
+  const r = row({
+    rawCustomerNameText: "BENTANCURT MARIELA",
+    parsedAmount: 16700,
+    parsedTransportDate: "2026-07-13",
+  });
+  const ranked = rankCandidatesForRow(r, [c], "tr-1", "A", new Map());
+  const result = classifyRowFromCandidates(r, ranked, false);
+  assert(result.rowStatus === "unassigned", "sin identidad → unassigned aunque fecha exacta");
 }
 
 console.log(`\nResultado: ${passed} ok, ${failed} fail\n`);

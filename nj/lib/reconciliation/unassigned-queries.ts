@@ -52,6 +52,7 @@ export async function countUnassignedConfirmedPayments(
       )
       .eq("row_status", "unassigned")
       .eq("cod_remittances.status", "confirmed")
+      .order("id", { ascending: true })
       .range(from, to);
 
     if (error) throw new Error(error.message);

@@ -24,12 +24,14 @@ type RawOrder = {
     | {
         id: string;
         full_name: string | null;
+        customer_number?: string | number | null;
         transport_id: string | null;
         additional_names: unknown;
       }
     | {
         id: string;
         full_name: string | null;
+        customer_number?: string | number | null;
         transport_id: string | null;
         additional_names: unknown;
       }[]
@@ -101,15 +103,19 @@ export async function loadExcludedOrderIds(supabase: SupabaseClient): Promise<{
         .range(from, to);
       return { data: r.data, error: r.error };
     }),
-    fetchAllPages<{ matched_order_id: string | null; remittance_id: string }>(async (from, to) => {
-      const r = await supabase
-        .from("cod_remittance_rows")
-        .select("matched_order_id, remittance_id")
-        .eq("row_status", "approved_pending_confirmation")
-        .not("matched_order_id", "is", null)
-        .range(from, to);
-      return { data: r.data, error: r.error };
-    }),
+    fetchAllPages<{ matched_order_id: string | null; remittance_id: string; sheet_revision?: number }>(
+      async (from, to) => {
+        const r = await supabase
+          .from("cod_remittance_rows")
+          .select(
+            "matched_order_id, remittance_id, sheet_revision, cod_remittances!inner(sheet_revision, status)"
+          )
+          .eq("row_status", "approved_pending_confirmation")
+          .not("matched_order_id", "is", null)
+          .range(from, to);
+        return { data: r.data as typeof r.data, error: r.error };
+      }
+    ),
   ]);
 
   const localSourceIds = new Set(localRows.map((r) => r.source_order_id).filter(Boolean));
@@ -117,9 +123,22 @@ export async function loadExcludedOrderIds(supabase: SupabaseClient): Promise<{
     confirmedRows.map((r) => r.matched_order_id).filter((id): id is string => !!id)
   );
   const approvedPendingWarnings = new Map<string, string>();
-  for (const r of approvedRows) {
+  for (const r of approvedRows as Array<{
+    matched_order_id: string | null;
+    remittance_id: string;
+    sheet_revision?: number;
+    cod_remittances?:
+      | { sheet_revision?: number; status?: string }
+      | { sheet_revision?: number; status?: string }[]
+      | null;
+  }>) {
     if (!r.matched_order_id) continue;
-    // No penaliza score; solo advertencia auditable.
+    const rem = Array.isArray(r.cod_remittances) ? r.cod_remittances[0] : r.cod_remittances;
+    const rowRev = Number(r.sheet_revision) || 1;
+    const remRev = Number(rem?.sheet_revision) || 1;
+    // Solo aprobaciones de la revisión operativa (históricas no advierten)
+    if (rowRev !== remRev) continue;
+    if (rem?.status === "voided") continue;
     approvedPendingWarnings.set(
       r.matched_order_id,
       `También aprobado en otra rendición aún no confirmada (${r.remittance_id}).`
@@ -140,10 +159,18 @@ function mapOrderToCandidate(
   if (effective.effectiveSentDate < startDate) return null;
 
   const effectiveTransportId = row.transport_id || customer?.transport_id || null;
+  const titular = customer?.full_name?.trim() || null;
+  const label = row.label_customer_name?.trim() || null;
   return {
     id: row.id,
     orderNumber: row.order_number,
     customerId: customer?.id ?? null,
+    customerDisplayName: titular,
+    customerNumber:
+      customer?.customer_number != null && String(customer.customer_number).trim()
+        ? String(customer.customer_number).trim()
+        : null,
+    labelCustomerName: label,
     expectedAmount: toNumber(row.total_amount),
     effectiveSentDate: effective.effectiveSentDate,
     sentDateOrigin: effective.sentDateOrigin as SentDateOrigin,
@@ -183,6 +210,7 @@ async function loadCodOrdersRaw(supabase: SupabaseClient): Promise<RawOrder[]> {
         customers!inner (
           id,
           full_name,
+          customer_number,
           transport_id,
           additional_names
         )

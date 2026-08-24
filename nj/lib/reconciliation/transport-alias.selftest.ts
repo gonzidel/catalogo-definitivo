@@ -31,20 +31,28 @@ function assert(cond: boolean, msg: string) {
 }
 
 function baseCandidate(over: Partial<CodCandidateOrder> & { id: string }): CodCandidateOrder {
+  const identities =
+    over.identities ??
+    buildIdentities({
+      labelCustomerName: null,
+      titularFullName: "ANA LOPEZ",
+      additionalNames: null,
+    });
+  const titular = identities.find((i) => i.source === "titular")?.raw ?? null;
+  const label = identities.find((i) => i.source === "label")?.raw ?? null;
   return {
     id: over.id,
     orderNumber: over.orderNumber ?? "A00001",
     customerId: over.customerId ?? "cust-1",
+    customerDisplayName: over.customerDisplayName ?? titular,
+    customerNumber: over.customerNumber ?? null,
+    labelCustomerName: over.labelCustomerName ?? label,
     expectedAmount: over.expectedAmount ?? 150000,
     effectiveSentDate: over.effectiveSentDate ?? "2026-07-20",
     sentDateOrigin: over.sentDateOrigin ?? "sent_at",
     effectiveTransportId: over.effectiveTransportId ?? "tr-1",
     transportName: over.transportName ?? "SEDE",
-    identities: over.identities ?? buildIdentities({
-      labelCustomerName: null,
-      titularFullName: "ANA LOPEZ",
-      additionalNames: null,
-    }),
+    identities,
   };
 }
 
@@ -108,6 +116,9 @@ console.log("\n=== transport-alias.selftest ===\n");
   assert(result.autoMatchReason === "transport_alias", "1: transport_alias");
   assert(result.matchBreakdown.aliasId === "alias-heter", "1: aliasId metadata");
   assert(result.matchBreakdown.aliasCustomerId === "cust-2194", "1: aliasCustomerId");
+  assert(result.matchedNameSnapshot === null, "1: snapshot no es el alias (RPC identities)");
+  assert(result.matchedNameSource === null, "1: source null si name=0");
+  assert(result.matchBreakdown.aliasRaw === "HETER ROCIO", "1: alias en breakdown");
 }
 
 // ─── 2. Alias + monto distinto → needs_review ────────────────────────────────
@@ -357,6 +368,15 @@ console.log("\n=== transport-alias.selftest ===\n");
   });
   assert(out.autoMatched === 1, "MIÑO simulado → auto");
   assert(out.results[0]!.autoMatchReason === "transport_alias", "MIÑO → transport_alias");
+  // Snapshot debe ser identidad del pedido (o null), nunca el texto alias de planilla
+  const snap = out.results[0]!.matchedNameSnapshot;
+  assert(
+    snap === null ||
+      snap === "MINO JESSICA" ||
+      snap === "MIÑO, JESSICA",
+    "MIÑO: snapshot ∈ identidades pedido, no alias planilla"
+  );
+  assert(out.results[0]!.matchedNameSnapshot !== "MIÑO JESICA", "MIÑO: no persistir raw alias");
 }
 
 // ─── SQL estático: migrations / RPC / no mutan orders ────────────────────────

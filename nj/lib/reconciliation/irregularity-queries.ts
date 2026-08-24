@@ -11,6 +11,7 @@ export type IrregularityListItem = {
   transportName: string | null;
   orderNumber: string | null;
   customerName: string | null;
+  customerNumber: string | null;
   orderSentDate: string | null;
   remittanceDate: string | null;
   expectedAmount: number;
@@ -89,12 +90,21 @@ function unwrapOrderNumber(rel: unknown): string | null {
   return (rel as { order_number?: string | null }).order_number ?? null;
 }
 
-function unwrapCustomerFromOrder(rel: unknown): string | null {
-  if (!rel) return null;
+function unwrapCustomerFromOrder(rel: unknown): {
+  name: string | null;
+  number: string | null;
+} {
+  if (!rel) return { name: null, number: null };
   const order = Array.isArray(rel) ? rel[0] : rel;
-  if (!order || typeof order !== "object") return null;
+  if (!order || typeof order !== "object") return { name: null, number: null };
   const customers = (order as { customers?: unknown }).customers;
-  return unwrapName(customers);
+  const c = Array.isArray(customers) ? customers[0] : customers;
+  if (!c || typeof c !== "object") return { name: null, number: null };
+  const o = c as { full_name?: string; customer_number?: string | number | null };
+  return {
+    name: o.full_name?.trim() || null,
+    number: o.customer_number != null ? String(o.customer_number) : null,
+  };
 }
 
 export function parseIrregularityFilters(input: {
@@ -180,7 +190,7 @@ export async function listIrregularities(
       created_at,
       resolved_at,
       transports ( name ),
-      orders ( order_number, customers ( full_name ) )
+      orders ( order_number, customers ( full_name, customer_number ) )
     `
     )
     .order("created_at", { ascending: true })
@@ -205,6 +215,7 @@ export async function listIrregularities(
 
   const items: IrregularityListItem[] = (data ?? []).map((r) => {
     const createdAt = r.created_at as string;
+    const customer = unwrapCustomerFromOrder(r.orders);
     return {
       id: r.id as string,
       status: r.status as IrregularityStatus,
@@ -213,7 +224,8 @@ export async function listIrregularities(
       transportId: r.transport_id as string,
       transportName: unwrapName(r.transports),
       orderNumber: unwrapOrderNumber(r.orders),
-      customerName: unwrapCustomerFromOrder(r.orders),
+      customerName: customer.name,
+      customerNumber: customer.number,
       orderSentDate: (r.order_sent_date_snapshot as string | null) ?? null,
       remittanceDate: (r.remittance_date_snapshot as string | null) ?? null,
       expectedAmount: toNumber(r.expected_amount),
@@ -269,7 +281,7 @@ export async function loadIrregularityDetail(
       superseded_at,
       updated_at,
       transports ( name ),
-      orders ( order_number, customers ( full_name ) )
+      orders ( order_number, customers ( full_name, customer_number ) )
     `
     )
     .eq("id", id)
@@ -288,6 +300,7 @@ export async function loadIrregularityDetail(
   if (evErr) throw new Error(evErr.message);
 
   const createdAt = data.created_at as string;
+  const customer = unwrapCustomerFromOrder(data.orders);
 
   return {
     id: data.id as string,
@@ -298,7 +311,8 @@ export async function loadIrregularityDetail(
     transportId: data.transport_id as string,
     transportName: unwrapName(data.transports),
     orderNumber: unwrapOrderNumber(data.orders),
-    customerName: unwrapCustomerFromOrder(data.orders),
+    customerName: customer.name,
+    customerNumber: customer.number,
     orderSentDate: (data.order_sent_date_snapshot as string | null) ?? null,
     remittanceDate: (data.remittance_date_snapshot as string | null) ?? null,
     expectedAmount: toNumber(data.expected_amount),

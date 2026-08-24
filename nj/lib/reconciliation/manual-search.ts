@@ -1,6 +1,9 @@
 /**
  * Búsqueda manual de pedidos COD para asignación (Fase 5).
- * Universo: sent + Contra Reembolso + desde 2026-05-01 + no local + no confirmed_*.
+ * Universo asignable: sent + Contra Reembolso + desde 2026-05-01 + no local + no confirmed_*.
+ *
+ * Lookup exacto por Nº de pedido: encuentra el pedido aunque esté fuera del universo
+ * (p. ej. Pagado) y lo muestra bloqueado con motivo — no lo oculta.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
@@ -9,6 +12,16 @@ import {
 } from "@/lib/reconciliation/constants";
 import { resolveEffectiveSent } from "@/lib/reconciliation/queries";
 import { normalizeMatchName, tokenizeMatchName } from "@/lib/reconciliation/name-normalize";
+import { loadOrderCodOccupancyMap } from "@/lib/reconciliation/already-used-loader";
+
+export type ManualBlockReason =
+  | "not_cod"
+  | "wrong_status"
+  | "too_old"
+  | "local_order"
+  | "already_confirmed"
+  | "approved_pending"
+  | null;
 
 export type ManualOrderHit = {
   id: string;
@@ -20,13 +33,29 @@ export type ManualOrderHit = {
   transportName: string | null;
   labelName: string | null;
   titularName: string | null;
+  customerNumber: string | null;
+  paymentMethod: string | null;
+  orderStatus: string | null;
   sameTransport: boolean;
   warnings: string[];
+  /** Si true, no se puede asignar desde esta búsqueda. */
+  assignmentBlocked: boolean;
+  blockReason: ManualBlockReason;
+  occupancy?: {
+    kind: "confirmed_exact" | "confirmed_with_diff" | "approved_pending";
+    otherRemittanceDate: string | null;
+    otherTransportName: string | null;
+    otherReportedAmount: number | null;
+    irregularityStatus: string | null;
+    amountDiff: number | null;
+  } | null;
 };
 
 type RawOrder = {
   id: string;
   order_number: string | null;
+  status: string | null;
+  payment_method: string | null;
   total_amount: number | string | null;
   sent_at: string | null;
   closed_at: string | null;
@@ -37,11 +66,13 @@ type RawOrder = {
         full_name: string | null;
         transport_id: string | null;
         additional_names: unknown;
+        customer_number?: string | number | null;
       }
     | {
         full_name: string | null;
         transport_id: string | null;
         additional_names: unknown;
+        customer_number?: string | number | null;
       }[]
     | null;
 };
@@ -64,6 +95,162 @@ function daysBetween(a: string, b: string): number {
   return Math.abs(Math.round((x - y) / 86_400_000));
 }
 
+/**
+ * Detecta y normaliza Nº de pedido FYL (A54945 / 54945).
+ * null = no parece un Nº de pedido.
+ */
+export function normalizeOrderNumberQuery(q: string): string | null {
+  const t = q.trim().toUpperCase().replace(/\s+/g, "");
+  if (!t) return null;
+  if (/^A\d{3,}$/.test(t)) return t;
+  if (/^\d{4,}$/.test(t)) return `A${t}`;
+  return null;
+}
+
+const ORDER_SELECT = `
+  id,
+  order_number,
+  status,
+  payment_method,
+  total_amount,
+  sent_at,
+  closed_at,
+  label_customer_name,
+  transport_id,
+  customers!inner (
+    full_name,
+    transport_id,
+    additional_names,
+    customer_number
+  )
+`;
+
+type OccupancyMap = Map<
+  string,
+  NonNullable<ManualOrderHit["occupancy"]>
+>;
+
+function buildHit(input: {
+  raw: RawOrder;
+  remittanceTransportId: string;
+  parsedDate: string | null;
+  parsedAmount: number | null;
+  transportNames: Map<string, string>;
+  localIds: Set<string>;
+  confirmed: Set<string>;
+  occupancyByOrderId: OccupancyMap;
+  /** true = lookup exacto: no filtrar fuera del universo, solo marcar bloqueo */
+  exactLookup: boolean;
+}): ManualOrderHit | null {
+  const {
+    raw,
+    remittanceTransportId,
+    parsedDate,
+    parsedAmount,
+    transportNames,
+    localIds,
+    confirmed,
+    occupancyByOrderId,
+    exactLookup,
+  } = input;
+
+  const customer = unwrapCustomer(raw);
+  const effective = resolveEffectiveSent(raw.sent_at, raw.closed_at);
+  const amount = toNumber(raw.total_amount);
+  const label = String(raw.label_customer_name || "").trim();
+  const titular = String(customer?.full_name || "").trim();
+  const customerNumber =
+    customer?.customer_number != null && String(customer.customer_number).trim()
+      ? String(customer.customer_number).trim()
+      : null;
+  const paymentMethod = raw.payment_method ? String(raw.payment_method) : null;
+  const orderStatus = raw.status ? String(raw.status) : null;
+  const effTr = raw.transport_id || customer?.transport_id || null;
+  const sameTransport = effTr === remittanceTransportId;
+  const occupancy = occupancyByOrderId.get(raw.id) ?? null;
+
+  let blockReason: ManualBlockReason = null;
+  const warnings: string[] = [];
+
+  if (orderStatus && orderStatus !== "sent") {
+    blockReason = "wrong_status";
+    warnings.push(`Estado del pedido: ${orderStatus} (se requiere enviado)`);
+  } else if (paymentMethod !== COD_PAYMENT_METHOD) {
+    blockReason = "not_cod";
+    warnings.push(
+      `No es Contra Reembolso (${paymentMethod || "sin método"}). No entra al universo COD.`
+    );
+  } else if (!effective) {
+    blockReason = "too_old";
+    warnings.push("Sin fecha efectiva de envío");
+  } else if (effective.effectiveSentDate < RECONCILIATION_START_DATE) {
+    blockReason = "too_old";
+    warnings.push(`Anterior a ${RECONCILIATION_START_DATE}`);
+  } else if (localIds.has(raw.id)) {
+    blockReason = "local_order";
+    warnings.push("Es un pedido local (excluido de COD)");
+  } else if (occupancy?.kind === "approved_pending" || confirmed.has(raw.id)) {
+    if (occupancy?.kind === "approved_pending") {
+      blockReason = "approved_pending";
+      warnings.push("Ya aprobado en otra rendición (pendiente de confirmar)");
+    } else {
+      blockReason = "already_confirmed";
+      warnings.push("Ya conciliado en otra rendición");
+    }
+  }
+
+  // Fuzzy COD path: omitir fuera de universo (no mostrar)
+  if (!exactLookup && blockReason) return null;
+
+  const fallbackDate = String(raw.sent_at || raw.closed_at || "").slice(0, 10);
+  const effectiveSentDate = effective?.effectiveSentDate || fallbackDate || "—";
+  const sentDateOrigin = effective?.sentDateOrigin ?? "sent_at";
+
+  if (!blockReason) {
+    if (!sameTransport) warnings.push("Transporte distinto");
+    if (parsedDate && effective) {
+      const d = daysBetween(parsedDate, effective.effectiveSentDate);
+      if (d > 3) warnings.push(`Fecha alejada (${d} días)`);
+    }
+    if (parsedAmount != null && Math.abs(parsedAmount - amount) >= 0.005) {
+      warnings.push("Monto distinto");
+    }
+  }
+
+  return {
+    id: raw.id,
+    orderNumber: raw.order_number,
+    expectedAmount: amount,
+    effectiveSentDate,
+    sentDateOrigin,
+    effectiveTransportId: effTr,
+    transportName: effTr ? transportNames.get(effTr) ?? null : null,
+    labelName: label || null,
+    titularName: titular || null,
+    customerNumber,
+    paymentMethod,
+    orderStatus,
+    sameTransport,
+    warnings,
+    assignmentBlocked: blockReason != null,
+    blockReason,
+    occupancy,
+  };
+}
+
+async function fetchExactByOrderNumber(
+  supabase: SupabaseClient,
+  orderNumber: string
+): Promise<RawOrder | null> {
+  const { data, error } = await supabase
+    .from("orders")
+    .select(ORDER_SELECT)
+    .eq("order_number", orderNumber)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data as RawOrder | null) ?? null;
+}
+
 export async function searchCodOrdersForManualAssign(
   supabase: SupabaseClient,
   input: {
@@ -77,6 +264,7 @@ export async function searchCodOrdersForManualAssign(
 ): Promise<ManualOrderHit[]> {
   const q = input.query.trim();
   const limit = input.limit ?? 30;
+  const exactOrderNumber = normalizeOrderNumberQuery(q);
 
   const confirmedRows = await supabase
     .from("cod_remittance_rows")
@@ -88,6 +276,24 @@ export async function searchCodOrdersForManualAssign(
       .map((r) => r.matched_order_id)
       .filter((id): id is string => !!id)
   );
+
+  let occupancyByOrderId: OccupancyMap = new Map();
+  try {
+    const full = await loadOrderCodOccupancyMap(supabase);
+    for (const [id, o] of full) {
+      occupancyByOrderId.set(id, {
+        kind: o.kind,
+        otherRemittanceDate: o.otherRemittanceDate,
+        otherTransportName: o.otherTransportName,
+        otherReportedAmount: o.otherReportedAmount,
+        irregularityStatus: o.irregularityStatus,
+        amountDiff: o.amountDiff,
+      });
+    }
+  } catch (e) {
+    console.error("[manual-search] already-used occupancy failed", e);
+    occupancyByOrderId = new Map();
+  }
 
   const localRows = await supabase
     .from("local_orders")
@@ -101,25 +307,42 @@ export async function searchCodOrdersForManualAssign(
   const { data: transports } = await supabase.from("transports").select("id, name");
   const transportNames = new Map((transports ?? []).map((t) => [t.id, t.name]));
 
-  // Fetch recent COD sent (bounded). Filter in memory for name/amount/date.
+  const hitOpts = {
+    remittanceTransportId: input.remittanceTransportId,
+    parsedDate: input.parsedDate,
+    parsedAmount: input.parsedAmount,
+    transportNames,
+    localIds,
+    confirmed,
+    occupancyByOrderId,
+  };
+
+  const hits: ManualOrderHit[] = [];
+  const seen = new Set<string>();
+
+  // 1) Lookup exacto por Nº — siempre, aunque no sea COD
+  if (exactOrderNumber) {
+    const exact = await fetchExactByOrderNumber(supabase, exactOrderNumber);
+    if (exact) {
+      const hit = buildHit({ ...hitOpts, raw: exact, exactLookup: true });
+      if (hit) {
+        // Exacto: respetar filtro transporte solo como warning, no ocultar
+        if (!input.allTransports && !hit.sameTransport && !hit.assignmentBlocked) {
+          hit.warnings = [
+            ...hit.warnings.filter((w) => w !== "Transporte distinto"),
+            "Transporte distinto",
+          ];
+        }
+        hits.push(hit);
+        seen.add(hit.id);
+      }
+    }
+  }
+
+  // 2) Búsqueda fuzzy en universo COD reciente (nombre / Nº parcial)
   const { data: orders, error } = await supabase
     .from("orders")
-    .select(
-      `
-      id,
-      order_number,
-      total_amount,
-      sent_at,
-      closed_at,
-      label_customer_name,
-      transport_id,
-      customers!inner (
-        full_name,
-        transport_id,
-        additional_names
-      )
-    `
-    )
+    .select(ORDER_SELECT)
     .eq("status", "sent")
     .eq("payment_method", COD_PAYMENT_METHOD)
     .order("closed_at", { ascending: false })
@@ -129,10 +352,10 @@ export async function searchCodOrdersForManualAssign(
 
   const normQ = normalizeMatchName(q);
   const tokens = tokenizeMatchName(q);
-  const hits: ManualOrderHit[] = [];
 
   for (const raw of (orders ?? []) as RawOrder[]) {
-    if (localIds.has(raw.id) || confirmed.has(raw.id)) continue;
+    if (seen.has(raw.id)) continue;
+    if (localIds.has(raw.id)) continue;
     const customer = unwrapCustomer(raw);
     const effective = resolveEffectiveSent(raw.sent_at, raw.closed_at);
     if (!effective || effective.effectiveSentDate < RECONCILIATION_START_DATE) continue;
@@ -143,7 +366,6 @@ export async function searchCodOrdersForManualAssign(
     const label = String(raw.label_customer_name || "").trim();
     const titular = String(customer?.full_name || "").trim();
     const names = [label, titular].filter(Boolean).map(normalizeMatchName);
-    // additional names lightly
     let additional: unknown = customer?.additional_names;
     if (typeof additional === "string") {
       try {
@@ -164,53 +386,30 @@ export async function searchCodOrdersForManualAssign(
     }
 
     const orderNum = String(raw.order_number || "").toLowerCase();
-    const amount = toNumber(raw.total_amount);
-
     let nameScore = 0;
     if (normQ) {
       if (names.some((n) => n === normQ)) nameScore = 3;
-      else if (tokens.length && names.some((n) => tokens.every((t) => n.includes(t)))) nameScore = 2;
+      else if (tokens.length && names.some((n) => tokens.every((t) => n.includes(t))))
+        nameScore = 2;
       else if (names.some((n) => n.includes(normQ) || normQ.includes(n))) nameScore = 1;
       else if (orderNum && orderNum.includes(normQ)) nameScore = 2;
-      else continue; // query no matchea
+      else continue;
     }
 
-    const warnings: string[] = [];
-    const sameTransport = effTr === input.remittanceTransportId;
-    if (!sameTransport) warnings.push("Transporte distinto");
-    if (input.parsedDate) {
-      const d = daysBetween(input.parsedDate, effective.effectiveSentDate);
-      if (d > 3) warnings.push(`Fecha alejada (${d} días)`);
+    const hit = buildHit({ ...hitOpts, raw, exactLookup: false });
+    if (!hit) continue;
+    if (nameScore <= 1 && normQ && !exactOrderNumber) {
+      hit.warnings.push("Nombre con baja coincidencia");
     }
-    if (input.parsedAmount != null && Math.abs(input.parsedAmount - amount) >= 0.005) {
-      warnings.push("Monto distinto");
-    }
-    if (nameScore <= 1 && normQ) warnings.push("Nombre con baja coincidencia");
-
-    hits.push({
-      id: raw.id,
-      orderNumber: raw.order_number,
-      expectedAmount: amount,
-      effectiveSentDate: effective.effectiveSentDate,
-      sentDateOrigin: effective.sentDateOrigin,
-      effectiveTransportId: effTr,
-      transportName: effTr ? transportNames.get(effTr) ?? null : null,
-      labelName: label || null,
-      titularName: titular || null,
-      sameTransport,
-      warnings,
-    });
+    hits.push(hit);
+    seen.add(hit.id);
   }
 
   hits.sort((a, b) => {
-    // Priorizar mismo transporte, fecha cercana, monto parecido
+    if (a.assignmentBlocked !== b.assignmentBlocked) return a.assignmentBlocked ? 1 : -1;
     if (a.sameTransport !== b.sameTransport) return a.sameTransport ? -1 : 1;
-    const da = input.parsedDate
-      ? daysBetween(input.parsedDate, a.effectiveSentDate)
-      : 0;
-    const db = input.parsedDate
-      ? daysBetween(input.parsedDate, b.effectiveSentDate)
-      : 0;
+    const da = input.parsedDate ? daysBetween(input.parsedDate, a.effectiveSentDate) : 0;
+    const db = input.parsedDate ? daysBetween(input.parsedDate, b.effectiveSentDate) : 0;
     if (da !== db) return da - db;
     const aa =
       input.parsedAmount != null ? Math.abs(input.parsedAmount - a.expectedAmount) : 0;

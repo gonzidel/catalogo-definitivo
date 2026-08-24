@@ -9,6 +9,11 @@ import {
   matchRemittanceRows,
   type RemittanceMatchRow,
 } from "@/lib/reconciliation/matching";
+import { pickBestAlreadyUsedMatch, type AlreadyUsedMatch } from "@/lib/reconciliation/already-used-match";
+import {
+  loadOccupiedCodCandidates,
+  loadOrderCodOccupancyMap,
+} from "@/lib/reconciliation/already-used-loader";
 import { searchCodOrdersForManualAssign } from "@/lib/reconciliation/manual-search";
 import type { ManualOrderHit } from "@/lib/reconciliation/manual-search";
 import { resolveEffectiveSent } from "@/lib/reconciliation/queries";
@@ -371,7 +376,7 @@ export async function analyzeRemittance(
   const supabase = await createSupabaseServerClient();
   const { data: rem, error: remError } = await supabase
     .from("cod_remittances")
-    .select("id, transport_id, status")
+    .select("id, transport_id, status, sheet_revision")
     .eq("id", remittanceId)
     .maybeSingle();
 
@@ -396,10 +401,13 @@ export async function analyzeRemittance(
     };
   }
 
+  const sheetRevision = Number(rem.sheet_revision) || 1;
+
   const { count: approvedCount } = await supabase
     .from("cod_remittance_rows")
     .select("id", { count: "exact", head: true })
     .eq("remittance_id", remittanceId)
+    .eq("sheet_revision", sheetRevision)
     .eq("row_status", "approved_pending_confirmation");
   if ((approvedCount ?? 0) > 0) {
     return {
@@ -409,13 +417,25 @@ export async function analyzeRemittance(
     };
   }
 
-  const { data: rowData, error: rowsError } = await supabase
+  let { data: rowData, error: rowsError } = await supabase
     .from("cod_remittance_rows")
     .select(
       "id, row_index, raw_customer_name_text, parsed_transport_date, parsed_amount"
     )
     .eq("remittance_id", remittanceId)
+    .eq("sheet_revision", sheetRevision)
     .order("row_index", { ascending: true });
+
+  // Fallback si sheet_revision aún no está en cache/schema del cliente
+  if (rowsError && /sheet_revision|does not exist|schema cache/i.test(rowsError.message)) {
+    ({ data: rowData, error: rowsError } = await supabase
+      .from("cod_remittance_rows")
+      .select(
+        "id, row_index, raw_customer_name_text, parsed_transport_date, parsed_amount"
+      )
+      .eq("remittance_id", remittanceId)
+      .order("row_index", { ascending: true }));
+  }
 
   if (rowsError) {
     return { ok: false, code: "rpc_error", message: rowsError.message };
@@ -448,26 +468,77 @@ export async function analyzeRemittance(
     aliasesByNormalized: pools.aliasesByNormalized,
   });
 
-  const scoreMs = Date.now() - tScore;
+  // Pedidos ya usados (confirmados / approved) — informativos, no seleccionables
+  let occupancyByOrderId = new Map();
+  let occupiedCandidates: Awaited<
+    ReturnType<typeof loadOccupiedCodCandidates>
+  >["candidates"] = [];
+  let customerNumberByOrderId = new Map<string, string | null>();
+  try {
+    occupancyByOrderId = await loadOrderCodOccupancyMap(supabase);
+    const occupiedIds = new Set(occupancyByOrderId.keys());
+    const transportNames = new Map(
+      pools.poolAll
+        .filter((c) => c.effectiveTransportId && c.transportName)
+        .map((c) => [c.effectiveTransportId!, c.transportName!])
+    );
+    // Completar nombres de transporte por si el pool operativo no los tiene
+    const { data: tr } = await supabase.from("transports").select("id, name");
+    for (const t of tr ?? []) transportNames.set(t.id, t.name);
+    const occupied = await loadOccupiedCodCandidates(
+      supabase,
+      occupiedIds,
+      transportNames
+    );
+    occupiedCandidates = occupied.candidates;
+    customerNumberByOrderId = occupied.customerNumberByOrderId;
+  } catch (e) {
+    // Si falla la carga informativa, el análisis operativo sigue.
+    console.error("[analyzeRemittance] already-used load failed", e);
+  }
 
-  const rowsPayload = matched.results.map((r) => ({
-    row_id: r.rowId,
-    row_status: r.rowStatus,
-    matched_order_id: r.rowStatus === "unassigned" ? null : r.matchedOrderId,
-    match_score: r.matchScore,
-    match_breakdown: r.matchBreakdown,
-    match_candidates: r.matchCandidates,
-    matched_via_broadened_search: r.matchedViaBroadenedSearch,
-    transport_mismatch: r.transportMismatch,
-    will_create_irregularity: r.willCreateIrregularity,
-    order_number_snapshot: r.orderNumberSnapshot,
-    matched_name_snapshot: r.matchedNameSnapshot,
-    matched_name_source: r.matchedNameSource,
-    transport_name_snapshot: r.transportNameSnapshot,
-    order_sent_date_snapshot: r.orderSentDateSnapshot,
-    order_sent_date_origin: r.orderSentDateOrigin,
-    expected_amount_snapshot: r.expectedAmountSnapshot,
-  }));
+  const scoreMs = Date.now() - tScore;
+  const rowById = new Map(rows.map((x) => [x.id, x]));
+
+  const rowsPayload = matched.results.map((r) => {
+    const src = rowById.get(r.rowId);
+    const alreadyUsed =
+      occupiedCandidates.length > 0 && src
+        ? pickBestAlreadyUsedMatch({
+            row: src,
+            remittanceTransportId: rem.transport_id,
+            candidates: occupiedCandidates,
+            occupancyByOrderId,
+            customerNumberByOrderId,
+            currentRemittanceId: rem.id,
+            currentRowId: src.id,
+          })
+        : null;
+
+    const breakdown = {
+      ...r.matchBreakdown,
+      ...(alreadyUsed ? { alreadyUsedOrder: alreadyUsed } : {}),
+    };
+
+    return {
+      row_id: r.rowId,
+      row_status: r.rowStatus,
+      matched_order_id: r.rowStatus === "unassigned" ? null : r.matchedOrderId,
+      match_score: r.matchScore,
+      match_breakdown: breakdown,
+      match_candidates: r.matchCandidates,
+      matched_via_broadened_search: r.matchedViaBroadenedSearch,
+      transport_mismatch: r.transportMismatch,
+      will_create_irregularity: r.willCreateIrregularity,
+      order_number_snapshot: r.orderNumberSnapshot,
+      matched_name_snapshot: r.matchedNameSnapshot,
+      matched_name_source: r.matchedNameSource,
+      transport_name_snapshot: r.transportNameSnapshot,
+      order_sent_date_snapshot: r.orderSentDateSnapshot,
+      order_sent_date_origin: r.orderSentDateOrigin,
+      expected_amount_snapshot: r.expectedAmountSnapshot,
+    };
+  });
 
   const tPersist = Date.now();
   const { data, error } = await supabase.rpc("rpc_cod_save_analysis", {
@@ -488,9 +559,10 @@ export async function analyzeRemittance(
     return {
       ok: false,
       code: "rpc_error",
-      message:
+      message: mapRpcError(
         error.message ||
-        "No se pudo guardar el análisis. ¿Está aplicada la migración 278 (rpc_cod_save_analysis)?",
+          "No se pudo guardar el análisis. ¿Está aplicada la migración 278 (rpc_cod_save_analysis)?"
+      ),
     };
   }
 
@@ -562,6 +634,12 @@ function mapRpcError(message: string): string {
   if (message.includes("remittance_has_approved_rows")) {
     return "Hay filas ya aprobadas. No se puede reanalizar.";
   }
+  if (message.includes("matched_name_not_in_order_identities")) {
+    return "El análisis propuso un nombre que no coincide con el label/titular del pedido. Reintentá; si persiste, avisá.";
+  }
+  if (message.includes("matched_name_source_snapshot_mismatch")) {
+    return "Inconsistencia en el nombre del match (source/snapshot). Reintentá el análisis.";
+  }
   if (message.includes("resolution_notes_required")) {
     return "Para resolver el reclamo necesitás una observación.";
   }
@@ -625,8 +703,29 @@ function mapRpcError(message: string): string {
   if (message.includes("matched_order_missing")) {
     return "Un pedido vinculado ya no existe. No se puede anular (rollback).";
   }
-  if (message.includes("row_void_count_mismatch")) {
-    return "El conteo de filas a anular no coincide. Se abortó por seguridad.";
+  if (message.includes("remittance_has_compensated_adjustments")) {
+    return "No se puede anular: hay diferencias del transporte ya compensadas en esta rendición.";
+  }
+  if (message.includes("adjustment_has_compensations")) {
+    return "Este crédito ya se usó en una compensación. No se puede anular.";
+  }
+  if (message.includes("row_already_confirmed_cod")) {
+    return "La fila ya está confirmada como COD. No se puede registrar como diferencia.";
+  }
+  if (message.includes("row_is_supplementary")) {
+    return "Los pagos complementarios no se registran como diferencia del transporte.";
+  }
+  if (message.includes("adjustment_already_active_for_row")) {
+    return "Esta fila ya tiene una diferencia registrada.";
+  }
+  if (message.includes("cross_transport_not_allowed")) {
+    return "No se pueden compensar movimientos de transportes distintos.";
+  }
+  if (message.includes("parsed_amount_invalid")) {
+    return "La fila no tiene un monto válido para registrar.";
+  }
+  if (message.includes("row_not_in_current_sheet_revision")) {
+    return "La fila no pertenece a la revisión actual de la planilla.";
   }
   return message;
 }
@@ -1102,6 +1201,154 @@ export async function confirmRemittance(remittanceId: string): Promise<Phase5Res
   };
 }
 
+/**
+ * Lookup on-demand de pedido ya usado (para filas analizadas antes del enrichment).
+ * No muta datos. No vuelve el pedido seleccionable.
+ */
+export async function lookupAlreadyUsedForRow(input: {
+  remittanceId: string;
+  rowId: string;
+}): Promise<
+  | { ok: true; hit: AlreadyUsedMatch | null }
+  | { ok: false; message: string }
+> {
+  const ctx = await requireEdit();
+  if (!ctx) return { ok: false, message: "Sin permiso." };
+
+  const supabase = await createSupabaseServerClient();
+  const { data: rem } = await supabase
+    .from("cod_remittances")
+    .select("id, transport_id, status, sheet_revision")
+    .eq("id", input.remittanceId)
+    .maybeSingle();
+  if (!rem) return { ok: false, message: "Rendición no encontrada." };
+
+  const sheetRevision = Number(rem.sheet_revision) || 1;
+  const { data: row } = await supabase
+    .from("cod_remittance_rows")
+    .select(
+      "id, row_index, raw_customer_name_text, parsed_transport_date, parsed_amount, sheet_revision"
+    )
+    .eq("id", input.rowId)
+    .eq("remittance_id", input.remittanceId)
+    .eq("sheet_revision", sheetRevision)
+    .maybeSingle();
+  if (!row) return { ok: false, message: "Fila no encontrada." };
+
+  try {
+    const occupancyByOrderId = await loadOrderCodOccupancyMap(supabase);
+    const occupiedIds = new Set(occupancyByOrderId.keys());
+    const { data: tr } = await supabase.from("transports").select("id, name");
+    const transportNames = new Map((tr ?? []).map((t) => [t.id as string, t.name as string]));
+    const occupied = await loadOccupiedCodCandidates(supabase, occupiedIds, transportNames);
+    const hit = pickBestAlreadyUsedMatch({
+      row: {
+        id: row.id,
+        rowIndex: row.row_index,
+        rawCustomerNameText: row.raw_customer_name_text,
+        parsedTransportDate: row.parsed_transport_date,
+        parsedAmount: row.parsed_amount != null ? Number(row.parsed_amount) : null,
+      },
+      remittanceTransportId: rem.transport_id,
+      candidates: occupied.candidates,
+      occupancyByOrderId,
+      customerNumberByOrderId: occupied.customerNumberByOrderId,
+      currentRemittanceId: rem.id,
+      currentRowId: row.id,
+    });
+    return { ok: true, hit };
+  } catch (e) {
+    console.error("[lookupAlreadyUsedForRow]", {
+      remittanceId: input.remittanceId,
+      rowId: input.rowId,
+      error: e instanceof Error ? e.message : e,
+    });
+    return {
+      ok: false,
+      message: "No pudimos verificar si existe una vinculación anterior.",
+    };
+  }
+}
+
+/**
+ * Aprueba pago complementario (sin efecto financiero).
+ * Requiere migraciones 292/293 aplicadas. Confirmar rendición aplica el saldo (294).
+ */
+export async function approveComplementaryPayment(input: {
+  remittanceId: string;
+  rowId: string;
+  orderId: string;
+  reason?: string;
+}): Promise<{ ok: true; message: string } | { ok: false; message: string }> {
+  const ctx = await requireEdit();
+  if (!ctx) return { ok: false, message: "Sin permiso." };
+
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.rpc("rpc_cod_approve_complementary_payment", {
+    p_remittance_id: input.remittanceId,
+    p_row_id: input.rowId,
+    p_order_id: input.orderId,
+    p_reason: input.reason ?? null,
+  });
+
+  if (error) {
+    console.error("[approveComplementaryPayment]", error.message);
+    const msg = error.message || "";
+    if (/payment_exceeds_remaining_balance/i.test(msg)) {
+      return {
+        ok: false,
+        message:
+          "El pago informado supera el saldo pendiente. Revisá la planilla antes de continuar.",
+      };
+    }
+    if (/active_shortage_irregularity_not_found/i.test(msg)) {
+      return {
+        ok: false,
+        message: "No hay un reclamo de faltante activo para este pedido.",
+      };
+    }
+    if (/multiple_active_shortage_irregularities/i.test(msg)) {
+      return {
+        ok: false,
+        message:
+          "Hay más de un reclamo de faltante activo. Revisá irregularidades antes de continuar.",
+      };
+    }
+    if (/shortage_balance_mismatch/i.test(msg)) {
+      return {
+        ok: false,
+        message:
+          "El saldo calculado no coincide con el reclamo activo. Requiere revisión manual.",
+      };
+    }
+    if (/remaining_balance_not_positive|balance_already_settled/i.test(msg)) {
+      return { ok: false, message: "Este pedido ya no tiene saldo pendiente." };
+    }
+    if (/Could not find the function|PGRST202/i.test(msg)) {
+      return {
+        ok: false,
+        message:
+          "La función de pago complementario aún no está aplicada en la base (292/293).",
+      };
+    }
+    return {
+      ok: false,
+      message: "No se pudo aprobar el pago complementario.",
+    };
+  }
+
+  const payload = data as { ok?: boolean } | null;
+  if (!payload?.ok) {
+    return { ok: false, message: "Respuesta inesperada al aprobar complemento." };
+  }
+
+  revalidatePath(`/admin/conciliacion-reembolso/remesas/${input.remittanceId}`);
+  return {
+    ok: true,
+    message: "Pago complementario aprobado · pendiente de confirmar la rendición.",
+  };
+}
+
 export async function searchManualOrders(input: {
   remittanceId: string;
   rowId: string;
@@ -1208,5 +1455,297 @@ export async function updateIrregularityStatus(input: {
     ok: true,
     message: "Reclamo resuelto.",
     data: (payload as Record<string, unknown>) ?? undefined,
+  };
+}
+
+export type ReplaceUnconfirmedSheetInput = {
+  remittanceId: string;
+  reason: string;
+  remittanceDateText: string;
+  reportedTotalText: string;
+  pasteText: string;
+  notes?: string;
+  confirmTotalDifference?: boolean;
+  confirmInternalDuplicates?: boolean;
+};
+
+export type ReplaceUnconfirmedSheetResult =
+  | {
+      ok: true;
+      remittanceId: string;
+      newSheetRevision: number;
+      oldRowCount: number;
+      newRowCount: number;
+      message: string;
+    }
+  | {
+      ok: false;
+      code: "forbidden" | "validation" | "needs_confirm_total" | "rpc_error" | "not_found";
+      message: string;
+      totalDifference?: number;
+    };
+
+/**
+ * Reemplazo total de planilla PRE-confirm (nueva sheet_revision, sin DELETE).
+ */
+export async function replaceUnconfirmedRemittanceSheet(
+  input: ReplaceUnconfirmedSheetInput
+): Promise<ReplaceUnconfirmedSheetResult> {
+  const ctx = await requireEdit();
+  if (!ctx) {
+    return { ok: false, code: "forbidden", message: "No tenés permiso para editar rendiciones." };
+  }
+
+  const reason = input.reason?.trim();
+  if (!reason) {
+    return { ok: false, code: "validation", message: "El motivo de corrección es obligatorio." };
+  }
+  if (!input.remittanceId?.trim()) {
+    return { ok: false, code: "validation", message: "Falta el id de la rendición." };
+  }
+
+  const dateParsed = parseRemittanceDate(input.remittanceDateText);
+  if (!dateParsed.ok) {
+    return { ok: false, code: "validation", message: dateParsed.error };
+  }
+  const totalParsed = parseReportedTotal(input.reportedTotalText);
+  if (!totalParsed.ok) {
+    return { ok: false, code: "validation", message: totalParsed.error };
+  }
+
+  const grid = parsePasteGrid(input.pasteText);
+  if (grid.invalidRows.length > 0) {
+    return {
+      ok: false,
+      code: "validation",
+      message: `Hay ${grid.invalidRows.length} fila(s) inválida(s). Corregilas antes de guardar.`,
+    };
+  }
+  if (grid.validRows.length === 0) {
+    return { ok: false, code: "validation", message: "La planilla no puede estar vacía." };
+  }
+
+  const dupCount = grid.validRows.filter((r) => r.isDuplicate).length;
+  if (dupCount > 0 && !input.confirmInternalDuplicates) {
+    return {
+      ok: false,
+      code: "validation",
+      message: `Hay ${dupCount} posible(s) duplicado(s) interno(s). Confirmá para guardar igual.`,
+    };
+  }
+
+  const diff = totalDifference(grid.calculatedTotal, totalParsed.value);
+  if (diff !== 0 && !input.confirmTotalDifference) {
+    return {
+      ok: false,
+      code: "needs_confirm_total",
+      message: `El total calculado difiere del informado (${diff > 0 ? "+" : ""}${diff}). Confirmá para guardar.`,
+      totalDifference: diff,
+    };
+  }
+
+  const contentHash = await computeContentHash(grid.contentHashInput);
+  const rowsPayload = grid.validRows.map((r) => ({
+    row_index: r.rowIndex,
+    raw_line: r.rawLine,
+    raw_transport_date_text: r.rawTransportDateText,
+    raw_customer_name_text: r.rawCustomerNameText,
+    raw_amount_text: r.rawAmountText,
+    parsed_transport_date: r.parsedTransportDate,
+    parsed_amount: r.parsedAmount,
+  }));
+
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.rpc("rpc_cod_replace_unconfirmed_remittance_sheet", {
+    p_remittance_id: input.remittanceId,
+    p_reason: reason,
+    p_remittance_date: dateParsed.value,
+    p_reported_total: totalParsed.value,
+    p_content_hash: contentHash,
+    p_rows: rowsPayload,
+    p_notes: input.notes?.trim() || null,
+  });
+
+  if (error) {
+    const msg = error.message || "";
+    if (msg.includes("remittance_confirmed_immutable")) {
+      return {
+        ok: false,
+        code: "validation",
+        message: "Esta rendición ya fue confirmada. No se puede editar la planilla.",
+      };
+    }
+    if (msg.includes("remittance_voided_immutable")) {
+      return {
+        ok: false,
+        code: "validation",
+        message: "Esta rendición está anulada. Solo lectura.",
+      };
+    }
+    if (msg.includes("reason_required")) {
+      return { ok: false, code: "validation", message: "El motivo es obligatorio." };
+    }
+    return {
+      ok: false,
+      code: "rpc_error",
+      message:
+        msg ||
+        "No se pudo guardar. ¿Están aplicadas las migraciones 289/290 (revisiones de planilla)?",
+    };
+  }
+
+  const payload = data as {
+    ok?: boolean;
+    new_sheet_revision?: number;
+    old_row_count?: number;
+    new_row_count?: number;
+  } | null;
+
+  if (!payload?.ok) {
+    return { ok: false, code: "rpc_error", message: "Respuesta inesperada al reemplazar planilla." };
+  }
+
+  revalidatePath("/admin/conciliacion-reembolso");
+  revalidatePath(`/admin/conciliacion-reembolso/remesas/${input.remittanceId}`);
+  revalidatePath(`/admin/conciliacion-reembolso/remesas/${input.remittanceId}/editar`);
+
+  return {
+    ok: true,
+    remittanceId: input.remittanceId,
+    newSheetRevision: Number(payload.new_sheet_revision) || 0,
+    oldRowCount: Number(payload.old_row_count) || 0,
+    newRowCount: Number(payload.new_row_count) || rowsPayload.length,
+    message: "Planilla actualizada. Debés analizar nuevamente las coincidencias.",
+  };
+}
+
+// ─── Diferencias del transporte (295–299) ────────────────────────────────────
+
+export async function registerTransportAdjustment(input: {
+  remittanceId: string;
+  rowId: string;
+  kind:
+    | "paid_other_method"
+    | "non_applicable_payment"
+    | "order_not_found"
+    | "foreign_client"
+    | "transport_error"
+    | "other";
+  observation?: string | null;
+  orderId?: string | null;
+  customerId?: string | null;
+}): Promise<Phase5Result> {
+  const ctx = await requireEdit();
+  if (!ctx) return { ok: false, code: "forbidden", message: "Sin permiso de edición." };
+
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.rpc("rpc_cod_register_transport_adjustment", {
+    p_remittance_id: input.remittanceId,
+    p_row_id: input.rowId,
+    p_kind: input.kind,
+    p_observation: input.observation?.trim() || null,
+    p_order_id: input.orderId || null,
+    p_customer_id: input.customerId || null,
+  });
+
+  if (error) {
+    return { ok: false, code: "rpc_error", message: mapRpcError(error.message) };
+  }
+
+  revalidatePath("/admin/conciliacion-reembolso");
+  revalidatePath(`/admin/conciliacion-reembolso/remesas/${input.remittanceId}`);
+  revalidatePath("/admin/conciliacion-reembolso/irregularidades");
+  revalidatePath("/admin/conciliacion-reembolso/sin-identificar");
+
+  const payload = (data ?? {}) as Record<string, unknown>;
+  const amount = Number(payload.original_amount);
+  return {
+    ok: true,
+    message:
+      Number.isFinite(amount) && amount > 0
+        ? `Registrado a favor del transporte: $${amount.toLocaleString("es-AR")}.`
+        : "Diferencia del transporte registrada.",
+    data: payload,
+  };
+}
+
+export async function voidTransportAdjustment(input: {
+  adjustmentId: string;
+  remittanceId?: string;
+  reason?: string | null;
+}): Promise<Phase5Result> {
+  const ctx = await requireEdit();
+  if (!ctx) return { ok: false, code: "forbidden", message: "Sin permiso de edición." };
+
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.rpc("rpc_cod_void_transport_adjustment", {
+    p_adjustment_id: input.adjustmentId,
+    p_reason: input.reason?.trim() || null,
+  });
+
+  if (error) {
+    return { ok: false, code: "rpc_error", message: mapRpcError(error.message) };
+  }
+
+  revalidatePath("/admin/conciliacion-reembolso");
+  revalidatePath("/admin/conciliacion-reembolso/irregularidades");
+  if (input.remittanceId) {
+    revalidatePath(`/admin/conciliacion-reembolso/remesas/${input.remittanceId}`);
+  }
+
+  return {
+    ok: true,
+    message: "Crédito anulado. La fila volvió a sin identificar.",
+    data: (data as Record<string, unknown>) ?? undefined,
+  };
+}
+
+export async function compensateTransportDifferences(input: {
+  transportId: string;
+  claimIds: string[];
+  creditAdjustmentIds?: string[];
+  creditIrregularityIds?: string[];
+  note?: string | null;
+}): Promise<Phase5Result> {
+  const ctx = await requireEdit();
+  if (!ctx) return { ok: false, code: "forbidden", message: "Sin permiso de edición." };
+
+  if (!input.claimIds.length) {
+    return { ok: false, code: "validation", message: "Seleccioná al menos un reclamo a compensar." };
+  }
+  const credits =
+    (input.creditAdjustmentIds?.length ?? 0) + (input.creditIrregularityIds?.length ?? 0);
+  if (credits === 0) {
+    return { ok: false, code: "validation", message: "Seleccioná al menos un crédito a favor." };
+  }
+
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.rpc("rpc_cod_compensate_transport_differences", {
+    p_transport_id: input.transportId,
+    p_claim_ids: input.claimIds,
+    p_credit_adjustment_ids: input.creditAdjustmentIds?.length
+      ? input.creditAdjustmentIds
+      : null,
+    p_credit_irregularity_ids: input.creditIrregularityIds?.length
+      ? input.creditIrregularityIds
+      : null,
+    p_note: input.note?.trim() || null,
+  });
+
+  if (error) {
+    return { ok: false, code: "rpc_error", message: mapRpcError(error.message) };
+  }
+
+  revalidatePath("/admin/conciliacion-reembolso");
+  revalidatePath("/admin/conciliacion-reembolso/irregularidades");
+
+  const payload = (data ?? {}) as Record<string, unknown>;
+  const applied = Number(payload.total_applied);
+  return {
+    ok: true,
+    message: Number.isFinite(applied)
+      ? `Compensación aplicada: $${applied.toLocaleString("es-AR")}.`
+      : "Compensación aplicada.",
+    data: payload,
   };
 }

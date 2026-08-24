@@ -9,8 +9,15 @@ import styles from "../../conciliacion.module.css";
 export const dynamic = "force-dynamic";
 
 type Params = Promise<{ id: string }>;
+type SearchParams = Promise<{ edited?: string; invalidate?: string }>;
 
-export default async function RemesaDetailPage({ params }: { params: Params }) {
+export default async function RemesaDetailPage({
+  params,
+  searchParams,
+}: {
+  params: Params;
+  searchParams: SearchParams;
+}) {
   const ctx = await getAdminContext();
   if (!ctx) {
     return (
@@ -28,6 +35,7 @@ export default async function RemesaDetailPage({ params }: { params: Params }) {
   }
 
   const { id } = await params;
+  const sp = await searchParams;
   const supabase = await createSupabaseServerClient();
   const detail = await getCodRemittanceDetail(supabase, id);
 
@@ -46,6 +54,8 @@ export default async function RemesaDetailPage({ params }: { params: Params }) {
       <RemittanceDetailView
         detail={detail}
         canEdit={hasPermission(ctx, RECONCILIATION_PERMISSION_KEY, "edit")}
+        editedFlash={sp.edited === "1"}
+        analysisInvalidatedFlash={sp.invalidate === "1"}
       />
     </div>
   );

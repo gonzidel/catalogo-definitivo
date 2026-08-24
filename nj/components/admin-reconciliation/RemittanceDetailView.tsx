@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { formatPriceAr } from "@/lib/orders/domain";
 import {
@@ -10,14 +10,37 @@ import {
   assignRemittanceRow,
   confirmRemittance,
   correctConfirmedAssignment,
+  lookupAlreadyUsedForRow,
   markRowUnassigned,
   previewAliasLinkForOrder,
+  registerTransportAdjustment,
   searchManualOrders,
   voidConfirmedRemittance,
+  voidTransportAdjustment,
 } from "@/lib/reconciliation/actions";
 import type { AliasLinkPreview } from "@/lib/reconciliation/actions";
 import type { ManualOrderHit } from "@/lib/reconciliation/manual-search";
 import type { RemittanceDetail, RemittanceRowDetail } from "@/lib/reconciliation/remittance-queries";
+import AlreadyUsedOrderBanner from "@/components/admin-reconciliation/AlreadyUsedOrderBanner";
+import { kindLabel } from "@/lib/reconciliation/difference-queries";
+import {
+  parseAlreadyUsedFromBreakdown,
+  type AlreadyUsedMatch,
+} from "@/lib/reconciliation/already-used-match";
+import {
+  amountDiffLabel,
+  candidateAmountDiff,
+  candidateMatchByHint,
+  candidatePrimaryName,
+  formatDateArIso,
+  formatSignedPriceAr,
+  nameSourceHuman,
+  signalAmount,
+  signalDate,
+  signalName,
+  signalTransport,
+  type CandidateDisplay,
+} from "@/lib/reconciliation/match-presentation";
 import styles from "@/app/admin/conciliacion-reembolso/conciliacion.module.css";
 
 type FilterTab =
@@ -25,7 +48,25 @@ type FilterTab =
   | "auto_matched"
   | "needs_review"
   | "unassigned"
-  | "approved_pending_confirmation";
+  | "approved_pending_confirmation"
+  | "classified_adjustment";
+
+type AdjustmentKind =
+  | "paid_other_method"
+  | "non_applicable_payment"
+  | "order_not_found"
+  | "foreign_client"
+  | "transport_error"
+  | "other";
+
+const ADJUSTMENT_KIND_OPTIONS: { value: AdjustmentKind; label: string }[] = [
+  { value: "paid_other_method", label: "Pedido pagado por otro medio" },
+  { value: "non_applicable_payment", label: "Pago que no corresponde" },
+  { value: "order_not_found", label: "Cliente/pedido no encontrado" },
+  { value: "foreign_client", label: "Cliente ajeno a FyL" },
+  { value: "transport_error", label: "Error informado por transporte" },
+  { value: "other", label: "Otro" },
+];
 
 function formatDateAr(iso: string | null): string {
   if (!iso) return "—";
@@ -76,6 +117,8 @@ function confidenceFromRow(row: RemittanceRowDetail): string {
       return "Revisión necesaria";
     case "unassigned":
       return "Sin identificar";
+    case "classified_adjustment":
+      return "Registrado como diferencia del transporte";
     case "approved_pending_confirmation":
       return "Aprobada (pendiente confirmar)";
     case "confirmed_matched":
@@ -113,13 +156,7 @@ function readBreakdownNum(bd: Record<string, unknown> | null, path: string[]): n
   return Number.isFinite(n) ? n : null;
 }
 
-type CandidateLite = {
-  orderId?: string;
-  orderNumber?: string | null;
-  score?: number;
-  matchedNameSource?: string | null;
-  nameSource?: string | null;
-};
+type CandidateLite = CandidateDisplay;
 
 function parseCandidates(row: RemittanceRowDetail): CandidateLite[] {
   if (!Array.isArray(row.matchCandidates)) return [];
@@ -129,9 +166,13 @@ function parseCandidates(row: RemittanceRowDetail): CandidateLite[] {
 export default function RemittanceDetailView({
   detail,
   canEdit,
+  editedFlash = false,
+  analysisInvalidatedFlash = false,
 }: {
   detail: RemittanceDetail;
   canEdit: boolean;
+  editedFlash?: boolean;
+  analysisInvalidatedFlash?: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -161,6 +202,16 @@ export default function RemittanceDetailView({
   const [searchQ, setSearchQ] = useState("");
   const [allTransports, setAllTransports] = useState(false);
   const [hits, setHits] = useState<ManualOrderHit[]>([]);
+  const [alreadyUsedByRow, setAlreadyUsedByRow] = useState<
+    Record<string, AlreadyUsedMatch | null>
+  >({});
+  const [alreadyUsedLoading, setAlreadyUsedLoading] = useState<Record<string, boolean>>(
+    {}
+  );
+  const [alreadyUsedError, setAlreadyUsedError] = useState<Record<string, string | null>>(
+    {}
+  );
+  const alreadyUsedInflight = useRef<Set<string>>(new Set());
   const [correctModal, setCorrectModal] = useState<{
     row: RemittanceRowDetail;
     selected: ManualOrderHit | null;
@@ -171,6 +222,11 @@ export default function RemittanceDetailView({
   const [voidModal, setVoidModal] = useState<{
     reason: string;
     confirmText: string;
+  } | null>(null);
+  const [adjustmentModal, setAdjustmentModal] = useState<{
+    row: RemittanceRowDetail;
+    kind: AdjustmentKind;
+    observation: string;
   } | null>(null);
 
   const isConfirmed = detail.status === "confirmed";
@@ -204,6 +260,11 @@ export default function RemittanceDetailView({
     (detail.status === "draft" || detail.status === "analyzed") &&
     !detail.rows.some((r) => r.rowStatus === "approved_pending_confirmation");
 
+  const canEditSheet =
+    canEdit &&
+    !readOnly &&
+    (detail.status === "draft" || detail.status === "analyzed");
+
   const counts = useMemo(() => {
     const auto = detail.rows.filter((r) => r.rowStatus === "auto_matched").length;
     const review = detail.rows.filter((r) => r.rowStatus === "needs_review").length;
@@ -211,7 +272,10 @@ export default function RemittanceDetailView({
     const approved = detail.rows.filter(
       (r) => r.rowStatus === "approved_pending_confirmation"
     ).length;
-    return { auto, review, unassigned, approved, total: detail.rows.length };
+    const classified = detail.rows.filter(
+      (r) => r.rowStatus === "classified_adjustment"
+    ).length;
+    return { auto, review, unassigned, approved, classified, total: detail.rows.length };
   }, [detail.rows]);
 
   const preview = useMemo(() => {
@@ -219,12 +283,16 @@ export default function RemittanceDetailView({
       (r) => r.rowStatus === "approved_pending_confirmation"
     );
     const unassigned = detail.rows.filter((r) => r.rowStatus === "unassigned");
+    const classified = detail.rows.filter(
+      (r) => r.rowStatus === "classified_adjustment"
+    );
     let exact = 0;
     let withDiff = 0;
     let diffPos = 0;
     let diffNeg = 0;
     let assignedAmount = 0;
     let unassignedAmount = 0;
+    let classifiedAmount = 0;
     for (const r of approved) {
       const expected = r.expectedAmountSnapshot ?? 0;
       const reported = r.parsedAmount ?? 0;
@@ -238,18 +306,23 @@ export default function RemittanceDetailView({
       }
     }
     for (const r of unassigned) unassignedAmount += r.parsedAmount ?? 0;
+    for (const r of classified) classifiedAmount += r.parsedAmount ?? 0;
     const undecided = detail.rows.filter((r) =>
       ["auto_matched", "needs_review", "pending_analysis"].includes(r.rowStatus)
     ).length;
+    // classified_adjustment = crédito transporte (no COD). RPC 300 las trata
+    // como ready/skip al confirmar, igual que unassigned.
     return {
       approved: approved.length,
       exact,
       withDiff,
       unassigned: unassigned.length,
+      classified: classified.length,
       undecided,
       reportedTotal: detail.reportedTotal,
       assignedAmount,
       unassignedAmount,
+      classifiedAmount,
       diffPos,
       diffNeg,
       net: Math.round((diffPos + diffNeg) * 100) / 100,
@@ -257,7 +330,11 @@ export default function RemittanceDetailView({
         detail.status === "analyzed" &&
         undecided === 0 &&
         detail.rows.every((r) =>
-          ["approved_pending_confirmation", "unassigned"].includes(r.rowStatus)
+          [
+            "approved_pending_confirmation",
+            "unassigned",
+            "classified_adjustment",
+          ].includes(r.rowStatus)
         ),
     };
   }, [detail]);
@@ -277,12 +354,82 @@ export default function RemittanceDetailView({
   }
 
   function toggleExpand(id: string) {
+    const isOpen = expanded.has(id);
+    if (isOpen) {
+      setExpanded((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      return;
+    }
+
     setExpanded((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      next.add(id);
       return next;
     });
+
+    // Lazy lookup SOLO desde el handler (nunca dentro de un updater/render).
+    const row = detail.rows.find((r) => r.id === id);
+    const hasCachedBreakdown = row
+      ? !!parseAlreadyUsedFromBreakdown(row.matchBreakdown)
+      : false;
+    const hasCachedLookup = Object.prototype.hasOwnProperty.call(alreadyUsedByRow, id);
+    const needsLookup =
+      !!row &&
+      !row.matchedOrderId &&
+      !hasCachedBreakdown &&
+      !hasCachedLookup &&
+      !alreadyUsedLoading[id] &&
+      !alreadyUsedInflight.current.has(id);
+
+    if (!needsLookup) return;
+
+    alreadyUsedInflight.current.add(id);
+    setAlreadyUsedLoading((m) => ({ ...m, [id]: true }));
+    setAlreadyUsedError((m) => ({ ...m, [id]: null }));
+
+    void (async () => {
+      try {
+        const res = await lookupAlreadyUsedForRow({
+          remittanceId: detail.id,
+          rowId: id,
+        });
+        if (!res.ok) {
+          console.error("[alreadyUsed] lookup failed", id, res.message);
+          setAlreadyUsedError((m) => ({
+            ...m,
+            [id]:
+              res.message && !/bad request/i.test(res.message)
+                ? res.message
+                : "No pudimos verificar si existe una vinculación anterior.",
+          }));
+          setAlreadyUsedByRow((m) => ({ ...m, [id]: null }));
+          return;
+        }
+        setAlreadyUsedByRow((m) => ({ ...m, [id]: res.hit }));
+      } catch (err) {
+        console.error("[alreadyUsed] lookup exception", id, err);
+        setAlreadyUsedError((m) => ({
+          ...m,
+          [id]: "No pudimos verificar si existe una vinculación anterior.",
+        }));
+        setAlreadyUsedByRow((m) => ({ ...m, [id]: null }));
+      } finally {
+        alreadyUsedInflight.current.delete(id);
+        setAlreadyUsedLoading((m) => ({ ...m, [id]: false }));
+      }
+    })();
+  }
+
+  function alreadyUsedForRow(row: RemittanceRowDetail): AlreadyUsedMatch | null {
+    return (
+      parseAlreadyUsedFromBreakdown(row.matchBreakdown) ??
+      (Object.prototype.hasOwnProperty.call(alreadyUsedByRow, row.id)
+        ? alreadyUsedByRow[row.id] ?? null
+        : null)
+    );
   }
 
   function run(fn: () => Promise<{ ok: boolean; message?: string; counts?: { autoMatched?: number; needsReview?: number; unassigned?: number } }>) {
@@ -544,7 +691,29 @@ export default function RemittanceDetailView({
                 ? "Revisión y aprobación. Sin efecto financiero hasta confirmar."
                 : "Borrador. Analizá para buscar coincidencias."}
         </p>
+        {detail.sheetRevision > 1 ? (
+          <p className={styles.cardHint}>
+            Revisión de planilla {detail.sheetRevision}
+            {detail.sheetEditCount > 0 ? ` · ${detail.sheetEditCount} edición(es)` : ""}
+          </p>
+        ) : null}
       </header>
+
+      {editedFlash ? (
+        <div className={styles.matchSummary} style={{ marginBottom: 14 }} role="status">
+          <p className={styles.matchSummaryTitle}>Planilla actualizada</p>
+          <p className={styles.cardHint}>
+            Se creó una nueva revisión. Volvé a analizar coincidencias.
+          </p>
+        </div>
+      ) : null}
+
+      {analysisInvalidatedFlash && !editedFlash ? (
+        <div className={styles.matchSummary} style={{ marginBottom: 14 }} role="status">
+          <p className={styles.matchSummaryTitle}>Análisis invalidado</p>
+          <p className={styles.cardHint}>Hay que volver a analizar tras editar la planilla.</p>
+        </div>
+      ) : null}
 
       {isConfirmed ? (
         <div className={styles.matchSummary} style={{ marginBottom: 14 }}>
@@ -610,16 +779,26 @@ export default function RemittanceDetailView({
         </div>
       </div>
 
-      {canAnalyze ? (
+      {canAnalyze || canEditSheet ? (
         <div className={styles.analyzeBar}>
-          <button
-            type="button"
-            className={`${styles.btn} ${styles.btnPrimary}`}
-            disabled={pending}
-            onClick={() => run(() => analyzeRemittance(detail.id))}
-          >
-            {pending ? "Analizando…" : analyzed ? "Reanalizar" : "Analizar coincidencias"}
-          </button>
+          {canEditSheet ? (
+            <Link
+              href={`/admin/conciliacion-reembolso/remesas/${detail.id}/editar`}
+              className={styles.btn}
+            >
+              Editar planilla
+            </Link>
+          ) : null}
+          {canAnalyze ? (
+            <button
+              type="button"
+              className={`${styles.btn} ${styles.btnPrimary}`}
+              disabled={pending}
+              onClick={() => run(() => analyzeRemittance(detail.id))}
+            >
+              {pending ? "Analizando…" : analyzed ? "Reanalizar" : "Analizar coincidencias"}
+            </button>
+          ) : null}
         </div>
       ) : null}
 
@@ -635,6 +814,9 @@ export default function RemittanceDetailView({
               <li>⚠️ {counts.review} para revisar</li>
               <li>❌ {counts.unassigned} sin identificar</li>
               <li>☑️ {counts.approved} aprobadas (pend. confirmar)</li>
+              {counts.classified > 0 ? (
+                <li>🧾 {counts.classified} diferencia del transporte</li>
+              ) : null}
             </ul>
           </div>
 
@@ -668,6 +850,9 @@ export default function RemittanceDetailView({
                 <li>
                   {preview.exact} exactos · {preview.withDiff} con diferencia ·{" "}
                   {preview.unassigned} sin identificar
+                  {preview.classified > 0
+                    ? ` · ${preview.classified} diferencia transporte`
+                    : ""}
                 </li>
                 <li>
                   A favor: +{formatPriceAr(preview.diffPos)} · En contra:{" "}
@@ -677,6 +862,9 @@ export default function RemittanceDetailView({
               <p className={styles.cardHint}>
                 Al confirmar, estos pagos se marcarán como conciliados y dejarán de figurar como
                 pendientes.
+                {preview.classified > 0
+                  ? " Las filas de diferencia del transporte no se confirman como COD: quedan como crédito a favor del transporte."
+                  : ""}
               </p>
               <button
                 type="button"
@@ -699,7 +887,14 @@ export default function RemittanceDetailView({
                   <p>
                     Al confirmar: <strong>{preview.approved}</strong> pagos quedarán vinculados
                     definitivamente; <strong>{preview.withDiff}</strong> generarán reclamos;{" "}
-                    <strong>{preview.unassigned}</strong> permanecerán sin identificar.
+                    <strong>{preview.unassigned}</strong> permanecerán sin identificar
+                    {preview.classified > 0 ? (
+                      <>
+                        ; <strong>{preview.classified}</strong> quedan como diferencia del
+                        transporte (no COD)
+                      </>
+                    ) : null}
+                    .
                   </p>
                   <p className={styles.cardHint}>
                     Esta es la acción financiera definitiva. Los pagos dejarán de figurar como
@@ -784,10 +979,15 @@ export default function RemittanceDetailView({
                 </div>
                 <div className={styles.modalBody}>
                 <div className={styles.aliasBlock}>
-                  <p className={styles.aliasBlockLabel}>Nombre informado por el transporte</p>
+                  <p className={styles.aliasBlockLabel}>
+                    Informado por {detail.transportName ?? "el transporte"}
+                  </p>
                   <p className={styles.aliasBlockTitle}>{aliasConfirm.rawAlias}</p>
                   <p className={styles.cardHint}>
-                    Transporte: {detail.transportName ?? "—"}
+                    {formatDateAr(aliasConfirm.parsedTransportDate)}
+                    {aliasConfirm.parsedAmount != null
+                      ? ` · ${formatPriceAr(aliasConfirm.parsedAmount)}`
+                      : ""}
                   </p>
                 </div>
 
@@ -796,55 +996,59 @@ export default function RemittanceDetailView({
                 </p>
 
                 <div className={styles.aliasBlock}>
-                  <p className={styles.aliasBlockLabel}>Se vinculará con</p>
+                  <p className={styles.aliasBlockLabel}>Vincular con</p>
                   <p className={styles.aliasBlockTitle}>
                     {aliasConfirm.preview.customerName ?? "—"}
                   </p>
                   <p className={styles.cardHint}>
-                    Cliente: #
+                    Cliente #
                     {aliasConfirm.preview.customerNumber ??
                       aliasConfirm.preview.customerId.slice(0, 8).toUpperCase()}
+                    {" · "}
+                    Pedido {aliasConfirm.preview.orderNumber ?? "—"}
                   </p>
                   <p className={styles.cardHint}>
-                    Pedido: {aliasConfirm.preview.orderNumber ?? "—"}
+                    {aliasConfirm.preview.orderSentDate
+                      ? formatDateAr(aliasConfirm.preview.orderSentDate)
+                      : "—"}
+                    {aliasConfirm.preview.expectedAmount != null
+                      ? ` · ${formatPriceAr(aliasConfirm.preview.expectedAmount)}`
+                      : ""}
                   </p>
                 </div>
 
                 <ul className={styles.aliasMetaList}>
-                  <li>
-                    Fecha planilla: {formatDateAr(aliasConfirm.parsedTransportDate)}
-                  </li>
-                  <li>
-                    Monto informado:{" "}
-                    {aliasConfirm.parsedAmount != null
-                      ? formatPriceAr(aliasConfirm.parsedAmount)
-                      : "—"}
-                  </li>
-                  {aliasConfirm.preview.orderSentDate ? (
+                  {aliasConfirm.parsedAmount != null &&
+                  aliasConfirm.preview.expectedAmount != null ? (
                     <li>
-                      Fecha pedido: {formatDateAr(aliasConfirm.preview.orderSentDate)}
-                      {aliasConfirm.parsedTransportDate ===
-                      aliasConfirm.preview.orderSentDate
-                        ? " ✓"
-                        : ""}
+                      {
+                        amountDiffLabel(
+                          Math.round(
+                            (aliasConfirm.parsedAmount -
+                              aliasConfirm.preview.expectedAmount) *
+                              100
+                          ) / 100
+                        ).long
+                      }
                     </li>
                   ) : null}
-                  {aliasConfirm.preview.expectedAmount != null ? (
+                  {aliasConfirm.parsedAmount != null &&
+                  aliasConfirm.preview.expectedAmount != null &&
+                  Math.abs(
+                    aliasConfirm.parsedAmount - aliasConfirm.preview.expectedAmount
+                  ) >= 0.005 ? (
                     <li>
-                      Monto pedido: {formatPriceAr(aliasConfirm.preview.expectedAmount)}
-                      {aliasConfirm.parsedAmount != null &&
-                      Math.abs(
-                        aliasConfirm.parsedAmount - aliasConfirm.preview.expectedAmount
-                      ) < 0.005
-                        ? " ✓"
-                        : ""}
+                      Al confirmar la rendición se generará un reclamo por esta diferencia.
                     </li>
-                  ) : null}
+                  ) : (
+                    <li>✓ Monto exacto — sin reclamo por diferencia.</li>
+                  )}
                 </ul>
 
                 <p className={styles.aliasFootnote}>
-                  Esta vinculación quedará guardada para futuras rendiciones de{" "}
-                  {detail.transportName ?? "este transporte"}.
+                  Si marcás recordar, «{aliasConfirm.rawAlias}» quedará como alias COD de este
+                  cliente para {detail.transportName ?? "este transporte"} (aparte de
+                  sub-nombres del maestro).
                 </p>
                 </div>
                 <div className={styles.modalFooter}>
@@ -872,12 +1076,15 @@ export default function RemittanceDetailView({
           <div className={styles.tabs} role="tablist">
             {(
               [
-                ["all", "Todas", counts.total],
-                ["auto_matched", "Seguras", counts.auto],
-                ["needs_review", "Revisar", counts.review],
-                ["unassigned", "Sin identificar", counts.unassigned],
-                ["approved_pending_confirmation", "Aprobadas", counts.approved],
-              ] as const
+                ["all", "Todas", counts.total] as const,
+                ["auto_matched", "Seguras", counts.auto] as const,
+                ["needs_review", "Revisar", counts.review] as const,
+                ["unassigned", "Sin identificar", counts.unassigned] as const,
+                ["approved_pending_confirmation", "Aprobadas", counts.approved] as const,
+                ...(counts.classified > 0
+                  ? ([["classified_adjustment", "Diferencias", counts.classified] as const])
+                  : []),
+              ]
             ).map(([key, label, count]) => (
               <button
                 key={key}
@@ -953,71 +1160,151 @@ export default function RemittanceDetailView({
                         {r.parsedAmount != null ? formatPriceAr(r.parsedAmount) : "—"}
                         {detail.transportName ? ` · ${detail.transportName}` : ""}
                       </p>
+                      {alreadyUsedLoading[r.id] ? (
+                        <p className={styles.cardHint}>
+                          Buscando coincidencias ya conciliadas…
+                        </p>
+                      ) : null}
+                      {alreadyUsedError[r.id] ? (
+                        <p className={styles.cardHint}>{alreadyUsedError[r.id]}</p>
+                      ) : null}
+                      {(() => {
+                        const alreadyUsed = alreadyUsedForRow(r);
+                        if (!alreadyUsed) return null;
+                        return (
+                          <AlreadyUsedOrderBanner
+                            hit={alreadyUsed}
+                            remittanceId={detail.id}
+                            rowId={r.id}
+                            rowParsedAmount={r.parsedAmount}
+                            remittanceStatus={detail.status}
+                            onApproved={() => {
+                              router.refresh();
+                            }}
+                          />
+                        );
+                      })()}
+
                       {r.matchedOrderId ? (
-                        <>
-                          {r.rowStatus === "auto_matched" &&
-                          r.matchBreakdown?.autoMatchReason === "transport_alias" ? (
-                            <div className={styles.irregularityHint}>
-                              <p>
-                                <strong>Nombre reconocido por alias</strong>
-                              </p>
-                              <p>
-                                {String(r.matchBreakdown.aliasRaw ?? r.rawCustomerNameText)} →
-                                cliente vinculado
-                              </p>
-                              <p className={styles.cardHint}>
-                                Pedido: {r.orderNumberSnapshot ?? "—"}
-                              </p>
-                            </div>
-                          ) : r.rowStatus === "auto_matched" &&
-                            r.matchBreakdown?.autoMatchReason ===
-                              "unique_financial_logistics" ? (
-                            <div className={styles.irregularityHint}>
-                              <p>
-                                <strong>Coincidencia segura</strong>
-                              </p>
-                              <p>Monto, fecha y transporte exactos · único pedido compatible</p>
-                              {r.matchedNameSnapshot ? (
-                                <p className={styles.cardHint}>
-                                  Nombre similar: {r.rawCustomerNameText} → {r.matchedNameSnapshot}
-                                </p>
+                        <div className={styles.linkExplain}>
+                          <p className={styles.linkExplainLabel}>Nombre informado por el transporte</p>
+                          <p className={styles.linkExplainName}>{r.rawCustomerNameText}</p>
+                          <p className={styles.linkExplainArrow} aria-hidden="true">
+                            ↓
+                          </p>
+                          <p className={styles.linkExplainLabel}>Posible vinculación</p>
+                          <p className={styles.linkExplainName}>
+                            {r.orderNumberSnapshot ?? "—"} ·{" "}
+                            {(() => {
+                              const main = parseCandidates(r).find(
+                                (c) => c.orderId === r.matchedOrderId
+                              );
+                              return main
+                                ? candidatePrimaryName(main)
+                                : r.matchedNameSnapshot ?? "Cliente del pedido";
+                            })()}
+                          </p>
+                          <p className={styles.cardHint}>
+                            {r.matchedNameSource === "sub_name"
+                              ? `✓ Sub-nombre reconocido: ${r.matchedNameSnapshot}`
+                              : r.matchBreakdown?.["autoMatchReason"] === "transport_alias" &&
+                                  r.matchBreakdown?.["aliasRaw"]
+                                ? `✓ Nombre reconocido para este cliente en ${
+                                    detail.transportName ?? "transporte"
+                                  }: ${String(r.matchBreakdown["aliasRaw"])}`
+                                : r.matchedNameSnapshot &&
+                                    r.matchedNameSource &&
+                                    r.matchedNameSource !== "titular"
+                                  ? `Coincidencia por: ${r.matchedNameSnapshot}`
+                                  : `Match por ${nameSourceHuman(r.matchedNameSource)}`}
+                            {r.matchBreakdown?.["rescueReason"] ===
+                            "strong_identity_weak_amount"
+                              ? " · ⚠ Revisión obligatoria (monto distinto)"
+                              : ""}
+                          </p>
+                          <p className={styles.cardHint}>
+                            Fecha pedido: {formatDateAr(r.orderSentDateSnapshot)} · Monto pedido:{" "}
+                            {r.expectedAmountSnapshot != null
+                              ? formatPriceAr(r.expectedAmountSnapshot)
+                              : "—"}
+                            {r.transportNameSnapshot
+                              ? ` · ${r.transportNameSnapshot}`
+                              : detail.transportName
+                                ? ` · ${detail.transportName}`
+                                : ""}
+                          </p>
+                          <ul className={styles.signalList}>
+                            <li>
+                              {signalName(namePts, r.matchedNameSource)}
+                              {namePts != null ? (
+                                <span className={styles.signalPts}> {namePts}/40</span>
                               ) : null}
-                              <p className={styles.cardHint}>
-                                Pedido: {r.orderNumberSnapshot ?? "—"}
-                              </p>
-                            </div>
-                          ) : (
-                            <p>
-                              Candidato: <strong>{r.orderNumberSnapshot ?? "—"}</strong> · Match
-                              por {nameSourceLabel(r.matchedNameSource)}
-                            </p>
-                          )}
-                          <ul className={styles.scoreLines}>
-                            <li>Nombre: {namePts ?? "—"}/40</li>
-                            <li>Fecha: {datePts ?? "—"}/30</li>
-                            <li>Monto: {amountPts ?? "—"}/25</li>
-                            <li>Transporte: {transportPts ?? "—"}</li>
+                            </li>
+                            <li>
+                              {signalDate(
+                                datePts,
+                                readBreakdownNum(r.matchBreakdown, ["date", "dayDiff"])
+                              )}
+                              {datePts != null ? (
+                                <span className={styles.signalPts}> {datePts}/30</span>
+                              ) : null}
+                            </li>
+                            <li>
+                              {signalAmount(
+                                amountPts,
+                                r.expectedAmountSnapshot != null &&
+                                  r.parsedAmount != null &&
+                                  Math.abs(r.parsedAmount - r.expectedAmountSnapshot) < 0.005,
+                                r.expectedAmountSnapshot != null && r.parsedAmount != null
+                                  ? Math.round(
+                                      (r.parsedAmount - r.expectedAmountSnapshot) * 100
+                                    ) / 100
+                                  : null
+                              )}
+                              {amountPts != null ? (
+                                <span className={styles.signalPts}> {amountPts}/25</span>
+                              ) : null}
+                            </li>
+                            <li>
+                              {signalTransport(
+                                transportPts,
+                                Boolean(r.transportMismatch),
+                                r.transportNameSnapshot ?? detail.transportName
+                              )}
+                            </li>
                           </ul>
                           {r.matchScore != null ? (
-                            <p className={styles.cardHint}>Score: {r.matchScore}</p>
+                            <p className={styles.cardHint}>Score (secundario): {r.matchScore}</p>
                           ) : null}
                           {r.willCreateIrregularity &&
                           r.expectedAmountSnapshot != null &&
                           r.parsedAmount != null ? (
                             <div className={styles.irregularityHint}>
-                              <p>Esperado: {formatPriceAr(r.expectedAmountSnapshot)}</p>
-                              <p>Informado: {formatPriceAr(r.parsedAmount)}</p>
                               <p>
-                                Diferencia:{" "}
-                                {formatPriceAr(
-                                  Math.round(
-                                    (r.parsedAmount - r.expectedAmountSnapshot) * 100
-                                  ) / 100
-                                )}
+                                Esperado: {formatPriceAr(r.expectedAmountSnapshot)} · Informado:{" "}
+                                {formatPriceAr(r.parsedAmount)}
+                              </p>
+                              <p>
+                                {
+                                  amountDiffLabel(
+                                    Math.round(
+                                      (r.parsedAmount - r.expectedAmountSnapshot) * 100
+                                    ) / 100
+                                  ).long
+                                }
+                              </p>
+                              <p className={styles.cardHint}>
+                                Al confirmar la rendición se generará un reclamo por esta diferencia.
                               </p>
                             </div>
                           ) : null}
-                        </>
+                        </div>
+                      ) : alreadyUsedForRow(r) ? (
+                        <p className={styles.cardHint}>
+                          No hay candidato seleccionable: el pedido más compatible ya está
+                          vinculado (ver aviso arriba). Los TOP de abajo son solo pedidos
+                          disponibles.
+                        </p>
                       ) : (
                         <p>Sin candidato principal.</p>
                       )}
@@ -1025,25 +1312,69 @@ export default function RemittanceDetailView({
                       {candidates.length > 0 ? (
                         <div className={styles.candidateList}>
                           <p className={styles.cardLabel}>TOP candidatos</p>
-                          {candidates.slice(0, 3).map((c, idx) => (
-                            <div key={`${c.orderId}-${idx}`} className={styles.candidateRow}>
-                              <span>
-                                {c.orderNumber ?? c.orderId?.slice(0, 8)} · score {c.score ?? "—"}
-                              </span>
-                              {editableRow &&
-                              c.orderId &&
-                              !(idx === 0 && r.matchedOrderId === c.orderId) ? (
-                                <button
-                                  type="button"
-                                  className={styles.btn}
-                                  disabled={pending}
-                                  onClick={() => onAssign(r, c.orderId!, false)}
-                                >
-                                  Elegir este
-                                </button>
-                              ) : null}
-                            </div>
-                          ))}
+                          {candidates.slice(0, 3).map((c, idx) => {
+                            const diff = candidateAmountDiff(c, r.parsedAmount);
+                            const diffLab = amountDiffLabel(diff);
+                            const matchHint = candidateMatchByHint(c, {
+                              transportName: c.transportName ?? detail.transportName,
+                              aliasRaw:
+                                r.matchedOrderId === c.orderId &&
+                                r.matchBreakdown?.["autoMatchReason"] === "transport_alias"
+                                  ? String(r.matchBreakdown?.["aliasRaw"] ?? "")
+                                  : null,
+                            });
+                            return (
+                              <div key={`${c.orderId}-${idx}`} className={styles.candidateCard}>
+                                <div className={styles.candidateCardMain}>
+                                  <p className={styles.candidateOrder}>
+                                    {c.orderNumber ?? c.orderId?.slice(0, 8) ?? "—"}
+                                  </p>
+                                  <p className={styles.candidateName}>
+                                    {candidatePrimaryName(c)}
+                                  </p>
+                                  {matchHint ? (
+                                    <p className={styles.cardHint}>{matchHint}</p>
+                                  ) : null}
+                                  <p className={styles.cardHint}>
+                                    {formatDateArIso(c.effectiveSentDate)} ·{" "}
+                                    {c.expectedAmount != null
+                                      ? formatPriceAr(c.expectedAmount)
+                                      : "—"}
+                                    {c.transportName ? ` · ${c.transportName}` : ""}
+                                  </p>
+                                  {diff != null && diffLab.kind !== "exact" ? (
+                                    <p className={styles.candidateDiff}>
+                                      {diffLab.short}
+                                      {r.parsedAmount != null ? (
+                                        <span>
+                                          {" "}
+                                          (inf. {formatPriceAr(r.parsedAmount)})
+                                        </span>
+                                      ) : null}
+                                    </p>
+                                  ) : null}
+                                  {c.score != null ? (
+                                    <p className={styles.candidateScore}>Score {c.score}</p>
+                                  ) : null}
+                                </div>
+                                {editableRow &&
+                                c.orderId &&
+                                !c.warningApprovedElsewhere &&
+                                !(idx === 0 && r.matchedOrderId === c.orderId) ? (
+                                  <button
+                                    type="button"
+                                    className={styles.btn}
+                                    disabled={pending}
+                                    onClick={() => onAssign(r, c.orderId!, false)}
+                                  >
+                                    Elegir este
+                                  </button>
+                                ) : c.warningApprovedElsewhere ? (
+                                  <span className={styles.muted}>En otra rendición</span>
+                                ) : null}
+                              </div>
+                            );
+                          })}
                         </div>
                       ) : null}
 
@@ -1080,11 +1411,11 @@ export default function RemittanceDetailView({
                             disabled={pending}
                             onClick={() => {
                               setSearchRowId(r.id);
-                              setSearchQ(r.rawCustomerNameText);
+                              setSearchQ("");
                               setHits([]);
                             }}
                           >
-                            Buscar manualmente
+                            Buscar / asignar pedido
                           </button>
                           <button
                             type="button"
@@ -1096,6 +1427,57 @@ export default function RemittanceDetailView({
                           >
                             Dejar sin identificar
                           </button>
+                          <button
+                            type="button"
+                            className={styles.btn}
+                            disabled={pending}
+                            onClick={() =>
+                              setAdjustmentModal({
+                                row: r,
+                                kind: "paid_other_method",
+                                observation: "",
+                              })
+                            }
+                          >
+                            Registrar incongruencia
+                          </button>
+                        </div>
+                      ) : null}
+
+                      {r.rowStatus === "classified_adjustment" ? (
+                        <div className={styles.infoBox}>
+                          <p>
+                            <strong>Registrado como diferencia del transporte</strong>
+                          </p>
+                          <p>
+                            A favor de {detail.transportName ?? "transporte"}
+                            {r.parsedAmount != null ? ` · ${formatPriceAr(r.parsedAmount)}` : ""}
+                          </p>
+                          {r.activeAdjustmentKind ? (
+                            <p>Motivo: {kindLabel(r.activeAdjustmentKind)}</p>
+                          ) : null}
+                          <p className={styles.muted}>
+                            No es pago COD. Sin asignar / sin identificar / complementary mientras
+                            el ajuste esté activo.
+                          </p>
+                          {canEdit && r.activeAdjustmentId ? (
+                            <button
+                              type="button"
+                              className={styles.btn}
+                              disabled={pending}
+                              onClick={() =>
+                                run(() =>
+                                  voidTransportAdjustment({
+                                    adjustmentId: r.activeAdjustmentId!,
+                                    remittanceId: detail.id,
+                                    reason: "Reclasificación V1",
+                                  })
+                                )
+                              }
+                            >
+                              Anular clasificación
+                            </button>
+                          ) : null}
                         </div>
                       ) : null}
 
@@ -1116,12 +1498,16 @@ export default function RemittanceDetailView({
 
                       {searchRowId === r.id ? (
                         <div className={styles.manualSearch}>
+                          <p className={styles.cardHint}>
+                            Buscá por nombre o por Nº de pedido exacto (ej. A54945).
+                          </p>
                           <div className={styles.manualSearchRow}>
                             <input
                               value={searchQ}
                               onChange={(e) => setSearchQ(e.target.value)}
-                              placeholder="Nombre o N° pedido"
+                              placeholder="Nombre o Nº pedido (ej. A54945)"
                               disabled={pending}
+                              autoCapitalize="characters"
                             />
                             <label className={styles.muted}>
                               <input
@@ -1140,36 +1526,100 @@ export default function RemittanceDetailView({
                               Buscar
                             </button>
                           </div>
-                          {hits.map((h) => (
-                            <div key={h.id} className={styles.candidateRow}>
-                              <span>
-                                {h.orderNumber} · {formatPriceAr(h.expectedAmount)} ·{" "}
-                                {formatDateAr(h.effectiveSentDate)} · {h.transportName ?? "—"}
-                                {h.warnings.length
-                                  ? ` · ⚠ ${h.warnings.join(", ")}`
-                                  : ""}
-                              </span>
-                              <button
-                                type="button"
-                                className={styles.btn}
-                                disabled={pending}
-                                onClick={() => onAssign(r, h.id, false)}
-                              >
-                                Asignar
-                              </button>
-                              <button
-                                type="button"
-                                className={styles.btn}
-                                disabled={pending}
-                                onClick={() =>
-                                  onAssign(r, h.id, false, undefined, undefined, true)
-                                }
-                                title={`Recordar «${r.rawCustomerNameText}» para este cliente en ${detail.transportName ?? "este transporte"}`}
-                              >
-                                Asignar y recordar
-                              </button>
-                            </div>
-                          ))}
+                          {hits.length === 0 && searchQ.trim() ? (
+                            <p className={styles.cardHint}>
+                              Sin resultados todavía — pulsá Buscar.
+                            </p>
+                          ) : null}
+                          {hits.map((h) => {
+                            const displayName =
+                              h.titularName || h.labelName || "Cliente sin nombre";
+                            const diff =
+                              r.parsedAmount != null
+                                ? Math.round((r.parsedAmount - h.expectedAmount) * 100) /
+                                  100
+                                : null;
+                            const diffLab = amountDiffLabel(diff);
+                            return (
+                              <div key={h.id} className={styles.candidateCard}>
+                                <div className={styles.candidateCardMain}>
+                                  <p className={styles.candidateOrder}>
+                                    {h.orderNumber ?? "—"} · {displayName}
+                                  </p>
+                                  {h.customerNumber ? (
+                                    <p className={styles.cardHint}>
+                                      Cliente #{h.customerNumber}
+                                    </p>
+                                  ) : null}
+                                  <p className={styles.cardHint}>
+                                    Fecha pedido: {formatDateAr(h.effectiveSentDate)}
+                                  </p>
+                                  <p className={styles.cardHint}>
+                                    Monto pedido: {formatPriceAr(h.expectedAmount)}
+                                  </p>
+                                  <p className={styles.cardHint}>
+                                    Transporte: {h.transportName ?? "—"}
+                                  </p>
+                                  {r.parsedAmount != null ? (
+                                    <p className={styles.cardHint}>
+                                      Informado: {formatPriceAr(r.parsedAmount)}
+                                      {diff != null && diffLab.kind !== "exact"
+                                        ? ` · Diferencia: ${formatSignedPriceAr(diff)}`
+                                        : diffLab.kind === "exact"
+                                          ? " · Monto exacto"
+                                          : ""}
+                                    </p>
+                                  ) : null}
+                                  {h.assignmentBlocked ? (
+                                    <p className={styles.diffAlert}>
+                                      {h.blockReason === "not_cod"
+                                        ? `No asignable: ${h.warnings[0] ?? "fuera del universo COD"}`
+                                        : h.blockReason === "already_confirmed"
+                                          ? "⚠ Ya rendido — no se puede asignar de nuevo"
+                                          : h.blockReason === "approved_pending"
+                                            ? "⚠ Ya aprobado en otra rendición"
+                                            : `⚠ ${h.warnings.join(" · ") || "No asignable"}`}
+                                      {h.occupancy?.otherRemittanceDate
+                                        ? ` · Rendición ${formatDateAr(h.occupancy.otherRemittanceDate)}`
+                                        : ""}
+                                      {h.occupancy?.otherReportedAmount != null
+                                        ? ` · Informado ${formatPriceAr(h.occupancy.otherReportedAmount)}`
+                                        : ""}
+                                    </p>
+                                  ) : h.warnings.length ? (
+                                    <p className={styles.cardHint}>
+                                      ⚠ {h.warnings.join(", ")}
+                                    </p>
+                                  ) : null}
+                                </div>
+                                {!h.assignmentBlocked ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      className={styles.btn}
+                                      disabled={pending}
+                                      onClick={() => onAssign(r, h.id, false)}
+                                    >
+                                      Asignar
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className={styles.btn}
+                                      disabled={pending}
+                                      onClick={() =>
+                                        onAssign(r, h.id, false, undefined, undefined, true)
+                                      }
+                                      title={`Recordar «${r.rawCustomerNameText}» para este cliente en ${detail.transportName ?? "este transporte"}`}
+                                    >
+                                      Asignar y recordar
+                                    </button>
+                                  </>
+                                ) : (
+                                  <span className={styles.muted}>No asignable</span>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
                       ) : null}
                     </div>
@@ -1238,7 +1688,7 @@ export default function RemittanceDetailView({
                     <input
                       value={searchQ}
                       onChange={(e) => setSearchQ(e.target.value)}
-                      placeholder="Nombre o N° pedido"
+                      placeholder="Nombre o Nº pedido (ej. A54945)"
                       disabled={pending}
                     />
                     <label className={styles.muted}>
@@ -1261,14 +1711,23 @@ export default function RemittanceDetailView({
                   {hits.map((h) => (
                     <div key={h.id} className={styles.candidateRow}>
                       <span>
-                        {h.orderNumber} · {formatPriceAr(h.expectedAmount)} ·{" "}
+                        {h.orderNumber} · {h.titularName || h.labelName || "—"} ·{" "}
+                        {formatPriceAr(h.expectedAmount)} ·{" "}
                         {formatDateAr(h.effectiveSentDate)} · {h.transportName ?? "—"}
-                        {h.warnings.length ? ` · ⚠ ${h.warnings.join(", ")}` : ""}
+                        {h.assignmentBlocked
+                          ? ` · ⛔ ${h.warnings[0] ?? "No asignable"}`
+                          : h.warnings.length
+                            ? ` · ⚠ ${h.warnings.join(", ")}`
+                            : ""}
                       </span>
                       <button
                         type="button"
                         className={styles.btn}
-                        disabled={pending || h.id === correctModal.row.matchedOrderId}
+                        disabled={
+                          pending ||
+                          h.assignmentBlocked ||
+                          h.id === correctModal.row.matchedOrderId
+                        }
                         onClick={() =>
                           setCorrectModal({
                             ...correctModal,
@@ -1277,7 +1736,7 @@ export default function RemittanceDetailView({
                           })
                         }
                       >
-                        Elegir
+                        {h.assignmentBlocked ? "No asignable" : "Elegir"}
                       </button>
                     </div>
                   ))}
@@ -1474,6 +1933,105 @@ export default function RemittanceDetailView({
                 onClick={() => runVoid()}
               >
                 Anular rendición
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {adjustmentModal ? (
+        <div className={styles.modalBackdrop} role="dialog" aria-modal="true" aria-labelledby="adj-modal-title">
+          <div className={styles.modalCard}>
+            <div className={styles.modalHeader}>
+              <h3 id="adj-modal-title">Registrar incongruencia</h3>
+            </div>
+            <div className={styles.modalBody}>
+              <p>
+                <strong>{adjustmentModal.row.rawCustomerNameText}</strong>
+                {adjustmentModal.row.parsedAmount != null
+                  ? ` · ${formatPriceAr(adjustmentModal.row.parsedAmount)}`
+                  : ""}
+              </p>
+              <p className={styles.cardHint}>
+                Se registrará a favor de {detail.transportName ?? "el transporte"}. No modifica el
+                pedido ni lo marca como Contra Reembolso.
+              </p>
+              <label className={styles.cardLabel} htmlFor="adj-kind" style={{ display: "block", marginTop: 12 }}>
+                Tipo
+              </label>
+              <select
+                id="adj-kind"
+                value={adjustmentModal.kind}
+                disabled={pending}
+                onChange={(e) =>
+                  setAdjustmentModal({
+                    ...adjustmentModal,
+                    kind: e.target.value as AdjustmentKind,
+                  })
+                }
+                style={{ width: "100%", marginTop: 6, padding: "8px 10px" }}
+              >
+                {ADJUSTMENT_KIND_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+              <label
+                className={styles.cardLabel}
+                htmlFor="adj-obs"
+                style={{ display: "block", marginTop: 12 }}
+              >
+                Observación (opcional)
+              </label>
+              <textarea
+                id="adj-obs"
+                value={adjustmentModal.observation}
+                onChange={(e) =>
+                  setAdjustmentModal({
+                    ...adjustmentModal,
+                    observation: e.target.value,
+                  })
+                }
+                rows={3}
+                disabled={pending}
+                placeholder="Ej: pedido Pagado / cliente ajeno / error de planilla"
+                style={{ width: "100%", marginTop: 6 }}
+              />
+            </div>
+            <div className={styles.modalFooter}>
+              <button
+                type="button"
+                className={styles.btn}
+                disabled={pending}
+                onClick={() => setAdjustmentModal(null)}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className={`${styles.btn} ${styles.btnPrimary}`}
+                disabled={pending}
+                onClick={() => {
+                  const row = adjustmentModal.row;
+                  const kind = adjustmentModal.kind;
+                  const observation = adjustmentModal.observation;
+                  setAdjustmentModal(null);
+                  run(() =>
+                    registerTransportAdjustment({
+                      remittanceId: detail.id,
+                      rowId: row.id,
+                      kind,
+                      observation,
+                      orderId: row.matchedOrderId,
+                    })
+                  );
+                }}
+              >
+                Registrar a favor del transporte
+                {adjustmentModal.row.parsedAmount != null
+                  ? ` · ${formatPriceAr(adjustmentModal.row.parsedAmount)}`
+                  : ""}
               </button>
             </div>
           </div>

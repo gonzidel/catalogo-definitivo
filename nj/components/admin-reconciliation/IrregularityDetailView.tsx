@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { formatPriceAr } from "@/lib/orders/domain";
 import { updateIrregularityStatus } from "@/lib/reconciliation/actions";
 import type { IrregularityDetail } from "@/lib/reconciliation/irregularity-queries";
+import { amountDiffLabel } from "@/lib/reconciliation/match-presentation";
 import styles from "@/app/admin/conciliacion-reembolso/conciliacion.module.css";
 
 function formatDateAr(iso: string | null): string {
@@ -140,7 +141,10 @@ export default function IrregularityDetailView({
           Reclamo · {detail.orderNumber ?? detail.orderId.slice(0, 8)}
         </h1>
         <p className={styles.subtitle}>
-          {detail.customerName ?? "Sin cliente"} · {detail.transportName ?? "—"}
+          {detail.customerName ?? "Sin cliente"}
+          {detail.customerNumber ? ` · #${detail.customerNumber}` : ""}
+          {" · "}
+          {detail.transportName ?? "—"}
         </p>
       </header>
 
@@ -160,11 +164,7 @@ export default function IrregularityDetailView({
 
       <div className={styles.card} style={{ marginBottom: 14 }}>
         <p className={styles.cardMeta}>
-          Diferencia:{" "}
-          <strong className={detail.amountDiff !== 0 ? styles.diffAlert : undefined}>
-            {detail.amountDiff > 0 ? "+" : ""}
-            {formatPriceAr(detail.amountDiff)}
-          </strong>
+          {amountDiffLabel(detail.amountDiff).long}
           {detail.amountDiffPct != null ? ` · ${detail.amountDiffPct}%` : ""}
         </p>
         <p className={styles.cardMeta}>

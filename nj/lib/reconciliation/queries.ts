@@ -169,6 +169,7 @@ async function loadLocalOrderSourceIds(supabase: SupabaseClient): Promise<Set<st
       .from("local_orders")
       .select("source_order_id")
       .not("source_order_id", "is", null)
+      .order("source_order_id", { ascending: true })
       .range(from, to);
     return { data: r.data, error: r.error };
   });
@@ -185,10 +186,21 @@ async function loadConfirmedMeta(
   }>(async (from, to) => {
     const r = await supabase
       .from("cod_remittance_rows")
-      .select("id, matched_order_id, row_status")
+      .select("id, matched_order_id, row_status, assignment_role")
       .in("row_status", ["confirmed_matched", "confirmed_with_irregularity"])
       .not("matched_order_id", "is", null)
+      .order("id", { ascending: true })
       .range(from, to);
+    if (r.error && /assignment_role/i.test(r.error.message)) {
+      const fallback = await supabase
+        .from("cod_remittance_rows")
+        .select("id, matched_order_id, row_status")
+        .in("row_status", ["confirmed_matched", "confirmed_with_irregularity"])
+        .not("matched_order_id", "is", null)
+        .order("id", { ascending: true })
+        .range(from, to);
+      return { data: fallback.data, error: fallback.error };
+    }
     return { data: r.data, error: r.error };
   });
 
@@ -216,6 +228,15 @@ async function loadConfirmedMeta(
 
   const map = new Map<string, ConfirmedRowMeta>();
   for (const r of rows) {
+    const existing = map.get(r.matched_order_id);
+    const role = String(
+      (r as { assignment_role?: string | null }).assignment_role || "primary"
+    );
+    // Post-292: si hay primary + supplementary, el KPI del pedido usa la primary.
+    if (existing && role === "supplementary") continue;
+    if (existing && role === "primary") {
+      // primary pisa cualquier entrada previa
+    }
     map.set(r.matched_order_id, {
       orderId: r.matched_order_id,
       rowStatus: r.row_status as ConfirmedRowMeta["rowStatus"],
@@ -232,6 +253,7 @@ async function loadApprovedWaitingOrderIds(supabase: SupabaseClient): Promise<Se
       .select("matched_order_id")
       .eq("row_status", "approved_pending_confirmation")
       .not("matched_order_id", "is", null)
+      .order("id", { ascending: true })
       .range(from, to);
     return { data: r.data, error: r.error };
   });
@@ -248,6 +270,7 @@ async function loadOpenIrregularityDiffs(supabase: SupabaseClient): Promise<{
       .from("cod_irregularities")
       .select("amount_diff")
       .in("status", ["open", "in_review"])
+      .order("id", { ascending: true })
       .range(from, to);
     return { data: r.data, error: r.error };
   });
@@ -279,6 +302,8 @@ async function loadTransports(supabase: SupabaseClient): Promise<Map<string, str
 
 async function loadCodSentOrders(supabase: SupabaseClient): Promise<OrderRow[]> {
   return fetchAllPages<OrderRow>(async (from, to) => {
+    // ORDER BY id obligatorio: sin orden estable, .range() puede devolver
+    // el mismo pedido en dos páginas → React "two children with the same key".
     const r = await supabase
       .from("orders")
       .select(
@@ -299,6 +324,7 @@ async function loadCodSentOrders(supabase: SupabaseClient): Promise<OrderRow[]> 
       )
       .eq("status", "sent")
       .eq("payment_method", COD_PAYMENT_METHOD)
+      .order("id", { ascending: true })
       .range(from, to);
     return { data: r.data as OrderRow[] | null, error: r.error };
   });
@@ -376,12 +402,13 @@ export async function loadReconciliationDashboard(
     confirmed: ConfirmedRowMeta | null;
   };
 
-  const universe: UniverseItem[] = [];
+  const universeById = new Map<string, UniverseItem>();
   const monthSet = new Set<string>();
   const transportCounts = new Map<string, { id: string; name: string; count: number }>();
 
   for (const o of orders) {
     if (localOrderIds.has(o.id)) continue;
+    if (universeById.has(o.id)) continue; // defensa ante duplicados de paginación
     const resolved = resolveEffectiveSent(o.sent_at, o.closed_at);
     if (!resolved) continue;
     if (resolved.effectiveSentDate < startDate) continue;
@@ -402,7 +429,7 @@ export async function loadReconciliationDashboard(
     const confirmed = confirmedMeta.get(o.id) ?? null;
     const isApprovedWaiting = !confirmed && approvedWaitingIds.has(o.id);
 
-    universe.push({
+    universeById.set(o.id, {
       id: o.id,
       orderNumber: o.order_number,
       amount: toNumber(o.total_amount),
@@ -430,6 +457,8 @@ export async function loadReconciliationDashboard(
       }
     }
   }
+
+  const universe = [...universeById.values()];
 
   const filteredUniverse = universe.filter((u) => {
     if (filters.month !== "all" && monthKey(u.effectiveSentDate) !== filters.month) {

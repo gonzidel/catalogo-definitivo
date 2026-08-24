@@ -39,6 +39,11 @@ export type CodCandidateOrder = {
   id: string;
   orderNumber: string | null;
   customerId: string | null;
+  /** Titular del cliente (UX). No es snapshot financiero. */
+  customerDisplayName: string | null;
+  customerNumber: string | null;
+  /** Label del pedido (UX). */
+  labelCustomerName: string | null;
   expectedAmount: number;
   effectiveSentDate: string; // YYYY-MM-DD
   sentDateOrigin: SentDateOrigin;
@@ -87,6 +92,10 @@ export type CandidateScore = {
   orderId: string;
   orderNumber: string | null;
   customerId: string | null;
+  /** Titular real del cliente (metadata UX; no cambia scoring). */
+  customerDisplayName: string | null;
+  customerNumber: string | null;
+  labelCustomerName: string | null;
   score: number;
   name: NameScoreDetail;
   date: DateScoreDetail;
@@ -264,6 +273,9 @@ export function scoreCandidateAgainstRow(
     orderId: candidate.id,
     orderNumber: candidate.orderNumber,
     customerId: candidate.customerId,
+    customerDisplayName: candidate.customerDisplayName,
+    customerNumber: candidate.customerNumber,
+    labelCustomerName: candidate.labelCustomerName,
     score,
     name,
     date,
@@ -282,6 +294,26 @@ export function scoreCandidateAgainstRow(
 
 function nameQualityStrong(name: NameScoreDetail): boolean {
   return name.points >= 35;
+}
+
+/**
+ * Identidad usable (parcial+) + fecha exacta + etapa A, con monto NO exacto.
+ * Cubre score&lt;50 típico: name 12 + fecha 30 + monto 0 + transporte 5 = 47.
+ * Con name≥25 el score ya sería ≥60 en etapa A; el rescate apunta al hueco parcial.
+ * Nunca habilita auto_matched.
+ */
+export function isStrongIdentityWeakAmountReview(input: {
+  best: CandidateScore | null;
+  usedStageB: boolean;
+}): boolean {
+  const { best, usedStageB } = input;
+  if (!best || usedStageB) return false;
+  if (best.transport.stage !== "A") return false;
+  if (best.transport.mismatch) return false;
+  if (best.date.dayDiff !== 0) return false;
+  if (best.name.points < 12) return false;
+  if (best.amount.exact) return false;
+  return true;
 }
 
 /**
@@ -369,6 +401,38 @@ export function classifyRowFromCandidates(
         aliasHit,
       });
     }
+
+    // Rescate conservador: identidad usable + fecha exacta + mismo transporte,
+    // aunque el monto lejos deje el score < 50. Nunca auto-match (solo needs_review).
+    if (isStrongIdentityWeakAmountReview({ best, usedStageB })) {
+      return {
+        rowId: row.id,
+        rowIndex: row.rowIndex,
+        rowStatus: "needs_review",
+        confidenceLabel: "revision",
+        autoMatchReason: null,
+        matchedOrderId: best.orderId,
+        matchScore: best.score,
+        matchBreakdown: {
+          ...buildBreakdown(best, second, "needs_review", usedStageB, false),
+          rescueReason: "strong_identity_weak_amount",
+          explanation:
+            "Nombre y fecha fuertes con monto distinto — revisión obligatoria (posible pago parcial / error de digitación).",
+        },
+        matchCandidates: top3,
+        matchedViaBroadenedSearch: usedStageB || best.transport.stage === "B",
+        transportMismatch: best.transport.mismatch,
+        willCreateIrregularity: !best.amount.exact,
+        orderNumberSnapshot: best.orderNumber,
+        matchedNameSnapshot: best.matchedNameSnapshot,
+        matchedNameSource: best.matchedNameSource,
+        transportNameSnapshot: best.transportName,
+        orderSentDateSnapshot: best.effectiveSentDate,
+        orderSentDateOrigin: best.sentDateOrigin,
+        expectedAmountSnapshot: best.expectedAmount,
+      };
+    }
+
     return {
       rowId: row.id,
       rowIndex: row.rowIndex,
@@ -509,10 +573,10 @@ function buildAutoMatchedResult(input: {
     transportMismatch: false,
     willCreateIrregularity: false,
     orderNumberSnapshot: chosen.orderNumber,
-    matchedNameSnapshot:
-      reason === "transport_alias" && aliasHit
-        ? aliasHit.rawAlias
-        : chosen.matchedNameSnapshot,
+    // matched_name_* debe ser una identidad real del pedido (label/titular/sub_name).
+    // El alias de transporte va en match_breakdown; no puede ir como snapshot
+    // (rpc_cod_save_analysis → matched_name_not_in_order_identities).
+    matchedNameSnapshot: chosen.matchedNameSnapshot,
     matchedNameSource: chosen.matchedNameSource,
     transportNameSnapshot: chosen.transportName,
     orderSentDateSnapshot: chosen.effectiveSentDate,

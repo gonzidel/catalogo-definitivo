@@ -195,7 +195,7 @@ export default function UnassignedPaymentsPanel({
                     <input
                       value={searchQ}
                       onChange={(e) => setSearchQ(e.target.value)}
-                      placeholder="Nombre o N° pedido"
+                      placeholder="Nombre o Nº pedido (ej. A54945)"
                       disabled={pending}
                     />
                     <label className={styles.muted}>
@@ -219,26 +219,34 @@ export default function UnassignedPaymentsPanel({
                   {hits.map((h) => (
                     <div key={h.id} className={styles.candidateRow}>
                       <span>
-                        {h.orderNumber} · {formatPriceAr(h.expectedAmount)} ·{" "}
+                        {h.orderNumber} · {h.titularName || h.labelName || "—"}
+                        {h.customerNumber ? ` · #${h.customerNumber}` : ""} ·{" "}
+                        {formatPriceAr(h.expectedAmount)} ·{" "}
                         {formatDateAr(h.effectiveSentDate)} · {h.transportName ?? "—"}
-                        {h.warnings.length ? ` · ⚠ ${h.warnings.join(", ")}` : ""}
+                        {h.assignmentBlocked
+                          ? ` · ⛔ ${h.warnings[0] ?? "No asignable"}`
+                          : h.warnings.length
+                            ? ` · ⚠ ${h.warnings.join(", ")}`
+                            : ""}
                       </span>
                       <button
                         type="button"
                         className={`${styles.btn} ${styles.btnPrimary}`}
-                        disabled={pending}
+                        disabled={pending || h.assignmentBlocked}
                         onClick={() => openConfirm(row, h, false)}
                       >
-                        Asignar pago
+                        {h.assignmentBlocked ? "No asignable" : "Asignar pago"}
                       </button>
-                      <button
-                        type="button"
-                        className={styles.btn}
-                        disabled={pending}
-                        onClick={() => openConfirm(row, h, true)}
-                      >
-                        Asignar y recordar
-                      </button>
+                      {!h.assignmentBlocked ? (
+                        <button
+                          type="button"
+                          className={styles.btn}
+                          disabled={pending}
+                          onClick={() => openConfirm(row, h, true)}
+                        >
+                          Asignar y recordar
+                        </button>
+                      ) : null}
                     </div>
                   ))}
                 </div>

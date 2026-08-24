@@ -8,7 +8,15 @@
   ],
   "rewrites": [
     {
-      "source": "/((?!catalogo(?:/|$)).*)",
+      "source": "/nj",
+      "destination": "https://nj-gonzidel.vercel.app/nj"
+    },
+    {
+      "source": "/nj/:path*",
+      "destination": "https://nj-gonzidel.vercel.app/nj/:path*"
+    },
+    {
+      "source": "/((?!catalogo(?:/|$)|nj(?:/|$)).*)",
       "destination": "https://catalogo-fyl-test.web.app/$1"
     }
   ]

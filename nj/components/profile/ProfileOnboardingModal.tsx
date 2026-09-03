@@ -340,10 +340,9 @@ export default function ProfileOnboardingModal({
             id="nj-pom-province"
             labelledBy="nj-pom-province-label"
             value={province}
-            placeholder="Elegí provincia…"
+            placeholder="Escribí para buscar provincia…"
             options={provinceOptions}
             searchable
-            searchPlaceholder="Escribí para buscar provincia…"
             onChange={(value) => {
               setProvince(value);
               setCity("");
@@ -359,11 +358,12 @@ export default function ProfileOnboardingModal({
             id="nj-pom-city"
             labelledBy="nj-pom-city-label"
             value={isCustomCity ? CUSTOM_CITY : city}
-            placeholder={province ? "Elegí localidad…" : "Primero elegí provincia"}
+            placeholder={
+              province ? "Escribí para buscar localidad…" : "Primero elegí provincia"
+            }
             disabled={!province}
             options={cityOptions}
             searchable
-            searchPlaceholder="Escribí para buscar localidad…"
             onChange={(value) => {
               if (value === CUSTOM_CITY) {
                 setIsCustomCity(true);

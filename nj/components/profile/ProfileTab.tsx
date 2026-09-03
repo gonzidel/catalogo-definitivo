@@ -5,43 +5,35 @@ import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import DropdownSelect from "@/components/ui/DropdownSelect";
 import ProfileShippingBlock from "./ProfileShippingBlock";
 import { linkOrCreateCustomerIdentity } from "@/lib/supabase/link-customer-identity";
+import { PROVINCE_CITIES_DATA } from "@/lib/data/argentina-cities-data";
 
-// ─── Datos de provincias/ciudades ─────────────────────────────────────────────
+// Mismo dataset que onboarding/admin (incluye Barrancas, etc.)
+const PROVINCE_CITIES = PROVINCE_CITIES_DATA as Record<string, string[]>;
+const ARGENTINA_PROVINCES = Object.keys(PROVINCE_CITIES).sort((a, b) =>
+  a.localeCompare(b, "es")
+);
 
-const ARGENTINA_PROVINCES = [
-  "Buenos Aires", "Catamarca", "Chaco", "Chubut", "Córdoba", "Corrientes",
-  "Entre Ríos", "Formosa", "Jujuy", "La Pampa", "La Rioja", "Mendoza",
-  "Misiones", "Neuquén", "Río Negro", "Salta", "San Juan", "San Luis",
-  "Santa Cruz", "Santa Fe", "Santiago del Estero", "Tierra del Fuego",
-  "Tucumán", "CABA",
-];
+function normalizeGeoKey(text: string) {
+  return String(text || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
 
-const PROVINCE_CITIES: Record<string, string[]> = {
-  "Buenos Aires": ["La Plata", "Mar del Plata", "Bahía Blanca", "Tandil", "Quilmes", "Lanús", "Banfield", "Lomas de Zamora", "Avellaneda", "Merlo", "San Miguel", "Moreno", "Morón", "Florencio Varela", "Berazategui", "San Isidro", "Tigre", "Pilar", "Malvinas Argentinas", "Esteban Echeverría"],
-  "Catamarca": ["San Fernando del Valle de Catamarca", "Valle Viejo", "Fray Mamerto Esquiú", "San Isidro"],
-  "Chaco": ["Resistencia", "Barranqueras", "Villa Ángela", "Presidencia Roque Sáenz Peña", "Charata", "General San Martín", "Juan José Castelli", "Machagai", "Quitilipi", "Villa Berthet"],
-  "Chubut": ["Rawson", "Comodoro Rivadavia", "Trelew", "Puerto Madryn", "Esquel", "Sarmiento", "Gaiman"],
-  "Córdoba": ["Córdoba", "Villa Carlos Paz", "Río Cuarto", "Villa María", "San Francisco", "Villa Allende", "Jesús María", "Unquillo", "La Calera", "Marcos Juárez"],
-  "Corrientes": ["Corrientes", "Goya", "Mercedes", "Curuzú Cuatiá", "Bella Vista", "Paso de los Libres", "Monte Caseros", "Esquina"],
-  "Entre Ríos": ["Paraná", "Concordia", "Gualeguaychú", "Concepción del Uruguay", "Villaguay", "Colón", "Nogoyá", "Federación"],
-  "Formosa": ["Formosa", "Clorinda", "Pirané", "El Colorado", "Comandante Fontana", "Laguna Naick Neck"],
-  "Jujuy": ["San Salvador de Jujuy", "Palpalá", "Perico", "San Pedro de Jujuy", "La Quiaca", "Humahuaca"],
-  "La Pampa": ["Santa Rosa", "General Pico", "Toay", "Realicó", "Eduardo Castex", "General Acha"],
-  "La Rioja": ["La Rioja", "Chilecito", "Arauco", "Aminga", "Chamical"],
-  "Mendoza": ["Mendoza", "San Rafael", "Godoy Cruz", "Luján de Cuyo", "Maipú", "Guaymallén", "Las Heras", "Rivadavia", "Tunuyán", "San Martín"],
-  "Misiones": ["Posadas", "Oberá", "Eldorado", "Puerto Iguazú", "Leandro N. Alem", "Apóstoles", "Montecarlo"],
-  "Neuquén": ["Neuquén", "Cutral Có", "Plottier", "Zapala", "San Martín de los Andes", "Villa La Angostura"],
-  "Río Negro": ["Viedma", "Bariloche", "General Roca", "Cipolletti", "Allen", "Cinco Saltos", "Villa Regina"],
-  "Salta": ["Salta", "Orán", "Tartagal", "Cafayate", "Metán", "Rosario de la Frontera", "Embarcación", "Güemes", "Cerrillos"],
-  "San Juan": ["San Juan", "Rawson", "Rivadavia", "Santa Lucía", "Pocito", "Chimbas", "Caucete"],
-  "San Luis": ["San Luis", "Villa Mercedes", "Merlo", "La Toma", "Justo Daract"],
-  "Santa Cruz": ["Río Gallegos", "Caleta Olivia", "El Calafate", "Puerto Deseado", "Pico Truncado"],
-  "Santa Fe": ["Santa Fe", "Rosario", "Venado Tuerto", "Rafaela", "Reconquista", "Santo Tomé", "Villa Gobernador Gálvez", "San Lorenzo"],
-  "Santiago del Estero": ["Santiago del Estero", "La Banda", "Fernández", "Frías", "Termas de Río Hondo"],
-  "Tierra del Fuego": ["Ushuaia", "Río Grande", "Tolhuin"],
-  "Tucumán": ["San Miguel de Tucumán", "Yerba Buena", "Tafí Viejo", "Concepción", "Banda del Río Salí", "Alderetes"],
-  "CABA": ["Ciudad Autónoma de Buenos Aires"],
-};
+/** Resuelve "Neuquén" → "Neuquen" (clave del dataset). */
+function resolveProvinceKey(province: string): string | null {
+  const raw = String(province || "").trim();
+  if (!raw) return null;
+  if (raw in PROVINCE_CITIES) return raw;
+  const n = normalizeGeoKey(raw);
+  return ARGENTINA_PROVINCES.find((k) => normalizeGeoKey(k) === n) ?? null;
+}
+
+function citiesForProvinceName(province: string): string[] {
+  const key = resolveProvinceKey(province);
+  return key ? PROVINCE_CITIES[key] ?? [] : [];
+}
 
 const CUSTOM_CITY_VALUE = "__otra__";
 
@@ -183,12 +175,12 @@ export default function ProfileTab({ customer, userEmail, userId, onLogout, logg
   const [editingLocation, setEditingLocation] = useState(false);
 
   const savedCityInList = customer?.province
-    ? (PROVINCE_CITIES[customer.province] ?? []).includes(customer?.city ?? "")
+    ? citiesForProvinceName(customer.province).includes(customer?.city ?? "")
     : false;
 
   const [location, setLocation] = useState({
     address: customer?.address ?? "",
-    province: customer?.province ?? "",
+    province: resolveProvinceKey(customer?.province ?? "") ?? (customer?.province ?? ""),
     city: customer?.city ?? "",
   });
   const [locationDraft, setLocationDraft] = useState(location);
@@ -200,7 +192,7 @@ export default function ProfileTab({ customer, userEmail, userId, onLogout, logg
   const [locationError, setLocationError] = useState<string | null>(null);
   const [locationOk, setLocationOk] = useState(false);
 
-  const citiesForProvince = locationDraft.province ? (PROVINCE_CITIES[locationDraft.province] ?? []) : [];
+  const citiesForProvince = citiesForProvinceName(locationDraft.province);
   const effectiveCityDraft = isCustomCityDraft ? customCityDraft : locationDraft.city;
   const effectiveCity = isCustomCity ? customCity : location.city;
   const provinceOptions = useMemo(
@@ -228,12 +220,14 @@ export default function ProfileTab({ customer, userEmail, userId, onLogout, logg
     setPersonal(nextPersonal);
     setPersonalDraft(nextPersonal);
 
-    const cityInList = customer?.province
-      ? (PROVINCE_CITIES[customer.province] ?? []).includes(customer?.city ?? "")
+    const resolvedProvince =
+      resolveProvinceKey(customer?.province ?? "") ?? (customer?.province ?? "");
+    const cityInList = resolvedProvince
+      ? citiesForProvinceName(resolvedProvince).includes(customer?.city ?? "")
       : false;
     const nextLocation = {
       address: customer?.address ?? "",
-      province: customer?.province ?? "",
+      province: resolvedProvince,
       city: customer?.city ?? "",
     };
     setLocation(nextLocation);
@@ -280,7 +274,8 @@ export default function ProfileTab({ customer, userEmail, userId, onLogout, logg
   }
 
   function handleProvinceChange(province: string) {
-    setLocationDraft((f) => ({ ...f, province, city: "" }));
+    const canonical = resolveProvinceKey(province) ?? province;
+    setLocationDraft((f) => ({ ...f, province: canonical, city: "" }));
     setIsCustomCityDraft(false);
     setCustomCityDraft("");
   }
@@ -502,11 +497,10 @@ export default function ProfileTab({ customer, userEmail, userId, onLogout, logg
               <DropdownSelect
                 labelledBy="profile-province-label"
                 value={locationDraft.province}
-                placeholder="Seleccioná una provincia"
+                placeholder="Escribí para buscar provincia…"
                 options={provinceOptions}
                 onChange={handleProvinceChange}
                 searchable
-                searchPlaceholder="Escribí para buscar provincia…"
               />
             </div>
             {locationDraft.province && (
@@ -517,11 +511,10 @@ export default function ProfileTab({ customer, userEmail, userId, onLogout, logg
                     <DropdownSelect
                       labelledBy="profile-city-label"
                       value={isCustomCityDraft ? CUSTOM_CITY_VALUE : (locationDraft.city || "")}
-                      placeholder="Seleccioná una localidad"
+                      placeholder="Escribí para buscar localidad…"
                       options={cityOptions}
                       onChange={handleCitySelectChange}
                       searchable
-                      searchPlaceholder="Escribí para buscar localidad…"
                     />
                     {isCustomCityDraft && (
                       <input type="text" value={customCityDraft}

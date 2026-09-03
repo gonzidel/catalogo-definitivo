@@ -9938,6 +9938,65 @@ a.order-card__wa-btn:active {
   text-align: center;
 }
 
+.fyl-dropdown__combobox {
+  position: relative;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.fyl-dropdown__input {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-height: 44px;
+  padding: 10px 36px 10px 12px;
+  border: 1px solid #ddd;
+  border-radius: 10px;
+  background: #fff;
+  color: #333;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 550;
+  text-align: left;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.fyl-dropdown.is-placeholder .fyl-dropdown__input {
+  color: #888;
+  font-weight: 450;
+}
+
+.fyl-dropdown.is-disabled .fyl-dropdown__input,
+.fyl-dropdown__input:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+  background: #f8f8f8;
+}
+
+.fyl-dropdown.is-open .fyl-dropdown__input {
+  border-color: #cd844d;
+  box-shadow: 0 0 0 2px rgba(205, 132, 77, 0.12);
+}
+
+.fyl-dropdown__input:focus {
+  outline: none;
+  border-color: #cd844d;
+  box-shadow: 0 0 0 2px rgba(205, 132, 77, 0.12);
+}
+
+.fyl-dropdown__combobox .fyl-dropdown__chevron {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.fyl-dropdown.is-open .fyl-dropdown__combobox .fyl-dropdown__chevron {
+  transform: translateY(-50%) rotate(180deg);
+}
+
 .fyl-dropdown__value {
   min-width: 0;
   flex: 1;

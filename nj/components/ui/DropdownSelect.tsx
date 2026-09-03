@@ -17,7 +17,7 @@ type DropdownSelectProps = {
   labelledBy?: string;
   ariaLabel?: string;
   className?: string;
-  /** Muestra input para filtrar opciones (como admin provincia/ciudad). */
+  /** Escribís en el mismo campo y se filtra la lista (como admin). */
   searchable?: boolean;
   searchPlaceholder?: string;
 };
@@ -32,8 +32,7 @@ function normalizeForSearch(text: string) {
 
 /**
  * Barra + desplegable custom (mobile-first).
- * Reemplaza <select> nativo para que el menú no se salga del viewport.
- * Con `searchable` permite escribir para filtrar (provincia/localidad).
+ * Con `searchable`, el trigger es un input: escribís ahí y se filtra.
  */
 export default function DropdownSelect({
   value,
@@ -46,21 +45,20 @@ export default function DropdownSelect({
   ariaLabel,
   className,
   searchable = false,
-  searchPlaceholder = "Escribí para buscar…",
+  searchPlaceholder,
 }: DropdownSelectProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
-  const searchRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const autoId = useId();
   const listboxId = id ? `${id}-listbox` : `${autoId}-listbox`;
-  const searchId = id ? `${id}-search` : `${autoId}-search`;
 
   const selected = options.find((o) => o.value === value) ?? null;
-  const display = selected?.label || placeholder;
+  const inputPlaceholder = searchPlaceholder || placeholder;
 
   const filteredOptions = useMemo(() => {
-    if (!searchable) return options;
+    if (!searchable || !open) return options;
     const q = normalizeForSearch(query);
     if (!q) return options;
     return options.filter((option) => {
@@ -68,13 +66,17 @@ export default function DropdownSelect({
       const val = normalizeForSearch(option.value);
       return label.includes(q) || val.includes(q);
     });
-  }, [options, query, searchable]);
+  }, [options, query, searchable, open]);
 
+  // Si cambia el value externo y no estamos editando, sincronizar texto
   useEffect(() => {
     if (!open) {
-      setQuery("");
-      return;
+      setQuery(selected?.label || "");
     }
+  }, [selected?.label, open]);
+
+  useEffect(() => {
+    if (!open) return;
 
     function onPointerDown(event: MouseEvent | TouchEvent) {
       const root = rootRef.current;
@@ -86,34 +88,37 @@ export default function DropdownSelect({
     }
 
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key === "Escape") {
+        setOpen(false);
+        inputRef.current?.blur();
+      }
     }
 
     document.addEventListener("mousedown", onPointerDown);
     document.addEventListener("touchstart", onPointerDown, { passive: true });
     document.addEventListener("keydown", onKeyDown);
-
-    if (searchable) {
-      // Enfocar el buscador al abrir (móvil: teclado listo para filtrar)
-      const t = window.setTimeout(() => searchRef.current?.focus(), 10);
-      return () => {
-        window.clearTimeout(t);
-        document.removeEventListener("mousedown", onPointerDown);
-        document.removeEventListener("touchstart", onPointerDown);
-        document.removeEventListener("keydown", onKeyDown);
-      };
-    }
-
     return () => {
       document.removeEventListener("mousedown", onPointerDown);
       document.removeEventListener("touchstart", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [open, searchable]);
+  }, [open]);
 
   useEffect(() => {
     if (disabled) setOpen(false);
   }, [disabled]);
+
+  function pickOption(option: DropdownOption) {
+    setOpen(false);
+    setQuery(option.label);
+    if (option.value !== value) onChange(option.value);
+  }
+
+  function openAndEdit() {
+    if (disabled) return;
+    setQuery(selected?.label || "");
+    setOpen(true);
+  }
 
   return (
     <div
@@ -123,66 +128,76 @@ export default function DropdownSelect({
         "fyl-dropdown",
         open ? "is-open" : "",
         disabled ? "is-disabled" : "",
-        !selected ? "is-placeholder" : "",
+        !selected && !query ? "is-placeholder" : "",
         searchable ? "is-searchable" : "",
         className || "",
       ]
         .filter(Boolean)
         .join(" ")}
     >
-      <button
-        type="button"
-        className="fyl-dropdown__trigger"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-controls={listboxId}
-        aria-labelledby={labelledBy}
-        aria-label={labelledBy ? undefined : ariaLabel}
-        disabled={disabled}
-        onClick={() => {
-          if (disabled) return;
-          setOpen((prev) => !prev);
-        }}
-      >
-        <span className="fyl-dropdown__value">{display}</span>
-        <span className="fyl-dropdown__chevron" aria-hidden="true">
-          ▾
-        </span>
-      </button>
+      {searchable ? (
+        <div className="fyl-dropdown__combobox">
+          <input
+            ref={inputRef}
+            type="text"
+            className="fyl-dropdown__input"
+            value={open ? query : selected?.label || query || ""}
+            placeholder={inputPlaceholder}
+            disabled={disabled}
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="none"
+            spellCheck={false}
+            role="combobox"
+            aria-expanded={open}
+            aria-controls={listboxId}
+            aria-autocomplete="list"
+            aria-labelledby={labelledBy}
+            aria-label={labelledBy ? undefined : ariaLabel}
+            onFocus={openAndEdit}
+            onClick={openAndEdit}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              if (!open) setOpen(true);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                const first = filteredOptions[0];
+                if (first) pickOption(first);
+              }
+            }}
+          />
+          <span className="fyl-dropdown__chevron" aria-hidden="true">
+            ▾
+          </span>
+        </div>
+      ) : (
+        <button
+          type="button"
+          className="fyl-dropdown__trigger"
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          aria-controls={listboxId}
+          aria-labelledby={labelledBy}
+          aria-label={labelledBy ? undefined : ariaLabel}
+          disabled={disabled}
+          onClick={() => {
+            if (disabled) return;
+            setOpen((prev) => !prev);
+          }}
+        >
+          <span className="fyl-dropdown__value">
+            {selected?.label || placeholder}
+          </span>
+          <span className="fyl-dropdown__chevron" aria-hidden="true">
+            ▾
+          </span>
+        </button>
+      )}
 
       {open ? (
         <div className="fyl-dropdown__panel">
-          {searchable ? (
-            <div className="fyl-dropdown__search">
-              <input
-                ref={searchRef}
-                id={searchId}
-                type="search"
-                className="fyl-dropdown__search-input"
-                value={query}
-                placeholder={searchPlaceholder}
-                autoComplete="off"
-                autoCorrect="off"
-                autoCapitalize="none"
-                spellCheck={false}
-                enterKeyHint="search"
-                aria-label={searchPlaceholder}
-                aria-controls={listboxId}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    const first = filteredOptions[0];
-                    if (first) {
-                      setOpen(false);
-                      if (first.value !== value) onChange(first.value);
-                    }
-                  }
-                }}
-              />
-            </div>
-          ) : null}
-
           <ul
             id={listboxId}
             className="fyl-dropdown__menu"
@@ -205,10 +220,7 @@ export default function DropdownSelect({
                       aria-selected={checked}
                       className={`fyl-dropdown__option${checked ? " is-selected" : ""}`}
                       disabled={disabled}
-                      onClick={() => {
-                        setOpen(false);
-                        if (option.value !== value) onChange(option.value);
-                      }}
+                      onClick={() => pickOption(option)}
                     >
                       {option.label}
                     </button>

@@ -505,6 +505,8 @@ export default function ProfileTab({ customer, userEmail, userId, onLogout, logg
                 placeholder="Seleccioná una provincia"
                 options={provinceOptions}
                 onChange={handleProvinceChange}
+                searchable
+                searchPlaceholder="Escribí para buscar provincia…"
               />
             </div>
             {locationDraft.province && (
@@ -518,6 +520,8 @@ export default function ProfileTab({ customer, userEmail, userId, onLogout, logg
                       placeholder="Seleccioná una localidad"
                       options={cityOptions}
                       onChange={handleCitySelectChange}
+                      searchable
+                      searchPlaceholder="Escribí para buscar localidad…"
                     />
                     {isCustomCityDraft && (
                       <input type="text" value={customCityDraft}

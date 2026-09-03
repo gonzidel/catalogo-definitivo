@@ -342,6 +342,8 @@ export default function ProfileOnboardingModal({
             value={province}
             placeholder="Elegí provincia…"
             options={provinceOptions}
+            searchable
+            searchPlaceholder="Escribí para buscar provincia…"
             onChange={(value) => {
               setProvince(value);
               setCity("");
@@ -360,6 +362,8 @@ export default function ProfileOnboardingModal({
             placeholder={province ? "Elegí localidad…" : "Primero elegí provincia"}
             disabled={!province}
             options={cityOptions}
+            searchable
+            searchPlaceholder="Escribí para buscar localidad…"
             onChange={(value) => {
               if (value === CUSTOM_CITY) {
                 setIsCustomCity(true);

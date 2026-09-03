@@ -93,8 +93,8 @@ Estas RPCs existen en el repo y posiblemente en Supabase, pero **no son llamadas
 
 | RPC | Area |
 |---|---|
-| `rpc_link_or_create_customer` | Cliente/carrito/perfil |
-| `rpc_link_public_sales_customer` | Vinculo cliente web con public sales |
+| `rpc_link_or_create_customer` | Cliente/carrito/perfil — merge admin↔auth (teléfono+geo → email → DNI). Firma con `p_province`/`p_city` opcionales desde `325_improve_customer_link_onboarding.sql`. Disparo: carrito vanilla + onboarding NJ. Ver [[325-VINCULACION-ADMIN-NJ-ONBOARDING-2026-09-03]]. |
+| `rpc_link_public_sales_customer` | Lookup cliente web ↔ public sales / admin (teléfono normalizado). No mergea UUID. |
 | `rpc_create_admin_customer`, `rpc_update_admin_customer`, `rpc_delete_admin_customer` | Admin customers/order creator |
 | `rpc_bulk_create_customers` | Imports |
 | `is_super_admin` | Permisos |

@@ -1,8 +1,10 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import DropdownSelect from "@/components/ui/DropdownSelect";
 import ProfileShippingBlock from "./ProfileShippingBlock";
+import { linkOrCreateCustomerIdentity } from "@/lib/supabase/link-customer-identity";
 
 // ─── Datos de provincias/ciudades ─────────────────────────────────────────────
 
@@ -158,12 +160,13 @@ interface ProfileTabProps {
   onCustomerUpdate?: (patch: Partial<Customer>) => void;
   /** Notifica al componente padre cuando el cliente elige otro transporte,
    * para que el header (que muestra el transporte activo) se refresque. */
-  onTransportChange?: (transporte: string) => void;
+  assignedTransportName?: string | null;
+  onTransportChange?: (transporte: string, transportId?: string | null) => void;
 }
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export default function ProfileTab({ customer, userEmail, userId, onLogout, loggingOut, onCustomerUpdate, onTransportChange }: ProfileTabProps) {
+export default function ProfileTab({ customer, userEmail, userId, onLogout, loggingOut, onCustomerUpdate, assignedTransportName, onTransportChange }: ProfileTabProps) {
   // ── Personal section state ──
   const [editingPersonal, setEditingPersonal] = useState(false);
   const [personal, setPersonal] = useState({
@@ -200,6 +203,17 @@ export default function ProfileTab({ customer, userEmail, userId, onLogout, logg
   const citiesForProvince = locationDraft.province ? (PROVINCE_CITIES[locationDraft.province] ?? []) : [];
   const effectiveCityDraft = isCustomCityDraft ? customCityDraft : locationDraft.city;
   const effectiveCity = isCustomCity ? customCity : location.city;
+  const provinceOptions = useMemo(
+    () => ARGENTINA_PROVINCES.map((p) => ({ value: p, label: p })),
+    []
+  );
+  const cityOptions = useMemo(
+    () => [
+      ...citiesForProvince.map((c) => ({ value: c, label: c })),
+      { value: CUSTOM_CITY_VALUE, label: "Otra localidad..." },
+    ],
+    [citiesForProvince]
+  );
 
   // Si el padre refresca el customer (onboarding / router.refresh), actualizar
   // la UI sin esperar un F5. No pisar mientras el usuario está editando.
@@ -297,17 +311,54 @@ export default function ProfileTab({ customer, userEmail, userId, onLogout, logg
     setPersonalError(null);
     const supabase = getSupabaseBrowserClient();
     const { current, email } = await getRpcBase(supabase);
+
+    const fullName = personalDraft.full_name.trim();
+    const phone = personalDraft.phone.trim();
+    const dni = personalDraft.dni.trim();
+    const province = location.province.trim();
+    const city = effectiveCity.trim();
+
+    // Reintento de vinculación si el perfil ya existía sin merge (tel + geo)
+    if (phone && province && city) {
+      const authLink = await linkOrCreateCustomerIdentity(supabase, {
+        userId,
+        email,
+        phone,
+        fullName,
+        dni,
+        province,
+        city,
+      });
+      if (authLink.errorMessage) {
+        setSavingPersonal(false);
+        setPersonalError(
+          `No se pudo vincular con un cliente existente: ${authLink.errorMessage}`
+        );
+        return;
+      }
+      if (authLink.customerNumber && !current?.customer_number) {
+        // keep for upsert below via refreshed current
+      }
+    }
+
+    const { data: currentAfterLink } = await supabase
+      .from("customers")
+      .select("customer_number, qr_code, public_sales_customer_id")
+      .eq("id", userId)
+      .maybeSingle();
+
     const { data, error } = await supabase.rpc("rpc_upsert_customer", {
-      p_full_name: personalDraft.full_name.trim() || null,
+      p_full_name: fullName || null,
       p_address: location.address.trim() || null,
-      p_city: effectiveCity.trim() || null,
-      p_province: location.province.trim() || null,
-      p_phone: personalDraft.phone.trim() || null,
-      p_dni: personalDraft.dni.trim() || null,
+      p_city: city || null,
+      p_province: province || null,
+      p_phone: phone || null,
+      p_dni: dni || null,
       p_email: email,
-      p_customer_number: current?.customer_number ?? null,
-      p_qr_code: current?.qr_code ?? null,
-      p_public_sales_customer_id: current?.public_sales_customer_id ?? null,
+      p_customer_number: currentAfterLink?.customer_number ?? current?.customer_number ?? null,
+      p_qr_code: currentAfterLink?.qr_code ?? current?.qr_code ?? null,
+      p_public_sales_customer_id:
+        currentAfterLink?.public_sales_customer_id ?? current?.public_sales_customer_id ?? null,
     });
     setSavingPersonal(false);
     // La RPC atrapa sus propias excepciones y devuelve { success: false, error }
@@ -380,6 +431,7 @@ export default function ProfileTab({ customer, userEmail, userId, onLogout, logg
         <ProfileShippingBlock
           province={effectiveCity ? (editingLocation ? locationDraft.province : location.province) : customer?.province}
           city={effectiveCity || customer?.city}
+          assignedTransportName={assignedTransportName}
           onTransportChange={onTransportChange}
         />
       </div>
@@ -446,26 +498,27 @@ export default function ProfileTab({ customer, userEmail, userId, onLogout, logg
                 placeholder="Calle, número, piso..." style={inputStyle} />
             </div>
             <div>
-              <label style={labelStyle}>Provincia</label>
-              <select value={locationDraft.province} onChange={(e) => handleProvinceChange(e.target.value)}
-                style={{ ...inputStyle, appearance: "auto", cursor: "pointer" }}>
-                <option value="">Seleccioná una provincia</option>
-                {ARGENTINA_PROVINCES.map((p) => <option key={p} value={p}>{p}</option>)}
-              </select>
+              <label id="profile-province-label" style={labelStyle}>Provincia</label>
+              <DropdownSelect
+                labelledBy="profile-province-label"
+                value={locationDraft.province}
+                placeholder="Seleccioná una provincia"
+                options={provinceOptions}
+                onChange={handleProvinceChange}
+              />
             </div>
             {locationDraft.province && (
               <div>
-                <label style={labelStyle}>Localidad</label>
+                <label id="profile-city-label" style={labelStyle}>Localidad</label>
                 {citiesForProvince.length > 0 ? (
                   <>
-                    <select
+                    <DropdownSelect
+                      labelledBy="profile-city-label"
                       value={isCustomCityDraft ? CUSTOM_CITY_VALUE : (locationDraft.city || "")}
-                      onChange={(e) => handleCitySelectChange(e.target.value)}
-                      style={{ ...inputStyle, appearance: "auto", cursor: "pointer" }}>
-                      <option value="">Seleccioná una localidad</option>
-                      {citiesForProvince.map((c, i) => <option key={`${c}-${i}`} value={c}>{c}</option>)}
-                      <option value={CUSTOM_CITY_VALUE}>Otra localidad...</option>
-                    </select>
+                      placeholder="Seleccioná una localidad"
+                      options={cityOptions}
+                      onChange={handleCitySelectChange}
+                    />
                     {isCustomCityDraft && (
                       <input type="text" value={customCityDraft}
                         onChange={(e) => { setCustomCityDraft(e.target.value); setLocationDraft((f) => ({ ...f, city: e.target.value })); }}

@@ -36,6 +36,8 @@ Flujo vivo:
 5. `client/dashboard.html` carga `scripts/cart-persistent.js` y `client/dashboard-instant.js`.
 6. El checkout real ocurre en `client/dashboard-instant.js` con `rpc_checkout_cart(uuid,jsonb)`.
 
+**NJ (Next.js):** el merge admin↔auth no corre en el carrito NJ. Se dispara al completar onboarding en `nj/components/profile/ProfileOnboardingModal.tsx` (`rpc_link_or_create_customer` → `rpc_link_public_sales_customer` → `rpc_upsert_customer`). Detalle: [[325-VINCULACION-ADMIN-NJ-ONBOARDING-2026-09-03]].
+
 ## Rutas alternativas/legacy
 
 | Ruta | Estado |

@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { PROVINCE_CITIES_DATA } from "@/lib/data/argentina-cities-data";
+import DropdownSelect from "@/components/ui/DropdownSelect";
+import { linkOrCreateCustomerIdentity } from "@/lib/supabase/link-customer-identity";
 
 const CUSTOM_CITY = "__otra__";
 
@@ -89,6 +91,17 @@ export default function ProfileOnboardingModal({
   const cities = province
     ? (PROVINCE_CITIES_DATA as Record<string, string[]>)[province] ?? []
     : [];
+  const provinceOptions = useMemo(
+    () => provinces.map((p) => ({ value: p, label: p })),
+    [provinces]
+  );
+  const cityOptions = useMemo(
+    () => [
+      ...cities.map((c) => ({ value: c, label: c })),
+      { value: CUSTOM_CITY, label: "Otra (escribir)" },
+    ],
+    [cities]
+  );
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -141,6 +154,29 @@ export default function ProfileOnboardingModal({
       let qrCode: string | null = null;
       let publicSalesCustomerId: string | null = null;
 
+      // 1) Merge real admin↔auth (teléfono + provincia/localidad) antes del upsert
+      const authLink = await linkOrCreateCustomerIdentity(supabase, {
+        userId,
+        email,
+        phone: formattedPhone,
+        fullName,
+        dni: dniDigits,
+        province: prov,
+        city: cityVal,
+      });
+
+      if (authLink.errorMessage) {
+        // Sin merge no seguimos: evita crear el duplicado y ocultar el fallo
+        throw new Error(
+          `No se pudo vincular con un cliente existente: ${authLink.errorMessage}`
+        );
+      }
+
+      if (authLink.customerNumber) {
+        customerNumber = authLink.customerNumber;
+      }
+
+      // 2) Lookup public-sales (QR / customer_number) — no mergea UUID admin
       const { data: linkResult, error: linkError } = await supabase.rpc(
         "rpc_link_public_sales_customer",
         {
@@ -154,13 +190,17 @@ export default function ProfileOnboardingModal({
       );
 
       if (!linkError && linkResult?.found) {
-        customerNumber = linkResult.customer_number ?? null;
         if (linkResult.source === "public_sales") {
+          if (!customerNumber && linkResult.customer_number) {
+            customerNumber = linkResult.customer_number ?? null;
+          }
           qrCode = linkResult.qr_code ?? null;
           publicSalesCustomerId = linkResult.public_sales_customer_id ?? null;
         }
       }
 
+      // 3) Completar perfil (dirección, etc.) sobre id = auth.uid()
+      //    El nombre del formulario manda (no el del contacto admin).
       const { data: rpcResult, error: rpcError } = await supabase.rpc(
         "rpc_upsert_customer",
         {
@@ -293,58 +333,43 @@ export default function ProfileOnboardingModal({
             required
           />
 
-          <label className="pom-label" htmlFor="nj-pom-province">
+          <label className="pom-label" id="nj-pom-province-label" htmlFor="nj-pom-province">
             Provincia <span className="pom-req">*</span>
           </label>
-          <select
+          <DropdownSelect
             id="nj-pom-province"
-            className="pom-input"
+            labelledBy="nj-pom-province-label"
             value={province}
-            onChange={(e) => {
-              setProvince(e.target.value);
+            placeholder="Elegí provincia…"
+            options={provinceOptions}
+            onChange={(value) => {
+              setProvince(value);
               setCity("");
               setCustomCity("");
               setIsCustomCity(false);
             }}
-            required
-          >
-            <option value="">Elegí provincia…</option>
-            {provinces.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </select>
+          />
 
-          <label className="pom-label" htmlFor="nj-pom-city">
+          <label className="pom-label" id="nj-pom-city-label" htmlFor="nj-pom-city">
             Localidad <span className="pom-req">*</span>
           </label>
-          <select
+          <DropdownSelect
             id="nj-pom-city"
-            className="pom-input"
+            labelledBy="nj-pom-city-label"
             value={isCustomCity ? CUSTOM_CITY : city}
+            placeholder={province ? "Elegí localidad…" : "Primero elegí provincia"}
             disabled={!province}
-            onChange={(e) => {
-              if (e.target.value === CUSTOM_CITY) {
+            options={cityOptions}
+            onChange={(value) => {
+              if (value === CUSTOM_CITY) {
                 setIsCustomCity(true);
                 setCity("");
               } else {
                 setIsCustomCity(false);
-                setCity(e.target.value);
+                setCity(value);
               }
             }}
-            required={!isCustomCity}
-          >
-            <option value="">
-              {province ? "Elegí localidad…" : "Primero elegí provincia"}
-            </option>
-            {cities.map((c, i) => (
-              <option key={`${c}-${i}`} value={c}>
-                {c}
-              </option>
-            ))}
-            <option value={CUSTOM_CITY}>Otra (escribir)</option>
-          </select>
+          />
           {isCustomCity && (
             <input
               className="pom-input"

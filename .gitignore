@@ -123,3 +123,4 @@ tmp/
 *.lnk
 nul
 backend/nul
+.vercel

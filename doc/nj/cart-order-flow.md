@@ -1,6 +1,6 @@
 # FYL /nj — Carrito y Flujo de Pedidos
 
-> Última actualización: 2026-08-04
+> Última actualización: 2026-08-28
 
 > **Prórroga 24h + cancelar pedido (vencido):** ver [[43-NJ-DASHBOARD-PRORROGA-CANCELACION-2026-06-09]] y RPCs `234`/`235` en fyl-core.
 
@@ -9,8 +9,10 @@
 | Concepto | Descripción |
 |----------|-------------|
 | **Carrito** | Selección de productos antes de confirmar. Sin mínimo. Local (Zustand) + Supabase sync. |
-| **Mi pedido** | El pedido ya confirmado. Mínimo 4 unidades para *enviar*. |
-| **Enviar pedido** | Acción final del cliente. Requiere 4+ unidades y cero items faltantes. |
+| **Mi pedido** | El pedido ya confirmado. Mínimo 4 unidades para *cerrar* (resto del país). |
+| **Enviar pedido** | Acción final del cliente. Requiere 4+ unidades y cero items faltantes (resto). |
+| **Plazo zona local** | Resistencia, Barranqueras, Puerto Vilelas, Fontana: **36 h** tras el **primer apartado admin** (no al checkout). Regla día hábil **15:00 AR**. `expires_at` = 12 h antes. **Sin mínimo de 4** para cerrar. **Sin prórroga 24 h**. Migraciones `307`/`308`/`309`. |
+| **Stock diferido (309)** | Checkout **no descuenta stock** → ítems `awaiting_apartado`, `dismantle_at` NULL. Admin en `/nj/admin/retiro` aparta → descuenta stock + arranca countdown. |
 
 ---
 
@@ -65,8 +67,9 @@ supabase.rpc("rpc_checkout_cart", {
 
 [MI PEDIDO — active / closing_soon]
   └── ActiveOrderTab muestra items con status badges
+  └── Zona local Chaco (309): ítems internos `awaiting_apartado`; en **Mi pedido** se ven igual que `reserved` (misma UX). Countdown 36 h solo post-apartado admin (`dismantle_at` null hasta entonces).
   └── Misma agrupación de promo 2x; al expandir: cantidad + basura (sin −/+)
-  └── Mínimo 4 unidades para habilitar "Enviar pedido"
+  └── Mínimo 4 unidades para habilitar "Cerrar pedido" (zona local Chaco acotada: sin mínimo)
   └── Si hay items "missing" → botón bloqueado + aviso rojo
   └── Botón "Enviar pedido" → abre MODAL DE CONFIRMACIÓN
       └── "Sí, enviar" → UPDATE orders SET status = "closed"
@@ -149,12 +152,13 @@ Lógica portada de `dashboard-instant.js`:
 - Si `dismantle_at` existe → usa esa fecha; si no → `created_at + 7 días`
 - `daysLeft === 1 || daysLeft === 2` → banner amarillo de advertencia
 - `isExpired (now >= dismantle_at)` → vista bloqueada (solo lectura en ítems):
-  - Aviso con **Dame 24 hs más** (una vez; `rpc_customer_request_order_extension_24h`)
-  - **WhatsApp** + **Cancelar pedido** (`rpc_customer_cancel_order`)
-  - Si cumple mínimo 4 u → botón **Enviar pedido** (sin WhatsApp duplicado abajo)
-  - Tras prórroga usada: solo WhatsApp + cancelar; mensaje “Ya usaste tu prórroga”
+  - **Resto del país:** aviso con **Extender 24 h** (una vez; `rpc_customer_request_order_extension_24h`) + WhatsApp + cancelar
+  - **Zona local (4 localidades Chaco):** sin prórroga; WhatsApp + cancelar; mensaje de plazo 36 h vencido
+  - Si cumple mínimo (4 u resto / 1 u zona local) → botón **Cerrar pedido** (solo resto del país cuando aún no venció; vencido sin prórroga no aplica en zona local)
 
 ### Prórroga 24h (cliente)
+
+No disponible para clientes de **Resistencia, Barranqueras, Puerto Vilelas o Fontana** (Chaco). Migración `308` rechaza la RPC en servidor.
 
 ```typescript
 supabase.rpc("rpc_customer_request_order_extension_24h", { p_order_id: order.id })
@@ -211,11 +215,24 @@ Hook interno `useCartStock`:
 
 ---
 
+## Verificación staging (zona local Resistencia)
+
+1. Checkout 1 ítem → stock sin cambio; ítem `awaiting_apartado`; `dismantle_at` null.
+2. Cliente: spinner + copy espera; sin chip de countdown.
+3. Admin `/nj/admin/retiro` → Apartar → stock baja; ítem `picked`; `dismantle_at` ≈ +36 h hábil 15:00 AR.
+4. Segundo ítem `awaiting_apartado` → apartar → timer **no** se reinicia.
+5. Stock 0 antes de apartar → ítem `missing` visible para cliente.
+6. Cliente resto del país: checkout sin cambios (stock al checkout, 7 d, min 4).
+
+---
+
 ## Checklist de integración Supabase
 
 - [ ] `carts` table: `id`, `customer_id`, `status`
 - [ ] `cart_items` table: `cart_id`, `variant_id`, `quantity`, `qty`, `status` (default `"reserved"`)
-- [ ] `orders` table: `id`, `customer_id`, `order_number`, `status`, `total_amount`, `created_at`, `dismantle_at`, `expires_at`
+- [ ] `orders` table: …, `local_deferred_pickup`, `pickup_timer_started_at`
+- [ ] `order_items.status` incluye `awaiting_apartado`
+- [ ] RPC `rpc_refresh_my_order_availability(p_order_id)` — migración 309
 - [ ] `order_items` table: `id`, `order_id`, `variant_id`, `product_name`, `color`, `size`, `quantity`, `price_snapshot`, `status`, `imagen`
 - [ ] RPC `rpc_checkout_cart(p_operation_id, p_request)`
 - [ ] RPC `rpc_cancel_order_item(p_item_id)`

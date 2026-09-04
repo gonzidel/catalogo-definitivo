@@ -11,6 +11,7 @@ import {
   isManualMissingOrderItem,
   isPickedManualConfirmed,
   parseOrderNotesObject,
+  isRetiroBoardOrderForLegacyPedidos,
   parseStockPendingReasonConflict,
   describeStockPendingConflict,
   clampIncidentPoints,
@@ -491,6 +492,32 @@ function isOrders2Page() {
     return false;
   }
 }
+
+/** Solo `admin/orders.html`. No aplica a orders2.html ni al Kanban NJ. */
+function isLegacyPedidosOrdersPage() {
+  try {
+    const p = String(window.location?.pathname || "").toLowerCase();
+    return p.endsWith("/orders.html") || (p.endsWith("orders.html") && !p.endsWith("orders2.html"));
+  } catch {
+    return false;
+  }
+}
+
+function transportLabelForRetiroFilter(order) {
+  const customer = Array.isArray(order?.customers)
+    ? (order.customers[0] || {})
+    : (order?.customers && typeof order.customers === "object" ? order.customers : {});
+  return getOrderTransportLabel(order, customer);
+}
+
+function excludeRetiroBoardOrdersIfLegacyPedidosPage(list) {
+  if (!Array.isArray(list)) return [];
+  if (!isLegacyPedidosOrdersPage()) return list;
+  return list.filter((order) => !isRetiroBoardOrderForLegacyPedidos(order, transportLabelForRetiroFilter(order)));
+}
+
+const LIGHT_ORDERS_SELECT =
+  "id, created_at, expires_at, dismantle_at, status, notes, transport_id, local_deferred_pickup, customers:customer_id!left (transport_id), order_items(status)";
 
 const ADMIN_CLIENT_SUMMARY_KEY = "admin_client_summary";
 const ADMIN_ENABLE_24H_USES_KEY = "admin_enable_24h_uses";
@@ -1767,9 +1794,16 @@ async function loadOrders(resetPagination = true) {
     );
 
   const filterMode = TAB_FILTER_MODE[currentFilter];
+  const useClientIdPaging =
+    filterMode === "client" ||
+    (isLegacyPedidosOrdersPage() && (currentFilter === "all" || currentFilter === "closed"));
   let data = null;
   let error = null;
   let totalCount = 0;
+
+  if (isLegacyPedidosOrdersPage()) {
+    await loadTransportNames();
+  }
 
   if (filterMode === "items" && currentFilter === "cancelled") {
     // Cancelaciones: pedidos con al menos un ítem cancelado.
@@ -1825,7 +1859,7 @@ async function loadOrders(resetPagination = true) {
       }
     }
   } else {
-    if (filterMode === "sql") {
+    if (filterMode === "sql" && !useClientIdPaging) {
       if (currentFilter === "all") {
         query = query.not("status", "in", '("sent","devolución","devolucion","expired")');
       } else {
@@ -1852,16 +1886,17 @@ async function loadOrders(resetPagination = true) {
         // wrapSupabase reexpone `count` del header de Supabase cuando se usa { count: 'exact' }
         totalCount = response.count ?? response.data?.length ?? 0;
       }
-    } else if (filterMode === "client") {
+    } else if (useClientIdPaging) {
       // Activos / Apartados / Espera: el criterio es por estados de order_items. Paginar por IDs filtrados
       // (si pagináramos solo por fecha, los N más recientes podrían ser casi todos "Apartados" y la pestaña Activos quedaría casi vacía).
+      // En orders.html, "Todos" y "Cerrados" también paginan por IDs para no mezclar el tablero Retiro.
       let lightRows = null;
       let lightErr = null;
 
       if (resetPagination || !clientTabFilteredIdsCache || clientTabFilteredIdsCache.filter !== currentFilter) {
         let lightQuery = supabase
           .from("orders")
-          .select("id, created_at, expires_at, dismantle_at, status, order_items(status)")
+          .select(LIGHT_ORDERS_SELECT)
           .not("status", "in", '("sent","devolución","devolucion","expired")');
 
         if (currentFilter === STATUS.ACTIVE || currentFilter === STATUS.PICKED || currentFilter === STATUS.WAITING) {
@@ -2384,9 +2419,13 @@ async function loadBadgeCountsInBackground() {
     // Consulta optimizada: solo traer IDs y status de items (no datos completos)
     // Esto es mucho más rápido que traer todos los datos del pedido
     // Misma base que loadOrders (pestañas client): incluye closed para que orders2 pueda contar cerrados con ítems reservados en Activos.
+    if (isLegacyPedidosOrdersPage()) {
+      await loadTransportNames();
+    }
+
     const { data: ordersForCounting } = await supabase
       .from("orders")
-      .select("id, status, created_at, dismantle_at, order_items(status)")
+      .select(LIGHT_ORDERS_SELECT)
       .not("status", "in", '("sent","devolución","devolucion","expired")');
     
     if (ordersForCounting) {
@@ -2406,11 +2445,17 @@ async function loadBadgeCountsInBackground() {
       console.log(`✅ Badges actualizados: Activos=${realActiveCount}, Apartados=${realPickedCount}, Espera=${realWaitingCount}, Cancelados=${realCancelledCount}`);
     }
     
-    // Contar cerrados (consulta simple y rápida)
-    const { count: closedCount } = await supabase
-      .from("orders")
-      .select("*", { count: 'exact', head: true })
-      .eq("status", "closed");
+    // Contar cerrados. En orders.html excluye tablero Retiro.
+    let closedCount = 0;
+    if (isLegacyPedidosOrdersPage() && ordersForCounting) {
+      closedCount = filterOrdersForTab(ordersForCounting, STATUS.CLOSED).length;
+    } else {
+      const closedRes = await supabase
+        .from("orders")
+        .select("*", { count: "exact", head: true })
+        .eq("status", "closed");
+      closedCount = closedRes.count || 0;
+    }
     const { count: stockPendingCount } = await supabase
       .from("orders")
       .select("*", { count: 'exact', head: true })
@@ -2590,7 +2635,7 @@ async function fetchOrderById(orderId) {
   const { data: order, error: err1 } = await supabase
     .from("orders")
     .select(`
-      id, order_number, status, total_amount, created_at, expires_at, dismantle_at, transport_id, updated_at, sent_at, customer_id, notes, source,
+      id, order_number, status, total_amount, created_at, expires_at, dismantle_at, transport_id, updated_at, sent_at, customer_id, notes, source, local_deferred_pickup,
       order_items (
         id, product_name, color, size, quantity, price_snapshot, status, imagen, variant_id,
         order_item_stock_sources ( qty, warehouse_id )
@@ -4395,6 +4440,7 @@ function filterOrdersForTab(list, tab) {
 }
 
 function filterOrders(list) {
+  list = excludeRetiroBoardOrdersIfLegacyPedidosPage(list);
   if (currentFilter === "all") {
     const excluded = new Set(FINAL_STATUSES.map((s) => s.toLowerCase()));
     return list.filter((o) => !excluded.has((o.status || "").toLowerCase()));

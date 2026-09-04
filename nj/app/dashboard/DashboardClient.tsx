@@ -3,10 +3,14 @@
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { getTransporte, canonicalizeTransportName, getTransportesDisponibles } from "@/lib/transport";
-import { resolveShippingOptions, getTransportExplanationText, isLocalPickupTransport } from "@/lib/transport/shipping-helpers";
+import { resolveShippingOptions, getTransportExplanationText, isLocalPickupTransport, getOrderCloseMinimumUnits, isLocalPickupShortDeadlineZone } from "@/lib/transport/shipping-helpers";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getCustomerFacingItemStatus } from "@/lib/orders/waiting-source";
-import { getOrderDeadlineDate } from "@/lib/orders/deadline";
+import {
+  isLocalPickupOrderFulfilled,
+  localPickupFulfilledDismissKey,
+} from "@/lib/orders/domain";
+import { getCustomerOrderDeadlineDate, isShortPickupDeadlineWindow } from "@/lib/orders/deadline";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { loadWarehouses } from "@/lib/supabase/order-queries";
 import type { WarehouseIds } from "@/types/orders";
@@ -17,12 +21,24 @@ import { useProfileGate } from "@/components/profile/ProfileGateProvider";
 import { useCartStore, selectCartCount } from "@/store/cart";
 
 // Mirrors dashboard-instant.js buildSyntheticDeadlineNotificationsList
-function buildDeadlineNotifications(order: { id: string; status: string; created_at: string; dismantle_at?: string | null; order_items: { quantity: number; status?: string }[] } | null) {
+function buildDeadlineNotifications(
+  order: {
+    id: string;
+    status: string;
+    created_at: string;
+    dismantle_at?: string | null;
+    local_deferred_pickup?: boolean | null;
+    order_items: { quantity: number; status?: string }[];
+  } | null,
+  customerProvince?: string | null,
+  customerCity?: string | null,
+) {
   if (!order || !["active", "closing_soon"].includes(order.status)) return [];
+  if (order.local_deferred_pickup && !order.dismantle_at) return [];
 
   const oneDayMs = 1000 * 60 * 60 * 24;
   const now = Date.now();
-  const deadline = getOrderDeadlineDate(order.created_at, order.dismantle_at).getTime();
+  const deadline = getCustomerOrderDeadlineDate(order).getTime();
   const daysLeft = Math.max(0, Math.ceil((deadline - now) / oneDayMs));
 
   if (daysLeft !== 1 && daysLeft !== 2 && daysLeft !== 0) return [];
@@ -30,20 +46,36 @@ function buildDeadlineNotifications(order: { id: string; status: string; created
   const totalItems = order.order_items
     .filter((i) => i.status !== "cancelled" && i.status !== "missing" && Number(i.quantity ?? 0) > 0)
     .reduce((a: number, i) => a + i.quantity, 0);
-  const hasMin = totalItems >= 4;
-  const missing = Math.max(0, 4 - totalItems);
+  const closeMin = getOrderCloseMinimumUnits(customerProvince, customerCity);
+  const isLocalZone = Boolean(
+    order.local_deferred_pickup &&
+      isLocalPickupShortDeadlineZone(customerProvince, customerCity)
+  );
+  const hasMin = totalItems >= closeMin;
+  const missing = Math.max(0, closeMin - totalItems);
   const tier = daysLeft === 2 ? 5 : 6;
 
-  const message = tier === 5
-    ? hasMin
-      ? "Faltan 2 días para que se cierre tu pedido. Cerralo cuando quieras para que lo preparemos."
-      : `Faltan 2 días para que se cierre tu pedido.<br>Te faltan ${missing} productos para alcanzar el mínimo y poder cerrarlo.`
-    : hasMin
-      ? "Tu pedido se cierra mañana.<br>Cerralo hoy para que podamos prepararlo."
-      : `Tu pedido se cierra mañana.<br>Te faltan ${missing} productos para alcanzar el mínimo.<br>Si no lo completás, el pedido se desarmará.`;
+  const message = isLocalZone
+    ? tier === 5
+      ? "Tu pedido vence pronto. Cerralo cuando quieras para que lo preparemos."
+      : "Tu pedido vence mañana.<br>Cerralo hoy para que podamos prepararlo."
+    : tier === 5
+      ? hasMin
+        ? "Faltan 2 días para que se cierre tu pedido. Cerralo cuando quieras para que lo preparemos."
+        : `Faltan 2 días para que se cierre tu pedido.<br>Te faltan ${missing} productos para alcanzar el mínimo y poder cerrarlo.`
+      : hasMin
+        ? "Tu pedido se cierra mañana.<br>Cerralo hoy para que podamos prepararlo."
+        : `Tu pedido se cierra mañana.<br>Te faltan ${missing} productos para alcanzar el mínimo.<br>Si no lo completás, el pedido se desarmará.`;
 
   const isExpired = daysLeft === 0;
-  const expiredMsg = "Tu pedido alcanzó el plazo de 7 días. Ya no se puede editar desde la web y está pendiente de desarme por administración.";
+  const shortWindow = Boolean(
+    order.local_deferred_pickup &&
+      (isShortPickupDeadlineWindow(order.created_at, order.dismantle_at) ||
+        isLocalPickupShortDeadlineZone(customerProvince, customerCity))
+  );
+  const expiredMsg = shortWindow
+    ? "Tu pedido alcanzó el plazo de 36 horas. Ya no se puede editar desde la web y está pendiente de desarme por administración."
+    : "Tu pedido alcanzó el plazo de 7 días. Ya no se puede editar desde la web y está pendiente de desarme por administración.";
 
   const results = [];
   if (isExpired) {
@@ -97,6 +129,7 @@ interface Order {
   created_at: string;
   payment_method?: string;
   dismantle_at?: string | null;
+  local_deferred_pickup?: boolean | null;
   expires_at?: string | null;
   notes?: string | null;
   order_items: OrderItem[];
@@ -150,7 +183,13 @@ function formatARS(n: number) {
   }).format(n);
 }
 
-const OPERATIONAL_ITEM_STATUSES = new Set(["reserved", "picked", "waiting", "missing"]);
+const OPERATIONAL_ITEM_STATUSES = new Set([
+  "reserved",
+  "awaiting_apartado",
+  "picked",
+  "waiting",
+  "missing",
+]);
 
 function orderHasOperationalItems(order: Order): boolean {
   return (order.order_items ?? []).some(
@@ -158,6 +197,29 @@ function orderHasOperationalItems(order: Order): boolean {
       OPERATIONAL_ITEM_STATUSES.has((i.status ?? "reserved").toLowerCase()) &&
       Number(i.quantity ?? 0) > 0
   );
+}
+
+/** Transporte del header: BD gana; localStorage solo después de hidratar (SSR no lo ve). */
+function resolveDashboardTransport(
+  province: string | null | undefined,
+  city: string | null | undefined,
+  assignedName: string | null | undefined,
+  allowLocalStorage: boolean,
+): string | null {
+  const prov = (province || "").trim();
+  const cityTrim = (city || "").trim();
+  if (!prov || !cityTrim) return null;
+
+  const assigned = canonicalizeTransportName(assignedName || "");
+  if (assigned) return assigned;
+
+  const raw = getTransportesDisponibles(prov, cityTrim);
+  const resolved = resolveShippingOptions(prov, cityTrim, raw);
+  if (allowLocalStorage) {
+    const stored = canonicalizeTransportName(getTransporte(prov, cityTrim));
+    if (resolved.opciones.includes(stored)) return stored;
+  }
+  return resolved.opciones[0] ?? null;
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -306,9 +368,12 @@ export default function DashboardClient({ user, customer: initialCustomer, order
   // el desmontaje/remontaje del tab "Perfil" al navegar entre pestañas del dashboard.
   const [customer, setCustomer] = useState<Customer | null>(initialCustomer);
   const [orders, setOrders] = useState<Order[]>(initialOrders);
-  // getTransporte() lee la elección guardada en localStorage; este contador solo
-  // fuerza un re-render para que el header recalcule effectiveTransport al toque.
-  const [transportRefreshTick, setTransportRefreshTick] = useState(0);
+  // Nombre vivo: arranca con el de BD (SSR-safe) y se actualiza si el cliente cambia en perfil.
+  const [liveAssignedTransport, setLiveAssignedTransport] = useState<string | null>(
+    assignedTransportName ?? null
+  );
+  // getTransporte() lee localStorage: no usarlo en el primer paint o hidrata distinto al HTML del server.
+  const [clientTransportReady, setClientTransportReady] = useState(false);
   const [expandedOrder, setExpandedOrder] = useState<string | null>(null);
   const searchParams = useSearchParams();
   const [loggingOut, setLoggingOut] = useState(false);
@@ -336,6 +401,17 @@ export default function DashboardClient({ user, customer: initialCustomer, order
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
+  const effectiveTransport = resolveDashboardTransport(
+    customer?.province,
+    customer?.city,
+    liveAssignedTransport,
+    clientTransportReady,
+  );
+  const orderTransportName =
+    effectiveTransport && isLocalPickupTransport(effectiveTransport)
+      ? effectiveTransport
+      : (assignedTransportName ?? effectiveTransport);
+
   // Priority: active → closing_soon → closed → sent (if recently sent / not dismissed)
   const statusRank = (s: string) => {
     if (s === "active")       return 0;
@@ -357,6 +433,13 @@ export default function DashboardClient({ user, customer: initialCustomer, order
         const dismissed = typeof window !== "undefined" ? localStorage.getItem(key) : null;
         if (dismissed) return false; // already dismissed by user
       }
+      if (isLocalPickupOrderFulfilled(o, orderTransportName)) {
+        const dismissed =
+          typeof window !== "undefined"
+            ? localStorage.getItem(localPickupFulfilledDismissKey(o.id))
+            : null;
+        if (dismissed) return false;
+      }
       return true;
     })
     .sort((a, b) => {
@@ -367,7 +450,16 @@ export default function DashboardClient({ user, customer: initialCustomer, order
   // History = everything NOT shown in Mi pedido
   const historyOrders = orders.filter((o) => {
     if (o.id === activeOrder?.id) return false;
-    return !MY_ORDER_STATUSES.has(o.status) || o.status === "sent";
+    if (o.status === "sent") return true;
+    if (
+      o.status === "closed" &&
+      isLocalPickupOrderFulfilled(o, orderTransportName) &&
+      typeof window !== "undefined" &&
+      localStorage.getItem(localPickupFulfilledDismissKey(o.id))
+    ) {
+      return true;
+    }
+    return !MY_ORDER_STATUSES.has(o.status);
   });
 
   async function handleLogout() {
@@ -383,7 +475,7 @@ export default function DashboardClient({ user, customer: initialCustomer, order
     const { data } = await supabase
       .from("orders")
       .select(`
-        id, order_number, status, total_amount, created_at, payment_method, dismantle_at, expires_at, notes,
+        id, order_number, status, total_amount, created_at, payment_method, dismantle_at, local_deferred_pickup, expires_at, notes,
         order_items ( id, product_name, color, size, quantity, price_snapshot, imagen, sku, status, created_at, variant_id, order_item_stock_sources(warehouse_id, qty) )
       `)
       .eq("customer_id", user.id)
@@ -438,6 +530,14 @@ export default function DashboardClient({ user, customer: initialCustomer, order
   // (useState solo toma initialCustomer en el primer mount).
   // No pisar con null: tras el onboarding el refetch client puede llegar antes.
   useEffect(() => {
+    setClientTransportReady(true);
+  }, []);
+
+  useEffect(() => {
+    setLiveAssignedTransport(assignedTransportName ?? null);
+  }, [assignedTransportName]);
+
+  useEffect(() => {
     if (initialCustomer) setCustomer(initialCustomer);
   }, [initialCustomer]);
 
@@ -455,8 +555,12 @@ export default function DashboardClient({ user, customer: initialCustomer, order
   // Sync active order status + synthetic notifications to Zustand
   useEffect(() => {
     setActiveOrderStatus(activeOrder?.status ?? null);
-    setSyntheticNotifications(buildDeadlineNotifications(activeOrder));
-  }, [activeOrder?.id, activeOrder?.status, setActiveOrderStatus, setSyntheticNotifications]);
+    setSyntheticNotifications(buildDeadlineNotifications(
+      activeOrder,
+      customer?.province ?? null,
+      customer?.city ?? null,
+    ));
+  }, [activeOrder?.id, activeOrder?.status, activeOrder?.order_items, customer?.province, customer?.city, setActiveOrderStatus, setSyntheticNotifications]);
 
   useEffect(() => {
     void loadWarehouses(getSupabaseBrowserClient()).then(setWarehouseIds);
@@ -527,30 +631,27 @@ export default function DashboardClient({ user, customer: initialCustomer, order
   // Resolve transport name from province+city (same logic as ProfileShippingBlock)
   const [showTransportInfo, setShowTransportInfo] = useState(false);
   const transportInfoRef = useRef<HTMLDivElement>(null);
-  const effectiveTransport = (() => {
-    const prov = (customer?.province || "").trim();
-    const city = (customer?.city || "").trim();
-    if (!prov || !city) return null;
-    const raw = getTransportesDisponibles(prov, city);
-    const resolved = resolveShippingOptions(prov, city, raw);
-    const auto = canonicalizeTransportName(getTransporte(prov, city));
-    return resolved.opciones.includes(auto) ? auto : (resolved.opciones[0] ?? null);
-  })();
   const isCorreo = effectiveTransport ? canonicalizeTransportName(effectiveTransport) === "Correo Argentino" : false;
-  // Si el admin le asignó un transporte puntual al cliente (ej. MyM, que no
-  // sale del cálculo automático por provincia/localidad), ese manda sobre
-  // el auto-calculado -- mismo criterio que attachTransportMeta en el admin.
-  const orderTransportName = effectiveTransport && isLocalPickupTransport(effectiveTransport)
-    ? effectiveTransport
-    : (assignedTransportName ?? effectiveTransport);
 
   const transportExplanation = effectiveTransport
     ? getTransportExplanationText(effectiveTransport)
     : null;
 
+  // El punto de "Mi pedido" solo si hay productos para gestionar.
+  // No en pantallas de éxito (enviado / ya retirado / cancelado) sin lista.
+  const activeOrderShowsProductBadge =
+    !!activeOrder &&
+    !showCancelSuccess &&
+    activeOrder.status !== "sent" &&
+    !(
+      activeOrder.status === "closed" &&
+      isLocalPickupOrderFulfilled(activeOrder, orderTransportName)
+    ) &&
+    orderHasOperationalItems(activeOrder);
+
   const PRIMARY_TABS = [
     { id: "cart" as TabId,         label: "Carrito",   sublabel: "Lo que querés pedir",      iconType: "cart" as const,  badge: cartCount > 0 ? String(cartCount) : null },
-    { id: "active-order" as TabId, label: "Mi pedido", sublabel: "Pedido abierto o listo para cerrar", iconType: "order" as const, badge: activeOrder && tab !== "active-order" ? "·" : null },
+    { id: "active-order" as TabId, label: "Mi pedido", sublabel: "Pedido abierto o listo para cerrar", iconType: "order" as const, badge: activeOrderShowsProductBadge && tab !== "active-order" ? "·" : null },
   ];
 
   return (
@@ -600,8 +701,8 @@ export default function DashboardClient({ user, customer: initialCustomer, order
             {displayName}
           </div>
 
-          {/* Fila transporte (key fuerza recalcular effectiveTransport si el cliente elige otro en su perfil) */}
-          <div key={transportRefreshTick} style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 2 }}>
+          {/* Fila transporte */}
+          <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 2 }}>
             {effectiveTransport ? (
               <>
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#aaa" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
@@ -810,6 +911,7 @@ export default function DashboardClient({ user, customer: initialCustomer, order
                 onOrderCancelled={handleOrderCancelled}
                 onOrderFullyCancelled={handleOrderFullyCancelled}
                 transportName={orderTransportName}
+                onGoToCart={() => setTab("cart")}
               />
             </div>
           )}
@@ -863,7 +965,10 @@ export default function DashboardClient({ user, customer: initialCustomer, order
             onLogout={handleLogout}
             loggingOut={loggingOut}
             onCustomerUpdate={(patch) => setCustomer((prev) => ({ ...(prev ?? { id: user.id }), ...patch }))}
-            onTransportChange={() => setTransportRefreshTick((t) => t + 1)}
+            assignedTransportName={liveAssignedTransport}
+            onTransportChange={(transporte) => {
+              setLiveAssignedTransport(canonicalizeTransportName(transporte) || null);
+            }}
           />
         )}
       </div>

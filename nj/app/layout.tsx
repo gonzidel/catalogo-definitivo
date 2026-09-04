@@ -6,6 +6,7 @@ import Header from "@/components/layout/Header";
 import BottomNav from "@/components/layout/BottomNav";
 import CartFloatingBar from "@/components/cart/CartFloatingBar";
 import ProfileGateProvider from "@/components/profile/ProfileGateProvider";
+import GaLoader from "@/components/analytics/GaLoader";
 
 export const metadata: Metadata = {
   title: "FYL Moda | Calzado e Indumentaria Femenina por Mayor",
@@ -62,6 +63,7 @@ export default function RootLayout({
         <meta name="theme-color" content="#CD844D" />
       </head>
       <body>
+        <GaLoader />
         <ProfileGateProvider>
           {/* Header needs Suspense because SearchBar uses useSearchParams */}
           <Suspense fallback={<HeaderFallback />}>

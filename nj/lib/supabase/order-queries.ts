@@ -1,9 +1,16 @@
 import {
+  applyOrderNotesPatch,
   getTransportBadgeClass,
   parseOrderNotesObject,
 } from "@/lib/orders/domain";
+import {
+  filterOrdersByBoardScope,
+  type BoardScope,
+} from "@/lib/orders/board-scope";
+import { isFinalOrderStatus } from "@/lib/orders/classification";
 import { enrichOrderItemsWithOfferFlags } from "@/lib/orders/offer-badges";
 import { enrichOrderItemsWithWarehouseLabels } from "@/lib/orders/warehouse-labels";
+import { isDashboardRetiroLocalZone } from "@/lib/transport/shipping-helpers";
 import type {
   AdminOrder,
   AdminTransport,
@@ -12,10 +19,11 @@ import type {
 } from "@/types/orders";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-/** Única fuente de verdad — SSR, fetchOrderById, realtime, post-RPC */
+/** Única fuente de verdad — SSR, fetchOrderById, realtime, post-RPC.
+ *  Nota: `deferred_stock_pending` (312) se agrega al select tras aplicar la migración en prod. */
 export const ORDER_SELECT = `
-  id, order_number, status, customer_id, total_amount, notes, source,
-  created_at, sent_at, expires_at, dismantle_at, transport_id,
+  id, order_number, status, customer_id, total_amount, notes, source, payment_method,
+  created_at, sent_at, expires_at, dismantle_at, local_deferred_pickup, pickup_timer_started_at, transport_id,
   customers(id, full_name, phone, email, dni, transport_id, city, province),
   order_items(
     id, order_id, variant_id, product_name, color, size, quantity,
@@ -69,7 +77,21 @@ function attachTransportMeta(
   const customerTransportId = String(customer?.transport_id || "").trim();
   const transportId = orderTransportId || customerTransportId;
   const transport = transportId ? transports.get(transportId) : null;
-  const transportName = transport?.name ?? null;
+  let transportName = transport?.name ?? null;
+
+  // Zona retiro local / deferred: la geo del dashboard fuerza Retira local.
+  // Si el customer aún tiene un transport_id viejo (MyM, etc.), no debe
+  // mandar el badge ni el Kanban. Si admin movió a Pedidos (kanban_scope =
+  // shipping), no forzar.
+  const notesKanban = parseOrderNotesObject(order.notes).kanban_scope;
+  if (
+    notesKanban !== "shipping" &&
+    (order.local_deferred_pickup ||
+      isDashboardRetiroLocalZone(customer?.province, customer?.city))
+  ) {
+    transportName = "Retira local";
+  }
+
   return {
     ...order,
     transportName,
@@ -93,7 +115,8 @@ export async function enrichOrders(
 }
 
 export async function fetchOrdersInitial(
-  supabase: SupabaseClient
+  supabase: SupabaseClient,
+  scope: BoardScope = "shipping"
 ): Promise<AdminOrder[]> {
   const [warehouseIds, transports] = await Promise.all([
     loadWarehouses(supabase),
@@ -118,7 +141,15 @@ export async function fetchOrdersInitial(
     return [];
   }
 
-  return enrichOrders(supabase, (data || []) as AdminOrder[], warehouseIds, transports);
+  const enriched = await enrichOrders(
+    supabase,
+    (data || []) as AdminOrder[],
+    warehouseIds,
+    transports
+  );
+  return filterOrdersByBoardScope(enriched, scope, { warehouseIds }).filter(
+    (order) => !isFinalOrderStatus(order)
+  );
 }
 
 export async function fetchOrderById(
@@ -265,6 +296,22 @@ export async function rpcCloseOrder(
   if (error) throw error;
 }
 
+/**
+ * Cliente pide cerrar con ítems todavía reserved/waiting: setea
+ * notes.customer_requested_close vía SECURITY DEFINER (no hay RLS UPDATE
+ * de customers sobre orders — un .update() directo falla en silencio).
+ */
+export async function rpcCustomerRequestClose(
+  supabase: SupabaseClient,
+  orderId: string
+) {
+  const { data, error } = await supabase.rpc("rpc_customer_request_close", {
+    p_order_id: orderId,
+  });
+  if (error) throw error;
+  return data;
+}
+
 export async function rpcSendOrderToLocal(
   supabase: SupabaseClient,
   orderId: string
@@ -274,6 +321,32 @@ export async function rpcSendOrderToLocal(
   });
   if (error) throw error;
   return data;
+}
+
+/**
+ * Mueve el pedido al otro Kanban (Pedidos ↔ Retiro) vía notes.kanban_scope.
+ * No usa rpc_send_order_to_local (eso copia a local_orders / venta al público).
+ */
+export async function updateOrderKanbanScope(
+  supabase: SupabaseClient,
+  orderId: string,
+  currentNotes: string | null | undefined,
+  targetScope: "shipping" | "local_pickup"
+) {
+  const patch: Record<string, unknown> = { kanban_scope: targetScope };
+  // Pedidos → Retiro: marca origen para color amarillo en Activos.
+  // Retiro → Pedidos: limpia esa marca.
+  if (targetScope === "local_pickup") {
+    patch.retiro_origin = "moved_from_orders";
+  } else {
+    patch.retiro_origin = null;
+  }
+  const notes = applyOrderNotesPatch(currentNotes, patch);
+  const { error } = await supabase
+    .from("orders")
+    .update({ notes, updated_at: new Date().toISOString() })
+    .eq("id", orderId);
+  if (error) throw error;
 }
 
 /**

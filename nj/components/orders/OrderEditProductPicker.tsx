@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { formatPriceAr, isSpecialExtraItem } from "@/lib/orders/domain";
+import { formatSignedPriceAr, isReturnOrderItem, isSpecialExtraItem } from "@/lib/orders/domain";
 import {
   catalogPriceGuardMessage,
   resolveSkuOrQrToOrderItem,
@@ -23,6 +23,10 @@ interface OrderEditProductPickerProps {
   onDraftChange: (items: OrderEditDraftItem[]) => void;
   onAddToDraft: (item: OrderEditDraftItem) => void;
   disabled?: boolean;
+  /** Solo Retiro: precios negativos + sin descontar stock (como public-sales). */
+  returnMode?: boolean;
+  onReturnModeChange?: (enabled: boolean) => void;
+  showReturnModeToggle?: boolean;
 }
 
 type ManualStep = "search" | "products" | "colors" | "sizes";
@@ -46,6 +50,9 @@ export default function OrderEditProductPicker({
   onDraftChange,
   onAddToDraft,
   disabled = false,
+  returnMode = false,
+  onReturnModeChange,
+  showReturnModeToggle = false,
 }: OrderEditProductPickerProps) {
   const showToast = useOrdersStore((s) => s.showToast);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -152,9 +159,20 @@ export default function OrderEditProductPicker({
     try {
       const supabase = getSupabaseBrowserClient();
       const warehouseIds = await loadWarehouses(supabase);
-      const item = await resolveSkuOrQrToOrderItem(supabase, code, warehouseIds, 1);
+      const item = await resolveSkuOrQrToOrderItem(
+        supabase,
+        code,
+        warehouseIds,
+        1,
+        returnMode
+      );
       onAddToDraft(item);
-      if (item.product_name) showToast(`+ ${item.product_name}`, "success");
+      if (item.product_name) {
+        showToast(
+          returnMode ? `Devolución: ${item.product_name}` : `+ ${item.product_name}`,
+          "success"
+        );
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Error al escanear";
       showToast(message, "error");
@@ -164,7 +182,7 @@ export default function OrderEditProductPicker({
         void processQrQueue();
       }, 0);
     }
-  }, [focusInput, onAddToDraft, showToast]);
+  }, [focusInput, onAddToDraft, returnMode, showToast]);
 
   const enqueueQr = useCallback(
     (code: string) => {
@@ -280,6 +298,7 @@ export default function OrderEditProductPicker({
       showToast(catalogPriceGuardMessage(selectedProduct.product_name), "error");
       return;
     }
+    const unit = Math.abs(Number(selectedVariant.price_snapshot));
     const key = manualPendingKey(selectedVariant.variant_id, sizeRow.size);
     setManualPending((prev) => {
       const qty = prev.get(key)?.quantity || 0;
@@ -288,21 +307,60 @@ export default function OrderEditProductPicker({
         product_name: selectedProduct.product_name,
         color: selectedVariant.color,
         size: normalizeSize(sizeRow.size),
-        price_snapshot: Number(selectedVariant.price_snapshot),
+        price_snapshot: returnMode ? -unit : unit,
         variant_id: selectedVariant.variant_id,
         quantity: qty + 1,
         status: "picked",
         admin_confirmed_missing: false,
+        qty_from_general: returnMode ? 0 : undefined,
+        qty_from_venta: returnMode ? 0 : undefined,
       });
       return next;
     });
   };
 
+  useEffect(() => {
+    // Al cambiar modo venta/devolución, no mezclar picks con signo incorrecto.
+    setManualPending((prev) => (prev.size === 0 ? prev : new Map()));
+  }, [returnMode]);
+
+  useEffect(() => {
+    if (!showReturnModeToggle || !onReturnModeChange) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "F2") return;
+      e.preventDefault();
+      onReturnModeChange(!returnMode);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onReturnModeChange, returnMode, showReturnModeToggle]);
+
   const manualPendingQty = getManualPendingTotalQty();
   const draftQty = draft.reduce((n, i) => n + (Number(i.quantity) || 0), 0);
 
   return (
-    <div className="order-edit-picker">
+    <div className={`order-edit-picker${returnMode ? " order-edit-picker--return" : ""}`}>
+      {showReturnModeToggle ? (
+        <div className="order-edit-picker__return-toggle">
+          <label className="order-edit-picker__return-label">
+            <input
+              type="checkbox"
+              checked={returnMode}
+              disabled={disabled}
+              onChange={(e) => onReturnModeChange?.(e.target.checked)}
+            />
+            <strong>Modo Devoluciones</strong>
+            <span className="order-edit-picker__return-hint">F2</span>
+          </label>
+          {returnMode ? (
+            <div className="order-edit-picker__return-banner" role="status">
+              ⚠️ Modo Devoluciones — usá <strong>Imprimir</strong> (no Guardar). Al cobrar:
+              devoluciones suman stock y productos nuevos descuentan.
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       <div className="order-edit-picker__scan-row">
         <input
           ref={inputRef}
@@ -310,7 +368,13 @@ export default function OrderEditProductPicker({
           className="order-edit-picker__input"
           autoComplete="off"
           disabled={disabled}
-          placeholder={manualMode ? "Buscar producto por nombre…" : "Escanear QR / SKU…"}
+          placeholder={
+            manualMode
+              ? "Buscar producto por nombre…"
+              : returnMode
+                ? "Escanear devolución QR / SKU…"
+                : "Escanear QR / SKU…"
+          }
           value={inputValue}
           onChange={(e) => handleInputChange(e.target.value)}
           onKeyDown={(e) => {
@@ -461,27 +525,34 @@ export default function OrderEditProductPicker({
           <ul className="order-edit-picker__draft-list">
             {draft.map((item, idx) => {
               const special = isSpecialExtraItem(item);
+              const isReturn = !special && isReturnOrderItem(item);
               return (
                 <li
-                  key={`${item.variant_id || "special"}-${item.size}-${idx}`}
-                  className={`order-edit-picker__draft-row${special ? " order-edit-picker__draft-row--special" : ""}`}
+                  key={`${item.variant_id || "special"}-${item.size}-${idx}-${isReturn ? "r" : "s"}`}
+                  className={`order-edit-picker__draft-row${special ? " order-edit-picker__draft-row--special" : ""}${isReturn ? " order-edit-picker__draft-row--return" : ""}`}
                 >
                   <div className="order-edit-picker__draft-main">
                     <strong>
                       {special
                         ? `${Number(item.price_snapshot) < 0 ? "➖ Resta" : "➕ Extra"}: ${item.product_name}`
-                        : item.product_name}
+                        : isReturn
+                          ? `[DEV] ${item.product_name}`
+                          : item.product_name}
                     </strong>
                     {!special ? (
                       <span>
                         {item.color || "-"} · Talle {item.size} · x{item.quantity}
                       </span>
                     ) : (
-                      <span>{formatPriceAr(item.price_snapshot)}</span>
+                      <span>{formatSignedPriceAr(Number(item.price_snapshot) || 0)}</span>
                     )}
                   </div>
                   <div className="order-edit-picker__draft-meta">
-                    {!special ? <span>{formatPriceAr(item.price_snapshot)}</span> : null}
+                    {!special ? (
+                      <span className={isReturn ? "is-return-price" : undefined}>
+                        {formatSignedPriceAr(Number(item.price_snapshot) || 0)}
+                      </span>
+                    ) : null}
                     <button
                       type="button"
                       className="order-edit-modal__remove order-edit-modal__remove--icon"

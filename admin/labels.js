@@ -693,7 +693,7 @@ function setupDetailEventListeners() {
   });
 
   // Botones globales
-  document.querySelector(".btn-print-all-stock")?.addEventListener("click", () => {
+  document.querySelector(".btn-print-all-stock")?.addEventListener("click", async (e) => {
     const rows = document.querySelectorAll(".label-size-row");
     const rowsToPrint = [];
 
@@ -723,18 +723,33 @@ function setupDetailEventListeners() {
       return compareCatalogSizes(a.size, b.size);
     });
 
-    // Imprimir en orden
+    // Aplanar a una sola lista de etiquetas individuales (en el mismo orden),
+    // para poder emparejarlas de a dos SIN reiniciar por talle: así el
+    // sobrante de un talle impar se empareja con el primero del talle
+    // siguiente en vez de desperdiciar media fila por cada talle.
+    const flatItems = [];
     rowsToPrint.forEach(({ row, qty }) => {
       const sku = row.dataset.sku;
       const qrCode = row.dataset.qrCode || null;
       const name = row.dataset.name;
       const color = row.dataset.color;
       const size = row.dataset.size;
-
-      // Usar qr_code si está disponible, sino usar sku como fallback
       const qrData = qrCode || sku;
-      printProductLabelsZebra(sku, name, color, size, qty, qrData);
+      for (let i = 0; i < qty; i++) {
+        flatItems.push({ sku, productName: name, color, size, qrData });
+      }
     });
+
+    const btn = e.target;
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Imprimiendo...";
+    try {
+      await printLabelBatchZebra(flatItems);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = originalText;
+    }
   });
 }
 
@@ -883,6 +898,51 @@ ${zplSizeLine2Right}
   ).trim();
 }
 
+/** Un lado (izq/der) de una fila doble, para poder combinar dos talles distintos en la misma fila. */
+function buildZplSideFragment(item, xQr, xText, isRight) {
+  const sName = cleanZplText(item.productName);
+  const sColor = cleanZplText(item.color);
+  const sSize = cleanZplText(item.size);
+  const sQr = cleanZplText(item.qrData);
+
+  const nameShort = sName.slice(0, 18);
+  const colorShort = sColor.slice(0, 18);
+  const sizeShort = sSize.slice(0, 28);
+
+  const cutMax = 16;
+  let cut = sizeShort.lastIndexOf(" ", cutMax);
+  if (cut < 8) cut = 14;
+  const sizeLine1 = sizeShort.slice(0, cut).trim();
+  const sizeLine2 = sizeShort.slice(cut).trim();
+  const zplSizeLine2 = sizeLine2 ? `^FO${xText},132^A0N,46,42^FD${sizeLine2}^FS` : "";
+
+  const label = isRight ? "DERECHA" : "IZQUIERDA";
+  return `^FX --- ${label} ---
+^FO${xQr},10^BQN,2,6^FDLA,${sQr}^FS
+^FO${xText},18^A0N,46,42^FD${nameShort}^FS
+^FO${xText},70^A0N,38,34^FD${colorShort}^FS
+^FO${xText},104^A0N,46,42^FD${sizeLine1}^FS
+${zplSizeLine2}`;
+}
+
+/**
+ * Fila doble que puede combinar DOS talles/colores distintos (uno por lado).
+ * `right` puede venir null: en ese caso queda esa mitad en blanco, igual que
+ * buildZplForDoubleLabel, pero acá se usa solo para el resto final de "Imprimir Todo".
+ */
+function buildZplForDoubleLabelMixed(left, right) {
+  const leftBlock = buildZplSideFragment(left, 24, 157, false);
+  const rightBlock = right ? buildZplSideFragment(right, 360, 490, true) : "";
+
+  return (
+    `^XA^PW648^LL172^LH0,0^MD30^PR2,2
+${leftBlock}
+
+${rightBlock}
+^XZ`
+  ).trim();
+}
+
 // ============================================================================
 // Impresión de etiquetas
 // ============================================================================
@@ -962,6 +1022,57 @@ async function printProductLabelsZebra(sku, productName, color, size, copies, qr
       errorMessage += "\n\nDebes estar autenticado para imprimir.";
     } else {
       errorMessage += "\n\nVerifica que:\n- QZ Tray esté instalado y ejecutándose\n- La impresora esté conectada\n- Tengas sesión activa";
+    }
+
+    alert(errorMessage);
+  }
+}
+
+/**
+ * Imprime un lote de etiquetas ya aplanado (una entrada por etiqueta física),
+ * emparejando de a dos CONSECUTIVAS sin importar si son de distinto
+ * talle/color — así el sobrante de un talle se empareja con el siguiente en
+ * vez de desperdiciar media fila por cada talle. Usado por "Imprimir Todo".
+ * @param {{sku:string, productName:string, color:string, size:string, qrData:string}[]} items
+ */
+async function printLabelBatchZebra(items) {
+  if (!items || items.length === 0) return;
+
+  try {
+    await qzConnect();
+    const cfg = await qzGetPrinterConfig({ forceRaw: true });
+
+    const jobs = [];
+    for (let i = 0; i < items.length; i += 2) {
+      const left = items[i];
+      const right = items[i + 1] || null;
+      if (right) {
+        jobs.push({ type: "raw", format: "command", data: buildZplForDoubleLabelMixed(left, right) });
+      } else {
+        jobs.push({
+          type: "raw",
+          format: "command",
+          data: buildZplForSingleLabel(left.sku, left.productName, left.color, left.size, left.qrData),
+        });
+      }
+    }
+
+    console.log(`JOBS_TO_PRINT (batch): ${jobs.length} filas para ${items.length} etiquetas`);
+    console.log("[QZ] print requested");
+    await qz.print(cfg, jobs);
+    console.log(`✅ ${items.length} etiqueta(s) enviada(s) a la impresora (lote)`);
+  } catch (err) {
+    console.error("❌ Error imprimiendo lote de etiquetas Zebra:", err);
+    updateQZStatus(false);
+
+    let errorMessage = "No se pudo imprimir las etiquetas.";
+
+    if (err.message && err.message.includes("QZ Tray no está disponible")) {
+      errorMessage = err.message;
+    } else if (err.message && err.message.includes("No se pudo establecer conexión")) {
+      errorMessage = err.message;
+    } else {
+      errorMessage += "\n\nVerifica que:\n- El agente de impresión esté corriendo\n- La impresora esté conectada\n- Tengas sesión activa";
     }
 
     alert(errorMessage);

@@ -32,6 +32,7 @@ export interface CatalogRow {
   ColorHex: string | null;
   ColorDisplayNumber: number | null;
   SupplierCode: string | null;
+  DetallesSimilitud?: string | null;
 }
 
 // ─── Grouped product (one per Articulo) ──────────────────────────────────────

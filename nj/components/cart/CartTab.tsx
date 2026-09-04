@@ -472,6 +472,7 @@ export default function CartTab({ customerId, onOrderCreated, activeOrderStatus,
             >
               <LineItemRow
                 imagen={item.imagen}
+                variantId={item.variant_id}
                 productName={item.product_name}
                 color={item.color}
                 size={item.size}
@@ -552,6 +553,7 @@ export default function CartTab({ customerId, onOrderCreated, activeOrderStatus,
             >
               <LineItemRow
                 imagen={item.imagen}
+                variantId={item.variant_id}
                 productName={item.product_name}
                 color={item.color}
                 size={item.size}

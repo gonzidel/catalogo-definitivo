@@ -1,6 +1,7 @@
 "use client";
 
-import type { CSSProperties, ReactNode } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { fetchOrderItemImageUrl } from "@/lib/supabase/order-item-image";
 
 export function formatItemARS(n: number) {
   return new Intl.NumberFormat("es-AR", {
@@ -18,6 +19,8 @@ interface StatusChip {
 
 interface LineItemRowProps {
   imagen?: string;
+  /** Fallback si `imagen` vino vacío (p. ej. ítem agregado desde admin Kanban). */
+  variantId?: string | null;
   productName: string;
   color?: string;
   size?: string;
@@ -34,14 +37,28 @@ interface LineItemRowProps {
   below?: ReactNode;
 }
 
+/** En filas missing el título se corta por CSS; nombre/color a 5 chars dejan ver el talle. */
+function clipLabel(value: string, max = 5): string {
+  const t = String(value || "").trim();
+  if (t.length <= max) return t;
+  return t.slice(0, max);
+}
+
 function buildTitle(
   productName: string,
   color?: string,
   size?: string,
-  isOffer?: boolean
+  isOffer?: boolean,
+  compactNameColor = false
 ) {
-  const parts = [productName];
-  if (color) parts.push(color);
+  const name = compactNameColor ? clipLabel(productName) : productName;
+  const colorPart = color
+    ? compactNameColor
+      ? clipLabel(color)
+      : color
+    : undefined;
+  const parts = [name];
+  if (colorPart) parts.push(colorPart);
   if (size) parts.push(`T. ${size}`);
   const base = parts.join(" · ");
   return isOffer ? `${base} 🔥` : base;
@@ -71,6 +88,7 @@ function defaultLine2(quantity: number, unitPrice: number) {
 
 export default function LineItemRow({
   imagen,
+  variantId = null,
   productName,
   color,
   size,
@@ -85,7 +103,36 @@ export default function LineItemRow({
   trailing,
   below,
 }: LineItemRowProps) {
+  const [resolvedImage, setResolvedImage] = useState<string | null>(
+    () => String(imagen || "").trim() || null
+  );
+
+  useEffect(() => {
+    const cached = String(imagen || "").trim();
+    if (cached) {
+      setResolvedImage(cached);
+      return;
+    }
+    const vid = String(variantId || "").trim();
+    if (!vid) {
+      setResolvedImage(null);
+      return;
+    }
+    let cancelled = false;
+    void fetchOrderItemImageUrl({ imagen: null, variant_id: vid }).then((url) => {
+      if (!cancelled) setResolvedImage(url);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [imagen, variantId]);
+
   const isWarn = highlight === "missing" || highlight === "outOfStock";
+  // Sin stock: fila apretada (Alternativas + Quitar) — recortar nombre/color
+  // para que el talle no quede en "T. …" (pedido explícito UX móvil).
+  const compactTitle = highlight === "missing";
+  const displayTitle = buildTitle(productName, color, size, isOffer, compactTitle);
+  const fullTitle = buildTitle(productName, color, size, isOffer, false);
   const lineTotal = unitPrice * quantity;
   const statusStyle = status
     ? ({
@@ -105,11 +152,11 @@ export default function LineItemRow({
           .filter(Boolean)
           .join(" ")}
       >
-        {imagen ? (
+        {resolvedImage ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={imagen}
-            alt={productName}
+            src={resolvedImage}
+            alt={fullTitle}
             className="line-item-row__img"
           />
         ) : (
@@ -117,8 +164,8 @@ export default function LineItemRow({
         )}
 
         <div className="line-item-row__body">
-          <div className="line-item-row__title">
-            {buildTitle(productName, color, size, isOffer)}
+          <div className="line-item-row__title" title={compactTitle ? fullTitle : undefined}>
+            {displayTitle}
           </div>
           <div className="line-item-row__meta">
             {line2 ?? defaultLine2(quantity, unitPrice)}

@@ -12,7 +12,7 @@ export const CATALOG_SOURCE = "catalog_public_snapshot";
 export const CATALOG_AVAILABLE_VIEW = "catalog_public_available_view";
 
 export const CATALOG_SELECT =
-  '"Categoria","Articulo","Descripcion","Color","Numeracion","FechaIngreso","FechaPublicacion","Mostrar","Oferta","Precio","Imagen Principal","Imagen 1","Imagen 2","Imagen 3","Filtro1","Filtro2","Filtro3","OfertaActiva","PrecioOferta","PromoActiva","OfferCampaignId","OfferImageUrl","OfferTitle","ColorHex","ColorDisplayNumber","SupplierCode"';
+  '"Categoria","Articulo","Descripcion","Color","Numeracion","FechaIngreso","FechaPublicacion","Mostrar","Oferta","Precio","Imagen Principal","Imagen 1","Imagen 2","Imagen 3","Filtro1","Filtro2","Filtro3","DetallesSimilitud","OfertaActiva","PrecioOferta","PromoActiva","OfferCampaignId","OfferImageUrl","OfferTitle","ColorHex","ColorDisplayNumber","SupplierCode"';
 
 export const CATEGORIAS_MAP: Record<string, string> = {
   calzado: "Calzado",
@@ -32,7 +32,38 @@ export function categoriaToSlug(cat: string): string {
   return cat.toLowerCase();
 }
 
+/** Slug de ruta real (`/calzado`, `/ofertas`, …) o null si no hay página (p. ej. Otros). */
+export function categoriaToNavigableSlug(cat: string): string | null {
+  const key = String(cat ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  if (!key) return null;
+  if (Object.prototype.hasOwnProperty.call(CATEGORIAS_MAP, key)) return key;
+  for (const [slug, name] of Object.entries(CATEGORIAS_MAP)) {
+    const folded = name
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
+    if (folded === key) return slug;
+  }
+  return null;
+}
+
 // ─── Group raw rows by Articulo ───────────────────────────────────────────────
+
+function mergeDetailTokens(current: string, incoming?: string | null): string {
+  const set = new Set<string>();
+  for (const raw of [current, incoming]) {
+    String(raw ?? "")
+      .split(/[,;|/]+/)
+      .map((t) => t.trim())
+      .filter(Boolean)
+      .forEach((t) => set.add(t));
+  }
+  return [...set].join(",");
+}
 
 function getColorKey(color: string): string {
   return String(color || "Sin color").trim().toLowerCase();
@@ -74,7 +105,7 @@ export function agruparProductos(rows: CatalogRow[]): GroupedProduct[] {
         Filtro1: row.Filtro1 ?? "",
         Filtro2: row.Filtro2 ?? "",
         Filtro3: row.Filtro3 ?? "",
-        DetallesSimilitud: "",
+        DetallesSimilitud: mergeDetailTokens("", row.DetallesSimilitud),
         OfertaActiva: false,
         PrecioOferta: "",
         PromoActiva: "",
@@ -84,6 +115,7 @@ export function agruparProductos(rows: CatalogRow[]): GroupedProduct[] {
     }
 
     const g = grupos[art];
+    g.DetallesSimilitud = mergeDetailTokens(g.DetallesSimilitud, row.DetallesSimilitud);
 
     if (row.OfertaActiva === true || row.OfertaActiva === "true") {
       g.OfertaActiva = true;

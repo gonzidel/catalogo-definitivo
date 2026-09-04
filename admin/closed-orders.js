@@ -5,8 +5,17 @@ import {
   canonicalizeTransportName,
   normalizeTransportKey,
 } from "../scripts/transport-canonical.js";
+import { isClosedOrderFromLocalZoneWithShipping } from "../scripts/local-zone-helpers.js";
 import { parseARSNumber, resolveOrderItemUnitPrice } from "../scripts/utils/price.js?v=m260607";
 import { formatDniDisplay } from "../scripts/utils/dni.js?v=m260607";
+import {
+  buildCustomerLabelNamePoolDetailed,
+  formatPersonDisplayName,
+  getOrderActiveLabelButtonIndex,
+  getOrderLabelDisplayName,
+  getPendingLabelNameEntry,
+  normalizeLabelNameCompare,
+} from "../scripts/utils/label-names.js?v=m260607";
 
 const TIMEZONE_BUENOS_AIRES = "America/Argentina/Buenos_Aires";
 
@@ -19,6 +28,114 @@ let currentAdminUser = null;
 let realtimeSubscription = null;
 let isRealtimeSubscribed = false;
 const closedOrdersVariantPriceMap = new Map(); // variant_id -> price de catálogo (raw)
+
+/** Pedido bloqueado hasta confirmar pago o costo Correo (migración 320). */
+function requiresPaymentConfirmation(order) {
+  const status = order?.closed_fulfillment_status;
+  return (
+    status === "awaiting_payment" ||
+    status === "awaiting_correo_cost" ||
+    status === "awaiting_customer_message"
+  );
+}
+
+function canFinalizeClosedOrder(order) {
+  if (!order) return false;
+  if (requiresPaymentConfirmation(order) && !order.payment_confirmed_at) {
+    return false;
+  }
+  return true;
+}
+
+function getFulfillmentBlockMessage(order, transportName) {
+  const status = order?.closed_fulfillment_status;
+  const canon = canonicalizeTransportName(transportName || "");
+  if (status === "awaiting_correo_cost") {
+    return "Correo Argentino — falta registrar costo de envío. Usá el botón Correo del header.";
+  }
+  if (status === "awaiting_payment" || status === "awaiting_customer_message") {
+    if (canon === "Correo Argentino") {
+      return "Correo Argentino — falta confirmación de pago en el panel Pagos del Kanban.";
+    }
+    return "Falta confirmación de pago en el panel Pagos del Kanban.";
+  }
+  return "";
+}
+
+/** Transportes con contra reembolso por defecto (migración 320). */
+const COD_TRANSPORT_CANONICAL = new Set(["MyM", "SEDE", "Expreso Norte"]);
+
+const ORDER_PAYMENT_METHOD = {
+  CONTRA_REEMBOLSO: "Contra Reembolso",
+  PAGADO: "Pagado",
+};
+
+function isCodTransportName(transportName) {
+  return COD_TRANSPORT_CANONICAL.has(canonicalizeTransportName(transportName || ""));
+}
+
+function isPagadoPaymentMethod(value) {
+  const key = String(value || "").trim().toLowerCase();
+  return key === "pagado" || key === "pago" || key === "transferencia" || key === "transferencia bancaria";
+}
+
+function getClosedOrderPaymentLabel(order, transportName) {
+  const pm = String(order?.payment_method || "").trim();
+  if (isPagadoPaymentMethod(pm)) return ORDER_PAYMENT_METHOD.PAGADO;
+  if (requiresPaymentConfirmation(order)) return ORDER_PAYMENT_METHOD.PAGADO;
+  if (isCodTransportName(transportName)) return ORDER_PAYMENT_METHOD.CONTRA_REEMBOLSO;
+  return pm || "Sin especificar";
+}
+
+function canSwitchCodToPagado(order, transportName) {
+  if (!isCodTransportName(transportName)) return false;
+  if (requiresPaymentConfirmation(order)) return false;
+  if (isPagadoPaymentMethod(order?.payment_method) && order?.payment_confirmed_at) {
+    return false;
+  }
+  return getClosedOrderPaymentLabel(order, transportName) === ORDER_PAYMENT_METHOD.CONTRA_REEMBOLSO;
+}
+
+async function handleSwitchCodToPagado(orderId) {
+  const order = orders.find((o) => o.id === orderId);
+  if (!order) {
+    alert("Pedido no encontrado.");
+    return;
+  }
+
+  if (!confirm("¿Cambiar el método de pago a Pagado?")) {
+    return;
+  }
+
+  const persist = confirm(
+    "¿Conservar este cambio para futuros pedidos de la clienta?\n\n" +
+      "• Aceptar = conservar (mismo protocolo que Via Cargo; el mensaje seguirá nombrando el transporte asignado)\n" +
+      "• Cancelar = solo para este envío (queda listo para finalizar sin panel Pagos)"
+  );
+
+  if (!supabase) supabase = await getSupabase();
+  if (!supabase) {
+    alert("No se pudo conectar con la base de datos.");
+    return;
+  }
+
+  try {
+    const { error } = await supabase.rpc("rpc_switch_cod_order_to_pagado", {
+      p_order_id: orderId,
+      p_persist: persist,
+    });
+    if (error) throw error;
+    alert(
+      persist
+        ? "Pago cambiado a Pagado y conservado para la clienta. Seguí el flujo en la campana y panel Pagos del Kanban."
+        : "Pago cambiado a Pagado solo para este envío. Ya podés finalizar el pedido."
+    );
+    await loadClosedOrders();
+  } catch (err) {
+    console.error(err);
+    alert(err.message || "No se pudo cambiar el método de pago.");
+  }
+}
 
 // Función para obtener supabase
 async function getSupabase() {
@@ -485,13 +602,6 @@ async function printTscShippingLabel(shippingLabel, copies = 1) {
   }
 }
 
-// Función para preparar objeto shippingLabel desde un pedido
-function getOrderLabelDisplayName(order, customer) {
-  const fromOrder = String(order?.label_customer_name || "").trim();
-  if (fromOrder) return fromOrder;
-  return String(customer?.full_name || "").trim() || "Cliente sin nombre";
-}
-
 async function resolveOrderLabelIdentity(orderId) {
   if (!supabase) supabase = await getSupabase();
   if (!supabase) throw new Error("No se pudo conectar con la base de datos");
@@ -514,17 +624,29 @@ function applyLabelIdentityToOrder(order, identity) {
   order.label_customer_dni = identity.customer_dni || order.label_customer_dni || "";
 }
 
+function orderLabelNeedsDniResolve(order) {
+  const preselected = String(order?.label_customer_name || "").trim();
+  if (!preselected) return true;
+
+  const preselectedDni = String(order?.label_customer_dni || "").trim();
+  if (preselectedDni) return false;
+
+  const customer = normalizeOrderCustomerRecord(order);
+  const pool = buildCustomerLabelNamePoolDetailed(customer);
+  return pool.some((entry) => String(entry?.dni || "").trim().length > 0);
+}
+
 async function prepareOrderShippingLabel(orderId) {
   const order = orders.find((o) => o.id === orderId);
   if (!order) throw new Error("Pedido no encontrado.");
 
-  const preselected = String(order?.label_customer_name || "").trim();
-  if (preselected) {
+  if (!orderLabelNeedsDniResolve(order)) {
     return await prepareShippingLabelFromOrder(order);
   }
 
   const identity = await resolveOrderLabelIdentity(orderId);
   applyLabelIdentityToOrder(order, identity);
+  refreshOrderCardLabelNameUI(orderId);
   return await prepareShippingLabelFromOrder(order);
 }
 
@@ -609,23 +731,8 @@ async function prepareShippingLabelFromOrder(order) {
   };
 }
 
-// Función para formatear nombre de cliente
-function formatPersonDisplayName(fullName) {
-  const full = String(fullName || "").trim();
-  if (!full) return "Cliente sin nombre";
-  const parts = full.split(/\s+/);
-  if (parts.length === 1) return full;
-  const last = parts.pop();
-  const first = parts.join(" ");
-  return `${last}, ${first}`;
-}
-
 function formatCustomerDisplayName(customer) {
   return formatPersonDisplayName(customer?.full_name || customer?.name || "");
-}
-
-function normalizeLabelNameCompare(name) {
-  return String(name || "").trim().toLowerCase().replace(/\s+/g, " ");
 }
 
 function normalizeOrderCustomerRecord(order) {
@@ -635,75 +742,14 @@ function normalizeOrderCustomerRecord(order) {
   return {};
 }
 
-function parseCustomerAdditionalNamesForLabels(raw) {
-  if (!raw) return [];
-  let parsed = raw;
-  if (typeof raw === "string") {
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      return [];
-    }
-  }
-  if (!Array.isArray(parsed)) return [];
-  return parsed
-    .slice(0, 3)
-    .map((entry) => {
-      const full =
-        String(entry?.full_name || "").trim() ||
-        String(`${entry?.first_name || ""} ${entry?.last_name || ""}`).trim() ||
-        String(entry?.name || "").trim();
-      const dni = String(entry?.dni || "").trim();
-      return full ? { full_name: full, dni } : null;
-    })
-    .filter(Boolean);
-}
-
-function buildCustomerLabelNamePoolDetailed(customer) {
-  const mainName = String(customer?.full_name || customer?.name || "").trim() || "Sin nombre";
-  const mainDni = String(customer?.dni || "").trim();
-  const pool = [{ button: 1, full_name: mainName, dni: mainDni, isMain: true }];
-  for (const entry of parseCustomerAdditionalNamesForLabels(customer?.additional_names)) {
-    pool.push({
-      button: pool.length + 1,
-      full_name: entry.full_name,
-      dni: entry.dni || "",
-      isMain: false,
-    });
-  }
-  return pool;
-}
-
-function buildCustomerLabelNamePool(customer) {
-  return buildCustomerLabelNamePoolDetailed(customer).map((entry) => ({
-    full_name: entry.full_name,
-    isMain: entry.isMain,
-  }));
-}
-
-function getOrderActiveLabelButtonIndex(order, customer) {
-  const pool = buildCustomerLabelNamePoolDetailed(customer);
-  if (pool.length <= 1) return 1;
-
-  const assigned = String(order?.label_customer_name || "").trim();
-  if (assigned) {
-    const match = pool.find(
-      (entry) => normalizeLabelNameCompare(entry.full_name) === normalizeLabelNameCompare(assigned)
-    );
-    if (match) return match.button;
-  }
-
-  return 1;
-}
-
 function getOrderCardDisplayIdentity(order, customer) {
   const pool = buildCustomerLabelNamePoolDetailed(customer);
-  const activeButton = getOrderActiveLabelButtonIndex(order, customer);
-  const entry = pool.find((item) => item.button === activeButton) || pool[0];
+  const entry = getPendingLabelNameEntry(customer, order) || pool[0];
+  const activeButton = entry?.button || getOrderActiveLabelButtonIndex(order, customer);
 
   return {
     displayName: formatPersonDisplayName(entry?.full_name),
-    displayDni: entry?.dni || "",
+    displayDni: entry?.dni || order?.label_customer_dni || "",
     activeButton,
     pool,
   };
@@ -734,11 +780,7 @@ function getOrderLabelNamePreview(order, customer) {
     return null;
   }
 
-  const pool = buildCustomerLabelNamePool(customer);
-  if (pool.length <= 1) return null;
-
-  const cursor = Number(customer?.label_name_cursor) || 0;
-  const entry = pool[cursor % pool.length];
+  const entry = getPendingLabelNameEntry(customer, order);
   if (!entry || entry.isMain) return null;
   return { name: entry.full_name, isSubName: true };
 }
@@ -1193,6 +1235,9 @@ async function loadClosedOrders() {
       payment_method,
       label_customer_name,
       label_customer_dni,
+      payment_confirmed_at,
+      correo_shipping_cost,
+      closed_fulfillment_status,
       order_items (
         id,
         product_name,
@@ -1253,7 +1298,7 @@ async function loadClosedOrders() {
 
     if (customerIds.length > 0) {
       // Intentar cargar transport_id de customers, pero si no existe, continuar sin él
-      let customerSelectFields = "id, customer_number, full_name, address, phone, city, province, dni, email, transport_id, additional_names, label_name_cursor";
+      let customerSelectFields = "id, customer_number, full_name, address, phone, city, province, dni, email, transport_id, additional_names, label_name_cursor, preferred_payment_method";
       let customersResponse = await supabase
         .from("customers")
         .select(customerSelectFields)
@@ -1261,8 +1306,8 @@ async function loadClosedOrders() {
 
       // Si columnas nuevas no existen, intentar sin ellas
       if (customersResponse.error && (customersResponse.error.code === '42703' || customersResponse.error.message?.includes('does not exist'))) {
-        console.warn("⚠️ Columnas additional_names/label_name_cursor no disponibles en customers.");
-        customerSelectFields = "id, customer_number, full_name, address, phone, city, province, dni, email, transport_id";
+        console.warn("⚠️ Columnas additional_names/label_name_cursor/preferred_payment_method no disponibles en customers.");
+        customerSelectFields = "id, customer_number, full_name, address, phone, city, province, dni, email, transport_id, additional_names, label_name_cursor";
         customersResponse = await supabase
           .from("customers")
           .select(customerSelectFields)
@@ -1498,13 +1543,29 @@ async function renderOrderCard(order) {
 
   const orderDisplayNumber = order.order_number || order.id.substring(0, 8);
   const labelIdentity = getOrderCardDisplayIdentity(order, customer);
+  const showLocalZoneBadge = isClosedOrderFromLocalZoneWithShipping(
+    order,
+    customer,
+    transportName
+  );
+
+  const fulfillmentBlocked = requiresPaymentConfirmation(order) && !order.payment_confirmed_at;
+  const blockMessage = fulfillmentBlocked ? getFulfillmentBlockMessage(order, transportName) : "";
+  const canFinalize = labelsPrinted && canFinalizeClosedOrder(order);
+  const paymentLabel = getClosedOrderPaymentLabel(order, transportName);
+  const showCodPaymentBtn = isCodTransportName(transportName);
+  const codPaymentSwitchable = canSwitchCodToPagado(order, transportName);
 
   return `
-    <div class="order-card" data-order-id="${order.id}">
+    <div class="order-card${showLocalZoneBadge ? " order-card--local-zone-shipping" : ""}${fulfillmentBlocked ? " order-card--blocked" : ""}" data-order-id="${order.id}">
       <div class="order-header">
         <div class="order-id">Pedido #${orderDisplayNumber}</div>
-        <div class="order-status">Cerrado</div>
+        <div class="order-header-badges">
+          ${showLocalZoneBadge ? `<span class="order-local-zone-badge" title="Clienta de zona con retiro en local; este pedido se envía a domicilio">Pedido del local</span>` : ""}
+          <div class="order-status">Cerrado</div>
+        </div>
       </div>
+      ${blockMessage ? `<div class="order-fulfillment-block" role="status">${blockMessage}</div>` : ""}
       <div class="customer-info">
         <div class="customer-name">
           ${customer.customer_number ? `<span style="color: #CD844D; font-weight: 600;">#${customer.customer_number}</span>` : ""}
@@ -1547,6 +1608,18 @@ async function renderOrderCard(order) {
         <div style="margin-top: 8px; font-size: 13px; color: #666;">
           ${transport ? `<strong>Asignado:</strong> ${transportName || 'Sin nombre'}${transport.details ? ` - ${transport.details}` : ''}` : transportId ? `<strong>Asignado:</strong> Transporte (ID: ${transportId.substring(0, 8)}...)` : '<em>No hay transporte asignado</em>'}
         </div>
+        ${showCodPaymentBtn ? `
+        <div class="order-payment-method-row">
+          <strong>💳 Método de pago:</strong>
+          <button
+            type="button"
+            class="btn btn-payment-method${paymentLabel === ORDER_PAYMENT_METHOD.PAGADO ? " btn-payment-method--pagado" : ""}"
+            data-switch-cod-payment="${order.id}"
+            ${codPaymentSwitchable ? "" : "disabled"}
+            title="${codPaymentSwitchable ? "Cambiar a Pagado" : paymentLabel}"
+          >${paymentLabel}</button>
+        </div>
+        ` : ""}
       </div>
       <div class="order-summary">
         <div class="order-summary-item">
@@ -1602,7 +1675,10 @@ async function renderOrderCard(order) {
       <div class="order-actions">
         <button class="btn btn-primary" data-show-detail="${order.id}">Ver Detalle</button>
         <button class="btn btn-secondary" data-revert-order="${order.id}">Volver a Apartados</button>
-        <button class="btn btn-success" data-finalize-order="${order.id}" ${!labelsPrinted ? 'disabled' : ''}>
+        <button class="btn" style="background: #CD844D; color: white;" data-send-closed-to-local="${order.id}">
+          🏪 Enviar al local
+        </button>
+        <button class="btn btn-success" data-finalize-order="${order.id}" ${!canFinalize ? "disabled" : ""}>
           Finalizar (Enviar)
         </button>
       </div>
@@ -1995,6 +2071,171 @@ async function revertOrderStatus(orderId) {
   await loadClosedOrders();
 }
 
+// Botón "Enviar al local": reabrir closed-orders como pedido operativo en Retiro (Apartados).
+async function sendClosedOrderToLocal(orderId) {
+  if (!orderId) return;
+
+  const confirmOk = await showConfirmModal({
+    title: "Enviar al local",
+    message:
+      "¿Está seguro que desea enviar este pedido al local (Retiro)? " +
+      "El pedido saldrá de cerrados y aparecerá en Apartados de Retiro.",
+    confirmLabel: "Enviar",
+    cancelLabel: "Cancelar",
+  });
+  if (!confirmOk) return;
+
+  if (!supabase) {
+    supabase = await getSupabase();
+  }
+  if (!supabase) {
+    alert("Error: No se pudo conectar con la base de datos.");
+    return;
+  }
+
+  const order = orders.find((o) => String(o.id) === String(orderId));
+  if (!order) {
+    alert("Pedido no encontrado en pantalla.");
+    return;
+  }
+
+  // 1) Marcar destino Kanban (Retiro / Apartados) con tono naranja.
+  let notesObj = {};
+  if (order.notes) {
+    try {
+      notesObj = JSON.parse(order.notes);
+    } catch {
+      notesObj = {};
+    }
+  }
+  notesObj.kanban_scope = "local_pickup";
+  notesObj.retiro_origin = "moved_from_closed";
+
+  const { error: notesError } = await supabase
+    .from("orders")
+    .update({
+      notes: JSON.stringify(notesObj),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", orderId);
+
+  if (notesError) {
+    console.error("❌ Error actualizando notes para enviar al local:", notesError);
+    alert(notesError.message || "No se pudo actualizar el destino del pedido.");
+    return;
+  }
+
+  // 2) Revertir `status = closed` -> `active` (ítems siguen como picked).
+  const { data: currentOrder, error: checkError } = await supabase
+    .from("orders")
+    .select("status")
+    .eq("id", orderId)
+    .maybeSingle();
+
+  if (checkError) {
+    console.error("❌ Error verificando estado del pedido:", checkError);
+    alert(checkError.message || "Error al verificar el pedido.");
+    return;
+  }
+
+  if (!currentOrder) {
+    alert("No se encontró el pedido.");
+    return;
+  }
+
+  if (currentOrder.status === "devolución") {
+    alert(
+      "No se puede enviar un pedido en devolución: los productos ya fueron devueltos al stock general."
+    );
+    return;
+  }
+
+  const { error: revertError } = await supabase.rpc("rpc_revert_order_to_picked", {
+    p_order_id: orderId,
+  });
+
+  if (revertError) {
+    // Si la función RPC no existe, intentar actualizar directamente.
+    if (
+      revertError.code === "42883" ||
+      revertError.message?.includes("does not exist")
+    ) {
+      console.warn("⚠️ rpc_revert_order_to_picked no existe aún. Usando UPDATE directo...");
+      const { error: updateError } = await supabase
+        .from("orders")
+        .update({ status: "active", updated_at: new Date().toISOString() })
+        .eq("id", orderId);
+
+      if (updateError) {
+        console.error("❌ Error revirtiendo pedido:", updateError);
+        alert(updateError.message || "No se pudo reabrir el pedido.");
+        return;
+      }
+    } else {
+      console.error("❌ Error revirtiendo pedido:", revertError);
+      alert(revertError.message || "No se pudo reabrir el pedido.");
+      return;
+    }
+  }
+
+  alert("✅ Pedido enviado al local (Retiro / Apartados).");
+  await loadClosedOrders();
+}
+
+/** Confirmación visual del sistema (sin confirm() del navegador). */
+function showConfirmModal({
+  title = "Confirmar",
+  message = "",
+  confirmLabel = "Confirmar",
+  cancelLabel = "Cancelar",
+} = {}) {
+  return new Promise((resolve) => {
+    const modal = document.getElementById("confirm-action-modal");
+    const titleEl = document.getElementById("confirm-action-title");
+    const messageEl = document.getElementById("confirm-action-message");
+    const okBtn = document.getElementById("confirm-action-ok");
+    const cancelBtn = document.getElementById("confirm-action-cancel");
+    const closeBtn = document.getElementById("confirm-action-close");
+
+    if (!modal || !titleEl || !messageEl || !okBtn || !cancelBtn) {
+      resolve(window.confirm(message));
+      return;
+    }
+
+    titleEl.textContent = title;
+    messageEl.textContent = message;
+    okBtn.textContent = confirmLabel;
+    cancelBtn.textContent = cancelLabel;
+    modal.classList.add("active");
+
+    const cleanup = (result) => {
+      modal.classList.remove("active");
+      okBtn.removeEventListener("click", onOk);
+      cancelBtn.removeEventListener("click", onCancel);
+      closeBtn?.removeEventListener("click", onCancel);
+      modal.removeEventListener("click", onBackdrop);
+      document.removeEventListener("keydown", onKey);
+      resolve(result);
+    };
+
+    const onOk = () => cleanup(true);
+    const onCancel = () => cleanup(false);
+    const onBackdrop = (e) => {
+      if (e.target === modal) cleanup(false);
+    };
+    const onKey = (e) => {
+      if (e.key === "Escape") cleanup(false);
+    };
+
+    okBtn.addEventListener("click", onOk);
+    cancelBtn.addEventListener("click", onCancel);
+    closeBtn?.addEventListener("click", onCancel);
+    modal.addEventListener("click", onBackdrop);
+    document.addEventListener("keydown", onKey);
+    okBtn.focus();
+  });
+}
+
 // Función para finalizar pedido (cambiar a "sent")
 async function finalizeOrder(orderId) {
   const order = orders.find(o => o.id === orderId);
@@ -2008,9 +2249,26 @@ async function finalizeOrder(orderId) {
     return;
   }
 
-  if (!confirm("¿Está seguro que desea finalizar este pedido? El pedido se moverá a 'Enviados'.")) {
+  if (!canFinalizeClosedOrder(order)) {
+    alert(
+      "⚠️ No se puede finalizar el pedido. " +
+        (getFulfillmentBlockMessage(
+          order,
+          canonicalizeTransportName(
+            scheduledTransports.find((t) => String(t.id) === String(order.transport_id || ""))?.name || ""
+          )
+        ) || "Falta confirmación de pago.")
+    );
     return;
   }
+
+  const confirmed = await showConfirmModal({
+    title: "Finalizar pedido",
+    message: "¿Está seguro que desea finalizar este pedido? El pedido se moverá a «Enviados».",
+    confirmLabel: "Finalizar",
+    cancelLabel: "Cancelar",
+  });
+  if (!confirmed) return;
 
   if (!supabase) {
     supabase = await getSupabase();
@@ -2050,7 +2308,6 @@ async function finalizeOrder(orderId) {
   }
 
   console.log("✅ Pedido finalizado correctamente");
-  alert("✅ Pedido finalizado. Aparecerá en la lista de envíos del día de hoy al buscar por su transporte.");
   await loadClosedOrders();
 }
 
@@ -2724,11 +2981,27 @@ function attachEventHandlers() {
     });
   });
 
+  // Botón enviar al local (closed-orders -> Retiro Apartados)
+  document.querySelectorAll('[data-send-closed-to-local]').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const orderId = btn.dataset.sendClosedToLocal;
+      await sendClosedOrderToLocal(orderId);
+    });
+  });
+
   // Botón finalizar pedido
   document.querySelectorAll('[data-finalize-order]').forEach(btn => {
     btn.addEventListener('click', async (e) => {
       const orderId = e.target.dataset.finalizeOrder;
       await finalizeOrder(orderId);
+    });
+  });
+
+  document.querySelectorAll('[data-switch-cod-payment]').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const orderId = e.target.dataset.switchCodPayment;
+      if (!orderId || e.target.disabled) return;
+      await handleSwitchCodToPagado(orderId);
     });
   });
 
@@ -2877,6 +3150,147 @@ function attachEventHandlers() {
       }
     });
   });
+}
+
+async function loadCorreoPendingOrders() {
+  if (!supabase) supabase = await getSupabase();
+  if (!supabase) return [];
+
+  const { data, error } = await supabase.rpc("rpc_list_correo_pending_shipping_cost");
+  if (error) {
+    console.error("Error cargando pedidos correo pendientes:", error);
+    return [];
+  }
+  const rows = data?.orders;
+  return Array.isArray(rows) ? rows : [];
+}
+
+function updateCorreoBtnBadge(count) {
+  const btn = document.getElementById("correo-btn");
+  const badge = document.getElementById("correo-btn-badge");
+  if (!btn || !badge) return;
+
+  const n = Math.max(0, Number(count) || 0);
+  badge.textContent = String(n);
+  badge.setAttribute("aria-hidden", n > 0 ? "false" : "true");
+  btn.classList.toggle("correo-btn--has-pending", n > 0);
+  btn.setAttribute(
+    "aria-label",
+    n > 0
+      ? `Correo Argentino: ${n} pendiente${n === 1 ? "" : "s"} de costo de envío`
+      : "Correo Argentino pendientes"
+  );
+}
+
+async function refreshCorreoBtnBadge() {
+  const pending = await loadCorreoPendingOrders();
+  updateCorreoBtnBadge(pending.length);
+  return pending;
+}
+
+function formatCurrencyInputPreview(value) {
+  const n = parseARSNumber(value);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  return new Intl.NumberFormat("es-AR", {
+    style: "currency",
+    currency: "ARS",
+    maximumFractionDigits: 0,
+  }).format(n);
+}
+
+async function renderCorreoPendingList() {
+  const container = document.getElementById("correo-pending-list");
+  if (!container) return;
+
+  container.innerHTML = `<p style="color:#666;">Cargando…</p>`;
+  const pending = await loadCorreoPendingOrders();
+  updateCorreoBtnBadge(pending.length);
+
+  if (!pending.length) {
+    container.innerHTML = `<p style="color:#666;">No hay pedidos de Correo Argentino pendientes de costo de envío.</p>`;
+    return;
+  }
+
+  container.innerHTML = pending
+    .map((row) => {
+      const label = row.customer_name || "Cliente";
+      const num = row.order_number ? `#${row.order_number}` : row.order_id?.substring(0, 8) || "";
+      return `
+        <div class="correo-pending-item" data-order-id="${row.order_id}">
+          <div class="correo-pending-item__name">${label} ${num ? `<span style="color:#666;font-weight:500;">${num}</span>` : ""}</div>
+          <input type="text" class="correo-pending-item__cost" placeholder="$15.000" inputmode="decimal" aria-label="Costo envío" />
+          <button type="button" class="btn btn-primary correo-set-cost-btn" data-order-id="${row.order_id}">Aceptar</button>
+        </div>
+      `;
+    })
+    .join("");
+
+  container.querySelectorAll(".correo-pending-item__cost").forEach((input) => {
+    input.addEventListener("blur", () => {
+      const preview = formatCurrencyInputPreview(input.value);
+      if (preview) input.value = preview.replace(/\s/g, "");
+    });
+  });
+
+  container.querySelectorAll(".correo-set-cost-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const orderId = btn.dataset.orderId;
+      const item = btn.closest(".correo-pending-item");
+      const input = item?.querySelector(".correo-pending-item__cost");
+      const cost = parseARSNumber(input?.value || "");
+      if (!Number.isFinite(cost) || cost <= 0) {
+        alert("Ingresá un costo de envío válido (ej. $15.000).");
+        return;
+      }
+      btn.disabled = true;
+      btn.textContent = "Guardando…";
+      try {
+        const { error } = await supabase.rpc("rpc_set_correo_shipping_cost", {
+          p_order_id: orderId,
+          p_cost: cost,
+        });
+        if (error) throw error;
+        await loadClosedOrders();
+        await renderCorreoPendingList();
+      } catch (err) {
+        console.error(err);
+        alert(err.message || "No se pudo guardar el costo de envío.");
+        btn.disabled = false;
+        btn.textContent = "Aceptar";
+      }
+    });
+  });
+}
+
+function setupCorreoModal() {
+  const correoBtn = document.getElementById("correo-btn");
+  const correoModal = document.getElementById("correo-modal");
+  const closeCorreoModal = document.getElementById("close-correo-modal");
+
+  if (correoBtn && correoModal) {
+    correoBtn.addEventListener("click", async () => {
+      correoModal.classList.add("active");
+      await renderCorreoPendingList();
+    });
+  }
+
+  if (closeCorreoModal && correoModal) {
+    closeCorreoModal.addEventListener("click", () => {
+      correoModal.classList.remove("active");
+      void refreshCorreoBtnBadge();
+    });
+  }
+
+  if (correoModal) {
+    correoModal.addEventListener("click", (e) => {
+      if (e.target === correoModal) {
+        correoModal.classList.remove("active");
+        void refreshCorreoBtnBadge();
+      }
+    });
+  }
+
+  void refreshCorreoBtnBadge();
 }
 
 // Función para configurar modales
@@ -3124,6 +3538,7 @@ async function initClosedOrders() {
     await loadClosedOrders();
     setupSearchControls();
     setupModals();
+    setupCorreoModal();
     setupPrintListsModal();
     setupRealtimeSubscription();
   } catch (error) {

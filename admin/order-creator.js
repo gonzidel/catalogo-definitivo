@@ -12,6 +12,7 @@ import {
   rankCustomersForSearch,
   computeWarehouseQtySplitForOrderItem,
   computeOrderItemsPromoDiscount,
+  isRetiroBoardOrderForLegacyPedidos,
 } from "./orders-domain.js?v=m260607";
 import { hasCatalogPrice, catalogPriceGuardMessage } from "../scripts/utils/price.js?v=m260607";
 
@@ -1721,9 +1722,10 @@ async function processQrCodeForOrder(qrCode) {
       variant_id: variant.id,
       qty_from_general: qtyFromGeneral,
       qty_from_venta: qtyFromVenta,
-      // Excepción operativa: si no hay stock confirmado, se guarda como missing
-      // para seguimiento manual y sin descuento automático.
-      status: hasConfirmedStock ? "picked" : "missing",
+      // Excepción operativa: si no hay stock confirmado, mantenemos trazabilidad
+      // con `admin_confirmed_missing`, pero para el cliente el ítem es "apartado"
+      // (no "Sin stock").
+      status: "picked",
       admin_confirmed_missing: !hasConfirmedStock
     };
     
@@ -2233,6 +2235,7 @@ async function addSelectedProductsToOrder() {
     let qtyFromGeneral = 0;
     let qtyFromVenta = 0;
     let itemStatus = "picked";
+    let adminConfirmedMissing = false;
     
     if (totalQuantity > stockTotal) {
       const available = Math.max(0, stockTotal - existingDeductibleQty);
@@ -2240,7 +2243,7 @@ async function addSelectedProductsToOrder() {
         // Sin stock: agregar al pedido sin aviso (coherente con clic en talle sin modal)
         qtyFromGeneral = 0;
         qtyFromVenta = 0;
-        itemStatus = "missing";
+        adminConfirmedMissing = true;
       } else {
         const confirmAdd = confirm(
           `⚠️ Stock insuficiente para ${articulo} - ${color} - Talle ${talle}.\n\n` +
@@ -2313,7 +2316,7 @@ async function addSelectedProductsToOrder() {
       qty_from_general: qtyFromGeneral,
       qty_from_venta: qtyFromVenta,
       status: itemStatus,
-      admin_confirmed_missing: itemStatus === "missing"
+      admin_confirmed_missing: adminConfirmedMissing
     });
   }
   
@@ -3727,16 +3730,28 @@ async function createNewOrder(customerId, items, total, extraValues = {}) {
   // requiere intervención manual, no una reserva vigente -- pero igual se avisa
   // acá (a nivel UI) para que el admin no cree un segundo pedido sin darse cuenta
   // de que ya hay uno sin resolver. Ver admin/orders-ops.js OPEN_ORDER_STATUSES.
-  const { data: existingOpen, error: openErr } = await supabase
+  //
+  // Pedidos del tablero Retiro (espejos caja / local_deferred_pickup) NO bloquean:
+  // el índice `orders_one_open_per_customer_idx` ya los excluye (313/318). Sin este
+  // skip, "Crear Pedido" en orders.html ofrecía reutilizar un A56xxx de mostrador
+  // (ej. Bernardis / A56344) como si fuera el pedido de envío vigente.
+  const { data: openCandidates, error: openErr } = await supabase
     .from("orders")
-    .select("id, order_number, status")
+    .select("id, order_number, status, notes, local_deferred_pickup, transport_id")
     .eq("customer_id", customerId)
     .in("status", ["active", "closing_soon", "closed", "stock_pending"])
     .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(20);
 
-  if (!openErr && existingOpen?.id) {
+  const existingOpen = !openErr
+    ? (openCandidates || []).find((o) => {
+        if (o?.local_deferred_pickup === true) return false;
+        if (isRetiroBoardOrderForLegacyPedidos(o, "")) return false;
+        return Boolean(o?.id);
+      }) || null
+    : null;
+
+  if (existingOpen?.id) {
     const label = existingOpen.order_number || String(existingOpen.id).slice(0, 8);
 
     if (existingOpen.status === "stock_pending") {
@@ -4324,7 +4339,7 @@ export async function resolveQrCodeToOrderItem(qrCode) {
     variant_id: variant.id,
     qty_from_general: qtyFromGeneral,
     qty_from_venta: qtyFromVenta,
-    status: hasConfirmedStock ? "picked" : "missing",
+    status: "picked",
     admin_confirmed_missing: !hasConfirmedStock,
   };
 }

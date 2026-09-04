@@ -1,11 +1,16 @@
 import {
   isPickedManualConfirmed,
+  isLocalPickupOrderFulfilled,
+  isCommonLocalPickupOrder,
+  isCommonLocalPickupAwaitingAdminSale,
   orderHasCancelledItems,
   orderHasCancelledItemsPendingStockReturn,
   wantsCustomerClose,
 } from "@/lib/orders/domain";
 import { isOrderExpired } from "@/lib/orders/deadline";
-import type { AdminOrder, KanbanColumnId } from "@/types/orders";
+import { isLocalPickupBoardOrder, type BoardScope } from "@/lib/orders/board-scope";
+import { orderHasRetiroDepositWaiting, orderHasPedidosLocalWaiting } from "@/lib/orders/retiro-deposit-waiting";
+import type { AdminOrder, KanbanColumnId, WarehouseIds } from "@/types/orders";
 
 const STATUS = {
   ACTIVE: "active",
@@ -31,12 +36,19 @@ const norm = (s: unknown) => String(s ?? "").trim().toLowerCase();
  */
 export function isFinalOrderStatus(order: AdminOrder): boolean {
   const statusNorm = norm(order.status);
-  return (
+  if (
     statusNorm === STATUS.SENT ||
     statusNorm === STATUS.DEVOLUCION ||
     statusNorm === STATUS.DEVOLUCION_ALT ||
     statusNorm === STATUS.EXPIRED
-  );
+  ) {
+    return true;
+  }
+  // Retiro: cerrado + cobrado (Cerrar pedido → Imprimir) = venta terminada, no va a Cerrados.
+  if (isLocalPickupOrderFulfilled(order, order.transportName ?? null)) {
+    return true;
+  }
+  return false;
 }
 
 function hasAllItemsPicked(order: AdminOrder): boolean {
@@ -71,7 +83,10 @@ function hasReservedItems(order: AdminOrder): boolean {
   if (!order || !Array.isArray(order.order_items) || order.order_items.length === 0) {
     return false;
   }
-  return order.order_items.some((item) => norm(item.status) === "reserved");
+  return order.order_items.some((item) => {
+    const st = norm(item.status);
+    return st === "reserved" || st === "awaiting_apartado";
+  });
 }
 
 function hasItemsNeedingAttention(order: AdminOrder): boolean {
@@ -80,7 +95,10 @@ function hasItemsNeedingAttention(order: AdminOrder): boolean {
   // local confirma que no hay stock no hay nada más que revisar ahí; el pedido
   // se resuelve hacia Apartados (con el aviso "!") en vez de quedar trabado.
   return order.order_items.some(
-    (item) => norm(item.status) === "reserved" && !isPickedManualConfirmed(item)
+    (item) => {
+      const st = norm(item.status);
+      return (st === "reserved" || st === "awaiting_apartado") && !isPickedManualConfirmed(item);
+    }
   );
 }
 
@@ -93,12 +111,17 @@ function hasWaitingItems(order: AdminOrder): boolean {
 
 function hasOrderPassedCustomerEditWindow(order: AdminOrder): boolean {
   if (!order || !order.created_at) return false;
-  return isOrderExpired({ created_at: order.created_at, dismantle_at: order.dismantle_at });
+  if (order.local_deferred_pickup && !order.dismantle_at) return false;
+  return isOrderExpired({
+    created_at: order.created_at,
+    dismantle_at: order.dismantle_at,
+    local_deferred_pickup: order.local_deferred_pickup,
+  });
 }
 
 function hasOperationalItems(order: AdminOrder): boolean {
   if (!order || !Array.isArray(order.order_items) || order.order_items.length === 0) return false;
-  const operational = new Set(["reserved", "picked", "waiting", "missing"]);
+  const operational = new Set(["reserved", "awaiting_apartado", "picked", "waiting", "missing"]);
   return order.order_items.some((item) => operational.has(norm(item.status)));
 }
 
@@ -140,6 +163,9 @@ function matchesWaitingTab(order: AdminOrder): boolean {
 }
 
 function matchesPickedTab(order: AdminOrder): boolean {
+  if (isCommonLocalPickupAwaitingAdminSale(order, order.transportName ?? null)) {
+    return true;
+  }
   if (norm(order.status) === STATUS.CLOSED || isFinalOrderStatus(order)) {
     return false;
   }
@@ -151,7 +177,12 @@ function matchesPickedTab(order: AdminOrder): boolean {
 }
 
 function matchesClosedTab(order: AdminOrder): boolean {
-  return norm(order.status) === STATUS.CLOSED;
+  if (isCommonLocalPickupAwaitingAdminSale(order, order.transportName ?? null)) {
+    return false;
+  }
+  if (norm(order.status) !== STATUS.CLOSED) return false;
+  if (isLocalPickupOrderFulfilled(order, order.transportName ?? null)) return false;
+  return true;
 }
 
 function matchesCancelledTab(order: AdminOrder): boolean {
@@ -173,10 +204,15 @@ function matchesStockPendingTab(order: AdminOrder): boolean {
  * y "missing" como resueltos para efectos de en qué columna se ve el pedido): acá
  * "missing"/"waiting" NO cuentan como listos, porque el criterio es "¿está todo
  * físicamente en mano para poder cerrar/enviar?", no "¿en qué columna se muestra?".
+ *
+ * Ítems cancelados ya resueltos NO bloquean (se filtran abajo). Sí bloquean los
+ * cancelados pendientes de devolver stock: cerrar ahí dejaría devoluciones sin
+ * confirmar. Bug real A56425: `orderHasCancelledItems` genérico impedía el
+ * auto-cierre con `customer_requested_close` aunque todo lo operativo estuviera picked.
  */
 function isOrderStrictlyFullyPicked(order: AdminOrder): boolean {
   if (norm(order.status) === STATUS.CLOSED || isFinalOrderStatus(order)) return false;
-  if (orderHasCancelledItems(order)) return false;
+  if (orderHasCancelledItemsPendingStockReturn(order)) return false;
   const items = (order.order_items || []).filter((item) => norm(item.status) !== STATUS.CANCELLED);
   if (items.length === 0) return false;
   return items.every((item) => norm(item.status) === STATUS.PICKED);
@@ -197,6 +233,14 @@ function isOrderStrictlyFullyPicked(order: AdminOrder): boolean {
  * cerrar ese caso a mano con el botón "Cerrar pedido".
  */
 export function shouldAutoCloseAfterCustomerRequest(order: AdminOrder): boolean {
+  // Retiro local común (Retira local): no auto-cerrar — queda en Apartados del
+  // board Retiro esperando cobro/venta. SEDE/MyM/etc. NO son retiro local.
+  // Pedidos con customer_requested_close + todo picked (sin missing/waiting ni
+  // cancelados pendientes de stock) sí se cierran solos, aunque tengan líneas
+  // canceladas ya resueltas (ver isOrderStrictlyFullyPicked / A56425).
+  if (isCommonLocalPickupOrder(order, order.transportName ?? null)) {
+    return false;
+  }
   return wantsCustomerClose(order) && isOrderStrictlyFullyPicked(order);
 }
 
@@ -226,9 +270,24 @@ export function getOrderKanbanColumn(order: AdminOrder): KanbanColumnId | null {
 
 export function filterOrdersForColumn(
   orders: AdminOrder[],
-  columnId: KanbanColumnId
+  columnId: KanbanColumnId,
+  ctx?: { boardScope?: BoardScope; warehouseIds?: WarehouseIds }
 ): AdminOrder[] {
-  return orders.filter((order) => getOrderKanbanColumn(order) === columnId);
+  return orders.filter((order) => {
+    if (getOrderKanbanColumn(order) !== columnId) return false;
+
+    const scope = ctx?.boardScope;
+    const wh = ctx?.warehouseIds;
+    if (scope === "shipping" && isLocalPickupBoardOrder(order)) {
+      if (columnId !== "waiting" || !wh) return false;
+      return orderHasRetiroDepositWaiting(order, wh);
+    }
+    if (scope === "local_pickup" && !isLocalPickupBoardOrder(order)) {
+      if (columnId !== "waiting" || !wh) return false;
+      return orderHasPedidosLocalWaiting(order, wh);
+    }
+    return true;
+  });
 }
 
 export function getPrimaryColumnForActions(order: AdminOrder): KanbanColumnId {

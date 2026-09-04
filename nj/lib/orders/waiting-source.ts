@@ -1,4 +1,5 @@
 import { normalizeOrderItemStatus, orderHasMissingItem } from "@/lib/orders/domain";
+import type { BoardScope } from "@/lib/orders/board-scope";
 import type { AdminOrder, AdminOrderItem, WarehouseIds } from "@/types/orders";
 
 export type WaitingSourceKind = "fabrica" | "local";
@@ -44,6 +45,11 @@ export function getCustomerFacingItemStatus(
   warehouseIds: WarehouseIds
 ): string {
   const st = normalizeOrderItemStatus(item.status);
+  if (st === "awaiting_apartado") {
+    // Misma experiencia que "reserved" en Mi pedido; la diferencia (stock
+    // sin descontar al checkout) es solo backend/admin retiro local.
+    return "reserved";
+  }
   if (st === "waiting") {
     // Espera de fábrica: se va a producir, es prácticamente un hecho -> se
     // muestra como "Confirmado" para no generar ansiedad de más.
@@ -68,12 +74,19 @@ export function orderHasWaitingSource(
 
 export function getWaitingColumnSortKey(
   order: AdminOrder,
-  warehouseIds: WarehouseIds
+  warehouseIds: WarehouseIds,
+  scope: BoardScope = "shipping"
 ): number {
   // Pedidos con algún producto "Falta" van al final de Espera: no hay nada para
   // conseguir en ese producto, así que no deben competir por atención con los
   // que sí tienen unidades genuinamente en camino (local/fábrica).
   const missingPenalty = orderHasMissingItem(order) ? 10 : 0;
+  if (scope === "local_pickup") {
+    // Retiro: Fábrica primero, luego Depósito (mismo kind "local").
+    if (orderHasWaitingSource(order, "fabrica", warehouseIds)) return missingPenalty + 0;
+    if (orderHasWaitingSource(order, "local", warehouseIds)) return missingPenalty + 1;
+    return missingPenalty + 2;
+  }
   if (orderHasWaitingSource(order, "local", warehouseIds)) return missingPenalty + 0;
   if (orderHasWaitingSource(order, "fabrica", warehouseIds)) return missingPenalty + 1;
   return missingPenalty + 2;

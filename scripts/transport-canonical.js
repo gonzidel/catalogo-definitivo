@@ -46,4 +46,8 @@ export function isReservedTransportName(input) {
   return RESERVED_TRANSPORT_KEYS.has(normalizeTransportKey(input));
 }
 
+export function isLocalPickupTransport(input) {
+  return canonicalizeTransportName(input) === CANONICAL_TRANSPORTS.RETIRO_DE_LOCAL;
+}
+
 export { CANONICAL_TRANSPORTS };

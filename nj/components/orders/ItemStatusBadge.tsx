@@ -2,6 +2,7 @@ import type { OrderItemStatus } from "@/types/orders";
 
 const LABELS: Record<string, string> = {
   reserved: "Reservado",
+  awaiting_apartado: "Sin apartar",
   picked: "Apartado",
   waiting: "Espera",
   missing: "Falta",
@@ -10,6 +11,7 @@ const LABELS: Record<string, string> = {
 
 const COMPACT_LABELS: Record<string, string> = {
   reserved: "Res.",
+  awaiting_apartado: "S/ap.",
   picked: "Ap.",
   waiting: "Esp.",
   missing: "Falta",
@@ -32,7 +34,8 @@ export default function ItemStatusBadge({ status, compact = false, muted = false
   const key = String(status || "reserved").trim().toLowerCase();
   const labels = compact ? COMPACT_LABELS : LABELS;
   const fullLabel = LABELS[key] || key;
-  const neverPhysicallySeparated = key === "reserved" || key === "waiting";
+  const neverPhysicallySeparated =
+    key === "reserved" || key === "waiting" || key === "awaiting_apartado";
   const mutedClass = muted
     ? neverPhysicallySeparated
       ? " order-item-badge--pending-return"

@@ -34,9 +34,10 @@ Complementa: [[41-MIGRACION-NEXTJS-NJ-2026-06-08]] (arquitectura `/nj`), [[43-NJ
 
 **Solución:** `nj/components/orders/PartialAcceptModal.tsx` (nuevo) — modal de 1 paso que pregunta cuántas unidades hay disponibles y permite repartir el resto entre **picked / espera (con origen Fábrica o Local) / falta**.
 
-- Se dispara desde `OrderCardItems.tsx` (`isMultiUnitReserved()`) interceptando tanto el botón **✓** como el **⏳** cuando el ítem reservado tiene `quantity > 1`.
+- Se dispara desde `OrderCardItems.tsx` (`isMultiUnitReserved()`) interceptando **✓**, **⏳** y **✕** cuando el ítem reservado tiene `quantity > 1`.
 - Aplica el reparto vía `rpc_split_order_item_status` (129) → `splitReservedItem` en `useOrders.ts`. Esta RPC ya era canónica (usada también por `admin/public-sales.js`, ver §5), solo se conectó al Kanban `nj`.
 - Columna Activos: si el reparto incluye "falta" → el resto del flujo de §3 aplica automáticamente (pasa a Apartados con el signo `!`).
+- **Móvil / draftMode (2026-09-02):** el ✓ en `OrderCardItemActions` ya no stagea directo en borrador; siempre pasa por el padre para abrir este panel en multi-unidad. ✕ usa `onRequestMissing`. Layout móvil: sheet inferior apilado (`globals.css` `@media max-width: 767px`), botones ~40px, CTAs sticky. Compartido Pedidos + Retiro.
 
 ---
 
@@ -122,7 +123,7 @@ Reuso de lógica ya existente en la edición de pedidos (`nj/lib/supabase/order-
 
 ## 9. Dashboard cliente (`nj/dashboard?tab=cart`)
 
-- **Agrupación de ítems idénticos:** mismo producto + talle + color + precio + estado visible se muestran como **una sola fila** con la suma de cantidades, en vez de N filas repetidas (`nj/lib/orders/customer-order-display.ts`, usado desde `ActiveOrderTab.tsx`).
+- **Agrupación de ítems idénticos:** mismo producto + talle + color + precio + estado visible se muestran como **una sola fila** con la suma de cantidades, en vez de N filas repetidas (`nj/lib/orders/customer-order-display.ts`, usado desde `ActiveOrderTab.tsx`). **Fix 2026-09-02 (A56427):** la clave no puede ser solo `variant_id` (en FYL la variante es producto+color); hay que incluir el talle, si no Chocolate 36 y 40 se fusionaban en Mi pedido.
 - **Cantidad resaltada:** `LineItemRow.tsx` → `QuantityUnitLabel`, chip visual en negrita; precio unitario ("c/u") solo se muestra si `quantity > 1`.
 - **Fix mobile 360px:** el chip de cantidad rompía la estética en viewports de 360px de ancho (se veía bien recién desde 390px); se ajustaron paddings/tamaños de fuente específicamente para ese breakpoint, sin afectar 390px+.
 
@@ -142,7 +143,7 @@ Pedido explícito: en mobile, la pantalla principal debe mostrar **solo Activos*
 **Draft mode (`nj/lib/orders/draft-changes.ts`):**
 
 - Tipos `DraftChangeKind` (`picked` / `waiting-fabrica` / `waiting-local` / `missing` / `split`) y `DraftChangesMap` (por `order_item_id`).
-- En `OrderCard.tsx`, si `draftMode = isMobile && column === "active"`: tocar ✓/⏳/✕ (`OrderCardItemActions.tsx`) o el wizard de reparto (§2) solo llama `onStage*` (cambia de color: verde/amarillo-con-letra-F-o-L/rojo) en vez del RPC real.
+- En `OrderCard.tsx`, si `draftMode = column === "active" && (isMobile || boardScope === "local_pickup")`: tocar ✓/⏳/✕ (`OrderCardItemActions.tsx`) o el wizard de reparto (§2) solo llama `onStage*` (cambia de color: verde/amarillo-con-letra-F-o-L/rojo) en vez del RPC real. Excepción: ítem multi-unidad reservado → primero abre `PartialAcceptModal` y el resultado se stagea como `kind: "split"`.
 - Barra `order-draft-bar` al pie de la tarjeta con resumen (`summarizeDraftChanges`) y botones **Confirmar cambios** / descartar — solo al confirmar se ejecutan las RPCs reales (`confirmChanges` en `OrderCard.tsx`), en el mismo orden en que se tocaron los botones.
 - Badge (●) en el header de la tarjeta colapsada si tiene cambios pendientes sin confirmar.
 - Botón "Apartar todos" (`OrderActions.tsx`) oculto mientras hay `draftMode` activo (no tiene sentido aplicar todo de golpe si se está revisando ítem por ítem).
@@ -166,6 +167,8 @@ Serie de fixes puntuales encontrados después del cierre inicial de esta nota (�
 **Problema:** si un admin agregaba/editaba manualmente un producto sin stock disponible desde el Kanban `nj`, el ítem quedaba con `status = 'missing'` → el cliente lo veía como "Sin stock" en el dashboard, cuando el patrón legacy para altas manuales sin stock es `status = 'picked'` + `admin_confirmed_missing = true` (se ve como "Apartado" para el cliente, con trazabilidad interna de que no había stock real).
 
 **Fix (`nj/lib/supabase/order-edit.ts`):** `enrichDraftItemsWithStock` y `resolveSkuOrQrToOrderItem` ahora asignan `status: "picked"` (antes `"missing"`) manteniendo `admin_confirmed_missing: !hasStock`.
+
+**Fix legacy admin:** en `admin/order-creator.js` y `admin/orders-ops.js` se corrige que cuando el admin carga físicamente con `hasConfirmedStock/hasStock=false`, el ítem ya no se persiste como `status: "missing"`, sino como `status: "picked"` con `admin_confirmed_missing=true`, evitando que el cliente vea “Sin stock”.
 
 ### 11.3 "Desarmar" en Cancelados: solo si pasaron los 7 días
 

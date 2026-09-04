@@ -1,4 +1,5 @@
 import { normalizeSize } from "@/lib/utils/size-normalizer";
+import { isLocalPickupTransport } from "@/lib/transport/shipping-helpers";
 import type { AdminOrder, AdminOrderItem } from "@/types/orders";
 
 export function isManualMissingOrderItem(item: AdminOrderItem | null | undefined): boolean {
@@ -93,10 +94,16 @@ export function normalizePhoneDigitsForMatch(text: string | null | undefined): s
   return d;
 }
 
-export function buildWhatsAppUrl(phone: string | null | undefined): string | null {
+export function buildWhatsAppUrl(
+  phone: string | null | undefined,
+  text?: string | null
+): string | null {
   const digits = normalizePhoneDigitsForMatch(phone);
   if (!digits || digits.length < 8) return null;
-  return `https://wa.me/549${digits}`;
+  const base = `https://wa.me/549${digits}`;
+  const msg = String(text || "").trim();
+  if (!msg) return base;
+  return `${base}?text=${encodeURIComponent(msg)}`;
 }
 
 export function getOrderDisplayNumber(order: AdminOrder): string {
@@ -240,6 +247,16 @@ export function isPickedOrderItem(item: AdminOrderItem): boolean {
 
 export function isReservedOrderItem(item: AdminOrderItem): boolean {
   return normalizeOrderItemStatus(item.status) === "reserved";
+}
+
+export function isAwaitingApartadoOrderItem(item: AdminOrderItem): boolean {
+  return normalizeOrderItemStatus(item.status) === "awaiting_apartado";
+}
+
+/** Ítem pendiente de apartado físico en admin (zona local stock diferido). */
+export function isPendingApartadoOrderItem(item: AdminOrderItem): boolean {
+  const st = normalizeOrderItemStatus(item.status);
+  return st === "awaiting_apartado" || st === "reserved";
 }
 
 export function isWaitingOrderItem(item: AdminOrderItem): boolean {
@@ -436,6 +453,17 @@ export function formatSignedPriceAr(amount: number): string {
   return formatPriceAr(n);
 }
 
+/** Línea de devolución en edición/cierre retiro: precio negativo + variante. */
+export function isReturnOrderItem(item: {
+  variant_id?: string | null;
+  price_snapshot?: number | null;
+  is_special_extra?: boolean | null;
+}): boolean {
+  if (item.is_special_extra) return false;
+  if (!item.variant_id) return false;
+  return Number(item.price_snapshot) < 0;
+}
+
 export function computeOrderTotalFromItems(
   items: Array<{ price_snapshot?: number | null; quantity?: number | null }>,
   notesExtras: OrderNotesExtras
@@ -489,4 +517,117 @@ export function computeWarehouseQtySplitForOrderItem(
     qtyFromGeneral = Math.min(q, gAvail);
   }
   return { qty_from_general: qtyFromGeneral, qty_from_venta: qtyFromVenta };
+}
+
+/** sessionStorage/localStorage: Mi pedido ya no muestra retiro completado tras dismiss. */
+export function localPickupFulfilledDismissKey(orderId: string): string {
+  return `fyl-order-pickup-fulfilled-dismissed-${orderId}`;
+}
+
+export function isCustomerLocalPickupOrder(
+  order: Pick<AdminOrder, "local_deferred_pickup"> | null | undefined,
+  transportName?: string | null
+): boolean {
+  if (order?.local_deferred_pickup) return true;
+  return isLocalPickupTransport(transportName);
+}
+
+/**
+ * Retiro en local sin flujo diferido (zona asignada o elección manual en perfil).
+ * No usa plazo 36 h ni avisos de vencimiento en Mi pedido — solo retiro especial
+ * (`local_deferred_pickup`) en localidades marcadas.
+ */
+export function isCommonLocalPickupOrder(
+  order: Pick<AdminOrder, "local_deferred_pickup"> | null | undefined,
+  transportName?: string | null
+): boolean {
+  if (!order || order.local_deferred_pickup) return false;
+  return isLocalPickupTransport(transportName);
+}
+
+/**
+ * Retiro común: la clienta cerró el pedido (todo apartado) y admin debe cobrar
+ * en Retiro → Apartados (morado), no en Cerrados. Incluye legacy `closed`+Pendiente.
+ */
+export function isCommonLocalPickupAwaitingAdminSale(
+  order:
+    | Pick<
+        AdminOrder,
+        | "status"
+        | "payment_method"
+        | "local_deferred_pickup"
+        | "notes"
+        | "transportName"
+        | "order_items"
+      >
+    | null
+    | undefined,
+  transportName?: string | null
+): boolean {
+  const tName = transportName ?? order?.transportName ?? null;
+  if (!isCommonLocalPickupOrder(order, tName)) return false;
+  if (isLocalPickupOrderFulfilled(order, tName)) return false;
+
+  // Si el pedido viene reenviado desde `admin/closed-orders.html`, forzamos
+  // el tono naranja (from_closed) y evitamos que caiga en el caso "cliente cerró".
+  const notes = parseOrderNotesObject(order?.notes);
+  if (notes.retiro_origin === "moved_from_closed") return false;
+
+  const pay = String(order?.payment_method || "").trim().toLowerCase();
+  if (pay && pay !== "pendiente") return false;
+
+  const status = String(order?.status || "").trim().toLowerCase();
+  const items = (order?.order_items || []).filter(
+    (i) => String(i.status || "").trim().toLowerCase() !== "cancelled"
+  );
+  if (items.length === 0) return false;
+
+  if (items.some((i) => String(i.status || "").trim().toLowerCase() === "waiting")) {
+    return false;
+  }
+  if (
+    items.some((i) =>
+      ["reserved", "awaiting_apartado"].includes(
+        String(i.status || "").trim().toLowerCase()
+      )
+    )
+  ) {
+    return false;
+  }
+
+  const allResolved = items.every((i) => {
+    const st = String(i.status || "").trim().toLowerCase();
+    return st === "picked" || st === "missing";
+  });
+  if (!allResolved) return false;
+
+  if (status === "active") return wantsCustomerClose(order);
+  if (status === "closed") return true;
+  return false;
+}
+
+/**
+ * Retiro local cobrado en admin (Cerrar pedido → Imprimir): el pedido queda
+ * `closed` con payment_method real (Efectivo/Tarjeta), no "Pendiente" del cierre
+ * de la clienta. Eso distingue "en preparación" de "ya retiraste".
+ *
+ * Si ya tiene `local_pickup_fulfilled_at` en notes, se considera cumplido aunque
+ * el cliente después cambie provincia/transporte en el perfil: el pedido cerrado
+ * no debe volver a "en preparación".
+ */
+export function isLocalPickupOrderFulfilled(
+  order: Pick<AdminOrder, "status" | "payment_method" | "local_deferred_pickup" | "notes"> | null | undefined,
+  transportName?: string | null
+): boolean {
+  if (!order) return false;
+  if (String(order.status || "").trim().toLowerCase() !== "closed") return false;
+
+  const notes = parseOrderNotesObject(order.notes);
+  if (notes.local_pickup_fulfilled_at) return true;
+
+  if (!isCustomerLocalPickupOrder(order, transportName)) return false;
+
+  const pay = String(order.payment_method || "").trim().toLowerCase();
+  if (!pay || pay === "pendiente") return false;
+  return true;
 }

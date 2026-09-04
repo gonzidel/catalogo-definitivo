@@ -1,0 +1,34 @@
+{
+  "name": "gz-agent",
+  "version": "1.0.0",
+  "description": "Agente de impresión local GZ (reemplazo de QZ Tray) para el admin de Catálogo FYL",
+  "private": true,
+  "main": "server.js",
+  "bin": "server.js",
+  "scripts": {
+    "start": "node scripts/build-native.js && node server.js",
+    "icons": "node scripts/build-icons.js",
+    "native": "node scripts/build-native.js",
+    "postinstall": "node scripts/build-native.js",
+    "build": "npm run icons && npm run native && node scripts/patch-base-icon.js && pkg . --targets node18-win-x64 --output dist/gz-agent.exe"
+  },
+  "dependencies": {
+    "jimp": "^0.22.12",
+    "png-to-ico": "^3.0.2",
+    "systray2": "^2.1.4"
+  },
+  "devDependencies": {
+    "pkg": "^5.8.1",
+    "rcedit": "^5.0.2"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "pkg": {
+    "assets": [
+      "assets/*.ico",
+      "native/GZNative.exe",
+      "node_modules/systray2/traybin/*"
+    ]
+  }
+}

@@ -280,3 +280,29 @@ Nota canónica: [[39-LISTA-ENVIOS-SENT-AT-2026-05-26]] · `doc/shipping-list-sen
 Así el banner amarillo y el ruteo a columna Cancelados solo aparecen cuando hay stock físico pendiente de confirmar. Un quitado desde Reservado deja de ensuciar la tarjeta de Activos.
 
 **Deuda:** las filas `cancelled` huérfanas (sin fuentes) siguen en la base hasta que se limpien o hasta que la RPC, en un cambio futuro, borre el ítem en vez de marcarlo `cancelled` cuando el origen era `reserved`/`waiting`. No afectan stock.
+
+## 16. Fix backend (2026-09-01): confirmar ✓ en Cancelados no debe borrar el pedido con stock pendiente
+
+**Contexto:** pedido `A56391` (luis cuadrado). La clienta quitó varios productos desde el dashboard; en Cancelados el admin confirmó uno con ✓ y el resto desapareció sin devolver stock ("pedido vacío" en UI, pérdida de inventario).
+
+**Causa:** `order_eligible_for_empty_deletion` trataba todos los `cancelled` como no operacionales. Tras confirmar el primer ítem con `order_item_stock_sources`, `rpc_remove_order_item_restore_stock` llamaba `maint_try_delete_order_if_eligible` y borraba el pedido entero por CASCADE, eliminando los demás cancelados sin pasar por devolución de stock (mismo patrón que 267 corrigió solo para `rpc_cancel_order_full`).
+
+**Fix (`319_order_eligible_pending_cancelled_stock.sql`):**
+- `order_has_cancelled_items_pending_stock_return` — espejo de `cancelledItemNeedsStockConfirmation`.
+- `order_eligible_for_empty_deletion` → false mientras quede stock pendiente en cancelados.
+- Trigger al marcar ítem `cancelled`: borra pedido solo si ya es seguro (sin stock pendiente).
+- Backfill de pedidos fantasma `active`/`closing_soon`/`cancelled` solo con ítems cancelados sin pendientes.
+
+**Fix frontend (`nj/hooks/useOrders.ts`):** `confirmCancelledItem` ya no quita el pedido del store solo porque `remainingItems.length === 0`; solo si `order_deleted` del RPC.
+
+**Verificación post-deploy:** pedido de prueba con 2+ ítems `picked` cancelados por clienta → confirmar ✓ uno a uno → cada confirmación devuelve stock y el pedido sigue hasta el último pendiente.
+
+## 17. `admin/orders.html` no lista el tablero Retiro (2026-09-02)
+
+**Qué cambió:** la pantalla legacy de Pedidos (`admin/orders.html` + `admin/orders.js`) deja de mostrar pedidos que en NJ viven en `/nj/admin/retiro`.
+
+**Criterio** (`isRetiroBoardOrderForLegacyPedidos` en `admin/orders-domain.js`): `notes.kanban_scope = local_pickup`, espejo de caja (`retiro_origin` public_sales/retiro/admin_local o `mirrored_from_local_order`), `local_deferred_pickup`, o transporte Retira local / Retiro de Local. `kanban_scope = shipping` se queda en esta pantalla.
+
+**Qué no se tocó:** `nj/admin/orders`, `nj/admin/retiro`, `admin/orders2.html`. No se copió el fallback geo de NJ (`isDashboardRetiroLocalZone`) para no ocultar envíos de Chaco/Corrientes sin override de tablero.
+
+**Create Pedido (2026-09-02, follow-up Bernardis):** `admin/order-creator.js` `createNewOrder` ignoraba el hecho de que el índice único ya excluye `local_deferred_pickup` (313/318). Al crear un pedido de envío para un cliente con espejo Retiro activo (ej. `A56344` Bernardis, `kanban_scope=local_pickup`, `local_deferred_pickup=true`), el confirm ofrecía “agregar al pedido existente” o bloqueaba. Ahora salta candidatos Retiro / `local_deferred_pickup` al buscar pedido abierto reutilizable. **No hace falta cambiar el índice en prod** para este caso: ya permite 1 Pedidos + 1 Retiro cuando el de Retiro lleva `local_deferred_pickup=true`.

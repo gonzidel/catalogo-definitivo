@@ -153,7 +153,7 @@ async function fetchVariantSizes(articulo: string) {
 
   const { data: variants } = await supabase
     .from("product_variants")
-    .select("id, color, sku, reserved_qty, products!inner(name)")
+    .select("id, color, sku, products!inner(name)")
     .eq("active", true)
     .eq("products.name", articulo.trim())
     .limit(30);
@@ -161,25 +161,30 @@ async function fetchVariantSizes(articulo: string) {
   if (!variants || variants.length === 0) return [];
 
   const variantIds = variants.map((v: { id: string }) => v.id);
-  const [
-    { data: sizeRows },
-    { data: sizeWarehouseRows },
-    { data: warehouseRows },
-  ] = await Promise.all([
-    supabase
-      .from("variant_sizes")
-      .select("variant_id, size, sku")
-      .in("variant_id", variantIds)
-      .order("size"),
-    supabase
-      .from("variant_size_warehouse_stock")
-      .select("variant_id, size, stock_qty")
-      .in("variant_id", variantIds),
-    supabase
-      .from("variant_warehouse_stock")
-      .select("variant_id, stock_qty")
-      .in("variant_id", variantIds),
-  ]);
+  // Stock por talle = misma base que catalog_public_available_view
+  // (general + venta-publico). No usar product_variants.reserved_qty como
+  // techo global: suele estar desfasado y deja talles en 0 aunque la vista
+  // pública (y el carrusel) muestren el producto con stock.
+  const [{ data: sizeRows }, { data: sizeWarehouseRows }, { data: warehouses }] =
+    await Promise.all([
+      supabase
+        .from("variant_sizes")
+        .select("variant_id, size, sku")
+        .in("variant_id", variantIds)
+        .order("size"),
+      supabase
+        .from("variant_size_warehouse_stock")
+        .select("variant_id, size, stock_qty, warehouse_id")
+        .in("variant_id", variantIds),
+      supabase
+        .from("warehouses")
+        .select("id, code")
+        .in("code", ["general", "venta-publico"]),
+    ]);
+
+  const sellableWarehouseIds = new Set(
+    (warehouses ?? []).map((w: { id: string }) => String(w.id))
+  );
 
   const normalizeSizeKey = (size: string) => {
     const trimmed = String(size ?? "").trim();
@@ -202,45 +207,26 @@ async function fetchVariantSizes(articulo: string) {
   const sizeStock = new Map<string, number>();
   for (const row of sizeWarehouseRows ?? []) {
     const variantId = String(row.variant_id ?? "");
-    if (!variantId) continue;
+    const warehouseId = String(row.warehouse_id ?? "");
+    if (!variantId || !sellableWarehouseIds.has(warehouseId)) continue;
     const key = `${variantId}__${normalizeSizeKey(String(row.size ?? ""))}`;
     sizeStock.set(key, (sizeStock.get(key) ?? 0) + Number(row.stock_qty ?? 0));
   }
 
-  const totalByVariant = new Map<string, number>();
-  for (const row of warehouseRows ?? []) {
-    const variantId = String(row.variant_id ?? "");
-    if (!variantId) continue;
-    totalByVariant.set(
-      variantId,
-      (totalByVariant.get(variantId) ?? 0) + Number(row.stock_qty ?? 0)
-    );
-  }
-
   const results = variants.map(
-    (v: { id: string; color?: string; sku?: string; reserved_qty?: number }) => {
-      const totalStock = totalByVariant.get(v.id);
-      const totalAvailable =
-        totalStock === undefined
-          ? null
-          : Math.max(0, totalStock - Number(v.reserved_qty ?? 0));
-
-      return {
-        variantId: v.id,
-        color: v.color ?? "",
-        sku: v.sku ?? "",
-        sizes: (sizeSkuByVariant.get(v.id) ?? []).map((s) => {
-          const bySize = sizeStock.get(`${v.id}__${normalizeSizeKey(s.size)}`) ?? 0;
-          const available =
-            totalAvailable === null ? bySize : Math.min(bySize, totalAvailable);
-          return {
-            size: s.size,
-            sku: s.sku,
-            stock_qty: Math.max(0, available),
-          };
-        }),
-      };
-    }
+    (v: { id: string; color?: string; sku?: string }) => ({
+      variantId: v.id,
+      color: v.color ?? "",
+      sku: v.sku ?? "",
+      sizes: (sizeSkuByVariant.get(v.id) ?? []).map((s) => {
+        const bySize = sizeStock.get(`${v.id}__${normalizeSizeKey(s.size)}`) ?? 0;
+        return {
+          size: s.size,
+          sku: s.sku,
+          stock_qty: Math.max(0, bySize),
+        };
+      }),
+    })
   );
 
   return results;

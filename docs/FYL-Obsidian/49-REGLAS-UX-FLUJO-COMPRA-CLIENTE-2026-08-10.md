@@ -276,6 +276,13 @@ Acción principal:
 
 - `Sí, cerrar pedido` o variante según transporte.
 
+**Modal previo de retiro/envío (primera vez al cerrar):**
+
+- Muestra solo las opciones válidas para la localidad del cliente.
+- **Corrientes Capital:** únicamente `Retira local` y `MyM` (no Credifin / Snaider / Via Cargo / Correo).
+- Texto MyM: `Se enviará a tu domicilio. El pago es contra reembolso: lo abonás junto con el envío cuando te lo entreguen.`
+- Fuente: `client/transportes-data.js` + `nj/lib/transport/shipping-helpers.ts`.
+
 Riesgos:
 
 - Texto demasiado largo que se ignora.

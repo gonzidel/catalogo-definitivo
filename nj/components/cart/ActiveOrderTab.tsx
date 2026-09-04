@@ -3,18 +3,31 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
+import {
+  isLocalPickupOrderFulfilled,
+  localPickupFulfilledDismissKey,
+  isCommonLocalPickupOrder,
+} from "@/lib/orders/domain";
 import { getCustomerFacingItemStatus } from "@/lib/orders/waiting-source";
 import { groupCustomerOrderItems, type GroupedCustomerOrderItem } from "@/lib/orders/customer-order-display";
 import {
-  getOrderDeadlineDate,
-  orderDaysRemaining,
+  getCustomerOrderDeadlineDate,
   calendarDaysUntil,
   isOrderExpired,
+  getLocalPickupDeadlineExplanation,
+  isShortPickupDeadlineWindow,
+  formatRemainingCountdown,
+  orderDaysRemainingForOrder,
 } from "@/lib/orders/deadline";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
-import { loadWarehouses, rpcCloseOrder } from "@/lib/supabase/order-queries";
+import { loadWarehouses, rpcCloseOrder, rpcCustomerRequestClose } from "@/lib/supabase/order-queries";
 import { hasCustomerUsedOrderExtension } from "@/lib/order-notes";
-import { getOrderReadyCompactMessage, isLocalPickupTransport } from "@/lib/transport/shipping-helpers";
+import {
+  getOrderCloseMinimumUnits,
+  getOrderReadyCompactMessage,
+  isLocalPickupTransport,
+  isLocalPickupShortDeadlineZone,
+} from "@/lib/transport/shipping-helpers";
 import { CATALOG_SOURCE } from "@/lib/utils/catalog";
 import { useCartStore } from "@/store/cart";
 import type { WarehouseIds } from "@/types/orders";
@@ -24,6 +37,8 @@ import CartRecommendedCarousel from "@/components/cart/CartRecommendedCarousel";
 import OrderTransportConfirmModal, {
   getOrderTransportConfirmKey,
 } from "@/components/cart/OrderTransportConfirmModal";
+import { rpcSetTransportBeforeCloseOrder, rpcSetMyTransport } from "@/lib/transport/rpc";
+import { canonicalizeTransportName } from "@/lib/transport";
 import { useProfileGate } from "@/components/profile/ProfileGateProvider";
 import {
   buildPromoGroups,
@@ -33,6 +48,10 @@ import {
   type PromoGroup,
   type PromoGroupableItem,
 } from "@/lib/cart/promo-groups";
+import {
+  getDashboardLocalPickupCloseCopy,
+  resolvePickupDeadlineLabel,
+} from "@/lib/orders/customer-status-message";
 
 function orderItemPromoKey(item: {
   primaryItemId?: string;
@@ -150,8 +169,11 @@ interface ActiveOrder {
   status: string;
   total_amount: number;
   created_at: string;
+  payment_method?: string | null;
   dismantle_at?: string | null;
   expires_at?: string | null;
+  local_deferred_pickup?: boolean | null;
+  pickup_timer_started_at?: string | null;
   notes?: string | null;
   order_items: OrderItem[];
 }
@@ -162,12 +184,80 @@ interface ActiveOrder {
 const ALT_PANEL_STORAGE_KEY = "fyl-nj-alt-panel-item";
 const FIRST_ORDER_GUIDE_KEY_PREFIX = "fyl-nj-first-order-guide:";
 const WHATSAPP_HREF = "https://wa.me/5493624118637";
+/** Local FYL — mismo link que en quiénes somos / cómo comprar. */
+const LOCAL_STORE_MAPS_HREF = "https://maps.app.goo.gl/PoxAhU5AG3m2etSz5";
 
 function WhatsAppIcon({ size = 18 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
       <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.7 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z" />
     </svg>
+  );
+}
+
+/** Círculo de líneas (tipo activity) — prep. pedido local diferido. */
+function PreparingOrderSpinner({ size = 18 }: { size?: number }) {
+  const ticks = 12;
+  return (
+    <span className="active-order-prep-spinner" aria-hidden="true">
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+        {Array.from({ length: ticks }, (_, i) => {
+          const angle = (i * 360) / ticks;
+          const opacity = 0.2 + (i / (ticks - 1)) * 0.8;
+          return (
+            <line
+              key={i}
+              x1="12"
+              y1="3.2"
+              x2="12"
+              y2="6.8"
+              stroke="currentColor"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+              opacity={opacity}
+              transform={`rotate(${angle} 12 12)`}
+            />
+          );
+        })}
+      </svg>
+    </span>
+  );
+}
+
+/** Check/spinner por ítem solo en retiro local especial (local_deferred_pickup / localidades asignadas). */
+function CustomerItemPrepStatus({
+  item,
+  warehouseIds,
+  localDeferredPickup,
+}: {
+  item: Parameters<typeof getCustomerFacingItemStatus>[0];
+  warehouseIds: WarehouseIds;
+  localDeferredPickup: boolean;
+}) {
+  if (!localDeferredPickup) return null;
+
+  const facing = getCustomerFacingItemStatus(item, warehouseIds);
+  if (facing === "picked") {
+    return (
+      <span
+        className="active-order-prep-item-status is-done"
+        aria-label="Producto confirmado"
+        title="Confirmado"
+      >
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <polyline points="20 6 9 17 4 12"/>
+        </svg>
+      </span>
+    );
+  }
+  return (
+    <span
+      className="active-order-prep-item-status is-pending"
+      aria-label="Producto en preparación"
+      title="Preparando"
+    >
+      <PreparingOrderSpinner size={12} />
+    </span>
   );
 }
 
@@ -512,6 +602,10 @@ interface ActiveOrderTabProps {
   onCancelSuccessDismiss?: () => void;
   /** Transporte asignado según provincia/localidad (mismo cálculo que DashboardClient) — cambia el aviso de "listo para coordinar" (ej. Via Cargo también coordina el pago). */
   transportName?: string | null;
+  /** Cuando el cliente confirma/guarda transporte en BD (cierre o elección). */
+  onTransportPersisted?: (transporte: string, transportId?: string | null) => void;
+  /** Tras "Agregar al carrito" desde editar cantidad: cambiar a la pestaña Carrito. */
+  onGoToCart?: () => void;
 }
 
 export default function ActiveOrderTab({
@@ -527,6 +621,8 @@ export default function ActiveOrderTab({
   onOrderCancelled,
   onOrderFullyCancelled,
   transportName,
+  onTransportPersisted,
+  onGoToCart,
 }: ActiveOrderTabProps) {
   const [confirmedTransportName, setConfirmedTransportName] = useState<string | null>(transportName ?? null);
   const activeTransportName = confirmedTransportName ?? transportName;
@@ -579,6 +675,10 @@ export default function ActiveOrderTab({
   const [editQtyFor, setEditQtyFor]         = useState<string | null>(null);
   const [editQtyValue, setEditQtyValue]     = useState<number>(0);
   const [variantStock, setVariantStock]     = useState<Record<string, number>>({});
+  /** Confirmación al quitar desde el menú ⋯ de Mi pedido */
+  const [pendingRemoveItem, setPendingRemoveItem] = useState<(GroupedCustomerOrderItem & OrderItem) | null>(null);
+  /** Unidades que quedan en el pedido (como en la lista). Quitar = cantidad actual − keepUnits. */
+  const [keepUnits, setKeepUnits]           = useState(0);
   /** Keys `producto|color` con oferta activa (para 🔥 + precio rojo). */
   const [offerItemKeys, setOfferItemKeys]   = useState<Set<string>>(() => new Set());
   const [promotions, setPromotions]         = useState<ActivePromotion[]>([]);
@@ -598,6 +698,27 @@ export default function ActiveOrderTab({
   useEffect(() => {
     void loadWarehouses(getSupabaseBrowserClient()).then(setWarehouseIds);
   }, []);
+
+  // Sincronizar ítems awaiting_apartado sin stock real → missing (zona retiro diferido).
+  useEffect(() => {
+    if (!order?.id || !order.local_deferred_pickup) return;
+    let cancelled = false;
+    const supabase = getSupabaseBrowserClient();
+    void supabase
+      .rpc("rpc_refresh_my_order_availability", { p_order_id: order.id })
+      .then(({ data, error }) => {
+        if (cancelled || error) return;
+        const updated =
+          data &&
+          typeof data === "object" &&
+          "updated_count" in data &&
+          Number((data as { updated_count?: number }).updated_count) > 0;
+        if (updated) onOrderRefresh();
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [order?.id, order?.local_deferred_pickup, onOrderRefresh]);
 
   // Promos 2x1 / 2xMonto activas para variantes del pedido.
   useEffect(() => {
@@ -701,8 +822,29 @@ export default function ActiveOrderTab({
     return () => clearInterval(id);
   }, [order?.id]);
 
-  // Hidrata nowMs solo en cliente para evitar hydration mismatch con Date.now()
-  useEffect(() => { setNowMs(Date.now()); }, [order?.id]);
+  // Hidrata nowMs solo en cliente para evitar hydration mismatch con Date.now().
+  // Con countdown de retiro local, refresca cada minuto (cada 15s si falta < 1 h).
+  useEffect(() => {
+    setNowMs(Date.now());
+    if (!order?.dismantle_at || !order.local_deferred_pickup) return;
+    let timer: ReturnType<typeof setTimeout>;
+    let cancelled = false;
+    const schedule = () => {
+      const now = Date.now();
+      const left = new Date(order.dismantle_at!).getTime() - now;
+      const delay = left > 0 && left < 60 * 60 * 1000 ? 15_000 : 60_000;
+      timer = setTimeout(() => {
+        if (cancelled) return;
+        setNowMs(Date.now());
+        schedule();
+      }, delay);
+    };
+    schedule();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [order?.id, order?.dismantle_at, order?.local_deferred_pickup]);
 
   // Si el cliente volvió desde el PDP de una alternativa (botón atrás),
   // reabrimos el panel de alternativas para ese ítem en vez de perderlo.
@@ -719,20 +861,29 @@ export default function ActiveOrderTab({
   // Debe estar antes de todos los early returns para evitar errores de referencia.
   // El cliente presionó "Enviar pedido" con ítems reservados: el pedido sigue en
   // 'active' para el admin pero el cliente ve la pantalla de "En preparación".
-  const customerRequestedClose = (() => {
-    if (requestedCloseOrderId === order?.id) return true;
-    if (!order?.notes || order?.status === "closed") return false;
+  // `requestedCloseOrderId` es optimista (mientras llega el refresh); NO puede
+  // quedar pegado si el servidor ya limpió el flag (bug A56427: reopen 400
+  // porque la UI seguía en preparación con notes={} y status=active).
+  const notesRequestClose = (() => {
+    if (!order?.notes) return false;
     try {
       const n = JSON.parse(String(order.notes)) as Record<string, unknown>;
       return Boolean(n?.customer_requested_close);
-    } catch { return false; }
+    } catch {
+      return false;
+    }
   })();
+  const customerRequestedClose =
+    order?.status === "closed"
+      ? false // closed se maneja por status en el branch de preparación
+      : notesRequestClose || requestedCloseOrderId === order?.id;
 
   useEffect(() => {
-    if (order?.id !== requestedCloseOrderId) return;
-    if (customerRequestedClose || order.status === "closed") return;
+    if (!order || order.id !== requestedCloseOrderId) return;
+    // Seguir mostrando prep solo si el servidor confirma closed o el flag en notes.
+    if (order.status === "closed" || notesRequestClose) return;
     setRequestedCloseOrderId(null);
-  }, [customerRequestedClose, order?.id, order?.status, requestedCloseOrderId]);
+  }, [order, notesRequestClose, requestedCloseOrderId]);
 
   useEffect(() => {
     if (!customerId || !order?.id || !["active", "closing_soon"].includes(order.status)) {
@@ -842,6 +993,46 @@ export default function ActiveOrderTab({
     );
   }
 
+  // ── Retiro local ya cobrado en el local (admin Cerrar pedido + imprimir) ───
+  if (order.status === "closed" && isLocalPickupOrderFulfilled(order, activeTransportName)) {
+    function dismissPickupFulfilled() {
+      localStorage.setItem(localPickupFulfilledDismissKey(order!.id), String(Date.now()));
+      onOrderDismissed();
+    }
+    return (
+      <div className="active-order-state active-order-state--dismissible">
+        <button
+          onClick={dismissPickupFulfilled}
+          aria-label="Cerrar"
+          className="active-order-btn active-order-btn--text-danger active-order-state__close"
+        >
+          ×
+        </button>
+        <div className="active-order-state__icon active-order-state__icon--lg">✅</div>
+        <div className="active-order-state__title active-order-state__title--lg active-order-state__title--green">
+          ¡Ya retiraste tu pedido!
+        </div>
+        <p className="active-order-state__text active-order-state__text--lead">
+          Pedido <strong>#{order.order_number}</strong>
+        </p>
+        <p className="active-order-state__text">
+          Gracias por tu compra. Podés ver el detalle completo en tu historial.
+        </p>
+        <div className="active-order-state__actions">
+          <button
+            onClick={dismissPickupFulfilled}
+            className="active-order-btn active-order-btn--primary-green active-order-btn--history"
+          >
+            Ver en historial
+          </button>
+          <Link href="/" className="active-order-btn active-order-btn--secondary">
+            Seguir comprando
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   // ── "En preparación": pedido cerrado O cliente solicitó cierre con ítems reservados ─
   if (order.status === "closed" || customerRequestedClose) {
     const hasUnresolvedMissing = order.order_items.some(
@@ -877,12 +1068,18 @@ export default function ActiveOrderTab({
       prepPromoBuilt.groups,
       prepPromoBuilt.ungrouped
     );
-    // Todavía puede haber ítems "reserved" (esperando que el equipo los
-    // aparte) aunque el pedido ya esté cerrado — distinguimos ambos
-    // momentos en vez de decir siempre "en preparación".
-    const allConfirmed = order.order_items
-      .filter((i) => i.status !== "cancelled" && Number(i.quantity ?? 0) > 0)
-      .every((i) => i.status === "picked" || i.status === "waiting");
+    const prepOperationalItems = prepBillable;
+    const allPrepItemsPicked =
+      prepOperationalItems.length > 0 &&
+      prepOperationalItems.every((i) => i.status === "picked");
+    const localPickupCloseCopy = isLocalPickupOrder
+      ? getDashboardLocalPickupCloseCopy({
+          orderNumber: order.order_number,
+          totalFormatted: formatARS(totalAmt),
+          allItemsPicked: allPrepItemsPicked,
+          pickupDeadlineLabel: resolvePickupDeadlineLabel(order),
+        })
+      : null;
 
     async function handleReopenForEditing() {
       if (!order || cancelingPrep) return;
@@ -900,9 +1097,26 @@ export default function ActiveOrderTab({
           p_order_id: order.id,
         });
         if (err) {
-          setReopenError("No se pudo reabrir el pedido. Intentá de nuevo.");
+          const msg = String(err.message || "");
+          // Pedido ya editable en servidor (UI quedada en prep por flag
+          // optimista): destrabar sin mostrar error genérico.
+          if (
+            msg.includes("no está en preparación") ||
+            msg.includes("no corresponde reabrir")
+          ) {
+            setRequestedCloseOrderId(null);
+            setShowReopenConfirm(false);
+            onOrderRefresh();
+            return;
+          }
+          setReopenError(
+            msg.trim()
+              ? msg
+              : "No se pudo reabrir el pedido. Intentá de nuevo."
+          );
           return;
         }
+        setRequestedCloseOrderId(null);
         setShowReopenConfirm(false);
         onOrderRefresh();
       } catch {
@@ -926,29 +1140,44 @@ export default function ActiveOrderTab({
               Pedido #{order.order_number}
             </div>
             <div className="active-order-prep-success__title">
-              Pedido en preparación
+              {localPickupCloseCopy?.title ?? "Pedido en preparación"}
             </div>
             <div className="active-order-prep-success__text">
-              {isLocalPickupOrder
-                ? "Lo estamos preparando para que lo retires."
-                : "Lo estamos preparando para enviártelo."}
+              {localPickupCloseCopy?.lead ??
+                (isLocalPickupOrder
+                  ? "Lo estamos preparando para que lo retires."
+                  : "Lo estamos preparando para enviártelo.")}
             </div>
-            <div className="active-order-prep-success__pill">
-              <span className="active-order-header__loading-dots">
-                {[0, 1, 2].map((i) => (
-                  <span
-                    key={i}
-                    className="active-order-header__loading-dot"
-                    style={{ animationDelay: `${i * 0.2}s` }}
-                  />
-                ))}
-              </span>
-              <span>
-                Preparación en curso
-              </span>
-            </div>
+            {localPickupCloseCopy?.progressLabel ? (
+              <div className="active-order-prep-success__pill active-order-prep-success__pill--pending">
+                <span className="active-order-header__loading-dots">
+                  {[0, 1, 2].map((i) => (
+                    <span
+                      key={i}
+                      className="active-order-header__loading-dot"
+                      style={{ animationDelay: `${i * 0.2}s` }}
+                    />
+                  ))}
+                </span>
+                <span>{localPickupCloseCopy.progressLabel}</span>
+              </div>
+            ) : localPickupCloseCopy?.mode === "all_picked" ? null : (
+              <div className="active-order-prep-success__pill">
+                <span className="active-order-header__loading-dots">
+                  {[0, 1, 2].map((i) => (
+                    <span
+                      key={i}
+                      className="active-order-header__loading-dot"
+                      style={{ animationDelay: `${i * 0.2}s` }}
+                    />
+                  ))}
+                </span>
+                <span>Preparación en curso</span>
+              </div>
+            )}
             <div className="active-order-prep-success__detail">
-              {getOrderReadyCompactMessage(activeTransportName)}
+              {localPickupCloseCopy?.detail ??
+                getOrderReadyCompactMessage(activeTransportName)}
             </div>
           </div>
           {/* Contacto */}
@@ -989,8 +1218,18 @@ export default function ActiveOrderTab({
                 // Los "reserved"/"waiting" (todavía esperando confirmación del
                 // equipo) van primero — son los que necesitan atención, no
                 // tiene sentido enterrarlos al final de la lista.
-                const aReserved = a.status === "reserved" || a.status === "waiting" ? 0 : 1;
-                const bReserved = b.status === "reserved" || b.status === "waiting" ? 0 : 1;
+                const aReserved =
+                  a.status === "reserved" ||
+                  a.status === "waiting" ||
+                  a.status === "awaiting_apartado"
+                    ? 0
+                    : 1;
+                const bReserved =
+                  b.status === "reserved" ||
+                  b.status === "waiting" ||
+                  b.status === "awaiting_apartado"
+                    ? 0
+                    : 1;
                 if (aReserved !== bReserved) return aReserved - bReserved;
                 return new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime();
               }),
@@ -1037,6 +1276,7 @@ export default function ActiveOrderTab({
                     <div key={item.primaryItemId} className="active-order-item-divider">
                       <LineItemRow
                         imagen={item.imagen}
+                        variantId={item.variant_id}
                         productName={item.product_name}
                         color={item.color}
                         size={item.size}
@@ -1146,8 +1386,14 @@ export default function ActiveOrderTab({
         // primero — si no, al ordenar solo por fecha puede quedar empujado
         // más allá del preview de ITEMS_PREVIEW y esconderse detrás de
         // "Ver más productos", justo el ítem que más atención necesita.
-        const aReserved = a.status === "reserved" || a.status === "waiting" ? 0 : 1;
-        const bReserved = b.status === "reserved" || b.status === "waiting" ? 0 : 1;
+        const aReserved =
+          a.status === "reserved" || a.status === "waiting" || a.status === "awaiting_apartado"
+            ? 0
+            : 1;
+        const bReserved =
+          b.status === "reserved" || b.status === "waiting" || b.status === "awaiting_apartado"
+            ? 0
+            : 1;
         if (aReserved !== bReserved) return aReserved - bReserved;
         return new Date(a.created_at ?? 0).getTime() - new Date(b.created_at ?? 0).getTime();
       }),
@@ -1200,8 +1446,28 @@ export default function ActiveOrderTab({
   );
   // Block send if there are unresolved missing items
   const hasMissing      = missingItems.length > 0;
-  const canSend         = totalItems >= 4 && !hasMissing;
-  const remaining       = Math.max(0, 4 - totalItems);
+  const isLocalPickupZone = isLocalPickupShortDeadlineZone(customerProvince, customerCity);
+  /** Plazo 36 h: solo retiro especial (local_deferred_pickup) en zona marcada. */
+  const isDeferredLocalZone = Boolean(
+    order.local_deferred_pickup && isLocalPickupZone
+  );
+  const hasAwaitingApartado = allVisible.some((i) => i.status === "awaiting_apartado");
+  /** Post-apartado: todo apartado → listo para retirar. */
+  const isLocalDeferredReady = Boolean(
+    order.local_deferred_pickup &&
+      allItemsPicked &&
+      !hasAwaitingApartado &&
+      !hasMissing
+  );
+  /** Ocultar countdown hasta que arranque el timer o no queden ítems por apartar. */
+  const hideDeadlineUntilApartado = Boolean(
+    order.local_deferred_pickup &&
+      (hasAwaitingApartado || !order.dismantle_at)
+  );
+  const localDeferredPickup = Boolean(order.local_deferred_pickup);
+  const closeMinUnits   = getOrderCloseMinimumUnits(customerProvince, customerCity);
+  const canSend         = totalItems >= closeMinUnits && !hasMissing;
+  const remaining       = Math.max(0, closeMinUnits - totalItems);
   // For "closed" orders re-confirming after resolving missing items: allow re-send
   const isClosed        = order.status === "closed";
   const orderStatusInfo = ORDER_STATUS_INFO[order.status] ?? ORDER_STATUS_INFO.active;
@@ -1210,16 +1476,35 @@ export default function ActiveOrderTab({
 
   const _now         = nowMs ?? 0;
   const isExpired    = nowMs !== null ? (isOrderExpired(order, _now) && !isClosed) : false;
-  const daysLeft     = nowMs !== null ? orderDaysRemaining(order.created_at, order.dismantle_at, _now) : 99;
+  const daysLeft     = nowMs !== null ? orderDaysRemainingForOrder(order, _now) : 99;
   const isReadOnly   = isExpired;
 
   // Fecha real de vencimiento — en días CALENDARIO (no bloques de 24hs,
   // para no confundir "mañana" con "hoy más tarde"). Se usa tanto para
   // el chip "N días"/"Mañana"/"Hoy" del header como para el aviso de
   // abajo, para que ambos siempre digan lo mismo.
-  const deadlineDate      = getOrderDeadlineDate(order.created_at, order.dismantle_at);
+  const deadlineDate      = getCustomerOrderDeadlineDate(order);
   const calendarDaysLeft  = nowMs !== null ? calendarDaysUntil(deadlineDate, _now) : 99;
-  const warnSoon     = !isExpired && !isClosed && calendarDaysLeft >= 0 && calendarDaysLeft <= 3;
+  const shortPickupWindow = Boolean(
+    order.local_deferred_pickup &&
+      (isShortPickupDeadlineWindow(order.created_at, order.dismantle_at) ||
+        isLocalPickupZone)
+  );
+  /** Cuenta regresiva en vivo (chip + banner) cuando el retiro local ya tiene plazo. */
+  const showPickupCountdown = Boolean(
+    nowMs !== null &&
+      order.dismantle_at &&
+      !hideDeadlineUntilApartado &&
+      (isLocalDeferredReady || (order.local_deferred_pickup && shortPickupWindow))
+  );
+  // Listo para retirar: una sola tarjeta verde (sin banner de vencimiento aparte).
+  const warnSoon     =
+    !hideDeadlineUntilApartado &&
+    !isLocalDeferredReady &&
+    !isExpired &&
+    !isClosed &&
+    calendarDaysLeft >= 0 &&
+    calendarDaysLeft <= 3;
 
   async function handleCancelItem(itemId: string) {
     setCancelingId(itemId);
@@ -1232,6 +1517,73 @@ export default function ActiveOrderTab({
       setAltOpenFor(null);
       onOrderRefresh();
     }
+  }
+
+  function openRemoveProductConfirm(item: GroupedCustomerOrderItem & OrderItem) {
+    const maxUnits = Math.max(1, Number(item.quantity) || 1);
+    setMenuOpenFor(null);
+    setPendingRemoveItem(item);
+    // Multi: mostrar cantidad actual (bajar = quitar diferencia). Una sola unidad: quitar todo.
+    setKeepUnits(maxUnits <= 1 ? 0 : maxUnits);
+  }
+
+  function closeRemoveProductConfirm() {
+    if (cancelingId) return;
+    setPendingRemoveItem(null);
+    setKeepUnits(0);
+  }
+
+  async function handleConfirmRemoveProduct() {
+    if (!pendingRemoveItem || !order) return;
+    const item = pendingRemoveItem;
+    const maxUnits = Math.max(1, Number(item.quantity) || 1);
+    const keep = Math.max(0, Math.min(maxUnits, Number(keepUnits) || 0));
+    const unitsToRemove = maxUnits - keep;
+    if (unitsToRemove <= 0) return;
+
+    setCancelingId(item.primaryItemId);
+    setError(null);
+    const supabase = getSupabaseBrowserClient();
+
+    // Distribuir unidades entre las líneas agrupadas (puede haber varias filas).
+    const rows = (order.order_items || [])
+      .filter((r) => item.itemIds.includes(r.id))
+      .map((r) => ({
+        id: r.id,
+        quantity: Math.max(0, Number(r.quantity || 0) || 0),
+      }))
+      .filter((r) => r.quantity > 0);
+
+    let remaining = unitsToRemove;
+    let failed = false;
+
+    for (const row of rows) {
+      if (remaining <= 0) break;
+      const cancelQty = Math.min(remaining, row.quantity);
+      const { error: rpcErr } = await supabase.rpc("rpc_cancel_order_item_units", {
+        p_item_id: row.id,
+        p_units: cancelQty,
+      });
+      if (rpcErr) {
+        console.error("Error quitando unidades del pedido:", rpcErr);
+        failed = true;
+        break;
+      }
+      remaining -= cancelQty;
+    }
+
+    setCancelingId(null);
+    setPendingRemoveItem(null);
+    setKeepUnits(0);
+
+    if (failed || remaining > 0) {
+      setError("No se pudo quitar el producto. Intentá de nuevo.");
+      onOrderRefresh();
+      return;
+    }
+
+    setAltOpenFor(null);
+    onOrderRefresh();
   }
 
   async function openEditQty(item: GroupedCustomerOrderItem & OrderItem) {
@@ -1294,6 +1646,7 @@ export default function ActiveOrderTab({
         price_snapshot: item.price_snapshot,
         imagen: item.imagen,
       });
+      onGoToCart?.();
     }
   }
 
@@ -1342,12 +1695,74 @@ export default function ActiveOrderTab({
   }
 
   function handleTransportConfirmed(transport: string) {
-    setConfirmedTransportName(transport);
-    if (customerId && typeof window !== "undefined") {
-      window.localStorage.setItem(getOrderTransportConfirmKey(customerId), "1");
+    void persistTransportThenContinue(transport);
+  }
+
+  async function persistTransportThenContinue(transport: string) {
+    const canonical = canonicalizeTransportName(transport);
+    setConfirmedTransportName(canonical);
+    setError(null);
+
+    if (!canonical) {
+      setShowTransportConfirm(false);
+      setShowSendConfirm(true);
+      return;
     }
-    setShowTransportConfirm(false);
-    setShowSendConfirm(true);
+
+    setSending(true);
+    try {
+      const supabase = getSupabaseBrowserClient();
+      let result;
+      if (order?.id) {
+        result = await rpcSetTransportBeforeCloseOrder(supabase, order.id, canonical);
+      } else {
+        result = await rpcSetMyTransport(supabase, canonical);
+      }
+      const savedName = canonicalizeTransportName(result.transport_name || canonical);
+      setConfirmedTransportName(savedName);
+      onTransportPersisted?.(savedName, result.transport_id ?? null);
+      if (customerId && typeof window !== "undefined") {
+        window.localStorage.setItem(getOrderTransportConfirmKey(customerId), "1");
+      }
+      setShowTransportConfirm(false);
+      setShowSendConfirm(true);
+    } catch (err) {
+      const msg =
+        err && typeof err === "object" && "message" in err
+          ? String((err as { message?: string }).message || "")
+          : "";
+      setError(
+        msg.includes("WhatsApp") || msg.includes("transporte") || msg.includes("Transporte")
+          ? msg
+          : "No se pudo guardar el transporte. Intentá de nuevo."
+      );
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function ensureTransportPersistedBeforeClose(): Promise<boolean> {
+    const name = canonicalizeTransportName(activeTransportName || "");
+    if (!name || !order?.id) return true;
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const result = await rpcSetTransportBeforeCloseOrder(supabase, order.id, name);
+      const savedName = canonicalizeTransportName(result.transport_name || name);
+      setConfirmedTransportName(savedName);
+      onTransportPersisted?.(savedName, result.transport_id ?? null);
+      return true;
+    } catch (err) {
+      const msg =
+        err && typeof err === "object" && "message" in err
+          ? String((err as { message?: string }).message || "")
+          : "";
+      setError(
+        msg.includes("WhatsApp") || msg.includes("transporte") || msg.includes("Transporte")
+          ? msg
+          : "No se pudo guardar el transporte. Intentá de nuevo."
+      );
+      return false;
+    }
   }
 
   function handleSendCtaClick() {
@@ -1365,7 +1780,7 @@ export default function ActiveOrderTab({
       return;
     }
 
-    if (remaining > 0 || totalItems < 4) {
+    if (remaining > 0 || totalItems < closeMinUnits) {
       setShowMinInfo(true);
     }
   }
@@ -1376,9 +1791,31 @@ export default function ActiveOrderTab({
     setError(null);
     const supabase = getSupabaseBrowserClient();
 
+    const transportOk = await ensureTransportPersistedBeforeClose();
+    if (!transportOk) {
+      setSending(false);
+      return false;
+    }
+
     if (allItemsPicked) {
-      // Todos apartados → cerrar directamente vía RPC (no UPDATE directo: rpc_close_order
-      // valida permisos/vencimiento y setea closed_at, que closed-orders.js usa para reportes).
+      if (isCommonLocalPickupOrder(order, activeTransportName)) {
+        // Retiro común: no rpc_close_order — queda active en Apartados hasta cobrar en admin.
+        // Flag vía RPC (RLS bloquea UPDATE directo de customers sobre orders).
+        try {
+          await rpcCustomerRequestClose(supabase, order.id);
+          setRequestedCloseOrderId(order.id);
+          onOrderRefresh();
+          return true;
+        } catch {
+          setError("No se pudo cerrar el pedido. Intentá de nuevo.");
+          return false;
+        } finally {
+          setSending(false);
+        }
+      }
+      // Envío / otros: cerrar vía RPC.
+      // Nota: notes.local_zone_shipping_close ya no se escribe acá — customers
+      // no tienen RLS UPDATE sobre orders; el cierre queda igual vía rpc_close_order.
       try {
         await rpcCloseOrder(supabase, order.id, "Pendiente");
         onOrderSent();
@@ -1390,23 +1827,19 @@ export default function ActiveOrderTab({
         setSending(false);
       }
     } else {
-      // Hay reservados → marcar flag en notes; el pedido sigue en 'active' para el admin
-      // pero el cliente verá la pantalla "En preparación".
-      let currentNotes: Record<string, unknown> = {};
-      try { currentNotes = JSON.parse(String(order.notes ?? "{}")) as Record<string, unknown>; } catch { /* noop */ }
-      const newNotes = JSON.stringify({ ...currentNotes, customer_requested_close: true });
-      const { error: err } = await supabase
-        .from("orders")
-        .update({ notes: newNotes, updated_at: new Date().toISOString() })
-        .eq("id", order.id);
-      setSending(false);
-      if (err) {
+      // Hay reservados → flag customer_requested_close vía SECURITY DEFINER;
+      // el pedido sigue active para el admin y el cliente ve "En preparación".
+      try {
+        await rpcCustomerRequestClose(supabase, order.id);
+        setRequestedCloseOrderId(order.id);
+        onOrderRefresh();
+        return true;
+      } catch {
         setError("No se pudo cerrar el pedido. Intentá de nuevo.");
         return false;
+      } finally {
+        setSending(false);
       }
-      setRequestedCloseOrderId(order.id);
-      onOrderRefresh();
-      return true;
     }
   }
 
@@ -1465,6 +1898,7 @@ export default function ActiveOrderTab({
       <div key={item.primaryItemId}>
         <LineItemRow
           imagen={item.imagen}
+          variantId={item.variant_id}
           productName={item.product_name}
           color={item.color}
           size={item.size}
@@ -1476,7 +1910,16 @@ export default function ActiveOrderTab({
           line2={
             <span className="active-order-line2">
               <QuantityUnitLabel quantity={item.quantity} />
-              {item.quantity > 1 && (
+              {!isMissing && (
+                <CustomerItemPrepStatus
+                  item={item}
+                  warehouseIds={warehouseIds}
+                  localDeferredPickup={localDeferredPickup}
+                />
+              )}
+              {/* En missing el total ya está a la derecha; el c/u compite con
+                  «Alternativas» + «Quitar» y overflow:hidden lo corta (360px). */}
+              {item.quantity > 1 && !isMissing && (
                 <span
                   className={[
                     "active-order-unit-price",
@@ -1559,10 +2002,7 @@ export default function ActiveOrderTab({
 
                       <button
                         type="button"
-                        onClick={() => {
-                          setMenuOpenFor(null);
-                          handleCancelItem(item.primaryItemId);
-                        }}
+                        onClick={() => openRemoveProductConfirm(item)}
                         className="active-order-menu__item active-order-menu__item--row active-order-menu__item--danger"
                       >
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
@@ -1669,7 +2109,16 @@ export default function ActiveOrderTab({
     for (const member of row.members) {
       childControls[orderItemPromoKey(member)] = {
         qty: member.quantity,
-        qtyLabel: <QuantityUnitLabel quantity={member.quantity} />,
+        qtyLabel: (
+          <span className="active-order-line2">
+            <QuantityUnitLabel quantity={member.quantity} />
+            <CustomerItemPrepStatus
+              item={member}
+              warehouseIds={warehouseIds}
+              localDeferredPickup={localDeferredPickup}
+            />
+          </span>
+        ),
         // Mi pedido: sin −/+, solo basura (misma acción que quitar producto)
         onRemove: isReadOnly
           ? undefined
@@ -1699,8 +2148,19 @@ export default function ActiveOrderTab({
   // (para que la acción principal quede junto al aviso de vencimiento,
   // no perdida al final de la lista), y en su lugar habitual (debajo de
   // la lista) en el resto de los casos.
+  // Zona local diferida (Resistencia/etc.): sin "Cerrar pedido" (prep. ni ya apartado).
+  const showCloseButton = isExpired
+    ? !isDeferredLocalZone && (canSend || hasMissing)
+    : !order.local_deferred_pickup;
+
   const totalAndSendCard = (
-    <div className="active-order-card active-order-card--summary active-order-card--summary-action">
+    <div
+      className={[
+        "active-order-card",
+        "active-order-card--summary",
+        showCloseButton ? "active-order-card--summary-action" : "active-order-card--summary-only",
+      ].join(" ")}
+    >
       <div className="active-order-summary__meta">
         <div className="active-order-summary__units">
           {totalItems} unidad{totalItems !== 1 ? "es" : ""}
@@ -1711,7 +2171,7 @@ export default function ActiveOrderTab({
       </div>
 
       {isExpired ? (
-        (canSend || hasMissing) && (
+        showCloseButton && (
           <button
             type="button"
             onClick={handleSendCtaClick}
@@ -1721,7 +2181,7 @@ export default function ActiveOrderTab({
             {sending ? "Cerrando..." : canSend ? "✓ Cerrar pedido" : "Cerrar pedido"}
           </button>
         )
-      ) : (
+      ) : showCloseButton ? (
         <button
           type="button"
           onClick={handleSendCtaClick}
@@ -1738,7 +2198,7 @@ export default function ActiveOrderTab({
                   ? "Agregá productos"
                   : `Faltan ${remaining} unidad${remaining !== 1 ? "es" : ""}`}
         </button>
-      )}
+      ) : null}
     </div>
   );
 
@@ -1754,11 +2214,13 @@ export default function ActiveOrderTab({
             El plazo de tu pedido venció
           </div>
           <p className="active-order-state__text active-order-state__text--center">
-            No podés modificarlo, pero aún podés cerrarlo tal como está.
+            {isDeferredLocalZone
+              ? "El plazo de 36 horas venció. Escribinos por WhatsApp si necesitás ayuda."
+              : "No podés modificarlo, pero aún podés cerrarlo tal como está."}
           </p>
 
           <div className="active-order-expired__actions">
-            {!extensionUsed && (
+            {!isDeferredLocalZone && !extensionUsed && (
               <button
                 type="button"
                 onClick={handleRequestExtension}
@@ -1782,7 +2244,7 @@ export default function ActiveOrderTab({
             </a>
           </div>
 
-          {extensionUsed && (
+          {!isDeferredLocalZone && extensionUsed && (
             <div className="active-order-banner active-order-banner--extension active-order-banner--extension-note">
               <p>
                 Ya usaste tu prórroga. Para más tiempo, escribinos por WhatsApp.
@@ -1810,11 +2272,20 @@ export default function ActiveOrderTab({
           la info (número de pedido, estado) ya vive en la tarjeta blanca
           de arriba, mostrar ambas era redundante. */}
       {!isExpired && (
-      <div className={`active-order-header active-order-header--compact${order.status === "closing_soon" ? " active-order-header--closing-soon" : ""}`}>
+      <div
+        className={[
+          "active-order-header",
+          "active-order-header--compact",
+          order.status === "closing_soon" ? "active-order-header--closing-soon" : "",
+          isLocalDeferredReady ? "active-order-header--ready-pickup" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
+      >
         <div className="active-order-header__row active-order-header__row--top">
           <div className="active-order-header__icon">
-            {allConfirmedForCustomer && missingItems.length === 0 ? (
-              // Check cuando todo lo que ve la clienta ya está confirmado
+            {isLocalDeferredReady || (allConfirmedForCustomer && missingItems.length === 0 && !hideDeadlineUntilApartado) ? (
+              // Check cuando todo lo que ve la clienta ya está confirmado / apartado
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="20 6 9 17 4 12"/>
               </svg>
@@ -1867,7 +2338,14 @@ export default function ActiveOrderTab({
 
         <div className="active-order-header__row active-order-header__row--bottom">
           <div className="active-order-header__status-title">
-            {order.status === "closing_soon"
+            {hideDeadlineUntilApartado ? (
+              <span className="active-order-header__status-title-row">
+                <PreparingOrderSpinner size={16} />
+                Preparando tu pedido
+              </span>
+            ) : isLocalDeferredReady
+              ? "Tu pedido está listo para retirar"
+              : order.status === "closing_soon"
               ? "Cerrá tu pedido pronto"
               : allConfirmedForCustomer && missingItems.length > 0
                 ? (missingItems.length === 1
@@ -1879,29 +2357,78 @@ export default function ActiveOrderTab({
                     : "Pedido abierto"
                   : "Pedido abierto"}
           </div>
-          {!isExpired && (
+          {!isExpired && !hideDeadlineUntilApartado && Boolean(order.dismantle_at || !order.local_deferred_pickup) && (
             <button
               type="button"
               onClick={() => { setShowDaysInfo((v) => !v); setShowStatusInfo(false); }}
               aria-label="¿Qué significa este plazo?"
               className={`active-order-header__chip${showDaysInfo ? " is-open" : ""}`}
             >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <rect x="3" y="4" width="18" height="18" rx="2"/>
-                <path d="M16 2v4M8 2v4M3 10h18"/>
-              </svg>
-              {formatDeadlineChip(calendarDaysLeft, deadlineDate)}
+              {showPickupCountdown ? (
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+                </svg>
+              ) : (
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="3" y="4" width="18" height="18" rx="2"/>
+                  <path d="M16 2v4M8 2v4M3 10h18"/>
+                </svg>
+              )}
+              {showPickupCountdown
+                ? formatRemainingCountdown(deadlineDate, _now)
+                : formatDeadlineChip(calendarDaysLeft, deadlineDate)}
             </button>
           )}
         </div>
 
+        {hideDeadlineUntilApartado && (
+          <p className="active-order-header__sub active-order-header__sub--detail">
+            Estamos verificando los productos en el local. Te avisaremos cuando esté listo para retirar.
+          </p>
+        )}
+
+        {isLocalDeferredReady && (
+          <div className="active-order-header__ready-body">
+            <p className="active-order-header__sub active-order-header__sub--detail">
+              Ya preparamos tus productos. Podés pasar a retirarlos por nuestro local.
+            </p>
+            <div className="active-order-header__pickup-meta">
+              <a
+                href={LOCAL_STORE_MAPS_HREF}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="active-order-header__pickup-address"
+                aria-label="Abrir ubicación en Google Maps"
+              >
+                <span aria-hidden="true">📍</span>
+                <span className="active-order-header__pickup-address-text">
+                  Av. Alberdi 1099
+                </span>
+              </a>
+              <p className="active-order-header__pickup-pay">
+                El pago se realiza al retirar.
+              </p>
+            </div>
+            <p className="active-order-header__pickup-hint">
+              Al retirar, indicá tu nombre o N.º de pedido{" "}
+              <strong>{order.order_number}</strong>
+            </p>
+          </div>
+        )}
+
         {/* Expandable explanation — oculto por defecto */}
-        {(showStatusInfo || showDaysInfo) && (
+        {!hideDeadlineUntilApartado && (showStatusInfo || showDaysInfo) && (
           <div className="active-order-header__info-panel">
             {showDaysInfo
-              ? getDeadlineExplanation(calendarDaysLeft, deadlineDate)
+              ? showPickupCountdown
+                ? `Tenés ${formatRemainingCountdown(deadlineDate, _now)} para retirarlo (vence el ${formatWeekdayDate(deadlineDate)} a las ${formatTime(deadlineDate)}).`
+                : shortPickupWindow
+                  ? getLocalPickupDeadlineExplanation(deadlineDate, _now)
+                  : getDeadlineExplanation(calendarDaysLeft, deadlineDate)
               : order.status === "closing_soon"
-                ? `Tu pedido está próximo a vencer (${daysLeft} día${daysLeft !== 1 ? "s" : ""}). Completá el mínimo de unidades o cerralo para que podamos prepararlo.`
+                ? isDeferredLocalZone
+                  ? `Tu pedido está próximo a vencer. Cerralo para que podamos prepararlo.`
+                  : `Tu pedido está próximo a vencer (${daysLeft} día${daysLeft !== 1 ? "s" : ""}). Completá el mínimo de unidades o cerralo para que podamos prepararlo.`
                 : (() => {
                     const hasMissing  = missingItems.length > 0;
                     if (allConfirmedForCustomer && !hasMissing)
@@ -1918,14 +2445,8 @@ export default function ActiveOrderTab({
           </div>
         )}
 
-        {/* Deadline warning — 1, 2 o 3 días. Dos filas separadas, misma
-            jerarquía tipográfica: la 1ra es el aviso de cierre solo (sin
-            compartir espacio con nada), la 2da es la invitación a
-            contactar + botón de WhatsApp — texto y botón en la MISMA
-            fila (2 columnas: texto flex:1 a la izquierda, botón anclado
-            a la derecha del ancho de su contenido) para que el botón no
-            quede huérfano con espacio vacío al lado, y del mismo tamaño
-            de fuente que el texto para que no domine visualmente. */}
+        {/* Deadline warning — 1, 2 o 3 días. No se usa en listo-para-retirar
+            (esa UI es una sola tarjeta verde con countdown en el chip). */}
         {warnSoon && !showStatusInfo && !showDaysInfo && (
           <div className="active-order-header__deadline-banner">
             <div className="active-order-header__deadline-title">
@@ -1943,7 +2464,7 @@ export default function ActiveOrderTab({
                 : calendarDaysLeft === 2
                     ? "Cerrá tu pedido para mantener estos productos en el pedido."
                     : "Cerrá tu pedido antes del vencimiento para mantener estos productos."}
-              {!canSend && ` Te faltan ${remaining} unidad${remaining !== 1 ? "es" : ""} para poder cerrarlo.`}
+              {!canSend && !isLocalPickupZone && ` Te faltan ${remaining} unidad${remaining !== 1 ? "es" : ""} para poder cerrarlo.`}
             </div>
             <div className="active-order-header__deadline-row">
               <span className="active-order-header__deadline-ask">
@@ -2016,7 +2537,11 @@ export default function ActiveOrderTab({
                   </svg>
                 </span>
                 <span>
-                  <strong>Tenés 7 días</strong>
+                  <strong>
+                    {order.local_deferred_pickup && isLocalPickupZone
+                      ? "Tenés 36 horas"
+                      : "Tenés 7 días"}
+                  </strong>
                   <small>Podés cerrar el pedido cuando quieras.</small>
                 </span>
               </div>
@@ -2122,12 +2647,20 @@ export default function ActiveOrderTab({
           aviso de vencimiento (ver más arriba). */}
       {!isExpired && totalAndSendCard}
 
+      {/* Retiro local diferido: sin "Cerrar pedido", pero sí pueden seguir
+          sumando unidades (catálogo). Misma CTA que en pedido cerrado/prep. */}
+      {!isExpired && (hideDeadlineUntilApartado || isLocalDeferredReady) && (
+        <Link href="/" className="active-order-btn active-order-btn--brand-soft active-order-btn--brand-soft--follow">
+          + Agregar más productos
+        </Link>
+      )}
+
       {/* Minimum progress — antes se mostraba con "!canSend", pero canSend
           también es false cuando hay un producto sin stock aunque el mínimo
           de 4 unidades ya esté cumplido: mostraba "9/4" con "0 unidades más"
           y la barra de progreso se pasaba de 100% de ancho. El mínimo es
           harina de otro costal — solo importa cuánto falta para las 4. */}
-      {remaining > 0 && totalItems > 0 && (
+      {!isLocalPickupZone && remaining > 0 && totalItems > 0 && (
         <div className="active-order-min">
           <div className="active-order-min__header">
             <div className="active-order-min__label-row">
@@ -2199,10 +2732,18 @@ export default function ActiveOrderTab({
 
       {/* Avisos relacionados con el envío — el botón en sí ya vive en la
           tarjeta de totales de arriba, acá solo quedan los mensajes de
-          apoyo (hint de "sin stock" y el carrusel de recomendados). */}
-      {!isExpired && !canSend && !hasMissing && remaining > 0 && (
+          apoyo (hint de "sin stock" y el carrusel de recomendados).
+          Zona local diferida (preparando o listo para retirar): recomendados
+          para seguir sumando productos al pedido. */}
+      {!isExpired && !hasMissing && (
+        (!isLocalPickupZone && !canSend && remaining > 0) ||
+        ((hideDeadlineUntilApartado || isLocalDeferredReady) && totalItems > 0)
+      ) && (
         <div className="active-order-carousel-wrap">
-          <CartRecommendedCarousel daysLeft={daysLeft} remaining={remaining} />
+          <CartRecommendedCarousel
+            daysLeft={(hideDeadlineUntilApartado || isLocalDeferredReady) ? 99 : daysLeft}
+            remaining={(hideDeadlineUntilApartado || isLocalDeferredReady) ? 0 : remaining}
+          />
         </div>
       )}
       {/* Toast centrado en pantalla, por encima de todo — antes este aviso
@@ -2355,6 +2896,118 @@ export default function ActiveOrderTab({
         </div>,
         document.body
       )}
+
+      {/* ── Quitar producto (menú ⋯) ─────────────────────────────────────────── */}
+      {pendingRemoveItem && (() => {
+        const removeMaxUnits = Math.max(1, Number(pendingRemoveItem.quantity) || 1);
+        const removeKeep = Math.max(0, Math.min(removeMaxUnits, Number(keepUnits) || 0));
+        const removeDelta = removeMaxUnits - removeKeep;
+        const removeConfirmLabel = cancelingId
+          ? "Quitando..."
+          : removeMaxUnits <= 1
+            ? "Quitar"
+            : removeKeep === 0
+              ? "Quitar todo"
+              : removeDelta <= 0
+                ? "Quitar"
+                : removeDelta === 1
+                  ? "Quitar 1"
+                  : `Quitar ${removeDelta}`;
+
+        return createPortal(
+          <div
+            className="active-order-sheet-backdrop"
+            onClick={closeRemoveProductConfirm}
+          >
+            <div
+              className="active-order-sheet active-order-sheet--padded"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="active-order-remove-title"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div
+                id="active-order-remove-title"
+                className="active-order-sheet__title active-order-sheet__title--spaced-sm"
+              >
+                ¿Quitar producto del pedido?
+              </div>
+              <p className="active-order-sheet__subtitle">
+                Estás por quitar{" "}
+                <strong>
+                  {pendingRemoveItem.product_name || "Producto"}
+                  {" · "}
+                  {pendingRemoveItem.color || "Color"}
+                  {pendingRemoveItem.size
+                    ? ` · T. ${pendingRemoveItem.size}`
+                    : ""}
+                </strong>
+                {" "}de tu pedido.
+              </p>
+
+              {removeMaxUnits > 1 && (
+                <div className="active-order-remove-stepper">
+                  <div className="active-order-remove-stepper__label">
+                    Cantidad en el pedido
+                  </div>
+                  <div className="active-order-remove-stepper__controls">
+                    <button
+                      type="button"
+                      className="active-order-remove-stepper__btn"
+                      aria-label="Reducir cantidad"
+                      disabled={removeKeep <= 0 || Boolean(cancelingId)}
+                      onClick={() => setKeepUnits((u) => Math.max(0, u - 1))}
+                    >
+                      −
+                    </button>
+                    <div className="active-order-remove-stepper__qty" aria-live="polite">
+                      {removeKeep}
+                    </div>
+                    <button
+                      type="button"
+                      className="active-order-remove-stepper__btn"
+                      aria-label="Aumentar cantidad"
+                      disabled={removeKeep >= removeMaxUnits || Boolean(cancelingId)}
+                      onClick={() => setKeepUnits((u) => Math.min(removeMaxUnits, u + 1))}
+                    >
+                      +
+                    </button>
+                  </div>
+                  <div className="active-order-remove-stepper__hint">
+                    {removeDelta <= 0
+                      ? `Tenés ${removeMaxUnits} unidades. Bajá el número para quitar.`
+                      : removeKeep === 0
+                        ? `Se quitarán las ${removeMaxUnits} unidades del pedido.`
+                        : removeDelta === 1
+                          ? `Se quitará 1 unidad. Quedarán ${removeKeep}.`
+                          : `Se quitarán ${removeDelta} unidades. Quedarán ${removeKeep}.`}
+                  </div>
+                </div>
+              )}
+
+              <div className="active-order-sheet__actions active-order-sheet__actions--flat active-order-remove-actions">
+                <button
+                  type="button"
+                  onClick={closeRemoveProductConfirm}
+                  disabled={Boolean(cancelingId)}
+                  className="active-order-btn active-order-btn--secondary active-order-btn--sheet-secondary"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleConfirmRemoveProduct()}
+                  disabled={Boolean(cancelingId) || removeDelta <= 0}
+                  className={`active-order-btn active-order-btn--danger active-order-btn--sheet-primary${cancelingId ? " is-busy" : ""}`}
+                >
+                  {removeConfirmLabel}
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        );
+      })()}
     </div>
   );
 }

@@ -105,12 +105,14 @@ export function mergeDraftItem(
     return [...draft, { ...item, quantity: item.quantity || 1 }];
   }
 
+  const itemIsReturn = Number(item.price_snapshot) < 0;
   const idx = draft.findIndex(
     (d) =>
       !d.is_special_extra &&
       d.variant_id === item.variant_id &&
       normalizeSize(d.size) === normalizeSize(item.size) &&
-      d.status === item.status
+      d.status === item.status &&
+      Number(d.price_snapshot) < 0 === itemIsReturn
   );
   if (idx >= 0) {
     const next = [...draft];
@@ -257,6 +259,70 @@ export async function searchProductsGroupedByPrefix(
   return grouped;
 }
 
+/**
+ * Resuelve la URL de imagen principal por variante.
+ * Prefiere position=1; si no hay, toma la de menor position (mismo criterio
+ * que fetchOrderItemImageUrl en el Kanban).
+ */
+export async function fetchPrimaryImageUrlsByVariantId(
+  supabase: SupabaseClient,
+  variantIds: string[]
+): Promise<Map<string, string>> {
+  const unique = [...new Set((variantIds || []).map((id) => String(id || "").trim()).filter(Boolean))];
+  const map = new Map<string, string>();
+  if (!unique.length) return map;
+
+  const { data, error } = await supabase
+    .from("variant_images")
+    .select("variant_id, url, position")
+    .in("variant_id", unique)
+    .order("position", { ascending: true });
+
+  if (error) {
+    console.warn("fetchPrimaryImageUrlsByVariantId:", error.message);
+    return map;
+  }
+
+  for (const row of data || []) {
+    const variantId = String(row.variant_id || "").trim();
+    const url = String(row.url || "").trim();
+    if (!variantId || !url) continue;
+    const position = Number(row.position);
+    const existing = map.get(variantId);
+    // Ordenados por position ASC: primera fila gana; position=1 pisa cualquier otra.
+    if (!existing || position === 1) {
+      map.set(variantId, url);
+    }
+  }
+
+  return map;
+}
+
+async function fillMissingDraftItemImages(
+  supabase: SupabaseClient,
+  items: OrderEditDraftItem[]
+): Promise<OrderEditDraftItem[]> {
+  const missingVariantIds = items
+    .filter(
+      (item) =>
+        !item.is_special_extra &&
+        !String(item.imagen || "").trim() &&
+        item.variant_id
+    )
+    .map((item) => String(item.variant_id));
+
+  if (!missingVariantIds.length) return items;
+
+  const imageMap = await fetchPrimaryImageUrlsByVariantId(supabase, missingVariantIds);
+  if (imageMap.size === 0) return items;
+
+  return items.map((item) => {
+    if (item.is_special_extra || String(item.imagen || "").trim()) return item;
+    const url = item.variant_id ? imageMap.get(String(item.variant_id)) : undefined;
+    return url ? { ...item, imagen: url } : item;
+  });
+}
+
 export async function enrichDraftItemsWithStock(
   supabase: SupabaseClient,
   items: OrderEditDraftItem[]
@@ -267,6 +333,19 @@ export async function enrichDraftItemsWithStock(
   for (const item of items) {
     if (item.is_special_extra) {
       out.push(item);
+      continue;
+    }
+
+    // Devolución (price_snapshot < 0): no partir stock ni marcar missing.
+    if (Number(item.price_snapshot) < 0) {
+      out.push({
+        ...item,
+        size: normalizeSize(item.size),
+        qty_from_general: 0,
+        qty_from_venta: 0,
+        admin_confirmed_missing: false,
+        status: item.status || "picked",
+      });
       continue;
     }
 
@@ -320,11 +399,14 @@ export async function enrichDraftItemsWithStock(
     });
   }
 
-  return out;
+  // El picker manual del Kanban no trae `imagen`; sin esto el dashboard del
+  // cliente muestra el placeholder gris. Completamos desde variant_images.
+  return fillMissingDraftItemImages(supabase, out);
 }
 
 export function itemQualifiesForStockDeduction(item: OrderEditDraftItem): boolean {
   if (item.is_special_extra) return false;
+  if (Number(item.price_snapshot) < 0) return false;
   if (!item.variant_id || !item.size) return false;
   const statusNorm = String(item.status || "").trim().toLowerCase();
   if (statusNorm === "missing") return false;
@@ -442,7 +524,8 @@ export async function resolveSkuOrQrToOrderItem(
   supabase: SupabaseClient,
   code: string,
   warehouseIds: WarehouseIds,
-  quantity = 1
+  quantity = 1,
+  returnMode = false
 ): Promise<OrderEditDraftItem> {
   const qrNormalized = String(code).trim().replace(/\s+/g, "");
   if (!qrNormalized) throw new Error("Ingresá un SKU o código QR.");
@@ -537,27 +620,25 @@ export async function resolveSkuOrQrToOrderItem(
   const split = computeWarehouseQtySplitForOrderItem(qty, stockGeneral, stockVenta);
   const hasConfirmedStock = split.qty_from_general + split.qty_from_venta >= qty;
 
-  const { data: imageData } = await supabase
-    .from("variant_images")
-    .select("url")
-    .eq("variant_id", variant.id)
-    .eq("position", 1)
-    .maybeSingle();
+  const imageMap = await fetchPrimaryImageUrlsByVariantId(supabase, [variant.id]);
+  const imagen = imageMap.get(variant.id) || null;
+
+  const signedPrice = returnMode ? -Math.abs(unitPrice) : Math.abs(unitPrice);
 
   return {
     product_name: product.name,
     color: variant.color,
     size: normalizedSize,
     quantity: qty,
-    price_snapshot: unitPrice,
-    imagen: imageData?.url || null,
+    price_snapshot: signedPrice,
+    imagen,
     variant_id: variant.id,
-    qty_from_general: split.qty_from_general,
-    qty_from_venta: split.qty_from_venta,
+    qty_from_general: returnMode ? 0 : split.qty_from_general,
+    qty_from_venta: returnMode ? 0 : split.qty_from_venta,
     // Igual criterio que enrichDraftItemsWithStock: escaneado/agregado por el
     // admin siempre queda "picked" para la clienta, aunque no haya stock real.
     status: "picked",
-    admin_confirmed_missing: !hasConfirmedStock,
+    admin_confirmed_missing: returnMode ? false : !hasConfirmedStock,
   };
 }
 

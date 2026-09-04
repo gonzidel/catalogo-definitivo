@@ -1,5 +1,6 @@
 export type OrderItemStatus =
   | "reserved"
+  | "awaiting_apartado"
   | "picked"
   | "waiting"
   | "missing"
@@ -54,6 +55,7 @@ export interface AdminOrderItem {
   price_snapshot: number | null;
   imagen?: string | null;
   status: OrderItemStatus | string;
+  deferred_stock_pending?: boolean | null;
   admin_confirmed_missing?: boolean | null;
   checked_by?: string | null;
   checked_at?: string | null;
@@ -80,6 +82,8 @@ export interface AdminOrder {
   sent_at?: string | null;
   expires_at?: string | null;
   dismantle_at?: string | null;
+  local_deferred_pickup?: boolean | null;
+  pickup_timer_started_at?: string | null;
   transport_id?: string | null;
   customers?: AdminOrderCustomer | AdminOrderCustomer[] | null;
   order_items?: AdminOrderItem[];

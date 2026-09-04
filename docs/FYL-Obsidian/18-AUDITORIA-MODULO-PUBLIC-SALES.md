@@ -73,9 +73,10 @@ SQL relevante:
 ### Pedido local a venta publica
 
 1. `public-sales.js` carga/edita pedidos locales con RPCs (`rpc_get_local_orders`, `rpc_get_local_order_items`, `rpc_update_local_order`, `rpc_load_local_order_to_sale`).
-2. Al finalizar, llama `rpc_create_public_sale` con idempotencia (`admin/public-sales.js:7522-7530`).
-3. Despues actualiza directo `local_orders.status = completed` (`admin/public-sales.js:7560`).
-4. `local-order-edit.js` tiene una ruta similar: llama `rpc_create_public_sale` y despues actualiza directo `local_orders.status = completed`.
+2. Al **crear** (`rpc_create_local_order`, canonical **311**): descuenta stock y espeja a `orders` para Kanban Retiro (`rpc_mirror_local_order_to_retiro` → Apartados). Soft-fail si hay pedido abierto. Link: `local_orders.source_order_id`.
+3. Al finalizar, llama `rpc_create_public_sale` con idempotencia.
+4. Despues actualiza `local_orders.status = completed` y cierra el espejo con `rpc_close_mirrored_retiro_from_local_order`.
+5. `local-order-edit.js` tiene una ruta similar de finalización a venta pública.
 
 ### Anulacion
 

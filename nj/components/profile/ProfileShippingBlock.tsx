@@ -11,16 +11,25 @@ import {
   getFormaPagoTextForTransport,
   resolveShippingOptions,
 } from "@/lib/transport/shipping-helpers";
+import { rpcSetMyTransport } from "@/lib/transport/rpc";
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import DropdownSelect from "@/components/ui/DropdownSelect";
 
 interface ProfileShippingBlockProps {
   province?: string | null;
   city?: string | null;
-  /** Se llama cuando el cliente elige otro transporte, para que el header
-   * del dashboard (que muestra el transporte activo) se actualice también. */
-  onTransportChange?: (transporte: string) => void;
+  /** Nombre desde customers.transport_id (BD). Tiene prioridad sobre localStorage. */
+  assignedTransportName?: string | null;
+  /** Se llama cuando el cliente elige otro transporte y se guardó en BD. */
+  onTransportChange?: (transporte: string, transportId?: string | null) => void;
 }
 
-export default function ProfileShippingBlock({ province, city, onTransportChange }: ProfileShippingBlockProps) {
+export default function ProfileShippingBlock({
+  province,
+  city,
+  assignedTransportName,
+  onTransportChange,
+}: ProfileShippingBlockProps) {
   const provinceTrim = (province || "").trim();
   const cityTrim = (city || "").trim();
   const hasLocation = Boolean(provinceTrim && cityTrim);
@@ -35,31 +44,72 @@ export default function ProfileShippingBlock({ province, city, onTransportChange
     }
     const raw = getTransportesDisponibles(provinceTrim, cityTrim);
     const resolved = resolveShippingOptions(provinceTrim, cityTrim, raw);
-    let efectivo = canonicalizeTransportName(getTransporte(provinceTrim, cityTrim));
-    if (resolved.opciones.includes(efectivo)) {
-      return { ...resolved, efectivo };
+    const assigned = canonicalizeTransportName(assignedTransportName || "");
+    if (assigned) {
+      const opciones = resolved.opciones.includes(assigned)
+        ? resolved.opciones
+        : [assigned, ...resolved.opciones];
+      return { ...resolved, opciones, efectivo: assigned };
     }
+    // No leer localStorage acá: en SSR no existe y rompe la hidratación.
     return { ...resolved, efectivo: resolved.opciones[0] ?? "—" };
-  }, [hasLocation, provinceTrim, cityTrim]);
+  }, [assignedTransportName, hasLocation, provinceTrim, cityTrim]);
 
   const { opciones, efectivo, soloSedeUnico } = shipping;
 
   const [selected, setSelected] = useState(efectivo);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     setSelected(efectivo);
   }, [efectivo]);
 
+  useEffect(() => {
+    if (!hasLocation || assignedTransportName) return;
+    const fromStorage = canonicalizeTransportName(getTransporte(provinceTrim, cityTrim));
+    if (fromStorage && fromStorage !== "—" && opciones.includes(fromStorage)) {
+      setSelected(fromStorage);
+    }
+  }, [hasLocation, assignedTransportName, provinceTrim, cityTrim, opciones]);
+
   const effective = opciones.includes(selected) ? selected : (opciones[0] ?? "—");
   const showSelect = hasLocation && !soloSedeUnico && opciones.length > 0;
   const showCorreo = canonicalizeTransportName(effective) === "Correo Argentino";
+  const transportOptions = useMemo(
+    () => opciones.map((t) => ({ value: t, label: t })),
+    [opciones]
+  );
 
-  function handleChange(value: string) {
+  async function handleChange(value: string) {
     const transporte = canonicalizeTransportName(value);
+    const previous = selected;
     setSelected(transporte);
-    if (provinceTrim && cityTrim && transporte) {
+    setSaveError(null);
+    if (!provinceTrim || !cityTrim || !transporte) return;
+
+    setSaving(true);
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const result = await rpcSetMyTransport(supabase, transporte);
       guardarTransporteElegido(provinceTrim, cityTrim, transporte);
-      onTransportChange?.(transporte);
+      onTransportChange?.(
+        canonicalizeTransportName(result.transport_name || transporte),
+        result.transport_id ?? null
+      );
+    } catch (err) {
+      setSelected(previous);
+      const msg =
+        err && typeof err === "object" && "message" in err
+          ? String((err as { message?: string }).message || "")
+          : "";
+      setSaveError(
+        msg.includes("WhatsApp")
+          ? msg
+          : "No se pudo guardar el transporte. Intentá de nuevo."
+      );
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -75,34 +125,47 @@ export default function ProfileShippingBlock({ province, city, onTransportChange
         </p>
       ) : (
         <>
-          <label style={{ display: "block", fontSize: 12, color: "#888", marginBottom: 6 }}>
+          <label
+            id="profile-transport-label"
+            style={{ display: "block", fontSize: 12, color: "#888", marginBottom: 6 }}
+          >
             Retiro/envío asignado
           </label>
 
           {showSelect ? (
-            <select
+            <DropdownSelect
+              labelledBy="profile-transport-label"
               value={effective}
-              onChange={(e) => handleChange(e.target.value)}
-              aria-label="Elegir transporte"
-              style={{
-                width: "100%", padding: "10px 12px", borderRadius: 10,
-                border: "1px solid #ddd", fontSize: 14, color: "#333",
-                background: "#fff", appearance: "auto",
+              options={transportOptions}
+              disabled={saving}
+              onChange={(value) => {
+                if (value === effective || saving) return;
+                void handleChange(value);
               }}
-            >
-              {opciones.map((t) => (
-                <option key={t} value={t}>{t}</option>
-              ))}
-            </select>
+            />
           ) : (
-            <div style={{
-              padding: "10px 12px", borderRadius: 10,
-              background: "#f8f8f8", border: "1px solid #eee",
-              fontSize: 14, fontWeight: 500, color: "#333",
-            }}>
+            <div className="fyl-dropdown__readonly">
               {opciones.length ? opciones[0] : "—"}
             </div>
           )}
+
+          {saveError ? (
+            <p style={{ margin: "8px 0 0", fontSize: 12, color: "#b91c1c" }}>{saveError}</p>
+          ) : null}
+
+          {effective !== "—" ? (
+            <div style={{
+              marginTop: 12, padding: 12, borderRadius: 10,
+              background: "#fafafa", border: "1px solid #eee",
+            }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#333", marginBottom: 4 }}>
+                Forma de pago
+              </div>
+              <p style={{ margin: 0, fontSize: 12, color: "#666", lineHeight: 1.45 }}>
+                {getFormaPagoTextForTransport(effective)}
+              </p>
+            </div>
+          ) : null}
 
           {showCorreo ? (
             <div style={{
@@ -113,19 +176,7 @@ export default function ProfileShippingBlock({ province, city, onTransportChange
                 Correo Argentino
               </div>
               <p style={{ margin: 0, fontSize: 12, color: "#666", lineHeight: 1.45 }}>
-                Si elegís Correo Argentino, te informaremos el costo total (pedido + envío) para abonarlo antes del despacho.
-              </p>
-            </div>
-          ) : effective !== "—" ? (
-            <div style={{
-              marginTop: 12, padding: 12, borderRadius: 10,
-              background: "#fafafa", border: "1px solid #eee",
-            }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: "#333", marginBottom: 4 }}>
-                Forma de pago
-              </div>
-              <p style={{ margin: 0, fontSize: 12, color: "#666", lineHeight: 1.45 }}>
-                {getFormaPagoTextForTransport(effective)}
+                Te informaremos el costo total (pedido + envío) para abonarlo por transferencia antes del despacho.
               </p>
             </div>
           ) : null}

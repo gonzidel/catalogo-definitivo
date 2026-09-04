@@ -139,6 +139,39 @@ export function parseOrderNotesObject(rawNotes) {
   return {};
 }
 
+const LEGACY_PEDIDOS_RETIRO_ORIGINS = new Set(["public_sales", "retiro", "admin_local"]);
+
+function normalizeLegacyTransportKey(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ");
+}
+
+/**
+ * Pedido que en NJ vive en el Kanban Retiro (`/nj/admin/retiro`), no en Pedidos.
+ * Criterio conservador a propósito: NO copia el fallback geo de NJ
+ * (`isDashboardRetiroLocalZone`) para no ocultar envíos de Chaco/Corrientes
+ * que el admin todavía opera en esta pantalla legacy.
+ *
+ * `kanban_scope = shipping` gana (pedido movido a Pedidos desde Retiro).
+ */
+export function isRetiroBoardOrderForLegacyPedidos(order, transportLabel = "") {
+  if (!order) return false;
+  const notes = parseOrderNotesObject(order.notes);
+  const scope = String(notes.kanban_scope || "").trim().toLowerCase();
+  if (scope === "shipping") return false;
+  if (scope === "local_pickup") return true;
+  if (notes.mirrored_from_local_order === true) return true;
+  const origin = String(notes.retiro_origin || "").trim().toLowerCase();
+  if (LEGACY_PEDIDOS_RETIRO_ORIGINS.has(origin)) return true;
+  if (order.local_deferred_pickup === true) return true;
+  const key = normalizeLegacyTransportKey(transportLabel);
+  return key === "retira local" || key === "retiro del local" || key === "retiro de local";
+}
+
 export function parseStockPendingReasonConflict(rawReason) {
   const reason = String(rawReason || "");
   if (!reason) return null;

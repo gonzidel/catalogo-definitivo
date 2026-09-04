@@ -296,6 +296,14 @@ body {
 
 /* ── Search bar + autocomplete ─────────────────────────────────────────────── */
 
+.search-bar-wrapper {
+  display: flex !important;
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 480px;
+  align-items: center;
+}
+
 .search-bar-inner {
   position: relative;
   flex: 1;
@@ -339,6 +347,12 @@ body {
   font-size: 13px;
   padding: 8px 0;
   color: #222;
+}
+
+/* /nj tiene un solo input (id search-bar-mobile para BottomNav).
+   styles.css lo oculta en ≥481px porque el catálogo vanilla usa otro campo desktop. */
+.search-bar-wrapper .search-bar-mobile {
+  display: block !important;
 }
 
 .search-bar__clear {
@@ -398,6 +412,15 @@ body {
 
 .search-suggest__icon--tag {
   color: #CD844D;
+}
+
+.search-suggest__icon--product {
+  color: #8a5a32;
+}
+
+.search-suggest__row--product .search-suggest__type {
+  color: #8a5a32;
+  font-weight: 600;
 }
 
 .search-suggest__label {

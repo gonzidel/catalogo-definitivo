@@ -29,7 +29,12 @@ function groupKey(item: CustomerOrderItemLike, warehouseIds: WarehouseIds): stri
   const color = String(item.color || "").trim().toLowerCase();
   const size = String(item.size || "").trim().toLowerCase();
   const price = Number(item.price_snapshot || 0);
-  const productKey = variantId || `${name}|${color}|${size}`;
+  // La variante en FYL es producto+color; el talle vive aparte. Si la clave
+  // usa solo variant_id, talles distintos del mismo color se fusionan mal en
+  // Mi pedido (bug A56427: Chocolate 36×2 + 40×3 → una fila T.36 ×5).
+  const productKey = variantId
+    ? `${variantId}|${size}`
+    : `${name}|${color}|${size}`;
   return `${productKey}|${statusKey}|${price}`;
 }
 

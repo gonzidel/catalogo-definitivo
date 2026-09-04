@@ -8,10 +8,9 @@ import {
 import { loadWarehouses } from "@/lib/supabase/order-queries";
 
 /**
- * Pedido abierto existente del cliente (active/closing_soon/closed — un pedido a la
- * vez, igual que admin/order-creator.js). `closed` cuenta como "abierto" a partir de
- * 2026-07-18: un pedido cerrado pendiente de envío también bloquea/ofrece merge antes
- * de crear uno nuevo (antes solo se chequeaba active/closing_soon).
+ * Pedido abierto existente del cliente (active/closing_soon/closed/cancelled — un pedido a
+ * la vez, igual que admin/order-creator.js). `closed` cuenta como "abierto" a partir de
+ * 2026-07-18. `cancelled` también bloquea (318) hasta que admin desarme o se auto-borre.
  */
 export async function findOpenOrderForCustomer(
   supabase: SupabaseClient,
@@ -21,7 +20,8 @@ export async function findOpenOrderForCustomer(
     .from("orders")
     .select("id, order_number, status")
     .eq("customer_id", customerId)
-    .in("status", ["active", "closing_soon", "closed"])
+    .in("status", ["active", "closing_soon", "closed", "cancelled"])
+    .or("local_deferred_pickup.is.null,local_deferred_pickup.eq.false")
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();

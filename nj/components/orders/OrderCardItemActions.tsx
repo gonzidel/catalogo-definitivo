@@ -2,7 +2,12 @@
 
 import { useState } from "react";
 import { createPortal } from "react-dom";
+import {
+  waitingLocalLabel as waitingLocalLabelForScope,
+  waitingLocalShortLabel,
+} from "@/lib/orders/board-scope";
 import type { DraftChangeKind } from "@/lib/orders/draft-changes";
+import { useOrdersStore } from "@/hooks/useOrders";
 
 interface OrderCardItemActionsProps {
   orderId: string;
@@ -12,6 +17,8 @@ interface OrderCardItemActionsProps {
   /** Variante + talle del ítem, para poder consultar/ajustar existencias al marcar "sin stock". */
   variantId?: string | null;
   size?: string | null;
+  /** Retiro local diferido: solo apartar o sin stock, sin "En espera". */
+  hideWaitingAction?: boolean;
   /** Controla el panel "Origen de espera" desde el padre, para que solo uno esté abierto a la vez */
   waitingPanelOpen?: boolean;
   onToggleWaitingPanel?: () => void;
@@ -28,7 +35,7 @@ interface OrderCardItemActionsProps {
   /** Lleva a 0 el stock de esa variante+talle (admin eligió "Sí, quitar el stock"). */
   onZeroStock?: (variantId: string, size: string, itemId?: string | null) => Promise<void>;
   /**
-   * Modo borrador (mobile): tocar los botones no aplica nada, solo marca el
+   * Modo borrador (mobile / Retiro): tocar los botones no aplica nada, solo marca el
    * cambio pendiente (color) hasta que se confirme desde la barra del pedido.
    */
   draftMode?: boolean;
@@ -36,6 +43,11 @@ interface OrderCardItemActionsProps {
   onStagePicked?: () => void;
   onStageWaiting?: (source: "fabrica" | "local") => void;
   onStageMissing?: () => void;
+  /**
+   * Si devuelve true, el padre ya abrió otro flujo (p. ej. «Repartir unidades»
+   * para ítems multi-unidad) y no hay que stagear ni abrir el confirm de missing.
+   */
+  onRequestMissing?: () => boolean;
 }
 
 export default function OrderCardItemActions({
@@ -45,6 +57,7 @@ export default function OrderCardItemActions({
   variant = "active",
   variantId = null,
   size = null,
+  hideWaitingAction = false,
   waitingPanelOpen = false,
   onToggleWaitingPanel,
   onCloseWaitingPanel,
@@ -58,10 +71,18 @@ export default function OrderCardItemActions({
   onStagePicked,
   onStageWaiting,
   onStageMissing,
+  onRequestMissing,
 }: OrderCardItemActionsProps) {
   const [missingOpen, setMissingOpen] = useState(false);
   const [zeroStockPrompt, setZeroStockPrompt] = useState<number | null>(null);
   const [zeroStockBusy, setZeroStockBusy] = useState(false);
+  const boardScope = useOrdersStore((s) => s.boardScope);
+  const waitingLocalLabel = waitingLocalLabelForScope(boardScope);
+  const waitingLocalShort = waitingLocalShortLabel(boardScope);
+  const waitingLocalBtnClass =
+    boardScope === "local_pickup"
+      ? "order-card__btn--waiting-deposito"
+      : "order-card__btn--waiting-local";
 
   /**
    * Consulta existencias ANTES de marcar "sin stock".
@@ -119,15 +140,14 @@ export default function OrderCardItemActions({
   const stagedMissing = draftMode && draftKind === "missing";
 
   const handlePickClick = () => {
-    if (draftMode) {
-      onStagePicked?.();
-      return;
-    }
+    // Siempre pasa por el padre: ahí se intercepta multi-unidad («Repartir
+    // unidades») y, si no aplica, el propio padre stagea en draftMode o llama RPC.
     void onMarkPicked(orderId, itemId);
   };
 
   const handleMissingClick = (event: React.MouseEvent) => {
     event.stopPropagation();
+    if (onRequestMissing?.()) return;
     if (draftMode) {
       onStageMissing?.();
       return;
@@ -158,7 +178,7 @@ export default function OrderCardItemActions({
           ✓
         </button>
 
-        {variant === "active" ? (
+        {variant === "active" && !hideWaitingAction ? (
           <span className="order-card__waiting-anchor">
             <button
               type="button"
@@ -171,7 +191,7 @@ export default function OrderCardItemActions({
                 onToggleWaitingPanel?.();
               }}
             >
-              {stagedWaitingFabrica ? "F" : stagedWaitingLocal ? "L" : "⏳"}
+              {stagedWaitingFabrica ? "F" : stagedWaitingLocal ? waitingLocalShort : "⏳"}
             </button>
 
             {waitingPanelOpen ? (
@@ -209,11 +229,11 @@ export default function OrderCardItemActions({
                     </button>
                     <button
                       type="button"
-                      className="order-card__btn order-card__btn--waiting-local"
+                      className={`order-card__btn ${waitingLocalBtnClass}`}
                       disabled={disabled}
                       onClick={() => handleWaitingSourceClick("local")}
                     >
-                      Local
+                      {waitingLocalLabel}
                     </button>
                   </span>
                 </span>

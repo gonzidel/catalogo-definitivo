@@ -33,6 +33,10 @@ const resultsCount = document.getElementById("results-count");
 const reloadBtn = document.getElementById("reload-btn");
 const errorContainer = document.getElementById("error-container");
 const noResults = document.getElementById("no-results");
+const loadMoreWrap = document.getElementById("load-more-wrap");
+const loadMoreBtn = document.getElementById("load-more-btn");
+const factoryWaitBody = document.getElementById("factory-wait-body");
+const factoryWaitCount = document.getElementById("factory-wait-count");
 
 // Modal
 const editModal = document.getElementById("edit-modal");
@@ -42,11 +46,34 @@ const modalSaveBtn = document.getElementById("modal-save-btn");
 const modalProductName = document.getElementById("modal-product-name");
 const modalVariantsTbody = document.getElementById("modal-variants-tbody");
 
+// Paginación
+const PAGE_SIZE = 6;
+
+// Panel espera fábrica (solo local a esta pantalla)
+const FACTORY_CONFIRM_KEY = "fyl_factory_wait_confirmed_v1";
+const FACTORY_CONFIRM_TTL_MS = 48 * 60 * 60 * 1000;
+const FACTORY_WAIT_REFRESH_MS = 45 * 1000;
+const FACTORY_FINAL_ORDER_STATUSES = new Set([
+  "closed", "sent", "devolucion", "devolución", "cancelled", "expired"
+]);
+
 // Datos
 let allProducts = []; // Array de productos con sus variantes
 let filteredProducts = [];
 let currentEditingProduct = null;
 let warehouseIds = { general: null, ventaPublico: null };
+let productsOffset = 0;
+let hasMoreProducts = false;
+let totalProductsCount = 0;
+let currentSearchTerm = "";
+let searchDebounceTimer = null;
+let isLoadingProducts = false;
+let pendingResetLoad = false;
+let supplierIdCache = null;
+let factoryWaitRows = [];
+let isLoadingFactoryWait = false;
+let pendingFactoryWaitReload = false;
+let factoryWaitRefreshTimer = null;
 
 // Cargar IDs de almacenes
 async function loadWarehouseIds() {
@@ -74,69 +101,425 @@ async function loadWarehouseIds() {
   return true;
 }
 
-// Cargar productos FYL
-async function loadProducts() {
-  productsContainer.innerHTML = '<div class="loading">Cargando productos...</div>';
+// ——— Panel Espera fábrica (solo UI local; no cambia pedidos ni stock) ———
+
+function getFactoryConfirmMap() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(FACTORY_CONFIRM_KEY) || "{}");
+    if (!raw || typeof raw !== "object") return {};
+    const now = Date.now();
+    const cleaned = {};
+    for (const [key, ts] of Object.entries(raw)) {
+      if (typeof ts === "number" && now - ts < FACTORY_CONFIRM_TTL_MS) {
+        cleaned[key] = ts;
+      }
+    }
+    if (Object.keys(cleaned).length !== Object.keys(raw).length) {
+      localStorage.setItem(FACTORY_CONFIRM_KEY, JSON.stringify(cleaned));
+    }
+    return cleaned;
+  } catch {
+    return {};
+  }
+}
+
+function setFactoryConfirmed(rowKey, confirmed) {
+  const map = getFactoryConfirmMap();
+  if (confirmed) {
+    map[rowKey] = Date.now();
+  } else {
+    delete map[rowKey];
+  }
+  localStorage.setItem(FACTORY_CONFIRM_KEY, JSON.stringify(map));
+}
+
+function factoryRowKey(name, color, variantId) {
+  if (variantId) return `v:${variantId}`;
+  return `n:${String(name || "").trim().toLowerCase()}|${String(color || "").trim().toLowerCase()}`;
+}
+
+function sortSizeLabels(sizes) {
+  return [...sizes].sort((a, b) => {
+    const na = parseFloat(String(a).replace(",", "."));
+    const nb = parseFloat(String(b).replace(",", "."));
+    if (!Number.isNaN(na) && !Number.isNaN(nb) && String(a).match(/^\d/) && String(b).match(/^\d/)) {
+      return na - nb;
+    }
+    return String(a).localeCompare(String(b), "es", { numeric: true });
+  });
+}
+
+function isFabricaWaitingItem(oi, generalId, ventaId) {
+  const st = String(oi?.status || "").trim().toLowerCase();
+  if (st !== "waiting") return false;
+
+  const order = oi.orders;
+  if (!order) return false;
+  const orderStatus = String(order.status || "").trim().toLowerCase();
+  if (FACTORY_FINAL_ORDER_STATUSES.has(orderStatus)) return false;
+
+  const qty = Math.max(0, Number(oi.quantity || 0) || 0);
+  if (qty <= 0) return false;
+
+  const sources = Array.isArray(oi.order_item_stock_sources) ? oi.order_item_stock_sources : [];
+  let ventaQty = 0;
+  let generalQty = 0;
+  sources.forEach((s) => {
+    const q = Number(s?.qty || 0) || 0;
+    if (s?.warehouse_id === ventaId) ventaQty += q;
+    if (s?.warehouse_id === generalId) generalQty += q;
+  });
+
+  // Misma regla que nj/waiting-source: solo-venta-público = local; resto = fábrica
+  if (ventaQty > 0 && generalQty === 0) return false;
+  return true;
+}
+
+function getFabricaQty(oi, generalId) {
+  const sources = Array.isArray(oi.order_item_stock_sources) ? oi.order_item_stock_sources : [];
+  let generalQty = 0;
+  sources.forEach((s) => {
+    if (s?.warehouse_id === generalId) generalQty += Number(s?.qty || 0) || 0;
+  });
+  if (generalQty > 0) return generalQty;
+  return Math.max(0, Number(oi.quantity || 0) || 0);
+}
+
+async function loadFactoryWaitPanel({ silent = false } = {}) {
+  if (!factoryWaitBody) return;
+  if (isLoadingFactoryWait) {
+    pendingFactoryWaitReload = true;
+    return;
+  }
+  isLoadingFactoryWait = true;
+  pendingFactoryWaitReload = false;
+
+  if (!silent) {
+    factoryWaitBody.innerHTML = '<div class="factory-wait-panel__empty">Cargando…</div>';
+    if (factoryWaitCount) factoryWaitCount.textContent = "";
+  }
+
+  try {
+    if (!warehouseIds.general || !warehouseIds.ventaPublico) {
+      const ok = await loadWarehouseIds();
+      if (!ok) {
+        if (!silent) {
+          factoryWaitBody.innerHTML = '<div class="factory-wait-panel__empty">No se pudieron cargar almacenes.</div>';
+        }
+        return;
+      }
+    }
+
+    const { data, error } = await supabase
+      .from("order_items")
+      .select([
+        "id",
+        "product_name",
+        "color",
+        "size",
+        "quantity",
+        "status",
+        "variant_id",
+        "imagen",
+        "orders(id, status)",
+        "order_item_stock_sources(qty, warehouse_id)"
+      ].join(","))
+      .eq("status", "waiting");
+
+    if (error) throw error;
+
+    const fabricaItems = (data || []).filter((oi) =>
+      isFabricaWaitingItem(oi, warehouseIds.general, warehouseIds.ventaPublico)
+    );
+
+    // Agrupar por variante / producto+color
+    const groups = new Map();
+    fabricaItems.forEach((oi) => {
+      const name = oi.product_name || "Sin nombre";
+      const color = oi.color || "Sin color";
+      const key = factoryRowKey(name, color, oi.variant_id);
+      const size = String(oi.size || "—").trim() || "—";
+      const qty = getFabricaQty(oi, warehouseIds.general);
+
+      if (!groups.has(key)) {
+        groups.set(key, {
+          key,
+          name,
+          color,
+          variantId: oi.variant_id || null,
+          imageUrl: oi.imagen || null,
+          sizes: new Map()
+        });
+      }
+      const g = groups.get(key);
+      if (!g.imageUrl && oi.imagen) g.imageUrl = oi.imagen;
+      g.sizes.set(size, (g.sizes.get(size) || 0) + qty);
+    });
+
+    // Completar imagen principal del color (variant_images position 1)
+    const variantIds = [...groups.values()]
+      .map((g) => g.variantId)
+      .filter(Boolean);
+    if (variantIds.length > 0) {
+      const { data: images, error: imgErr } = await supabase
+        .from("variant_images")
+        .select("variant_id, url, position")
+        .in("variant_id", variantIds)
+        .eq("position", 1);
+
+      if (!imgErr && images) {
+        const byVariant = new Map(images.map((img) => [img.variant_id, img.url]));
+        groups.forEach((g) => {
+          if (g.variantId && byVariant.has(g.variantId)) {
+            g.imageUrl = byVariant.get(g.variantId);
+          }
+        });
+      }
+    }
+
+    const confirmedMap = getFactoryConfirmMap();
+    factoryWaitRows = [...groups.values()]
+      .map((g) => {
+        const sizeEntries = sortSizeLabels([...g.sizes.keys()]).map((size) => ({
+          size,
+          qty: g.sizes.get(size) || 0
+        }));
+        return {
+          key: g.key,
+          name: g.name,
+          color: g.color,
+          imageUrl: g.imageUrl,
+          sizes: sizeEntries,
+          confirmedAt: confirmedMap[g.key] || null
+        };
+      })
+      .sort((a, b) => {
+        // Confirmados al final; dentro de cada grupo por nombre
+        const ac = a.confirmedAt ? 1 : 0;
+        const bc = b.confirmedAt ? 1 : 0;
+        if (ac !== bc) return ac - bc;
+        return a.name.localeCompare(b.name, "es");
+      });
+
+    renderFactoryWaitPanel();
+  } catch (err) {
+    console.error("Error cargando espera fábrica:", err);
+    if (!silent) {
+      factoryWaitBody.innerHTML = `<div class="factory-wait-panel__empty">Error: ${escapeHtml(err.message || "desconocido")}</div>`;
+      if (factoryWaitCount) factoryWaitCount.textContent = "";
+    }
+  } finally {
+    isLoadingFactoryWait = false;
+    if (pendingFactoryWaitReload) {
+      pendingFactoryWaitReload = false;
+      loadFactoryWaitPanel({ silent: true });
+    }
+  }
+}
+
+function startFactoryWaitAutoRefresh() {
+  stopFactoryWaitAutoRefresh();
+  factoryWaitRefreshTimer = setInterval(() => {
+    if (document.visibilityState !== "visible") return;
+    loadFactoryWaitPanel({ silent: true });
+  }, FACTORY_WAIT_REFRESH_MS);
+}
+
+function stopFactoryWaitAutoRefresh() {
+  if (factoryWaitRefreshTimer) {
+    clearInterval(factoryWaitRefreshTimer);
+    factoryWaitRefreshTimer = null;
+  }
+}
+
+function renderFactoryWaitPanel() {
+  if (!factoryWaitBody) return;
+
+  if (!factoryWaitRows.length) {
+    factoryWaitBody.innerHTML = '<div class="factory-wait-panel__empty">No hay productos en espera de fábrica.</div>';
+    if (factoryWaitCount) factoryWaitCount.textContent = "0";
+    return;
+  }
+
+  const pending = factoryWaitRows.filter((r) => !r.confirmedAt).length;
+  if (factoryWaitCount) {
+    factoryWaitCount.textContent = pending > 0
+      ? `${pending} pendiente${pending !== 1 ? "s" : ""}`
+      : `${factoryWaitRows.length} confirmado${factoryWaitRows.length !== 1 ? "s" : ""}`;
+  }
+
+  factoryWaitBody.innerHTML = factoryWaitRows.map((row) => {
+    const confirmed = Boolean(row.confirmedAt);
+    const sizesHtml = row.sizes.map((s) => `
+      <div class="factory-wait-size">
+        <div class="factory-wait-size__label">${escapeHtml(s.size)}</div>
+        <div class="factory-wait-size__qty">${s.qty}</div>
+      </div>
+    `).join("");
+
+    const imgHtml = row.imageUrl
+      ? `<img class="factory-wait-row__img" src="${escapeHtml(row.imageUrl)}" alt="" loading="lazy" onerror="this.style.display='none'">`
+      : `<div class="factory-wait-row__img factory-wait-row__img--placeholder" aria-hidden="true">👟</div>`;
+
+    return `
+      <div class="factory-wait-row${confirmed ? " factory-wait-row--confirmed" : ""}" data-factory-key="${escapeHtml(row.key)}">
+        ${imgHtml}
+        <div class="factory-wait-row__info">
+          <div class="factory-wait-row__name">${escapeHtml(row.name)}</div>
+          <div class="factory-wait-row__color">${escapeHtml(row.color)}</div>
+        </div>
+        <div class="factory-wait-row__sizes">${sizesHtml}</div>
+        <input
+          type="checkbox"
+          class="factory-wait-row__check"
+          data-factory-key="${escapeHtml(row.key)}"
+          ${confirmed ? "checked" : ""}
+          title="Confirmar en esta lista (48 h)"
+          aria-label="Confirmar ${escapeHtml(row.name)} ${escapeHtml(row.color)}"
+        />
+      </div>
+    `;
+  }).join("");
+
+  factoryWaitBody.querySelectorAll(".factory-wait-row__check").forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      const key = checkbox.getAttribute("data-factory-key");
+      if (!key) return;
+      setFactoryConfirmed(key, checkbox.checked);
+      const row = factoryWaitRows.find((r) => r.key === key);
+      if (row) row.confirmedAt = checkbox.checked ? Date.now() : null;
+      // Reordenar y repintar para mover confirmados abajo / verde
+      factoryWaitRows.sort((a, b) => {
+        const ac = a.confirmedAt ? 1 : 0;
+        const bc = b.confirmedAt ? 1 : 0;
+        if (ac !== bc) return ac - bc;
+        return a.name.localeCompare(b.name, "es");
+      });
+      renderFactoryWaitPanel();
+    });
+  });
+}
+
+// Cargar productos FYL (paginado: 6 por página, más recientes primero)
+async function loadProducts({ reset = true } = {}) {
+  if (isLoadingProducts) {
+    if (reset) pendingResetLoad = true;
+    return;
+  }
+  isLoadingProducts = true;
+  pendingResetLoad = false;
+
   errorContainer.innerHTML = "";
   noResults.style.display = "none";
-  
+
+  if (reset) {
+    productsOffset = 0;
+    allProducts = [];
+    filteredProducts = [];
+    hasMoreProducts = false;
+    totalProductsCount = 0;
+    productsContainer.innerHTML = '<div class="loading">Cargando productos...</div>';
+    updateLoadMoreButton(false);
+  } else if (loadMoreBtn) {
+    loadMoreBtn.disabled = true;
+    loadMoreBtn.textContent = "Cargando...";
+  }
+
   // Cargar almacenes primero
   const warehousesLoaded = await loadWarehouseIds();
   if (!warehousesLoaded) {
-    productsContainer.innerHTML = "";
+    if (reset) productsContainer.innerHTML = "";
+    updateLoadMoreButton(false);
+    isLoadingProducts = false;
+    if (pendingResetLoad) {
+      pendingResetLoad = false;
+      loadProducts({ reset: true });
+    }
     return;
   }
-  
+
   try {
-    // Obtener proveedor FYL
-    const { data: supplier, error: supplierError } = await supabase
-      .from("suppliers")
-      .select("id, name")
-      .eq("name", "FYL")
-      .single();
-    
-    if (supplierError || !supplier) {
-      showError("No se encontró el proveedor FYL. Asegúrate de que existe en la base de datos.");
-      productsContainer.innerHTML = "";
-      return;
+    // Obtener proveedor FYL (cachear id)
+    if (!supplierIdCache) {
+      const { data: supplier, error: supplierError } = await supabase
+        .from("suppliers")
+        .select("id, name")
+        .eq("name", "FYL")
+        .single();
+
+      if (supplierError || !supplier) {
+        showError("No se encontró el proveedor FYL. Asegúrate de que existe en la base de datos.");
+        if (reset) productsContainer.innerHTML = "";
+        updateLoadMoreButton(false);
+        return;
+      }
+      supplierIdCache = supplier.id;
     }
-    
-    // Obtener productos del proveedor FYL
-    const { data: products, error: productsError } = await supabase
+
+    const from = productsOffset;
+    const to = productsOffset + PAGE_SIZE - 1;
+
+    let productsQuery = supabase
       .from("products")
-      .select("id, name, handle, category, status")
-      .eq("supplier_id", supplier.id)
+      .select("id, name, handle, category, status, created_at", { count: "exact" })
+      .eq("supplier_id", supplierIdCache)
       .neq("status", "archived")
-      .order("name", { ascending: true });
-    
+      .order("created_at", { ascending: false });
+
+    if (currentSearchTerm) {
+      const term = currentSearchTerm.replace(/[%_,]/g, "");
+      if (term) {
+        productsQuery = productsQuery.or(
+          `name.ilike.%${term}%,handle.ilike.%${term}%`
+        );
+      }
+    }
+
+    const { data: products, error: productsError, count } = await productsQuery.range(from, to);
+
     if (productsError) {
       showError(`Error cargando productos: ${productsError.message}`);
-      productsContainer.innerHTML = "";
+      if (reset) productsContainer.innerHTML = "";
+      updateLoadMoreButton(false);
       return;
     }
-    
-    if (!products || products.length === 0) {
+
+    totalProductsCount = typeof count === "number" ? count : totalProductsCount;
+    hasMoreProducts = (products?.length || 0) === PAGE_SIZE;
+    productsOffset += products?.length || 0;
+
+    if ((!products || products.length === 0) && allProducts.length === 0) {
       productsContainer.innerHTML = "";
       noResults.style.display = "block";
-      updateResultsCount(0);
+      updateResultsCount(0, 0);
+      updateLoadMoreButton(false);
       return;
     }
-    
-    // Obtener todas las variantes de estos productos (sin usar size que está deprecado)
+
+    if (!products || products.length === 0) {
+      hasMoreProducts = false;
+      filteredProducts = [...allProducts];
+      renderProducts();
+      updateLoadMoreButton(hasMoreProducts);
+      return;
+    }
+
+    // Obtener variantes de estos productos
     const productIds = products.map(p => p.id);
     const { data: variants, error: variantsError } = await supabase
       .from("product_variants")
       .select("id, product_id, color, sku, price, active")
       .in("product_id", productIds)
       .order("color", { ascending: true });
-    
+
     if (variantsError) {
       showError(`Error cargando variantes: ${variantsError.message}`);
-      productsContainer.innerHTML = "";
+      if (reset) productsContainer.innerHTML = "";
+      updateLoadMoreButton(false);
       return;
     }
-    
-    // Obtener talles desde variant_sizes para todas las variantes
+
+    // Obtener talles desde variant_sizes
     const variantIds = (variants || []).map(v => v.id);
     let sizesData = [];
     if (variantIds.length > 0) {
@@ -145,15 +528,14 @@ async function loadProducts() {
         .select("variant_id, size, stock_qty, sku")
         .in("variant_id", variantIds)
         .order("size");
-      
+
       if (sizesError) {
         console.error("Error cargando talles desde variant_sizes:", sizesError);
       } else {
         sizesData = sizes || [];
       }
     }
-    
-    // Agrupar talles por variant_id
+
     const sizesByVariant = new Map();
     sizesData.forEach(sizeRow => {
       if (!sizeRow.variant_id) return;
@@ -169,8 +551,8 @@ async function loadProducts() {
         });
       }
     });
-    
-    // Obtener imágenes de variantes
+
+    // Imágenes de variantes
     let images = [];
     if (variantIds.length > 0) {
       const { data: imagesData, error: imagesError } = await supabase
@@ -178,18 +560,17 @@ async function loadProducts() {
         .select("variant_id, url, position")
         .in("variant_id", variantIds)
         .order("position", { ascending: true });
-      
+
       if (imagesError) {
         console.error("Error cargando imágenes:", imagesError);
       } else {
         images = imagesData || [];
       }
     }
-    
-    // Crear mapa de imágenes por producto (primera imagen de la primera variante)
+
     const productImages = new Map();
     products.forEach(product => {
-      const productVariants = variants.filter(v => v.product_id === product.id);
+      const productVariants = (variants || []).filter(v => v.product_id === product.id);
       if (productVariants.length > 0) {
         const firstVariantId = productVariants[0].id;
         const firstImage = images.find(img => img.variant_id === firstVariantId && img.position === 1);
@@ -198,8 +579,8 @@ async function loadProducts() {
         }
       }
     });
-    
-    // Obtener stocks por talle y almacén desde variant_size_warehouse_stock
+
+    // Stocks por talle y almacén
     let sizeWarehouseStocks = [];
     if (variantIds.length > 0) {
       const { data: sizeStocksData, error: sizeStocksError } = await supabase
@@ -207,23 +588,21 @@ async function loadProducts() {
         .select("variant_id, size, warehouse_id, stock_qty")
         .in("variant_id", variantIds)
         .in("warehouse_id", [warehouseIds.general, warehouseIds.ventaPublico]);
-      
+
       if (sizeStocksError) {
         console.error("Error cargando stock por talle:", sizeStocksError);
       } else {
         sizeWarehouseStocks = sizeStocksData || [];
       }
     }
-    
-    // Crear mapa de stocks por variante, talle y almacén
-    // key: `${variant_id}_${size}_${warehouse_id}` -> stock_qty
+
     const sizeWarehouseStockMap = new Map();
     sizeWarehouseStocks.forEach(sws => {
       const key = `${sws.variant_id}_${sws.size}_${sws.warehouse_id}`;
       sizeWarehouseStockMap.set(key, sws.stock_qty || 0);
     });
-    
-    // También obtener stocks generales de variantes (fallback para variantes sin talles)
+
+    // Stocks generales (fallback)
     let stocks = [];
     if (variantIds.length > 0) {
       const { data: stocksData, error: stocksError } = await supabase
@@ -231,88 +610,102 @@ async function loadProducts() {
         .select("variant_id, warehouse_id, stock_qty")
         .in("variant_id", variantIds)
         .in("warehouse_id", [warehouseIds.general, warehouseIds.ventaPublico]);
-      
+
       if (stocksError) {
         console.error("Error cargando stocks generales:", stocksError);
       } else {
         stocks = stocksData || [];
       }
     }
-    
-    // Crear mapa de stocks generales (fallback)
+
     const stockMap = new Map();
     stocks.forEach(s => {
       const key = `${s.variant_id}_${s.warehouse_id}`;
       stockMap.set(key, s.stock_qty || 0);
     });
-    
-    // Agrupar variantes por producto y expandir con talles
-    allProducts = products.map(product => {
-      const productVariants = (variants || [])
-        .filter(v => v.product_id === product.id);
-      
-      // Expandir cada variante con sus talles
+
+    const mappedProducts = products.map(product => {
+      const productVariants = (variants || []).filter(v => v.product_id === product.id);
       const expandedVariants = [];
+
       productVariants.forEach(variant => {
         const sizes = sizesByVariant.get(variant.id) || [];
-        
-        // Si no hay talles en variant_sizes, crear una entrada sin talle (comportamiento legacy)
+
         if (sizes.length === 0) {
           const stockGeneralKey = `${variant.id}_${warehouseIds.general}`;
           const stockVentaPublicoKey = `${variant.id}_${warehouseIds.ventaPublico}`;
           const stock_general = stockMap.get(stockGeneralKey) || 0;
           const stock_venta_publico = stockMap.get(stockVentaPublicoKey) || 0;
           const stock_total = stock_general + stock_venta_publico;
-          
+
           expandedVariants.push({
             ...variant,
-            size: null, // Sin talle
-            sizeSku: variant.sku, // Usar SKU de variante como fallback
+            size: null,
+            sizeSku: variant.sku,
             stock_general,
             stock_venta_publico,
             stock_total,
-            isSizeRow: false // Indica que es una variante sin talles
+            isSizeRow: false
           });
         } else {
-          // Crear una entrada por cada talle
           sizes.forEach(sizeData => {
             const stockGeneralKey = `${variant.id}_${sizeData.size}_${warehouseIds.general}`;
             const stockVentaPublicoKey = `${variant.id}_${sizeData.size}_${warehouseIds.ventaPublico}`;
             const stock_general = sizeWarehouseStockMap.get(stockGeneralKey) || 0;
             const stock_venta_publico = sizeWarehouseStockMap.get(stockVentaPublicoKey) || 0;
             const stock_total = stock_general + stock_venta_publico;
-            
+
             expandedVariants.push({
               ...variant,
               size: sizeData.size,
-              sizeSku: sizeData.sku || variant.sku, // SKU específico del talle
+              sizeSku: sizeData.sku || variant.sku,
               stock_general,
               stock_venta_publico,
               stock_total,
-              isSizeRow: true // Indica que es un talle individual
+              isSizeRow: true
             });
           });
         }
       });
-      
+
       return {
         ...product,
         variants: expandedVariants,
         image_url: productImages.get(product.id) || null
       };
-    });
-    
-    // Filtrar productos sin variantes
-    allProducts = allProducts.filter(p => p.variants.length > 0);
-    
+    }).filter(p => p.variants.length > 0);
+
+    if (reset) {
+      allProducts = mappedProducts;
+    } else {
+      allProducts = [...allProducts, ...mappedProducts];
+    }
+
     filteredProducts = [...allProducts];
     renderProducts();
-    
+    updateLoadMoreButton(hasMoreProducts);
+
   } catch (error) {
     console.error("Error en loadProducts:", error);
     showError(`Error: ${error.message}`);
-    productsContainer.innerHTML = "";
+    if (reset) productsContainer.innerHTML = "";
+    updateLoadMoreButton(false);
+  } finally {
+    isLoadingProducts = false;
+    if (loadMoreBtn) {
+      loadMoreBtn.disabled = false;
+      loadMoreBtn.textContent = "Cargar más";
+    }
+    if (pendingResetLoad) {
+      pendingResetLoad = false;
+      loadProducts({ reset: true });
+    }
   }
+}
+
+function updateLoadMoreButton(show) {
+  if (!loadMoreWrap) return;
+  loadMoreWrap.style.display = show ? "flex" : "none";
 }
 
 // Renderizar productos
@@ -325,7 +718,7 @@ function renderProducts() {
   }
   
   noResults.style.display = "none";
-  updateResultsCount(filteredProducts.length);
+  updateResultsCount(filteredProducts.length, totalProductsCount);
   
   const isMobile = window.innerWidth <= 768;
   
@@ -884,7 +1277,7 @@ async function saveModalChanges() {
     }
 
     // Recargar productos y cerrar modal.
-    await loadProducts();
+    await loadProducts({ reset: true });
     closeEditModal();
 
   } catch (error) {
@@ -895,24 +1288,13 @@ async function saveModalChanges() {
   }
 }
 
-// Búsqueda
+// Búsqueda (servidor + paginación)
 function filterProducts(searchTerm) {
-  if (!searchTerm || searchTerm.trim() === "") {
-    filteredProducts = [...allProducts];
-  } else {
-    const term = searchTerm.toLowerCase().trim();
-    filteredProducts = allProducts.filter(product => {
-      return product.name.toLowerCase().includes(term) ||
-             product.handle?.toLowerCase().includes(term) ||
-             product.variants.some(v => 
-               v.color?.toLowerCase().includes(term) ||
-               (v.size && v.size.toLowerCase().includes(term)) ||
-               (v.sizeSku && v.sizeSku.toLowerCase().includes(term)) ||
-               (v.sku && v.sku.toLowerCase().includes(term))
-             );
-    });
-  }
-  renderProducts();
+  currentSearchTerm = (searchTerm || "").trim();
+  clearTimeout(searchDebounceTimer);
+  searchDebounceTimer = setTimeout(() => {
+    loadProducts({ reset: true });
+  }, 300);
 }
 
 // Guardar cambio de stock en móvil
@@ -1026,8 +1408,12 @@ function showError(message) {
   errorContainer.innerHTML = `<div class="error-message">${escapeHtml(message)}</div>`;
 }
 
-function updateResultsCount(count) {
-  resultsCount.textContent = `${count} producto${count !== 1 ? 's' : ''} encontrado${count !== 1 ? 's' : ''}`;
+function updateResultsCount(shown, total = null) {
+  if (total != null && total > shown) {
+    resultsCount.textContent = `Mostrando ${shown} de ${total} productos`;
+  } else {
+    resultsCount.textContent = `${shown} producto${shown !== 1 ? "s" : ""} encontrado${shown !== 1 ? "s" : ""}`;
+  }
 }
 
 // Event listeners
@@ -1036,8 +1422,15 @@ searchInput.addEventListener("input", (e) => {
 });
 
 reloadBtn.addEventListener("click", () => {
-  loadProducts();
+  loadFactoryWaitPanel();
+  loadProducts({ reset: true });
 });
+
+if (loadMoreBtn) {
+  loadMoreBtn.addEventListener("click", () => {
+    loadProducts({ reset: false });
+  });
+}
 
 modalCloseBtn.addEventListener("click", closeEditModal);
 modalCancelBtn.addEventListener("click", closeEditModal);
@@ -1051,6 +1444,25 @@ editModal.addEventListener("click", (e) => {
   }
 });
 
-// Cargar productos al iniciar
-loadProducts();
+// Cargar panel espera fábrica + productos al iniciar
+loadFactoryWaitPanel();
+loadProducts({ reset: true });
+startFactoryWaitAutoRefresh();
+
+// Al volver a esta pestaña/página, refrescar espera fábrica
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") {
+    loadFactoryWaitPanel({ silent: true });
+    startFactoryWaitAutoRefresh();
+  } else {
+    stopFactoryWaitAutoRefresh();
+  }
+});
+
+window.addEventListener("pageshow", (event) => {
+  // bfcache / volver desde otro admin: forzar datos frescos
+  if (event.persisted) {
+    loadFactoryWaitPanel({ silent: true });
+  }
+});
 

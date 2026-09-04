@@ -6,11 +6,14 @@ import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
 interface CatalogRow {
   Articulo: string;
+  Color?: string | null;
   Precio: string;
   PrecioOferta?: string;
   OfertaActiva?: boolean;
   "Imagen Principal"?: string | null;
   FechaIngreso?: string | null;
+  Numeracion?: string | null;
+  variant_id?: string | null;
 }
 
 interface Props {
@@ -37,6 +40,13 @@ function formatARS(n: number) {
   return "$ " + Math.round(n).toLocaleString("es-AR");
 }
 
+function hasAvailableSizes(row: CatalogRow): boolean {
+  return String(row.Numeracion ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .some(Boolean);
+}
+
 export default function CartRecommendedCarousel({ daysLeft, remaining }: Props) {
   const [pool, setPool] = useState<CatalogRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -50,22 +60,29 @@ export default function CartRecommendedCarousel({ daysLeft, remaining }: Props) 
     async function load() {
       try {
         const supabase = getSupabaseBrowserClient();
+        // Vista ya filtrada a variantes con available_qty > 0.
         const { data, error } = await supabase
           .from("catalog_public_available_view")
-          .select('"Articulo","Precio","PrecioOferta","OfertaActiva","Imagen Principal","FechaIngreso"')
-          .limit(60);
+          .select(
+            'Articulo, Color, Precio, PrecioOferta, OfertaActiva, "Imagen Principal", FechaIngreso, Numeracion, variant_id'
+          )
+          .not("Numeracion", "is", null)
+          .order("FechaPublicacion", { ascending: false, nullsFirst: false })
+          .limit(120);
 
         if (cancelled) return;
-        if (error || !data) { setLoading(false); return; }
+        if (error || !data) {
+          setLoading(false);
+          return;
+        }
 
-        // Deduplicar por Articulo
+        // Deduplicar por Articulo; nos quedamos con la primera variante con talles.
         const seen = new Set<string>();
         const unique: CatalogRow[] = [];
         for (const row of data as CatalogRow[]) {
-          if (!seen.has(row.Articulo)) {
-            seen.add(row.Articulo);
-            unique.push(row);
-          }
+          if (!row.Articulo || seen.has(row.Articulo) || !hasAvailableSizes(row)) continue;
+          seen.add(row.Articulo);
+          unique.push(row);
         }
 
         let candidates: CatalogRow[];
@@ -74,7 +91,9 @@ export default function CartRecommendedCarousel({ daysLeft, remaining }: Props) 
             const price = toNum(p.OfertaActiva ? (p.PrecioOferta ?? p.Precio) : p.Precio);
             return price > 0 && price <= CHEAP_THRESHOLD;
           });
-          const extra = unique.filter((p) => !cheap.includes(p)).sort((a, b) => toNum(a.Precio) - toNum(b.Precio));
+          const extra = unique
+            .filter((p) => !cheap.includes(p))
+            .sort((a, b) => toNum(a.Precio) - toNum(b.Precio));
           candidates = [...shuffle(cheap), ...extra];
         } else {
           const cutoff = Date.now() - 60 * 86400000;
@@ -97,7 +116,9 @@ export default function CartRecommendedCarousel({ daysLeft, remaining }: Props) 
     }
 
     void load();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [urgentMode]);
 
   if (pool.length === 0 && !loading) return null;
@@ -106,10 +127,7 @@ export default function CartRecommendedCarousel({ daysLeft, remaining }: Props) 
     <div className="cart-reco">
       <div className="cart-reco__header">
         <span
-          className={[
-            "cart-reco__title",
-            urgentMode ? "is-urgent" : "",
-          ]
+          className={["cart-reco__title", urgentMode ? "is-urgent" : ""]
             .filter(Boolean)
             .join(" ")}
         >
@@ -138,10 +156,14 @@ export default function CartRecommendedCarousel({ daysLeft, remaining }: Props) 
               const offerPrice = p.OfertaActiva ? toNum(p.PrecioOferta) : 0;
               const hasOffer = offerPrice > 0 && offerPrice < price;
               const displayPrice = hasOffer ? offerPrice : price;
+              const color = String(p.Color ?? "").trim();
+              const href = color
+                ? `/producto/${encodeURIComponent(p.Articulo)}?color=${encodeURIComponent(color)}`
+                : `/producto/${encodeURIComponent(p.Articulo)}`;
               return (
                 <Link
-                  key={p.Articulo}
-                  href={`/producto/${encodeURIComponent(p.Articulo)}`}
+                  key={`${p.Articulo}__${p.variant_id ?? color}`}
+                  href={href}
                   className="cart-reco__card-link"
                 >
                   <div className="cart-reco__card">

@@ -10,6 +10,8 @@ import {
 } from "@/lib/orders/domain";
 import { getWaitingSourceKind } from "@/lib/orders/waiting-source";
 import { draftChangeLabel, type DraftChangesMap } from "@/lib/orders/draft-changes";
+import { waitingLocalLabel } from "@/lib/orders/board-scope";
+import { getWaitingLocalVisualKind } from "@/lib/orders/retiro-deposit-waiting";
 import { useOrdersStore } from "@/hooks/useOrders";
 import type { AdminOrderItem } from "@/types/orders";
 import ItemStatusBadge from "./ItemStatusBadge";
@@ -95,19 +97,33 @@ export default function OrderCardItems({
   const [partialAcceptItemId, setPartialAcceptItemId] = useState<string | null>(null);
   const partialAcceptItem = items.find((i) => i.id === partialAcceptItemId);
   const warehouseIds = useOrdersStore((s) => s.warehouseIds);
+  const boardScope = useOrdersStore((s) => s.boardScope);
+  const orderForVisual = useOrdersStore((s) =>
+    orderId ? s.orders.find((o) => o.id === orderId) : undefined
+  );
+  const waitingLocalVisual = orderForVisual
+    ? getWaitingLocalVisualKind(orderForVisual, boardScope, warehouseIds)
+    : boardScope === "local_pickup"
+      ? "deposito"
+      : "local";
   const splitReservedItem = useOrdersStore((s) => s.splitReservedItem);
   const splitReservedItemMixed = useOrdersStore((s) => s.splitReservedItemMixed);
   const getVariantSizeStockQty = useOrdersStore((s) => s.getVariantSizeStockQty);
   const zeroVariantSizeStock = useOrdersStore((s) => s.zeroVariantSizeStock);
+  const localWaitingLabel = waitingLocalLabel(boardScope);
 
   if (!items.length) {
     return <p className="kanban-column__empty">{emptyLabel}</p>;
   }
 
-  const isMultiUnitReserved = (itemForAction: AdminOrderItem) =>
-    orderSource === "customer" &&
-    itemForAction.quantity > 1 &&
-    normalizeOrderItemStatus(itemForAction.status) === "reserved";
+  const isMultiUnitReserved = (itemForAction: AdminOrderItem) => {
+    const st = normalizeOrderItemStatus(itemForAction.status);
+    return (
+      orderSource === "customer" &&
+      itemForAction.quantity > 1 &&
+      (st === "reserved" || st === "awaiting_apartado")
+    );
+  };
 
   const handleMarkPicked = async (itemForAction: AdminOrderItem) => {
     if (isMultiUnitReserved(itemForAction)) {
@@ -183,12 +199,12 @@ export default function OrderCardItems({
           const waitingKind = getWaitingSourceKind(item, warehouseIds);
           const waitingPick = enableWaitingPick && normalizeOrderItemStatus(item.status) === "waiting";
           const pickedLayout = showRemove && !showActiveReservedActions && !waitingPick && !confirmCancelledLayout;
-          const cancelledLayout = confirmCancelledLayout;
+          const cancelledPending = confirmCancelledLayout;
           const missing = !special && isMissingOrderItem(item);
           return (
             <li
               key={item.id}
-              className={`order-card__item-row order-card__item-row--split${special ? " order-card__item-row--special" : ""}${pickedLayout ? " order-card__item-row--picked" : ""}${cancelledLayout ? " order-card__item-row--cancelled" : ""}${missing ? " order-card__item-row--missing" : ""}`}
+              className={`order-card__item-row order-card__item-row--split${special ? " order-card__item-row--special" : ""}${pickedLayout ? " order-card__item-row--picked" : ""}${cancelledPending ? " order-card__item-row--cancelled-pending" : ""}${missing ? " order-card__item-row--missing" : ""}`}
             >
               <div className="order-card__item-label">
                 {special ? (
@@ -211,10 +227,16 @@ export default function OrderCardItems({
                       {normalizeOrderItemStatus(item.status) === "waiting" ? (
                         <span
                           className={`order-card__item-origin order-card__item-origin--${
-                            waitingKind === "local" ? "local" : "fabrica"
+                            waitingKind === "local"
+                              ? waitingLocalVisual
+                              : "fabrica"
                           }`}
                         >
-                          {waitingKind === "local" ? "Local" : "Fábrica"}
+                          {waitingKind === "local"
+                            ? waitingLocalVisual === "deposito"
+                              ? "Depósito"
+                              : localWaitingLabel
+                            : "Fábrica"}
                         </span>
                       ) : item.warehouseLabel ? (
                         <span className="order-card__item-warehouse"> · {item.warehouseLabel}</span>
@@ -259,8 +281,8 @@ export default function OrderCardItems({
                 draftMode &&
                 draftChanges?.[item.id]?.kind === "split" ? (
                   <span className="order-card__item-cell order-card__item-cell--actions">
-                    <span className="order-draft-split-chip" title={draftChangeLabel(draftChanges[item.id])}>
-                      {draftChangeLabel(draftChanges[item.id])}
+                    <span className="order-draft-split-chip" title={draftChangeLabel(draftChanges[item.id], localWaitingLabel)}>
+                      {draftChangeLabel(draftChanges[item.id], localWaitingLabel)}
                     </span>
                     <button
                       type="button"
@@ -307,6 +329,11 @@ export default function OrderCardItems({
                       onStagePicked={() => onStagePicked?.(item.id)}
                       onStageWaiting={(source) => onStageWaiting?.(item.id, source)}
                       onStageMissing={() => onStageMissing?.(item.id)}
+                      onRequestMissing={() => {
+                        if (!isMultiUnitReserved(item)) return false;
+                        setPartialAcceptItemId(item.id);
+                        return true;
+                      }}
                     />
                   </span>
                 ) : waitingPick && orderId && onMarkPicked ? (

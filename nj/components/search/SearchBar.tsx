@@ -1,10 +1,19 @@
 "use client";
 
 import {
-  useCallback, useRef, useState, useEffect, useTransition,
+  useCallback, useRef, useState, useEffect, useId, useTransition,
 } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { buildSuggestions, type SearchSuggestion } from "@/lib/utils/search";
+import { useSearchDictionary } from "@/hooks/useSearchDictionary";
+import {
+  noteUiSearchCommit,
+  trackAutocompleteProductSelected,
+  trackSuggestionSelected,
+} from "@/lib/search/search-analytics";
+import type { GroupedProduct } from "@/types/catalog";
+
+const SUGGEST_DEBOUNCE_MS = 280;
 
 const ICON_SEARCH = (
   <svg className="search-bar__icon" width="16" height="16" viewBox="0 0 24 24" fill="none"
@@ -23,10 +32,20 @@ const ICON_CLEAR = (
   </svg>
 );
 
+function getCatalogProducts(): GroupedProduct[] {
+  if (typeof window === "undefined") return [];
+  const bag = window as Window & { __fylProducts?: GroupedProduct[] };
+  return bag.__fylProducts ?? [];
+}
+
+function isHomeCatalogPath(pathname: string): boolean {
+  return pathname === "/" || pathname === "/nj" || pathname === "/nj/";
+}
+
 function SuggestionIcon({ type }: { type: SearchSuggestion["type"] }) {
   if (type === "product") {
     return (
-      <svg className="search-suggest__icon" width="16" height="16" viewBox="0 0 24 24" fill="none"
+      <svg className="search-suggest__icon search-suggest__icon--product" width="16" height="16" viewBox="0 0 24 24" fill="none"
         stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
         aria-hidden="true">
         <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
@@ -55,16 +74,16 @@ function SuggestionIcon({ type }: { type: SearchSuggestion["type"] }) {
   );
 }
 
-function typeLabel(type: SearchSuggestion["type"]): string {
-  switch (type) {
+function typeLabel(s: SearchSuggestion): string {
+  switch (s.type) {
     case "product":
-      return "Artículo";
+      return "Abrir producto";
     case "tag":
-      return "Etiqueta";
+      return "Buscar";
     case "categoria":
-      return "Categoría";
+      return s.href ? "Categoría" : "Buscar";
     default: {
-      const _exhaustive: never = type;
+      const _exhaustive: never = s.type;
       return _exhaustive;
     }
   }
@@ -75,10 +94,16 @@ export default function SearchBar() {
   const pathname      = usePathname();
   const searchParams  = useSearchParams();
   const [, startTransition] = useTransition();
+  const dictionary = useSearchDictionary();
+  const listboxId = useId();
 
   const inputRef     = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const debounceRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pathnameRef  = useRef(pathname);
+  const searchParamsRef = useRef(searchParams);
+  pathnameRef.current = pathname;
+  searchParamsRef.current = searchParams;
 
   const current = searchParams.get("q") ?? "";
 
@@ -87,91 +112,138 @@ export default function SearchBar() {
   const [showDropdown, setShowDropdown] = useState(false);
   const [highlighted, setHighlighted]   = useState(-1);
 
-  useEffect(() => { setInputValue(current); }, [current]);
+  useEffect(() => {
+    if (current) {
+      setInputValue(current);
+      return;
+    }
+    if (isHomeCatalogPath(pathname)) {
+      setInputValue("");
+    }
+  }, [current, pathname]);
 
   useEffect(() => {
-    function handleClick(e: MouseEvent) {
+    function handlePointerDown(e: MouseEvent) {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setShowDropdown(false);
+        setHighlighted(-1);
       }
     }
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
   }, []);
 
-  // usePathname a veces incluye /nj (basePath); TagFilterBar navega con "/"
-  const isCatalogPage =
-    pathname === "/" ||
-    pathname === "/nj" ||
-    pathname === "/nj/";
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, []);
 
-  function navigate(q: string) {
-    const params = new URLSearchParams(isCatalogPage ? searchParams.toString() : "");
-    if (q.trim().length >= 2) {
-      params.set("q", q.trim());
+  const cancelSuggestTimer = useCallback(() => {
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+      debounceRef.current = null;
+    }
+  }, []);
+
+  const closeSuggestions = useCallback(() => {
+    setSuggestions([]);
+    setShowDropdown(false);
+    setHighlighted(-1);
+  }, []);
+
+  const commitSearch = useCallback((raw: string) => {
+    cancelSuggestTimer();
+    const q = raw.trim();
+    setInputValue(q);
+    closeSuggestions();
+
+    const onHome = isHomeCatalogPath(pathnameRef.current);
+    const params = new URLSearchParams(onHome ? searchParamsRef.current.toString() : "");
+    if (q.length >= 2) {
+      noteUiSearchCommit(q, dictionary);
+      params.set("q", q);
     } else {
       params.delete("q");
     }
     const qs = params.toString();
-    startTransition(() => {
-      router.push(qs ? `/?${qs}` : "/", { scroll: false });
-    });
-  }
-
-  const onInput = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const val = e.target.value;
-      setInputValue(val);
-      setHighlighted(-1);
-
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      debounceRef.current = setTimeout(() => {
-        const products = (typeof window !== "undefined" && (window as any).__fylProducts) ?? [];
-        if (val.trim().length >= 2 && products.length > 0) {
-          setSuggestions(buildSuggestions(products, val, 7));
-          setShowDropdown(true);
-        } else {
-          setSuggestions([]);
-          setShowDropdown(false);
-        }
-        navigate(val);
-      }, 280);
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [pathname, searchParams]
-  );
-
-  function applySuggestion(s: SearchSuggestion) {
-    setInputValue(s.query);
-    setSuggestions([]);
-    setShowDropdown(false);
+    const href = qs ? `/?${qs}` : "/";
     inputRef.current?.blur();
-    if (s.href) {
-      startTransition(() => {
-        router.push(s.href!);
-      });
+    startTransition(() => {
+      router.push(href, { scroll: false });
+    });
+  }, [cancelSuggestTimer, closeSuggestions, dictionary, router, startTransition]);
+
+  const goToHref = useCallback((href: string) => {
+    cancelSuggestTimer();
+    closeSuggestions();
+    inputRef.current?.blur();
+    startTransition(() => {
+      router.push(href);
+    });
+  }, [cancelSuggestTimer, closeSuggestions, router, startTransition]);
+
+  const onInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setInputValue(val);
+    setHighlighted(-1);
+
+    cancelSuggestTimer();
+    debounceRef.current = setTimeout(() => {
+      debounceRef.current = null;
+      const products = getCatalogProducts();
+      if (val.trim().length >= 2 && products.length > 0) {
+        setSuggestions(buildSuggestions(products, val, 7, dictionary));
+        setShowDropdown(true);
+      } else {
+        setSuggestions([]);
+        setShowDropdown(false);
+      }
+    }, SUGGEST_DEBOUNCE_MS);
+  }, [cancelSuggestTimer, dictionary]);
+
+  const applySuggestion = useCallback((s: SearchSuggestion, index: number) => {
+    setInputValue(s.query);
+    if (s.type === "product" && s.href) {
+      trackAutocompleteProductSelected(inputValue, s.query, index + 1);
+      goToHref(s.href);
       return;
     }
-    navigate(s.query);
-  }
+    trackSuggestionSelected(inputValue, s, dictionary);
+    if (s.type === "categoria" && s.href) {
+      goToHref(s.href);
+      return;
+    }
+    commitSearch(s.query);
+  }, [commitSearch, dictionary, goToHref, inputValue]);
 
-  function clearSearch() {
-    setInputValue("");
-    setSuggestions([]);
-    setShowDropdown(false);
-    navigate("");
+  const clearSearch = useCallback(() => {
+    commitSearch("");
     inputRef.current?.focus();
-  }
+  }, [commitSearch]);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Escape") {
+      e.preventDefault();
       if (showDropdown) {
         setShowDropdown(false);
+        setHighlighted(-1);
       } else {
         clearSearch();
       }
       return;
     }
+
+    if (e.key === "Enter") {
+      e.preventDefault();
+      if (showDropdown && highlighted >= 0 && suggestions[highlighted]) {
+        applySuggestion(suggestions[highlighted], highlighted);
+      } else {
+        commitSearch(inputValue);
+      }
+      return;
+    }
+
     if (!showDropdown || suggestions.length === 0) return;
 
     if (e.key === "ArrowDown") {
@@ -180,13 +252,14 @@ export default function SearchBar() {
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       setHighlighted((h) => Math.max(h - 1, -1));
-    } else if (e.key === "Enter" && highlighted >= 0) {
-      e.preventDefault();
-      applySuggestion(suggestions[highlighted]);
     }
   };
 
   const hasSuggestions = showDropdown && suggestions.length > 0;
+  const activeOptionId =
+    hasSuggestions && highlighted >= 0
+      ? `${listboxId}-opt-${highlighted}`
+      : undefined;
 
   return (
     <div ref={containerRef} className="search-bar-inner">
@@ -201,6 +274,11 @@ export default function SearchBar() {
           autoComplete="off"
           spellCheck={false}
           enterKeyHint="search"
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={hasSuggestions}
+          aria-controls={listboxId}
+          aria-activedescendant={activeOptionId}
           value={inputValue}
           onChange={onInput}
           onKeyDown={onKeyDown}
@@ -221,31 +299,37 @@ export default function SearchBar() {
       </div>
 
       {hasSuggestions && (
-        <div className="search-suggest" role="listbox">
-          {suggestions.map((s, idx) => (
-            <button
-              key={`${s.type}-${s.label}`}
-              type="button"
-              role="option"
-              aria-selected={highlighted === idx}
-              className={`search-suggest__row${highlighted === idx ? " is-active" : ""}`}
-              onMouseDown={(e) => { e.preventDefault(); applySuggestion(s); }}
-            >
-              <SuggestionIcon type={s.type} />
-              <span className="search-suggest__label">
-                {highlightMatch(s.label, inputValue)}
-              </span>
-              <span className="search-suggest__type">{typeLabel(s.type)}</span>
-            </button>
-          ))}
+        <div className="search-suggest">
+          <div id={listboxId} className="search-suggest__list" role="listbox">
+            {suggestions.map((s, idx) => (
+              <button
+                key={`${s.type}-${s.label}`}
+                id={`${listboxId}-opt-${idx}`}
+                type="button"
+                role="option"
+                aria-selected={highlighted === idx}
+                className={[
+                  "search-suggest__row",
+                  highlighted === idx ? "is-active" : "",
+                  s.type === "product" ? "search-suggest__row--product" : "search-suggest__row--search",
+                ].filter(Boolean).join(" ")}
+                onMouseDown={(e) => { e.preventDefault(); applySuggestion(s, idx); }}
+              >
+                <SuggestionIcon type={s.type} />
+                <span className="search-suggest__label">
+                  {highlightMatch(s.label, inputValue)}
+                </span>
+                <span className="search-suggest__type">{typeLabel(s)}</span>
+              </button>
+            ))}
+          </div>
 
           <button
             type="button"
             className="search-suggest__all"
             onMouseDown={(e) => {
               e.preventDefault();
-              setShowDropdown(false);
-              navigate(inputValue);
+              commitSearch(inputValue);
             }}
           >
             {ICON_SEARCH}

@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient, getServerUser } from "@/lib/supabase/server";
 import DashboardClient from "./DashboardClient";
+import { canonicalizeTransportName } from "@/lib/transport";
 
 export const dynamic = "force-dynamic";
 
@@ -17,9 +18,8 @@ export default async function DashboardPage() {
     .eq("id", user.id)
     .maybeSingle();
 
-  // Nombre del transporte asignado manualmente (si el admin le puso uno
-  // puntual como MyM/SEDE al cliente, tiene prioridad sobre el que se
-  // calcularía automáticamente por provincia/localidad -- ver DashboardClient).
+  // Nombre del transporte asignado (customers.transport_id). Fuente de verdad
+  // compartida con admin/closed-orders — gana sobre geo/localStorage en el cliente.
   let assignedTransportName: string | null = null;
   if (customer?.transport_id) {
     const { data: transport } = await supabase
@@ -27,7 +27,7 @@ export default async function DashboardPage() {
       .select("name")
       .eq("id", customer.transport_id)
       .maybeSingle();
-    assignedTransportName = transport?.name ?? null;
+    assignedTransportName = canonicalizeTransportName(transport?.name ?? "") || null;
   }
 
   // Load orders with items
@@ -41,6 +41,7 @@ export default async function DashboardPage() {
       created_at,
       payment_method,
       dismantle_at,
+      local_deferred_pickup,
       expires_at,
       notes,
       order_items (

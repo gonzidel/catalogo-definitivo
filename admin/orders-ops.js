@@ -211,7 +211,9 @@ export async function enrichDraftItemsWithStock(items) {
       size,
       qty_from_general: split.qty_from_general,
       qty_from_venta: split.qty_from_venta,
-      status: hasStock ? item.status || "picked" : "missing",
+      // Si el admin carga físicamente aunque el inventario en sistema marque 0,
+      // persistimos como picked para que el cliente no vea "Sin stock".
+      status: hasStock ? item.status || "picked" : "picked",
       admin_confirmed_missing: !hasStock,
     });
   }

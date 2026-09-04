@@ -1,10 +1,11 @@
 ﻿// admin/qz-printing.js
-// Módulo compartido: única fuente de carga, firma y conexión QZ Tray
-import { SUPABASE_URL } from "../scripts/config.js";
-import { supabase } from "../scripts/supabase-client.js?v=m260607";
+// Módulo compartido: única fuente de carga y conexión al agente de impresión.
+// Usa GZ (agente local propio, admin/gz-shim.js + gz-agent/) en vez de QZ Tray:
+// sin certificados ni popups de "confiar en este sitio". Todas las páginas
+// que importan este módulo cargan admin/gz-shim.js antes, así que `qz` acá
+// abajo siempre termina siendo el shim de GZ.
 
-const QZ_CERT_URL = "/certs/qz-site.crt";
-const QZ_TRAY_SCRIPT_SRC = "https://cdn.jsdelivr.net/npm/qz-tray@2.2.5/qz-tray.js";
+const QZ_TRAY_SCRIPT_SRC = "./gz-shim.js";
 
 let qzLibraryReadyPromise = null;
 let qzSecurityConfigured = false;
@@ -21,7 +22,6 @@ function qzTraceSnapshot() {
     websocketActive:
       typeof qz !== "undefined" && qz && qz.websocket && qz.websocket.isActive() === true,
     signatureConfigured: qzSecurityConfigured,
-    certRoute: QZ_CERT_URL,
   };
 }
 
@@ -207,7 +207,7 @@ function loadQZInternal() {
       return;
     }
 
-    let scriptEl = document.querySelector('script[src*="qz-tray"]');
+    let scriptEl = document.querySelector('script[src*="gz-shim"]');
     if (!scriptEl) {
       scriptEl = document.createElement("script");
       scriptEl.src = QZ_TRAY_SCRIPT_SRC;
@@ -269,7 +269,7 @@ async function qzConnectRunner() {
 
   await loadQZ();
   if (typeof qz === "undefined" || !qz || !qz.websocket) {
-    throw new Error("QZ Tray no está disponible");
+    throw new Error("GZ no está disponible");
   }
 
   if (qz.websocket.isActive()) {
@@ -300,14 +300,6 @@ async function qzConnectRunner() {
     console.log("[QZ] websocket connected");
   } catch (error) {
     console.log("[QZ STATE] websocket connect failed", error && error.message ? error.message : error);
-    if (error.message && error.message.includes("Connection blocked")) {
-      const origin = typeof location !== "undefined" ? location.origin : "este sitio";
-      const improved = new Error(
-        "No se pudo conectar con QZ Tray (sitio bloqueado). Permití " + origin + " en Site Manager de QZ Tray."
-      );
-      improved.stack = error.stack;
-      throw improved;
-    }
     throw error;
   }
 }
@@ -322,6 +314,11 @@ export function qzConnect() {
   return qzConnectChain;
 }
 
+/**
+ * GZ no usa certificados ni firma digital (es software propio, sin popup de
+ * "confiar en este sitio" que gestionar). Se mantiene esta función solo para
+ * no tocar el flujo de qzConnectRunner; llama a los no-ops del shim y listo.
+ */
 export async function setupQZSignature() {
   await loadQZ();
 
@@ -331,106 +328,15 @@ export async function setupQZSignature() {
   }
 
   if (qzSecurityConfigured) {
-    console.log("[QZ STATE] setup skipped");
-    console.log("[QZ STATE] signature already configured");
-    console.log("[QZ] signature promise ready");
     return true;
   }
 
-  console.log("[QZ] setup signature start");
+  qz.security.setCertificatePromise(() => {});
+  qz.security.setSignaturePromise(() => {});
+  qz.security.setSignatureAlgorithm("SHA512");
 
-  try {
-    const certResponse = await fetch(QZ_CERT_URL, { cache: "no-store" });
-    if (!certResponse.ok) {
-      throw new Error("cert HTTP " + certResponse.status);
-    }
-    const contentType = certResponse.headers.get("content-type") || "";
-    if (contentType.includes("text/html")) {
-      throw new Error("cert response is HTML");
-    }
-    const certText = await certResponse.text();
-    if (
-      !certText ||
-      certText.trim().startsWith("<!DOCTYPE") ||
-      certText.trim().startsWith("<html")
-    ) {
-      throw new Error("cert body looks like HTML");
-    }
-
-    console.log("[QZ] certificate loaded");
-
-    qz.security.setCertificatePromise((resolve, reject) => {
-      const match = certText.match(
-        /-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/
-      );
-      if (match) {
-        resolve(match[0]);
-      } else {
-        reject(new Error("cert PEM block not found"));
-      }
-    });
-
-    qz.security.setSignatureAlgorithm("SHA512");
-
-    qz.security.setSignaturePromise(async (toSign) => {
-      if (!toSign || typeof toSign !== "string") {
-        throw new Error("toSign inválido o vacío");
-      }
-
-      if (!supabase || !supabase.auth) {
-        throw new Error("Cliente Supabase no disponible para firmar con QZ");
-      }
-
-      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-      const accessToken = sessionData?.session?.access_token || "";
-      if (sessionError || !accessToken) {
-        throw new Error("Sesión Supabase requerida para firmar con QZ");
-      }
-
-      console.log("[QZ] sign request sent");
-
-      let res;
-      try {
-        res = await fetch(`${SUPABASE_URL}/functions/v1/qz-sign`, {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${accessToken}`,
-            "Content-Type": "text/plain;charset=utf-8",
-          },
-          body: toSign,
-        });
-      } catch (netErr) {
-        const msg = netErr && netErr.message ? netErr.message : String(netErr);
-        const isCors =
-          /Failed to fetch|NetworkError|CORS|Load failed|network/i.test(msg);
-        console.log("[QZ] sign request failed", msg);
-        console.log("[QZ STATE] sign network error", isCors ? "possible CORS or offline" : msg);
-        throw netErr;
-      }
-
-      if (!res.ok) {
-        const errorText = await res.text();
-        console.log("[QZ] sign request failed", "HTTP " + res.status);
-        if (res.status === 401) {
-          console.log("[QZ STATE] sign HTTP 401 unauthorized");
-        } else {
-          console.log("[QZ STATE] sign HTTP error", res.status);
-        }
-        throw new Error(`Error en firma: ${res.status} - ${errorText}`);
-      }
-
-      const signature = (await res.text()).trim();
-      console.log("[QZ] sign request success");
-      return signature;
-    });
-
-    qzSecurityConfigured = true;
-    console.log("[QZ] signature promise ready");
-    return true;
-  } catch (error) {
-    console.log("[QZ] setup failed", error && error.message ? error.message : error);
-    return false;
-  }
+  qzSecurityConfigured = true;
+  return true;
 }
 
 /**
@@ -597,16 +503,11 @@ export async function printProductLabelsZebra(sku, productName, color, size, cop
 
     let errorMessage = "No se pudo imprimir la etiqueta en la Zebra.";
 
-    if (err.message && err.message.includes("certificate")) {
-      errorMessage +=
-        "\n\nError de certificado/firma. Verifica que la Edge Function qz-sign esté desplegada y funcionando.";
-    } else if (err.message && err.message.includes("Connection blocked")) {
-      errorMessage += "\n\nConexión bloqueada. Verifica que QZ Tray esté instalado y ejecutándose.";
-    } else if (err.message && err.message.includes("No session token")) {
-      errorMessage += "\n\nDebes estar autenticado para imprimir.";
+    if (err.message && err.message.includes("GZ agent")) {
+      errorMessage += "\n\nNo se pudo conectar con GZ. Verificá que gz-agent.exe esté corriendo en esta PC.";
     } else {
       errorMessage +=
-        "\n\nVerifica que:\n- QZ Tray esté instalado y ejecutándose\n- La impresora esté conectada\n- Tengas sesión activa";
+        "\n\nVerifica que:\n- gz-agent.exe esté corriendo en esta PC\n- La impresora esté conectada y aparezca en Windows";
     }
 
     alert(errorMessage);

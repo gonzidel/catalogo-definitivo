@@ -242,18 +242,46 @@ async function loadSentOrders(customerIds = []) {
     const PAGE_SIZE = 500;
     const orders = [];
     const CUSTOMER_BATCH_SIZE = 100;
-
-    for (let i = 0; i < customerIds.length; i += CUSTOMER_BATCH_SIZE) {
-      const idsBatch = customerIds.slice(i, i + CUSTOMER_BATCH_SIZE);
-      let from = 0;
-      let keepFetching = true;
-
-      while (keepFetching) {
-        const to = from + PAGE_SIZE - 1;
-        const { data: pageOrders, error: ordersError } = await supabase
-          .from("orders")
-          .select(
-            `
+    const ORDER_ITEMS_SELECT = `
+              id,
+              product_name,
+              color,
+              size,
+              quantity,
+              price_snapshot,
+              imagen,
+              status,
+              variant_id,
+              sku
+            `;
+    const ORDERS_SELECT_FULL = `
+            id,
+            order_number,
+            customer_id,
+            updated_at,
+            sent_at,
+            original_sent_at,
+            total_amount,
+            notes,
+            transport_id,
+            sent_transport_id,
+            last_label_transport_id,
+            labels_reprinted,
+            last_reprinted_at,
+            status,
+            payment_method,
+            label_customer_name,
+            label_customer_dni,
+            invoice_status,
+            facturante_id,
+            invoice_prefix,
+            invoice_number,
+            invoice_pdf_url,
+            invoice_created_at,
+            invoice_error,
+            order_items (${ORDER_ITEMS_SELECT})
+            `;
+    const ORDERS_SELECT_FALLBACK = `
             id,
             order_number,
             customer_id,
@@ -273,24 +301,47 @@ async function loadSentOrders(customerIds = []) {
             invoice_pdf_url,
             invoice_created_at,
             invoice_error,
-            order_items (
-              id,
-              product_name,
-              color,
-              size,
-              quantity,
-              price_snapshot,
-              imagen,
-              status,
-              variant_id,
-              sku
-            )
-            `
-          )
+            order_items (${ORDER_ITEMS_SELECT})
+            `;
+    let ordersSelect = ORDERS_SELECT_FULL;
+    let shippingMetaColumnsAvailable = true;
+
+    for (let i = 0; i < customerIds.length; i += CUSTOMER_BATCH_SIZE) {
+      const idsBatch = customerIds.slice(i, i + CUSTOMER_BATCH_SIZE);
+      let from = 0;
+      let keepFetching = true;
+
+      while (keepFetching) {
+        const to = from + PAGE_SIZE - 1;
+        let { data: pageOrders, error: ordersError } = await supabase
+          .from("orders")
+          .select(ordersSelect)
           .in("status", ["sent", "devolución"])
           .in("customer_id", idsBatch)
           .order("sent_at", { ascending: false })
           .range(from, to);
+
+        // Si faltan columnas de meta de envío (migración 304), reintentar sin ellas.
+        if (
+          ordersError &&
+          shippingMetaColumnsAvailable &&
+          /original_sent_at|sent_transport_id|last_label_transport_id|labels_reprinted|last_reprinted_at/i.test(
+            ordersError.message || ""
+          )
+        ) {
+          console.warn(
+            "⚠️ Columnas de meta de envío no disponibles aún. Cargando sin ellas (aplicar migración 304)."
+          );
+          shippingMetaColumnsAvailable = false;
+          ordersSelect = ORDERS_SELECT_FALLBACK;
+          ({ data: pageOrders, error: ordersError } = await supabase
+            .from("orders")
+            .select(ordersSelect)
+            .in("status", ["sent", "devolución"])
+            .in("customer_id", idsBatch)
+            .order("sent_at", { ascending: false })
+            .range(from, to));
+        }
 
         if (ordersError) {
           console.error("❌ Error cargando pedidos enviados:", ordersError);
@@ -896,6 +947,7 @@ function openCustomerModal(customer) {
                   </div>
                   <span class="order-expand-icon" aria-hidden="true">▼</span>
                 </div>
+                ${renderOrderShippingMeta(order, customer)}
                 <div class="order-total">
                   <span>Total: $${total.toLocaleString("es-AR")}</span>
                   <span class="order-total-products">· ${totalProducts} producto${totalProducts === 1 ? "" : "s"}</span>
@@ -1045,6 +1097,86 @@ function formatInvoiceDate(isoString) {
   if (!isoString) return "";
   const d = new Date(isoString);
   return d.toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
+/** Fecha de calendario en zona Argentina (YYYY-MM-DD). */
+function toArgentinaDateKey(isoString) {
+  if (!isoString) return "";
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Argentina/Buenos_Aires",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    }).format(new Date(isoString));
+  } catch (_) {
+    const d = new Date(isoString);
+    if (Number.isNaN(d.getTime())) return "";
+    return d.toISOString().slice(0, 10);
+  }
+}
+
+function formatArgentinaDay(isoString) {
+  if (!isoString) return "";
+  return new Date(isoString).toLocaleDateString("es-AR", {
+    timeZone: "America/Argentina/Buenos_Aires",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric"
+  });
+}
+
+function getTransportNameById(transportId) {
+  if (!transportId) return null;
+  const transport = scheduledTransports.find((t) => t.id === transportId);
+  return transport ? transport.name : null;
+}
+
+function resolveOrderTransportIds(order, customer) {
+  const sentTransportId = order.sent_transport_id || order.transport_id || customer?.transport_id || null;
+  const lastLabelTransportId =
+    order.last_label_transport_id || order.transport_id || customer?.transport_id || sentTransportId || null;
+  return { sentTransportId, lastLabelTransportId };
+}
+
+/**
+ * Meta de envío para la tarjeta del pedido (transporte, reimpresión, cambio de fecha).
+ */
+function renderOrderShippingMeta(order, customer) {
+  const { sentTransportId, lastLabelTransportId } = resolveOrderTransportIds(order, customer);
+  const sentTransportName = getTransportNameById(sentTransportId) || "Sin transporte asignado";
+  const lastLabelTransportName = getTransportNameById(lastLabelTransportId);
+  const wasReprinted = !!order.labels_reprinted;
+  const transportChangedOnReprint =
+    wasReprinted &&
+    !!sentTransportId &&
+    !!lastLabelTransportId &&
+    String(sentTransportId) !== String(lastLabelTransportId);
+
+  const originalKey = toArgentinaDateKey(order.original_sent_at);
+  const currentKey = toArgentinaDateKey(order.sent_at);
+  const dateChanged = !!(originalKey && currentKey && originalKey !== currentKey);
+
+  const chips = [];
+  chips.push(`<span class="order-shipping-chip order-shipping-chip--transport">🚚 ${sentTransportName}</span>`);
+
+  if (wasReprinted) {
+    if (transportChangedOnReprint && lastLabelTransportName) {
+      chips.push(
+        `<span class="order-shipping-chip order-shipping-chip--reprint">🔄 Reimpreso · transporte: ${lastLabelTransportName}</span>`
+      );
+    } else {
+      chips.push(`<span class="order-shipping-chip order-shipping-chip--reprint">🔄 Reimpreso</span>`);
+    }
+  }
+
+  if (dateChanged) {
+    chips.push(
+      `<span class="order-shipping-chip order-shipping-chip--date">📅 Fecha: ${formatArgentinaDay(order.original_sent_at)} → ${formatArgentinaDay(order.sent_at)}</span>`
+    );
+  }
+
+  return `<div class="order-shipping-meta">${chips.join("")}</div>`;
 }
 
 /**
@@ -1751,6 +1883,19 @@ async function rescheduleOrder(orderId, newDate) {
       alert("No se pudo reprogramar la fecha de envío: " + (error.message || 'Error desconocido'));
       return false;
     }
+
+    // Actualizar memoria local (preservar original_sent_at si ya existía)
+    for (const cust of allCustomersData) {
+      const found = cust.orders.find((o) => o.id === orderId);
+      if (found) {
+        if (!found.original_sent_at) {
+          found.original_sent_at = found.sent_at || timestamp;
+        }
+        found.sent_at = timestamp;
+        found.updated_at = new Date().toISOString();
+        break;
+      }
+    }
     
     console.log(`✅ Pedido ${orderId} reprogramado para ${newDate}`);
     return true;
@@ -1759,6 +1904,91 @@ async function rescheduleOrder(orderId, newDate) {
     alert("Error al reprogramar el pedido: " + (error.message || 'Error desconocido'));
     return false;
   }
+}
+
+/** Registra reimpresión de rótulo + transporte usado (migración 304). */
+async function recordSentOrderLabelReprint(orderId, transportId) {
+  if (!supabase) {
+    supabase = await getSupabase();
+  }
+  if (!supabase) {
+    console.error("❌ Supabase no disponible");
+    return null;
+  }
+
+  try {
+    const { data, error } = await supabase.rpc("rpc_record_sent_order_label_reprint", {
+      p_order_id: orderId,
+      p_transport_id: transportId || null,
+      p_update_order_transport: true
+    });
+
+    if (error) {
+      console.warn("⚠️ No se pudo registrar meta de reimpresión:", error.message || error);
+      return null;
+    }
+
+    for (const cust of allCustomersData) {
+      const found = cust.orders.find((o) => o.id === orderId);
+      if (found && data) {
+        found.labels_reprinted = true;
+        found.last_reprinted_at = data.last_reprinted_at || new Date().toISOString();
+        found.last_label_transport_id = data.last_label_transport_id || transportId || found.last_label_transport_id;
+        found.sent_transport_id = data.sent_transport_id || found.sent_transport_id || found.transport_id;
+        found.original_sent_at = data.original_sent_at || found.original_sent_at || found.sent_at;
+        if (data.transport_id) found.transport_id = data.transport_id;
+        if (data.sent_at) found.sent_at = data.sent_at;
+        break;
+      }
+    }
+
+    return data;
+  } catch (error) {
+    console.warn("⚠️ Error registrando reimpresión:", error);
+    return null;
+  }
+}
+
+/**
+ * Permite elegir otro transporte para la reimpresión.
+ * Devuelve el transport id elegido (o el actual si no cambia).
+ */
+function promptTransportForReprint(currentTransport) {
+  if (!scheduledTransports.length) {
+    return currentTransport ? currentTransport.id : null;
+  }
+
+  const currentName = currentTransport ? currentTransport.name : "Sin transporte";
+  const wantsChange = confirm(
+    `🚚 Transporte para esta reimpresión: ${currentName}\n\n` +
+      `¿Desea usar otro transporte?\n\n` +
+      `• SÍ: elegir de la lista\n` +
+      `• NO: mantener ${currentName}`
+  );
+
+  if (!wantsChange) {
+    return currentTransport ? currentTransport.id : null;
+  }
+
+  const list = scheduledTransports
+    .map((t, i) => `${i + 1}. ${t.name}`)
+    .join("\n");
+  const answer = prompt(
+    `Elegí el transporte (número):\n\n${list}\n\nDejá vacío para cancelar el cambio.`,
+    ""
+  );
+
+  if (answer == null || String(answer).trim() === "") {
+    return currentTransport ? currentTransport.id : null;
+  }
+
+  const idx = parseInt(String(answer).trim(), 10) - 1;
+  if (Number.isNaN(idx) || idx < 0 || idx >= scheduledTransports.length) {
+    alert("Número de transporte inválido. Se mantiene el actual.");
+    return currentTransport ? currentTransport.id : null;
+  }
+
+  return scheduledTransports[idx].id;
 }
 
 // Función para cargar almacenes
@@ -2183,8 +2413,18 @@ function setupPrintLabelsButtons() {
       }
 
       const selectedLabelEntry = nameSelection.entry;
-      const transportId = customer.transport_id || order.transport_id;
-      const transport = transportId ? scheduledTransports.find(t => t.id === transportId) : null;
+      let transportId = customer.transport_id || order.transport_id || order.last_label_transport_id || order.sent_transport_id || null;
+      let transport = transportId ? scheduledTransports.find(t => t.id === transportId) : null;
+
+      // Permitir cambiar transporte en esta reimpresión
+      const chosenTransportId = promptTransportForReprint(transport);
+      if (chosenTransportId) {
+        transportId = chosenTransportId;
+        transport = scheduledTransports.find(t => t.id === transportId) || null;
+        // Reflejar en memoria para el rótulo y la tarjeta
+        customer.transport_id = transportId;
+        order.transport_id = transportId;
+      }
       
       // Preguntar si quiere reprogramar el envío (solo si hay transporte)
       let shouldReschedule = false;
@@ -2288,6 +2528,18 @@ function setupPrintLabelsButtons() {
 
         if (printSuccess) {
           console.log("✅ Rótulos impresos correctamente");
+
+          // Registrar reimpresión + transporte usado (para la tarjeta del pedido)
+          await recordSentOrderLabelReprint(order.id, transportId);
+
+          // Refrescar tarjeta del modal si está abierta
+          const modal = document.getElementById("customer-modal");
+          if (modal && modal.classList.contains("active")) {
+            const refreshedCustomer = allCustomersData.find((c) => c.id === customer.id);
+            if (refreshedCustomer) {
+              openCustomerModal(refreshedCustomer);
+            }
+          }
           
           // Mensaje de confirmación
           let successMessage = `✅ Rótulos impresos exitosamente\n\n`;
@@ -2296,6 +2548,8 @@ function setupPrintLabelsButtons() {
             successMessage += `📅 Pedido reprogramado para: ${shippingDate}\n` +
                             `🚚 Transporte: ${transport.name}\n\n` +
                             `El pedido ahora aparecerá en la lista de envíos de "Pedidos Cerrados" para esta fecha y transporte.`;
+          } else if (transport) {
+            successMessage += `🚚 Transporte: ${transport.name}`;
           }
           
           alert(successMessage);

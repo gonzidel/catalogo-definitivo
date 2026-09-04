@@ -2,7 +2,12 @@
 
 import { useMemo, useState } from "react";
 import { createPortal } from "react-dom";
+import {
+  waitingLocalLabel,
+  waitingLocalShortLabel,
+} from "@/lib/orders/board-scope";
 import { formatPriceAr } from "@/lib/orders/domain";
+import { useOrdersStore } from "@/hooks/useOrders";
 import type { AdminOrderItem } from "@/types/orders";
 import ItemStatusBadge from "./ItemStatusBadge";
 import OrderItemImageButton from "./OrderItemImageButton";
@@ -32,6 +37,13 @@ export default function PartialAcceptModal({
   // Por defecto todas quedan "apartadas": el admin solo toca las que cambian.
   const [units, setUnits] = useState<UnitState[]>(() => Array.from({ length: qty }, () => "picked"));
   const [openSourcePickerIdx, setOpenSourcePickerIdx] = useState<number | null>(null);
+  const boardScope = useOrdersStore((s) => s.boardScope);
+  const localLabel = waitingLocalLabel(boardScope);
+  const localShort = waitingLocalShortLabel(boardScope);
+  const localSourceBtnClass =
+    boardScope === "local_pickup"
+      ? "order-partial-accept__source-btn--deposito"
+      : "order-partial-accept__source-btn--local";
 
   const label = useMemo(
     () => `${item.product_name || "Producto"} · ${item.color || "-"} · ${item.size || "-"}`,
@@ -56,11 +68,14 @@ export default function PartialAcceptModal({
     onApply(nPicked, nMissing, nFabrica, nLocal);
   };
 
+  if (typeof document === "undefined") return null;
+
   return createPortal(
     <div className="order-modal-backdrop order-modal-backdrop--item" role="presentation" onClick={onClose}>
       <div
         className="order-modal order-modal--compact order-partial-accept-modal"
         role="dialog"
+        aria-modal="true"
         aria-labelledby="partial-accept-title"
         onClick={(e) => e.stopPropagation()}
       >
@@ -94,7 +109,7 @@ export default function PartialAcceptModal({
                   <span className="order-card__item-cell order-card__item-cell--badge">
                     <ItemStatusBadge status={badgeStatus} compact />
                     {isFabrica ? <span className="order-partial-accept__source-tag">F</span> : null}
-                    {isLocal ? <span className="order-partial-accept__source-tag">L</span> : null}
+                    {isLocal ? <span className="order-partial-accept__source-tag">{localShort}</span> : null}
                   </span>
                   <span className="order-card__item-cell order-card__item-cell--lupa">
                     {item.isOffer ? (
@@ -134,13 +149,13 @@ export default function PartialAcceptModal({
                           </button>
                           <button
                             type="button"
-                            className="order-card__item-action order-partial-accept__source-btn order-partial-accept__source-btn--local"
+                            className={`order-card__item-action order-partial-accept__source-btn ${localSourceBtnClass}`}
                             disabled={disabled}
-                            aria-label="Espera del local"
-                            title="Local"
+                            aria-label={`Espera de ${localLabel.toLowerCase()}`}
+                            title={localLabel}
                             onClick={() => setUnit(idx, "waiting-local")}
                           >
-                            L
+                            {localShort}
                           </button>
                         </>
                       ) : (
@@ -152,7 +167,7 @@ export default function PartialAcceptModal({
                           title="En espera"
                           onClick={() => toggleSourcePicker(idx)}
                         >
-                          {isFabrica ? "F" : isLocal ? "L" : "⏳"}
+                          {isFabrica ? "F" : isLocal ? localShort : "⏳"}
                         </button>
                       )}
 
@@ -175,7 +190,7 @@ export default function PartialAcceptModal({
         </ul>
 
         <p className="order-partial-accept__summary">
-          Apartados: {nPicked} · Espera fábrica: {nFabrica} · Espera local: {nLocal} · Sin stock:{" "}
+          Apartados: {nPicked} · Espera fábrica: {nFabrica} · Espera {localLabel.toLowerCase()}: {nLocal} · Sin stock:{" "}
           {nMissing}
         </p>
 

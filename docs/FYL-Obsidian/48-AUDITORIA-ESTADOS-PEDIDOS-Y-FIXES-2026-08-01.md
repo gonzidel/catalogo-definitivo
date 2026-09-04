@@ -86,6 +86,7 @@ Validación de 9 escenarios hipotéticos de estado de pedido/ítems provistos po
 
 - `nj/lib/orders/domain.ts` — nuevo helper `wantsCustomerClose(order)` (parsea `customer_requested_close` de `notes`).
 - `nj/lib/orders/classification.ts` — nuevo helper exportado `shouldAutoCloseAfterCustomerRequest(order)`, que combina `wantsCustomerClose` con un predicado estricto nuevo (`isOrderStrictlyFullyPicked`, privado): todos los ítems no cancelados deben estar literalmente en `picked` — a propósito **no** cuenta `waiting` ni `missing` como "listo" (a diferencia de `hasAllItemsPicked`, que sí los cuenta para decidir en qué columna se ve el pedido). Si queda algo `missing`, el pedido no se cierra solo: el admin tiene que decidir a mano vía el botón "Cerrar pedido" (esto reproduce el comportamiento que el usuario pidió explícitamente para ese sub-caso).
+- **Fix 2026-09-02 (A56425):** `isOrderStrictlyFullyPicked` ya no usa `orderHasCancelledItems` (cualquier cancelado bloqueaba el auto-cierre). Solo bloquea `orderHasCancelledItemsPendingStockReturn`. Caso: clienta con `customer_requested_close`, sumó productos, admin apartó todo vía draft/Confirmar → pedía quedar en Cerrados pero quedaba en Apartados por líneas `cancelled` viejas.
 - `nj/hooks/useOrders.ts` — nuevo helper interno `refreshAndMaybeAutoClose(supabase, orderId)`: refresca el pedido y, si `shouldAutoCloseAfterCustomerRequest` da `true`, llama a `rpcCloseOrder` antes de devolver el pedido actualizado. Se conectó en `pickAllReserved` (reemplazando la lógica ad-hoc que tenía antes), `markItemPicked`, `splitReservedItem`, `splitReservedItemMixed` y `confirmCancelledItem` (este último importa: si lo único que faltaba era confirmar la devolución de stock de un ítem cancelado, el pedido puede terminar de cerrarse ahí). `markItemMissing`/`markItemWaiting` se dejaron sin cambios a propósito: por diseño nunca van a cumplir el predicado estricto, así que no hace falta ni tiene sentido conectarlos.
 - `nj/components/cart/ActiveOrderTab.tsx` — `allItemsPicked` ahora exige `status === "picked"` estrictamente (ya no cuenta `waiting`). El branch de cierre directo de `handleSend()` pasó de un `UPDATE` crudo a `rpcCloseOrder(supabase, order.id, "Pendiente")`, para que quede validado server-side y con `closed_at` seteado igual que cualquier otro cierre.
 
@@ -100,6 +101,13 @@ Validación de 9 escenarios hipotéticos de estado de pedido/ítems provistos po
 - **Verificado, sin bug:** pedidos en `stock_pending` quedan excluidos de `MY_ORDER_STATUSES` en `DashboardClient.tsx`, así que nunca llegan a `ActiveOrderTab`/`handleSend` ni pueden tener `customer_requested_close` seteado.
 - **Verificado, sin bug:** ningún componente de `nj` llama a `rpc_mark_order_items_picked` / `rpc_close_order` / `rpc_split_order_item_status` fuera de `useOrders.ts` y `ActiveOrderTab.tsx` (ambos ya cubiertos por el fix) — no hay otro camino que bypasee el auto-cierre centralizado.
 - **Investigado y descartado (confirmado por el usuario):** `admin/orders.js` (panel legacy) tiene su propia implementación de apartar/cerrar pedidos, totalmente ajena al flag `customer_requested_close`. El usuario confirmó que ese panel está deprecado para ese flujo — no hace falta portar el fix ahí.
+
+### Fix 2026-09-03 (A56434) — RLS bloqueaba el flag de cierre
+
+- **Síntoma:** clienta con ítems `reserved` (admin aún no confirmó) tocaba "Cerrar pedido" → salía el modal → al confirmar no pasaba a "En preparación".
+- **Causa:** `ActiveOrderTab.handleSend` hacía `.from("orders").update({ notes })`. Customers solo tienen RLS **SELECT** sobre `orders` (no UPDATE). El update fallaba; el flag nunca se grababa.
+- **Fix frontend:** llamar `rpc_customer_request_close` (`rpcCustomerRequestClose` en `order-queries.ts`) — SECURITY DEFINER ya presente en fyl-core. Repo: `supabase/canonical/324_rpc_customer_request_close.sql` (documenta la RPC existente).
+- **Flujo esperado:** clienta cierra → `customer_requested_close: true` + UI "En preparación" → admin aparta → `refreshAndMaybeAutoClose` → `closed`.
 
 ### Nota — label visible vs. status real de un ítem "waiting"
 

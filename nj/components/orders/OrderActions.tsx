@@ -10,11 +10,16 @@ import {
   parseOrderNotesObject,
   parseStockPendingReasonConflict,
 } from "@/lib/orders/domain";
+import {
+  otherBoardButtonLabel,
+  otherBoardTitle,
+} from "@/lib/orders/board-scope";
 import { loadPaymentMethods } from "@/lib/supabase/order-queries";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useOrdersStore } from "@/hooks/useOrders";
 import type { AdminOrder, KanbanColumnId, PaymentMethod } from "@/types/orders";
 import OrderEditModal from "./OrderEditModal";
+import RetiroCloseModal from "./RetiroCloseModal";
 
 interface OrderActionsProps {
   order: AdminOrder;
@@ -59,7 +64,8 @@ export default function OrderActions({ order, draftMode = false }: OrderActionsP
   const loadingAction = useOrdersStore((s) => s.loadingAction);
   const pickAllReserved = useOrdersStore((s) => s.pickAllReserved);
   const closeOrder = useOrdersStore((s) => s.closeOrder);
-  const sendToLocal = useOrdersStore((s) => s.sendToLocal);
+  const moveOrderToOtherBoard = useOrdersStore((s) => s.moveOrderToOtherBoard);
+  const boardScope = useOrdersStore((s) => s.boardScope);
   const revertOrderToPicked = useOrdersStore((s) => s.revertOrderToPicked);
   const resolveStockPending = useOrdersStore((s) => s.resolveStockPending);
   const cancelStockPendingOrder = useOrdersStore((s) => s.cancelStockPendingOrder);
@@ -71,19 +77,21 @@ export default function OrderActions({ order, draftMode = false }: OrderActionsP
   const [dismantleModalOpen, setDismantleModalOpen] = useState(false);
   const [extendModalOpen, setExtendModalOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
-  const [sendLocalConfirmOpen, setSendLocalConfirmOpen] = useState(false);
+  const [moveBoardConfirmOpen, setMoveBoardConfirmOpen] = useState(false);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
   const [selectedPayment, setSelectedPayment] = useState("");
   const busy = loadingAction === order.id;
   const showEdit = canEditOrder(column, order);
+  const moveBoardLabel = otherBoardButtonLabel(boardScope);
+  const moveBoardTargetTitle = otherBoardTitle(boardScope);
 
   useEffect(() => {
-    if (!closeModalOpen) return;
+    if (!closeModalOpen || boardScope === "local_pickup") return;
     loadPaymentMethods(getSupabaseBrowserClient()).then((methods) => {
       setPaymentMethods(methods);
       if (methods[0]) setSelectedPayment(methods[0].name);
     });
-  }, [closeModalOpen]);
+  }, [closeModalOpen, boardScope]);
 
   const notesObj = parseOrderNotesObject(order.notes);
   const conflictParsed = parseStockPendingReasonConflict(
@@ -101,6 +109,8 @@ export default function OrderActions({ order, draftMode = false }: OrderActionsP
     setCloseModalOpen(false);
   };
 
+  const isRetiroBoard = boardScope === "local_pickup";
+
   const handleResolveConfirm = async () => {
     await resolveStockPending(order.id);
     setResolveModalOpen(false);
@@ -116,9 +126,9 @@ export default function OrderActions({ order, draftMode = false }: OrderActionsP
     setExtendModalOpen(false);
   };
 
-  const handleSendLocalConfirm = async () => {
-    setSendLocalConfirmOpen(false);
-    await sendToLocal(order.id);
+  const handleMoveBoardConfirm = async () => {
+    setMoveBoardConfirmOpen(false);
+    await moveOrderToOtherBoard(order.id);
   };
 
   const editButton = showEdit ? (
@@ -167,11 +177,11 @@ export default function OrderActions({ order, draftMode = false }: OrderActionsP
               type="button"
               className="order-card__btn order-card__btn--mini"
               disabled={busy}
-              title="Enviar al local"
-              aria-label="Enviar al local"
-              onClick={() => setSendLocalConfirmOpen(true)}
+              title={`Enviar a ${moveBoardTargetTitle}`}
+              aria-label={`Enviar a ${moveBoardTargetTitle}`}
+              onClick={() => setMoveBoardConfirmOpen(true)}
             >
-              Local
+              {moveBoardLabel}
             </button>
           </>
         ) : null}
@@ -236,29 +246,30 @@ export default function OrderActions({ order, draftMode = false }: OrderActionsP
         <OrderEditModal order={order} onClose={() => setEditModalOpen(false)} />
       ) : null}
 
-      {sendLocalConfirmOpen ? (
+      {moveBoardConfirmOpen ? (
         <div
           className="order-modal-backdrop"
           role="presentation"
-          onClick={() => setSendLocalConfirmOpen(false)}
+          onClick={() => setMoveBoardConfirmOpen(false)}
         >
           <div
             className="order-modal order-modal--compact"
             role="dialog"
-            aria-labelledby={`send-local-${order.id}`}
+            aria-labelledby={`move-board-${order.id}`}
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 className="order-modal__title" id={`send-local-${order.id}`}>
-              Enviar al local
+            <h3 className="order-modal__title" id={`move-board-${order.id}`}>
+              Enviar a {moveBoardTargetTitle}
             </h3>
             <p className="order-modal__text">
-              ¿Confirmar envío al local? El pedido saldrá de esta lista.
+              ¿Confirmar envío a {moveBoardTargetTitle}? El pedido saldrá de esta lista
+              y aparecerá en el otro tablero.
             </p>
             <div className="order-modal__actions">
               <button
                 type="button"
                 className="order-card__btn"
-                onClick={() => setSendLocalConfirmOpen(false)}
+                onClick={() => setMoveBoardConfirmOpen(false)}
               >
                 Cancelar
               </button>
@@ -266,7 +277,7 @@ export default function OrderActions({ order, draftMode = false }: OrderActionsP
                 type="button"
                 className="order-card__btn order-card__btn--primary"
                 disabled={busy}
-                onClick={() => void handleSendLocalConfirm()}
+                onClick={() => void handleMoveBoardConfirm()}
               >
                 Confirmar
               </button>
@@ -275,7 +286,23 @@ export default function OrderActions({ order, draftMode = false }: OrderActionsP
         </div>
       ) : null}
 
-      {closeModalOpen ? (
+      {closeModalOpen && isRetiroBoard ? (
+        <RetiroCloseModal
+          order={order}
+          busy={busy}
+          onClose={() => setCloseModalOpen(false)}
+          onDone={(message) => {
+            setCloseModalOpen(false);
+            useOrdersStore.getState().removeOrder(order.id);
+            useOrdersStore.getState().showToast(message, "success");
+          }}
+          onError={(message) => {
+            useOrdersStore.getState().showToast(message, "error");
+          }}
+        />
+      ) : null}
+
+      {closeModalOpen && !isRetiroBoard ? (
         <div
           className="order-modal-backdrop"
           role="presentation"

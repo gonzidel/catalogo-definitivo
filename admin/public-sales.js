@@ -486,8 +486,13 @@ const pendingSalesGrid = document.getElementById("pending-sales-grid");
 const caja2Btn = document.getElementById("caja2-btn");
 const caja3Btn = document.getElementById("caja3-btn");
 // Campana: pendientes en local (pedidos web)
+const reservasBellWrap = document.getElementById("reservas-bell-wrap");
 const reservasBellBtn = document.getElementById("reservas-bell-btn");
 const reservasBellBadge = document.getElementById("reservas-bell-badge");
+const reservasBellTimer = document.getElementById("reservas-bell-timer");
+const reservasIdleAlert = document.getElementById("reservas-idle-alert");
+const reservasIdleAcceptBtn = document.getElementById("reservas-idle-accept-btn");
+const reservasIdleCannotBtn = document.getElementById("reservas-idle-cannot-btn");
 const reservasModal = document.getElementById("reservas-modal");
 const closeReservasModalBtn = document.getElementById("close-reservas-modal");
 const reservasList = document.getElementById("reservas-list");
@@ -501,6 +506,155 @@ const reservaItemsById = new Map();
 let reservaVentaPublicoId = null;
 let reservasRealtimeChannel = null;
 let reservasRefreshDebounceTimer = null;
+let reservasIdleTicker = null;
+let reservasBellPendingUnits = 0;
+let reservasIdleAlertOpen = false;
+let reservasIdleAlertPhase = null;
+
+const RESERVAS_IDLE_STORAGE_KEY = "fyl_reservas_idle_v2";
+const RESERVAS_IDLE_MS_10 = 10 * 60 * 1000;
+const RESERVAS_IDLE_MS_30 = 30 * 60 * 1000;
+
+function loadReservasIdleState() {
+  try {
+    const raw = localStorage.getItem(RESERVAS_IDLE_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function saveReservasIdleState(state) {
+  try {
+    localStorage.setItem(RESERVAS_IDLE_STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    /* noop */
+  }
+}
+
+function clearReservasIdleState() {
+  try {
+    localStorage.removeItem(RESERVAS_IDLE_STORAGE_KEY);
+  } catch {
+    /* noop */
+  }
+}
+
+function formatReservasIdleElapsed(ms) {
+  const totalSec = Math.max(0, Math.floor(ms / 1000));
+  const min = Math.floor(totalSec / 60);
+  const sec = totalSec % 60;
+  return `${String(min).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+}
+
+function touchReservasNotificationActivity() {
+  const state = loadReservasIdleState();
+  if (!state) return;
+  const now = Date.now();
+  saveReservasIdleState({
+    ...state,
+    lastActivityAt: now,
+    lastAlertDismissedAt: null,
+  });
+  reservasBellWrap?.classList.remove("reservas-bell-wrap--warn");
+}
+
+function stopReservasIdleTicker() {
+  if (reservasIdleTicker) {
+    clearInterval(reservasIdleTicker);
+    reservasIdleTicker = null;
+  }
+}
+
+function closeReservasIdleAlert() {
+  reservasIdleAlertOpen = false;
+  reservasIdleAlertPhase = null;
+  if (reservasIdleAlert) {
+    reservasIdleAlert.classList.remove("active");
+    reservasIdleAlert.setAttribute("aria-hidden", "true");
+  }
+  if (reservasIdleCannotBtn) reservasIdleCannotBtn.style.display = "none";
+}
+
+function openReservasIdleAlert(phase) {
+  if (!reservasIdleAlert) return;
+  reservasIdleAlertOpen = true;
+  reservasIdleAlertPhase = phase;
+  reservasIdleAlert.classList.add("active");
+  reservasIdleAlert.setAttribute("aria-hidden", "false");
+  if (reservasIdleCannotBtn) {
+    reservasIdleCannotBtn.style.display = phase === "30" ? "block" : "none";
+  }
+}
+
+async function emitLocalCannotSeparateAlert() {
+  if (!supabase) throw new Error("Supabase no disponible");
+  const { error } = await supabase.rpc("rpc_create_admin_local_cannot_separate_alert", {
+    p_pending_count: reservasBellPendingUnits,
+  });
+  if (error) throw error;
+}
+
+function tickReservasIdle() {
+  if (reservasBellPendingUnits <= 0) return;
+  const state = loadReservasIdleState();
+  if (!state?.lastActivityAt) return;
+
+  const now = Date.now();
+  const elapsed = now - Number(state.lastActivityAt);
+  const dismissedAt = state.lastAlertDismissedAt ? Number(state.lastAlertDismissedAt) : null;
+  const sinceDismiss = dismissedAt ? now - dismissedAt : RESERVAS_IDLE_MS_10;
+
+  if (reservasBellTimer) {
+    reservasBellTimer.textContent = formatReservasIdleElapsed(elapsed);
+  }
+  if (elapsed >= RESERVAS_IDLE_MS_10) {
+    reservasBellWrap?.classList.add("reservas-bell-wrap--warn");
+  }
+
+  if (reservasIdleAlertOpen) return;
+
+  const shouldShow =
+    elapsed >= RESERVAS_IDLE_MS_10 && sinceDismiss >= RESERVAS_IDLE_MS_10;
+
+  if (!shouldShow) return;
+
+  const phase = elapsed >= RESERVAS_IDLE_MS_30 ? "30" : "repeat";
+  openReservasIdleAlert(phase);
+}
+
+function syncReservasIdleFromBellCount(units) {
+  const n = Number(units || 0) || 0;
+  reservasBellPendingUnits = n;
+
+  if (n <= 0) {
+    stopReservasIdleTicker();
+    clearReservasIdleState();
+    closeReservasIdleAlert();
+    if (reservasBellTimer) reservasBellTimer.textContent = "00:00";
+    reservasBellWrap?.classList.remove("reservas-bell-wrap--warn");
+    return;
+  }
+
+  const now = Date.now();
+  let state = loadReservasIdleState();
+  if (!state) {
+    state = {
+      lastActivityAt: now,
+      lastAlertDismissedAt: null,
+      cannotSeparateSent: false,
+    };
+    saveReservasIdleState(state);
+  }
+
+  if (!reservasIdleTicker) {
+    tickReservasIdle();
+    reservasIdleTicker = setInterval(tickReservasIdle, 1000);
+  }
+}
 const manualProduct = document.getElementById("manual-product");
 const manualSearchBtn = document.getElementById("manual-search-btn");
 const manualProductSelection = document.getElementById("manual-product-selection");
@@ -662,7 +816,36 @@ let currentLocalOrderId = null; // ID del pedido local si viene de un pedido loc
 
 // =============================================================================
 // Campana: líneas de pedidos web con stock desde venta-público (espera en local)
+// Solo tablero Pedidos (envío). Excluye Retiro, deferred pickup y espejo caja.
 // =============================================================================
+
+function parseOrderNotesForBell(notes) {
+  if (notes == null || notes === "") return {};
+  if (typeof notes === "object") return notes;
+  try {
+    const parsed = JSON.parse(String(notes));
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Pedido elegible para campana public-sales (espera local desde Orders). */
+function isPublicSalesBellOrder(order) {
+  if (!order) return false;
+  if (order.local_deferred_pickup === true) return false;
+  const notes = parseOrderNotesForBell(order.notes);
+  if (notes.kanban_scope === "local_pickup") return false;
+  if (notes.mirrored_from_local_order === true) return false;
+  if (
+    notes.retiro_origin === "public_sales" ||
+    notes.retiro_origin === "retiro" ||
+    notes.retiro_origin === "admin_local"
+  ) {
+    return false;
+  }
+  return true;
+}
 
 function _safeText(v) {
   return (v ?? "").toString();
@@ -671,13 +854,25 @@ function _safeText(v) {
 function setBellCount(units) {
   const n = Number(units || 0) || 0;
   if (!reservasBellBadge) return;
+  const label =
+    n <= 0
+      ? "Pendientes en local (pedidos web)"
+      : `${n} producto${n === 1 ? "" : "s"} pendiente${n === 1 ? "" : "s"} en local`;
+  if (reservasBellBtn) {
+    reservasBellBtn.setAttribute("aria-label", label);
+    reservasBellBtn.title = label;
+  }
   if (n <= 0) {
     reservasBellBadge.style.display = "none";
     reservasBellBadge.textContent = "0";
+    reservasBellWrap?.classList.remove("reservas-bell-wrap--active");
+    syncReservasIdleFromBellCount(0);
     return;
   }
   reservasBellBadge.style.display = "inline-flex";
   reservasBellBadge.textContent = n > 99 ? "99+" : String(n);
+  reservasBellWrap?.classList.add("reservas-bell-wrap--active");
+  syncReservasIdleFromBellCount(n);
 }
 
 function toggleReservasPanel(forceOpen = null) {
@@ -717,7 +912,7 @@ async function fetchLocalReservations() {
         "variant_id",
         "imagen",
         "created_at",
-        "orders(id, order_number, status, customer_id, customers(full_name))",
+        "orders(id, order_number, status, customer_id, local_deferred_pickup, notes, customers(full_name))",
         "order_item_stock_sources(qty, warehouse_id)"
       ].join(",")
     )
@@ -731,6 +926,7 @@ async function fetchLocalReservations() {
   const filtered = rows.filter((oi) => {
     const order = oi.orders;
     if (!order) return false;
+    if (!isPublicSalesBellOrder(order)) return false;
     const orderStatus = _safeText(order.status).trim().toLowerCase();
     if (finalStatuses.has(orderStatus)) return false;
 
@@ -1036,6 +1232,7 @@ function setupReservasRealtime() {
 async function handleReservaAction(action, orderItemId) {
   if (!supabase) throw new Error("Supabase no disponible");
   const a = _safeText(action).trim().toLowerCase();
+  touchReservasNotificationActivity();
 
   // Botón de reloj: la unidad reservada de venta-público en realidad no está
   // físicamente a mano en el local -> se pasa a "espera de fábrica" en vez de
@@ -6888,7 +7085,37 @@ document.addEventListener("keydown", (e) => {
 });
 if (reservasRefreshBtn) {
   reservasRefreshBtn.addEventListener("click", () => {
+    touchReservasNotificationActivity();
     refreshReservas().catch((e) => console.warn("refreshReservas:", e?.message || e));
+  });
+}
+if (reservasIdleAcceptBtn) {
+  reservasIdleAcceptBtn.addEventListener("click", () => {
+    const state = loadReservasIdleState();
+    if (state) {
+      saveReservasIdleState({ ...state, lastAlertDismissedAt: Date.now() });
+    }
+    closeReservasIdleAlert();
+  });
+}
+if (reservasIdleCannotBtn) {
+  reservasIdleCannotBtn.addEventListener("click", () => {
+    emitLocalCannotSeparateAlert()
+      .then(() => {
+        const state = loadReservasIdleState();
+        if (state) {
+          saveReservasIdleState({
+            ...state,
+            cannotSeparateSent: true,
+            lastAlertDismissedAt: Date.now(),
+          });
+        }
+        closeReservasIdleAlert();
+      })
+      .catch((err) => {
+        console.error("emitLocalCannotSeparateAlert:", err);
+        alert(err?.message || "No se pudo avisar al equipo de pedidos.");
+      });
   });
 }
 if (closeReservaImageModalBtn) {
@@ -7980,6 +8207,15 @@ document.getElementById("order-edit-finalize-btn")?.addEventListener("click", as
       });
     }
     await supabase.from("local_orders").update({ status: "completed", updated_at: new Date().toISOString() }).eq("id", editOrderId);
+    // Cerrar espejo en Kanban Retiro (si existe) — migración 311
+    try {
+      await supabase.rpc("rpc_close_mirrored_retiro_from_local_order", {
+        p_local_order_id: editOrderId,
+        p_payment_method: "Efectivo",
+      });
+    } catch (mirrorCloseErr) {
+      console.warn("Cierre espejo Retiro:", mirrorCloseErr);
+    }
     const { data: saleDetails, error: detailsError } = await supabase.rpc("rpc_get_public_sale_details", { p_sale_id: saleData.sale_id });
     if (!detailsError && saleDetails) {
       try {
@@ -9002,8 +9238,21 @@ async function saveLocalOrder() {
     console.log("Order ID:", data.local_order_id);
     console.log("Order Number:", data.order_number);
 
-    // Mostrar mensaje de éxito
-    showMessage(`Pedido guardado correctamente: ${data.order_number}`, "success");
+    // Espejo Retiro (si el RPC 311 lo devolvió / soft-fail)
+    const mirror = data?.retiro_mirror || null;
+    if (mirror?.ok && mirror?.order_number) {
+      showMessage(
+        `Pedido guardado: ${data.order_number} · Retiro ${mirror.order_number} (Apartados)`,
+        "success"
+      );
+    } else if (mirror && mirror.ok === false && mirror.reason === "open_order_exists") {
+      showMessage(
+        `Pedido guardado: ${data.order_number}. No se espejó en Retiro: el cliente ya tiene un pedido abierto.`,
+        "info"
+      );
+    } else {
+      showMessage(`Pedido guardado correctamente: ${data.order_number}`, "success");
+    }
 
     // Limpiar la caja
     saleItems = [];

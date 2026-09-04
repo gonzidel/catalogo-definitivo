@@ -51,6 +51,7 @@ Causa: `handleReopenForEditing` en `nj/components/cart/ActiveOrderTab.tsx` calcu
 
 **Fix aplicado:**
 - Migración `supabase/canonical/270_rpc_customer_reopen_order_for_editing.sql`: nueva RPC `rpc_customer_reopen_order_for_editing(p_order_id)` que unifica los dos casos que manejaba el código cliente (pedido `closed` → `active`; pedido `active` con flag `customer_requested_close` → solo limpia el flag) en un solo `UPDATE`, usando `fn_compute_order_deadline(now(), 1)` (próximo día hábil 17:00 Arg) en vez de un literal +24hs.
+- **Fix 2026-09-02 (A56427 / mig 323):** esa RPC ya no debe acortar un `dismantle_at` que todavía sea mayor que el plazo corto. Regla: `max(dismantle_at actual, fn_compute_order_deadline(now(), 1))`. Si no, admin mostraba "Mañana" y Mi pedido (que ignora plazos cortos no-deferred vía `getCustomerFacingDismantleAt`) seguía mostrando ~7 días.
 - `nj/components/cart/ActiveOrderTab.tsx`: `handleReopenForEditing` ahora llama a esa RPC en vez de hacer `.update()` directo.
 - `admin/orders.js`: el botón "habilitar 24hs" ahora llama a `rpc_admin_extend_order_24h` (ya existente desde 258) en vez de su propio cálculo.
 - Reparación puntual de `A55552`: `dismantle_at` corregido de `2026-08-04 21:59:33.175 UTC` a `2026-08-04 20:00:00 UTC` (17:00 Arg), sin cambiar el día (ya era correcto que el reopen le diera ventana hasta el día siguiente hábil, solo estaba mal la hora exacta).

@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { getCachedSearchDictionary } from "@/lib/search/dictionary-store";
+import { resolveSearchQuery } from "@/lib/search/search-resolver";
 import {
   enrichGroupedProductsWithVariants,
   searchProductsIncludingOutOfStock,
@@ -24,6 +26,7 @@ export function useEnrichedCatalog(
   const [enriched, setEnriched] = useState<GroupedProduct[]>(products);
   const [extraSearch, setExtraSearch] = useState<GroupedProduct[]>([]);
   const [isEnriching, setIsEnriching] = useState(false);
+  const [isSearchExtrasPending, setIsSearchExtrasPending] = useState(false);
 
   // Reset + enriquecer cuando cambia el set de artículos (solo baseKey, no la ref del array).
   useEffect(() => {
@@ -55,22 +58,32 @@ export function useEnrichedCatalog(
     const term = searchTerm.trim();
     if (term.length < 2) {
       setExtraSearch([]);
+      setIsSearchExtrasPending(false);
       return;
     }
 
+    setIsSearchExtrasPending(true);
     let cancelled = false;
     const timer = window.setTimeout(() => {
       const exclude = new Set(productsRef.current.map((p) => p.Articulo));
+      const resolved = resolveSearchQuery(term, getCachedSearchDictionary());
+      const lookup = resolved.resolvedQuery || term;
       searchProductsIncludingOutOfStock(
         getSupabaseBrowserClient(),
-        term,
+        lookup,
         exclude
       )
         .then((found) => {
-          if (!cancelled) setExtraSearch(found);
+          if (!cancelled) {
+            setExtraSearch(found);
+            setIsSearchExtrasPending(false);
+          }
         })
         .catch(() => {
-          if (!cancelled) setExtraSearch([]);
+          if (!cancelled) {
+            setExtraSearch([]);
+            setIsSearchExtrasPending(false);
+          }
         });
     }, 280);
 
@@ -87,5 +100,5 @@ export function useEnrichedCatalog(
     return add.length ? [...enriched, ...add] : enriched;
   }, [enriched, extraSearch]);
 
-  return { products: merged, isEnriching };
+  return { products: merged, isEnriching, isSearchExtrasPending };
 }

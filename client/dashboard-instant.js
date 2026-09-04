@@ -2241,6 +2241,170 @@ function confirmRemoveCartItemInApp() {
   });
 }
 
+/**
+ * Bottom sheet: confirmar quitar unidades de un producto en "Mi pedido".
+ * Con más de 1 unidad muestra contador +/- (por defecto todas).
+ * @param {{ productLabel: string, maxUnits: number, sizeLabel?: string }} opts
+ * @returns {Promise<number|null>} unidades a quitar, o null si cancela
+ */
+function showDashboardRemoveOrderItemSheet(opts) {
+  const productLabel =
+    String(opts?.productLabel || "este producto").trim() || "este producto";
+  const maxUnits = Math.max(1, Number(opts?.maxUnits || 1) | 0);
+  const sizeLabel = String(opts?.sizeLabel || "").trim();
+
+  return new Promise((resolve) => {
+    let sheet = document.getElementById("dash-remove-order-item-sheet");
+    if (!sheet) {
+      sheet = document.createElement("div");
+      sheet.id = "dash-remove-order-item-sheet";
+      sheet.className = "dash-remove-order-sheet";
+      sheet.setAttribute("role", "dialog");
+      sheet.setAttribute("aria-modal", "true");
+      sheet.setAttribute("aria-labelledby", "dash-remove-order-sheet-title");
+      sheet.setAttribute("aria-hidden", "true");
+      sheet.innerHTML = `
+        <div class="dash-remove-order-sheet__backdrop" data-sheet-dismiss="1"></div>
+        <div class="dash-remove-order-sheet__panel">
+          <div class="dash-remove-order-sheet__handle" aria-hidden="true"></div>
+          <h3 id="dash-remove-order-sheet-title" class="dash-remove-order-sheet__title"></h3>
+          <p id="dash-remove-order-sheet-msg" class="dash-remove-order-sheet__msg"></p>
+          <div id="dash-remove-order-sheet-stepper" class="dash-remove-order-sheet__stepper" hidden>
+            <div class="dash-remove-order-sheet__stepper-label">Cantidad a quitar</div>
+            <div class="dash-remove-order-sheet__stepper-controls">
+              <button type="button" class="dash-remove-order-sheet__step-btn" id="dash-remove-order-sheet-dec" aria-label="Menos">−</button>
+              <div class="dash-remove-order-sheet__step-qty" id="dash-remove-order-sheet-qty" aria-live="polite">1</div>
+              <button type="button" class="dash-remove-order-sheet__step-btn" id="dash-remove-order-sheet-inc" aria-label="Más">+</button>
+            </div>
+            <div class="dash-remove-order-sheet__stepper-hint" id="dash-remove-order-sheet-hint"></div>
+          </div>
+          <div class="dash-remove-order-sheet__actions">
+            <button type="button" class="btn btn-ghost" id="dash-remove-order-sheet-cancel">Cancelar</button>
+            <button type="button" class="btn btn-danger" id="dash-remove-order-sheet-ok">Quitar</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(sheet);
+    }
+
+    const titleEl = sheet.querySelector("#dash-remove-order-sheet-title");
+    const msgEl = sheet.querySelector("#dash-remove-order-sheet-msg");
+    const stepperEl = sheet.querySelector("#dash-remove-order-sheet-stepper");
+    const qtyEl = sheet.querySelector("#dash-remove-order-sheet-qty");
+    const hintEl = sheet.querySelector("#dash-remove-order-sheet-hint");
+    const decBtn = sheet.querySelector("#dash-remove-order-sheet-dec");
+    const incBtn = sheet.querySelector("#dash-remove-order-sheet-inc");
+    const okBtn = sheet.querySelector("#dash-remove-order-sheet-ok");
+    const cancelBtn = sheet.querySelector("#dash-remove-order-sheet-cancel");
+
+    let units = maxUnits;
+
+    const confirmLabelFor = (n) => {
+      if (maxUnits <= 1) return "Quitar";
+      if (n >= maxUnits) return "Quitar todo";
+      if (n === 1) return "Quitar 1";
+      return `Quitar ${n}`;
+    };
+
+    const syncUi = () => {
+      if (qtyEl) qtyEl.textContent = String(units);
+      if (decBtn) decBtn.disabled = units <= 1;
+      if (incBtn) incBtn.disabled = units >= maxUnits;
+      if (okBtn) okBtn.textContent = confirmLabelFor(units);
+      if (hintEl) {
+        hintEl.textContent =
+          units >= maxUnits
+            ? `Se quitarán las ${maxUnits} unidades del pedido.`
+            : `Se quitarán ${units} de ${maxUnits} unidades.`;
+      }
+    };
+
+    titleEl.textContent = "¿Quitar producto del pedido?";
+    let sizeSuffix = "";
+    if (sizeLabel) {
+      const sizeFmt = /^t\.?\s*/i.test(sizeLabel)
+        ? sizeLabel.replace(/^t\.?\s*/i, "T. ")
+        : `T. ${sizeLabel}`;
+      const alreadyInLabel = productLabel.toLowerCase().includes(sizeLabel.toLowerCase());
+      if (!alreadyInLabel) sizeSuffix = ` · ${sizeFmt}`;
+    }
+    msgEl.textContent = `Estás por quitar ${productLabel}${sizeSuffix} de tu pedido.`;
+
+    if (maxUnits > 1) {
+      stepperEl.hidden = false;
+      units = maxUnits;
+      syncUi();
+    } else {
+      stepperEl.hidden = true;
+      units = 1;
+      if (okBtn) okBtn.textContent = "Quitar";
+    }
+
+    const cleanup = () => {
+      sheet.classList.remove("is-open");
+      sheet.setAttribute("aria-hidden", "true");
+      sheet.onclick = null;
+      okBtn.onclick = null;
+      cancelBtn.onclick = null;
+      if (decBtn) decBtn.onclick = null;
+      if (incBtn) incBtn.onclick = null;
+      document.removeEventListener("keydown", onKeyDown);
+    };
+
+    const done = (value) => {
+      cleanup();
+      resolve(value);
+    };
+
+    function onKeyDown(e) {
+      if (e.key === "Escape") done(null);
+    }
+
+    sheet.onclick = (e) => {
+      const t = e.target;
+      if (t && t.getAttribute && t.getAttribute("data-sheet-dismiss") === "1") {
+        done(null);
+      }
+    };
+
+    if (decBtn) {
+      decBtn.onclick = (e) => {
+        e.stopPropagation();
+        if (units > 1) {
+          units -= 1;
+          syncUi();
+        }
+      };
+    }
+    if (incBtn) {
+      incBtn.onclick = (e) => {
+        e.stopPropagation();
+        if (units < maxUnits) {
+          units += 1;
+          syncUi();
+        }
+      };
+    }
+
+    okBtn.onclick = (e) => {
+      e.stopPropagation();
+      done(Math.max(1, Math.min(maxUnits, units)));
+    };
+    cancelBtn.onclick = (e) => {
+      e.stopPropagation();
+      done(null);
+    };
+
+    document.addEventListener("keydown", onKeyDown);
+    sheet.setAttribute("aria-hidden", "false");
+    // Doble rAF para animar la entrada del sheet
+    requestAnimationFrame(() => {
+      sheet.classList.add("is-open");
+      cancelBtn.focus();
+    });
+  });
+}
+
 /** Reloj inline (historial) — mismo estilo trazo que el resto del dashboard. */
 const DASH_MESSAGE_CLOCK_SVG = `<svg class="dash-app-message-modal__clock-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`;
 
@@ -4612,7 +4776,7 @@ async function loadOrders(userId, options = {}) {
                       ? `<div class="item-row__menu-wrap">
                           <button type="button" class="item-row__kebab" aria-label="Opciones" aria-haspopup="true" aria-expanded="false">⋯</button>
                           <div class="item-row__popover" role="menu" aria-hidden="true">
-                            <button type="button" class="item-row__menuitem item-row__menuitem--danger" data-action="remove-order-item" data-order-item-ids="${orderItemIds.replace(/"/g, "&quot;")}">Quitar del pedido</button>
+                            <button type="button" class="item-row__menuitem item-row__menuitem--danger" data-action="remove-order-item" data-order-item-ids="${escapeHtmlAttr(orderItemIds)}" data-product-label="${escapeHtmlAttr(showInlineSize ? `${productName} · ${color} · ${sizeLabel}` : `${productName} · ${color}`)}">Quitar del pedido</button>
                             <a href="${buildCatalogHrefFromVariantOrName(base.variant_id, productName)}" class="item-row__menuitem" data-action="view-product">Ver producto</a>
                           </div>
                         </div>`
@@ -4680,7 +4844,7 @@ async function loadOrders(userId, options = {}) {
                       ? `<div class="item-row__menu-wrap">
                           <button type="button" class="item-row__kebab" aria-label="Opciones" aria-haspopup="true" aria-expanded="false">⋯</button>
                           <div class="item-row__popover" role="menu" aria-hidden="true">
-                            <button type="button" class="item-row__menuitem item-row__menuitem--danger" data-action="remove-order-item" data-order-item-ids="${(m.id || "").replace(/"/g, "&quot;")}">Quitar del pedido</button>
+                            <button type="button" class="item-row__menuitem item-row__menuitem--danger" data-action="remove-order-item" data-order-item-ids="${escapeHtmlAttr(m.id || "")}" data-product-label="${escapeHtmlAttr(showInlineSize ? `${productName} · ${color} · ${sizeLabel}` : `${productName} · ${color}`)}">Quitar del pedido</button>
                             <a href="../index.html?similares=1&articulo=${encodeURIComponent(productName)}&talle=${encodeURIComponent(size)}" class="item-row__menuitem" data-action="view-similares">Ver similares</a>
                             <a href="${buildCatalogHrefFromVariantOrName(m.variant_id, productName)}" class="item-row__menuitem" data-action="view-product">Ver producto</a>
                           </div>
@@ -5094,6 +5258,14 @@ async function loadOrders(userId, options = {}) {
         const idsStr = btn.dataset.orderItemIds || "";
         const ids = idsStr.split(",").map((id) => id.trim()).filter(Boolean);
         if (ids.length === 0) return;
+        const productLabelFromBtn =
+          String(btn.dataset.productLabel || "").trim() ||
+          btn
+            .closest(".item-row")
+            ?.querySelector(".item-row__title")
+            ?.textContent?.replace(/\s+/g, " ")
+            .trim() ||
+          "este producto";
         const wrap = btn.closest(".item-row__menu-wrap");
         const popover = wrap?.querySelector(".item-row__popover");
         if (popover) {
@@ -5146,29 +5318,27 @@ async function loadOrders(userId, options = {}) {
         const totalUnitsForSize = rowsForSize.reduce((sum, r) => sum + (Math.max(0, Number(r?.quantity || 0) || 0)), 0);
         const maxUnits = Math.max(1, totalUnitsForSize || 1);
 
-        let unitsToRemove = 1;
-        // El modal de cantidad SOLO aparece si ese talle tiene más de 1 unidad
-        if (maxUnits > 1) {
-          const pickedUnits = await showDashboardQuantitySelectModal({
-            title: "¿Cuántas unidades querés quitar?",
-            max: maxUnits,
-            confirmLabel: "Aceptar",
-            cancelLabel: "Cancelar",
-          });
-          if (!pickedUnits) return;
-          unitsToRemove = Math.max(1, Math.min(maxUnits, Number(pickedUnits) | 0));
-        }
+        const normChosen = String(chosenSize || "")
+          .toLowerCase()
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .trim();
+        const chosenIsUnique =
+          !chosenSize ||
+          normChosen === "unico" ||
+          normChosen === "talle unico" ||
+          normChosen === "talle unico." ||
+          normChosen === "talle: unico" ||
+          normChosen === "talle unico (unico)";
+        // Solo anexar talle cuando el grupo tiene varios y el usuario eligió uno.
+        const sizeForSheet = sizes.length > 1 && !chosenIsUnique ? chosenSize : "";
 
-        const secondConfirm = await showDashboardConfirmModal({
-          title:
-            unitsToRemove === 1
-              ? "¿Quiere quitar 1 producto de su pedido?"
-              : `¿Quiere quitar ${unitsToRemove} productos de su pedido?`,
-          message: "",
-          confirmLabel: "Quitar",
-          cancelLabel: "Cancelar",
+        const unitsToRemove = await showDashboardRemoveOrderItemSheet({
+          productLabel: productLabelFromBtn,
+          maxUnits,
+          sizeLabel: sizeForSheet,
         });
-        if (!secondConfirm) return;
+        if (!unitsToRemove) return;
 
         // Quitar unidades distribuyéndolas entre líneas (si una línea tiene quantity > 1, se cancela parcialmente).
         let remaining = unitsToRemove;

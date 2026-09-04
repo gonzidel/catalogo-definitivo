@@ -7,8 +7,19 @@ import {
   shouldAutoCloseAfterCustomerRequest,
 } from "@/lib/orders/classification";
 import {
+  filterOrdersByBoardScope,
+  orderBelongsOnKanban,
+  otherBoardScope,
+  otherBoardTitle,
+  realtimeChannelForScope,
+  waitingLocalLabel,
+  type BoardScope,
+} from "@/lib/orders/board-scope";
+import {
   ADMIN_ENABLE_24H_USES_KEY,
   applyOrderNotesPatch,
+  getCancelledItemsPendingStockReturn,
+  getCustomerFromOrder,
   getEnable24hUsesFromOrder,
   parseOrderNotesObject,
   parseStockPendingReasonConflict,
@@ -31,9 +42,17 @@ import {
   rpcSplitOrderItemStatus,
   rpcUpdateOrderItemStatus,
   rpcZeroVariantSizeStock,
+  updateOrderKanbanScope,
 } from "@/lib/supabase/order-queries";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
-import type { AdminOrder, KanbanColumnId, WarehouseIds } from "@/types/orders";
+import { isLocalZoneCustomerShippingOrder } from "@/lib/transport/shipping-helpers";
+import { formatItemProductLabel } from "@/lib/orders/customer-status-message";
+import {
+  recordLocalWaitItemResolution,
+  syncOrderSnapshotPriorFromOrder,
+} from "@/lib/orders/local-wait-notifications";
+import { getWaitingSourceKind } from "@/lib/orders/waiting-source";
+import type { AdminOrder, AdminOrderItem, KanbanColumnId, WarehouseIds } from "@/types/orders";
 import type { RealtimeChannel, RealtimePostgresInsertPayload } from "@supabase/supabase-js";
 
 export type ToastKind = "success" | "error" | "info";
@@ -46,11 +65,12 @@ export interface OrdersToastState {
 interface OrdersState {
   orders: AdminOrder[];
   warehouseIds: WarehouseIds;
+  boardScope: BoardScope;
   hydrated: boolean;
   toast: OrdersToastState | null;
   loadingAction: string | null;
 
-  hydrate: (orders: AdminOrder[]) => void;
+  hydrate: (orders: AdminOrder[], scope?: BoardScope) => void;
   refreshAll: () => Promise<void>;
   showToast: (message: string, kind?: ToastKind) => void;
   clearToast: () => void;
@@ -62,6 +82,7 @@ interface OrdersState {
   pickAllReserved: (orderId: string) => Promise<void>;
   cancelItem: (orderId: string, itemId: string) => Promise<void>;
   confirmCancelledItem: (orderId: string, itemId: string) => Promise<void>;
+  confirmAllCancelledItems: (orderId: string) => Promise<void>;
   markItemMissing: (orderId: string, itemId: string) => Promise<void>;
   /** Existencias que figuran hoy en la web para variante+talle (para el aviso al presionar ✕). */
   getVariantSizeStockQty: (variantId: string, size: string) => Promise<number>;
@@ -104,6 +125,8 @@ interface OrdersState {
   ) => Promise<void>;
   closeOrder: (orderId: string, paymentMethod: string) => Promise<void>;
   sendToLocal: (orderId: string) => Promise<void>;
+  /** Apartados: mueve el pedido al otro tablero (Pedidos ↔ Retiro). */
+  moveOrderToOtherBoard: (orderId: string) => Promise<void>;
   /** Cerrados -> Apartados: solo admin (rpc_revert_order_to_picked) */
   revertOrderToPicked: (orderId: string) => Promise<void>;
   resolveStockPending: (orderId: string) => Promise<void>;
@@ -123,6 +146,19 @@ function cloneOrders(orders: AdminOrder[]): AdminOrder[] {
 
 function findOrder(state: OrdersState, orderId: string): AdminOrder | undefined {
   return state.orders.find((o) => o.id === orderId);
+}
+
+/** Ítem en espera cuya resolución alimenta snapshot → campana (local/depósito o fábrica en local diferido). */
+function itemWaitingForSnapshotResolution(
+  item: AdminOrderItem | undefined,
+  order: AdminOrder | undefined,
+  wh: WarehouseIds
+): boolean {
+  if (!item || !order) return false;
+  if (String(item.status || "").trim().toLowerCase() !== "waiting") return false;
+  const kind = getWaitingSourceKind(item, wh);
+  if (kind === "local") return true;
+  return kind === "fabrica" && Boolean(order.local_deferred_pickup);
 }
 
 function getErrorMessage(err: unknown): string {
@@ -186,6 +222,24 @@ export async function refreshAndMaybeAutoClose(
   } catch {
     return { order: refreshed, autoClosed: false };
   }
+  const customer = getCustomerFromOrder(refreshed);
+  if (
+    isLocalZoneCustomerShippingOrder(
+      customer?.province,
+      customer?.city,
+      refreshed.transportName ?? null
+    )
+  ) {
+    await supabase
+      .from("orders")
+      .update({
+        notes: applyOrderNotesPatch(refreshed.notes, {
+          local_zone_shipping_close: true,
+        }),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", orderId);
+  }
   const closed = await fetchOrderById(supabase, orderId);
   return { order: closed ?? refreshed, autoClosed: true };
 }
@@ -193,16 +247,30 @@ export async function refreshAndMaybeAutoClose(
 export const useOrdersStore = create<OrdersState>((set, get) => ({
   orders: [],
   warehouseIds: { general: null, ventaPublico: null },
+  boardScope: "shipping",
   hydrated: false,
   toast: null,
   loadingAction: null,
 
-  hydrate: (orders) => set({ orders, hydrated: true }),
+  hydrate: (orders, scope) =>
+    set((state) => {
+      const boardScope = scope ?? state.boardScope;
+      const wh = state.warehouseIds;
+      const hasWarehouses = Boolean(wh.general || wh.ventaPublico);
+      return {
+        orders: hasWarehouses
+          ? filterOrdersByBoardScope(orders, boardScope, { warehouseIds: wh })
+          : orders,
+        boardScope,
+        hydrated: true,
+      };
+    }),
 
   refreshAll: async () => {
     const supabase = getSupabaseBrowserClient();
+    const scope = get().boardScope;
     const [orders, warehouseIds] = await Promise.all([
-      fetchOrdersInitial(supabase),
+      fetchOrdersInitial(supabase, scope),
       loadWarehouses(supabase),
     ]);
     set({ orders, warehouseIds, hydrated: true });
@@ -212,7 +280,11 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
 
   clearToast: () => set({ toast: null }),
 
-  getColumnOrders: (columnId) => filterOrdersForColumn(get().orders, columnId),
+  getColumnOrders: (columnId) =>
+    filterOrdersForColumn(get().orders, columnId, {
+      boardScope: get().boardScope,
+      warehouseIds: get().warehouseIds,
+    }),
 
   patchOrder: (order) =>
     set((state) => {
@@ -220,6 +292,9 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
       // realtime: sacarlo del store en vez de dejarlo colgado. Sin esto quedaba
       // en memoria para siempre (bloat + podía matchear mal alguna columna).
       if (isFinalOrderStatus(order)) {
+        return { orders: state.orders.filter((o) => o.id !== order.id) };
+      }
+      if (!orderBelongsOnKanban(order, state.boardScope, state.warehouseIds)) {
         return { orders: state.orders.filter((o) => o.id !== order.id) };
       }
       return {
@@ -236,6 +311,7 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
 
   addOrderIfMissing: (order) =>
     set((state) => {
+      if (!orderBelongsOnKanban(order, state.boardScope, state.warehouseIds)) return state;
       if (state.orders.some((o) => o.id === order.id)) return state;
       return { orders: [order, ...state.orders] };
     }),
@@ -246,11 +322,14 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
     if (!order) return;
 
     const reservedIds = (order.order_items || [])
-      .filter((i) => String(i.status).trim().toLowerCase() === "reserved")
+      .filter((i) => {
+        const st = String(i.status).trim().toLowerCase();
+        return st === "reserved" || st === "awaiting_apartado";
+      })
       .map((i) => i.id);
 
     if (reservedIds.length === 0) {
-      get().showToast("No hay ítems reservados para apartar", "info");
+      get().showToast("No hay ítems pendientes de apartar", "info");
       return;
     }
 
@@ -331,6 +410,67 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
     }
   },
 
+  confirmAllCancelledItems: async (orderId) => {
+    const snapshot = cloneOrders(get().orders);
+    const order = findOrder(get(), orderId);
+    if (!order) return;
+
+    const pending = getCancelledItemsPendingStockReturn(order);
+    if (pending.length === 0) {
+      get().showToast("No hay cancelaciones pendientes de confirmar", "info");
+      return;
+    }
+
+    const pendingIds = new Set(pending.map((item) => item.id));
+    const loadingKey = `confirm-all-cancelled:${orderId}`;
+
+    set((state) => ({
+      orders: state.orders.map((o) =>
+        o.id !== orderId
+          ? o
+          : {
+              ...o,
+              order_items: (o.order_items || []).filter((item) => !pendingIds.has(item.id)),
+            }
+      ),
+      loadingAction: loadingKey,
+    }));
+
+    try {
+      const supabase = getSupabaseBrowserClient();
+      for (const item of pending) {
+        const result = await rpcRemoveOrderItemRestoreStock(supabase, item.id);
+        if (result?.order_deleted) {
+          get().removeOrder(orderId);
+          get().showToast(
+            pending.length === 1
+              ? "Cancelación confirmada — pedido actualizado"
+              : `${pending.length} cancelaciones confirmadas — pedido actualizado`,
+            "success"
+          );
+          return;
+        }
+      }
+
+      const { order: refreshed, autoClosed } = await refreshAndMaybeAutoClose(supabase, orderId);
+      if (refreshed) get().patchOrder(refreshed);
+      else get().removeOrder(orderId);
+      get().showToast(
+        autoClosed
+          ? "Pedido cerrado — el cliente ya había pedido el cierre"
+          : pending.length === 1
+            ? "Cancelación confirmada — stock actualizado"
+            : `${pending.length} cancelaciones confirmadas — stock actualizado`,
+        "success"
+      );
+    } catch (err) {
+      set({ orders: snapshot });
+      get().showToast(getErrorMessage(err), "error");
+    } finally {
+      set({ loadingAction: null });
+    }
+  },
+
   confirmCancelledItem: async (orderId, itemId) => {
     const snapshot = cloneOrders(get().orders);
     const order = findOrder(get(), orderId);
@@ -357,7 +497,10 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
       const supabase = getSupabaseBrowserClient();
       const result = await rpcRemoveOrderItemRestoreStock(supabase, itemId);
 
-      if (result?.order_deleted || remainingItems.length === 0) {
+      // Solo quitar el pedido si el backend lo borró (p. ej. ya no quedan ítems).
+      // No usar remainingItems.length: al confirmar 1 de varios cancelados con stock
+      // pendiente, el pedido debe seguir visible hasta devolver todo (319).
+      if (result?.order_deleted) {
         get().removeOrder(orderId);
         get().showToast("Cancelación confirmada — pedido actualizado", "success");
         return;
@@ -382,6 +525,11 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
 
   markItemMissing: async (orderId, itemId) => {
     const snapshot = cloneOrders(get().orders);
+    const orderBefore = findOrder(get(), orderId);
+    const itemBefore = (orderBefore?.order_items || []).find((item) => item.id === itemId);
+    const wh = get().warehouseIds;
+    const wasWaitingDeferred = itemWaitingForSnapshotResolution(itemBefore, orderBefore, wh);
+
     const order = findOrder(get(), orderId);
     if (!order) return;
 
@@ -417,8 +565,35 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
         dedupeTypes: ["ORDER_MISSING_ITEMS", "ORDER_ALL_RESERVED"],
       });
 
+      const missingItem = (order.order_items || []).find((item) => item.id === itemId);
+      if (wasWaitingDeferred) {
+        const { notificationCreated } = await recordLocalWaitItemResolution(
+          orderId,
+          itemId,
+          "missing",
+          formatItemProductLabel(missingItem || itemBefore || {})
+        );
+        if (notificationCreated) {
+          get().showToast("Mensaje listo en la campana", "success");
+        }
+      }
+
       const refreshed = await fetchOrderById(supabase, orderId);
-      if (refreshed) get().patchOrder(refreshed);
+      if (refreshed) {
+        get().patchOrder(refreshed);
+        if (!wasWaitingDeferred) {
+          try {
+            await syncOrderSnapshotPriorFromOrder(
+              orderId,
+              refreshed.order_items || [],
+              get().warehouseIds,
+              refreshed
+            );
+          } catch {
+            // sin snapshot activo
+          }
+        }
+      }
       get().showToast("Producto marcado sin stock", "success");
     } catch (err) {
       set({ orders: snapshot });
@@ -451,6 +626,11 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
 
   markItemPicked: async (orderId, itemId) => {
     const snapshot = cloneOrders(get().orders);
+    const orderBefore = findOrder(get(), orderId);
+    const itemBefore = (orderBefore?.order_items || []).find((item) => item.id === itemId);
+    const wh = get().warehouseIds;
+    const wasWaitingDeferred = itemWaitingForSnapshotResolution(itemBefore, orderBefore, wh);
+
     set((state) => ({
       orders: state.orders.map((o) =>
         o.id !== orderId
@@ -468,8 +648,33 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
     try {
       const supabase = getSupabaseBrowserClient();
       await rpcMarkOrderItemsPicked(supabase, [itemId], "pick_one");
+      if (wasWaitingDeferred) {
+        const { notificationCreated } = await recordLocalWaitItemResolution(
+          orderId,
+          itemId,
+          "picked",
+          formatItemProductLabel(itemBefore || {})
+        );
+        if (notificationCreated) {
+          get().showToast("Mensaje listo en la campana", "success");
+        }
+      }
       const { order: refreshed, autoClosed } = await refreshAndMaybeAutoClose(supabase, orderId);
-      if (refreshed) get().patchOrder(refreshed);
+      if (refreshed) {
+        get().patchOrder(refreshed);
+        if (!wasWaitingDeferred) {
+          try {
+            await syncOrderSnapshotPriorFromOrder(
+              orderId,
+              refreshed.order_items || [],
+              get().warehouseIds,
+              refreshed
+            );
+          } catch {
+            // sin snapshot activo
+          }
+        }
+      }
       get().showToast(
         autoClosed ? "Pedido cerrado — el cliente ya había pedido el cierre" : "Producto apartado",
         "success"
@@ -511,7 +716,9 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
       const refreshed = await fetchOrderById(supabase, orderId);
       if (refreshed) get().patchOrder(refreshed);
       get().showToast(
-        source === "local" ? "En espera (local)" : "En espera (fábrica)",
+        source === "local"
+          ? `En espera (${waitingLocalLabel(get().boardScope).toLowerCase()})`
+          : "En espera (fábrica)",
         "success"
       );
     } catch (err) {
@@ -659,6 +866,28 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
       await rpcSendOrderToLocal(supabase, orderId);
       get().removeOrder(orderId);
       get().showToast("Pedido enviado al local", "success");
+    } catch (err) {
+      set({ orders: snapshot });
+      get().showToast(getErrorMessage(err), "error");
+    } finally {
+      set({ loadingAction: null });
+    }
+  },
+
+  moveOrderToOtherBoard: async (orderId) => {
+    const snapshot = cloneOrders(get().orders);
+    const order = findOrder(get(), orderId);
+    if (!order) return;
+
+    const targetScope = otherBoardScope(get().boardScope);
+    const targetTitle = otherBoardTitle(get().boardScope);
+    set({ loadingAction: orderId });
+
+    try {
+      const supabase = getSupabaseBrowserClient();
+      await updateOrderKanbanScope(supabase, orderId, order.notes, targetScope);
+      get().removeOrder(orderId);
+      get().showToast(`Pedido enviado a ${targetTitle}`, "success");
     } catch (err) {
       set({ orders: snapshot });
       get().showToast(getErrorMessage(err), "error");
@@ -833,6 +1062,7 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
 
   subscribeNewOrders: () => {
     const supabase = getSupabaseBrowserClient();
+    const scope = get().boardScope;
 
     if (realtimeChannel) {
       supabase.removeChannel(realtimeChannel);
@@ -845,7 +1075,7 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
     };
 
     realtimeChannel = supabase
-      .channel("orders-kanban")
+      .channel(realtimeChannelForScope(scope))
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "orders" },

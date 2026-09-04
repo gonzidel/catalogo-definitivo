@@ -6,6 +6,11 @@ import { useCatalog } from "@/hooks/useCatalog";
 import { useEnrichedCatalog } from "@/hooks/useEnrichedCatalog";
 import { productHasAnyStock } from "@/lib/utils/catalog-variant-enrich";
 import { searchProducts, filterBySizes } from "@/lib/utils/search";
+import { useSearchDictionary } from "@/hooks/useSearchDictionary";
+import {
+  flushPendingSearchCommitted,
+  trackSearchResultClick,
+} from "@/lib/search/search-analytics";
 import {
   inferCategoryFromProducts,
   filterProductsByTags,
@@ -55,6 +60,7 @@ export default function CatalogShell({
   const searchParams = useSearchParams();
   const pathname = usePathname();
   const searchTerm = searchParams.get("q") ?? "";
+  const searchDictionary = useSearchDictionary();
   const activeSizes = searchParams
     .get("talle")
     ?.split(",")
@@ -99,7 +105,7 @@ export default function CatalogShell({
       ? allProducts
       : initialProducts;
 
-  const { products: enrichedProducts, isEnriching } = useEnrichedCatalog(
+  const { products: enrichedProducts, isEnriching, isSearchExtrasPending } = useEnrichedCatalog(
     baseProducts,
     searchTerm
   );
@@ -126,9 +132,9 @@ export default function CatalogShell({
   const searched = React.useMemo(
     () =>
       searchTerm.length >= 2
-        ? searchProducts(tagFiltered, searchTerm)
+        ? searchProducts(tagFiltered, searchTerm, searchDictionary)
         : tagFiltered,
-    [tagFiltered, searchTerm]
+    [tagFiltered, searchTerm, searchDictionary]
   );
 
   const effectiveCategoria = React.useMemo(() => {
@@ -141,6 +147,18 @@ export default function CatalogShell({
     activeSizes.length > 0
       ? filterBySizes(searched, activeSizes, effectiveCategoria)
       : searched;
+
+  useEffect(() => {
+    if (searchTerm.trim().length < 2) return;
+    if (isEnriching || isSearchExtrasPending) return;
+    flushPendingSearchCommitted(searchTerm, searched.length, searchDictionary);
+  }, [
+    searchTerm,
+    isEnriching,
+    isSearchExtrasPending,
+    searched.length,
+    searchDictionary,
+  ]);
 
   const contextCategoria =
     categoria !== "all" ? categoria : effectiveCategoria;
@@ -374,9 +392,17 @@ export default function CatalogShell({
                 priority={i < 4}
                 activeSizes={activeSizes}
                 categoria={effectiveCategoria}
-                onNavigate={(element) =>
-                  saveCatalogState(product.Articulo, element.getBoundingClientRect().top)
-                }
+                onNavigate={(element) => {
+                  saveCatalogState(product.Articulo, element.getBoundingClientRect().top);
+                  if (searchTerm.trim().length >= 2) {
+                    trackSearchResultClick(
+                      searchTerm,
+                      product.Articulo,
+                      i + 1,
+                      searchDictionary
+                    );
+                  }
+                }}
               />
             );
             // Insert curated banner slot after the 4th product (index 3)

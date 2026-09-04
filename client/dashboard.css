@@ -4361,6 +4361,170 @@ html.client-area body.onboarding-open #section-bag #cart-footer {
   }
 }
 
+/* Bottom sheet: confirmar quitar producto de Mi pedido */
+html.client-area .dash-remove-order-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 12050;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s ease, visibility 0.2s ease;
+  box-sizing: border-box;
+}
+
+html.client-area .dash-remove-order-sheet.is-open {
+  pointer-events: auto;
+  opacity: 1;
+  visibility: visible;
+}
+
+html.client-area .dash-remove-order-sheet__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+html.client-area .dash-remove-order-sheet__panel {
+  position: relative;
+  width: 100%;
+  max-width: 480px;
+  background: var(--card, #fff);
+  border-radius: 18px 18px 0 0;
+  padding: 12px 20px calc(18px + env(safe-area-inset-bottom, 0px));
+  box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.18);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-bottom: none;
+  box-sizing: border-box;
+  transform: translateY(100%);
+  transition: transform 0.25s ease;
+}
+
+html.client-area .dash-remove-order-sheet.is-open .dash-remove-order-sheet__panel {
+  transform: translateY(0);
+}
+
+html.client-area .dash-remove-order-sheet__handle {
+  width: 40px;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.14);
+  margin: 2px auto 14px;
+}
+
+html.client-area .dash-remove-order-sheet__title {
+  margin: 0 0 8px 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text, #2d2d2d);
+  line-height: 1.3;
+}
+
+html.client-area .dash-remove-order-sheet__msg {
+  margin: 0;
+  color: var(--muted, #5f5f5f);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+html.client-area .dash-remove-order-sheet__stepper {
+  margin-top: 16px;
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  padding: 14px 12px;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.03);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+html.client-area .dash-remove-order-sheet__stepper-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted, #5f5f5f);
+  line-height: 1.3;
+}
+
+html.client-area .dash-remove-order-sheet__stepper-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+}
+
+html.client-area .dash-remove-order-sheet__step-btn {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  border: 1.5px solid var(--brand, #cd844d);
+  background: #fff;
+  color: var(--brand, #cd844d);
+  border-radius: 12px;
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+html.client-area .dash-remove-order-sheet__step-btn:hover:not(:disabled) {
+  background: var(--brand, #cd844d);
+  color: #fff;
+}
+
+html.client-area .dash-remove-order-sheet__step-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+html.client-area .dash-remove-order-sheet__step-qty {
+  min-width: 36px;
+  text-align: center;
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--text, #2d2d2d);
+  line-height: 1;
+}
+
+html.client-area .dash-remove-order-sheet__stepper-hint {
+  font-size: 12px;
+  color: var(--muted, #5f5f5f);
+  line-height: 1.35;
+  text-align: center;
+}
+
+html.client-area .dash-remove-order-sheet__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: stretch;
+  margin-top: 18px;
+}
+
+html.client-area .dash-remove-order-sheet__actions .btn {
+  flex: 1 1 0;
+  min-height: 44px;
+  justify-content: center;
+}
+
+html.client-area .dash-remove-order-sheet__actions .btn-danger {
+  background: #e54848;
+  border-color: transparent;
+  color: #fff;
+}
+
+html.client-area .dash-remove-order-sheet__actions .btn-danger:hover {
+  background: #c92a2a;
+  color: #fff;
+}
+
 /* Modal in-app: quitar producto de la bolsa (sustituye confirm() nativo) */
 html.client-area .dash-remove-cart-item-modal {
   display: none;

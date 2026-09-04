@@ -7,6 +7,7 @@ import NuevosIngresosBanner from "@/components/banners/NuevosIngresosBanner";
 import CuratedSpecialBanner from "@/components/banners/CuratedSpecialBanner";
 import CuratedBanner from "@/components/banners/CuratedBanner";
 import InfoBanner from "@/components/banners/InfoBanner";
+import HomeLaunchOnboarding from "@/components/guide/HomeLaunchOnboarding";
 
 export const revalidate = 300;
 
@@ -51,8 +52,11 @@ async function CatalogContent() {
 // NOT async — sends HTML immediately with skeleton fallback
 export default function HomePage() {
   return (
-    <Suspense fallback={<CatalogSkeleton />}>
-      <CatalogContent />
-    </Suspense>
+    <>
+      <HomeLaunchOnboarding />
+      <Suspense fallback={<CatalogSkeleton />}>
+        <CatalogContent />
+      </Suspense>
+    </>
   );
 }

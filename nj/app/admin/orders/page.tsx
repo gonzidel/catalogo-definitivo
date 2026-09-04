@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 export default async function AdminOrdersPage() {
   const supabase = await createSupabaseServerClient();
-  const initialOrders = await fetchOrdersInitial(supabase);
+  const initialOrders = await fetchOrdersInitial(supabase, "shipping");
 
-  return <KanbanBoard initialOrders={initialOrders} />;
+  return <KanbanBoard initialOrders={initialOrders} scope="shipping" />;
 }

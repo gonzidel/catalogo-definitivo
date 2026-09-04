@@ -17,7 +17,9 @@ import {
   getOrderDisplayNumber,
   isCancelledOrderItem,
   isCustomerSourcedOrder,
+  isCommonLocalPickupAwaitingAdminSale,
   isMissingOrderItem,
+  isAwaitingApartadoOrderItem,
   isPickedOrderItem,
   isReservedOrderItem,
   isWaitingOrderItem,
@@ -30,9 +32,31 @@ import {
   formatAdminDeadlineCountdown,
   getOrderDeadlineDate,
   isOrderExpired,
+  isOrderExpiringToday,
 } from "@/lib/orders/deadline";
-import { orderHasWaitingSource } from "@/lib/orders/waiting-source";
-import { summarizeDraftChanges, type DraftChangesMap } from "@/lib/orders/draft-changes";
+import { buildExpiryWarningMessage, buildExpiredOrderMessage } from "@/lib/orders/customer-status-message";
+import { useExpiryWarnSentStore } from "@/lib/orders/expiry-warning-sent";
+import {
+  getWaitingSourceKind,
+  orderHasWaitingSource,
+} from "@/lib/orders/waiting-source";
+import {
+  draftDefersCustomerMessage,
+  type DraftChangesMap,
+} from "@/lib/orders/draft-changes";
+import {
+  buildMessageFromOrderAndDraft,
+  buildPriorDecisionFromOrder,
+  collectWaitingFabricaItemIdsFromDraft,
+  collectWaitingLocalItemIdsFromDraft,
+  resolveMessageProfile,
+} from "@/lib/orders/customer-status-message";
+import {
+  saveLocalWaitSnapshotFromConfirm,
+  updateLocalWaitSnapshotPriorFromConfirm,
+} from "@/lib/orders/local-wait-notifications";
+import { getRetiroActiveOriginTone } from "@/lib/orders/board-scope";
+import { getWaitingLocalVisualKind } from "@/lib/orders/retiro-deposit-waiting";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useOrdersStore } from "@/hooks/useOrders";
 import type { AdminOrder } from "@/types/orders";
@@ -96,6 +120,7 @@ export default function OrderCard({ order }: OrderCardProps) {
   const warehouseIds = useOrdersStore((s) => s.warehouseIds);
   const removeItem = useOrdersStore((s) => s.cancelItem);
   const confirmCancelledItem = useOrdersStore((s) => s.confirmCancelledItem);
+  const confirmAllCancelledItems = useOrdersStore((s) => s.confirmAllCancelledItems);
   const markItemMissing = useOrdersStore((s) => s.markItemMissing);
   const markItemPicked = useOrdersStore((s) => s.markItemPicked);
   const markItemWaiting = useOrdersStore((s) => s.markItemWaiting);
@@ -104,12 +129,22 @@ export default function OrderCard({ order }: OrderCardProps) {
   const isMobile = useIsMobile();
   const [pendingChanges, setPendingChanges] = useState<DraftChangesMap>({});
   const [confirmBusy, setConfirmBusy] = useState(false);
+  const [pendingConfirmAllCancelled, setPendingConfirmAllCancelled] = useState(false);
+  const hydrateExpiryWarn = useExpiryWarnSentStore((s) => s.hydrate);
+  const expiryWarnSent = useExpiryWarnSentStore((s) => s.sentIds.has(order.id));
+
+  useEffect(() => {
+    hydrateExpiryWarn();
+  }, [hydrateExpiryWarn]);
 
   const customer = getCustomerFromOrder(order);
   const column = getPrimaryColumnForActions(order);
   // Countdown de vencimiento: solo pedidos con plazo real (dismantle_at) o de clienta.
   // Pedidos admin/PAU sin dismantle_at no muestran chip (no tienen ventana de 7 días).
-  const hasDeadline = Boolean(order.dismantle_at) || isCustomerSourcedOrder(order);
+  // Deferred local (309): sin dismantle_at todavía no hay plazo → no inventar "7 días".
+  const hasDeadline =
+    Boolean(order.dismantle_at) ||
+    (isCustomerSourcedOrder(order) && !order.local_deferred_pickup);
   const deadlineDate = hasDeadline
     ? getOrderDeadlineDate(order.created_at, order.dismantle_at)
     : null;
@@ -119,9 +154,14 @@ export default function OrderCard({ order }: OrderCardProps) {
       : null;
   const deadlineExpired =
     hasDeadline && column !== "closed" && isOrderExpired(order);
-  /** ≤2 días para vencer → alerta rosa (distinta del azul clienta / rojo vencido). */
+  const boardScope = useOrdersStore((s) => s.boardScope);
+  /** ≤2 días para vencer → alerta rosa (solo tablero Pedidos/shipping).
+   *  En Retiro no pintar “por vencer”: solo el rojo de ya vencido. */
   const expiringSoon =
-    calendarDaysLeft !== null && !deadlineExpired && calendarDaysLeft <= 2;
+    boardScope !== "local_pickup" &&
+    calendarDaysLeft !== null &&
+    !deadlineExpired &&
+    calendarDaysLeft <= 2;
   const countdownLabel =
     calendarDaysLeft === null
       ? null
@@ -134,8 +174,9 @@ export default function OrderCard({ order }: OrderCardProps) {
         ? `Venció el ${deadlineDate.toLocaleString("es-AR")}`
         : `Vence el ${deadlineDate.toLocaleString("es-AR")}`
       : undefined;
-  /** En mobile, Activos pasa a modo borrador: tocar ✓/⏳/✕ no aplica nada hasta "Confirmar cambios" */
-  const draftMode = isMobile && column === "active";
+  /** Activos en modo borrador: tocar ✓/⏳/✕ solo marca el cambio hasta "Confirmar" (mobile y Retiro desktop). */
+  const draftMode =
+    column === "active" && (isMobile || boardScope === "local_pickup");
   /** Mobile: tap en la card expande/colapsa — no hace falta el link Expandir. */
   const expandOnCardClick =
     isMobile || column === "active" || column === "waiting" || column === "cancelled";
@@ -152,12 +193,26 @@ export default function OrderCard({ order }: OrderCardProps) {
       ),
     [column, items]
   );
+  const operationalProductCount = useMemo(
+    () => countRegularProductUnits(items.filter((item) => !isCancelledOrderItem(item))),
+    [items]
+  );
+  const showExpiryWarningBtn =
+    isMobile &&
+    hasDeadline &&
+    isOrderExpiringToday(order) &&
+    operationalProductCount >= 4 &&
+    (column === "cancelled" ||
+      column === "active" ||
+      column === "picked" ||
+      column === "waiting");
+  const showExpiredOrderMessageBtn =
+    isMobile &&
+    column === "cancelled" &&
+    hasDeadline &&
+    deadlineExpired &&
+    !showExpiryWarningBtn;
   const cancelledItems = useMemo(() => getCancelledOrderItems(order), [order]);
-  // Solo los cancelados que realmente necesitan que el admin confirme una
-  // devolución de stock (excluye los cancelados desde "missing" -- nunca hubo
-  // stock real, ver domain.ts cancelledItemNeedsStockConfirmation). Se usa en
-  // vez de cancelledItems para no pedirle al admin que confirme algo que no
-  // corresponde ni arriesgar una acreditación fantasma de stock.
   const cancelledItemsPendingReturn = useMemo(
     () => getCancelledItemsPendingStockReturn(order),
     [order]
@@ -185,18 +240,41 @@ export default function OrderCard({ order }: OrderCardProps) {
   // (ítems activos + algún ítem cancelado suelto, sin botón "Desarmar"
   // disponible), el ✓ individual sigue siendo la única forma de resolverlo.
   const dismantleAllPending = column === "cancelled" && order.status !== "cancelled" && isExpiredPending;
+  const showCancelledColumnPending =
+    column === "cancelled" &&
+    !dismantleAllPending &&
+    order.status !== "cancelled" &&
+    cancelledItemsPendingReturn.length > 0;
+  const confirmAllCancelledBusy = loadingAction === `confirm-all-cancelled:${order.id}`;
+  const confirmAllCancelledLabel =
+    cancelledItemsPendingReturn.length === 1
+      ? "Confirmar cancelación y devolver stock"
+      : `Confirmar ${cancelledItemsPendingReturn.length} cancelaciones y devolver stock`;
   const cancelledSummaryItems = useMemo(
     () => (dismantleAllPending ? [...cancelledItems, ...operationalWhileCancelled] : []),
     [dismantleAllPending, cancelledItems, operationalWhileCancelled]
   );
   const hasMissingItem = orderHasMissingItem(order);
   const customerWantsClose = Boolean(parseOrderNotesObject(order.notes)?.customer_requested_close);
+  const customerClosedAwaitingSale = isCommonLocalPickupAwaitingAdminSale(
+    order,
+    order.transportName ?? null
+  );
   const missingOnlyItems = useMemo(() => items.filter(isMissingOrderItem), [items]);
   // Usados solo para el tinte de fondo de la tarjeta (ver className más abajo):
   // si el pedido tiene los dos orígenes mezclados, no se tiñe la tarjeta entera
   // (cada ítem ya lleva su propia etiqueta Local/Fábrica, ver OrderCardItems).
   const hasLocalWaiting = orderHasWaitingSource(order, "local", warehouseIds);
   const hasFabricaWaiting = orderHasWaitingSource(order, "fabrica", warehouseIds);
+  const waitingLocalVisual = getWaitingLocalVisualKind(order, boardScope, warehouseIds);
+  const waitingCardToneClass =
+    column === "waiting" && hasLocalWaiting && !hasFabricaWaiting
+      ? waitingLocalVisual === "deposito"
+        ? " order-card--waiting-deposito"
+        : " order-card--waiting-local"
+      : column === "waiting" && hasFabricaWaiting && !hasLocalWaiting
+        ? " order-card--waiting-fabrica"
+        : "";
   const pickedCount = useMemo(
     () => (column === "active" ? countPickedOrderItems(items) : 0),
     [column, items]
@@ -204,13 +282,18 @@ export default function OrderCard({ order }: OrderCardProps) {
   const reservedItems = useMemo(
     () =>
       column === "active"
-        ? items.filter((item) => isReservedOrderItem(item) || isMissingOrderItem(item))
+        ? items.filter(
+            (item) =>
+              isReservedOrderItem(item) ||
+              isAwaitingApartadoOrderItem(item) ||
+              isMissingOrderItem(item)
+          )
         : items,
     [column, items]
   );
   const pickedItems = useMemo(
-    () => (showPicked && column === "active" ? items.filter(isPickedOrderItem) : []),
-    [showPicked, column, items]
+    () => (column === "active" ? items.filter(isPickedOrderItem) : []),
+    [column, items]
   );
   const pickedColumnItems = useMemo(
     () =>
@@ -223,24 +306,84 @@ export default function OrderCard({ order }: OrderCardProps) {
     () => (column === "waiting" ? items.filter(isWaitingOrderItem) : items),
     [column, items]
   );
+  /** Espera: productos visibles sin expandir; count/total solo al expandir (footer). */
+  const isWaitingColumn = column === "waiting";
+  const showWaitingHeaderTotals = !isWaitingColumn;
   const customerName = customer?.full_name?.trim() || "Sin cliente";
   const city = customer?.city?.trim() || null;
   const phone = customer?.phone?.trim() || null;
   const waUrl = buildWhatsAppUrl(phone);
   const fromCustomer = isCustomerSourcedOrder(order);
+  /** Solo Apartados en Retiro: verde clienta / amarillo desde Pedidos / celeste admin-local. */
+  const retiroActiveTone =
+    boardScope === "local_pickup" && column === "picked" && !customerClosedAwaitingSale
+      ? getRetiroActiveOriginTone(order)
+      : null;
+  const customerCardClass =
+    !retiroActiveTone && fromCustomer ? " order-card--customer" : "";
+  const retiroToneClass = customerClosedAwaitingSale
+    ? " order-card--retiro-picked-customer-close"
+    : retiroActiveTone
+      ? ` order-card--retiro-origin-${retiroActiveTone}`
+      : "";
 
   useEffect(() => {
-    if (!expanded) {
-      setShowPicked(false);
-      return;
-    }
-    // Mobile: sin el toggle "X ap.", al expandir se muestran los apartados solos.
-    if (isMobile && column === "active" && pickedCount > 0) setShowPicked(true);
-  }, [expanded, isMobile, column, pickedCount]);
+    if (!expanded) setShowPicked(false);
+  }, [expanded]);
 
   useEffect(() => {
     if (!draftMode) setPendingChanges({});
   }, [draftMode]);
+
+  const sendExpiryWarningMessage = async () => {
+    const msg = buildExpiryWarningMessage();
+    try {
+      await navigator.clipboard.writeText(msg);
+    } catch {
+      useOrdersStore.getState().showToast("No se pudo copiar el mensaje", "error");
+      return;
+    }
+    try {
+      await useExpiryWarnSentStore.getState().markSent(order.id);
+    } catch {
+      useOrdersStore.getState().showToast("No se pudo registrar el aviso", "error");
+      return;
+    }
+    const url = buildWhatsAppUrl(phone, msg);
+    if (!url) {
+      useOrdersStore.getState().showToast("Sin teléfono del cliente", "error");
+      return;
+    }
+    window.open(url, "_blank", "noopener,noreferrer");
+    useOrdersStore.getState().showToast("Mensaje copiado", "success");
+  };
+
+  const copyExpiredOrderMessage = async () => {
+    const msg = buildExpiredOrderMessage();
+    try {
+      await navigator.clipboard.writeText(msg);
+      useOrdersStore.getState().showToast("Mensaje copiado", "success");
+    } catch {
+      useOrdersStore.getState().showToast("No se pudo copiar el mensaje", "error");
+    }
+  };
+
+  const sendExpiredOrderMessage = async () => {
+    const msg = buildExpiredOrderMessage();
+    try {
+      await navigator.clipboard.writeText(msg);
+    } catch {
+      useOrdersStore.getState().showToast("No se pudo copiar el mensaje", "error");
+      return;
+    }
+    const url = buildWhatsAppUrl(phone, msg);
+    if (!url) {
+      useOrdersStore.getState().showToast("Sin teléfono del cliente", "error");
+      return;
+    }
+    window.open(url, "_blank", "noopener,noreferrer");
+    useOrdersStore.getState().showToast("Mensaje copiado", "success");
+  };
 
   const stagePicked = (itemId: string) => {
     setPendingChanges((prev) => {
@@ -290,10 +433,43 @@ export default function OrderCard({ order }: OrderCardProps) {
 
   const discardChanges = () => setPendingChanges({});
 
+  const defersCustomerMessage = draftDefersCustomerMessage(pendingChanges, order);
+  const showDraftMessageActions =
+    draftMode && Object.keys(pendingChanges).length > 0 && !defersCustomerMessage;
+
+  const copyDraftCustomerMessage = async (): Promise<string | null> => {
+    const msg = buildMessageFromOrderAndDraft(items, pendingChanges, warehouseIds, order);
+    if (!msg) {
+      useOrdersStore.getState().showToast("No hay mensaje para copiar", "info");
+      return null;
+    }
+    try {
+      await navigator.clipboard.writeText(msg);
+      useOrdersStore.getState().showToast("Mensaje copiado", "success");
+      return msg;
+    } catch {
+      useOrdersStore.getState().showToast("No se pudo copiar el mensaje", "error");
+      return null;
+    }
+  };
+
+  const sendDraftCustomerMessage = async () => {
+    const msg = await copyDraftCustomerMessage();
+    if (!msg) return;
+    const url = buildWhatsAppUrl(phone, msg);
+    if (!url) {
+      useOrdersStore.getState().showToast("Sin teléfono del cliente", "error");
+      return;
+    }
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
+
   const confirmChanges = async () => {
     setConfirmBusy(true);
+    const draftSnapshot = { ...pendingChanges };
+    const defersMessage = draftDefersCustomerMessage(draftSnapshot, order);
     try {
-      for (const [itemId, change] of Object.entries(pendingChanges)) {
+      for (const [itemId, change] of Object.entries(draftSnapshot)) {
         if (change.kind === "picked") await markItemPicked(order.id, itemId);
         else if (change.kind === "waiting-fabrica") await markItemWaiting(order.id, itemId, "fabrica");
         else if (change.kind === "waiting-local") await markItemWaiting(order.id, itemId, "local");
@@ -309,6 +485,52 @@ export default function OrderCard({ order }: OrderCardProps) {
           );
       }
       setPendingChanges({});
+
+      const refreshed =
+        useOrdersStore.getState().orders.find((o) => o.id === order.id) || order;
+      const wh = useOrdersStore.getState().warehouseIds;
+      const priorFromOrder = buildPriorDecisionFromOrder(
+        refreshed.order_items || [],
+        wh,
+        refreshed
+      );
+
+      if (defersMessage && isCustomerSourcedOrder(refreshed)) {
+        const waitingLocalItemIds = collectWaitingLocalItemIdsFromDraft(
+          draftSnapshot,
+          refreshed.order_items || [],
+          wh
+        );
+        const waitingFabricaItemIds = collectWaitingFabricaItemIdsFromDraft(
+          draftSnapshot,
+          refreshed.order_items || [],
+          wh,
+          refreshed
+        );
+        if (waitingLocalItemIds.length > 0 || waitingFabricaItemIds.length > 0) {
+          try {
+            await saveLocalWaitSnapshotFromConfirm({
+              orderId: order.id,
+              customerName: customerName || "Cliente",
+              phone: phone || null,
+              prior: priorFromOrder,
+              waitingLocalItemIds,
+              waitingFabricaItemIds,
+              messageProfile: resolveMessageProfile(refreshed),
+              pickupDeadlineAt: refreshed.dismantle_at ?? null,
+            });
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : "No se pudo guardar aviso de espera";
+            useOrdersStore.getState().showToast(msg, "error");
+          }
+        }
+      } else if (Object.keys(draftSnapshot).length > 0) {
+        try {
+          await updateLocalWaitSnapshotPriorFromConfirm(order.id, priorFromOrder, refreshed);
+        } catch {
+          // sin snapshot previo en servidor
+        }
+      }
     } finally {
       setConfirmBusy(false);
     }
@@ -340,6 +562,8 @@ export default function OrderCard({ order }: OrderCardProps) {
   const showPickedToggle = !isMobile && pickedCount > 0 && column === "active";
   const showDraftBadge = draftMode && Object.keys(pendingChanges).length > 0;
   const showSendBadge = !isMobile && customerWantsClose && column === "active";
+  const showPickedCloseBadge =
+    !isMobile && column === "picked" && customerClosedAwaitingSale;
   const showExpandToggle = !isMobile;
   const hasMetaActions =
     showTransport ||
@@ -347,12 +571,16 @@ export default function OrderCard({ order }: OrderCardProps) {
     showDraftBadge ||
     isExpiredPending ||
     showSendBadge ||
+    showPickedCloseBadge ||
     showExpandToggle;
-  const wantsCloseMobile = isMobile && customerWantsClose && column === "active";
+  const wantsCloseMobile =
+    isMobile &&
+    ((customerWantsClose && column === "active") ||
+      (customerClosedAwaitingSale && column === "picked"));
 
   return (
     <article
-      className={`order-card${deadlineExpired ? " order-card--aged" : ""}${expiringSoon ? " order-card--expiring-soon" : ""}${expanded ? " order-card--expanded" : ""}${fromCustomer ? " order-card--customer" : ""}${expandOnCardClick ? " order-card--click-expand" : ""}${wantsCloseMobile ? " order-card--wants-close" : ""}${column === "waiting" && hasLocalWaiting && !hasFabricaWaiting ? " order-card--waiting-local" : ""}${column === "waiting" && hasFabricaWaiting && !hasLocalWaiting ? " order-card--waiting-fabrica" : ""}`}
+      className={`order-card${deadlineExpired ? " order-card--aged" : ""}${expiringSoon ? " order-card--expiring-soon" : ""}${expanded ? " order-card--expanded" : ""}${customerCardClass}${retiroToneClass}${expandOnCardClick ? " order-card--click-expand" : ""}${wantsCloseMobile ? " order-card--wants-close" : ""}${isWaitingColumn ? " order-card--waiting-inline" : ""}${waitingCardToneClass}`}
       onClick={expandOnCardClick ? handleCardClick : undefined}
     >
       <div className="order-card__header">
@@ -382,18 +610,18 @@ export default function OrderCard({ order }: OrderCardProps) {
             ) : null}
           </span>
           <span className="order-card__customer">{customerName}</span>
-          <span className="order-card__header-total">
-            <span className="order-card__header-count">
-              {productCount} prod.
-            </span>
-            {/* Desktop: precio arriba. Mobile: va a la fila de abajo (.order-card__meta-price).
-                En Cancelados el total no refleja nada útil (ver domain.ts). */}
-            {column !== "cancelled" ? (
-              <span className="order-card__header-price">
-                {formatPriceAr(order.total_amount)}
+          {showWaitingHeaderTotals ? (
+            <span className="order-card__header-total">
+              <span className="order-card__header-count">
+                {productCount} prod.
               </span>
-            ) : null}
-          </span>
+              {column !== "cancelled" ? (
+                <span className="order-card__header-price">
+                  {formatPriceAr(order.total_amount)}
+                </span>
+              ) : null}
+            </span>
+          ) : null}
         </div>
 
         <div className="order-card__meta-row">
@@ -482,6 +710,15 @@ export default function OrderCard({ order }: OrderCardProps) {
                   Enviar
                 </span>
               ) : null}
+              {showPickedCloseBadge ? (
+                <span
+                  className="order-card__draft-badge"
+                  title="La clienta cerró el pedido — listo para cobrar e imprimir"
+                  style={{ background: "#7c3aed", color: "#fff" }}
+                >
+                  Cerró
+                </span>
+              ) : null}
               {showExpandToggle ? (
                 <button
                   type="button"
@@ -497,7 +734,7 @@ export default function OrderCard({ order }: OrderCardProps) {
               ) : null}
             </div>
           ) : null}
-          {column !== "cancelled" ? (
+          {showWaitingHeaderTotals && column !== "cancelled" ? (
             <span className="order-card__meta-price">
               {formatPriceAr(order.total_amount)}
             </span>
@@ -521,8 +758,59 @@ export default function OrderCard({ order }: OrderCardProps) {
         </div>
       ) : null}
 
+      {isWaitingColumn ? (
+        <div className="order-card__body order-card__body--waiting-inline" onClick={(event) => event.stopPropagation()}>
+          <OrderCardItems
+            items={waitingItems}
+            orderId={order.id}
+            orderSource={order.source}
+            enableWaitingPick
+            onMarkMissing={markItemMissing}
+            onMarkPicked={markItemPicked}
+            onMarkWaiting={markItemWaiting}
+            draftMode={draftMode}
+            draftChanges={pendingChanges}
+            onStagePicked={stagePicked}
+            onStageWaiting={stageWaiting}
+            onStageMissing={stageMissing}
+            onStageSplit={stageSplit}
+            loadingItemId={loadingAction}
+            emptyLabel="Sin productos en espera"
+          />
+        </div>
+      ) : null}
+
+      {showCancelledColumnPending ? (
+        <div
+          className="order-card__body order-card__body--cancelled-pending"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <p className="order-card__cancelled-banner">
+            {cancelledItemsPendingReturn.length} producto(s) cancelado(s) por la clienta —
+            confirmá con <strong>✓</strong> o el botón de abajo para devolver el stock
+          </p>
+          <OrderCardItems
+            items={cancelledItemsPendingReturn}
+            orderId={order.id}
+            confirmCancelledLayout
+            onConfirmCancelled={(itemId) => confirmCancelledItem(order.id, itemId)}
+            loadingItemId={loadingAction}
+            emptyLabel="Sin cancelaciones"
+          />
+          <button
+            type="button"
+            className="order-card__btn order-card__btn--primary order-card__confirm-all-cancelled"
+            disabled={confirmAllCancelledBusy || Boolean(loadingAction)}
+            onClick={() => setPendingConfirmAllCancelled(true)}
+          >
+            {confirmAllCancelledBusy ? "Confirmando…" : confirmAllCancelledLabel}
+          </button>
+        </div>
+      ) : null}
+
       {expanded ? (
         <>
+          {!isWaitingColumn ? (
           <div className="order-card__body">
             {showCancelledBanner ? (
               <div className="order-card__cancelled-panel">
@@ -543,7 +831,8 @@ export default function OrderCard({ order }: OrderCardProps) {
             {column === "cancelled" &&
             cancelledItemsPendingReturn.length > 0 &&
             order.status !== "cancelled" &&
-            !dismantleAllPending ? (
+            !dismantleAllPending &&
+            !showCancelledColumnPending ? (
               <p className="order-card__cancelled-banner">
                 {cancelledItemsPendingReturn.length} producto(s) cancelado(s) — tocá{" "}
                 <strong>✓</strong> para confirmar y devolver el stock
@@ -553,25 +842,31 @@ export default function OrderCard({ order }: OrderCardProps) {
                 (más abajo se muestra un único resumen fusionado, ver dismantleAllPending) --
                 pedir que confirmen uno por uno no tiene sentido cuando "Desarmar" ya
                 resuelve todo en un solo paso. */}
-            {!dismantleAllPending ? (
+            {!dismantleAllPending && !(column === "cancelled" && showCancelledColumnPending) ? (
               <OrderCardItems
                 items={
                   column === "cancelled"
                     ? cancelledItemsPendingReturn
                     : column === "active"
-                      ? reservedItems
-                      : column === "waiting"
-                        ? waitingItems
-                        : column === "picked"
-                          ? pickedColumnItems
-                          : items
+                        ? reservedItems
+                        : column === "waiting"
+                          ? waitingItems
+                          : column === "picked"
+                            ? pickedColumnItems
+                            : items
                 }
                 orderId={order.id}
                 orderSource={order.source}
                 showRemove={showItemRemove}
-                confirmCancelledLayout={column === "cancelled" && order.status !== "cancelled"}
+                confirmCancelledLayout={
+                  column === "cancelled" &&
+                  order.status !== "cancelled" &&
+                  !showCancelledColumnPending
+                }
                 onConfirmCancelled={
-                  column === "cancelled" && order.status !== "cancelled"
+                  column === "cancelled" &&
+                  order.status !== "cancelled" &&
+                  !showCancelledColumnPending
                     ? (itemId) => confirmCancelledItem(order.id, itemId)
                     : undefined
                 }
@@ -592,7 +887,7 @@ export default function OrderCard({ order }: OrderCardProps) {
                   column === "cancelled"
                     ? order.status === "cancelled" ? "Sin productos" : "Sin productos cancelados"
                     : column === "active"
-                      ? "Sin productos reservados"
+                      ? "Sin productos pendientes de apartar"
                       : column === "waiting"
                         ? "Sin productos en espera"
                         : "Sin ítems"
@@ -623,28 +918,58 @@ export default function OrderCard({ order }: OrderCardProps) {
                 />
               </div>
             ) : null}
-            {showPicked && pickedItems.length > 0 ? (
+            {column === "active" && pickedItems.length > 0 ? (
               <div className="order-card__picked-panel">
-                <p className="order-card__picked-panel-title">Ya apartados</p>
-                <OrderCardItems
-                  items={pickedItems}
-                  showRemove={showItemRemove}
-                  onRemoveItem={(itemId) => removeItem(order.id, itemId)}
-                  loadingItemId={loadingAction}
-                />
+                <button
+                  type="button"
+                  className="order-card__picked-panel-title"
+                  aria-expanded={showPicked}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setShowPicked((v) => !v);
+                  }}
+                >
+                  Ya apartados ({pickedItems.length})
+                  <span className="order-card__picked-panel-chevron" aria-hidden>
+                    {showPicked ? "▾" : "▸"}
+                  </span>
+                </button>
+                {showPicked ? (
+                  <OrderCardItems
+                    items={pickedItems}
+                    showRemove={showItemRemove}
+                    onRemoveItem={(itemId) => removeItem(order.id, itemId)}
+                    loadingItemId={loadingAction}
+                  />
+                ) : null}
               </div>
             ) : null}
             {draftMode && Object.keys(pendingChanges).length > 0 ? (
               <div className="order-draft-bar" onClick={(event) => event.stopPropagation()}>
-                <p className="order-draft-bar__summary">
-                  {Object.keys(pendingChanges).length} cambio
-                  {Object.keys(pendingChanges).length === 1 ? "" : "s"} sin confirmar ·{" "}
-                  {summarizeDraftChanges(pendingChanges)}
-                </p>
-                <div className="order-draft-bar__actions">
+                {showDraftMessageActions ? (
+                  <div className="order-draft-bar__row order-draft-bar__row--msg">
+                    <button
+                      type="button"
+                      className="order-card__btn order-draft-bar__btn-msg"
+                      disabled={confirmBusy}
+                      onClick={() => void copyDraftCustomerMessage()}
+                    >
+                      Mensaje
+                    </button>
+                    <button
+                      type="button"
+                      className="order-card__btn order-draft-bar__btn-send"
+                      disabled={confirmBusy || !phone}
+                      onClick={() => void sendDraftCustomerMessage()}
+                    >
+                      Enviar
+                    </button>
+                  </div>
+                ) : null}
+                <div className="order-draft-bar__row order-draft-bar__row--confirm">
                   <button
                     type="button"
-                    className="order-card__btn"
+                    className="order-card__btn order-draft-bar__btn-discard"
                     disabled={confirmBusy}
                     onClick={discardChanges}
                   >
@@ -652,18 +977,104 @@ export default function OrderCard({ order }: OrderCardProps) {
                   </button>
                   <button
                     type="button"
-                    className="order-card__btn order-card__btn--primary order-card__btn--grow"
+                    className="order-card__btn order-card__btn--primary order-draft-bar__btn-confirm"
                     disabled={confirmBusy}
                     onClick={() => void confirmChanges()}
                   >
-                    {confirmBusy ? "Aplicando…" : "Confirmar cambios"}
+                    {confirmBusy ? "Aplicando…" : "Confirmar"}
                   </button>
                 </div>
               </div>
             ) : null}
           </div>
+          ) : null}
           <OrderCardFooter order={order} productCount={productCount} showTotal={column !== "cancelled"} />
         </>
+      ) : showCancelledColumnPending ? (
+        <OrderCardFooter order={order} productCount={productCount} showTotal={false} />
+      ) : null}
+
+      {pendingConfirmAllCancelled ? (
+        <div
+          className="order-modal-backdrop order-modal-backdrop--item"
+          role="presentation"
+          onClick={() => setPendingConfirmAllCancelled(false)}
+        >
+          <div
+            className="order-modal order-modal--compact"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={`confirm-all-cancelled-${order.id}`}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h3 className="order-modal__title" id={`confirm-all-cancelled-${order.id}`}>
+              Confirmar cancelaciones
+            </h3>
+            <p className="order-modal__text">
+              {cancelledItemsPendingReturn.length === 1
+                ? "Se devolverá el stock del producto cancelado por la clienta."
+                : `Se devolverá el stock de ${cancelledItemsPendingReturn.length} productos cancelados por la clienta.`}
+            </p>
+            <div className="order-modal__actions">
+              <button
+                type="button"
+                className="order-card__btn"
+                disabled={confirmAllCancelledBusy}
+                onClick={() => setPendingConfirmAllCancelled(false)}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="order-card__btn order-card__btn--primary"
+                disabled={confirmAllCancelledBusy}
+                onClick={() => {
+                  setPendingConfirmAllCancelled(false);
+                  void confirmAllCancelledItems(order.id);
+                }}
+              >
+                {confirmAllCancelledBusy ? "Confirmando…" : "Confirmar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showExpiryWarningBtn ? (
+        <div className="order-expiry-warn" onClick={(event) => event.stopPropagation()}>
+          <button
+            type="button"
+            className={`order-expiry-warn__btn${expiryWarnSent ? " order-expiry-warn__btn--sent" : ""}`}
+            disabled={expiryWarnSent || !phone}
+            onClick={() => void sendExpiryWarningMessage()}
+          >
+            {expiryWarnSent ? "Mensaje enviado" : "Enviar mensaje"}
+          </button>
+        </div>
+      ) : null}
+
+      {showExpiredOrderMessageBtn ? (
+        <div className="order-expiry-warn" onClick={(event) => event.stopPropagation()}>
+          <div className="order-draft-bar order-expiry-warn__bar">
+            <div className="order-draft-bar__row order-draft-bar__row--msg">
+              <button
+                type="button"
+                className="order-card__btn order-draft-bar__btn-msg"
+                onClick={() => void copyExpiredOrderMessage()}
+              >
+                Mensaje
+              </button>
+              <button
+                type="button"
+                className="order-card__btn order-draft-bar__btn-send"
+                disabled={!phone}
+                onClick={() => void sendExpiredOrderMessage()}
+              >
+                Enviar
+              </button>
+            </div>
+          </div>
+        </div>
       ) : null}
 
       <OrderActions order={order} draftMode={draftMode} />

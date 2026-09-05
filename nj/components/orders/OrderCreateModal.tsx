@@ -17,7 +17,11 @@ import {
   syncOrderTotalAndNotes,
   type OrderEditDraftItem,
 } from "@/lib/supabase/order-edit";
-import { createManualOrder, findOpenOrderForCustomer } from "@/lib/supabase/order-create";
+import {
+  createManualOrder,
+  findOpenOrderForCustomer,
+  findOpenRetiroOrderForCustomer,
+} from "@/lib/supabase/order-create";
 import {
   ARGENTINA_PROVINCES,
   PROVINCE_CITIES,
@@ -29,6 +33,14 @@ import {
   type CustomerDirectoryRow,
   type NewCustomerFormInput,
 } from "@/lib/supabase/customer-directory";
+import {
+  createPublicSalesCustomer,
+  findPublicSalesCustomerByDni,
+  resolveOrdersCustomerIdFromPublicSales,
+  searchPublicSalesCustomersByQuery,
+  validateNewLocalCustomerForm,
+  type NewLocalCustomerFormInput,
+} from "@/lib/supabase/public-sales-customer-directory";
 import { fetchOrderById } from "@/lib/supabase/order-queries";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useOrdersStore, refreshAndMaybeAutoClose } from "@/hooks/useOrders";
@@ -57,11 +69,20 @@ const EMPTY_CUSTOMER_FORM: NewCustomerFormInput = {
   province: "",
   city: "",
 };
+const EMPTY_LOCAL_CUSTOMER_FORM: NewLocalCustomerFormInput = {
+  firstName: "",
+  lastName: "",
+  dni: "",
+  phone: "",
+  email: "",
+};
 
 export default function OrderCreateModal({ onClose }: OrderCreateModalProps) {
   const addOrderIfMissing = useOrdersStore((s) => s.addOrderIfMissing);
   const patchOrder = useOrdersStore((s) => s.patchOrder);
   const showToast = useOrdersStore((s) => s.showToast);
+  const boardScope = useOrdersStore((s) => s.boardScope);
+  const isRetiroBoard = boardScope === "local_pickup";
 
   const [customer, setCustomer] = useState<CustomerDirectoryRow | null>(null);
   const [customerQuery, setCustomerQuery] = useState("");
@@ -71,6 +92,8 @@ export default function OrderCreateModal({ onClose }: OrderCreateModalProps) {
 
   const [showCreateCustomer, setShowCreateCustomer] = useState(false);
   const [newCustomerForm, setNewCustomerForm] = useState<NewCustomerFormInput>(EMPTY_CUSTOMER_FORM);
+  const [newLocalCustomerForm, setNewLocalCustomerForm] =
+    useState<NewLocalCustomerFormInput>(EMPTY_LOCAL_CUSTOMER_FORM);
   const [newCustomerError, setNewCustomerError] = useState("");
   const [creatingCustomer, setCreatingCustomer] = useState(false);
 
@@ -101,7 +124,9 @@ export default function OrderCreateModal({ onClose }: OrderCreateModalProps) {
     setSearchingCustomer(true);
     try {
       const supabase = getSupabaseBrowserClient();
-      const results = await searchCustomersByQuery(supabase, value);
+      const results = isRetiroBoard
+        ? await searchPublicSalesCustomersByQuery(supabase, value)
+        : await searchCustomersByQuery(supabase, value);
       setCustomerResults(results);
     } catch {
       setCustomerResults([]);
@@ -136,7 +161,11 @@ export default function OrderCreateModal({ onClose }: OrderCreateModalProps) {
   const openCreateCustomer = () => {
     setShowCreateCustomer(true);
     setNewCustomerError("");
-    setNewCustomerForm({ ...EMPTY_CUSTOMER_FORM, firstName: customerQuery.trim() });
+    if (isRetiroBoard) {
+      setNewLocalCustomerForm({ ...EMPTY_LOCAL_CUSTOMER_FORM, firstName: customerQuery.trim() });
+    } else {
+      setNewCustomerForm({ ...EMPTY_CUSTOMER_FORM, firstName: customerQuery.trim() });
+    }
   };
 
   const closeCreateCustomer = () => {
@@ -153,6 +182,10 @@ export default function OrderCreateModal({ onClose }: OrderCreateModalProps) {
     });
   };
 
+  const setLocalCustomerField = (key: keyof NewLocalCustomerFormInput, value: string) => {
+    setNewLocalCustomerForm((prev) => ({ ...prev, [key]: value }));
+  };
+
   const availableCities = useMemo(() => {
     if (!newCustomerForm.province) return [];
     const raw = PROVINCE_CITIES[newCustomerForm.province] || [];
@@ -161,6 +194,40 @@ export default function OrderCreateModal({ onClose }: OrderCreateModalProps) {
 
   const handleCreateCustomer = async () => {
     setNewCustomerError("");
+
+    if (isRetiroBoard) {
+      const validation = validateNewLocalCustomerForm(newLocalCustomerForm);
+      if (!validation.ok) {
+        setNewCustomerError(validation.error);
+        return;
+      }
+      setCreatingCustomer(true);
+      try {
+        const supabase = getSupabaseBrowserClient();
+        if (validation.data.dni) {
+          const existing = await findPublicSalesCustomerByDni(supabase, validation.data.dni);
+          if (existing) {
+            handleSelectCustomer(existing);
+            setShowCreateCustomer(false);
+            showToast(
+              `Ya existía un cliente del local con ese DNI: ${formatCustomerDisplayName(existing)}`,
+              "info"
+            );
+            return;
+          }
+        }
+        const created = await createPublicSalesCustomer(supabase, validation.data);
+        handleSelectCustomer(created);
+        setShowCreateCustomer(false);
+        showToast(`Cliente del local "${created.full_name}" creado`, "success");
+      } catch (err) {
+        setNewCustomerError(err instanceof Error ? err.message : "Error al crear el cliente.");
+      } finally {
+        setCreatingCustomer(false);
+      }
+      return;
+    }
+
     const validation = validateNewCustomerForm(newCustomerForm);
     if (!validation.ok) {
       setNewCustomerError(validation.error);
@@ -196,8 +263,15 @@ export default function OrderCreateModal({ onClose }: OrderCreateModalProps) {
     try {
       const supabase = getSupabaseBrowserClient();
 
+      const publicSalesCustomerId = isRetiroBoard ? customer.id : null;
+      const ordersCustomerId = isRetiroBoard
+        ? await resolveOrdersCustomerIdFromPublicSales(supabase, customer.id)
+        : customer.id;
+
       if (!duplicateOrder) {
-        const openOrder = await findOpenOrderForCustomer(supabase, customer.id);
+        const openOrder = isRetiroBoard
+          ? await findOpenRetiroOrderForCustomer(supabase, ordersCustomerId)
+          : await findOpenOrderForCustomer(supabase, ordersCustomerId);
         if (openOrder) {
           setDuplicateOrder(openOrder);
           setBusy(false);
@@ -225,7 +299,18 @@ export default function OrderCreateModal({ onClose }: OrderCreateModalProps) {
           "success"
         );
       } else {
-        const newOrderId = await createManualOrder(supabase, customer.id, enriched, notesExtras);
+        const newOrderId = await createManualOrder(
+          supabase,
+          ordersCustomerId,
+          enriched,
+          notesExtras,
+          isRetiroBoard
+            ? {
+                boardMode: "local_pickup",
+                publicSalesCustomerId,
+              }
+            : undefined
+        );
         const created = await fetchOrderById(supabase, newOrderId);
         if (created) addOrderIfMissing(created);
         showToast("Pedido creado", "success");
@@ -266,7 +351,11 @@ export default function OrderCreateModal({ onClose }: OrderCreateModalProps) {
               <input
                 type="text"
                 className="order-edit-modal__input"
-                placeholder="Buscar cliente por nombre, DNI, teléfono o email…"
+                placeholder={
+                  isRetiroBoard
+                    ? "Buscar cliente del local por nombre, DNI, teléfono…"
+                    : "Buscar cliente por nombre, DNI, teléfono o email…"
+                }
                 value={customerQuery}
                 disabled={busy}
                 onChange={(e) => handleCustomerQueryChange(e.target.value)}
@@ -287,7 +376,9 @@ export default function OrderCreateModal({ onClose }: OrderCreateModalProps) {
                   <p className="order-edit-picker__hint">Buscando…</p>
                 ) : customerResults.length === 0 ? (
                   <p className="order-edit-picker__hint">
-                    Sin coincidencias. Podés crear un cliente nuevo con “+ Nuevo cliente”.
+                    {isRetiroBoard
+                      ? "Sin coincidencias en clientes del local. Podés crear uno con “+ Nuevo cliente”."
+                      : "Sin coincidencias. Podés crear un cliente nuevo con “+ Nuevo cliente”."}
                   </p>
                 ) : (
                   customerResults.map((c) => (
@@ -467,7 +558,7 @@ export default function OrderCreateModal({ onClose }: OrderCreateModalProps) {
             >
               <div className="order-edit-modal__header">
                 <h3 className="order-modal__title" id="create-customer-title">
-                  Nuevo cliente
+                  {isRetiroBoard ? "Nuevo cliente del local" : "Nuevo cliente"}
                 </h3>
                 <button
                   type="button"
@@ -480,6 +571,56 @@ export default function OrderCreateModal({ onClose }: OrderCreateModalProps) {
                 </button>
               </div>
 
+              {isRetiroBoard ? (
+                <div className="order-edit-extras__grid order-create-customer-form__grid">
+                  <label className="order-edit-extras__field">
+                    <span>Nombre</span>
+                    <input
+                      type="text"
+                      value={newLocalCustomerForm.firstName}
+                      disabled={creatingCustomer}
+                      onChange={(e) => setLocalCustomerField("firstName", e.target.value)}
+                    />
+                  </label>
+                  <label className="order-edit-extras__field">
+                    <span>Apellido</span>
+                    <input
+                      type="text"
+                      value={newLocalCustomerForm.lastName || ""}
+                      disabled={creatingCustomer}
+                      onChange={(e) => setLocalCustomerField("lastName", e.target.value)}
+                    />
+                  </label>
+                  <label className="order-edit-extras__field">
+                    <span>Teléfono</span>
+                    <input
+                      type="text"
+                      placeholder="Ej: 3794123456"
+                      value={newLocalCustomerForm.phone}
+                      disabled={creatingCustomer}
+                      onChange={(e) => setLocalCustomerField("phone", e.target.value)}
+                    />
+                  </label>
+                  <label className="order-edit-extras__field">
+                    <span>DNI (opcional)</span>
+                    <input
+                      type="text"
+                      value={newLocalCustomerForm.dni || ""}
+                      disabled={creatingCustomer}
+                      onChange={(e) => setLocalCustomerField("dni", e.target.value)}
+                    />
+                  </label>
+                  <label className="order-edit-extras__field order-edit-extras__field--block">
+                    <span>Email (opcional)</span>
+                    <input
+                      type="email"
+                      value={newLocalCustomerForm.email || ""}
+                      disabled={creatingCustomer}
+                      onChange={(e) => setLocalCustomerField("email", e.target.value)}
+                    />
+                  </label>
+                </div>
+              ) : (
               <div className="order-edit-extras__grid order-create-customer-form__grid">
                 <label className="order-edit-extras__field">
                   <span>Nombre</span>
@@ -568,6 +709,7 @@ export default function OrderCreateModal({ onClose }: OrderCreateModalProps) {
                   </datalist>
                 </label>
               </div>
+              )}
 
               {newCustomerError ? <p className="order-edit-extras__error">{newCustomerError}</p> : null}
 

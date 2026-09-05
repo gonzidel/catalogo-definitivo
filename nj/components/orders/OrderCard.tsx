@@ -849,11 +849,9 @@ export default function OrderCard({ order }: OrderCardProps) {
                     ? cancelledItemsPendingReturn
                     : column === "active"
                         ? reservedItems
-                        : column === "waiting"
-                          ? waitingItems
-                          : column === "picked"
-                            ? pickedColumnItems
-                            : items
+                        : column === "picked"
+                          ? pickedColumnItems
+                          : items
                 }
                 orderId={order.id}
                 orderSource={order.source}
@@ -871,7 +869,7 @@ export default function OrderCard({ order }: OrderCardProps) {
                     : undefined
                 }
                 showActiveReservedActions={showActiveReservedActions}
-                enableWaitingPick={column === "waiting"}
+                enableWaitingPick={false}
                 onRemoveItem={(itemId) => removeItem(order.id, itemId)}
                 onMarkMissing={markItemMissing}
                 onMarkPicked={markItemPicked}
@@ -888,9 +886,7 @@ export default function OrderCard({ order }: OrderCardProps) {
                     ? order.status === "cancelled" ? "Sin productos" : "Sin productos cancelados"
                     : column === "active"
                       ? "Sin productos pendientes de apartar"
-                      : column === "waiting"
-                        ? "Sin productos en espera"
-                        : "Sin ítems"
+                      : "Sin ítems"
                 }
               />
             ) : null}

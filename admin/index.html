@@ -74,6 +74,76 @@
       max-width: 1200px;
       margin: 0 auto;
     }
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.5);
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+    .modal-overlay.open {
+      display: flex;
+    }
+    .modal-box {
+      background: white;
+      border-radius: 12px;
+      padding: 32px;
+      max-width: 420px;
+      width: 90%;
+      text-align: center;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.25);
+    }
+    .modal-box h3 {
+      margin: 0 0 8px;
+      font-size: 22px;
+      color: #333;
+    }
+    .modal-box p {
+      margin: 0 0 24px;
+      color: #666;
+      font-size: 14px;
+    }
+    .modal-choices {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .modal-choice-btn {
+      display: block;
+      width: 100%;
+      padding: 14px 16px;
+      border-radius: 8px;
+      border: 2px solid #ddd;
+      background: #fafafa;
+      color: #333;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      text-align: center;
+      text-decoration: none;
+      transition: all 0.2s ease;
+    }
+    .modal-choice-btn:hover {
+      border-color: #CD844D;
+      background: #fff6ef;
+    }
+    .modal-choice-btn small {
+      display: block;
+      font-weight: 400;
+      color: #888;
+      margin-top: 4px;
+    }
+    .modal-cancel-btn {
+      margin-top: 16px;
+      background: none;
+      border: none;
+      color: #999;
+      font-size: 13px;
+      cursor: pointer;
+      text-decoration: underline;
+    }
     #login-form {
       max-width: 500px;
       margin: 0 auto;
@@ -293,7 +363,7 @@
             <h3 class="dashboard-card-title">Auditoría de Stock</h3>
             <p class="dashboard-card-desc">Observabilidad y detección de inconsistencias (solo lectura)</p>
           </a>
-          <a href="./orders.html" class="dashboard-card" data-module="orders">
+          <a href="./orders.html" id="pedidos-link" class="dashboard-card" data-module="orders">
             <div class="dashboard-card-icon">🛒</div>
             <h3 class="dashboard-card-title">Pedidos</h3>
             <p class="dashboard-card-desc">Gestionar pedidos pendientes</p>
@@ -324,7 +394,8 @@
             <p class="dashboard-card-desc">Gestionar pedidos cerrados, transporte y rótulos</p>
           </a>
           <a
-            href="http://localhost:3001/nj/admin/conciliacion-reembolso"
+            id="nj-conciliacion-link"
+            href="https://www.fylmoda.com.ar/nj/admin/conciliacion-reembolso"
             class="dashboard-card"
             data-module="conciliacion-reembolso"
             target="_blank"
@@ -432,8 +503,73 @@
     </section>
   </div>
 
+  <div id="pedidos-modal-overlay" class="modal-overlay">
+    <div class="modal-box">
+      <h3>Pedidos</h3>
+      <p>¿Qué panel de pedidos querés abrir?</p>
+      <div class="modal-choices">
+        <a href="./orders.html" class="modal-choice-btn" id="pedidos-viejo-btn">
+          🕰️ Panel actual
+          <small>El de siempre, en esta misma pestaña</small>
+        </a>
+        <a href="#" class="modal-choice-btn" id="pedidos-nuevo-btn" target="_blank" rel="noopener noreferrer">
+          🚀 Panel nuevo (NJ)
+          <small>Se abre en una pestaña nueva</small>
+        </a>
+        <a href="#" class="modal-choice-btn" id="pedidos-retiro-btn" target="_blank" rel="noopener noreferrer">
+          🏬 Retiro local (NJ)
+          <small>Kanban de retiro en tienda, en una pestaña nueva</small>
+        </a>
+      </div>
+      <button type="button" class="modal-cancel-btn" id="pedidos-modal-cancel">Cancelar</button>
+    </div>
+  </div>
+
   <!-- Suprimir errores de extensiones del navegador -->
   <script src="./suppress-extension-errors.js"></script>
+  <script>
+    // Resuelve URLs del panel NJ: localhost en dev, dominio real en producción
+    function njUrl(path) {
+      var h = window.location.hostname;
+      var isLocal = h === "localhost" || h === "127.0.0.1" || h === "";
+      var base = isLocal ? "http://localhost:3001" : "https://www.fylmoda.com.ar";
+      return base + path;
+    }
+
+    (function () {
+      var conciliacionLink = document.getElementById("nj-conciliacion-link");
+      if (conciliacionLink) conciliacionLink.href = njUrl("/nj/admin/conciliacion-reembolso");
+
+      var nuevoBtn = document.getElementById("pedidos-nuevo-btn");
+      if (nuevoBtn) nuevoBtn.href = njUrl("/nj/admin/orders");
+
+      var retiroBtn = document.getElementById("pedidos-retiro-btn");
+      if (retiroBtn) retiroBtn.href = njUrl("/nj/admin/retiro");
+
+      var pedidosLink = document.getElementById("pedidos-link");
+      var overlay = document.getElementById("pedidos-modal-overlay");
+      var cancelBtn = document.getElementById("pedidos-modal-cancel");
+
+      function openModal(e) {
+        e.preventDefault();
+        overlay.classList.add("open");
+      }
+      function closeModal() {
+        overlay.classList.remove("open");
+      }
+
+      if (pedidosLink) pedidosLink.addEventListener("click", openModal);
+      if (cancelBtn) cancelBtn.addEventListener("click", closeModal);
+      if (overlay) {
+        overlay.addEventListener("click", function (e) {
+          if (e.target === overlay) closeModal();
+        });
+      }
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape") closeModal();
+      });
+    })();
+  </script>
   <script type="module" src="../scripts/config.js"></script>
   <script defer src="../scripts/vendor/supabase-js.bundle.min.js?v=m260607"></script>
   <script type="module" src="../scripts/supabase-client.js?v=m260607"></script>

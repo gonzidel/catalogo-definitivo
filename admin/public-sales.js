@@ -7501,13 +7501,61 @@ function updateSaveOrderButtonVisibility() {
   }
 }
 
+// Resuelve la URL del panel de retiro NJ: localhost en dev, dominio real en producción
+function njRetiroUrl() {
+  const h = window.location.hostname;
+  const isLocal = h === "localhost" || h === "127.0.0.1" || h === "";
+  const base = isLocal ? "http://localhost:3001" : "https://www.fylmoda.com.ar";
+  return base + "/nj/admin/retiro";
+}
+
+function openNormalOrdersPanel() {
+  ordersModal.classList.add("active");
+  // Activar tab de recibidos por defecto
+  switchOrdersTab('received');
+  loadLocalOrders();
+}
+
+// Modal de selección: panel de pedidos normal (local) o NJ Retiro (nuevo)
+function ensurePedidosChoiceModal() {
+  let modal = document.getElementById("pedidos-choice-modal");
+  if (modal) return modal;
+
+  modal = document.createElement("div");
+  modal.className = "modal";
+  modal.id = "pedidos-choice-modal";
+  modal.innerHTML = `
+    <div class="modal-content" style="max-width:380px;text-align:center;">
+      <h2 style="margin:0 0 8px;">📦 Pedidos</h2>
+      <p style="margin:0 0 20px;color:#666;font-size:14px;">¿Qué panel de pedidos querés abrir?</p>
+      <div style="display:flex;flex-direction:column;gap:12px;">
+        <button type="button" id="pedidos-choice-normal" class="btn btn-primary" style="width:100%;padding:14px 16px;font-size:15px;">🛒 Normal</button>
+        <a href="#" id="pedidos-choice-nuevo" target="_blank" rel="noopener noreferrer" class="btn btn-secondary" style="width:100%;padding:14px 16px;font-size:15px;display:block;text-decoration:none;box-sizing:border-box;">🚀 Nuevo (NJ Retiro)</a>
+      </div>
+      <button type="button" id="pedidos-choice-cancel" style="margin-top:16px;background:none;border:none;color:#999;font-size:13px;cursor:pointer;text-decoration:underline;">Cancelar</button>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  modal.addEventListener("click", (e) => {
+    if (e.target === modal) modal.classList.remove("active");
+  });
+  modal.querySelector("#pedidos-choice-cancel").addEventListener("click", () => {
+    modal.classList.remove("active");
+  });
+  modal.querySelector("#pedidos-choice-normal").addEventListener("click", () => {
+    modal.classList.remove("active");
+    openNormalOrdersPanel();
+  });
+  modal.querySelector("#pedidos-choice-nuevo").href = njRetiroUrl();
+
+  return modal;
+}
+
 // Modal de pedidos locales
 if (ordersBtn) {
   ordersBtn.addEventListener("click", () => {
-    ordersModal.classList.add("active");
-    // Activar tab de recibidos por defecto
-    switchOrdersTab('received');
-    loadLocalOrders();
+    ensurePedidosChoiceModal().classList.add("active");
   });
 }
 

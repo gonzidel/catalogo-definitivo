@@ -14,6 +14,26 @@ export interface DraftChange {
   nWaiting?: number;
   nMissing?: number;
   waitingSource?: "fabrica" | "local";
+  /** Conteo explícito cuando el split mezcla fábrica + local */
+  nFabrica?: number;
+  nLocal?: number;
+}
+
+/** Resuelve unidades en espera fábrica/local de un cambio de borrador. */
+export function splitWaitingCounts(change: DraftChange): {
+  nFabrica: number;
+  nLocal: number;
+} {
+  if (change.nFabrica != null || change.nLocal != null) {
+    return {
+      nFabrica: Math.max(0, change.nFabrica ?? 0),
+      nLocal: Math.max(0, change.nLocal ?? 0),
+    };
+  }
+  const n = Math.max(0, change.nWaiting ?? 0);
+  if (change.waitingSource === "local") return { nFabrica: 0, nLocal: n };
+  if (change.waitingSource === "fabrica") return { nFabrica: n, nLocal: 0 };
+  return { nFabrica: 0, nLocal: 0 };
 }
 
 export type DraftChangesMap = Record<string, DraftChange>;
@@ -33,11 +53,10 @@ export function draftChangeLabel(
       return "Sin stock";
     case "split": {
       const parts: string[] = [];
+      const { nFabrica, nLocal } = splitWaitingCounts(change);
       if (change.nPicked) parts.push(`${change.nPicked} apart.`);
-      if (change.nWaiting) {
-        const src = change.waitingSource === "local" ? localLabel : "Fábrica";
-        parts.push(`${change.nWaiting} espera (${src})`);
-      }
+      if (nFabrica) parts.push(`${nFabrica} espera (Fábrica)`);
+      if (nLocal) parts.push(`${nLocal} espera (${localLabel})`);
       if (change.nMissing) parts.push(`${change.nMissing} sin stock`);
       return parts.join(" · ") || "Reparto manual";
     }
@@ -71,13 +90,7 @@ export function summarizeDraftChanges(pending: DraftChangesMap): string {
 export function draftHasWaitingLocal(pending: DraftChangesMap): boolean {
   return Object.values(pending).some((change) => {
     if (change.kind === "waiting-local") return true;
-    if (
-      change.kind === "split" &&
-      (change.nWaiting ?? 0) > 0 &&
-      change.waitingSource === "local"
-    ) {
-      return true;
-    }
+    if (change.kind === "split" && splitWaitingCounts(change).nLocal > 0) return true;
     return false;
   });
 }
@@ -86,13 +99,7 @@ export function draftHasWaitingLocal(pending: DraftChangesMap): boolean {
 export function draftHasWaitingFabrica(pending: DraftChangesMap): boolean {
   return Object.values(pending).some((change) => {
     if (change.kind === "waiting-fabrica") return true;
-    if (
-      change.kind === "split" &&
-      (change.nWaiting ?? 0) > 0 &&
-      change.waitingSource === "fabrica"
-    ) {
-      return true;
-    }
+    if (change.kind === "split" && splitWaitingCounts(change).nFabrica > 0) return true;
     return false;
   });
 }

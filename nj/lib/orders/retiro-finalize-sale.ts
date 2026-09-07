@@ -27,6 +27,8 @@ import {
 import type { AdminOrder } from "@/types/orders";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { buildEscposTicketText } from "@/lib/print/escpos-ticket";
+import { printEscposTicketWithGz } from "@/lib/print/gz-agent";
 
 
 
@@ -1063,13 +1065,40 @@ export async function finalizeRetiroOrderSale(
   }
 
   try {
-
-    openPrintWindow(html);
-
+    const ticketText = buildEscposTicketText({
+      saleNumber,
+      createdAt: new Date().toISOString(),
+      customerName: customer?.full_name ?? null,
+      orderNumber,
+      payMethod,
+      items: ticketItems,
+      total: totals.total,
+      creditUsed: totals.creditUsed,
+    });
+    let qrUrl: string | null = null;
+    if (publicSalesCustomerId) {
+      try {
+        const { data: psCustomer } = await supabase
+          .from("public_sales_customers")
+          .select("qr_code")
+          .eq("id", publicSalesCustomerId)
+          .maybeSingle();
+        const qrCode = String(psCustomer?.qr_code || "").trim();
+        if (qrCode && typeof window !== "undefined") {
+          qrUrl = `${window.location.origin}/customer.html?code=${qrCode}`;
+        }
+      } catch {
+        qrUrl = null;
+      }
+    }
+    await printEscposTicketWithGz({ ticketText, qrUrl });
   } catch (printErr) {
-
-    console.warn("Impresión retiro:", printErr);
-
+    console.warn("Impresión GZ retiro, fallback navegador:", printErr);
+    try {
+      openPrintWindow(html);
+    } catch (fallbackErr) {
+      console.warn("Impresión retiro:", fallbackErr);
+    }
   }
 
 

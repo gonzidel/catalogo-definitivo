@@ -71,7 +71,7 @@ interface OrderMsgNotifsState {
     itemId: string,
     outcome: "picked" | "missing",
     label: string
-  ) => Promise<void>;
+  ) => Promise<{ notificationCreated: boolean }>;
   markCopied: (id: string) => Promise<void>;
   dismiss: (id: string) => Promise<void>;
   completeClosed: (id: string, markCopied: boolean) => Promise<void>;
@@ -142,6 +142,7 @@ export const useOrderMsgNotifsStore = create<OrderMsgNotifsState>((set, get) => 
       label
     );
     if (notificationCreated) await get().refresh();
+    return { notificationCreated };
   },
 
   markCopied: async (id) => {

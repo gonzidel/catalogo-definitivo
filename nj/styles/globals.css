@@ -5425,6 +5425,172 @@ body:has(.kanban-admin-shell) [data-nextjs-toast] {
   color: #1f2937;
 }
 
+.kanban-header__title--mobile-hidden {
+  display: none;
+}
+
+/* Inbox Ani / Fati — switch del header (solo Pedidos) */
+.kanban-inbox-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 999px;
+  background: #e5e7eb;
+  border: 1px solid #d1d5db;
+  flex-shrink: 0;
+}
+
+.kanban-inbox-switch__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 36px;
+  min-width: 52px;
+  padding: 4px 10px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: #4b5563;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.kanban-inbox-switch__btn--active {
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  color: #111827;
+}
+
+.kanban-inbox-switch__btn--active.kanban-inbox-switch__btn--ani {
+  background: #fce7f3;
+  color: #9d174d;
+}
+
+.kanban-inbox-switch__btn--active.kanban-inbox-switch__btn--fati {
+  background: #e0f2fe;
+  color: #075985;
+}
+
+.kanban-inbox-switch__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.kanban-inbox-switch__dot--ani {
+  background: #ec4899;
+}
+
+.kanban-inbox-switch__dot--fati {
+  background: #38bdf8;
+}
+
+.kanban-inbox-switch--compact {
+  margin: 0;
+}
+
+.kanban-inbox-switch--compact .kanban-inbox-switch__btn {
+  min-width: 48px;
+  padding: 4px 8px;
+  font-size: 0.78rem;
+}
+
+/* Chip Ani/Fati + estrella en tarjeta */
+.order-inbox-owner {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.order-inbox-owner__star {
+  color: #eab308;
+  font-size: 0.85rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.order-inbox-owner__chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  min-width: 40px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid #d1d5db;
+  background: #f3f4f6;
+  color: #374151;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+  line-height: 1;
+}
+
+.order-inbox-owner__chip--ani,
+.kanban-inbox-chip--ani {
+  background: #fce7f3;
+  border-color: #f9a8d4;
+  color: #9d174d;
+}
+
+.order-inbox-owner__chip--fati,
+.kanban-inbox-chip--fati {
+  background: #e0f2fe;
+  border-color: #7dd3fc;
+  color: #075985;
+}
+
+.order-inbox-owner__chip--none {
+  background: #fff7ed;
+  border-color: #fdba74;
+  color: #9a3412;
+}
+
+.order-inbox-owner__chip--open {
+  outline: 2px solid #9ca3af;
+  outline-offset: 1px;
+}
+
+.order-inbox-owner__picker {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  background: #fff;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
+  min-width: 88px;
+}
+
+.order-inbox-owner__pick {
+  min-height: 36px;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.order-inbox-owner__pick--current {
+  outline: 2px solid #6b7280;
+  outline-offset: 0;
+}
+
 .kanban-header__alerts {
   display: flex;
   align-items: center;
@@ -6095,6 +6261,10 @@ body:has(.kanban-admin-shell) [data-nextjs-toast] {
   text-overflow: ellipsis;
   white-space: nowrap;
   line-height: 1.25;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 4px;
 }
 
 .order-card__location a {
@@ -9161,6 +9331,13 @@ a.order-card__wa-btn:active {
   color: #fff !important;
 }
 
+.order-draft-bar__btn-send--sent {
+  background: #9ca3af !important;
+  border-color: #6b7280 !important;
+  color: #f3f4f6 !important;
+  cursor: pointer;
+}
+
 .order-draft-bar__btn-discard {
   background: #fff !important;
   color: #374151 !important;
@@ -9331,6 +9508,25 @@ a.order-card__wa-btn:active {
 .order-msg-bell__card--copied {
   border-color: #86efac;
   background: #dcfce7;
+}
+
+.order-msg-bell__card--sent {
+  border-color: #9ca3af;
+  background: #e5e7eb;
+  filter: grayscale(0.25);
+  opacity: 0.78;
+}
+
+.order-msg-bell__card--sent .order-msg-bell__card-name,
+.order-msg-bell__card--sent .order-msg-bell__card-phone {
+  color: #4b5563;
+}
+
+.order-msg-bell__card--sent .order-msg-bell__btn--primary {
+  background: #9ca3af;
+  border-color: #6b7280;
+  color: #f3f4f6;
+  cursor: pointer;
 }
 
 .order-msg-bell__card--expiry {

@@ -94,11 +94,24 @@ export function normalizePhoneDigitsForMatch(text: string | null | undefined): s
   return d;
 }
 
+/** Nacional AR (10 dígitos) para wa.me/549…, sin duplicar el 9 de celular. */
+export function toArgentinaWhatsAppNationalDigits(
+  phone: string | null | undefined
+): string {
+  let d = String(phone || "").replace(/\D/g, "");
+  if (!d) return "";
+  if (d.startsWith("00")) d = d.slice(2);
+  if (d.startsWith("54") && d.length > 10) d = d.slice(2);
+  if (d.startsWith("0")) d = d.slice(1);
+  while (d.startsWith("9") && d.length > 10) d = d.slice(1);
+  return d;
+}
+
 export function buildWhatsAppUrl(
   phone: string | null | undefined,
   text?: string | null
 ): string | null {
-  const digits = normalizePhoneDigitsForMatch(phone);
+  const digits = toArgentinaWhatsAppNationalDigits(phone);
   if (!digits || digits.length < 8) return null;
   const base = `https://wa.me/549${digits}`;
   const msg = String(text || "").trim();

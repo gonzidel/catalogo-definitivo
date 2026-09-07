@@ -24,6 +24,18 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 export const ORDER_SELECT = `
   id, order_number, status, customer_id, total_amount, notes, source, payment_method,
   created_at, sent_at, expires_at, dismantle_at, local_deferred_pickup, pickup_timer_started_at, transport_id,
+  customers(id, full_name, phone, email, dni, transport_id, city, province, kanban_inbox_owner, kanban_inbox_assigned_at),
+  order_items(
+    id, order_id, variant_id, product_name, color, size, quantity,
+    price_snapshot, imagen, status, admin_confirmed_missing, checked_by, checked_at,
+    order_item_stock_sources(warehouse_id, qty)
+  )
+`;
+
+/** Fallback si 338 aún no está aplicada (columnas inbox ausentes). */
+const ORDER_SELECT_WITHOUT_INBOX = `
+  id, order_number, status, customer_id, total_amount, notes, source, payment_method,
+  created_at, sent_at, expires_at, dismantle_at, local_deferred_pickup, pickup_timer_started_at, transport_id,
   customers(id, full_name, phone, email, dni, transport_id, city, province),
   order_items(
     id, order_id, variant_id, product_name, color, size, quantity,
@@ -31,6 +43,11 @@ export const ORDER_SELECT = `
     order_item_stock_sources(warehouse_id, qty)
   )
 `;
+
+function isMissingInboxColumnError(error: { message?: string; details?: string; hint?: string } | null): boolean {
+  const blob = `${error?.message || ""} ${error?.details || ""} ${error?.hint || ""}`.toLowerCase();
+  return blob.includes("kanban_inbox_owner") || blob.includes("kanban_inbox_assigned_at");
+}
 
 export async function loadWarehouses(
   supabase: SupabaseClient
@@ -136,14 +153,29 @@ export async function fetchOrdersInitial(
     .order("created_at", { ascending: false })
     .limit(200);
 
+  let rows: unknown[] | null = data as unknown[] | null;
   if (error) {
-    console.error("fetchOrdersInitial error:", error);
-    return [];
+    if (isMissingInboxColumnError(error)) {
+      const fallback = await supabase
+        .from("orders")
+        .select(ORDER_SELECT_WITHOUT_INBOX)
+        .not("status", "in", '("sent","devolución","devolucion","expired")')
+        .order("created_at", { ascending: false })
+        .limit(200);
+      if (fallback.error) {
+        console.error("fetchOrdersInitial error:", fallback.error);
+        return [];
+      }
+      rows = fallback.data as unknown[] | null;
+    } else {
+      console.error("fetchOrdersInitial error:", error);
+      return [];
+    }
   }
 
   const enriched = await enrichOrders(
     supabase,
-    (data || []) as AdminOrder[],
+    (rows || []) as AdminOrder[],
     warehouseIds,
     transports
   );
@@ -167,11 +199,25 @@ export async function fetchOrderById(
     .eq("id", orderId)
     .maybeSingle();
 
-  if (error || !data) return null;
+  let row: unknown = data;
+  if (error) {
+    if (isMissingInboxColumnError(error)) {
+      const fallback = await supabase
+        .from("orders")
+        .select(ORDER_SELECT_WITHOUT_INBOX)
+        .eq("id", orderId)
+        .maybeSingle();
+      if (fallback.error || !fallback.data) return null;
+      row = fallback.data;
+    } else {
+      return null;
+    }
+  }
+  if (!row) return null;
 
   const enriched = await enrichOrders(
     supabase,
-    [data as AdminOrder],
+    [row as AdminOrder],
     warehouseIds,
     transports
   );
@@ -474,4 +520,50 @@ export async function rpcZeroVariantSizeStock(
   });
   if (error) throw error;
   return data;
+}
+
+/** Admin: reasignar clienta a Ani o Fati (inbox Pedidos). */
+export async function rpcSetKanbanInboxOwner(
+  supabase: SupabaseClient,
+  customerId: string,
+  owner: "ani" | "fati"
+) {
+  const { data, error } = await supabase.rpc("rpc_set_kanban_inbox_owner", {
+    p_customer_id: customerId,
+    p_owner: owner,
+  });
+  if (error) throw error;
+  return data as { ok?: boolean; customer_id?: string; owner?: string };
+}
+
+/**
+ * Clientas del tablero con exactamente 1 pedido (estrella "primera vez").
+ * Si la columna aún no existe / error de red → Set vacío.
+ */
+export async function fetchFirstOrderCustomerIds(
+  supabase: SupabaseClient,
+  customerIds: string[]
+): Promise<Set<string>> {
+  const ids = [...new Set(customerIds.filter(Boolean))];
+  if (!ids.length) return new Set();
+
+  const { data, error } = await supabase
+    .from("orders")
+    .select("customer_id")
+    .in("customer_id", ids);
+
+  if (error || !data) return new Set();
+
+  const counts = new Map<string, number>();
+  for (const row of data) {
+    const cid = String(row.customer_id || "").trim();
+    if (!cid) continue;
+    counts.set(cid, (counts.get(cid) || 0) + 1);
+  }
+
+  const first = new Set<string>();
+  for (const [cid, n] of counts) {
+    if (n === 1) first.add(cid);
+  }
+  return first;
 }

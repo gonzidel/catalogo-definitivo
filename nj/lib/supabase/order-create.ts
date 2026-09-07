@@ -1,5 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { computeOrderTotalFromItems, type OrderNotesExtras } from "@/lib/orders/domain";
+import {
+  computeOrderTotalFromItems,
+  isLocalPickupOrderFulfilled,
+  type OrderNotesExtras,
+} from "@/lib/orders/domain";
 import {
   applyManualConfirmedItems,
   applyOrderStockDeduction,
@@ -17,10 +21,10 @@ export type CreateManualOrderOptions = {
 };
 
 /**
- * Pedido abierto existente del cliente (active/closing_soon/closed/cancelled — un pedido a
- * la vez, igual que admin/order-creator.js). `closed` cuenta como "abierto" a partir de
- * 2026-07-18. `cancelled` también bloquea (318) hasta que admin desarme o se auto-borre.
- * Excluye retiro/caja (`local_deferred_pickup`).
+ * Pedido abierto existente del cliente (active/closing_soon/closed — un pedido a
+ * la vez, igual que admin/order-creator.js). `closed` cuenta como "abierto" a partir
+ * de 2026-07-18, salvo retiro ya cobrado (`local_pickup_fulfilled_at`, 337).
+ * `cancelled` no bloquea (336). Excluye retiro/caja (`local_deferred_pickup`).
  */
 export async function findOpenOrderForCustomer(
   supabase: SupabaseClient,
@@ -28,16 +32,17 @@ export async function findOpenOrderForCustomer(
 ): Promise<{ id: string; order_number: string | null; status: string } | null> {
   const { data, error } = await supabase
     .from("orders")
-    .select("id, order_number, status")
+    .select("id, order_number, status, notes, payment_method, local_deferred_pickup")
     .eq("customer_id", customerId)
-    .in("status", ["active", "closing_soon", "closed", "cancelled"])
+    .in("status", ["active", "closing_soon", "closed"])
     .or("local_deferred_pickup.is.null,local_deferred_pickup.eq.false")
     .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(15);
 
   if (error) throw error;
-  return data || null;
+  const open = (data || []).find((row) => !isLocalPickupOrderFulfilled(row));
+  if (!open) return null;
+  return { id: open.id, order_number: open.order_number, status: open.status };
 }
 
 /**
@@ -50,16 +55,17 @@ export async function findOpenRetiroOrderForCustomer(
 ): Promise<{ id: string; order_number: string | null; status: string } | null> {
   const { data, error } = await supabase
     .from("orders")
-    .select("id, order_number, status")
+    .select("id, order_number, status, notes, payment_method, local_deferred_pickup")
     .eq("customer_id", customerId)
     .eq("local_deferred_pickup", true)
-    .in("status", ["active", "closing_soon", "closed", "cancelled"])
+    .in("status", ["active", "closing_soon", "closed"])
     .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(15);
 
   if (error) throw error;
-  return data || null;
+  const open = (data || []).find((row) => !isLocalPickupOrderFulfilled(row));
+  if (!open) return null;
+  return { id: open.id, order_number: open.order_number, status: open.status };
 }
 
 /**

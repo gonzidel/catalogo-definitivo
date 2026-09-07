@@ -22,7 +22,7 @@ import PartialAcceptModal from "./PartialAcceptModal";
 interface OrderCardItemsProps {
   items: AdminOrderItem[];
   orderId?: string;
-  /** "customer" habilita el asistente "¿Cuántas hay disponibles?" para ítems con varias unidades */
+  /** Origen del pedido (customer/admin). El reparto por unidad no depende de esto. */
   orderSource?: string | null;
   showRemove?: boolean;
   /** Ítems cancelados por la clienta: ✓ confirma y devuelve stock si correspondía */
@@ -62,14 +62,16 @@ interface OrderCardItemsProps {
     nPicked: number,
     nWaiting: number,
     nMissing: number,
-    waitingSource?: "fabrica" | "local"
+    waitingSource?: "fabrica" | "local",
+    nFabrica?: number,
+    nLocal?: number
   ) => void;
 }
 
 export default function OrderCardItems({
   items,
   orderId,
-  orderSource = null,
+  orderSource: _orderSource = null,
   showRemove = false,
   confirmCancelledLayout = false,
   mutedBadges = false,
@@ -119,7 +121,6 @@ export default function OrderCardItems({
   const isMultiUnitReserved = (itemForAction: AdminOrderItem) => {
     const st = normalizeOrderItemStatus(itemForAction.status);
     return (
-      orderSource === "customer" &&
       itemForAction.quantity > 1 &&
       (st === "reserved" || st === "awaiting_apartado")
     );
@@ -159,12 +160,9 @@ export default function OrderCardItems({
     const nWaiting = nFabrica + nLocal;
 
     if (draftMode) {
-      // El modo borrador (mobile) todavía guarda un solo origen de espera por
-      // ítem: si hay mezcla fábrica+local se prioriza fábrica al armar el chip,
-      // pero al confirmar cambios se aplica con la misma lógica de abajo.
       const waitingSource: "fabrica" | "local" | undefined =
-        nLocal > 0 && nFabrica === 0 ? "local" : nFabrica > 0 ? "fabrica" : undefined;
-      onStageSplit?.(targetId, nPicked, nWaiting, nMissing, waitingSource);
+        nLocal > 0 && nFabrica === 0 ? "local" : nFabrica > 0 && nLocal === 0 ? "fabrica" : undefined;
+      onStageSplit?.(targetId, nPicked, nWaiting, nMissing, waitingSource, nFabrica, nLocal);
       return;
     }
     if (!orderId) return;

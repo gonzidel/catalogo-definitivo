@@ -33,6 +33,8 @@ export interface OrderItemStockSource {
   qty: number;
 }
 
+export type KanbanInboxOwner = "ani" | "fati";
+
 export interface AdminOrderCustomer {
   id: string;
   full_name: string | null;
@@ -42,6 +44,9 @@ export interface AdminOrderCustomer {
   transport_id?: string | null;
   city: string | null;
   province: string | null;
+  /** Dueña WhatsApp/inbox Pedidos (Ani/Fati). Solo shipping. */
+  kanban_inbox_owner?: KanbanInboxOwner | string | null;
+  kanban_inbox_assigned_at?: string | null;
 }
 
 export interface AdminOrderItem {
@@ -77,6 +82,7 @@ export interface AdminOrder {
   customer_id: string;
   total_amount: number | null;
   notes: string | null;
+  payment_method?: string | null;
   source: string | null;
   created_at: string;
   sent_at?: string | null;

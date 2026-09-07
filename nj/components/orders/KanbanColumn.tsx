@@ -7,6 +7,7 @@ import { retiroActiveColumnSortKey } from "@/lib/orders/board-scope";
 import { orderMatchesCustomerSearch } from "@/lib/orders/customer-search";
 import { useExpiryWarnSentStore } from "@/lib/orders/expiry-warning-sent";
 import { getWaitingColumnSortKey } from "@/lib/orders/waiting-source";
+import { filterOrdersByKanbanInboxView } from "@/lib/orders/kanban-inbox";
 import { useOrdersStore } from "@/hooks/useOrders";
 import type { KanbanColumnId } from "@/types/orders";
 import KanbanColumnSearch from "./KanbanColumnSearch";
@@ -32,6 +33,7 @@ export default function KanbanColumn({
   const allOrders = useOrdersStore((s) => s.orders);
   const warehouseIds = useOrdersStore((s) => s.warehouseIds);
   const boardScope = useOrdersStore((s) => s.boardScope);
+  const inboxView = useOrdersStore((s) => s.inboxView);
   const expiryWarnSentIds = useExpiryWarnSentStore((s) => s.sentIds);
   const hydrateExpiryWarn = useExpiryWarnSentStore((s) => s.hydrate);
 
@@ -40,7 +42,11 @@ export default function KanbanColumn({
   }, [hydrateExpiryWarn]);
 
   const orders = useMemo(() => {
-    const filtered = filterOrdersForColumn(allOrders, columnId, {
+    const scoped = filterOrdersByKanbanInboxView(allOrders, inboxView, {
+      boardScope,
+      columnId,
+    });
+    const filtered = filterOrdersForColumn(scoped, columnId, {
       boardScope,
       warehouseIds,
     });
@@ -85,7 +91,7 @@ export default function KanbanColumn({
       return [...filtered].sort(sentToEnd);
     }
     return filtered;
-  }, [allOrders, columnId, warehouseIds, boardScope, expiryWarnSentIds]);
+  }, [allOrders, columnId, warehouseIds, boardScope, expiryWarnSentIds, inboxView]);
   const visibleOrders = useMemo(() => {
     const q = searchQuery.trim();
     if (!q) return orders;

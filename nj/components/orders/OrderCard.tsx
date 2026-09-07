@@ -42,6 +42,7 @@ import {
 } from "@/lib/orders/waiting-source";
 import {
   draftDefersCustomerMessage,
+  splitWaitingCounts,
   type DraftChangesMap,
 } from "@/lib/orders/draft-changes";
 import {
@@ -62,6 +63,7 @@ import { useOrdersStore } from "@/hooks/useOrders";
 import type { AdminOrder } from "@/types/orders";
 import OrderActions from "./OrderActions";
 import OrderCardItems from "./OrderCardItems";
+import OrderInboxOwnerChip from "./OrderInboxOwnerChip";
 
 interface OrderCardProps {
   order: AdminOrder;
@@ -125,9 +127,11 @@ export default function OrderCard({ order }: OrderCardProps) {
   const markItemPicked = useOrdersStore((s) => s.markItemPicked);
   const markItemWaiting = useOrdersStore((s) => s.markItemWaiting);
   const splitReservedItem = useOrdersStore((s) => s.splitReservedItem);
+  const splitReservedItemMixed = useOrdersStore((s) => s.splitReservedItemMixed);
 
   const isMobile = useIsMobile();
   const [pendingChanges, setPendingChanges] = useState<DraftChangesMap>({});
+  const [draftMessageSent, setDraftMessageSent] = useState(false);
   const [confirmBusy, setConfirmBusy] = useState(false);
   const [pendingConfirmAllCancelled, setPendingConfirmAllCancelled] = useState(false);
   const hydrateExpiryWarn = useExpiryWarnSentStore((s) => s.hydrate);
@@ -155,6 +159,12 @@ export default function OrderCard({ order }: OrderCardProps) {
   const deadlineExpired =
     hasDeadline && column !== "closed" && isOrderExpired(order);
   const boardScope = useOrdersStore((s) => s.boardScope);
+  const firstOrderCustomerIds = useOrdersStore((s) => s.firstOrderCustomerIds);
+  const showInboxOwnerChip = boardScope === "shipping";
+  const isFirstOrderCustomer =
+    showInboxOwnerChip &&
+    Boolean(order.customer_id) &&
+    firstOrderCustomerIds.includes(order.customer_id);
   /** ≤2 días para vencer → alerta rosa (solo tablero Pedidos/shipping).
    *  En Retiro no pintar “por vencer”: solo el rojo de ya vencido. */
   const expiringSoon =
@@ -418,7 +428,9 @@ export default function OrderCard({ order }: OrderCardProps) {
     nPicked: number,
     nWaiting: number,
     nMissing: number,
-    waitingSource?: "fabrica" | "local"
+    waitingSource?: "fabrica" | "local",
+    nFabrica?: number,
+    nLocal?: number
   ) => {
     setPendingChanges((prev) => {
       const next = { ...prev };
@@ -426,16 +438,29 @@ export default function OrderCard({ order }: OrderCardProps) {
         delete next[itemId];
         return next;
       }
-      next[itemId] = { kind: "split", nPicked, nWaiting, nMissing, waitingSource };
+      next[itemId] = {
+        kind: "split",
+        nPicked,
+        nWaiting,
+        nMissing,
+        waitingSource,
+        nFabrica,
+        nLocal,
+      };
       return next;
     });
   };
 
-  const discardChanges = () => setPendingChanges({});
+  const discardChanges = () => {
+    setPendingChanges({});
+    setDraftMessageSent(false);
+  };
 
   const defersCustomerMessage = draftDefersCustomerMessage(pendingChanges, order);
   const showDraftMessageActions =
     draftMode && Object.keys(pendingChanges).length > 0 && !defersCustomerMessage;
+  const draftFingerprint = JSON.stringify(pendingChanges);
+  const needsSendBeforeConfirm = showDraftMessageActions && Boolean(phone);
 
   const copyDraftCustomerMessage = async (): Promise<string | null> => {
     const msg = buildMessageFromOrderAndDraft(items, pendingChanges, warehouseIds, order);
@@ -462,7 +487,12 @@ export default function OrderCard({ order }: OrderCardProps) {
       return;
     }
     window.open(url, "_blank", "noopener,noreferrer");
+    setDraftMessageSent(true);
   };
+
+  useEffect(() => {
+    setDraftMessageSent(false);
+  }, [draftFingerprint]);
 
   const confirmChanges = async () => {
     setConfirmBusy(true);
@@ -474,15 +504,28 @@ export default function OrderCard({ order }: OrderCardProps) {
         else if (change.kind === "waiting-fabrica") await markItemWaiting(order.id, itemId, "fabrica");
         else if (change.kind === "waiting-local") await markItemWaiting(order.id, itemId, "local");
         else if (change.kind === "missing") await markItemMissing(order.id, itemId);
-        else if (change.kind === "split")
-          await splitReservedItem(
-            order.id,
-            itemId,
-            change.nPicked ?? 0,
-            change.nWaiting ?? 0,
-            change.nMissing ?? 0,
-            change.waitingSource
-          );
+        else if (change.kind === "split") {
+          const { nFabrica, nLocal } = splitWaitingCounts(change);
+          if (nFabrica > 0 && nLocal > 0) {
+            await splitReservedItemMixed(
+              order.id,
+              itemId,
+              change.nPicked ?? 0,
+              nFabrica,
+              nLocal,
+              change.nMissing ?? 0
+            );
+          } else {
+            await splitReservedItem(
+              order.id,
+              itemId,
+              change.nPicked ?? 0,
+              change.nWaiting ?? 0,
+              change.nMissing ?? 0,
+              change.waitingSource
+            );
+          }
+        }
       }
       setPendingChanges({});
 
@@ -652,6 +695,12 @@ export default function OrderCard({ order }: OrderCardProps) {
               ) : (
                 <span>📞 {phone}</span>
               )
+            ) : null}
+            {showInboxOwnerChip ? (
+              <OrderInboxOwnerChip
+                order={order}
+                showFirstOrderStar={isFirstOrderCustomer}
+              />
             ) : null}
           </div>
           {countdownLabel ? (
@@ -954,8 +1003,9 @@ export default function OrderCard({ order }: OrderCardProps) {
                     </button>
                     <button
                       type="button"
-                      className="order-card__btn order-draft-bar__btn-send"
+                      className={`order-card__btn order-draft-bar__btn-send${draftMessageSent ? " order-draft-bar__btn-send--sent" : ""}`}
                       disabled={confirmBusy || !phone}
+                      title={draftMessageSent ? "Ya enviado — se puede reenviar" : "Enviar por WhatsApp"}
                       onClick={() => void sendDraftCustomerMessage()}
                     >
                       Enviar
@@ -974,7 +1024,12 @@ export default function OrderCard({ order }: OrderCardProps) {
                   <button
                     type="button"
                     className="order-card__btn order-card__btn--primary order-draft-bar__btn-confirm"
-                    disabled={confirmBusy}
+                    disabled={confirmBusy || (needsSendBeforeConfirm && !draftMessageSent)}
+                    title={
+                      needsSendBeforeConfirm && !draftMessageSent
+                        ? "Primero enviá el mensaje"
+                        : undefined
+                    }
                     onClick={() => void confirmChanges()}
                   >
                     {confirmBusy ? "Aplicando…" : "Confirmar"}

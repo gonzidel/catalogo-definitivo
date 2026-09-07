@@ -29,6 +29,7 @@ import {
   fetchOrderById,
   fetchOrdersInitial,
   fetchVariantSizeStockQty,
+  fetchFirstOrderCustomerIds,
   emitCustomerOrderNotification,
   loadWarehouses,
   resolveStockPendingOrderRpc,
@@ -39,6 +40,7 @@ import {
   rpcRemoveOrderItemRestoreStock,
   rpcRevertOrderToPicked,
   rpcSendOrderToLocal,
+  rpcSetKanbanInboxOwner,
   rpcSplitOrderItemStatus,
   rpcUpdateOrderItemStatus,
   rpcZeroVariantSizeStock,
@@ -52,6 +54,12 @@ import {
   syncOrderSnapshotPriorFromOrder,
 } from "@/lib/orders/local-wait-notifications";
 import { getWaitingSourceKind } from "@/lib/orders/waiting-source";
+import {
+  loadKanbanInboxView,
+  persistKanbanInboxView,
+  type KanbanInboxOwner,
+  type KanbanInboxView,
+} from "@/lib/orders/kanban-inbox";
 import type { AdminOrder, AdminOrderItem, KanbanColumnId, WarehouseIds } from "@/types/orders";
 import type { RealtimeChannel, RealtimePostgresInsertPayload } from "@supabase/supabase-js";
 
@@ -69,6 +77,10 @@ interface OrdersState {
   hydrated: boolean;
   toast: OrdersToastState | null;
   loadingAction: string | null;
+  /** Vista Ani/Fati/General — solo Pedidos; Retiro ignora el filtro. */
+  inboxView: KanbanInboxView;
+  /** Customer ids con exactamente 1 pedido (estrella primera vez). */
+  firstOrderCustomerIds: string[];
 
   hydrate: (orders: AdminOrder[], scope?: BoardScope) => void;
   refreshAll: () => Promise<void>;
@@ -78,6 +90,12 @@ interface OrdersState {
   patchOrder: (order: AdminOrder) => void;
   removeOrder: (orderId: string) => void;
   addOrderIfMissing: (order: AdminOrder) => void;
+  setInboxView: (view: KanbanInboxView) => void;
+  refreshFirstOrderStars: () => Promise<void>;
+  setKanbanInboxOwner: (
+    customerId: string,
+    owner: KanbanInboxOwner
+  ) => Promise<boolean>;
 
   pickAllReserved: (orderId: string) => Promise<void>;
   cancelItem: (orderId: string, itemId: string) => Promise<void>;
@@ -135,6 +153,26 @@ interface OrdersState {
   extendOrder24h: (orderId: string) => Promise<void>;
 
   subscribeNewOrders: () => () => void;
+}
+
+function customerIdsFromOrders(orders: AdminOrder[]): string[] {
+  const ids: string[] = [];
+  for (const order of orders) {
+    const c = getCustomerFromOrder(order);
+    if (c?.id) ids.push(c.id);
+    else if (order.customer_id) ids.push(order.customer_id);
+  }
+  return ids;
+}
+
+async function loadFirstOrderStars(orders: AdminOrder[]): Promise<string[]> {
+  try {
+    const supabase = getSupabaseBrowserClient();
+    const set = await fetchFirstOrderCustomerIds(supabase, customerIdsFromOrders(orders));
+    return [...set];
+  } catch {
+    return [];
+  }
 }
 
 function cloneOrders(orders: AdminOrder[]): AdminOrder[] {
@@ -251,8 +289,10 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
   hydrated: false,
   toast: null,
   loadingAction: null,
+  inboxView: "general",
+  firstOrderCustomerIds: [],
 
-  hydrate: (orders, scope) =>
+  hydrate: (orders, scope) => {
     set((state) => {
       const boardScope = scope ?? state.boardScope;
       const wh = state.warehouseIds;
@@ -263,8 +303,13 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
           : orders,
         boardScope,
         hydrated: true,
+        inboxView: boardScope === "shipping" ? loadKanbanInboxView() : "general",
       };
-    }),
+    });
+    if ((scope ?? get().boardScope) === "shipping") {
+      void get().refreshFirstOrderStars();
+    }
+  },
 
   refreshAll: async () => {
     const supabase = getSupabaseBrowserClient();
@@ -274,6 +319,83 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
       loadWarehouses(supabase),
     ]);
     set({ orders, warehouseIds, hydrated: true });
+    if (scope === "shipping") {
+      void get().refreshFirstOrderStars();
+    }
+  },
+
+  setInboxView: (view) => {
+    persistKanbanInboxView(view);
+    set({ inboxView: view });
+  },
+
+  refreshFirstOrderStars: async () => {
+    if (get().boardScope !== "shipping") {
+      set({ firstOrderCustomerIds: [] });
+      return;
+    }
+    const ids = await loadFirstOrderStars(get().orders);
+    set({ firstOrderCustomerIds: ids });
+  },
+
+  setKanbanInboxOwner: async (customerId, owner) => {
+    const supabase = getSupabaseBrowserClient();
+    try {
+      await rpcSetKanbanInboxOwner(supabase, customerId, owner);
+      const assignedAt = new Date().toISOString();
+      set((state) => ({
+        orders: state.orders.map((order) => {
+          if (order.customer_id !== customerId) return order;
+          const raw = order.customers;
+          if (!raw) {
+            return {
+              ...order,
+              customers: {
+                id: customerId,
+                full_name: null,
+                phone: null,
+                email: null,
+                dni: null,
+                city: null,
+                province: null,
+                kanban_inbox_owner: owner,
+                kanban_inbox_assigned_at: assignedAt,
+              },
+            };
+          }
+          if (Array.isArray(raw)) {
+            return {
+              ...order,
+              customers: raw.map((c) =>
+                c.id === customerId || !c.id
+                  ? {
+                      ...c,
+                      kanban_inbox_owner: owner,
+                      kanban_inbox_assigned_at: assignedAt,
+                    }
+                  : c
+              ),
+            };
+          }
+          return {
+            ...order,
+            customers: {
+              ...raw,
+              kanban_inbox_owner: owner,
+              kanban_inbox_assigned_at: assignedAt,
+            },
+          };
+        }),
+      }));
+      get().showToast(
+        owner === "ani" ? "Clienta asignada a Ani" : "Clienta asignada a Fati",
+        "success"
+      );
+      return true;
+    } catch (err) {
+      get().showToast(getErrorMessage(err), "error");
+      return false;
+    }
   },
 
   showToast: (message, kind = "info") => set({ toast: { message, kind } }),

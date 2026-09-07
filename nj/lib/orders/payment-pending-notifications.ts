@@ -55,8 +55,8 @@ async function filterCustomerSourcedPayments(
 
   const allowed = new Set(
     data
-      .filter((o) => isCustomerSourcedOrder(o))
-      .map((o) => o.id as string)
+      .filter((o: { id: string; source?: string | null }) => isCustomerSourcedOrder(o))
+      .map((o: { id: string }) => o.id)
   );
 
   return rows.filter((r) => allowed.has(r.order_id));

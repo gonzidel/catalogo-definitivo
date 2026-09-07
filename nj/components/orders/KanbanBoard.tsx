@@ -18,7 +18,9 @@ import OrderMessageBell from "./OrderMessageBell";
 import OrderPaymentsPanel, { usePaymentPendingCount } from "./OrderPaymentsPanel";
 import LocalCannotSeparateAlert from "./LocalCannotSeparateAlert";
 import { OrdersToastContainer } from "./OrdersToast";
+import KanbanInboxSwitch from "./KanbanInboxSwitch";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { filterOrdersByKanbanInboxView } from "@/lib/orders/kanban-inbox";
 
 interface KanbanBoardProps {
   initialOrders: AdminOrder[];
@@ -59,32 +61,49 @@ export default function KanbanBoard({
   const hydrated = useOrdersStore((s) => s.hydrated);
   const allOrders = useOrdersStore((s) => s.orders);
   const warehouseIds = useOrdersStore((s) => s.warehouseIds);
+  const inboxView = useOrdersStore((s) => s.inboxView);
+  const setInboxView = useOrdersStore((s) => s.setInboxView);
   const title = boardTitleForScope(scope);
+  const showInboxSwitch = scope === "shipping";
 
   const columnFilterCtx = useMemo(
     () => ({ boardScope, warehouseIds }),
     [boardScope, warehouseIds]
   );
 
+  const inboxFilteredOrders = useMemo(() => {
+    if (!showInboxSwitch) return allOrders;
+    return filterOrdersByKanbanInboxView(allOrders, inboxView, {
+      boardScope,
+    });
+  }, [allOrders, inboxView, boardScope, showInboxSwitch]);
+
   const closedCount = useMemo(
-    () => filterOrdersForColumn(allOrders, "closed", columnFilterCtx).length,
-    [allOrders, columnFilterCtx]
+    () =>
+      filterOrdersForColumn(inboxFilteredOrders, "closed", columnFilterCtx).length,
+    [inboxFilteredOrders, columnFilterCtx]
   );
   const activeCount = useMemo(
-    () => filterOrdersForColumn(allOrders, "active", columnFilterCtx).length,
-    [allOrders, columnFilterCtx]
+    () =>
+      filterOrdersForColumn(inboxFilteredOrders, "active", columnFilterCtx).length,
+    [inboxFilteredOrders, columnFilterCtx]
   );
   const waitingCount = useMemo(
-    () => filterOrdersForColumn(allOrders, "waiting", columnFilterCtx).length,
-    [allOrders, columnFilterCtx]
+    () =>
+      filterOrdersForColumn(inboxFilteredOrders, "waiting", columnFilterCtx).length,
+    [inboxFilteredOrders, columnFilterCtx]
   );
   const cancelledCount = useMemo(
-    () => filterOrdersForColumn(allOrders, "cancelled", columnFilterCtx).length,
-    [allOrders, columnFilterCtx]
+    () =>
+      filterOrdersForColumn(inboxFilteredOrders, "cancelled", columnFilterCtx)
+        .length,
+    [inboxFilteredOrders, columnFilterCtx]
   );
   const stockPendingCount = useMemo(
-    () => filterOrdersForColumn(allOrders, "stock_pending", columnFilterCtx).length,
-    [allOrders, columnFilterCtx]
+    () =>
+      filterOrdersForColumn(inboxFilteredOrders, "stock_pending", columnFilterCtx)
+        .length,
+    [inboxFilteredOrders, columnFilterCtx]
   );
 
   const openDrawer = (id: Exclude<DrawerId, null>) => setDrawer(id);
@@ -199,7 +218,20 @@ export default function KanbanBoard({
             </>
           ) : null}
         </div>
-        <h1 className="kanban-header__title">{title}</h1>
+        <h1
+          className={`kanban-header__title${
+            showInboxSwitch && isMobile ? " kanban-header__title--mobile-hidden" : ""
+          }`}
+        >
+          {title}
+        </h1>
+        {showInboxSwitch ? (
+          <KanbanInboxSwitch
+            value={inboxView}
+            onChange={setInboxView}
+            compact={isMobile}
+          />
+        ) : null}
         {scope === "shipping" || isMobile || scope === "local_pickup" ? (
           <OrderMessageBell boardScope={scope} />
         ) : null}

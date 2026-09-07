@@ -2510,23 +2510,41 @@ export default function ActiveOrderTab({
               id="active-order-first-guide-title"
               className="active-order-first-guide__title"
             >
-              Tus productos ya están en el pedido
+              {isLocalPickupZone
+                ? "Recibimos tu pedido"
+                : "Tus productos ya están en el pedido"}
             </div>
             <div className="active-order-first-guide__lead">
-              Acá podés revisarlos antes de cerrarlo.
+              {isLocalPickupZone
+                ? "Ahora vamos a preparar y confirmar los productos que pediste."
+                : "Acá podés revisarlos antes de cerrarlo."}
             </div>
             <div className="active-order-first-guide__list">
               <div className="active-order-first-guide__item">
                 <span className="active-order-first-guide__icon" aria-hidden="true">
-                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none">
-                    <path d="M12 3 4.5 7.2v9.2L12 20.7l7.5-4.3V7.2L12 3Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-                    <path d="M4.8 7.4 12 11.5l7.2-4.1M12 11.5v5.7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                    <path d="m15.8 14.9 3.2 3.2m0-3.2-3.2 3.2" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
-                  </svg>
+                  {isLocalPickupZone ? (
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none">
+                      <path d="M20.5 11.5c0 4.3-3.8 7.8-8.5 7.8-1.1 0-2.2-.2-3.2-.6L5 20.2l1.4-3.1c-.9-1.1-1.4-2.5-1.4-4 0-4.3 3.8-7.8 8.5-7.8s8.5 3.5 8.5 7.8Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+                    </svg>
+                  ) : (
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none">
+                      <path d="M12 3 4.5 7.2v9.2L12 20.7l7.5-4.3V7.2L12 3Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+                      <path d="M4.8 7.4 12 11.5l7.2-4.1M12 11.5v5.7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                      <path d="m15.8 14.9 3.2 3.2m0-3.2-3.2 3.2" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+                    </svg>
+                  )}
                 </span>
                 <span>
-                  <strong>Si algún producto no está disponible</strong>
-                  <small>Lo vamos a marcar acá y también te avisaremos por WhatsApp.</small>
+                  <strong>
+                    {isLocalPickupZone
+                      ? "Te avisamos cuando esté listo"
+                      : "Si algún producto no está disponible"}
+                  </strong>
+                  <small>
+                    {isLocalPickupZone
+                      ? "Vas a recibir un mensaje por WhatsApp cuando tu pedido esté preparado para retirar."
+                      : "Lo vamos a marcar acá y también te avisaremos por WhatsApp."}
+                  </small>
                 </span>
               </div>
               <div className="active-order-first-guide__item">
@@ -2538,11 +2556,15 @@ export default function ActiveOrderTab({
                 </span>
                 <span>
                   <strong>
-                    {order.local_deferred_pickup && isLocalPickupZone
-                      ? "Tenés 36 horas"
+                    {isLocalPickupZone
+                      ? "Tenés 24 horas para retirarlo"
                       : "Tenés 7 días"}
                   </strong>
-                  <small>Podés cerrar el pedido cuando quieras.</small>
+                  <small>
+                    {isLocalPickupZone
+                      ? "El plazo comienza desde el momento en que te confirmamos que tu pedido está listo."
+                      : "Podés cerrar el pedido cuando quieras."}
+                  </small>
                 </span>
               </div>
             </div>

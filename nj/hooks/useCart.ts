@@ -3,6 +3,13 @@
 import { useEffect, useRef } from "react";
 import { useCartStore, type CartItem } from "@/store/cart";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import {
+  acquireCheckoutInFlight,
+  buildCartFingerprint,
+  CHECKOUT_IN_FLIGHT_MESSAGE,
+  releaseCheckoutInFlight,
+  resolveCheckoutOperation,
+} from "@/lib/cart/checkout-operation";
 
 // ─── Supabase helpers ─────────────────────────────────────────────────────────
 
@@ -13,6 +20,8 @@ async function ensureCart(customerId: string): Promise<string | null> {
     .select("id")
     .eq("customer_id", customerId)
     .eq("status", "open")
+    .order("created_at", { ascending: false })
+    .limit(1)
     .maybeSingle();
 
   if (existing) return existing.id;
@@ -39,18 +48,8 @@ async function upsertCartItem(cartId: string, item: CartItem): Promise<string | 
 
   const supabase = getSupabaseBrowserClient();
 
-  // If item already has a real Supabase id, update qty (both columns for compatibility)
-  if (item.id && !item.id.startsWith("local_")) {
-    const { data } = await supabase
-      .from("cart_items")
-      .update({ quantity: item.qty, qty: item.qty })
-      .eq("id", item.id)
-      .select("id")
-      .single();
-    return data?.id ?? item.id;
-  }
-
-  // Check if row already exists for this variant+size in this cart
+  // Siempre resolver por carrito+variante+talle. Un id persistido de un carrito
+  // vaciado (checkout anterior) no debe updatear una fila que ya no existe.
   const { data: existing } = await supabase
     .from("cart_items")
     .select("id")
@@ -62,7 +61,11 @@ async function upsertCartItem(cartId: string, item: CartItem): Promise<string | 
   if (existing) {
     await supabase
       .from("cart_items")
-      .update({ quantity: item.qty, qty: item.qty })
+      .update({
+        quantity: item.qty,
+        qty: item.qty,
+        price_snapshot: item.price_snapshot,
+      })
       .eq("id", existing.id);
     return existing.id;
   }
@@ -133,54 +136,24 @@ export async function loadCartFromSupabase(customerId: string): Promise<{
 
 // ─── Checkout ─────────────────────────────────────────────────────────────────
 
-function generateOperationId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
-  });
-}
-
-function buildCartFingerprint(items: CartItem[]): string {
-  if (!items.length) return "empty";
-  const lines = items
-    .map((item) => ({
-      vid: String(item.variant_id ?? "").trim(),
-      sz: String(item.size ?? "").trim().toLowerCase(),
-      qty: Number(item.qty ?? 0),
-      price: Number(item.price_snapshot ?? 0),
-    }))
-    .sort((a, b) => {
-      const k1 = `${a.vid}|${a.sz}`;
-      const k2 = `${b.vid}|${b.sz}`;
-      return k1 < k2 ? -1 : k1 > k2 ? 1 : 0;
-    });
-  // djb2 hash — same as original dashboard
-  const raw = JSON.stringify(lines);
-  let h = 5381;
-  for (let i = 0; i < raw.length; i++) {
-    h = (((h << 5) + h) + raw.charCodeAt(i)) >>> 0;
-  }
-  return h.toString(16);
-}
-
 /** Calls rpc_checkout_cart with the same signature as client/dashboard-instant.js */
 export async function checkoutCart(items: CartItem[]): Promise<{ success: boolean; error?: string }> {
-  const supabase = getSupabaseBrowserClient();
-  const operationId = generateOperationId();
-  const request = {
-    source: "dashboard-nj",
-    action: "checkout_cart",
-    cart_fingerprint: buildCartFingerprint(items),
-  };
-  const { error } = await supabase.rpc("rpc_checkout_cart", {
-    p_operation_id: operationId,
-    p_request: request,
-  });
-  if (error) return { success: false, error: error.message };
-  return { success: true };
+  if (!acquireCheckoutInFlight()) {
+    return { success: false, error: CHECKOUT_IN_FLIGHT_MESSAGE };
+  }
+  try {
+    const supabase = getSupabaseBrowserClient();
+    const operation = resolveCheckoutOperation(buildCartFingerprint(items));
+    const { error } = await supabase.rpc("rpc_checkout_cart", {
+      p_operation_id: operation.operationId,
+      p_request: operation.request,
+    });
+    if (error) return { success: false, error: error.message };
+    operation.markCompleted();
+    return { success: true };
+  } finally {
+    releaseCheckoutInFlight();
+  }
 }
 
 // ─── Hook: useCartSync ────────────────────────────────────────────────────────
@@ -188,7 +161,7 @@ export async function checkoutCart(items: CartItem[]): Promise<{ success: boolea
 /**
  * Syncs local (unsynced) cart items to Supabase.
  * - Only runs for authenticated users with a valid customerId.
- * - Uses a ref-based lock to prevent concurrent sync runs.
+ * - Concurrent callers share one in-flight Promise instead of failing.
  * - Does NOT include `items` in the useEffect dep array to prevent infinite loops.
  *   Instead reads items via a ref on each sync pass.
  */
@@ -198,7 +171,7 @@ export function useCartSync(customerId: string | null) {
   // Use refs to read latest state inside the effect without adding to deps
   const itemsRef    = useRef(items);
   const cartIdRef   = useRef(cartId);
-  const syncing     = useRef(false);
+  const inFlight    = useRef<Promise<boolean> | null>(null);
   itemsRef.current  = items;
   cartIdRef.current = cartId;
 
@@ -234,37 +207,45 @@ export function useCartSync(customerId: string | null) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customerId]);
 
-  // Sync unsynced items — triggered manually via syncNow()
-  async function syncNow() {
-    if (!customerId || syncing.current) return;
+  // Empuja el carrito local al carrito open del cliente. Antes del checkout
+  // hay que mandar TODOS los ítems: synced:true puede ser de un carrito ya
+  // vaciado y el RPC solo lee carts.status='open' en Supabase.
+  function syncNow(): Promise<boolean> {
+    if (inFlight.current) return inFlight.current;
 
-    const currentItems = itemsRef.current;
-    const unsynced = currentItems.filter(
-      (i) => !i.synced && i.variant_id && !i.variant_id.startsWith("local_")
-    );
-    if (unsynced.length === 0) return;
+    const run = (async (): Promise<boolean> => {
+      if (!customerId) return false;
 
-    syncing.current = true;
-    try {
-      let cid = cartIdRef.current;
-      if (!cid) {
-        cid = await ensureCart(customerId);
-        if (cid) setCartId(cid);
-      }
-      if (!cid) return;
+      const currentItems = itemsRef.current;
+      const toSync = currentItems.filter(
+        (i) => i.variant_id && !i.variant_id.startsWith("local_") && i.qty > 0
+      );
+      if (toSync.length === 0) return false;
+
+      const cid = await ensureCart(customerId);
+      if (!cid) return false;
+      cartIdRef.current = cid;
+      setCartId(cid);
 
       const updatedItems = [...currentItems];
-      for (const item of unsynced) {
+      let pushed = 0;
+      for (const item of toSync) {
         const realId = await upsertCartItem(cid, item);
         if (realId) {
+          pushed += 1;
           const idx = updatedItems.findIndex((i) => i.id === item.id);
           if (idx !== -1) updatedItems[idx] = { ...updatedItems[idx], id: realId, synced: true };
         }
       }
       setItems(updatedItems);
-    } finally {
-      syncing.current = false;
-    }
+      return pushed === toSync.length;
+    })();
+
+    inFlight.current = run;
+    void run.finally(() => {
+      if (inFlight.current === run) inFlight.current = null;
+    });
+    return run;
   }
 
   return {

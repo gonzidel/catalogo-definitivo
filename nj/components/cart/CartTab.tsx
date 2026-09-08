@@ -223,17 +223,17 @@ export default function CartTab({ customerId, onOrderCreated, activeOrderStatus,
 
   async function handleCheckout() {
     if (checkoutLock.current || useCartStore.getState().isCheckingOut) return;
-    const profileOk = await requireProfileComplete();
-    if (!profileOk) return;
     checkoutLock.current = true;
     setCheckingOut(true);
-    setCheckoutError(null);
     try {
+      const profileOk = await requireProfileComplete();
+      if (!profileOk) return;
+      setCheckoutError(null);
       const sellableOk = await assertSellableBeforeCheckout();
       if (!sellableOk) return;
       const synced = await syncNow();
       if (!synced) {
-        setCheckoutError("No pudimos guardar el carrito. Revisá la conexión e intentá de nuevo.");
+        setCheckoutError("No pudimos guardar el carrito. Intentá nuevamente.");
         return;
       }
       const currentItems = useCartStore.getState().items;

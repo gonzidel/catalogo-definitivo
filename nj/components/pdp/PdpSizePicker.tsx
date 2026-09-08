@@ -2,19 +2,12 @@
 
 import type { CSSProperties, RefObject } from "react";
 import { compareCatalogSizes } from "@/lib/utils/size-normalizer";
+import {
+  formatSellableRemaining,
+  type PdpVariantInfo,
+  type PdpVariantSize,
+} from "@/lib/stock/sellable-stock";
 import type { ColorDetail } from "@/types/catalog";
-
-interface SizeWithStock {
-  size: string;
-  sku: string;
-  stock_qty: number;
-}
-
-interface VariantSizeInfo {
-  variantId: string;
-  color: string;
-  sizes: SizeWithStock[];
-}
 
 interface SelectedItem {
   variantId: string;
@@ -27,12 +20,12 @@ interface PdpSizePickerProps {
   colorDetail: ColorDetail | null;
   activeColor: string;
   selectionLabel?: string;
-  sizesWithStock?: SizeWithStock[];
+  sizesWithStock?: PdpVariantSize[];
   /** Variante actualmente en pantalla (según el color elegido arriba). */
   activeVariantId: string;
-  /** Todas las variantes de color, con su stock por talle — para calcular
-      el máximo permitido en las filas de otros colores ya elegidos. */
-  variantSizes: VariantSizeInfo[];
+  /** Todas las variantes de color, con sellable_qty por talle. */
+  variantSizes: PdpVariantInfo[];
+  sellableStatus: "loading" | "ready" | "error";
   /** Colores del producto — para pintar el punto de color en cada fila. */
   colors: ColorDetail[];
   /** Selección acumulada de TODOS los colores (no solo el que está activo). */
@@ -48,22 +41,24 @@ export default function PdpSizePicker({
   sizesWithStock,
   activeVariantId,
   variantSizes,
+  sellableStatus,
   colors,
   allSelections,
   onSelectionChange,
   qtyListRef,
 }: PdpSizePickerProps) {
-  const stockMap = new Map((sizesWithStock ?? []).map((s) => [s.size, s.stock_qty]));
+  const stockMap = new Map((sizesWithStock ?? []).map((s) => [s.size, s.sellable_qty]));
   const capitalizedSelectionLabel =
     selectionLabel.charAt(0).toUpperCase() + selectionLabel.slice(1);
   const selectionArticle = selectionLabel === "medida" ? "una" : "un";
-  const hasStockData = stockMap.size > 0;
 
-  // Use variant_sizes as the canonical source (includes out-of-stock talles).
-  // Fall back to colorDetail.talles only if no stock data is loaded yet.
-  const talles = hasStockData
-    ? (sizesWithStock ?? []).map((s) => s.size)
-    : (colorDetail?.talles ?? []);
+  // Grilla visual: variant_sizes si ya llegaron; si no, Numeracion del snapshot.
+  // El snapshot NUNCA habilita compra: sin sellable live confirmado el chip queda disabled.
+  const liveSizes = sizesWithStock ?? [];
+  const talles =
+    liveSizes.length > 0
+      ? liveSizes.map((s) => s.size)
+      : (colorDetail?.talles ?? []);
   const sortedTalles = [...talles].sort(compareCatalogSizes);
 
   // Selección del color activo (para resaltar los chips de arriba).
@@ -75,9 +70,9 @@ export default function PdpSizePicker({
   const totalSelectedAllColors = allSelections.reduce((a, i) => a + Math.max(0, i.qty), 0);
 
   // Stock por variante+talle, para los steppers de las filas de otros colores.
-  const stockByVariant = new Map<string, Map<string, number>>();
+  const stockByVariant = new Map<string, Map<string, number | null>>();
   for (const v of variantSizes) {
-    stockByVariant.set(v.variantId, new Map(v.sizes.map((s) => [s.size, s.stock_qty])));
+    stockByVariant.set(v.variantId, new Map(v.sizes.map((s) => [s.size, s.sellable_qty])));
   }
 
   const hexByColor = new Map(colors.map((c) => [c.color.toLowerCase(), c.hex_color]));
@@ -102,7 +97,9 @@ export default function PdpSizePicker({
         <div className="pdp-sizes__chips">
           {sortedTalles.map((talle) => {
             const stock = stockMap.get(talle);
-            const outOfStock = hasStockData && stock !== undefined && stock <= 0;
+            const confirmed = sellableStatus === "ready" && typeof stock === "number";
+            const outOfStock = confirmed && stock <= 0;
+            const canSelect = confirmed && stock > 0 && Boolean(activeVariantId);
             const qty = activeSelections[talle] ?? 0;
             const isSelected = talle in activeSelections;
 
@@ -111,12 +108,12 @@ export default function PdpSizePicker({
                 key={talle}
                 type="button"
                 onClick={() => {
-                  if (outOfStock) return;
+                  if (!canSelect) return;
                   onSelectionChange(activeVariantId, talle, isSelected ? -1 : 0);
                 }}
                 aria-pressed={isSelected}
                 aria-label={`${capitalizedSelectionLabel} ${talle}${outOfStock ? " (sin stock)" : ""}${isSelected ? ` (${qty} seleccionado${qty > 1 ? "s" : ""})` : ""}`}
-                disabled={outOfStock}
+                disabled={!canSelect}
                 className={[
                   "pdp-size-chip",
                   isSelected ? "is-selected" : "",
@@ -145,8 +142,8 @@ export default function PdpSizePicker({
           {allSelections.map((item) => {
             const qty = item.qty;
             const stock = stockByVariant.get(item.variantId)?.get(item.size);
-            const hasStockForRow = Boolean(stockByVariant.get(item.variantId)?.size);
-            const maxQty = hasStockForRow && stock !== undefined ? stock : 99;
+            const maxQty =
+              sellableStatus === "ready" && typeof stock === "number" ? stock : 0;
             const hex = hexByColor.get(item.color.toLowerCase()) ?? "#ccc";
             const isActiveColorRow = item.variantId === activeVariantId;
             const atMax = qty >= maxQty;
@@ -180,6 +177,11 @@ export default function PdpSizePicker({
                       />
                       <span className="pdp-qty-row__color-name">{item.color}</span>
                     </span>
+                    {sellableStatus === "ready" && atMax && typeof stock === "number" && stock > 0 && (
+                      <span className="pdp-qty-row__stock-hint">
+                        {formatSellableRemaining(stock)}
+                      </span>
+                    )}
                   </span>
                 </div>
 

@@ -11,6 +11,12 @@ import {
   pickDisplayColorDetail,
   stripColorsWithoutImages,
 } from "@/lib/utils/catalog-variant-enrich";
+import {
+  applySellableHasStockToProduct,
+  applySellableToPdpVariants,
+  type PdpVariantInfo,
+} from "@/lib/stock/sellable-stock";
+import { useSellableStock } from "@/hooks/useSellableStock";
 import type { CatalogRow, GroupedProduct } from "@/types/catalog";
 import PdpInteractive from "./PdpInteractive";
 import PdpLoading from "@/app/producto/[sku]/loading";
@@ -148,7 +154,16 @@ async function fetchProductForSku(sku: string): Promise<{
   return { product, initialColor };
 }
 
-async function fetchVariantSizes(articulo: string) {
+type PdpVariantCatalogRow = {
+  variantId: string;
+  color: string;
+  sku: string;
+  sizes: Array<{ size: string; sku: string }>;
+};
+
+async function fetchPdpVariantCatalog(
+  articulo: string
+): Promise<PdpVariantCatalogRow[]> {
   const supabase = getSupabaseBrowserClient();
 
   const { data: variants } = await supabase
@@ -161,36 +176,11 @@ async function fetchVariantSizes(articulo: string) {
   if (!variants || variants.length === 0) return [];
 
   const variantIds = variants.map((v: { id: string }) => v.id);
-  // Stock por talle = misma base que catalog_public_available_view
-  // (general + venta-publico). No usar product_variants.reserved_qty como
-  // techo global: suele estar desfasado y deja talles en 0 aunque la vista
-  // pública (y el carrusel) muestren el producto con stock.
-  const [{ data: sizeRows }, { data: sizeWarehouseRows }, { data: warehouses }] =
-    await Promise.all([
-      supabase
-        .from("variant_sizes")
-        .select("variant_id, size, sku")
-        .in("variant_id", variantIds)
-        .order("size"),
-      supabase
-        .from("variant_size_warehouse_stock")
-        .select("variant_id, size, stock_qty, warehouse_id")
-        .in("variant_id", variantIds),
-      supabase
-        .from("warehouses")
-        .select("id, code")
-        .in("code", ["general", "venta-publico"]),
-    ]);
-
-  const sellableWarehouseIds = new Set(
-    (warehouses ?? []).map((w: { id: string }) => String(w.id))
-  );
-
-  const normalizeSizeKey = (size: string) => {
-    const trimmed = String(size ?? "").trim();
-    if (/^\d+(\.0+)?$/.test(trimmed)) return String(Number(trimmed));
-    return trimmed.toLowerCase();
-  };
+  const { data: sizeRows } = await supabase
+    .from("variant_sizes")
+    .select("variant_id, size, sku")
+    .in("variant_id", variantIds)
+    .order("size");
 
   const sizeSkuByVariant = new Map<string, Array<{ size: string; sku: string }>>();
   for (const row of sizeRows ?? []) {
@@ -204,32 +194,12 @@ async function fetchVariantSizes(articulo: string) {
     sizeSkuByVariant.set(variantId, entry);
   }
 
-  const sizeStock = new Map<string, number>();
-  for (const row of sizeWarehouseRows ?? []) {
-    const variantId = String(row.variant_id ?? "");
-    const warehouseId = String(row.warehouse_id ?? "");
-    if (!variantId || !sellableWarehouseIds.has(warehouseId)) continue;
-    const key = `${variantId}__${normalizeSizeKey(String(row.size ?? ""))}`;
-    sizeStock.set(key, (sizeStock.get(key) ?? 0) + Number(row.stock_qty ?? 0));
-  }
-
-  const results = variants.map(
-    (v: { id: string; color?: string; sku?: string }) => ({
-      variantId: v.id,
-      color: v.color ?? "",
-      sku: v.sku ?? "",
-      sizes: (sizeSkuByVariant.get(v.id) ?? []).map((s) => {
-        const bySize = sizeStock.get(`${v.id}__${normalizeSizeKey(s.size)}`) ?? 0;
-        return {
-          size: s.size,
-          sku: s.sku,
-          stock_qty: Math.max(0, bySize),
-        };
-      }),
-    })
-  );
-
-  return results;
+  return variants.map((v: { id: string; color?: string; sku?: string }) => ({
+    variantId: v.id,
+    color: v.color ?? "",
+    sku: v.sku ?? "",
+    sizes: sizeSkuByVariant.get(v.id) ?? [],
+  }));
 }
 
 function PdpNotFound({ backUrl }: { backUrl: string }) {
@@ -263,22 +233,55 @@ export default function PdpLoader({ sku, backUrl, initialColorFromUrl }: PdpLoad
     return data?.initialColor;
   }, [data, initialColorFromUrl]);
 
-  const { data: variantSizes = [] } = useSWR(
-    data?.product ? `pdp-sizes:${data.product.Articulo}` : null,
-    () => fetchVariantSizes(data!.product.Articulo),
+  const { data: variantCatalog } = useSWR(
+    data?.product ? `pdp-variant-catalog:${data.product.Articulo}` : null,
+    () => fetchPdpVariantCatalog(data!.product.Articulo),
     {
       revalidateOnFocus: false,
       revalidateOnReconnect: false,
     }
   );
+  const variantCatalogRows = variantCatalog ?? [];
+
+  const sellableVariantIds = useMemo(
+    () => variantCatalogRows.map((v) => v.variantId),
+    [variantCatalogRows]
+  );
+  const {
+    byVariant,
+    queryFailed: sellableError,
+    isLoading: sellableLoading,
+  } = useSellableStock(sellableVariantIds);
+
+  const variantSizes: PdpVariantInfo[] = useMemo(() => {
+    if (!byVariant) return [];
+    return applySellableToPdpVariants(variantCatalogRows, byVariant);
+  }, [variantCatalogRows, byVariant]);
+
+  const productWithSellable = useMemo(() => {
+    if (!data?.product) return undefined;
+    if (!byVariant) {
+      return {
+        ...data.product,
+        DetalleColor: data.product.DetalleColor.map((dc) => ({
+          ...dc,
+          hasStock: undefined,
+        })),
+      };
+    }
+    return applySellableHasStockToProduct(data.product, variantSizes);
+  }, [data?.product, byVariant, variantSizes]);
 
   if (isLoading) return <PdpLoading />;
-  if (error || !data) return <PdpNotFound backUrl={backUrl} />;
+  if (error || !data || !productWithSellable) return <PdpNotFound backUrl={backUrl} />;
 
   return (
     <PdpInteractive
-      product={data.product}
+      product={productWithSellable}
       variantSizes={variantSizes}
+      sellableStatus={
+        sellableError ? "error" : sellableLoading || !byVariant ? "loading" : "ready"
+      }
       initialColor={resolvedInitialColor}
       backUrl={backUrl}
     />

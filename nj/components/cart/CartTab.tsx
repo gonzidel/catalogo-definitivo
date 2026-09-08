@@ -1,13 +1,19 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
 import { useCartStore, type CartItem } from "@/store/cart";
 import { useCartSync, checkoutCart } from "@/hooks/useCart";
-import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import LineItemRow, { formatItemARS } from "@/components/cart/LineItemRow";
-import PromoGroupRow from "@/components/cart/PromoGroupRow";
+import PromoGroupRow, { type PromoChildControls } from "@/components/cart/PromoGroupRow";
 import { useProfileGate } from "@/components/profile/ProfileGateProvider";
+import { useSellableStock } from "@/hooks/useSellableStock";
+import {
+  cartLineStockStatus,
+  formatSellableRemaining,
+  lookupSellableQty,
+  sellableStockKey,
+} from "@/lib/stock/sellable-stock";
 import {
   buildPromoGroups,
   fetchActivePromotionsForVariants,
@@ -21,117 +27,14 @@ function formatARS(n: number) {
   return formatItemARS(n);
 }
 
-function normalizeSizeKey(size: string) {
-  const trimmed = String(size ?? "").trim();
-  if (/^\d+(\.0+)?$/.test(trimmed)) return String(Number(trimmed));
-  return trimmed.toLowerCase();
-}
-
 function cartItemKey(item: CartItem) {
-  return `${item.variant_id}__${normalizeSizeKey(item.size)}`;
-}
-
-function stockMapKey(variantId: string, size: string) {
-  return `${variantId}__${normalizeSizeKey(size)}`;
+  return sellableStockKey(item.variant_id, item.size);
 }
 
 function describeCartItem(item: CartItem) {
   return [item.product_name, item.color, item.size ? `T. ${item.size}` : ""]
     .filter(Boolean)
     .join(" · ");
-}
-
-// ─── Stock check ──────────────────────────────────────────────────────────────
-
-/** Map of "variantId__size" → available stock qty */
-type StockMap = Record<string, number>;
-
-async function fetchCartStock(items: CartItem[]): Promise<StockMap> {
-  const variantIds = [
-    ...new Set(items.map((i) => i.variant_id).filter((id): id is string => Boolean(id))),
-  ];
-  if (variantIds.length === 0) return {};
-
-  // Default every cart row to 0. If the size row disappeared or no longer
-  // comes back from Supabase, it must be shown as unavailable, not "unknown".
-  const map: StockMap = {};
-  for (const item of items) {
-    if (!item.variant_id) continue;
-    map[cartItemKey(item)] = 0;
-  }
-
-  const supabase = getSupabaseBrowserClient();
-
-  const [
-    { data: sizeRows, error: sizeError },
-    { data: variantRows, error: variantError },
-    { data: warehouseRows, error: warehouseError },
-  ] = await Promise.all([
-    supabase
-      .from("variant_size_warehouse_stock")
-      .select("variant_id, size, stock_qty")
-      .in("variant_id", variantIds),
-    supabase
-      .from("product_variants")
-      .select("id, reserved_qty")
-      .in("id", variantIds),
-    supabase
-      .from("variant_warehouse_stock")
-      .select("variant_id, stock_qty")
-      .in("variant_id", variantIds),
-  ]);
-
-  if (sizeError) throw sizeError;
-  if (variantError) throw variantError;
-  if (warehouseError) throw warehouseError;
-
-  const sizeTotals = new Map<string, number>();
-  for (const row of sizeRows ?? []) {
-    const variantId = String(row.variant_id ?? "");
-    if (!variantId) continue;
-    const key = stockMapKey(variantId, String(row.size ?? ""));
-    sizeTotals.set(key, (sizeTotals.get(key) ?? 0) + Number(row.stock_qty ?? 0));
-  }
-
-  const totalByVariant = new Map<string, number>();
-  for (const row of warehouseRows ?? []) {
-    const variantId = String(row.variant_id ?? "");
-    if (!variantId) continue;
-    totalByVariant.set(
-      variantId,
-      (totalByVariant.get(variantId) ?? 0) + Number(row.stock_qty ?? 0)
-    );
-  }
-
-  const reservedByVariant = new Map<string, number>();
-  for (const row of variantRows ?? []) {
-    const variantId = String(row.id ?? "");
-    if (!variantId) continue;
-    reservedByVariant.set(variantId, Number(row.reserved_qty ?? 0));
-  }
-
-  for (const item of items) {
-    if (!item.variant_id) continue;
-    const key = cartItemKey(item);
-    const hasSize = normalizeSizeKey(item.size) !== "";
-    const sizeAvailable = hasSize ? (sizeTotals.get(key) ?? 0) : null;
-    const totalStock = totalByVariant.get(item.variant_id);
-    const totalAvailable =
-      totalStock === undefined
-        ? null
-        : Math.max(0, totalStock - (reservedByVariant.get(item.variant_id) ?? 0));
-
-    if (hasSize) {
-      map[key] =
-        totalAvailable === null
-          ? Math.max(0, sizeAvailable ?? 0)
-          : Math.max(0, Math.min(sizeAvailable ?? 0, totalAvailable));
-    } else {
-      map[key] = Math.max(0, totalAvailable ?? 0);
-    }
-  }
-
-  return map;
 }
 
 function findStockConflicts(
@@ -161,81 +64,12 @@ function buildStockConflictMessage(
   return `${prefix}${itemName}: ${availableLabel} y tenés ${first.item.qty}. Ajustá la cantidad para hacer el pedido.`;
 }
 
-function useCartStock(items: CartItem[]) {
-  const [stockMap, setStockMap] = useState<StockMap>({});
-  const [checking, setChecking] = useState(false);
-  const cartStockKey = useMemo(
-    () => items.map((i) => cartItemKey(i)).sort().join("|"),
-    [items]
-  );
-
-  useEffect(() => {
-    if (items.length === 0) {
-      setStockMap({});
-      setChecking(false);
-      return;
-    }
-
-    let cancelled = false;
-    let timeoutId: number | null = null;
-
-    function refreshStock() {
-      if (cancelled) return;
-      // Soft indicator only — never block the checkout CTA on this advisory fetch.
-      setChecking(true);
-
-      // On slow/flaky networks the request can hang; clear the indicator so the
-      // cart never feels "stuck". Stock is re-validated for real in rpc_checkout_cart.
-      if (timeoutId !== null) window.clearTimeout(timeoutId);
-      timeoutId = window.setTimeout(() => {
-        if (!cancelled) setChecking(false);
-      }, 5000);
-
-      fetchCartStock(items)
-        .then((map) => {
-          if (!cancelled) setStockMap(map);
-        })
-        .catch(() => {
-          // Keep previous map; badges are advisory.
-        })
-        .finally(() => {
-          if (timeoutId !== null) window.clearTimeout(timeoutId);
-          timeoutId = null;
-          if (!cancelled) setChecking(false);
-        });
-    }
-
-    refreshStock();
-
-    function handleVisibilityOrFocus() {
-      if (document.visibilityState === "visible") refreshStock();
-    }
-
-    document.addEventListener("visibilitychange", handleVisibilityOrFocus);
-    window.addEventListener("focus", handleVisibilityOrFocus);
-
-    return () => {
-      cancelled = true;
-      if (timeoutId !== null) window.clearTimeout(timeoutId);
-      document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
-      window.removeEventListener("focus", handleVisibilityOrFocus);
-    };
-  }, [items, cartStockKey]);
-
-  function getStock(item: CartItem): number | null {
-    const key = cartItemKey(item);
-    return key in stockMap ? stockMap[key] : null;
-  }
-
-  return { getStock, checking };
-}
-
 // ─── Props ────────────────────────────────────────────────────────────────────
 
 interface CartTabProps {
   customerId: string;
   onOrderCreated: () => void;
-  activeOrderStatus?: string | null; // warn if "closed"
+  activeOrderStatus?: string | null; // "closed" = envío pendiente; no usar si retiro ya cobrado
   onGoToOrder?: () => void;
 }
 
@@ -251,18 +85,34 @@ export default function CartTab({ customerId, onOrderCreated, activeOrderStatus,
   const setCheckingOut   = useCartStore((s) => s.setCheckingOut);
   const setCheckoutError = useCartStore((s) => s.setCheckoutError);
   const [showConfirm, setShowConfirm] = useState(false);
+  const checkoutLock = useRef(false);
 
   const { removeFromSupabase, syncNow } = useCartSync(customerId);
-  const { getStock, checking } = useCartStock(items);
+  const sellableVariantIds = useMemo(
+    () => [...new Set(items.map((i) => i.variant_id).filter(Boolean))],
+    [items]
+  );
+  const {
+    byVariant,
+    queryFailed,
+    isValidating,
+    revalidate: revalidateSellable,
+  } = useSellableStock(sellableVariantIds);
   const { requireProfileComplete, profileComplete } = useProfileGate();
   const [promotions, setPromotions] = useState<ActivePromotion[]>([]);
 
-  // Items with stock info
+  function getStock(item: CartItem): number | null {
+    if (queryFailed) return null;
+    if (!byVariant) return null;
+    return lookupSellableQty(byVariant, item.variant_id, item.size);
+  }
+
   const itemsWithStock = items.map((item) => {
     const stock = getStock(item);
-    const outOfStock = stock !== null && stock <= 0;
-    const limitedStock = stock !== null && stock > 0 && stock < item.qty;
-    return { item, stock, outOfStock, limitedStock };
+    const status = cartLineStockStatus(item.qty, stock);
+    const outOfStock = status.kind === "out";
+    const limitedStock = status.kind === "limited";
+    return { item, stock, status, outOfStock, limitedStock };
   });
 
   const outOfStockCount = itemsWithStock.filter((x) => x.outOfStock).length;
@@ -334,13 +184,36 @@ export default function CartTab({ customerId, onOrderCreated, activeOrderStatus,
     updateQty(item.variant_id, item.size, next);
   }
 
-  function validateVisibleStock() {
-    const conflicts = findStockConflicts(items, getStock);
+  async function assertSellableBeforeCheckout(): Promise<boolean> {
+    let latest;
+    try {
+      latest = await revalidateSellable();
+    } catch {
+      setCheckoutError("No pudimos verificar el stock. Intentá nuevamente.");
+      return false;
+    }
+    if (!latest) {
+      setCheckoutError("No pudimos verificar el stock. Intentá nuevamente.");
+      return false;
+    }
+    const freshGetStock = (item: CartItem): number | null =>
+      lookupSellableQty(latest, item.variant_id, item.size);
+    const unverified = items.filter((item) => freshGetStock(item) === null);
+    if (unverified.length > 0) {
+      setCheckoutError("No pudimos verificar el stock. Intentá nuevamente.");
+      return false;
+    }
+    const conflicts = findStockConflicts(items, freshGetStock);
     if (conflicts.length > 0) {
       setCheckoutError(buildStockConflictMessage(conflicts));
       return false;
     }
-    if (totalItems <= 0) {
+    const availableUnits = items.reduce((acc, item) => {
+      const sellable = freshGetStock(item);
+      if (sellable === null || sellable <= 0) return acc;
+      return acc + item.qty;
+    }, 0);
+    if (availableUnits <= 0) {
       setCheckoutError("No hay productos con stock disponible para hacer el pedido.");
       return false;
     }
@@ -349,12 +222,20 @@ export default function CartTab({ customerId, onOrderCreated, activeOrderStatus,
   }
 
   async function handleCheckout() {
+    if (checkoutLock.current || useCartStore.getState().isCheckingOut) return;
     const profileOk = await requireProfileComplete();
     if (!profileOk) return;
+    checkoutLock.current = true;
     setCheckingOut(true);
     setCheckoutError(null);
     try {
-      await syncNow();
+      const sellableOk = await assertSellableBeforeCheckout();
+      if (!sellableOk) return;
+      const synced = await syncNow();
+      if (!synced) {
+        setCheckoutError("No pudimos guardar el carrito. Revisá la conexión e intentá de nuevo.");
+        return;
+      }
       const currentItems = useCartStore.getState().items;
       const result = await checkoutCart(currentItems);
       if (result.success) {
@@ -366,6 +247,8 @@ export default function CartTab({ customerId, onOrderCreated, activeOrderStatus,
           msg = "Hay un pedido en proceso. Esperá unos segundos e intentá nuevamente.";
         } else if (msg.includes("operation_id_conflict")) {
           msg = "El carrito cambió entre intentos. Intentá nuevamente.";
+        } else if (/no se encontró un carrito activo/i.test(msg) || /carrito está vacío/i.test(msg)) {
+          msg = "El carrito no se guardó en el servidor. Cerrá esto e intentá de nuevo.";
         } else if (/no tiene variante asociada/i.test(msg)) {
           msg = "Hay un producto que ya no está disponible. Eliminalo y volvé a intentar.";
         } else if (/stock.*insuficiente/i.test(msg)) {
@@ -376,6 +259,7 @@ export default function CartTab({ customerId, onOrderCreated, activeOrderStatus,
     } catch {
       setCheckoutError("No pudimos revisar el stock. Intentá nuevamente.");
     } finally {
+      checkoutLock.current = false;
       setCheckingOut(false);
     }
   }
@@ -401,6 +285,18 @@ export default function CartTab({ customerId, onOrderCreated, activeOrderStatus,
 
   return (
     <div>
+      {queryFailed && (
+        <div className="cart-tab-banner cart-tab-banner--info">
+          <span className="cart-tab-banner__icon">⚠️</span>
+          <div>
+            <div className="cart-tab-banner__title">No pudimos verificar el stock</div>
+            <div className="cart-tab-banner__text">
+              Tus productos siguen en el carrito. Reintentá o volvé a esta pestaña.
+            </div>
+          </div>
+        </div>
+      )}
+
       {outOfStockCount > 0 && (
         <div className="cart-tab-banner cart-tab-banner--oos">
           <span className="cart-tab-banner__icon">⚠️</span>
@@ -419,27 +315,25 @@ export default function CartTab({ customerId, onOrderCreated, activeOrderStatus,
 
       <div className="cart-tab-list">
         {promoGroups.map((group) => {
-          const childControls: Record<
-            string,
-            {
-              qty: number;
-              atMax?: boolean;
-              onQtyDelta?: (delta: number) => void;
-              onRemove?: () => void;
-            }
-          > = {};
+          const childControls: Record<string, PromoChildControls> = {};
           for (const gItem of group.items) {
             const cartItem = cartByKey.get(gItem.key);
             if (!cartItem) continue;
             const s = getStock(cartItem);
+            const status = cartLineStockStatus(cartItem.qty, s);
             childControls[gItem.key] = {
-              // Cantidad cubierta por la promo (no la qty total de la línea)
               qty: gItem.qty,
               atMax: s !== null && cartItem.qty >= s,
               onQtyDelta: (delta) => handleQty(cartItem, delta),
               onRemove: () => {
                 void handleRemove(cartItem);
               },
+              below:
+                status.kind === "limited" ? (
+                  <span className="cart-tab-stock-pill cart-tab-stock-pill--limited">
+                    {formatSellableRemaining(status.sellable)}
+                  </span>
+                ) : undefined,
             };
           }
           return (
@@ -534,7 +428,7 @@ export default function CartTab({ customerId, onOrderCreated, activeOrderStatus,
                 below={
                   limitedStock ? (
                     <span className="cart-tab-stock-pill cart-tab-stock-pill--limited">
-                      {`Máx. ${stock} disponibles`}
+                      {stock !== null ? formatSellableRemaining(stock) : ""}
                     </span>
                   ) : undefined
                 }
@@ -647,7 +541,7 @@ export default function CartTab({ customerId, onOrderCreated, activeOrderStatus,
         type="button"
         onClick={async () => {
           const ok = await requireProfileComplete();
-          if (ok && validateVisibleStock()) setShowConfirm(true);
+          if (ok && (await assertSellableBeforeCheckout())) setShowConfirm(true);
         }}
         disabled={submitBusy}
         className={[
@@ -697,10 +591,13 @@ export default function CartTab({ customerId, onOrderCreated, activeOrderStatus,
           </>
         )}
       </button>
-      {checking && (
+      {isValidating && (
         <p className="cart-tab-submit-hint">Revisando tu carrito…</p>
       )}
-      {!checking && stockConflictCount > 0 && (
+      {queryFailed && !isValidating && (
+        <p className="cart-tab-submit-hint">No pudimos verificar el stock.</p>
+      )}
+      {!isValidating && !queryFailed && stockConflictCount > 0 && (
         <p className="cart-tab-submit-hint">Ajustá los productos marcados antes de hacer el pedido.</p>
       )}
 

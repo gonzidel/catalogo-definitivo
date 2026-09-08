@@ -9,21 +9,25 @@ import PdpRecommended from "./PdpRecommended";
 import { useCartStore } from "@/store/cart";
 import { useProfileGate } from "@/components/profile/ProfileGateProvider";
 import { formatARS, colorDetailHasImage } from "@/lib/utils/catalog";
+import {
+  cartPriceForColor,
+  getColorEffectivePrice,
+} from "@/lib/utils/variant-price";
+import {
+  clampQtyToSellable,
+  getSellableStockForVariants,
+  resolveAddLinesFromFreshSellable,
+  type PdpVariantInfo,
+} from "@/lib/stock/sellable-stock";
 import type { GroupedProduct, ColorDetail } from "@/types/catalog";
 
 /** selections[variantId][size] = qty */
 type MultiSelection = Record<string, Record<string, number>>;
 
-interface VariantSizeInfo {
-  variantId: string;
-  color: string;
-  sku: string;
-  sizes: Array<{ size: string; sku: string; stock_qty: number }>;
-}
-
 interface PdpInteractiveProps {
   product: GroupedProduct;
-  variantSizes: VariantSizeInfo[];
+  variantSizes: PdpVariantInfo[];
+  sellableStatus: "loading" | "ready" | "error";
   initialColor?: string;
   backUrl: string;
 }
@@ -101,6 +105,7 @@ async function downloadHeroImage(heroSrc: string | null, articulo: string) {
 export default function PdpInteractive({
   product,
   variantSizes,
+  sellableStatus,
   initialColor,
   backUrl,
 }: PdpInteractiveProps) {
@@ -122,6 +127,8 @@ export default function PdpInteractive({
   // Multi-selection: { variantId: { size: qty } }
   const [selections, setSelections] = useState<MultiSelection>({});
   const [addedFlash, setAddedFlash] = useState(false);
+  const [addInFlight, setAddInFlight] = useState(false);
+  const [addStockError, setAddStockError] = useState(false);
   const qtyListRef = useRef<HTMLDivElement | null>(null);
 
   const addItem = useCartStore((s) => s.addItem);
@@ -143,15 +150,33 @@ export default function PdpInteractive({
   // Talle puede tocarse para CUALQUIER variante (no solo la del color que
   // está en pantalla) — así la fila "38 Beige" en el resumen sigue siendo
   // editable aunque ahora estemos mirando el negro.
+  const sellableFor = useCallback(
+    (variantId: string, size: string): number => {
+      const variant = variantSizes.find((v) => v.variantId === variantId);
+      return (
+        variant?.sizes.find((s) => s.size === size)?.sellable_qty ?? 0
+      );
+    },
+    [variantSizes]
+  );
+
   const handleSizeChange = useCallback((variantId: string, size: string, qty: number) => {
     if (!variantId) return;
     setSelections((prev) => {
       const variant = { ...(prev[variantId] ?? {}) };
       if (qty < 0) {
-        // -1 = deselect (quitar del mapa)
         delete variant[size];
+      } else if (sellableStatus !== "ready") {
+        variant[size] = 0;
       } else {
-        variant[size] = qty;
+        const max = sellableFor(variantId, size);
+        if (max <= 0) {
+          delete variant[size];
+        } else if (qty === 0) {
+          variant[size] = 0;
+        } else {
+          variant[size] = clampQtyToSellable(qty, max);
+        }
       }
       return { ...prev, [variantId]: variant };
     });
@@ -160,7 +185,7 @@ export default function PdpInteractive({
       activeElement instanceof HTMLElement &&
       Boolean(qtyListRef.current?.contains(activeElement));
 
-    if (qty >= 0 && !cameFromQtyList) {
+    if (qty >= 0 && sellableStatus === "ready" && !cameFromQtyList) {
       window.requestAnimationFrame(() => {
         window.requestAnimationFrame(() => {
           qtyListRef.current?.scrollIntoView({
@@ -170,7 +195,7 @@ export default function PdpInteractive({
         });
       });
     }
-  }, []);
+  }, [sellableFor, sellableStatus]);
 
   const onColorChange = useCallback((color: string) => {
     setActiveColor(color);
@@ -210,22 +235,14 @@ export default function PdpInteractive({
       });
   }, [allSelectedRows, visibleColors]);
 
-  const hasOffer = Boolean(product.OfertaActiva && product.PrecioOferta);
-  const unitPriceNum = (() => {
-    const raw = hasOffer ? product.PrecioOferta : product.Precio;
-    if (raw == null || raw === "") return 0;
-    const n =
-      typeof raw === "string"
-        ? parseFloat(raw.replace(/[^\d.]/g, ""))
-        : Number(raw);
-    return Number.isFinite(n) ? n : 0;
-  })();
+  const pricing = getColorEffectivePrice(colorDetail, product);
+  const hasOffer = pricing.isOffer;
 
   const totalSelectedQty = allSelectedItems.reduce((a, i) => a + i.qty, 0);
-  const totalSelectedAmount = allSelectedItems.reduce(
-    (a, i) => a + i.qty * unitPriceNum,
-    0
-  );
+  const totalSelectedAmount = allSelectedItems.reduce((a, i) => {
+    const line = cartPriceForColor(visibleColors, i.color, product);
+    return a + i.qty * line.effectivePrice;
+  }, 0);
 
   // Le avisa a CartFloatingBar (barra global) que esta barra propia del PDP
   // está ocupando el lugar, para que no se superpongan. Cuando no hay
@@ -236,30 +253,78 @@ export default function PdpInteractive({
     return () => setPdpOwnBarActive(false);
   }, [totalSelectedQty, addedFlash, setPdpOwnBarActive]);
 
+  useEffect(() => {
+    if (sellableStatus !== "ready") return;
+    setSelections((prev) => {
+      let changed = false;
+      const next: MultiSelection = {};
+      for (const [variantId, sizeMap] of Object.entries(prev)) {
+        const nextSizes: Record<string, number> = {};
+        for (const [size, qty] of Object.entries(sizeMap)) {
+          const max = sellableFor(variantId, size);
+          if (max <= 0) {
+            changed = true;
+            continue;
+          }
+          const clamped = qty === 0 ? 0 : clampQtyToSellable(qty, max);
+          if (clamped !== qty) changed = true;
+          nextSizes[size] = clamped;
+        }
+        if (Object.keys(nextSizes).length > 0) next[variantId] = nextSizes;
+        else if (Object.keys(sizeMap).length > 0) changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [sellableFor, sellableStatus]);
+
   async function handleAddAllToCart() {
     if (totalSelectedQty === 0) return;
-    // Cuenta Google/nueva sin datos: exigir perfil antes de armar carrito.
-    const profileOk = await requireProfileComplete();
-    if (!profileOk) return;
-    for (const item of allSelectedItems) {
-      addItem({
-        variant_id: item.variantId,
-        product_name: product.Articulo,
-        color: item.color,
-        size: item.size,
-        qty: item.qty,
-        price_snapshot: unitPriceNum,
-        is_offer: hasOffer,
-        imagen: item.imagen,
-      });
+    if (sellableStatus !== "ready") return;
+    if (addInFlight) return;
+    const pendingItems = allSelectedItems;
+    if (pendingItems.length === 0) return;
+
+    setAddInFlight(true);
+    setAddStockError(false);
+    try {
+      // Cuenta Google/nueva sin datos: exigir perfil antes de armar carrito.
+      const profileOk = await requireProfileComplete();
+      if (!profileOk) return;
+
+      const variantIds = [...new Set(pendingItems.map((item) => item.variantId))];
+      const fresh = await getSellableStockForVariants(variantIds);
+      const resolved = resolveAddLinesFromFreshSellable(pendingItems, fresh);
+      if (!resolved.ok) {
+        setAddStockError(true);
+        return;
+      }
+
+      let added = 0;
+      for (const item of resolved.lines) {
+        const linePrice = cartPriceForColor(visibleColors, item.color, product);
+        addItem({
+          variant_id: item.variantId,
+          product_name: product.Articulo,
+          color: item.color,
+          size: item.size,
+          qty: item.qty,
+          price_snapshot: linePrice.effectivePrice,
+          is_offer: linePrice.isOffer,
+          imagen: item.imagen,
+        });
+        added += 1;
+      }
+      if (added === 0) return;
+      setSelections({});
+      setAddedFlash(true);
+      setTimeout(() => setAddedFlash(false), 1400);
+    } finally {
+      setAddInFlight(false);
     }
-    setSelections({});
-    setAddedFlash(true);
-    setTimeout(() => setAddedFlash(false), 1400);
   }
 
-  const price = formatARS(product.Precio);
-  const offerPrice = hasOffer ? formatARS(product.PrecioOferta) : null;
+  const price = formatARS(pricing.normalPrice || product.Precio);
+  const offerPrice = hasOffer ? formatARS(pricing.effectivePrice) : null;
   const displayPrice = offerPrice ?? price;
   const selectionLabel = usesMeasureLabel(product) ? "medida" : "talle";
   const selectionArticle = selectionLabel === "medida" ? "una" : "un";
@@ -412,6 +477,14 @@ export default function PdpInteractive({
             />
           </div>
 
+          {(sellableStatus === "error" || addStockError) && (
+            <div className="pdp-hint pdp-hint--error" role="status">
+              <span className="pdp-hint__text">
+                No pudimos verificar el stock. Volvé a intentar en unos segundos.
+              </span>
+            </div>
+          )}
+
           <PdpSizePicker
             colorDetail={colorDetail}
             activeColor={activeColor}
@@ -419,6 +492,7 @@ export default function PdpInteractive({
             sizesWithStock={sizesWithStock}
             activeVariantId={resolvedVariantId}
             variantSizes={variantSizes}
+            sellableStatus={sellableStatus}
             colors={visibleColors}
             allSelections={allSelectedRows}
             onSelectionChange={handleSizeChange}
@@ -513,6 +587,7 @@ export default function PdpInteractive({
             <button
               type="button"
               onClick={handleAddAllToCart}
+              disabled={sellableStatus !== "ready" || addInFlight}
               className="pdp-sticky-cta"
             >
               <span className="pdp-sticky-cta__label">

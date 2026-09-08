@@ -4,18 +4,18 @@ import { useEffect, useRef } from "react";
 import { useCartStore, type CartItem } from "@/store/cart";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import {
-  acquireCheckoutInFlight,
-  buildCartFingerprint,
   CHECKOUT_IN_FLIGHT_MESSAGE,
-  releaseCheckoutInFlight,
-  resolveCheckoutOperation,
+  type CheckoutOperationStorage,
 } from "@/lib/cart/checkout-operation";
+import { runCustomerCheckout } from "@/lib/cart/checkout-flow";
+import { isUniqueConflict, mergeHydratedCartItems } from "@/lib/cart/cart-hydrate";
+import type { ExclusiveLock } from "@/lib/cart/checkout-lock";
 
 // ─── Supabase helpers ─────────────────────────────────────────────────────────
 
 async function ensureCart(customerId: string): Promise<string | null> {
   const supabase = getSupabaseBrowserClient();
-  const { data: existing } = await supabase
+  const { data: existing, error: selectError } = await supabase
     .from("carts")
     .select("id")
     .eq("customer_id", customerId)
@@ -23,6 +23,11 @@ async function ensureCart(customerId: string): Promise<string | null> {
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
+
+  if (selectError) {
+    console.warn("[cart] ensureCart select error:", selectError.message);
+    return null;
+  }
 
   if (existing) return existing.id;
 
@@ -50,7 +55,7 @@ async function upsertCartItem(cartId: string, item: CartItem): Promise<string | 
 
   // Siempre resolver por carrito+variante+talle. Un id persistido de un carrito
   // vaciado (checkout anterior) no debe updatear una fila que ya no existe.
-  const { data: existing } = await supabase
+  const { data: existing, error: selectError } = await supabase
     .from("cart_items")
     .select("id")
     .eq("cart_id", cartId)
@@ -58,8 +63,13 @@ async function upsertCartItem(cartId: string, item: CartItem): Promise<string | 
     .ilike("size", item.size)
     .maybeSingle();
 
+  if (selectError) {
+    console.warn("[cart] upsertCartItem select error:", selectError.message);
+    return null;
+  }
+
   if (existing) {
-    await supabase
+    const { error: updateError } = await supabase
       .from("cart_items")
       .update({
         quantity: item.qty,
@@ -67,6 +77,10 @@ async function upsertCartItem(cartId: string, item: CartItem): Promise<string | 
         price_snapshot: item.price_snapshot,
       })
       .eq("id", existing.id);
+    if (updateError) {
+      console.warn("[cart] upsertCartItem update error:", updateError.message);
+      return null;
+    }
     return existing.id;
   }
 
@@ -89,16 +103,31 @@ async function upsertCartItem(cartId: string, item: CartItem): Promise<string | 
     .single();
 
   if (error) {
+    if (isUniqueConflict(error)) {
+      const { data: raced } = await supabase
+        .from("cart_items")
+        .select("id")
+        .eq("cart_id", cartId)
+        .eq("variant_id", item.variant_id)
+        .ilike("size", item.size)
+        .maybeSingle();
+      if (raced?.id) return raced.id;
+    }
     console.warn("[cart] upsertCartItem error:", error.message);
     return null;
   }
   return inserted?.id ?? null;
 }
 
-async function deleteCartItem(itemId: string) {
-  if (!itemId || itemId.startsWith("local_")) return;
+async function deleteCartItem(itemId: string): Promise<boolean> {
+  if (!itemId || itemId.startsWith("local_")) return true;
   const supabase = getSupabaseBrowserClient();
-  await supabase.from("cart_items").delete().eq("id", itemId);
+  const { error } = await supabase.from("cart_items").delete().eq("id", itemId);
+  if (error) {
+    console.warn("[cart] deleteCartItem error:", error.message);
+    return false;
+  }
+  return true;
 }
 
 // ─── Load cart from Supabase ──────────────────────────────────────────────────
@@ -137,23 +166,34 @@ export async function loadCartFromSupabase(customerId: string): Promise<{
 // ─── Checkout ─────────────────────────────────────────────────────────────────
 
 /** Calls rpc_checkout_cart with the same signature as client/dashboard-instant.js */
-export async function checkoutCart(items: CartItem[]): Promise<{ success: boolean; error?: string }> {
-  if (!acquireCheckoutInFlight()) {
+export async function checkoutCart(
+  items: CartItem[],
+  customerId: string,
+  opts: {
+    syncNow: () => Promise<boolean>;
+    lock?: ExclusiveLock;
+    storage?: CheckoutOperationStorage;
+  }
+): Promise<{ success: boolean; error?: string; skipped?: boolean }> {
+  if (typeof window === "undefined") {
     return { success: false, error: CHECKOUT_IN_FLIGHT_MESSAGE };
   }
-  try {
-    const supabase = getSupabaseBrowserClient();
-    const operation = resolveCheckoutOperation(buildCartFingerprint(items));
-    const { error } = await supabase.rpc("rpc_checkout_cart", {
-      p_operation_id: operation.operationId,
-      p_request: operation.request,
-    });
-    if (error) return { success: false, error: error.message };
-    operation.markCompleted();
-    return { success: true };
-  } finally {
-    releaseCheckoutInFlight();
-  }
+  const storage = opts.storage ?? window.localStorage;
+  return runCustomerCheckout({
+    customerId,
+    items,
+    syncNow: opts.syncNow,
+    lock: opts.lock,
+    storage,
+    rpc: async ({ operationId, request }) => {
+      const supabase = getSupabaseBrowserClient();
+      const { error } = await supabase.rpc("rpc_checkout_cart", {
+        p_operation_id: operationId,
+        p_request: request,
+      });
+      return { error };
+    },
+  });
 }
 
 // ─── Hook: useCartSync ────────────────────────────────────────────────────────
@@ -181,27 +221,7 @@ export function useCartSync(customerId: string | null) {
     loadCartFromSupabase(customerId).then(({ cartId: cid, items: serverItems }) => {
       if (cid) setCartId(cid);
       if (serverItems.length > 0) {
-        const localByKey = new Map(
-          itemsRef.current.map((i) => [
-            `${i.variant_id}__${String(i.size).toLowerCase()}`,
-            i,
-          ])
-        );
-        const serverKeys = new Set(
-          serverItems.map((i) => `${i.variant_id}__${String(i.size).toLowerCase()}`)
-        );
-        const mergedServer = serverItems.map((si) => {
-          const local = localByKey.get(
-            `${si.variant_id}__${String(si.size).toLowerCase()}`
-          );
-          return local?.is_offer ? { ...si, is_offer: true } : si;
-        });
-        const localOnly = itemsRef.current.filter(
-          (i) =>
-            i.id.startsWith("local_") &&
-            !serverKeys.has(`${i.variant_id}__${String(i.size).toLowerCase()}`)
-        );
-        setItems([...mergedServer, ...localOnly]);
+        setItems(mergeHydratedCartItems(itemsRef.current, serverItems));
       }
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps

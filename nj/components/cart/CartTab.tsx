@@ -22,6 +22,7 @@ import {
   type ActivePromotion,
   type PromoGroupableItem,
 } from "@/lib/cart/promo-groups";
+import { CHECKOUT_SYNC_FAILED } from "@/lib/cart/checkout-flow";
 
 function formatARS(n: number) {
   return formatItemARS(n);
@@ -172,8 +173,12 @@ export default function CartTab({ customerId, onOrderCreated, activeOrderStatus,
   }, [items]);
 
   async function handleRemove(item: CartItem) {
+    const removed = await removeFromSupabase(item.id);
+    if (!removed) {
+      setCheckoutError("No pudimos quitar el producto. Intentá nuevamente.");
+      return;
+    }
     removeItem(item.variant_id, item.size);
-    await removeFromSupabase(item.id);
   }
 
   function handleQty(item: CartItem, delta: number) {
@@ -231,17 +236,16 @@ export default function CartTab({ customerId, onOrderCreated, activeOrderStatus,
       setCheckoutError(null);
       const sellableOk = await assertSellableBeforeCheckout();
       if (!sellableOk) return;
-      const synced = await syncNow();
-      if (!synced) {
-        setCheckoutError("No pudimos guardar el carrito. Intentá nuevamente.");
-        return;
-      }
       const currentItems = useCartStore.getState().items;
-      const result = await checkoutCart(currentItems);
+      const result = await checkoutCart(currentItems, customerId, { syncNow });
       if (result.success) {
         clearCart();
         onOrderCreated();
       } else {
+        if (result.error === CHECKOUT_SYNC_FAILED) {
+          setCheckoutError("No pudimos guardar el carrito. Intentá nuevamente.");
+          return;
+        }
         let msg = result.error ?? "Error al hacer tu pedido";
         if (msg.includes("conflict_in_progress")) {
           msg = "Hay un pedido en proceso. Esperá unos segundos e intentá nuevamente.";

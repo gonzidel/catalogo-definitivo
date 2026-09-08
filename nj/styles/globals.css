@@ -5560,11 +5560,20 @@ body:has(.kanban-admin-shell) [data-nextjs-toast] {
   outline-offset: 1px;
 }
 
+.order-inbox-owner__catcher {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  border: none;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  cursor: default;
+}
+
 .order-inbox-owner__picker {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  z-index: 20;
+  position: fixed;
+  z-index: 60;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -5572,8 +5581,8 @@ body:has(.kanban-admin-shell) [data-nextjs-toast] {
   background: #fff;
   border: 1px solid #d1d5db;
   border-radius: 10px;
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
-  min-width: 88px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.16);
+  min-width: 96px;
 }
 
 .order-inbox-owner__pick {

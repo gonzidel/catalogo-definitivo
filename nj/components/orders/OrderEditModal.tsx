@@ -19,6 +19,7 @@ import {
 } from "@/lib/orders/domain";
 import {
   addItemsToExistingOrder,
+  bumpDraftExtraQuantity,
   enrichDraftItemsWithStock,
   mergeDraftItem,
   syncOrderTotalAndNotes,
@@ -32,6 +33,7 @@ import ItemStatusBadge from "./ItemStatusBadge";
 import OrderItemImageButton from "./OrderItemImageButton";
 import OrderEditExtrasPanel from "./OrderEditExtrasPanel";
 import OrderEditProductPicker from "./OrderEditProductPicker";
+import OrderExtraQtyStepper from "./OrderExtraQtyStepper";
 import RetiroCloseModal from "./RetiroCloseModal";
 
 interface OrderEditModalProps {
@@ -365,13 +367,15 @@ export default function OrderEditModal({ order, onClose }: OrderEditModalProps) 
                         <div className="order-edit-modal__compact-label">
                           <span className="order-edit-modal__compact-name">
                             {Number(item.price_snapshot) < 0 ? "➖" : "➕"}{" "}
-                            {item.product_name || "Extra especial"}
+                            {item.product_name || "Extra"}
                           </span>
-                          <span className="order-edit-modal__compact-meta">Extra especial</span>
+                          <span className="order-edit-modal__compact-meta">
+                            {Number(item.price_snapshot) < 0 ? "Descuento" : "Extra"} ×{item.quantity || 1}
+                          </span>
                         </div>
                         <div className="order-edit-modal__compact-actions">
                           <span className="order-edit-modal__compact-cell order-edit-modal__compact-cell--badge">
-                            <span className="order-edit-modal__special-badge">Extra esp.</span>
+                            <span className="order-edit-modal__special-badge">Extra</span>
                           </span>
                           <span className="order-edit-modal__compact-cell order-edit-modal__compact-cell--lupa" />
                           <span className="order-edit-modal__compact-cell order-edit-modal__compact-cell--price">
@@ -420,6 +424,7 @@ export default function OrderEditModal({ order, onClose }: OrderEditModalProps) 
                     {draft.map((item, idx) => {
                       const special = isSpecialExtraItem(item);
                       const isReturn = !special && isReturnOrderItem(item);
+                      const extraQty = Number(item.quantity) || 1;
                       return (
                         <li
                           key={`draft-${idx}-${item.variant_id || "x"}-${item.size}-${isReturn ? "r" : "s"}`}
@@ -430,9 +435,18 @@ export default function OrderEditModal({ order, onClose }: OrderEditModalProps) 
                               <>
                                 <span className="order-edit-modal__compact-name">
                                   {Number(item.price_snapshot) < 0 ? "➖" : "➕"}{" "}
-                                  {item.product_name || "Extra especial"}
+                                  {item.product_name || "Extra"}
                                 </span>
-                                <span className="order-edit-modal__compact-meta">Pendiente · extra especial</span>
+                                <span className="order-edit-modal__compact-meta">
+                                  Pendiente · {Number(item.price_snapshot) < 0 ? "descuento" : "extra"} ×{extraQty}
+                                </span>
+                                <OrderExtraQtyStepper
+                                  value={extraQty}
+                                  disabled={isBusy}
+                                  onChange={(qty) =>
+                                    setDraft((prev) => bumpDraftExtraQuantity(prev, idx, qty - extraQty))
+                                  }
+                                />
                               </>
                             ) : (
                               <>
@@ -463,7 +477,7 @@ export default function OrderEditModal({ order, onClose }: OrderEditModalProps) 
                             <span
                               className={`order-edit-modal__compact-cell order-edit-modal__compact-cell--price${isReturn ? " is-return-price" : ""}`}
                             >
-                              {formatSignedPriceAr(Number(item.price_snapshot) * (item.quantity || 1))}
+                              {formatSignedPriceAr(Number(item.price_snapshot) * extraQty)}
                             </span>
                             <span className="order-edit-modal__compact-cell order-edit-modal__compact-cell--remove" />
                           </div>

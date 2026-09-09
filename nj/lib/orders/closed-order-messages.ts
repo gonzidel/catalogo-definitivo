@@ -3,7 +3,7 @@
  * Paridad con fn_build_closed_order_* en migración 320.
  */
 
-import { formatPriceAr } from "@/lib/orders/domain";
+import { formatPriceAr, isCustomerSourcedOrder } from "@/lib/orders/domain";
 import { canonicalizeTransportName } from "@/lib/transport/index";
 
 export const FYL_TRANSFER_ALIAS = "0170218940000003684953";
@@ -50,6 +50,19 @@ export function isCustomerClosedNotificationKind(kind: string): boolean {
     kind === "customer_closed_transfer" ||
     kind === "customer_closed_correo"
   );
+}
+
+/**
+ * Espera / vencimiento: solo pedidos auto-gestionados (no admin/PAU).
+ * Cierre clienta (`customer_closed_*`): sí, aunque el pedido sea PAU/vía + Pedido,
+ * porque la clienta lo cerró desde su dashboard.
+ */
+export function messageBellAllowsOrderSource(
+  kind: string,
+  order: { source?: string | null } | null | undefined
+): boolean {
+  if (isCustomerClosedNotificationKind(kind)) return true;
+  return isCustomerSourcedOrder(order);
 }
 
 export function customerClosedKindRequiresPaymentPending(kind: string): boolean {

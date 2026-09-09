@@ -415,6 +415,66 @@ export function buildOrderNoteExtraRows(
   return rows;
 }
 
+export const NOTE_EXTRA_ITEM_ID_PREFIX = "note-extra:";
+
+export function isNoteExtraDisplayItem(
+  item: { id?: string | null } | null | undefined
+): boolean {
+  return String(item?.id || "").startsWith(NOTE_EXTRA_ITEM_ID_PREFIX);
+}
+
+export function getOrderExtraDisplayKind(item: {
+  price_snapshot?: number | null;
+}): "discount" | "extra" {
+  return Number(item.price_snapshot) < 0 ? "discount" : "extra";
+}
+
+export function getOrderExtraDisplayName(item: {
+  product_name?: string | null;
+  price_snapshot?: number | null;
+}): string {
+  const named = String(item.product_name || "").trim();
+  if (named) return named;
+  return getOrderExtraDisplayKind(item) === "discount" ? "Descuento" : "Extra";
+}
+
+export function buildOrderNoteExtraDisplayItems(
+  order: Pick<AdminOrder, "id" | "notes" | "order_items">
+): AdminOrderItem[] {
+  const notesExtras = parseOrderNotesExtrasValues(order.notes);
+  const subtotal = computeItemsLineSubtotal(order.order_items || []);
+  return buildOrderNoteExtraRows(notesExtras, subtotal).map((row) => ({
+    id: `${NOTE_EXTRA_ITEM_ID_PREFIX}${order.id}:${row.key}`,
+    order_id: order.id,
+    variant_id: null,
+    product_name: row.label,
+    color: null,
+    size: null,
+    quantity: 1,
+    price_snapshot: row.amount,
+    status: "picked",
+    is_special_extra: true,
+  }));
+}
+
+/** Ítems extra visibles en la card: especiales reales + envío/descuento/extra de notes. */
+export function appendExtrasToOrderCardItems(
+  visibleItems: AdminOrderItem[],
+  order: AdminOrder
+): AdminOrderItem[] {
+  const all = order.order_items || [];
+  const ids = new Set(visibleItems.map((item) => item.id));
+  const specials = all.filter(
+    (item) =>
+      isSpecialExtraItem(item) &&
+      !isCancelledOrderItem(item) &&
+      !ids.has(item.id)
+  );
+  const notes = buildOrderNoteExtraDisplayItems(order);
+  if (!specials.length && !notes.length) return visibleItems;
+  return [...visibleItems, ...specials, ...notes];
+}
+
 export type OrderEditSummaryChipTone =
   | "shipping"
   | "discount"

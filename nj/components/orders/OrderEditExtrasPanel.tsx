@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 import { createPortal } from "react-dom";
-import { parseMoneyInput, type OrderNotesExtras } from "@/lib/orders/domain";
+import { parseMoneyInput, formatSignedPriceAr, type OrderNotesExtras } from "@/lib/orders/domain";
 import { buildSpecialExtraDraftItem, type OrderEditDraftItem } from "@/lib/supabase/order-edit";
+import OrderExtraQtyStepper from "./OrderExtraQtyStepper";
 
 interface OrderEditExtrasPanelProps {
   notesExtras: OrderNotesExtras;
@@ -27,6 +28,7 @@ export default function OrderEditExtrasPanel({
   const [adjustKind, setAdjustKind] = useState<AdjustKind>("plus");
   const [adjustDescription, setAdjustDescription] = useState("");
   const [adjustAmount, setAdjustAmount] = useState("");
+  const [adjustQty, setAdjustQty] = useState(1);
   const [adjustError, setAdjustError] = useState("");
 
   const hasActiveExtras =
@@ -56,6 +58,7 @@ export default function OrderEditExtrasPanel({
     setAdjustKind(kind);
     setAdjustDescription("");
     setAdjustAmount("");
+    setAdjustQty(1);
     setAdjustError("");
     setAdjustOpen(true);
     setAdjustPanelOpen(false);
@@ -64,19 +67,16 @@ export default function OrderEditExtrasPanel({
   const submitAdjust = () => {
     const description = adjustDescription.trim();
     const amountValue = parseMoneyInput(adjustAmount);
-    if (!description) {
-      setAdjustError("Ingresá una descripción.");
-      return;
-    }
     if (!amountValue) {
       setAdjustError("Ingresá un monto válido mayor a 0.");
       return;
     }
     const signedAmount = adjustKind === "minus" ? -amountValue : amountValue;
-    onAddSpecialExtra(buildSpecialExtraDraftItem(description, signedAmount));
+    onAddSpecialExtra(buildSpecialExtraDraftItem(description, signedAmount, adjustQty));
     setAdjustOpen(false);
     setAdjustDescription("");
     setAdjustAmount("");
+    setAdjustQty(1);
     setAdjustError("");
   };
 
@@ -240,12 +240,12 @@ export default function OrderEditExtrasPanel({
                     className="order-edit-modal__input"
                     value={adjustDescription}
                     disabled={disabled}
-                    placeholder="Ej: Caja de regalo"
+                    placeholder={adjustKind === "minus" ? "Ej: Descuento (opcional)" : "Ej: Remera (opcional)"}
                     onChange={(e) => setAdjustDescription(e.target.value)}
                   />
                 </label>
                 <label className="order-edit-extras__field order-edit-extras__field--block">
-                  <span>Monto ($)</span>
+                  <span>Monto por unidad ($)</span>
                   <input
                     type="number"
                     min={0}
@@ -257,6 +257,23 @@ export default function OrderEditExtrasPanel({
                     onChange={(e) => setAdjustAmount(e.target.value)}
                   />
                 </label>
+                <div className="order-edit-extras__field order-edit-extras__field--block">
+                  <span>Cantidad</span>
+                  <OrderExtraQtyStepper
+                    value={adjustQty}
+                    onChange={setAdjustQty}
+                    disabled={disabled}
+                    size="modal"
+                  />
+                  {adjustQty > 1 && parseMoneyInput(adjustAmount) > 0 ? (
+                    <p className="order-edit-extras__qty-hint">
+                      {adjustQty} unidades · total{" "}
+                      {formatSignedPriceAr(
+                        (adjustKind === "minus" ? -1 : 1) * parseMoneyInput(adjustAmount) * adjustQty
+                      )}
+                    </p>
+                  ) : null}
+                </div>
                 {adjustError ? <p className="order-edit-extras__error">{adjustError}</p> : null}
                 <div className="order-modal__actions">
                   <button type="button" className="order-card__btn" onClick={() => setAdjustOpen(false)}>

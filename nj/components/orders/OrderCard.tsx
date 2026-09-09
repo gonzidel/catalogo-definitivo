@@ -11,6 +11,7 @@ import {
   countRegularProductUnits,
   formatOrderNotesExtras,
   formatPriceAr,
+  appendExtrasToOrderCardItems,
   getCancelledItemsPendingStockReturn,
   getCancelledOrderItems,
   getCustomerFromOrder,
@@ -80,12 +81,14 @@ function OrderCardFooter({
   order,
   productCount,
   showTotal,
+  showNoteExtras = true,
 }: {
   order: AdminOrder;
   productCount: number;
   showTotal: boolean;
+  showNoteExtras?: boolean;
 }) {
-  const extrasLines = formatOrderNotesExtras(order);
+  const extrasLines = showNoteExtras ? formatOrderNotesExtras(order) : [];
   const createdLabel = new Date(order.created_at).toLocaleDateString("es-AR", {
     day: "2-digit",
     month: "2-digit",
@@ -810,7 +813,7 @@ export default function OrderCard({ order }: OrderCardProps) {
       {isWaitingColumn ? (
         <div className="order-card__body order-card__body--waiting-inline" onClick={(event) => event.stopPropagation()}>
           <OrderCardItems
-            items={waitingItems}
+            items={appendExtrasToOrderCardItems(waitingItems, order)}
             orderId={order.id}
             orderSource={order.source}
             enableWaitingPick
@@ -895,12 +898,14 @@ export default function OrderCard({ order }: OrderCardProps) {
               <OrderCardItems
                 items={
                   column === "cancelled"
-                    ? cancelledItemsPendingReturn
+                    ? order.status === "cancelled"
+                      ? appendExtrasToOrderCardItems(cancelledItemsPendingReturn, order)
+                      : cancelledItemsPendingReturn
                     : column === "active"
-                        ? reservedItems
+                        ? appendExtrasToOrderCardItems(reservedItems, order)
                         : column === "picked"
-                          ? pickedColumnItems
-                          : items
+                          ? appendExtrasToOrderCardItems(pickedColumnItems, order)
+                          : appendExtrasToOrderCardItems(items, order)
                 }
                 orderId={order.id}
                 orderSource={order.source}
@@ -957,7 +962,7 @@ export default function OrderCard({ order }: OrderCardProps) {
               <div className="order-card__cancelled-rest">
                 <p className="order-card__cancelled-rest-title">Otros productos del pedido (siguen activos)</p>
                 <OrderCardItems
-                  items={operationalWhileCancelled}
+                  items={appendExtrasToOrderCardItems(operationalWhileCancelled, order)}
                   loadingItemId={loadingAction}
                   emptyLabel="Sin otros productos"
                 />
@@ -1039,7 +1044,12 @@ export default function OrderCard({ order }: OrderCardProps) {
             ) : null}
           </div>
           ) : null}
-          <OrderCardFooter order={order} productCount={productCount} showTotal={column !== "cancelled"} />
+          <OrderCardFooter
+            order={order}
+            productCount={productCount}
+            showTotal={column !== "cancelled"}
+            showNoteExtras={false}
+          />
         </>
       ) : showCancelledColumnPending ? (
         <OrderCardFooter order={order} productCount={productCount} showTotal={false} />

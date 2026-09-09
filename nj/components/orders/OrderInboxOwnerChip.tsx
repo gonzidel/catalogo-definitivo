@@ -22,13 +22,15 @@ export default function OrderInboxOwnerChip({
 }: OrderInboxOwnerChipProps) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [pendingOwner, setPendingOwner] = useState<KanbanInboxOwner | null>(null);
   const [pickerStyle, setPickerStyle] = useState<CSSProperties | null>(null);
   const chipRef = useRef<HTMLButtonElement>(null);
   const setKanbanInboxOwner = useOrdersStore((s) => s.setKanbanInboxOwner);
   const owner = getOrderInboxOwner(order);
   const customerId = order.customer_id;
 
-  const currentMeta = KANBAN_INBOX_OWNERS.find((o) => o.id === owner);
+  const displayOwner = pendingOwner ?? owner;
+  const currentMeta = KANBAN_INBOX_OWNERS.find((o) => o.id === displayOwner);
 
   const placePicker = () => {
     const el = chipRef.current;
@@ -73,10 +75,15 @@ export default function OrderInboxOwnerChip({
       setOpen(false);
       return;
     }
+    setPendingOwner(next);
     setBusy(true);
+    setOpen(false);
     const ok = await setKanbanInboxOwner(customerId, next);
     setBusy(false);
-    if (ok) setOpen(false);
+    setPendingOwner(null);
+    if (!ok) {
+      // Rollback visual: el store ya revirtió; reabrir no hace falta.
+    }
   };
 
   return (
@@ -95,14 +102,29 @@ export default function OrderInboxOwnerChip({
         type="button"
         className={`order-inbox-owner__chip${
           currentMeta ? ` ${currentMeta.colorClass}` : " order-inbox-owner__chip--none"
-        }${open ? " order-inbox-owner__chip--open" : ""}`}
+        }${open ? " order-inbox-owner__chip--open" : ""}${
+          busy ? " order-inbox-owner__chip--busy" : ""
+        }`}
         aria-expanded={open}
         aria-haspopup="true"
+        aria-busy={busy}
         disabled={busy || !customerId}
-        title="Cambiar dueña Ani / Fati"
-        onClick={() => setOpen((v) => !v)}
+        title={busy ? "Guardando…" : "Cambiar dueña Ani / Fati"}
+        onClick={() => {
+          if (busy) return;
+          setOpen((v) => !v);
+        }}
       >
-        {currentMeta?.label ?? "¿?"}
+        {busy ? (
+          <span className="order-inbox-owner__spinner" aria-hidden />
+        ) : (
+          currentMeta?.label ?? "¿?"
+        )}
+        {busy ? (
+          <span className="order-inbox-owner__busy-label">
+            {currentMeta?.label ?? "…"}
+          </span>
+        ) : null}
       </button>
       {open && pickerStyle ? (
         <>

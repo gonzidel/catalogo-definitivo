@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { formatSignedPriceAr, isReturnOrderItem, isSpecialExtraItem } from "@/lib/orders/domain";
 import {
+  bumpDraftExtraQuantity,
   catalogPriceGuardMessage,
   resolveSkuOrQrToOrderItem,
   searchProductsGroupedByPrefix,
@@ -14,6 +15,7 @@ import { loadWarehouses } from "@/lib/supabase/order-queries";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { normalizeSize } from "@/lib/utils/size-normalizer";
 import { useOrdersStore } from "@/hooks/useOrders";
+import OrderExtraQtyStepper from "./OrderExtraQtyStepper";
 
 const QR_MIN_DIGITS = 6;
 const SEARCH_DEBOUNCE_MS = 300;
@@ -526,6 +528,7 @@ export default function OrderEditProductPicker({
             {draft.map((item, idx) => {
               const special = isSpecialExtraItem(item);
               const isReturn = !special && isReturnOrderItem(item);
+              const extraQty = Number(item.quantity) || 1;
               return (
                 <li
                   key={`${item.variant_id || "special"}-${item.size}-${idx}-${isReturn ? "r" : "s"}`}
@@ -544,15 +547,23 @@ export default function OrderEditProductPicker({
                         {item.color || "-"} · Talle {item.size} · x{item.quantity}
                       </span>
                     ) : (
-                      <span>{formatSignedPriceAr(Number(item.price_snapshot) || 0)}</span>
+                      <span>
+                        ×{extraQty} · {formatSignedPriceAr((Number(item.price_snapshot) || 0) * extraQty)}
+                      </span>
                     )}
                   </div>
                   <div className="order-edit-picker__draft-meta">
-                    {!special ? (
+                    {special ? (
+                      <OrderExtraQtyStepper
+                        value={extraQty}
+                        disabled={disabled}
+                        onChange={(qty) => onDraftChange(bumpDraftExtraQuantity(draft, idx, qty - extraQty))}
+                      />
+                    ) : (
                       <span className={isReturn ? "is-return-price" : undefined}>
                         {formatSignedPriceAr(Number(item.price_snapshot) || 0)}
                       </span>
-                    ) : null}
+                    )}
                     <button
                       type="button"
                       className="order-edit-modal__remove order-edit-modal__remove--icon"

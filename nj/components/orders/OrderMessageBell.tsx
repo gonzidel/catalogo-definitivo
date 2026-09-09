@@ -3,9 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { orderBelongsOnKanban, type BoardScope } from "@/lib/orders/board-scope";
 import { buildExpiryBellNotifications } from "@/lib/orders/expiry-bell-notifications";
-import { isCustomerClosedNotificationKind } from "@/lib/orders/closed-order-messages";
+import {
+  isCustomerClosedNotificationKind,
+  messageBellAllowsOrderSource,
+} from "@/lib/orders/closed-order-messages";
 import { useExpiryWarnSentStore } from "@/lib/orders/expiry-warning-sent";
-import { buildWhatsAppUrl, isCustomerSourcedOrder } from "@/lib/orders/domain";
+import { buildWhatsAppUrl } from "@/lib/orders/domain";
 import { orderMatchesKanbanInboxView } from "@/lib/orders/kanban-inbox";
 import {
   useOrderMsgNotifsStore,
@@ -132,8 +135,7 @@ export default function OrderMessageBell({ boardScope }: OrderMessageBellProps) 
         // En shipping mantener avisos mientras recarga.
         return boardScope === "shipping";
       }
-      // Campana solo para pedidos auto-gestionados por la clienta (no admin/PAU).
-      if (!isCustomerSourcedOrder(order)) return false;
+      if (!messageBellAllowsOrderSource(notif.kind, order)) return false;
       if (!orderBelongsOnKanban(order, boardScope, warehouseIds)) return false;
       // Inbox Ani/Fati: misma regla que Activos (General = todas).
       if (boardScope === "shipping" && inboxView !== "general") {

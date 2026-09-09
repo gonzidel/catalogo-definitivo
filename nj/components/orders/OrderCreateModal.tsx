@@ -3,6 +3,8 @@
 import { useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
+  buildOrderNoteExtraRows,
+  computeItemsLineSubtotal,
   computeOrderTotalFromItems,
   formatPriceAr,
   formatSignedPriceAr,
@@ -12,6 +14,7 @@ import {
 } from "@/lib/orders/domain";
 import {
   addItemsToExistingOrder,
+  bumpDraftExtraQuantity,
   enrichDraftItemsWithStock,
   mergeDraftItem,
   syncOrderTotalAndNotes,
@@ -46,6 +49,7 @@ import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useOrdersStore, refreshAndMaybeAutoClose } from "@/hooks/useOrders";
 import OrderEditExtrasPanel from "./OrderEditExtrasPanel";
 import OrderEditProductPicker from "./OrderEditProductPicker";
+import OrderExtraQtyStepper from "./OrderExtraQtyStepper";
 
 interface OrderCreateModalProps {
   onClose: () => void;
@@ -113,6 +117,10 @@ export default function OrderCreateModal({ onClose }: OrderCreateModalProps) {
   const previewTotal = useMemo(
     () => computeOrderTotalFromItems(previewLineItems, notesExtras),
     [previewLineItems, notesExtras]
+  );
+  const noteExtraRows = useMemo(
+    () => buildOrderNoteExtraRows(notesExtras, computeItemsLineSubtotal(previewLineItems)),
+    [notesExtras, previewLineItems]
   );
 
   const handleAddToDraft = (item: OrderEditDraftItem) => {
@@ -455,7 +463,7 @@ export default function OrderCreateModal({ onClose }: OrderCreateModalProps) {
             <section className="order-edit-modal__panel order-edit-modal__panel--items">
               <h4 className="order-edit-modal__section-title">Productos del pedido</h4>
               <div className="order-edit-modal__scroll">
-                {draft.length === 0 ? (
+                {draft.length === 0 && noteExtraRows.length === 0 ? (
                   <p className="order-edit-modal__empty">
                     Elegí un cliente y agregá productos desde el panel de la derecha.
                   </p>
@@ -463,6 +471,7 @@ export default function OrderCreateModal({ onClose }: OrderCreateModalProps) {
                   <ul className="order-edit-modal__list order-edit-modal__list--compact">
                     {draft.map((item, idx) => {
                       const special = isSpecialExtraItem(item);
+                      const extraQty = Number(item.quantity) || 1;
                       return (
                         <li
                           key={`draft-${idx}-${item.variant_id || "x"}-${item.size}`}
@@ -472,9 +481,18 @@ export default function OrderCreateModal({ onClose }: OrderCreateModalProps) {
                             {special ? (
                               <>
                                 <span className="order-edit-modal__compact-name">
-                                  {Number(item.price_snapshot) < 0 ? "➖" : "➕"} {item.product_name || "Extra especial"}
+                                  {Number(item.price_snapshot) < 0 ? "➖" : "➕"} {item.product_name || "Extra"}
                                 </span>
-                                <span className="order-edit-modal__compact-meta">Extra especial</span>
+                                <span className="order-edit-modal__compact-meta">
+                                  {Number(item.price_snapshot) < 0 ? "Descuento" : "Extra"} ×{extraQty}
+                                </span>
+                                <OrderExtraQtyStepper
+                                  value={extraQty}
+                                  disabled={busy}
+                                  onChange={(qty) =>
+                                    setDraft((prev) => bumpDraftExtraQuantity(prev, idx, qty - extraQty))
+                                  }
+                                />
                               </>
                             ) : (
                               <>
@@ -489,7 +507,7 @@ export default function OrderCreateModal({ onClose }: OrderCreateModalProps) {
                           </div>
                           <div className="order-edit-modal__compact-actions">
                             <span className="order-edit-modal__compact-cell order-edit-modal__compact-cell--price">
-                              {formatSignedPriceAr(Number(item.price_snapshot) * (item.quantity || 1))}
+                              {formatSignedPriceAr(Number(item.price_snapshot) * extraQty)}
                             </span>
                             <button
                               type="button"
@@ -503,6 +521,33 @@ export default function OrderCreateModal({ onClose }: OrderCreateModalProps) {
                         </li>
                       );
                     })}
+                    {noteExtraRows.map((row) => (
+                      <li
+                        key={row.key}
+                        className="order-edit-modal__row order-edit-modal__row--compact order-edit-modal__row--split order-edit-modal__row--note-extra"
+                      >
+                        <div className="order-edit-modal__compact-label">
+                          <span className="order-edit-modal__compact-name">{row.label}</span>
+                          <span className="order-edit-modal__compact-meta">
+                            {row.key === "discount" ? "Descuento" : "Extra"}
+                          </span>
+                        </div>
+                        <div className="order-edit-modal__compact-actions">
+                          <span className="order-edit-modal__compact-cell order-edit-modal__compact-cell--badge">
+                            <span
+                              className={`order-edit-modal__chip order-edit-modal__chip--${
+                                row.key === "discount" ? "discount" : row.key === "shipping" ? "shipping" : "extra"
+                              } order-edit-modal__chip--inline`}
+                            >
+                              {row.badge}
+                            </span>
+                          </span>
+                          <span className="order-edit-modal__compact-cell order-edit-modal__compact-cell--price">
+                            {formatSignedPriceAr(row.amount)}
+                          </span>
+                        </div>
+                      </li>
+                    ))}
                   </ul>
                 )}
               </div>

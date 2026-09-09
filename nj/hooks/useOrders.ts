@@ -340,9 +340,24 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
 
   setKanbanInboxOwner: async (customerId, owner) => {
     const supabase = getSupabaseBrowserClient();
-    try {
-      await rpcSetKanbanInboxOwner(supabase, customerId, owner);
-      const assignedAt = new Date().toISOString();
+    const previousByOrderId = new Map<
+      string,
+      { owner: string | null | undefined; assignedAt: string | null | undefined }
+    >();
+    for (const order of get().orders) {
+      if (order.customer_id !== customerId) continue;
+      const c = getCustomerFromOrder(order);
+      previousByOrderId.set(order.id, {
+        owner: c?.kanban_inbox_owner,
+        assignedAt: c?.kanban_inbox_assigned_at,
+      });
+    }
+
+    const assignedAt = new Date().toISOString();
+    const patchOwnerOnOrders = (
+      nextOwner: KanbanInboxOwner | string | null | undefined,
+      nextAssignedAt: string | null | undefined
+    ) => {
       set((state) => ({
         orders: state.orders.map((order) => {
           if (order.customer_id !== customerId) return order;
@@ -358,8 +373,8 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
                 dni: null,
                 city: null,
                 province: null,
-                kanban_inbox_owner: owner,
-                kanban_inbox_assigned_at: assignedAt,
+                kanban_inbox_owner: nextOwner ?? null,
+                kanban_inbox_assigned_at: nextAssignedAt ?? null,
               },
             };
           }
@@ -370,8 +385,8 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
                 c.id === customerId || !c.id
                   ? {
                       ...c,
-                      kanban_inbox_owner: owner,
-                      kanban_inbox_assigned_at: assignedAt,
+                      kanban_inbox_owner: nextOwner ?? null,
+                      kanban_inbox_assigned_at: nextAssignedAt ?? null,
                     }
                   : c
               ),
@@ -381,18 +396,55 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
             ...order,
             customers: {
               ...raw,
-              kanban_inbox_owner: owner,
-              kanban_inbox_assigned_at: assignedAt,
+              kanban_inbox_owner: nextOwner ?? null,
+              kanban_inbox_assigned_at: nextAssignedAt ?? null,
             },
           };
         }),
       }));
+    };
+
+    // Optimistic: el chip cambia al toque; la RPC corre en segundo plano.
+    patchOwnerOnOrders(owner, assignedAt);
+
+    try {
+      await rpcSetKanbanInboxOwner(supabase, customerId, owner);
       get().showToast(
         owner === "ani" ? "Clienta asignada a Ani" : "Clienta asignada a Fati",
         "success"
       );
       return true;
     } catch (err) {
+      set((state) => ({
+        orders: state.orders.map((order) => {
+          if (order.customer_id !== customerId) return order;
+          const prev = previousByOrderId.get(order.id);
+          const raw = order.customers;
+          if (!raw) return order;
+          if (Array.isArray(raw)) {
+            return {
+              ...order,
+              customers: raw.map((c) =>
+                c.id === customerId || !c.id
+                  ? {
+                      ...c,
+                      kanban_inbox_owner: prev?.owner ?? null,
+                      kanban_inbox_assigned_at: prev?.assignedAt ?? null,
+                    }
+                  : c
+              ),
+            };
+          }
+          return {
+            ...order,
+            customers: {
+              ...raw,
+              kanban_inbox_owner: prev?.owner ?? null,
+              kanban_inbox_assigned_at: prev?.assignedAt ?? null,
+            },
+          };
+        }),
+      }));
       get().showToast(getErrorMessage(err), "error");
       return false;
     }

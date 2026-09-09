@@ -68,6 +68,8 @@ export interface AdminOrderItem {
   warehouseLabel?: WarehouseLabel;
   /** Enrichment: promo 2x1/2xMonto o oferta por color activa (ver offer-badges.ts). */
   isOffer?: boolean;
+  /** Extra/descuento sin variante (caja de regalo, resta, etc.). */
+  is_special_extra?: boolean | null;
 }
 
 export interface AdminTransport {

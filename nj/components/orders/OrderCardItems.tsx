@@ -3,8 +3,12 @@
 import { useState } from "react";
 import {
   formatPriceAr,
+  formatSignedPriceAr,
+  getOrderExtraDisplayKind,
+  getOrderExtraDisplayName,
   getOrderItemLineTotal,
   isMissingOrderItem,
+  isNoteExtraDisplayItem,
   isSpecialExtraItem,
   normalizeOrderItemStatus,
 } from "@/lib/orders/domain";
@@ -193,25 +197,33 @@ export default function OrderCardItems({
       <ul className="order-card__items">
         {items.map((item) => {
           const special = isSpecialExtraItem(item);
+          const noteExtra = isNoteExtraDisplayItem(item);
+          const extraKind = special ? getOrderExtraDisplayKind(item) : null;
+          const extraName = special ? getOrderExtraDisplayName(item) : "";
+          const extraMeta = extraKind === "discount" ? "Descuento" : "Extra";
           const lineTotal = getOrderItemLineTotal(item);
           const waitingKind = getWaitingSourceKind(item, warehouseIds);
-          const waitingPick = enableWaitingPick && normalizeOrderItemStatus(item.status) === "waiting";
-          const pickedLayout = showRemove && !showActiveReservedActions && !waitingPick && !confirmCancelledLayout;
-          const cancelledPending = confirmCancelledLayout;
+          const waitingPick =
+            !special && enableWaitingPick && normalizeOrderItemStatus(item.status) === "waiting";
+          const showStockActions = !special && showActiveReservedActions;
+          const canRemove = !noteExtra && showRemove && Boolean(onRemoveItem);
+          const pickedLayout = canRemove && !showStockActions && !waitingPick && !confirmCancelledLayout;
+          const cancelledPending = !special && confirmCancelledLayout;
           const missing = !special && isMissingOrderItem(item);
           return (
             <li
               key={item.id}
-              className={`order-card__item-row order-card__item-row--split${special ? " order-card__item-row--special" : ""}${pickedLayout ? " order-card__item-row--picked" : ""}${cancelledPending ? " order-card__item-row--cancelled-pending" : ""}${missing ? " order-card__item-row--missing" : ""}`}
+              className={`order-card__item-row order-card__item-row--split${special ? " order-card__item-row--special" : ""}${extraKind === "discount" ? " order-card__item-row--discount" : ""}${pickedLayout ? " order-card__item-row--picked" : ""}${cancelledPending ? " order-card__item-row--cancelled-pending" : ""}${missing ? " order-card__item-row--missing" : ""}`}
             >
               <div className="order-card__item-label">
                 {special ? (
                   <>
                     <span className="order-card__item-name">
-                      {Number(item.price_snapshot) < 0 ? "➖" : "➕"}{" "}
-                      {item.product_name || "Extra especial"}
+                      {extraKind === "discount" ? "➖" : "➕"} {extraName}
                     </span>
-                    <span className="order-card__item-meta">Extra especial</span>
+                    <span className="order-card__item-meta">
+                      {extraMeta} ×{item.quantity || 1}
+                    </span>
                   </>
                 ) : (
                   <>
@@ -251,7 +263,13 @@ export default function OrderCardItems({
               >
                 <span className="order-card__item-cell order-card__item-cell--badge">
                   {special ? (
-                    <span className="order-edit-modal__special-badge">Extra</span>
+                    extraKind === "discount" ? (
+                      <span className="order-edit-modal__chip order-edit-modal__chip--discount order-edit-modal__chip--inline">
+                        Descuento
+                      </span>
+                    ) : (
+                      <span className="order-edit-modal__special-badge">Extra</span>
+                    )
                   ) : (
                     <ItemStatusBadge status={item.status} compact muted={mutedBadges} />
                   )}
@@ -269,9 +287,9 @@ export default function OrderCardItems({
                   )}
                 </span>
                 <span className="order-card__item-cell order-card__item-cell--price">
-                  {formatPriceAr(lineTotal)}
+                  {special ? formatSignedPriceAr(lineTotal) : formatPriceAr(lineTotal)}
                 </span>
-                {showActiveReservedActions &&
+                {showStockActions &&
                 orderId &&
                 onMarkMissing &&
                 onMarkPicked &&
@@ -301,7 +319,7 @@ export default function OrderCardItems({
                       ×
                     </button>
                   </span>
-                ) : showActiveReservedActions &&
+                ) : showStockActions &&
                   orderId &&
                   onMarkMissing &&
                   onMarkPicked &&
@@ -350,7 +368,7 @@ export default function OrderCardItems({
                       onZeroStock={zeroVariantSizeStock}
                     />
                   </span>
-                ) : confirmCancelledLayout && onConfirmCancelled ? (
+                ) : !special && confirmCancelledLayout && onConfirmCancelled ? (
                   <button
                     type="button"
                     className="order-card__item-confirm-cancel order-card__item-cell order-card__item-cell--remove"
@@ -361,7 +379,7 @@ export default function OrderCardItems({
                   >
                     ✓
                   </button>
-                ) : showRemove && onRemoveItem ? (
+                ) : canRemove ? (
                   <button
                     type="button"
                     className="order-card__item-remove order-card__item-cell order-card__item-cell--remove"
@@ -398,13 +416,16 @@ export default function OrderCardItems({
             </h3>
             <p className="order-modal__text">¿Quitar este ítem del pedido?</p>
             <p className="order-modal__text" style={{ fontWeight: 600, color: "#1f2937" }}>
-              {pendingItem.product_name || "Producto"} · {pendingItem.color || "-"} ·{" "}
-              {pendingItem.size || "-"}
+              {isSpecialExtraItem(pendingItem)
+                ? getOrderExtraDisplayName(pendingItem)
+                : `${pendingItem.product_name || "Producto"} · ${pendingItem.color || "-"} · ${pendingItem.size || "-"}`}
             </p>
             <p className="order-modal__text" style={{ fontWeight: 700, color: "#1f2937", marginBottom: 4 }}>
-              {isMissingOrderItem(pendingItem)
-                ? "No había stock reservado para este producto — solo se quita del pedido."
-                : "El producto vuelve al stock disponible."}
+              {isSpecialExtraItem(pendingItem)
+                ? "Se quita este extra del pedido. No afecta stock."
+                : isMissingOrderItem(pendingItem)
+                  ? "No había stock reservado para este producto — solo se quita del pedido."
+                  : "El producto vuelve al stock disponible."}
             </p>
             <div className="order-modal__actions order-modal__actions--big">
               <button

@@ -24,15 +24,23 @@ export interface OrderEditDraftItem {
   is_special_extra?: boolean;
 }
 
+export function resolveSpecialExtraName(description: string, amount: number): string {
+  const named = String(description || "").trim();
+  if (named) return named;
+  return Number(amount) < 0 ? "Descuento" : "Extra";
+}
+
 export function buildSpecialExtraDraftItem(
   description: string,
-  amount: number
+  amount: number,
+  quantity = 1
 ): OrderEditDraftItem {
+  const qty = Math.max(1, Math.min(99, Math.floor(Number(quantity) || 1)));
   return {
-    product_name: description,
+    product_name: resolveSpecialExtraName(description, amount),
     color: null,
     size: "",
-    quantity: 1,
+    quantity: qty,
     price_snapshot: amount,
     variant_id: null,
     qty_from_general: 0,
@@ -97,12 +105,43 @@ export interface ProductSearchGroup {
   variants: ProductSearchVariant[];
 }
 
+export function bumpDraftExtraQuantity(
+  draft: OrderEditDraftItem[],
+  index: number,
+  delta: number
+): OrderEditDraftItem[] {
+  const item = draft[index];
+  if (!item?.is_special_extra) return draft;
+  const nextQty = (Number(item.quantity) || 1) + delta;
+  if (nextQty <= 0) return draft.filter((_, i) => i !== index);
+  const next = [...draft];
+  next[index] = { ...item, quantity: Math.min(99, nextQty) };
+  return next;
+}
+
 export function mergeDraftItem(
   draft: OrderEditDraftItem[],
   item: OrderEditDraftItem
 ): OrderEditDraftItem[] {
   if (item.is_special_extra) {
-    return [...draft, { ...item, quantity: item.quantity || 1 }];
+    const qty = Math.max(1, Number(item.quantity) || 1);
+    const name = String(item.product_name || "").trim().toLowerCase();
+    const price = Number(item.price_snapshot) || 0;
+    const idx = draft.findIndex(
+      (d) =>
+        d.is_special_extra &&
+        String(d.product_name || "").trim().toLowerCase() === name &&
+        Number(d.price_snapshot) === price
+    );
+    if (idx >= 0) {
+      const next = [...draft];
+      next[idx] = {
+        ...next[idx],
+        quantity: Math.min(99, (Number(next[idx].quantity) || 0) + qty),
+      };
+      return next;
+    }
+    return [...draft, { ...item, quantity: qty }];
   }
 
   const itemIsReturn = Number(item.price_snapshot) < 0;

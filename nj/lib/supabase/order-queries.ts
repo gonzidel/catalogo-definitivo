@@ -49,6 +49,49 @@ function isMissingInboxColumnError(error: { message?: string; details?: string; 
   return blob.includes("kanban_inbox_owner") || blob.includes("kanban_inbox_assigned_at");
 }
 
+const OPERATIONAL_STATUS_FILTER = '("sent","devolución","devolucion","expired")';
+const OPERATIONAL_ORDERS_PAGE_SIZE = 200;
+const OPERATIONAL_ORDERS_MAX_ROWS = 2000;
+
+/**
+ * Todos los pedidos operativos, no solo los 200 más nuevos.
+ * El corte único de 200 + filtro Pedidos/Retiro en cliente hacía desaparecer
+ * pedidos viejos al moverlos con Local (ej. A56595 Rosana, rank 203).
+ */
+async function fetchOperationalOrderRows(
+  supabase: SupabaseClient,
+  select: string
+): Promise<{
+  data: unknown[] | null;
+  error: { message?: string; details?: string; hint?: string } | null;
+}> {
+  const all: unknown[] = [];
+  let from = 0;
+  while (from < OPERATIONAL_ORDERS_MAX_ROWS) {
+    const to = from + OPERATIONAL_ORDERS_PAGE_SIZE - 1;
+    const { data, error } = await supabase
+      .from("orders")
+      .select(select)
+      .not("status", "in", OPERATIONAL_STATUS_FILTER)
+      .order("created_at", { ascending: false })
+      .range(from, to);
+    if (error) {
+      if (all.length > 0) {
+        console.error("fetchOperationalOrderRows page error, using partial:", error);
+        return { data: all, error: null };
+      }
+      return { data: null, error };
+    }
+    const rows = (data as unknown[]) || [];
+    all.push(...rows);
+    if (rows.length < OPERATIONAL_ORDERS_PAGE_SIZE) {
+      return { data: all, error: null };
+    }
+    from += OPERATIONAL_ORDERS_PAGE_SIZE;
+  }
+  return { data: all, error: null };
+}
+
 export async function loadWarehouses(
   supabase: SupabaseClient
 ): Promise<WarehouseIds> {
@@ -146,29 +189,22 @@ export async function fetchOrdersInitial(
   // devuelve null y el pedido queda flotando sin poder clasificarse en ninguna columna.
   // Nota: "cancelled" (a nivel pedido) SÍ debe seguir incluido -- se resuelve vía
   // orderHasCancelledItems() y aparece en la columna "Cancelados" con acción "Desarmar".
-  const { data, error } = await supabase
-    .from("orders")
-    .select(ORDER_SELECT)
-    .not("status", "in", '("sent","devolución","devolucion","expired")')
-    .order("created_at", { ascending: false })
-    .limit(200);
+  const first = await fetchOperationalOrderRows(supabase, ORDER_SELECT);
 
-  let rows: unknown[] | null = data as unknown[] | null;
-  if (error) {
-    if (isMissingInboxColumnError(error)) {
-      const fallback = await supabase
-        .from("orders")
-        .select(ORDER_SELECT_WITHOUT_INBOX)
-        .not("status", "in", '("sent","devolución","devolucion","expired")')
-        .order("created_at", { ascending: false })
-        .limit(200);
+  let rows: unknown[] | null = first.data;
+  if (first.error) {
+    if (isMissingInboxColumnError(first.error)) {
+      const fallback = await fetchOperationalOrderRows(
+        supabase,
+        ORDER_SELECT_WITHOUT_INBOX
+      );
       if (fallback.error) {
         console.error("fetchOrdersInitial error:", fallback.error);
         return [];
       }
-      rows = fallback.data as unknown[] | null;
+      rows = fallback.data;
     } else {
-      console.error("fetchOrdersInitial error:", error);
+      console.error("fetchOrdersInitial error:", first.error);
       return [];
     }
   }

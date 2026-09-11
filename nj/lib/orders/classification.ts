@@ -163,6 +163,9 @@ function matchesWaitingTab(order: AdminOrder): boolean {
 }
 
 function matchesPickedTab(order: AdminOrder): boolean {
+  if (isLocalPickupOrderFulfilled(order, order.transportName ?? null)) {
+    return false;
+  }
   if (isCommonLocalPickupAwaitingAdminSale(order, order.transportName ?? null)) {
     return true;
   }

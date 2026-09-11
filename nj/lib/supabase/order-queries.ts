@@ -52,42 +52,90 @@ function isMissingInboxColumnError(error: { message?: string; details?: string; 
 const OPERATIONAL_STATUS_FILTER = '("sent","devolución","devolucion","expired")';
 const OPERATIONAL_ORDERS_PAGE_SIZE = 200;
 const OPERATIONAL_ORDERS_MAX_ROWS = 2000;
+const FULL_ORDER_HYDRATE_CHUNK = 60;
 
 /**
- * Todos los pedidos operativos, no solo los 200 más nuevos.
- * El corte único de 200 + filtro Pedidos/Retiro en cliente hacía desaparecer
- * pedidos viejos al moverlos con Local (ej. A56595 Rosana, rank 203).
+ * Claves para Pedidos vs Retiro, sin imágenes/precios.
+ * Paginar el SELECT completo + ítems + fuentes reventaba la página 2
+ * (timeout/payload) y el catch devolvía solo los 200 más nuevos: el botón
+ * Local escribía bien pero /retiro no veía el pedido (A56595 rank 203;
+ * 2026-09-11: 21 de 85 local_pickup siguen fuera de la página 1).
+ */
+const ORDER_BOARD_KEY_SELECT = `
+  id, notes, status, source, payment_method, created_at, local_deferred_pickup, transport_id,
+  customers(id, city, province, transport_id),
+  order_items(id, status, order_item_stock_sources(warehouse_id, qty))
+`;
+
+function formatQueryError(error: QueryError): string {
+  if (!error) return "";
+  return [error.message, error.details, error.hint].filter(Boolean).join(" | ");
+}
+
+type QueryError = { message?: string; details?: string; hint?: string } | null;
+
+async function fetchOperationalRange(
+  supabase: SupabaseClient,
+  select: string,
+  from: number,
+  pageSize: number
+): Promise<{ data: unknown[] | null; error: QueryError }> {
+  const to = from + pageSize - 1;
+  const { data, error } = await supabase
+    .from("orders")
+    .select(select)
+    .not("status", "in", OPERATIONAL_STATUS_FILTER)
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .range(from, to);
+  return { data: (data as unknown[]) ?? null, error };
+}
+
+/**
+ * Página todos los operativos. Si una página grande falla, reintenta en 50
+ * desde el mismo offset. No trata un corte a mitad de camino como éxito.
  */
 async function fetchOperationalOrderRows(
   supabase: SupabaseClient,
   select: string
-): Promise<{
-  data: unknown[] | null;
-  error: { message?: string; details?: string; hint?: string } | null;
-}> {
+): Promise<{ data: unknown[] | null; error: QueryError }> {
   const all: unknown[] = [];
   let from = 0;
+  let pageSize = OPERATIONAL_ORDERS_PAGE_SIZE;
   while (from < OPERATIONAL_ORDERS_MAX_ROWS) {
-    const to = from + OPERATIONAL_ORDERS_PAGE_SIZE - 1;
-    const { data, error } = await supabase
-      .from("orders")
-      .select(select)
-      .not("status", "in", OPERATIONAL_STATUS_FILTER)
-      .order("created_at", { ascending: false })
-      .range(from, to);
+    let { data, error } = await fetchOperationalRange(supabase, select, from, pageSize);
+    if (error && pageSize > 50) {
+      pageSize = 50;
+      ({ data, error } = await fetchOperationalRange(supabase, select, from, pageSize));
+    }
     if (error) {
       if (all.length > 0) {
-        console.error("fetchOperationalOrderRows page error, using partial:", error);
-        return { data: all, error: null };
+        console.error("fetchOperationalOrderRows stopped after", all.length, error);
+        return { data: all, error };
       }
       return { data: null, error };
     }
-    const rows = (data as unknown[]) || [];
+    const rows = data || [];
     all.push(...rows);
-    if (rows.length < OPERATIONAL_ORDERS_PAGE_SIZE) {
+    if (rows.length < pageSize) {
       return { data: all, error: null };
     }
-    from += OPERATIONAL_ORDERS_PAGE_SIZE;
+    from += pageSize;
+  }
+  return { data: all, error: null };
+}
+
+async function fetchOrdersByIds(
+  supabase: SupabaseClient,
+  ids: string[],
+  select: string
+): Promise<{ data: unknown[]; error: QueryError }> {
+  const all: unknown[] = [];
+  for (let i = 0; i < ids.length; i += FULL_ORDER_HYDRATE_CHUNK) {
+    const chunk = ids.slice(i, i + FULL_ORDER_HYDRATE_CHUNK);
+    const { data, error } = await supabase.from("orders").select(select).in("id", chunk);
+    if (error) return { data: all, error };
+    all.push(...((data as unknown[]) || []));
   }
   return { data: all, error: null };
 }
@@ -189,29 +237,51 @@ export async function fetchOrdersInitial(
   // devuelve null y el pedido queda flotando sin poder clasificarse en ninguna columna.
   // Nota: "cancelled" (a nivel pedido) SÍ debe seguir incluido -- se resuelve vía
   // orderHasCancelledItems() y aparece en la columna "Cancelados" con acción "Desarmar".
-  const first = await fetchOperationalOrderRows(supabase, ORDER_SELECT);
-
-  let rows: unknown[] | null = first.data;
-  if (first.error) {
-    if (isMissingInboxColumnError(first.error)) {
-      const fallback = await fetchOperationalOrderRows(
-        supabase,
-        ORDER_SELECT_WITHOUT_INBOX
-      );
-      if (fallback.error) {
-        console.error("fetchOrdersInitial error:", fallback.error);
-        return [];
-      }
-      rows = fallback.data;
-    } else {
-      console.error("fetchOrdersInitial error:", first.error);
+  let keys = await fetchOperationalOrderRows(supabase, ORDER_BOARD_KEY_SELECT);
+  if (keys.error && !keys.data?.length) {
+    console.error("fetchOrdersInitial board-key error:", formatQueryError(keys.error) || keys.error);
+    keys = await fetchOperationalOrderRows(supabase, ORDER_SELECT);
+    if (keys.error && isMissingInboxColumnError(keys.error)) {
+      keys = await fetchOperationalOrderRows(supabase, ORDER_SELECT_WITHOUT_INBOX);
+    }
+    if (keys.error && !keys.data?.length) {
+      console.error("fetchOrdersInitial fallback error:", formatQueryError(keys.error) || keys.error);
       return [];
     }
+    const enrichedFallback = await enrichOrders(
+      supabase,
+      (keys.data || []) as AdminOrder[],
+      warehouseIds,
+      transports
+    );
+    return filterOrdersByBoardScope(enrichedFallback, scope, { warehouseIds }).filter(
+      (order) => !isFinalOrderStatus(order)
+    );
+  }
+
+  const keyRows = (keys.data || []) as AdminOrder[];
+  const scopedIds = filterOrdersByBoardScope(
+    keyRows.map((order) => attachTransportMeta(order, transports)),
+    scope,
+    { warehouseIds }
+  )
+    .filter((order) => !isFinalOrderStatus(order))
+    .map((order) => order.id);
+
+  if (!scopedIds.length) return [];
+
+  let full = await fetchOrdersByIds(supabase, scopedIds, ORDER_SELECT);
+  if (full.error && isMissingInboxColumnError(full.error)) {
+    full = await fetchOrdersByIds(supabase, scopedIds, ORDER_SELECT_WITHOUT_INBOX);
+  }
+  if (full.error && !full.data.length) {
+    console.error("fetchOrdersInitial hydrate error:", full.error);
+    return [];
   }
 
   const enriched = await enrichOrders(
     supabase,
-    (rows || []) as AdminOrder[],
+    full.data as AdminOrder[],
     warehouseIds,
     transports
   );
@@ -424,11 +494,16 @@ export async function updateOrderKanbanScope(
     patch.retiro_origin = null;
   }
   const notes = applyOrderNotesPatch(currentNotes, patch);
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("orders")
     .update({ notes, updated_at: new Date().toISOString() })
-    .eq("id", orderId);
+    .eq("id", orderId)
+    .select("id")
+    .maybeSingle();
   if (error) throw error;
+  if (!data?.id) {
+    throw new Error("No se pudo mover el pedido. Recargá e intentá de nuevo.");
+  }
 }
 
 /**

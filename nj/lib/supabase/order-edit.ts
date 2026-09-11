@@ -1,6 +1,7 @@
 import {
   computeWarehouseQtySplitForOrderItem,
   computeOrderTotalFromItems,
+  isTransientNetworkError,
   parseOrderNotesObject,
   type OrderNotesExtras,
 } from "@/lib/orders/domain";
@@ -22,6 +23,7 @@ export interface OrderEditDraftItem {
   admin_confirmed_missing: boolean;
   imagen?: string | null;
   is_special_extra?: boolean;
+  order_item_id?: string | null;
 }
 
 export function resolveSpecialExtraName(description: string, amount: number): string {
@@ -462,6 +464,43 @@ function hasValidPrice(price: unknown): boolean {
   return Number.isFinite(n) && n > 0;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchSourcedOrderItemIds(
+  supabase: SupabaseClient,
+  itemIds: string[]
+): Promise<Set<string>> {
+  if (!itemIds.length) return new Set();
+  const { data, error } = await supabase
+    .from("order_item_stock_sources")
+    .select("order_item_id")
+    .in("order_item_id", itemIds);
+  if (error) throw error;
+  return new Set((data || []).map((row) => String(row.order_item_id)));
+}
+
+async function fetchDeductedOrderItemIds(
+  supabase: SupabaseClient,
+  orderId: string
+): Promise<{ ok: boolean; ids: Set<string> }> {
+  const { data, error } = await supabase
+    .from("stock_history")
+    .select("notes")
+    .eq("change_type", "order_deduction")
+    .ilike("notes", `%order_id:${orderId}%`);
+  if (error) return { ok: false, ids: new Set() };
+  const ids = new Set<string>();
+  const re = /order_item_id:([0-9a-fA-F-]{36})/gi;
+  for (const row of data || []) {
+    const notes = String(row.notes || "");
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(notes))) ids.add(match[1]);
+  }
+  return { ok: true, ids };
+}
+
 export async function applyManualConfirmedItems(
   supabase: SupabaseClient,
   insertedItems: Array<{
@@ -485,7 +524,14 @@ export async function applyManualConfirmedItems(
   );
   if (!manualItems.length) return;
 
-  const p_items = manualItems.map((item) => ({
+  const alreadySourced = await fetchSourcedOrderItemIds(
+    supabase,
+    manualItems.map((item) => item.id)
+  );
+  const pendingManual = manualItems.filter((item) => !alreadySourced.has(item.id));
+  if (!pendingManual.length) return;
+
+  const p_items = pendingManual.map((item) => ({
     variant_id: item.variant_id,
     size: normalizeSize(item.size),
     warehouse_id: warehouseIds.general,
@@ -505,10 +551,23 @@ export async function applyOrderStockDeduction(
   items: OrderEditDraftItem[],
   orderId: string,
   warehouseIds: WarehouseIds,
-  source = "order_edit"
+  source = "order_edit",
+  options?: { requireHistoryCheck?: boolean }
 ) {
   const itemsToUpdate = items.filter(itemQualifiesForStockDeduction);
   if (!itemsToUpdate.length) return;
+
+  const deducted = await fetchDeductedOrderItemIds(supabase, orderId);
+  if (!deducted.ok && options?.requireHistoryCheck) {
+    throw new Error("No se pudo verificar el descuento de stock. Reintentá.");
+  }
+  const pendingItems = deducted.ok
+    ? itemsToUpdate.filter((item) => {
+        const itemId = String(item.order_item_id || "");
+        return !itemId || !deducted.ids.has(itemId);
+      })
+    : itemsToUpdate;
+  if (!pendingItems.length) return;
 
   const deductions: Array<{
     variant_id: string;
@@ -518,7 +577,7 @@ export async function applyOrderStockDeduction(
     order_item_id: string | null;
   }> = [];
 
-  for (const item of itemsToUpdate) {
+  for (const item of pendingItems) {
     const normalizedSize = normalizeSize(item.size);
     if (!normalizedSize) continue;
 
@@ -527,13 +586,15 @@ export async function applyOrderStockDeduction(
     const qtyFromVenta = Number(item.qty_from_venta) || 0;
     if (quantity <= 0 || qtyFromGeneral + qtyFromVenta !== quantity) continue;
 
+    const orderItemId = item.order_item_id || null;
+
     if (qtyFromGeneral > 0 && warehouseIds.general && item.variant_id) {
       deductions.push({
         variant_id: item.variant_id,
         size: normalizedSize,
         warehouse_id: warehouseIds.general,
         qty_to_deduct: qtyFromGeneral,
-        order_item_id: null,
+        order_item_id: orderItemId,
       });
     }
     if (qtyFromVenta > 0 && warehouseIds.ventaPublico && item.variant_id) {
@@ -542,7 +603,7 @@ export async function applyOrderStockDeduction(
         size: normalizedSize,
         warehouse_id: warehouseIds.ventaPublico,
         qty_to_deduct: qtyFromVenta,
-        order_item_id: null,
+        order_item_id: orderItemId,
       });
     }
   }
@@ -557,6 +618,112 @@ export async function applyOrderStockDeduction(
 
   if (error) throw new Error(`Error descontando stock: ${error.message}`);
   if (!data?.ok) throw new Error("Error descontando stock (respuesta inesperada).");
+}
+
+export async function applyAdminOrderStockWithRetry(
+  supabase: SupabaseClient,
+  insertedItems: Array<{
+    id: string;
+    variant_id: string | null;
+    size: string | null;
+    quantity: number;
+    admin_confirmed_missing?: boolean | null;
+  }>,
+  items: OrderEditDraftItem[],
+  orderId: string,
+  warehouseIds: WarehouseIds,
+  source = "order_edit"
+): Promise<void> {
+  const run = async (requireHistoryCheck = false) => {
+    await applyManualConfirmedItems(supabase, insertedItems, orderId, warehouseIds);
+    await applyOrderStockDeduction(supabase, items, orderId, warehouseIds, source, {
+      requireHistoryCheck,
+    });
+  };
+  try {
+    await run(false);
+  } catch (err) {
+    if (!isTransientNetworkError(err)) throw err;
+    await sleep(400);
+    await run(true);
+  }
+}
+
+export async function retryNetworkStockPendingOrder(
+  supabase: SupabaseClient,
+  order: {
+    id: string;
+    notes?: string | null;
+    order_items?: Array<{
+      id: string;
+      variant_id?: string | null;
+      size?: string | null;
+      quantity?: number | null;
+      price_snapshot?: number | null;
+      product_name?: string | null;
+      color?: string | null;
+      status?: string | null;
+      admin_confirmed_missing?: boolean | null;
+      is_special_extra?: boolean | null;
+    }> | null;
+  }
+): Promise<void> {
+  const warehouseIds = await loadWarehouses(supabase);
+  const items = (order.order_items || []).filter((item) => {
+    const status = String(item.status || "").trim().toLowerCase();
+    if (status === "cancelled") return false;
+    if (item.is_special_extra) return false;
+    return Boolean(item.variant_id && item.size && Number(item.quantity) > 0);
+  });
+
+  const insertedLike = items.map((item) => ({
+    id: item.id,
+    variant_id: item.variant_id || null,
+    size: item.size || null,
+    quantity: Number(item.quantity) || 0,
+    admin_confirmed_missing: Boolean(item.admin_confirmed_missing),
+  }));
+
+  const drafts: OrderEditDraftItem[] = items
+    .filter((item) => !item.admin_confirmed_missing)
+    .map((item) => ({
+      product_name: item.product_name || "",
+      color: item.color || null,
+      size: item.size || "",
+      quantity: Number(item.quantity) || 0,
+      price_snapshot: Number(item.price_snapshot) || 0,
+      variant_id: item.variant_id || null,
+      qty_from_general: Number(item.quantity) || 0,
+      qty_from_venta: 0,
+      status: item.status || "picked",
+      admin_confirmed_missing: false,
+      order_item_id: item.id,
+    }));
+
+  await applyAdminOrderStockWithRetry(
+    supabase,
+    insertedLike,
+    drafts,
+    order.id,
+    warehouseIds,
+    "order_edit"
+  );
+
+  const notesObj = parseOrderNotesObject(order.notes);
+  delete notesObj.stock_pending_reason;
+  delete notesObj.stock_pending_at;
+  delete notesObj.stock_pending_source;
+  const nextNotesRaw = JSON.stringify(notesObj);
+
+  const { error } = await supabase
+    .from("orders")
+    .update({
+      status: "active",
+      notes: nextNotesRaw === "{}" ? null : nextNotesRaw,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", order.id);
+  if (error) throw error;
 }
 
 export async function resolveSkuOrQrToOrderItem(
@@ -754,12 +921,18 @@ export async function addItemsToExistingOrder(
   );
 
   try {
-    await applyManualConfirmedItems(supabase, insertedStockItems, orderId, warehouseIds);
     const itemsWithIds = stockItems.map((item, index) => ({
       ...item,
       order_item_id: insertedStockItems?.[index]?.id ?? null,
     }));
-    await applyOrderStockDeduction(supabase, itemsWithIds, orderId, warehouseIds);
+    await applyAdminOrderStockWithRetry(
+      supabase,
+      insertedStockItems,
+      itemsWithIds,
+      orderId,
+      warehouseIds,
+      "order_edit"
+    );
   } catch (stockErr) {
     const pendingNotesObj = (() => {
       try {

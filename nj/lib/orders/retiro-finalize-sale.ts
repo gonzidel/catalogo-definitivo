@@ -1037,31 +1037,35 @@ export async function finalizeRetiroOrderSale(
 
   // Retiro común: la clienta pudo cerrar con rpc_close_order (legacy) → ya `closed`
   // con Pago Pendiente. No volver a llamar rpc_close_order (falla si venció dismantle_at).
-  if (status === "closed" && awaitingAdminSale) {
-    const { error: updateError } = await supabase
-      .from("orders")
-      .update({
-        payment_method: payMethod,
-        notes: fulfilledNotes,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", order.id);
-    if (updateError) throw updateError;
-  } else {
+  if (!(status === "closed" && awaitingAdminSale)) {
     const { error: closeError } = await supabase.rpc("rpc_close_order", {
       p_order_id: order.id,
       p_payment_method: payMethod,
     });
     if (closeError) throw closeError;
+  }
 
-    const { error: notesError } = await supabase
-      .from("orders")
-      .update({
-        notes: fulfilledNotes,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", order.id);
-    if (notesError) throw notesError;
+  const { data: fulfilledRow, error: fulfillError } = await supabase
+    .from("orders")
+    .update({
+      status: "closed",
+      payment_method: payMethod,
+      notes: fulfilledNotes,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", order.id)
+    .select("id, status, payment_method, notes")
+    .maybeSingle();
+  if (fulfillError) throw fulfillError;
+  const fulfilledAt = parseOrderNotesObject(fulfilledRow?.notes).local_pickup_fulfilled_at;
+  if (
+    !fulfilledRow?.id ||
+    String(fulfilledRow.status || "").trim().toLowerCase() !== "closed" ||
+    !fulfilledAt
+  ) {
+    throw new Error(
+      "Se registró la venta pero el pedido no quedó finalizado. Recargá e intentá de nuevo."
+    );
   }
 
   try {

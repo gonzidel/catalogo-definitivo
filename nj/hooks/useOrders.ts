@@ -3,6 +3,7 @@
 import { create } from "zustand";
 import {
   filterOrdersForColumn,
+  getOrderKanbanColumn,
   isFinalOrderStatus,
   shouldAutoCloseAfterCustomerRequest,
 } from "@/lib/orders/classification";
@@ -21,9 +22,11 @@ import {
   getCancelledItemsPendingStockReturn,
   getCustomerFromOrder,
   getEnable24hUsesFromOrder,
+  isNetworkStockPendingReason,
   parseOrderNotesObject,
   parseStockPendingReasonConflict,
 } from "@/lib/orders/domain";
+import { retryNetworkStockPendingOrder } from "@/lib/supabase/order-edit";
 import { normalizeSize } from "@/lib/utils/size-normalizer";
 import {
   fetchOrderById,
@@ -83,7 +86,7 @@ interface OrdersState {
   firstOrderCustomerIds: string[];
 
   hydrate: (orders: AdminOrder[], scope?: BoardScope) => void;
-  refreshAll: () => Promise<void>;
+  refreshAll: (scopeOverride?: BoardScope) => Promise<void>;
   showToast: (message: string, kind?: ToastKind) => void;
   clearToast: () => void;
   getColumnOrders: (columnId: KanbanColumnId) => AdminOrder[];
@@ -295,6 +298,10 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
   hydrate: (orders, scope) => {
     set((state) => {
       const boardScope = scope ?? state.boardScope;
+      const scopeChanged = boardScope !== state.boardScope;
+      if (state.hydrated && !scopeChanged) {
+        return { boardScope };
+      }
       const wh = state.warehouseIds;
       const hasWarehouses = Boolean(wh.general || wh.ventaPublico);
       return {
@@ -311,14 +318,14 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
     }
   },
 
-  refreshAll: async () => {
+  refreshAll: async (scopeOverride) => {
     const supabase = getSupabaseBrowserClient();
-    const scope = get().boardScope;
+    const scope = scopeOverride ?? get().boardScope;
     const [orders, warehouseIds] = await Promise.all([
       fetchOrdersInitial(supabase, scope),
       loadWarehouses(supabase),
     ]);
-    set({ orders, warehouseIds, hydrated: true });
+    set({ orders, warehouseIds, hydrated: true, boardScope: scope });
     if (scope === "shipping") {
       void get().refreshFirstOrderStars();
     }
@@ -1061,7 +1068,24 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
       const supabase = getSupabaseBrowserClient();
       await updateOrderKanbanScope(supabase, orderId, order.notes, targetScope);
       get().removeOrder(orderId);
-      get().showToast(`Pedido enviado a ${targetTitle}`, "success");
+      const movedNotes = applyOrderNotesPatch(order.notes, {
+        kanban_scope: targetScope,
+        retiro_origin: targetScope === "local_pickup" ? "moved_from_orders" : null,
+      });
+      const destCol = getOrderKanbanColumn({ ...order, notes: movedNotes });
+      const destHint =
+        destCol === "picked"
+          ? " → Apartados"
+          : destCol === "active"
+            ? " → Activos"
+            : destCol === "waiting"
+              ? " → Espera"
+              : destCol === "cancelled"
+                ? " → Cancelados"
+                : destCol === "closed"
+                  ? " → Cerrados"
+                  : "";
+      get().showToast(`Pedido enviado a ${targetTitle}${destHint}`, "success");
     } catch (err) {
       set({ orders: snapshot });
       get().showToast(getErrorMessage(err), "error");
@@ -1104,6 +1128,22 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
 
     const notesObj = parseOrderNotesObject(order.notes);
     const reasonRaw = String(notesObj.stock_pending_reason || "").trim();
+    if (isNetworkStockPendingReason(reasonRaw)) {
+      set({ loadingAction: orderId });
+      try {
+        const supabase = getSupabaseBrowserClient();
+        await retryNetworkStockPendingOrder(supabase, order);
+        const refreshed = await fetchOrderById(supabase, orderId);
+        if (refreshed) get().patchOrder(refreshed);
+        get().showToast("Stock descontado. El pedido volvió a Activos/Apartados", "success");
+      } catch (err) {
+        get().showToast(getErrorMessage(err), "error");
+      } finally {
+        set({ loadingAction: null });
+      }
+      return;
+    }
+
     const parsed = parseStockPendingReasonConflict(reasonRaw);
     if (!parsed?.variant_id) {
       get().showToast(

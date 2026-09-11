@@ -548,6 +548,7 @@ export default function OrderEditModal({ order, onClose }: OrderEditModalProps) 
             setPrintCloseOrder(null);
             useOrdersStore.getState().removeOrder(closedId);
             showToast(message, "success");
+            void useOrdersStore.getState().refreshAll("local_pickup");
             onClose();
           }}
           onError={(message) => {

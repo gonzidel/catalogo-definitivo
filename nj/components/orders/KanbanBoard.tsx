@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { filterOrdersForColumn } from "@/lib/orders/classification";
+import { filterOrdersForColumn, isFinalOrderStatus } from "@/lib/orders/classification";
 import {
   boardTitleForScope,
   filterOrdersByBoardScope,
@@ -117,7 +117,7 @@ export default function KanbanBoard({
         warehouseIds,
         orders: filterOrdersByBoardScope(state.orders, state.boardScope, {
           warehouseIds,
-        }),
+        }).filter((order) => !isFinalOrderStatus(order)),
       }));
     });
   }, [initialOrders, hydrate, scope]);
@@ -130,19 +130,19 @@ export default function KanbanBoard({
   // Respaldo: al volver a la pestaña o cada 20s si está visible
   useEffect(() => {
     const onVisible = () => {
-      if (document.visibilityState === "visible") void refreshAll();
+      if (document.visibilityState === "visible") void refreshAll(scope);
     };
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("focus", onVisible);
     const pollId = window.setInterval(() => {
-      if (document.visibilityState === "visible") void refreshAll();
+      if (document.visibilityState === "visible") void refreshAll(scope);
     }, 20000);
     return () => {
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", onVisible);
       window.clearInterval(pollId);
     };
-  }, [refreshAll]);
+  }, [refreshAll, scope]);
 
   useEffect(() => {
     if (drawer === "closed" && closedCount === 0) setDrawer(null);

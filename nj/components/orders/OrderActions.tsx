@@ -8,6 +8,7 @@ import {
 import {
   describeStockPendingConflict,
   parseOrderNotesObject,
+  isNetworkStockPendingReason,
   parseStockPendingReasonConflict,
 } from "@/lib/orders/domain";
 import {
@@ -94,14 +95,12 @@ export default function OrderActions({ order, draftMode = false }: OrderActionsP
   }, [closeModalOpen, boardScope]);
 
   const notesObj = parseOrderNotesObject(order.notes);
-  const conflictParsed = parseStockPendingReasonConflict(
-    String(notesObj.stock_pending_reason || "")
-  );
-  const conflictDescription = describeStockPendingConflict(
-    order,
-    conflictParsed,
-    String(notesObj.stock_pending_reason || "")
-  );
+  const pendingReason = String(notesObj.stock_pending_reason || "");
+  const isNetworkPending = isNetworkStockPendingReason(pendingReason);
+  const conflictParsed = parseStockPendingReasonConflict(pendingReason);
+  const conflictDescription = isNetworkPending
+    ? "Falló la conexión al descontar stock. Los productos ya están en el pedido; reintentamos solo el descuento (sin volver a cargar)."
+    : describeStockPendingConflict(order, conflictParsed, pendingReason);
 
   const handleCloseConfirm = async () => {
     if (!selectedPayment) return;
@@ -205,7 +204,7 @@ export default function OrderActions({ order, draftMode = false }: OrderActionsP
               disabled={busy}
               onClick={() => setResolveModalOpen(true)}
             >
-              Resolver
+              {isNetworkPending ? "Reintentar" : "Resolver"}
             </button>
             <button
               type="button"
@@ -295,6 +294,7 @@ export default function OrderActions({ order, draftMode = false }: OrderActionsP
             setCloseModalOpen(false);
             useOrdersStore.getState().removeOrder(order.id);
             useOrdersStore.getState().showToast(message, "success");
+            void useOrdersStore.getState().refreshAll("local_pickup");
           }}
           onError={(message) => {
             useOrdersStore.getState().showToast(message, "error");
@@ -370,12 +370,14 @@ export default function OrderActions({ order, draftMode = false }: OrderActionsP
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="order-modal__title" id={`resolve-modal-${order.id}`}>
-              Resolver conflicto de stock
+              {isNetworkPending ? "Reintentar descuento de stock" : "Resolver conflicto de stock"}
             </h3>
             <p className="order-modal__text">{conflictDescription}</p>
-            <p className="order-modal__text">
-              Se eliminará el ítem conflictivo y el pedido volverá a estado activo.
-            </p>
+            {isNetworkPending ? null : (
+              <p className="order-modal__text">
+                Se eliminará el ítem conflictivo y el pedido volverá a estado activo.
+              </p>
+            )}
             <div className="order-modal__actions">
               <button
                 type="button"
@@ -386,11 +388,11 @@ export default function OrderActions({ order, draftMode = false }: OrderActionsP
               </button>
               <button
                 type="button"
-                className="order-card__btn order-card__btn--danger"
+                className={`order-card__btn ${isNetworkPending ? "order-card__btn--primary" : "order-card__btn--danger"}`}
                 disabled={busy}
                 onClick={handleResolveConfirm}
               >
-                Continuar
+                {isNetworkPending ? "Reintentar" : "Continuar"}
               </button>
             </div>
           </div>

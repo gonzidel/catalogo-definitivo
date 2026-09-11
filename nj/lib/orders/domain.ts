@@ -37,6 +37,28 @@ export interface StockPendingConflict {
   requested: number;
 }
 
+/** Corte de red / timeout: no es un choque de stock (disponible < solicitado). */
+export function isTransientNetworkError(err: unknown): boolean {
+  const name = err && typeof err === "object" && "name" in err ? String((err as { name?: unknown }).name || "") : "";
+  const message =
+    err instanceof Error
+      ? err.message
+      : typeof err === "string"
+        ? err
+        : err && typeof err === "object" && "message" in err
+          ? String((err as { message?: unknown }).message || "")
+          : String(err || "");
+  if (name === "AbortError") return true;
+  if (/failed to fetch|networkerror|network request failed|load failed|fyl_timeout|err_network|err_internet|failed to load/i.test(message)) {
+    return true;
+  }
+  return name === "TypeError" && /fetch|network|failed|load/i.test(message);
+}
+
+export function isNetworkStockPendingReason(rawReason: string | null | undefined): boolean {
+  return isTransientNetworkError(String(rawReason || "").trim());
+}
+
 export function parseStockPendingReasonConflict(rawReason: string | null | undefined): StockPendingConflict | null {
   const reason = String(rawReason || "");
   if (!reason) return null;
@@ -290,22 +312,18 @@ export function orderHasCancelledItems(order: AdminOrder): boolean {
 
 /**
  * Un ítem cancelado necesita que el admin confirme la devolución física de stock
- * solo cuando realmente hay algo apartado pendiente de devolver.
+ * cuando todavía hay `order_item_stock_sources` con qty > 0.
  *
- * Reglas (ambas deben cumplirse):
- * 1. NO viene de "missing" (`admin_confirmed_missing=true`, migración 269): el
- *    local avisó que no existía físicamente; no hay nada que devolver aunque
- *    arrastre trazas obsoletas heredadas de un split previo.
- * 2. Todavía tiene `order_item_stock_sources` con qty > 0: eso solo queda cuando
- *    se canceló un ítem ya "picked"/Apartado (rpc_cancel_order_item NO restaura
- *    stock automáticamente en ese caso). Si se canceló estando "reserved" o
- *    "waiting", el mismo RPC ya devolvió el stock y borró las fuentes — ese
- *    producto nunca estuvo confirmado/apartado y NO debe aparecer en el banner
- *    amarillo de "confirmá para devolver stock".
+ * Eso queda cuando se canceló un ítem ya "picked"/Apartado: rpc_cancel_order_item
+ * NO restaura stock en ese caso. Si se canceló en "reserved" o "waiting", el RPC
+ * ya devolvió el stock y borró las fuentes — no pide ✓.
+ *
+ * `admin_confirmed_missing` NO oculta el ✓ si hay fuentes: el admin puede cargar
+ * a mano un producto (flag true + inyección de stock) y la clienta lo quita; ese
+ * stock sigue apartado y tiene que ir a Cancelados (A56782 / A56807).
  */
 export function cancelledItemNeedsStockConfirmation(item: AdminOrderItem): boolean {
   if (!isCancelledOrderItem(item)) return false;
-  if (item.admin_confirmed_missing) return false;
   const sources = item.order_item_stock_sources ?? [];
   return sources.some((s) => Number(s?.qty ?? 0) > 0);
 }

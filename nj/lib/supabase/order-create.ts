@@ -2,11 +2,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   computeOrderTotalFromItems,
   isLocalPickupOrderFulfilled,
+  isTransientNetworkError,
   type OrderNotesExtras,
 } from "@/lib/orders/domain";
 import {
-  applyManualConfirmedItems,
-  applyOrderStockDeduction,
+  applyAdminOrderStockWithRetry,
   type OrderEditDraftItem,
 } from "@/lib/supabase/order-edit";
 import { loadWarehouses } from "@/lib/supabase/order-queries";
@@ -154,15 +154,25 @@ export async function createManualOrder(
   );
 
   try {
-    await applyManualConfirmedItems(supabase, insertedStockItems, orderId, warehouseIds);
     const itemsWithIds = stockItems.map((item, index) => ({
       ...item,
       order_item_id: insertedStockItems?.[index]?.id ?? null,
     }));
-    await applyOrderStockDeduction(supabase, itemsWithIds, orderId, warehouseIds, "order_creation");
+    await applyAdminOrderStockWithRetry(
+      supabase,
+      insertedStockItems,
+      itemsWithIds,
+      orderId,
+      warehouseIds,
+      "order_creation"
+    );
   } catch (stockErr) {
     const reason = stockErr instanceof Error ? stockErr.message : String(stockErr);
-    await rollbackOrder(supabase, orderId, reason);
+    if (isTransientNetworkError(stockErr)) {
+      await markOrderStockPending(supabase, orderId, reason, "nj/order-create");
+    } else {
+      await rollbackOrder(supabase, orderId, reason);
+    }
     throw new Error(`${reason}. El pedido quedó en stock pendiente.`);
   }
 
@@ -181,6 +191,15 @@ async function rollbackOrder(supabase: SupabaseClient, orderId: string, reason: 
 
   if (!deleteOrderError) return;
 
+  await markOrderStockPending(supabase, orderId, reason, "nj/order-create");
+}
+
+async function markOrderStockPending(
+  supabase: SupabaseClient,
+  orderId: string,
+  reason: string,
+  source: string
+): Promise<void> {
   await supabase
     .from("orders")
     .update({
@@ -188,7 +207,7 @@ async function rollbackOrder(supabase: SupabaseClient, orderId: string, reason: 
       notes: JSON.stringify({
         stock_pending_reason: reason,
         stock_pending_at: new Date().toISOString(),
-        stock_pending_source: "nj/order-create",
+        stock_pending_source: source,
       }),
     })
     .eq("id", orderId);

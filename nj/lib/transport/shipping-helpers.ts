@@ -66,7 +66,8 @@ export function isLocalPickupShortDeadlineZone(
 /**
  * Geo donde el dashboard asigna "Retiro de Local" (perfil / cierre de pedido).
  * Incluye isChacoSpecial + Corrientes Capital (lista retiro_del_local).
- * Usado por el Kanban Retiro como fallback si el transport_id está viejo/vacío.
+ * El Kanban Pedidos/Retiro ya no usa esta geo para enrutar: hace falta
+ * botón Local, caja, deferred 36 h o Enviar al local.
  */
 export function isDashboardRetiroLocalZone(
   province?: string | null,

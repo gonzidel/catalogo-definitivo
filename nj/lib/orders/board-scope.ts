@@ -1,7 +1,6 @@
 import { isCustomerSourcedOrder, parseOrderNotesObject } from "@/lib/orders/domain";
 import { orderHasRetiroDepositWaiting, orderHasPedidosLocalWaiting } from "@/lib/orders/retiro-deposit-waiting";
-import { isDashboardRetiroLocalZone, isLocalPickupTransport } from "@/lib/transport/shipping-helpers";
-import type { AdminOrder, AdminOrderCustomer, WarehouseIds } from "@/types/orders";
+import type { AdminOrder, WarehouseIds } from "@/types/orders";
 
 export type BoardScope = "shipping" | "local_pickup";
 
@@ -67,23 +66,18 @@ export function getKanbanScopeOverride(
   return null;
 }
 
-function getOrderCustomer(
-  order: Pick<AdminOrder, "customers">
-): AdminOrderCustomer | null {
-  const raw = order.customers;
-  if (!raw) return null;
-  return (Array.isArray(raw) ? raw[0] : raw) ?? null;
-}
+const RETIRO_EXPLICIT_ORIGINS = new Set(["public_sales", "retiro", "admin_local"]);
 
 /**
- * Retiro local en Kanban: mismo criterio que el dashboard al asignar
- * "Retiro de Local":
- * - transporte Retira local / Retiro de Local
- * - local_deferred_pickup (checkout 309)
- * - geo dashboard (Chaco especial + Corrientes Capital), aunque el
- *   transport_id esté viejo (ej. MyM)
+ * Retiro en Kanban: solo señal explícita, no el transporte del perfil
+ * ni la geo (Chaco / Corrientes Capital).
  *
- * notes.kanban_scope gana sobre geo/transporte (botón Local / Depósito).
+ * - `kanban_scope` (botón Local / Depósito / Enviar al local)
+ * - espejo caja (`retiro_origin` / `mirrored_from_local_order`)
+ * - `local_deferred_pickup` (checkout 309, 36 h)
+ * - `local_pickup_fulfilled_at` (ya cobrado en local)
+ *
+ * El perfil "Retira local" sigue en Pedidos hasta Local o Enviar al local.
  */
 export function isLocalPickupBoardOrder(
   order: Pick<AdminOrder, "transportName" | "local_deferred_pickup" | "customers" | "notes">
@@ -92,16 +86,12 @@ export function isLocalPickupBoardOrder(
   if (override === "shipping") return false;
   if (override === "local_pickup") return true;
 
-  if (isLocalPickupTransport(order.transportName)) return true;
+  const notes = parseOrderNotesObject(order.notes);
+  if (notes.mirrored_from_local_order === true) return true;
+  const origin = String(notes.retiro_origin || "").trim().toLowerCase();
+  if (RETIRO_EXPLICIT_ORIGINS.has(origin)) return true;
   if (order.local_deferred_pickup) return true;
-
-  const customer = getOrderCustomer(order);
-  if (
-    customer &&
-    isDashboardRetiroLocalZone(customer.province, customer.city)
-  ) {
-    return true;
-  }
+  if (notes.local_pickup_fulfilled_at) return true;
 
   return false;
 }

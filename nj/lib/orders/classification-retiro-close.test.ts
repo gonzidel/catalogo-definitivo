@@ -33,17 +33,31 @@ function order(partial: Partial<AdminOrder>): AdminOrder {
 test("retiro cobrado con fulfilled_at no queda en Apartados", () => {
   const closed = order({
     payment_method: "Efectivo",
-    notes: JSON.stringify({ local_pickup_fulfilled_at: "2026-09-11T15:00:00Z" }),
+    notes: JSON.stringify({
+      kanban_scope: "local_pickup",
+      local_pickup_fulfilled_at: "2026-09-11T15:00:00Z",
+    }),
     transportName: "Retira local",
   });
   assert.equal(isFinalOrderStatus(closed), true);
   assert.equal(getOrderKanbanColumn(closed), null);
 });
 
+test("retiro cerrado con Contra Reembolso va a Cerrados, no desaparece", () => {
+  const closedCod = order({
+    payment_method: "Contra Reembolso",
+    notes: JSON.stringify({ pau_source: true, kanban_scope: "local_pickup" }),
+    local_deferred_pickup: false,
+    transportName: "Retira local",
+  });
+  assert.equal(isFinalOrderStatus(closedCod), false);
+  assert.equal(getOrderKanbanColumn(closedCod), "closed");
+});
+
 test("retiro cerrado sin cobrar sigue en Apartados", () => {
   const awaiting = order({
     payment_method: "Pendiente",
-    notes: null,
+    notes: JSON.stringify({ kanban_scope: "local_pickup" }),
     local_deferred_pickup: false,
     transportName: "Retira local",
   });

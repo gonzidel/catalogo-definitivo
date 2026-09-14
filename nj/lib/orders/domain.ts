@@ -718,7 +718,8 @@ export function isLocalPickupOrderFulfilled(
 
   if (!isCustomerLocalPickupOrder(order, transportName)) return false;
 
+  // Solo cobro real en local (Cerrar → Imprimir). Contra Reembolso / transferencia
+  // es cierre de envío o PAU: el pedido sigue en Cerrados, no se oculta del Kanban.
   const pay = String(order.payment_method || "").trim().toLowerCase();
-  if (!pay || pay === "pendiente") return false;
-  return true;
+  return pay === "efectivo" || pay === "tarjeta";
 }

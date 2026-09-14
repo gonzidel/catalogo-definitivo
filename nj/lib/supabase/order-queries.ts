@@ -5,12 +5,12 @@ import {
 } from "@/lib/orders/domain";
 import {
   filterOrdersByBoardScope,
+  isLocalPickupBoardOrder,
   type BoardScope,
 } from "@/lib/orders/board-scope";
 import { isFinalOrderStatus } from "@/lib/orders/classification";
 import { enrichOrderItemsWithOfferFlags } from "@/lib/orders/offer-badges";
 import { enrichOrderItemsWithWarehouseLabels } from "@/lib/orders/warehouse-labels";
-import { isDashboardRetiroLocalZone } from "@/lib/transport/shipping-helpers";
 import type {
   AdminOrder,
   AdminTransport,
@@ -140,6 +140,115 @@ async function fetchOrdersByIds(
   return { data: all, error: null };
 }
 
+/**
+ * Patrones ILIKE sobre `orders.notes` (columna `text`, no `jsonb` -- por eso no
+ * se puede usar `notes->>campo` en el filtro SQL) que replican, uno a uno, las
+ * señales de `isLocalPickupBoardOrder()` en board-scope.ts. Si se agrega una
+ * señal nueva ahí, agregarla también aquí.
+ */
+const RETIRO_NOTES_ILIKE_PATTERNS = [
+  '%"kanban_scope":"local_pickup"%',
+  '%"retiro_origin":"%',
+  '%"mirrored_from_local_order":true%',
+  '%"local_pickup_fulfilled_at":"%',
+];
+
+/**
+ * Pool de candidatos a Retiro consultado directo en SQL (no depende de traer
+ * primero el pool paginado de operativos, a diferencia de fetchOrdersInitial
+ * con scope "shipping"). Arregla el bug donde pedidos local_pickup "viejos"
+ * (fuera del rango de páginas más recientes) no aparecían en /retiro.
+ */
+async function fetchLocalPickupCandidateIds(
+  supabase: SupabaseClient
+): Promise<Set<string>> {
+  const ids = new Set<string>();
+  const queries = [
+    supabase
+      .from("orders")
+      .select("id")
+      .eq("local_deferred_pickup", true)
+      .not("status", "in", OPERATIONAL_STATUS_FILTER),
+    ...RETIRO_NOTES_ILIKE_PATTERNS.map((pattern) =>
+      supabase
+        .from("orders")
+        .select("id")
+        .ilike("notes", pattern)
+        .not("status", "in", OPERATIONAL_STATUS_FILTER)
+    ),
+  ];
+  const results = await Promise.all(queries);
+  for (const { data, error } of results) {
+    if (error) {
+      console.error("fetchLocalPickupCandidateIds error:", formatQueryError(error) || error);
+      continue;
+    }
+    for (const row of (data || []) as { id: string }[]) {
+      if (row?.id) ids.add(row.id);
+    }
+  }
+  return ids;
+}
+
+/**
+ * Pool chico de pedidos con al menos un ítem 'waiting' -- usado para las
+ * excepciones cruzadas de la columna Espera (orderHasRetiroDepositWaiting /
+ * orderHasPedidosLocalWaiting en retiro-deposit-waiting.ts), que necesitan
+ * evaluarse contra pedidos que NO tienen señal directa de local_pickup.
+ */
+async function fetchOrderIdsWithWaitingItems(
+  supabase: SupabaseClient
+): Promise<Set<string>> {
+  const { data, error } = await supabase
+    .from("order_items")
+    .select("order_id")
+    .eq("status", "waiting");
+  if (error) {
+    console.error("fetchOrderIdsWithWaitingItems error:", formatQueryError(error) || error);
+    return new Set();
+  }
+  return new Set(
+    ((data || []) as { order_id: string }[]).map((r) => r.order_id).filter(Boolean)
+  );
+}
+
+/**
+ * Lista propia de Retiro: consulta directo por señal de local_pickup en SQL
+ * en lugar de heredar el pool paginado (hasta 2000 filas) que usa /orders y
+ * filtrar en JS. Ver auditoría 2026-09-14 (retiro no es "solo un filtro").
+ */
+async function fetchRetiroOrdersDirect(
+  supabase: SupabaseClient,
+  warehouseIds: WarehouseIds,
+  transports: Map<string, AdminTransport>
+): Promise<AdminOrder[]> {
+  const [candidateIds, waitingIds] = await Promise.all([
+    fetchLocalPickupCandidateIds(supabase),
+    fetchOrderIdsWithWaitingItems(supabase),
+  ]);
+  const allIds = new Set<string>([...candidateIds, ...waitingIds]);
+  if (!allIds.size) return [];
+
+  let full = await fetchOrdersByIds(supabase, [...allIds], ORDER_SELECT);
+  if (full.error && isMissingInboxColumnError(full.error)) {
+    full = await fetchOrdersByIds(supabase, [...allIds], ORDER_SELECT_WITHOUT_INBOX);
+  }
+  if (full.error && !full.data.length) {
+    console.error("fetchRetiroOrdersDirect hydrate error:", full.error);
+    return [];
+  }
+
+  const enriched = await enrichOrders(
+    supabase,
+    full.data as AdminOrder[],
+    warehouseIds,
+    transports
+  );
+  return filterOrdersByBoardScope(enriched, "local_pickup", { warehouseIds }).filter(
+    (order) => !isFinalOrderStatus(order)
+  );
+}
+
 export async function loadWarehouses(
   supabase: SupabaseClient
 ): Promise<WarehouseIds> {
@@ -187,16 +296,9 @@ function attachTransportMeta(
   const transport = transportId ? transports.get(transportId) : null;
   let transportName = transport?.name ?? null;
 
-  // Zona retiro local / deferred: la geo del dashboard fuerza Retira local.
-  // Si el customer aún tiene un transport_id viejo (MyM, etc.), no debe
-  // mandar el badge ni el Kanban. Si admin movió a Pedidos (kanban_scope =
-  // shipping), no forzar.
-  const notesKanban = parseOrderNotesObject(order.notes).kanban_scope;
-  if (
-    notesKanban !== "shipping" &&
-    (order.local_deferred_pickup ||
-      isDashboardRetiroLocalZone(customer?.province, customer?.city))
-  ) {
+  // Badge Retira local solo si el pedido es del tablero Retiro (botón Local,
+  // caja, deferred 36 h). No forzar por geo ni por el transporte del perfil.
+  if (isLocalPickupBoardOrder({ ...order, transportName })) {
     transportName = "Retira local";
   }
 
@@ -230,6 +332,12 @@ export async function fetchOrdersInitial(
     loadWarehouses(supabase),
     loadTransports(supabase),
   ]);
+
+  // Retiro: lista propia por SQL (ver fetchRetiroOrdersDirect), no depende
+  // del pool paginado de operativos que puede cortar a los 2000 más nuevos.
+  if (scope === "local_pickup") {
+    return fetchRetiroOrdersDirect(supabase, warehouseIds, transports);
+  }
 
   // Estados finales: no viven en el Kanban operativo (paridad con "sent"/"devolución").
   // "expired" (pedido desarmado automáticamente por rpc_orders_daily_maintenance) no

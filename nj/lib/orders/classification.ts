@@ -30,17 +30,18 @@ const norm = (s: unknown) => String(s ?? "").trim().toLowerCase();
 
 /**
  * Estados de pedido finales/terminales: no tienen columna propia en este Kanban.
- * "expired" ya se excluye en el fetch inicial (fetchOrdersInitial), pero un pedido
- * puede llegar igual acá vía patchOrder en tiempo real -- este check evita que
- * quede clasificando por ítems (que ya no son operacionales) y cayendo en null.
+ *
+ * "expired" NO está acá a propósito (ver auditoría 2026-09-15): antes se
+ * trataba como terminal y quedaba invisible para siempre en todo el admin
+ * (no se podía avisar a la clienta ni "Desarmar"/archivar). Ahora
+ * getOrderKanbanColumn lo clasifica explícitamente en "cancelled".
  */
 export function isFinalOrderStatus(order: AdminOrder): boolean {
   const statusNorm = norm(order.status);
   if (
     statusNorm === STATUS.SENT ||
     statusNorm === STATUS.DEVOLUCION ||
-    statusNorm === STATUS.DEVOLUCION_ALT ||
-    statusNorm === STATUS.EXPIRED
+    statusNorm === STATUS.DEVOLUCION_ALT
   ) {
     return true;
   }
@@ -254,7 +255,14 @@ export function getOrderKanbanColumn(order: AdminOrder): KanbanColumnId | null {
   if (isFinalOrderStatus(order)) return null;
   if (matchesStockPendingTab(order)) return "stock_pending";
   if (matchesClosedTab(order)) return "closed";
-  // Vencidos ≥7d con ítems operacionales → Cancelados (antes que Apartados/Activos)
+  // Pedido ya vencido Y desarmado por rpc_orders_daily_maintenance (status='expired',
+  // items en 'expired', stock ya devuelto por el cron) -- sigue viviendo en Cancelados
+  // para poder avisar a la clienta y "Desarmar"/archivar en vez de desaparecer para
+  // siempre. hasOperationalItems() da false para estos (sus items ya no son
+  // reserved/picked/etc.), por eso necesita esta rama explícita además de la de abajo.
+  if (norm(order.status) === STATUS.EXPIRED) return "cancelled";
+  // Vencidos ≥7d con ítems operacionales, TODAVÍA sin pasar por el cron (status
+  // sigue active/closing_soon) → Cancelados también (antes que Apartados/Activos).
   if (isExpiredPendingAdminDisassembly(order)) return "cancelled";
   if (matchesActiveTab(order)) return "active";
   if (matchesWaitingTab(order)) return "waiting";

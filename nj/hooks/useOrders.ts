@@ -1218,6 +1218,7 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
 
   dismantleOrder: async (orderId) => {
     const snapshot = cloneOrders(get().orders);
+    const wasAlreadyExpired = findOrder(get(), orderId)?.status === "expired";
     set((state) => ({
       orders: state.orders.filter((o) => o.id !== orderId),
       loadingAction: orderId,
@@ -1226,7 +1227,12 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
     try {
       const supabase = getSupabaseBrowserClient();
       await rpcCancelOrderFull(supabase, orderId);
-      get().showToast("Pedido desarmado — stock restaurado", "success");
+      // Pedido ya vencido por rpc_orders_daily_maintenance: el stock volvió solo
+      // al vencer, este RPC solo termina de archivar/borrar el registro.
+      get().showToast(
+        wasAlreadyExpired ? "Pedido archivado" : "Pedido desarmado — stock restaurado",
+        "success"
+      );
     } catch (err) {
       set({ orders: snapshot });
       get().showToast(getErrorMessage(err), "error");

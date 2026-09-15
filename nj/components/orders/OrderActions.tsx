@@ -217,7 +217,10 @@ export default function OrderActions({ order, draftMode = false }: OrderActionsP
           </>
         ) : null}
 
-        {column === "cancelled" && (isExpiredPendingAdminDisassembly(order) || order.status === "cancelled") ? (
+        {column === "cancelled" &&
+        (isExpiredPendingAdminDisassembly(order) ||
+          order.status === "cancelled" ||
+          order.status === "expired") ? (
           <>
             {isExpiredPendingAdminDisassembly(order) && (
               <button
@@ -235,7 +238,7 @@ export default function OrderActions({ order, draftMode = false }: OrderActionsP
               disabled={busy}
               onClick={() => setDismantleModalOpen(true)}
             >
-              Desarmar
+              {order.status === "expired" ? "Archivar" : "Desarmar"}
             </button>
           </>
         ) : null}
@@ -412,10 +415,12 @@ export default function OrderActions({ order, draftMode = false }: OrderActionsP
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="order-modal__title" id={`dismantle-modal-${order.id}`}>
-              Desarmar pedido
+              {order.status === "expired" ? "Archivar pedido vencido" : "Desarmar pedido"}
             </h3>
             <p className="order-modal__text">
-              ¿Confirmar desarme? Todo el stock regresa al sistema.
+              {order.status === "expired"
+                ? "El stock ya volvió al sistema automáticamente al vencer el plazo. Confirmá para archivar el pedido y sacarlo de Cancelados."
+                : "¿Confirmar desarme? Todo el stock regresa al sistema."}
             </p>
             <div className="order-modal__actions order-modal__actions--big">
               <button
@@ -431,7 +436,7 @@ export default function OrderActions({ order, draftMode = false }: OrderActionsP
                 disabled={busy}
                 onClick={handleDismantleConfirm}
               >
-                Desarmar
+                {order.status === "expired" ? "Archivar" : "Desarmar"}
               </button>
             </div>
           </div>

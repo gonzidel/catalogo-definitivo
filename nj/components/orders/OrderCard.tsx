@@ -244,7 +244,14 @@ export default function OrderCard({ order }: OrderCardProps) {
   // ni se ofrece, ver OrderActions). Acá SÍ se ofrece, y todo lo que sigue "activo"
   // (Apartado/Reservado/Espera) vuelve al stock apenas se aprieta ese botón — por
   // eso se muestra distinto (ver renderizado más abajo).
-  const isExpiredPending = column === "cancelled" && isExpiredPendingAdminDisassembly(order);
+  // Ya vencido y desarmado por el cron (rpc_orders_daily_maintenance): status='expired',
+  // stock ya devuelto solo. Se trata igual que isExpiredPendingAdminDisassembly (mismo
+  // resumen fusionado / badge "Vencido"), salvo que acá ya no hace falta devolver stock,
+  // solo archivar. Ver auditoría 2026-09-15.
+  const isFullyExpiredStatus = String(order.status || "").trim().toLowerCase() === "expired";
+  const isExpiredPending =
+    column === "cancelled" &&
+    (isExpiredPendingAdminDisassembly(order) || isFullyExpiredStatus);
   // Pedido vencido pendiente de desarmar: "Desarmar" ya resuelve TODO en un
   // solo paso (incluidos los ítems cancelados-pendientes de confirmar, ver
   // rpc_cancel_order_full 267), así que no tiene sentido pedirle al admin que
@@ -946,10 +953,15 @@ export default function OrderCard({ order }: OrderCardProps) {
             ) : null}
             {dismantleAllPending ? (
               <div className="order-card__cancelled-rest">
-                <p className="order-card__cancelled-rest-title">Se devuelve todo el stock al desarmar</p>
+                <p className="order-card__cancelled-rest-title">
+                  {isFullyExpiredStatus
+                    ? "El stock ya volvió solo al vencer el plazo"
+                    : "Se devuelve todo el stock al desarmar"}
+                </p>
                 <p className="order-card__cancelled-rest-hint">
-                  Lo marcado en amarillo nunca se separó físicamente del depósito (reservado/espera) —
-                  el resto sí estaba apartado.
+                  {isFullyExpiredStatus
+                    ? "Tocá Archivar para sacar este pedido de Cancelados."
+                    : "Lo marcado en amarillo nunca se separó físicamente del depósito (reservado/espera) — el resto sí estaba apartado."}
                 </p>
                 <OrderCardItems
                   items={cancelledSummaryItems}

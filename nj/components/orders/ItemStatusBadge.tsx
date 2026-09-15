@@ -7,6 +7,8 @@ const LABELS: Record<string, string> = {
   waiting: "Espera",
   missing: "Falta",
   cancelled: "Cancelado",
+  // Pedido vencido y desarmado por rpc_orders_daily_maintenance (ver auditoría 2026-09-15).
+  expired: "Vencido",
 };
 
 const COMPACT_LABELS: Record<string, string> = {
@@ -16,6 +18,7 @@ const COMPACT_LABELS: Record<string, string> = {
   waiting: "Esp.",
   missing: "Falta",
   cancelled: "Can.",
+  expired: "Venc.",
 };
 
 interface ItemStatusBadgeProps {

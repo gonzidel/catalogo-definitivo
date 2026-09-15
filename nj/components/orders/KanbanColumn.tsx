@@ -8,13 +8,19 @@ import { orderMatchesCustomerSearch } from "@/lib/orders/customer-search";
 import { useExpiryWarnSentStore } from "@/lib/orders/expiry-warning-sent";
 import { getWaitingColumnSortKey } from "@/lib/orders/waiting-source";
 import { filterOrdersByKanbanInboxView } from "@/lib/orders/kanban-inbox";
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { searchOrdersGlobal } from "@/lib/supabase/order-queries";
 import { useOrdersStore } from "@/hooks/useOrders";
-import type { KanbanColumnId } from "@/types/orders";
+import type { AdminOrder, KanbanColumnId } from "@/types/orders";
 import KanbanColumnSearch from "./KanbanColumnSearch";
 import NewOrderForm from "./NewOrderForm";
 import OrderCard from "./OrderCard";
+import OrderSearchResultCard from "./OrderSearchResultCard";
 import RetiroOriginLegend from "./RetiroOriginLegend";
 import WaitingLegend from "./WaitingLegend";
+
+const GLOBAL_SEARCH_MIN_LEN = 2;
+const GLOBAL_SEARCH_DEBOUNCE_MS = 350;
 
 interface KanbanColumnProps {
   columnId: KanbanColumnId;
@@ -30,6 +36,7 @@ export default function KanbanColumn({
   hideHeader = false,
 }: KanbanColumnProps) {
   const [searchQuery, setSearchQuery] = useState("");
+  const [globalMatches, setGlobalMatches] = useState<AdminOrder[]>([]);
   const allOrders = useOrdersStore((s) => s.orders);
   const warehouseIds = useOrdersStore((s) => s.warehouseIds);
   const boardScope = useOrdersStore((s) => s.boardScope);
@@ -98,6 +105,42 @@ export default function KanbanColumn({
     return orders.filter((order) => orderMatchesCustomerSearch(order, q));
   }, [orders, searchQuery]);
 
+  // Mismo buscador de columna: además de filtrar el pool operativo (arriba),
+  // dispara (con debounce) una búsqueda global sin filtro de status para
+  // encontrar pedidos que quedaron en estado terminal (expired/sent/devolución)
+  // y por eso son invisibles en todo el Kanban. Ver auditoría 2026-09-15.
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (q.length < GLOBAL_SEARCH_MIN_LEN) {
+      setGlobalMatches([]);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      const supabase = getSupabaseBrowserClient();
+      searchOrdersGlobal(supabase, q)
+        .then((results) => {
+          if (!cancelled) setGlobalMatches(results);
+        })
+        .catch((err) => {
+          console.error("searchOrdersGlobal error:", err);
+          if (!cancelled) setGlobalMatches([]);
+        });
+    }, GLOBAL_SEARCH_DEBOUNCE_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [searchQuery]);
+
+  // Solo mostramos los que NO están ya en el pool operativo del store: si un
+  // pedido activo aparece en otra columna, no lo duplicamos acá.
+  const outOfBoardMatches = useMemo(() => {
+    if (!globalMatches.length) return [];
+    const knownIds = new Set(allOrders.map((o) => o.id));
+    return globalMatches.filter((order) => !knownIds.has(order.id));
+  }, [globalMatches, allOrders]);
+
   return (
     <section className="kanban-column" aria-label={label}>
       {!hideHeader ? (
@@ -121,13 +164,23 @@ export default function KanbanColumn({
         columnLabel={label}
       />
       <div className="kanban-column__list">
-        {orders.length === 0 ? (
+        {orders.length === 0 && outOfBoardMatches.length === 0 ? (
           <p className="kanban-column__empty">Sin pedidos</p>
-        ) : visibleOrders.length === 0 ? (
+        ) : visibleOrders.length === 0 && outOfBoardMatches.length === 0 ? (
           <p className="kanban-column__empty">Sin coincidencias</p>
         ) : (
           visibleOrders.map((order) => <OrderCard key={order.id} order={order} />)
         )}
+        {outOfBoardMatches.length > 0 ? (
+          <div className="kanban-column__global-results">
+            <p className="kanban-column__global-results-title">
+              Fuera del tablero ({outOfBoardMatches.length})
+            </p>
+            {outOfBoardMatches.map((order) => (
+              <OrderSearchResultCard key={order.id} order={order} />
+            ))}
+          </div>
+        ) : null}
       </div>
     </section>
   );

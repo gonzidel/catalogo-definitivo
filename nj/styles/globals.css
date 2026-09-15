@@ -5974,6 +5974,68 @@ body:has(.kanban-admin-shell) [data-nextjs-toast] {
   padding: 16px 8px;
 }
 
+.kanban-column__global-results {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed #d1d5db;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.kanban-column__global-results-title {
+  margin: 0 0 2px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #9ca3af;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.order-search-result {
+  border: 1px dashed #d1d5db;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #f9fafb;
+}
+
+.order-search-result__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.order-search-result__number {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #374151;
+}
+
+.order-search-result__status {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #b45309;
+  background: #fef3c7;
+  border-radius: 999px;
+  padding: 2px 8px;
+  flex-shrink: 0;
+}
+
+.order-search-result__customer {
+  margin: 4px 0 2px;
+  font-size: 0.78rem;
+  color: #111827;
+}
+
+.order-search-result__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 0.7rem;
+  color: #6b7280;
+}
+
 .kanban-skeleton-column {
   min-width: 0;
   background: #e5e7eb;

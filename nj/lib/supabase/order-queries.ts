@@ -49,7 +49,12 @@ function isMissingInboxColumnError(error: { message?: string; details?: string; 
   return blob.includes("kanban_inbox_owner") || blob.includes("kanban_inbox_assigned_at");
 }
 
-const OPERATIONAL_STATUS_FILTER = '("sent","devolución","devolucion","expired")';
+// "expired" se sacó de este filtro (2026-09-15): antes un pedido vencido y
+// desarmado por rpc_orders_daily_maintenance quedaba invisible para siempre en
+// todo el admin (no podía avisarse a la clienta ni "Desarmar"/archivar desde
+// la UI). Ahora sí se trae y getOrderKanbanColumn lo manda a "Cancelados".
+// Solo 63 filas en total a la fecha de este cambio -- no hace falta acotar por fecha.
+const OPERATIONAL_STATUS_FILTER = '("sent","devolución","devolucion")';
 const OPERATIONAL_ORDERS_PAGE_SIZE = 200;
 const OPERATIONAL_ORDERS_MAX_ROWS = 2000;
 const FULL_ORDER_HYDRATE_CHUNK = 60;
@@ -138,6 +143,92 @@ async function fetchOrdersByIds(
     all.push(...((data as unknown[]) || []));
   }
   return { data: all, error: null };
+}
+
+const GLOBAL_SEARCH_ORDER_LIMIT = 25;
+
+async function fetchCustomerIdsForGlobalSearch(
+  supabase: SupabaseClient,
+  escapedQuery: string
+): Promise<string[]> {
+  const { data, error } = await supabase
+    .from("customers")
+    .select("id")
+    .or(
+      `full_name.ilike.%${escapedQuery}%,dni.ilike.%${escapedQuery}%,phone.ilike.%${escapedQuery}%,email.ilike.%${escapedQuery}%,customer_number.ilike.%${escapedQuery}%`
+    )
+    .limit(20);
+  if (error) {
+    console.error("fetchCustomerIdsForGlobalSearch error:", formatQueryError(error) || error);
+    return [];
+  }
+  return ((data || []) as { id: string }[]).map((r) => r.id).filter(Boolean);
+}
+
+/**
+ * Búsqueda global sin filtro de status, pensada para el buscador que YA existe
+ * en cada columna del Kanban (KanbanColumnSearch / KanbanColumn.tsx). A
+ * diferencia del pool operativo (fetchOperationalOrderRows / fetchOrdersInitial),
+ * esta consulta sí incluye pedidos en estado terminal (expired/sent/devolución).
+ *
+ * Ver auditoría 2026-09-15: pedidos vencidos "desarmados" por
+ * rpc_orders_daily_maintenance quedaban invisibles para siempre en todo el
+ * admin, incluso buscando por nombre/DNI/Nº de pedido. Se usa solo para
+ * mostrar resultados de solo lectura fuera del tablero (OrderSearchResultCard);
+ * no participa de fetchOrdersInitial ni de getOrderKanbanColumn.
+ */
+export async function searchOrdersGlobal(
+  supabase: SupabaseClient,
+  rawQuery: string
+): Promise<AdminOrder[]> {
+  const query = String(rawQuery || "").trim();
+  if (query.length < 2) return [];
+  const escaped = query.replace(/[%_]/g, "");
+
+  const [customerIds, byOrderNumber] = await Promise.all([
+    fetchCustomerIdsForGlobalSearch(supabase, escaped),
+    supabase
+      .from("orders")
+      .select("id")
+      .ilike("order_number", `%${escaped}%`)
+      .limit(GLOBAL_SEARCH_ORDER_LIMIT),
+  ]);
+
+  const idSet = new Set<string>();
+  for (const row of (byOrderNumber.data || []) as { id: string }[]) {
+    if (row?.id) idSet.add(row.id);
+  }
+
+  if (customerIds.length) {
+    const { data, error } = await supabase
+      .from("orders")
+      .select("id")
+      .in("customer_id", customerIds)
+      .order("created_at", { ascending: false })
+      .limit(GLOBAL_SEARCH_ORDER_LIMIT);
+    if (error) {
+      console.error("searchOrdersGlobal by customer error:", formatQueryError(error) || error);
+    } else {
+      for (const row of (data || []) as { id: string }[]) {
+        if (row?.id) idSet.add(row.id);
+      }
+    }
+  }
+
+  if (!idSet.size) return [];
+
+  let full = await fetchOrdersByIds(supabase, [...idSet], ORDER_SELECT);
+  if (full.error && isMissingInboxColumnError(full.error)) {
+    full = await fetchOrdersByIds(supabase, [...idSet], ORDER_SELECT_WITHOUT_INBOX);
+  }
+  if (full.error && !full.data.length) {
+    console.error("searchOrdersGlobal hydrate error:", full.error);
+    return [];
+  }
+
+  return (full.data as AdminOrder[])
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    .slice(0, GLOBAL_SEARCH_ORDER_LIMIT);
 }
 
 /**
@@ -339,11 +430,10 @@ export async function fetchOrdersInitial(
     return fetchRetiroOrdersDirect(supabase, warehouseIds, transports);
   }
 
-  // Estados finales: no viven en el Kanban operativo (paridad con "sent"/"devolución").
-  // "expired" (pedido desarmado automáticamente por rpc_orders_daily_maintenance) no
-  // tiene columna propia ni ítems operacionales -- si se incluyera, getOrderKanbanColumn
-  // devuelve null y el pedido queda flotando sin poder clasificarse en ninguna columna.
-  // Nota: "cancelled" (a nivel pedido) SÍ debe seguir incluido -- se resuelve vía
+  // Estados finales: no viven en el Kanban operativo ("sent"/"devolución").
+  // "expired" SÍ se incluye: getOrderKanbanColumn lo manda a "Cancelados" para
+  // poder avisar a la clienta y "Desarmar"/archivar (ver auditoría 2026-09-15).
+  // "cancelled" (a nivel pedido) también sigue incluido -- se resuelve vía
   // orderHasCancelledItems() y aparece en la columna "Cancelados" con acción "Desarmar".
   let keys = await fetchOperationalOrderRows(supabase, ORDER_BOARD_KEY_SELECT);
   if (keys.error && !keys.data?.length) {

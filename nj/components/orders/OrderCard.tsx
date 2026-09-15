@@ -219,8 +219,10 @@ export default function OrderCard({ order }: OrderCardProps) {
       column === "active" ||
       column === "picked" ||
       column === "waiting");
+  // A diferencia de showExpiryWarningBtn (que sigue siendo mobile-only, es otro
+  // flujo), este botón de "avisar que venció" también debe verse en desktop --
+  // era justo lo que el admin necesitaba y no aparecía ahí. Ver 2026-09-15.
   const showExpiredOrderMessageBtn =
-    isMobile &&
     column === "cancelled" &&
     hasDeadline &&
     deadlineExpired &&

@@ -154,6 +154,9 @@ interface OrdersState {
   cancelStockPendingOrder: (orderId: string) => Promise<void>;
   dismantleOrder: (orderId: string) => Promise<void>;
   extendOrder24h: (orderId: string) => Promise<void>;
+  /** Pedido ya vencido por el cron (status='expired'): lo reabre en Apartados
+   *  sin tocar stock (ver rpc_admin_reopen_expired_order, auditoría 2026-09-15). */
+  reopenExpiredOrder: (orderId: string) => Promise<void>;
 
   subscribeNewOrders: () => () => void;
 }
@@ -1272,6 +1275,29 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
       const refreshed = await fetchOrderById(supabase, orderId);
       if (refreshed) get().patchOrder(refreshed);
       get().showToast("Prórroga aplicada", "success");
+    } catch (err) {
+      set({ orders: snapshot });
+      get().showToast(getErrorMessage(err), "error");
+    } finally {
+      set({ loadingAction: null });
+    }
+  },
+
+  reopenExpiredOrder: async (orderId) => {
+    const snapshot = cloneOrders(get().orders);
+    set({ loadingAction: orderId });
+
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const { error } = await supabase.rpc("rpc_admin_reopen_expired_order", {
+        p_order_id: orderId,
+      });
+
+      if (error) throw error;
+
+      const refreshed = await fetchOrderById(supabase, orderId);
+      if (refreshed) get().patchOrder(refreshed);
+      get().showToast("Pedido reabierto en Apartados", "success");
     } catch (err) {
       set({ orders: snapshot });
       get().showToast(getErrorMessage(err), "error");

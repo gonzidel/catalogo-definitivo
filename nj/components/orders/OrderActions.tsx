@@ -72,6 +72,8 @@ export default function OrderActions({ order, draftMode = false }: OrderActionsP
   const cancelStockPendingOrder = useOrdersStore((s) => s.cancelStockPendingOrder);
   const dismantleOrder = useOrdersStore((s) => s.dismantleOrder);
   const extendOrder24h = useOrdersStore((s) => s.extendOrder24h);
+  const reopenExpiredOrder = useOrdersStore((s) => s.reopenExpiredOrder);
+  const isFullyExpired = order.status === "expired";
 
   const [closeModalOpen, setCloseModalOpen] = useState(false);
   const [resolveModalOpen, setResolveModalOpen] = useState(false);
@@ -121,7 +123,11 @@ export default function OrderActions({ order, draftMode = false }: OrderActionsP
   };
 
   const handleExtendConfirm = async () => {
-    await extendOrder24h(order.id);
+    if (isFullyExpired) {
+      await reopenExpiredOrder(order.id);
+    } else {
+      await extendOrder24h(order.id);
+    }
     setExtendModalOpen(false);
   };
 
@@ -222,7 +228,7 @@ export default function OrderActions({ order, draftMode = false }: OrderActionsP
           order.status === "cancelled" ||
           order.status === "expired") ? (
           <>
-            {isExpiredPendingAdminDisassembly(order) && (
+            {(isExpiredPendingAdminDisassembly(order) || isFullyExpired) && (
               <button
                 type="button"
                 className="order-card__btn order-card__btn--grow"
@@ -456,11 +462,12 @@ export default function OrderActions({ order, draftMode = false }: OrderActionsP
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="order-modal__title" id={`extend-modal-${order.id}`}>
-              Prórroga +24hs
+              {isFullyExpired ? "Reabrir pedido vencido" : "Prórroga +24hs"}
             </h3>
             <p className="order-modal__text">
-              ¿Habilitar este pedido por 24 horas más? El cliente podrá volver a operarlo
-              temporalmente.
+              {isFullyExpired
+                ? "El pedido vuelve a Apartados y tiene 24hs más para gestionarse. El stock no se toca: estos productos ya estaban físicamente reservados."
+                : "¿Habilitar este pedido por 24 horas más? El cliente podrá volver a operarlo temporalmente."}
             </p>
             <div className="order-modal__actions">
               <button

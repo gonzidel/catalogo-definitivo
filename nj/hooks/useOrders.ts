@@ -38,14 +38,16 @@ import {
   resolveStockPendingOrderRpc,
   rpcCancelOrderFull,
   rpcCloseOrder,
+  rpcMarkExpiredOrderSent,
+  rpcMarkItemMissing,
   rpcMarkOrderItemWaitingSource,
   rpcMarkOrderItemsPicked,
+  rpcRemoveCancelledItemWriteoff,
   rpcRemoveOrderItemRestoreStock,
   rpcRevertOrderToPicked,
   rpcSendOrderToLocal,
   rpcSetKanbanInboxOwner,
   rpcSplitOrderItemStatus,
-  rpcUpdateOrderItemStatus,
   rpcZeroVariantSizeStock,
   updateOrderKanbanScope,
 } from "@/lib/supabase/order-queries";
@@ -103,6 +105,9 @@ interface OrdersState {
   pickAllReserved: (orderId: string) => Promise<void>;
   cancelItem: (orderId: string, itemId: string) => Promise<void>;
   confirmCancelledItem: (orderId: string, itemId: string) => Promise<void>;
+  /** Igual que confirmCancelledItem pero sin devolver stock (producto sin
+   *  stock real). Ver rpc_admin_remove_cancelled_item_writeoff. */
+  confirmCancelledItemNoStock: (orderId: string, itemId: string) => Promise<void>;
   confirmAllCancelledItems: (orderId: string) => Promise<void>;
   markItemMissing: (orderId: string, itemId: string) => Promise<void>;
   /** Existencias que figuran hoy en la web para variante+talle (para el aviso al presionar ✕). */
@@ -157,6 +162,9 @@ interface OrdersState {
   /** Pedido ya vencido por el cron (status='expired'): lo reabre en Apartados
    *  sin tocar stock (ver rpc_admin_reopen_expired_order, auditoría 2026-09-15). */
   reopenExpiredOrder: (orderId: string) => Promise<void>;
+  /** Corrige un pedido 'expired' que ya se resolvió fuera del sistema (marca
+   *  status='sent'). No toca stock. Ver rpc_admin_mark_expired_order_sent. */
+  markExpiredOrderSent: (orderId: string) => Promise<void>;
 
   subscribeNewOrders: () => () => void;
 }
@@ -707,6 +715,58 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
     }
   },
 
+  /** Como confirmCancelledItem, pero para cuando el producto en realidad no
+   *  existe en stock: saca el ítem sin sumarle nada al depósito (ver
+   *  rpc_admin_remove_cancelled_item_writeoff, auditoría 2026-09-15). */
+  confirmCancelledItemNoStock: async (orderId, itemId) => {
+    const snapshot = cloneOrders(get().orders);
+    const order = findOrder(get(), orderId);
+    if (!order) return;
+
+    const target = (order.order_items || []).find((i) => i.id === itemId);
+    if (!target || String(target.status || "").toLowerCase() !== "cancelled") {
+      get().showToast("Este producto no está cancelado", "error");
+      return;
+    }
+
+    const remainingItems = (order.order_items || []).filter((item) => item.id !== itemId);
+
+    set((state) => ({
+      orders: state.orders
+        .map((o) =>
+          o.id !== orderId ? o : { ...o, order_items: remainingItems }
+        )
+        .filter((o) => o.id !== orderId || (o.order_items || []).length > 0),
+      loadingAction: itemId,
+    }));
+
+    try {
+      const supabase = getSupabaseBrowserClient();
+      const result = await rpcRemoveCancelledItemWriteoff(supabase, itemId);
+
+      if (result?.order_deleted) {
+        get().removeOrder(orderId);
+        get().showToast("Confirmado sin devolver stock — pedido actualizado", "success");
+        return;
+      }
+
+      const { order: refreshed, autoClosed } = await refreshAndMaybeAutoClose(supabase, orderId);
+      if (refreshed) get().patchOrder(refreshed);
+      else get().removeOrder(orderId);
+      get().showToast(
+        autoClosed
+          ? "Pedido cerrado — el cliente ya había pedido el cierre"
+          : "Confirmado sin devolver stock",
+        "success"
+      );
+    } catch (err) {
+      set({ orders: snapshot });
+      get().showToast(getErrorMessage(err), "error");
+    } finally {
+      set({ loadingAction: null });
+    }
+  },
+
   markItemMissing: async (orderId, itemId) => {
     const snapshot = cloneOrders(get().orders);
     const orderBefore = findOrder(get(), orderId);
@@ -733,12 +793,11 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
 
     try {
       const supabase = getSupabaseBrowserClient();
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user?.id) throw new Error("Sesión admin no disponible");
 
-      await rpcUpdateOrderItemStatus(supabase, itemId, "missing", user.id);
+      // rpc_admin_mark_item_missing (no rpcUpdateOrderItemStatus): si el ítem
+      // ya tenía stock reservado de verdad, da de baja esa reserva sin
+      // sumarle nada al depósito -- ver auditoría 2026-09-15 (A56971/A56917).
+      await rpcMarkItemMissing(supabase, itemId);
 
       await emitCustomerOrderNotification(supabase, {
         customerId: order.customer_id,
@@ -1298,6 +1357,26 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
       const refreshed = await fetchOrderById(supabase, orderId);
       if (refreshed) get().patchOrder(refreshed);
       get().showToast("Pedido reabierto en Apartados", "success");
+    } catch (err) {
+      set({ orders: snapshot });
+      get().showToast(getErrorMessage(err), "error");
+    } finally {
+      set({ loadingAction: null });
+    }
+  },
+
+  /** Corrige un pedido 'expired' que en realidad ya se envió/entregó fuera
+   *  del sistema (ej. WhatsApp) -- ver auditoría 2026-09-15, caso Palomo
+   *  Juana A56173. Solo cambia status, no toca stock. */
+  markExpiredOrderSent: async (orderId) => {
+    const snapshot = cloneOrders(get().orders);
+    set({ loadingAction: orderId });
+
+    try {
+      const supabase = getSupabaseBrowserClient();
+      await rpcMarkExpiredOrderSent(supabase, orderId);
+      get().removeOrder(orderId);
+      get().showToast("Pedido marcado como enviado", "success");
     } catch (err) {
       set({ orders: snapshot });
       get().showToast(getErrorMessage(err), "error");

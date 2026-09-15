@@ -29,6 +29,11 @@ interface OrderCardItemsProps {
   /** Origen del pedido (customer/admin). El reparto por unidad no depende de esto. */
   orderSource?: string | null;
   showRemove?: boolean;
+  /** Apartados: además del ✕ "Quitar", ofrece "Marcar sin stock" -- para
+   *  cuando el producto ya estaba apartado y recién ahí se descubre que no
+   *  hay stock real (ver auditoría 2026-09-15, A56971/A56917). A diferencia
+   *  de "Quitar", esto no dispara el flujo de devolución de stock. */
+  allowMarkMissingOnRemove?: boolean;
   /** Ítems cancelados por la clienta: ✓ confirma y devuelve stock si correspondía */
   confirmCancelledLayout?: boolean;
   /** Ítems que van a devolverse en bloque (ej. pedido vencido pendiente de desarmar):
@@ -42,6 +47,10 @@ interface OrderCardItemsProps {
   enableWaitingPick?: boolean;
   onRemoveItem?: (itemId: string) => void;
   onConfirmCancelled?: (itemId: string) => void;
+  /** Cancelados: confirmar SIN devolver stock -- para cuando el producto en
+   *  realidad no existe en el depósito (ver rpc_admin_remove_cancelled_item_writeoff,
+   *  auditoría 2026-09-15). */
+  onConfirmCancelledNoStock?: (itemId: string) => void;
   onMarkMissing?: (orderId: string, itemId: string) => Promise<void>;
   onMarkPicked?: (orderId: string, itemId: string) => Promise<void>;
   onMarkWaiting?: (
@@ -77,12 +86,14 @@ export default function OrderCardItems({
   orderId,
   orderSource: _orderSource = null,
   showRemove = false,
+  allowMarkMissingOnRemove = false,
   confirmCancelledLayout = false,
   mutedBadges = false,
   showActiveReservedActions = false,
   enableWaitingPick = false,
   onRemoveItem,
   onConfirmCancelled,
+  onConfirmCancelledNoStock,
   onMarkMissing,
   onMarkPicked,
   onMarkWaiting,
@@ -97,8 +108,12 @@ export default function OrderCardItems({
 }: OrderCardItemsProps) {
   const [pendingConfirmId, setPendingConfirmId] = useState<string | null>(null);
   const pendingConfirmItem = items.find((i) => i.id === pendingConfirmId);
+  const [pendingNoStockConfirmId, setPendingNoStockConfirmId] = useState<string | null>(null);
+  const pendingNoStockConfirmItem = items.find((i) => i.id === pendingNoStockConfirmId);
   const [pendingItemId, setPendingItemId] = useState<string | null>(null);
   const pendingItem = items.find((i) => i.id === pendingItemId);
+  const [pendingMissingId, setPendingMissingId] = useState<string | null>(null);
+  const pendingMissingItem = items.find((i) => i.id === pendingMissingId);
   const [openWaitingItemId, setOpenWaitingItemId] = useState<string | null>(null);
   const [partialAcceptItemId, setPartialAcceptItemId] = useState<string | null>(null);
   const partialAcceptItem = items.find((i) => i.id === partialAcceptItemId);
@@ -186,10 +201,22 @@ export default function OrderCardItems({
     setPendingItemId(null);
   };
 
+  const handleConfirmMarkMissing = async () => {
+    if (!pendingMissingId || !onMarkMissing || !orderId) return;
+    await onMarkMissing(orderId, pendingMissingId);
+    setPendingMissingId(null);
+  };
+
   const handleConfirmCancelled = async () => {
     if (!pendingConfirmId || !onConfirmCancelled) return;
     await onConfirmCancelled(pendingConfirmId);
     setPendingConfirmId(null);
+  };
+
+  const handleConfirmCancelledNoStock = async () => {
+    if (!pendingNoStockConfirmId || !onConfirmCancelledNoStock) return;
+    await onConfirmCancelledNoStock(pendingNoStockConfirmId);
+    setPendingNoStockConfirmId(null);
   };
 
   return (
@@ -369,27 +396,55 @@ export default function OrderCardItems({
                     />
                   </span>
                 ) : !special && confirmCancelledLayout && onConfirmCancelled ? (
-                  <button
-                    type="button"
-                    className="order-card__item-confirm-cancel order-card__item-cell order-card__item-cell--remove"
-                    disabled={loadingItemId === item.id}
-                    aria-label="Confirmar cancelación y devolver stock"
-                    title="Confirmar cancelación"
-                    onClick={() => setPendingConfirmId(item.id)}
-                  >
-                    ✓
-                  </button>
+                  <span className="order-card__item-cell order-card__item-cell--remove order-card__item-cell--remove-group">
+                    {onConfirmCancelledNoStock ? (
+                      <button
+                        type="button"
+                        className="order-card__item-mark-missing"
+                        disabled={loadingItemId === item.id}
+                        aria-label="Confirmar sin devolver stock"
+                        title="Sin stock real (no devolver)"
+                        onClick={() => setPendingNoStockConfirmId(item.id)}
+                      >
+                        !
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="order-card__item-confirm-cancel"
+                      disabled={loadingItemId === item.id}
+                      aria-label="Confirmar cancelación y devolver stock"
+                      title="Confirmar cancelación"
+                      onClick={() => setPendingConfirmId(item.id)}
+                    >
+                      ✓
+                    </button>
+                  </span>
                 ) : canRemove ? (
-                  <button
-                    type="button"
-                    className="order-card__item-remove order-card__item-cell order-card__item-cell--remove"
-                    disabled={loadingItemId === item.id}
-                    aria-label="Quitar ítem"
-                    title="Quitar ítem"
-                    onClick={() => setPendingItemId(item.id)}
-                  >
-                    ✕
-                  </button>
+                  <span className="order-card__item-cell order-card__item-cell--remove order-card__item-cell--remove-group">
+                    {allowMarkMissingOnRemove && onMarkMissing && orderId && !missing ? (
+                      <button
+                        type="button"
+                        className="order-card__item-mark-missing"
+                        disabled={loadingItemId === item.id}
+                        aria-label="Marcar sin stock"
+                        title="Marcar sin stock (no devuelve stock al depósito)"
+                        onClick={() => setPendingMissingId(item.id)}
+                      >
+                        !
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="order-card__item-remove"
+                      disabled={loadingItemId === item.id}
+                      aria-label="Quitar ítem"
+                      title="Quitar ítem"
+                      onClick={() => setPendingItemId(item.id)}
+                    >
+                      ✕
+                    </button>
+                  </span>
                 ) : (
                   <span className="order-card__item-cell order-card__item-cell--actions" aria-hidden="true" />
                 )}
@@ -448,6 +503,50 @@ export default function OrderCardItems({
         </div>
       ) : null}
 
+      {pendingMissingId && pendingMissingItem ? (
+        <div
+          className="order-modal-backdrop order-modal-backdrop--item"
+          role="presentation"
+          onClick={() => setPendingMissingId(null)}
+        >
+          <div
+            className="order-modal order-modal--compact"
+            role="dialog"
+            aria-labelledby="mark-missing-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="order-modal__title" id="mark-missing-title">
+              Marcar sin stock
+            </h3>
+            <p className="order-modal__text" style={{ fontWeight: 600, color: "#1f2937" }}>
+              {pendingMissingItem.product_name || "Producto"} · {pendingMissingItem.color || "-"} ·{" "}
+              {pendingMissingItem.size || "-"}
+            </p>
+            <p className="order-modal__text" style={{ fontWeight: 700, color: "#1f2937", marginBottom: 4 }}>
+              Usá esto solo si el producto NO existe físicamente (a diferencia de
+              &quot;Quitar&quot;, esto NO devuelve stock al depósito).
+            </p>
+            <div className="order-modal__actions order-modal__actions--big">
+              <button
+                type="button"
+                className="order-card__btn"
+                onClick={() => setPendingMissingId(null)}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="order-card__btn order-card__btn--danger"
+                disabled={loadingItemId === pendingMissingId}
+                onClick={() => void handleConfirmMarkMissing()}
+              >
+                Marcar sin stock
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {pendingConfirmId && pendingConfirmItem ? (
         <div
           className="order-modal-backdrop order-modal-backdrop--item"
@@ -488,6 +587,51 @@ export default function OrderCardItems({
                 onClick={() => void handleConfirmCancelled()}
               >
                 Confirmar ✓
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {pendingNoStockConfirmId && pendingNoStockConfirmItem ? (
+        <div
+          className="order-modal-backdrop order-modal-backdrop--item"
+          role="presentation"
+          onClick={() => setPendingNoStockConfirmId(null)}
+        >
+          <div
+            className="order-modal order-modal--compact"
+            role="dialog"
+            aria-labelledby="confirm-cancel-no-stock-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="order-modal__title" id="confirm-cancel-no-stock-title">
+              Confirmar sin devolver stock
+            </h3>
+            <p className="order-modal__text">
+              {pendingNoStockConfirmItem.product_name || "Producto"} ·{" "}
+              {pendingNoStockConfirmItem.color || "-"} · {pendingNoStockConfirmItem.size || "-"}
+              <br />
+              <strong>
+                Usá esto solo si el producto NO existe físicamente en el depósito. El
+                producto se elimina del pedido pero NO se suma stock (a diferencia del ✓).
+              </strong>
+            </p>
+            <div className="order-modal__actions">
+              <button
+                type="button"
+                className="order-card__btn"
+                onClick={() => setPendingNoStockConfirmId(null)}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="order-card__btn order-card__btn--danger"
+                disabled={loadingItemId === pendingNoStockConfirmId}
+                onClick={() => void handleConfirmCancelledNoStock()}
+              >
+                Confirmar sin stock
               </button>
             </div>
           </div>

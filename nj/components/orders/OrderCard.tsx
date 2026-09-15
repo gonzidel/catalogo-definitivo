@@ -125,6 +125,7 @@ export default function OrderCard({ order }: OrderCardProps) {
   const warehouseIds = useOrdersStore((s) => s.warehouseIds);
   const removeItem = useOrdersStore((s) => s.cancelItem);
   const confirmCancelledItem = useOrdersStore((s) => s.confirmCancelledItem);
+  const confirmCancelledItemNoStock = useOrdersStore((s) => s.confirmCancelledItemNoStock);
   const confirmAllCancelledItems = useOrdersStore((s) => s.confirmAllCancelledItems);
   const markItemMissing = useOrdersStore((s) => s.markItemMissing);
   const markItemPicked = useOrdersStore((s) => s.markItemPicked);
@@ -855,6 +856,7 @@ export default function OrderCard({ order }: OrderCardProps) {
             orderId={order.id}
             confirmCancelledLayout
             onConfirmCancelled={(itemId) => confirmCancelledItem(order.id, itemId)}
+            onConfirmCancelledNoStock={(itemId) => confirmCancelledItemNoStock(order.id, itemId)}
             loadingItemId={loadingAction}
             emptyLabel="Sin cancelaciones"
           />
@@ -884,6 +886,7 @@ export default function OrderCard({ order }: OrderCardProps) {
                   orderId={order.id}
                   confirmCancelledLayout
                   onConfirmCancelled={(itemId) => confirmCancelledItem(order.id, itemId)}
+                  onConfirmCancelledNoStock={(itemId) => confirmCancelledItemNoStock(order.id, itemId)}
                   loadingItemId={loadingAction}
                   emptyLabel="Sin cancelaciones"
                 />
@@ -919,6 +922,10 @@ export default function OrderCard({ order }: OrderCardProps) {
                 orderId={order.id}
                 orderSource={order.source}
                 showRemove={showItemRemove}
+                // Apartados: además de "Quitar" (que devuelve stock), permite
+                // "Marcar sin stock" para cuando el producto ya apartado en
+                // realidad no existe físicamente (ver auditoría 2026-09-15).
+                allowMarkMissingOnRemove={column === "picked"}
                 confirmCancelledLayout={
                   column === "cancelled" &&
                   order.status !== "cancelled" &&
@@ -929,6 +936,13 @@ export default function OrderCard({ order }: OrderCardProps) {
                   order.status !== "cancelled" &&
                   !showCancelledColumnPending
                     ? (itemId) => confirmCancelledItem(order.id, itemId)
+                    : undefined
+                }
+                onConfirmCancelledNoStock={
+                  column === "cancelled" &&
+                  order.status !== "cancelled" &&
+                  !showCancelledColumnPending
+                    ? (itemId) => confirmCancelledItemNoStock(order.id, itemId)
                     : undefined
                 }
                 showActiveReservedActions={showActiveReservedActions}

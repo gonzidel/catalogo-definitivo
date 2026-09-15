@@ -15,7 +15,7 @@ import {
   otherBoardButtonLabel,
   otherBoardTitle,
 } from "@/lib/orders/board-scope";
-import { loadPaymentMethods } from "@/lib/supabase/order-queries";
+import { fetchPendingStockReturnQty, loadPaymentMethods } from "@/lib/supabase/order-queries";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useOrdersStore } from "@/hooks/useOrders";
 import type { AdminOrder, KanbanColumnId, PaymentMethod } from "@/types/orders";
@@ -73,12 +73,19 @@ export default function OrderActions({ order, draftMode = false }: OrderActionsP
   const dismantleOrder = useOrdersStore((s) => s.dismantleOrder);
   const extendOrder24h = useOrdersStore((s) => s.extendOrder24h);
   const reopenExpiredOrder = useOrdersStore((s) => s.reopenExpiredOrder);
+  const markExpiredOrderSent = useOrdersStore((s) => s.markExpiredOrderSent);
   const isFullyExpired = order.status === "expired";
 
   const [closeModalOpen, setCloseModalOpen] = useState(false);
   const [resolveModalOpen, setResolveModalOpen] = useState(false);
   const [dismantleModalOpen, setDismantleModalOpen] = useState(false);
   const [extendModalOpen, setExtendModalOpen] = useState(false);
+  const [markSentModalOpen, setMarkSentModalOpen] = useState(false);
+  // Cuánto stock real se sumaría al depósito si se archiva este pedido vencido --
+  // la mayoría de los 'expired' ya no tienen fuentes reales (el cron las liberó
+  // al vencer), pero mostrar el número en vez de asumirlo le da confianza al
+  // admin antes de confirmar (ver auditoría 2026-09-15, caso Gonzalo de la Fuente).
+  const [stockImpactQty, setStockImpactQty] = useState<number | null>(null);
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [moveBoardConfirmOpen, setMoveBoardConfirmOpen] = useState(false);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
@@ -95,6 +102,21 @@ export default function OrderActions({ order, draftMode = false }: OrderActionsP
       if (methods[0]) setSelectedPayment(methods[0].name);
     });
   }, [closeModalOpen, boardScope]);
+
+  useEffect(() => {
+    if (!dismantleModalOpen || !isFullyExpired) {
+      setStockImpactQty(null);
+      return;
+    }
+    let cancelled = false;
+    const itemIds = (order.order_items || []).map((i) => i.id);
+    fetchPendingStockReturnQty(getSupabaseBrowserClient(), itemIds).then((qty) => {
+      if (!cancelled) setStockImpactQty(qty);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [dismantleModalOpen, isFullyExpired, order.order_items]);
 
   const notesObj = parseOrderNotesObject(order.notes);
   const pendingReason = String(notesObj.stock_pending_reason || "");
@@ -120,6 +142,11 @@ export default function OrderActions({ order, draftMode = false }: OrderActionsP
   const handleDismantleConfirm = async () => {
     await dismantleOrder(order.id);
     setDismantleModalOpen(false);
+  };
+
+  const handleMarkSentConfirm = async () => {
+    await markExpiredOrderSent(order.id);
+    setMarkSentModalOpen(false);
   };
 
   const handleExtendConfirm = async () => {
@@ -236,6 +263,17 @@ export default function OrderActions({ order, draftMode = false }: OrderActionsP
                 onClick={() => setExtendModalOpen(true)}
               >
                 +24hs
+              </button>
+            )}
+            {isFullyExpired && (
+              <button
+                type="button"
+                className="order-card__btn order-card__btn--grow"
+                disabled={busy}
+                title="El pedido en realidad ya se resolvió fuera del sistema (ej. WhatsApp)"
+                onClick={() => setMarkSentModalOpen(true)}
+              >
+                Ya enviado
               </button>
             )}
             <button
@@ -428,6 +466,18 @@ export default function OrderActions({ order, draftMode = false }: OrderActionsP
                 ? "El stock ya volvió al sistema automáticamente al vencer el plazo. Confirmá para archivar el pedido y sacarlo de Cancelados."
                 : "¿Confirmar desarme? Todo el stock regresa al sistema."}
             </p>
+            {order.status === "expired" ? (
+              <p
+                className="order-modal__text"
+                style={{ fontWeight: 700, color: stockImpactQty ? "#b45309" : "#15803d" }}
+              >
+                {stockImpactQty === null
+                  ? "Revisando stock…"
+                  : stockImpactQty > 0
+                    ? `Ojo: al archivar se van a sumar ${stockImpactQty} unidad${stockImpactQty === 1 ? "" : "es"} al depósito.`
+                    : "No va a sumar nada al depósito (ya se liberó automáticamente al vencer)."}
+              </p>
+            ) : null}
             <div className="order-modal__actions order-modal__actions--big">
               <button
                 type="button"
@@ -484,6 +534,50 @@ export default function OrderActions({ order, draftMode = false }: OrderActionsP
                 onClick={handleExtendConfirm}
               >
                 Confirmar
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {markSentModalOpen ? (
+        <div
+          className="order-modal-backdrop"
+          role="presentation"
+          onClick={() => setMarkSentModalOpen(false)}
+        >
+          <div
+            className="order-modal order-modal--compact"
+            role="dialog"
+            aria-labelledby={`mark-sent-modal-${order.id}`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="order-modal__title" id={`mark-sent-modal-${order.id}`}>
+              Marcar como ya enviado
+            </h3>
+            <p className="order-modal__text">
+              Usá esto cuando el pedido en realidad ya se entregó/envió fuera del
+              sistema (ej. WhatsApp) y el cron lo dejó como vencido por error de
+              carga. El pedido pasa a &quot;Enviado&quot; y sale de Cancelados.
+            </p>
+            <p className="order-modal__text" style={{ fontWeight: 700, color: "#1f2937" }}>
+              No se toca el stock ni los productos del pedido.
+            </p>
+            <div className="order-modal__actions order-modal__actions--big">
+              <button
+                type="button"
+                className="order-card__btn"
+                onClick={() => setMarkSentModalOpen(false)}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="order-card__btn order-card__btn--primary"
+                disabled={busy}
+                onClick={() => void handleMarkSentConfirm()}
+              >
+                Marcar enviado
               </button>
             </div>
           </div>

@@ -566,6 +566,59 @@ export async function rpcUpdateOrderItemStatus(
   return data;
 }
 
+/**
+ * Corrige un pedido 'expired' que en la práctica ya se resolvió (enviado o
+ * entregado fuera del sistema, ej. WhatsApp) pero el cron lo dejó vencido.
+ * Solo cambia status/closed_at, no toca stock ni ítems (ver auditoría
+ * 2026-09-15, caso Palomo Juana A56173).
+ */
+export async function rpcMarkExpiredOrderSent(supabase: SupabaseClient, orderId: string) {
+  const { data, error } = await supabase.rpc("rpc_admin_mark_expired_order_sent", {
+    p_order_id: orderId,
+  });
+  if (error) throw error;
+  return data;
+}
+
+/**
+ * Suma cuánto stock real (order_item_stock_sources) devolvería archivar/desarmar
+ * estos ítems -- se usa para mostrarle al admin, antes de confirmar "Archivar"
+ * en un pedido 'expired', si esa acción va a tocar el depósito o no (la
+ * mayoría de los pedidos vencidos por el cron ya no tienen fuentes reales
+ * porque el cron las liberó al expirar). Ver auditoría 2026-09-15.
+ */
+export async function fetchPendingStockReturnQty(
+  supabase: SupabaseClient,
+  itemIds: string[]
+): Promise<number> {
+  if (!itemIds.length) return 0;
+  const { data, error } = await supabase
+    .from("order_item_stock_sources")
+    .select("qty")
+    .in("order_item_id", itemIds);
+  if (error) {
+    console.error("fetchPendingStockReturnQty error:", error);
+    return 0;
+  }
+  return (data || []).reduce((sum, row) => sum + Math.max(Number(row.qty) || 0, 0), 0);
+}
+
+/**
+ * Marca un ítem "sin stock". A diferencia de rpcUpdateOrderItemStatus, si el
+ * ítem ya tenía una reserva real de stock (order_item_stock_sources), la da
+ * de baja (libera reserved_qty, borra las fuentes, deja rastro en
+ * stock_history) SIN sumar nada a variant_size_warehouse_stock -- porque el
+ * producto marcado "sin stock" no existe físicamente para devolver (ver
+ * auditoría 2026-09-15, A56971/A56917).
+ */
+export async function rpcMarkItemMissing(supabase: SupabaseClient, itemId: string) {
+  const { data, error } = await supabase.rpc("rpc_admin_mark_item_missing", {
+    p_item_id: itemId,
+  });
+  if (error) throw error;
+  return data;
+}
+
 export async function rpcSplitOrderItemStatus(
   supabase: SupabaseClient,
   itemId: string,
@@ -729,6 +782,27 @@ export async function rpcRemoveOrderItemRestoreStock(
   if (error) throw error;
   if (!data || data.ok !== true) {
     throw new Error("No se pudo quitar el producto del pedido");
+  }
+  return data;
+}
+
+/**
+ * Como rpcRemoveOrderItemRestoreStock, pero para el caso en que el producto
+ * cancelado/pendiente de confirmar en Cancelados en realidad no existe en
+ * stock: saca el ítem del pedido SIN sumar nada a
+ * variant_size_warehouse_stock (ver rpc_admin_remove_cancelled_item_writeoff,
+ * auditoría 2026-09-15).
+ */
+export async function rpcRemoveCancelledItemWriteoff(
+  supabase: SupabaseClient,
+  orderItemId: string
+) {
+  const { data, error } = await supabase.rpc("rpc_admin_remove_cancelled_item_writeoff", {
+    p_order_item_id: orderItemId,
+  });
+  if (error) throw error;
+  if (!data || data.ok !== true) {
+    throw new Error("No se pudo confirmar sin devolver stock");
   }
   return data;
 }

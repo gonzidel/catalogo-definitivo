@@ -6902,6 +6902,19 @@ a.order-card__wa-btn:active {
   font-size: 0.75rem;
 }
 
+/* El grupo "! + ✕" necesita más ancho que el ✕ solo -- pisa el width:22px
+   fijo de arriba (ver .order-card__item-cell--remove-group). */
+.order-card__item-row--picked .order-card__item-cell--remove-group {
+  width: auto;
+  min-height: 22px;
+}
+
+.order-card__item-row--picked .order-card__item-mark-missing {
+  width: 22px;
+  height: 22px;
+  font-size: 0.7rem;
+}
+
 .order-card__item-row--missing {
   background: #fef2f2;
   border-radius: 6px;
@@ -7154,6 +7167,35 @@ a.order-card__wa-btn:active {
 
 .order-card__item-cell--remove:empty {
   display: block;
+}
+
+/* Grupo "! Marcar sin stock" + "✕ Quitar" (Apartados) o "! Sin stock real" +
+   "✓ Confirmar" (Cancelados) -- ver auditoría 2026-09-15. Se ensancha respecto
+   al --remove de un solo botón para que entren los dos sin superponerse. */
+.order-card__item-cell--remove-group {
+  width: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.order-card__item-mark-missing {
+  border: none;
+  background: #ffedd5;
+  color: #c2410c;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 800;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.order-card__item-mark-missing:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .order-card__item-quick-actions {

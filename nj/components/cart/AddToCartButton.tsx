@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useCartStore } from "@/store/cart";
+import { hasValidCatalogPrice } from "@/lib/utils/variant-price";
 
 interface AddToCartButtonProps {
   variantId: string;
@@ -26,9 +27,10 @@ export default function AddToCartButton({
 }: AddToCartButtonProps) {
   const addItem = useCartStore((s) => s.addItem);
   const [added, setAdded] = useState(false);
+  const noPrice = !hasValidCatalogPrice(priceSnapshot);
 
   function handleAdd() {
-    if (!size) return;
+    if (!size || noPrice) return;
     addItem({
       variant_id: variantId,
       product_name: productName,
@@ -49,11 +51,11 @@ export default function AddToCartButton({
     <button
       type="button"
       onClick={handleAdd}
-      disabled={disabled || noSize || added}
+      disabled={disabled || noSize || noPrice || added}
       className={[
         "add-to-cart-btn",
         added ? "is-added" : "",
-        noSize || disabled ? "is-disabled" : "",
+        noSize || noPrice || disabled ? "is-disabled" : "",
       ]
         .filter(Boolean)
         .join(" ")}
@@ -67,6 +69,8 @@ export default function AddToCartButton({
         </>
       ) : noSize ? (
         "Seleccioná un talle"
+      ) : noPrice ? (
+        "Sin precio"
       ) : (
         <>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

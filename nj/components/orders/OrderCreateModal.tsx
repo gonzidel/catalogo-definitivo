@@ -17,7 +17,6 @@ import {
   bumpDraftExtraQuantity,
   enrichDraftItemsWithStock,
   mergeDraftItem,
-  syncOrderTotalAndNotes,
   type OrderEditDraftItem,
 } from "@/lib/supabase/order-edit";
 import {
@@ -292,9 +291,10 @@ export default function OrderCreateModal({ onClose }: OrderCreateModalProps) {
       if (duplicateOrder) {
         const existingOrder = await fetchOrderById(supabase, duplicateOrder.id);
         if (!existingOrder) throw new Error("No se pudo cargar el pedido existente del cliente.");
-        await addItemsToExistingOrder(supabase, existingOrder.id, enriched);
         const existingNotesExtras = parseOrderNotesExtrasValues(existingOrder.notes);
-        await syncOrderTotalAndNotes(supabase, existingOrder.id, existingNotesExtras, existingOrder.notes);
+        await addItemsToExistingOrder(supabase, existingOrder.id, enriched, {
+          notesExtras: existingNotesExtras,
+        });
         // Si la clienta ya había pedido cerrar (customer_requested_close) y estos
         // productos nuevos (agregados ya apartados) completan el pedido, hay que
         // cerrarlo acá -- sin esto quedaba trabado en Apartados para siempre.

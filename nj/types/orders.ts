@@ -62,6 +62,8 @@ export interface AdminOrderItem {
   status: OrderItemStatus | string;
   deferred_stock_pending?: boolean | null;
   admin_confirmed_missing?: boolean | null;
+  /** Estado previo persistido por migración 344 al pasar a cancelled. */
+  cancelled_from_status?: OrderItemStatus | string | null;
   checked_by?: string | null;
   checked_at?: string | null;
   order_item_stock_sources?: OrderItemStockSource[];

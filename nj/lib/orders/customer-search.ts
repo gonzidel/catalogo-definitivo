@@ -6,6 +6,13 @@ export function normalizeCustomerSearchText(value: string | null | undefined): s
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
+    // El picker de clientes de Retiro (public_sales_customers) muestra el
+    // nombre como "Apellido, Nombre". Si el admin busca pegando ese mismo
+    // texto tal cual lo ve, la coma queda pegada al primer token ("gimenez,")
+    // y rompe el match por substring contra full_name ("belen gimenez", sin
+    // coma) aunque el nombre sea el correcto. Ver auditoría 2026-09-15 (caso
+    // Gimenez, Belen / pedido A56946, invisible en el buscador de /retiro).
+    .replace(/[,;]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }

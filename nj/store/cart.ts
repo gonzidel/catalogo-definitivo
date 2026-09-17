@@ -71,6 +71,16 @@ export const useCartStore = create<CartState>()(
       setItems: (items) => set({ items }),
 
       addItem: (newItem) => {
+        const price = Number(newItem.price_snapshot);
+        if (!Number.isFinite(price) || price <= 0) {
+          console.warn(
+            "[cart] addItem rechazado: precio inválido",
+            newItem.product_name,
+            newItem.color,
+            newItem.price_snapshot
+          );
+          return;
+        }
         const items = get().items;
         const key = (i: CartItem) =>
           `${i.variant_id}__${i.size.toLowerCase()}`;

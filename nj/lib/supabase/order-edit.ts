@@ -848,36 +848,101 @@ export async function resolveSkuOrQrToOrderItem(
   };
 }
 
+export interface AddItemsToExistingOrderOptions {
+  notesExtras?: OrderNotesExtras;
+}
+
+interface AdminOrderEditOperation {
+  id: string;
+  intent: string;
+  payload: Record<string, unknown>;
+}
+
+const ADMIN_ORDER_EDIT_OPERATION_PREFIX = "fyl-admin-order-edit-op:";
+
+function adminOrderEditOperationStorageKey(orderId: string, intent: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < intent.length; index += 1) {
+    hash ^= intent.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `${ADMIN_ORDER_EDIT_OPERATION_PREFIX}${orderId}:${(hash >>> 0).toString(16)}`;
+}
+
+function newAdminOrderEditOperationId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (char) => {
+    const value = Math.floor(Math.random() * 16);
+    return (char === "x" ? value : (value & 0x3) | 0x8).toString(16);
+  });
+}
+
+function readAdminOrderEditOperation(
+  orderId: string,
+  intent: string
+): AdminOrderEditOperation | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(
+      adminOrderEditOperationStorageKey(orderId, intent)
+    );
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<AdminOrderEditOperation>;
+    if (
+      typeof parsed.id !== "string" ||
+      parsed.intent !== intent ||
+      !parsed.payload ||
+      typeof parsed.payload !== "object"
+    ) {
+      return null;
+    }
+    return {
+      id: parsed.id,
+      intent: parsed.intent,
+      payload: parsed.payload as Record<string, unknown>,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeAdminOrderEditOperation(
+  orderId: string,
+  operation: AdminOrderEditOperation
+): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      adminOrderEditOperationStorageKey(orderId, operation.intent),
+      JSON.stringify(operation)
+    );
+  } catch {
+    // La RPC sigue siendo atómica; solo se degrada el replay tras perder la red.
+  }
+}
+
+function clearAdminOrderEditOperation(orderId: string, intent: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(
+      adminOrderEditOperationStorageKey(orderId, intent)
+    );
+  } catch {
+    // No bloquear una edición confirmada por un fallo de almacenamiento local.
+  }
+}
+
 export async function addItemsToExistingOrder(
   supabase: SupabaseClient,
   orderId: string,
-  items: OrderEditDraftItem[]
+  items: OrderEditDraftItem[],
+  options?: AddItemsToExistingOrderOptions
 ): Promise<void> {
   if (!items.length) return;
 
-  const warehouseIds = await loadWarehouses(supabase);
-
-  const { data: order, error: orderError } = await supabase
-    .from("orders")
-    .select("status, total_amount, notes")
-    .eq("id", orderId)
-    .single();
-
-  if (orderError || !order) throw new Error("No se pudo cargar el pedido.");
-  if (order.status === "stock_pending") {
-    throw new Error(
-      "No se puede editar: el pedido está en stock pendiente. Resolvelo antes de editar."
-    );
-  }
-
-  const newItemsTotal = items.reduce(
-    (sum, item) => sum + (Number(item.price_snapshot) || 0) * (Number(item.quantity) || 0),
-    0
-  );
-  void newItemsTotal;
-
-  const orderItemsData = items.map((item) => ({
-    order_id: orderId,
+  const rpcItems = items.map((item) => ({
     variant_id: item.is_special_extra ? null : item.variant_id,
     product_name: item.product_name,
     color: item.is_special_extra ? null : item.color,
@@ -887,77 +952,65 @@ export async function addItemsToExistingOrder(
     imagen: item.imagen ?? null,
     status: item.status || "picked",
     admin_confirmed_missing: Boolean(item.admin_confirmed_missing),
+    is_special_extra: Boolean(item.is_special_extra),
+    qty_from_general: Number(item.qty_from_general) || 0,
+    qty_from_venta: Number(item.qty_from_venta) || 0,
   }));
+  const intent = JSON.stringify({
+    order_id: orderId,
+    items: rpcItems,
+    notes_extras: options?.notesExtras ?? null,
+  });
 
-  const { data: insertedItems, error: itemsError } = await supabase
-    .from("order_items")
-    .insert(orderItemsData)
-    .select("id, variant_id, size, quantity, admin_confirmed_missing");
+  let operation = readAdminOrderEditOperation(orderId, intent);
+  if (!operation) {
+    const { data: order, error: orderError } = await supabase
+      .from("orders")
+      .select("status")
+      .eq("id", orderId)
+      .single();
 
-  if (itemsError) throw new Error(`Error agregando productos: ${itemsError.message}`);
+    if (orderError || !order) throw new Error("No se pudo cargar el pedido.");
 
-  const updateData: { status?: string; notes?: string | null } = {};
-
-  const statusNorm = String(order.status || "").trim().toLowerCase();
-  if (
-    statusNorm !== "closed" &&
-    statusNorm !== "sent" &&
-    statusNorm !== "devolución" &&
-    statusNorm !== "devolucion"
-  ) {
-    updateData.status = "active";
+    operation = {
+      id: newAdminOrderEditOperationId(),
+      intent,
+      payload: {
+        expected_status: order.status,
+        items: rpcItems,
+        ...(options?.notesExtras ? { notes_extras: options.notesExtras } : {}),
+      },
+    };
+    writeAdminOrderEditOperation(orderId, operation);
   }
 
-  if (order.notes) updateData.notes = order.notes;
-
-  if (Object.keys(updateData).length > 0) {
-    const { error: updateError } = await supabase.from("orders").update(updateData).eq("id", orderId);
-    if (updateError) throw updateError;
-  }
-
-  const stockItems = items.filter((item) => !item.is_special_extra);
-  const insertedStockItems = (insertedItems || []).filter(
-    (_, index) => !items[index]?.is_special_extra
+  const { data, error } = await supabase.rpc(
+    "rpc_admin_add_order_items_atomic",
+    {
+      p_order_id: orderId,
+      p_payload: operation.payload,
+      p_idempotency_key: operation.id,
+    }
   );
 
-  try {
-    const itemsWithIds = stockItems.map((item, index) => ({
-      ...item,
-      order_item_id: insertedStockItems?.[index]?.id ?? null,
-    }));
-    await applyAdminOrderStockWithRetry(
-      supabase,
-      insertedStockItems,
-      itemsWithIds,
-      orderId,
-      warehouseIds,
-      "order_edit"
-    );
-  } catch (stockErr) {
-    const pendingNotesObj = (() => {
-      try {
-        return order.notes ? JSON.parse(order.notes) : {};
-      } catch {
-        return {};
-      }
-    })();
-    pendingNotesObj.stock_pending_reason =
-      stockErr instanceof Error ? stockErr.message : String(stockErr);
-    pendingNotesObj.stock_pending_at = new Date().toISOString();
-    pendingNotesObj.stock_pending_source = "nj/order-edit";
+  if (error) {
+    if (!isTransientNetworkError(error)) {
+      clearAdminOrderEditOperation(orderId, intent);
+    }
+    throw new Error(`Error agregando productos: ${error.message}`);
+  }
 
-    await supabase
-      .from("orders")
-      .update({
-        status: "stock_pending",
-        notes: JSON.stringify(pendingNotesObj),
-      })
-      .eq("id", orderId);
-
+  if (
+    !data ||
+    data.ok !== true ||
+    data.order_id !== orderId ||
+    !Array.isArray(data.inserted_items)
+  ) {
+    clearAdminOrderEditOperation(orderId, intent);
     throw new Error(
-      stockErr instanceof Error
-        ? `${stockErr.message}. El pedido quedó en stock pendiente.`
-        : "Error de stock. El pedido quedó en stock pendiente."
+      "El servidor no pudo verificar la edición completa del pedido."
     );
   }
+
+  clearAdminOrderEditOperation(orderId, intent);
 }

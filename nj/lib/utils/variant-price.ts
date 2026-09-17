@@ -26,6 +26,27 @@ export function parseCatalogPrice(
   return Number.isFinite(n) ? n : 0;
 }
 
+/** Precio de catálogo usable para vender (lista u oferta efectiva). */
+export function hasValidCatalogPrice(price: unknown): boolean {
+  return parseCatalogPrice(price as number | string | null | undefined) > 0;
+}
+
+export function catalogPriceMissingMessage(productName?: string): string {
+  const name = String(productName || "Este producto").trim() || "Este producto";
+  return `${name} no tiene precio cargado. No se puede agregar al carrito.`;
+}
+
+/** True si el color trae Precio propio (incluye "0.00"); no heredar del artículo. */
+export function colorHasOwnListPrice(
+  color: ColorPriceInput | null | undefined
+): boolean {
+  if (!color) return false;
+  const raw = color.Precio;
+  if (raw == null) return false;
+  if (typeof raw === "string" && raw.trim() === "") return false;
+  return true;
+}
+
 export function isOfferFlagActive(
   value: boolean | string | null | undefined
 ): boolean {
@@ -50,13 +71,16 @@ export function findColorDetail(
 /**
  * Precio de venta de UN color. No usar GroupedProduct.Precio/OfertaActiva
  * como autoridad cuando hay ColorDetail del color seleccionado.
+ * Si el color declara Precio (aunque sea 0), ese valor manda: no heredar
+ * el precio de otro color vía el fallback del artículo.
  */
 export function getColorEffectivePrice(
   color: ColorPriceInput | null | undefined,
   fallback?: ColorPriceInput | null
 ): ColorEffectivePrice {
-  const normalPrice =
-    parseCatalogPrice(color?.Precio) || parseCatalogPrice(fallback?.Precio);
+  const normalPrice = colorHasOwnListPrice(color)
+    ? parseCatalogPrice(color?.Precio)
+    : parseCatalogPrice(fallback?.Precio);
   const offerRaw = parseCatalogPrice(color?.PrecioOferta);
   const isOffer = isOfferFlagActive(color?.OfertaActiva) && offerRaw > 0;
   const offerPrice = isOffer ? offerRaw : null;

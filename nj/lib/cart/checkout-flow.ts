@@ -4,7 +4,6 @@ import {
   markCheckoutFailed,
   peekCheckoutOperation,
   resolveCheckoutOperation,
-  shouldSkipCheckoutSync,
   withCustomerCheckoutLock,
   type CheckoutOperationStorage,
   type CheckoutRequest,
@@ -45,16 +44,22 @@ export async function runCustomerCheckout(opts: {
   const fingerprint = buildCartFingerprint(items);
   let syncCalls = 0;
   let rpcCalls = 0;
+  const operationSeenBeforeLock = peekCheckoutOperation(customerId, storage);
 
   return withCustomerCheckoutLock(
     customerId,
     async () => {
-      if (shouldSkipCheckoutSync(customerId, fingerprint, storage)) {
-        const skipped = peekCheckoutOperation(customerId, storage);
+      const current = peekCheckoutOperation(customerId, storage);
+      const concurrentAttemptCompletedWhileWaiting =
+        operationSeenBeforeLock?.status !== "completed" &&
+        current?.status === "completed" &&
+        current.request.cart_fingerprint === fingerprint;
+
+      if (concurrentAttemptCompletedWhileWaiting) {
         return {
           success: true,
           skipped: true,
-          operationId: skipped?.operationId,
+          operationId: current.operationId,
           syncCalls,
           rpcCalls,
         };
@@ -63,16 +68,6 @@ export async function runCustomerCheckout(opts: {
       const existing = peekCheckoutOperation(customerId, storage);
       const resumePending = existing?.status === "pending";
       const operation = resolveCheckoutOperation(fingerprint, customerId, storage);
-
-      if (operation.status === "completed") {
-        return {
-          success: true,
-          skipped: true,
-          operationId: operation.operationId,
-          syncCalls,
-          rpcCalls,
-        };
-      }
 
       async function callRpc() {
         rpcCalls += 1;

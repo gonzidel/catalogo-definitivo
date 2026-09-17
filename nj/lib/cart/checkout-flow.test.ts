@@ -89,7 +89,7 @@ test("dos tabs generan un solo operation_id sobre storage compartido", () => {
   assert.equal(a.operationId, b.operationId);
 });
 
-test("tab A completa, tab B no re-sync ni llama RPC", async () => {
+test("otro intento iniciado después de completed no hereda el resultado anterior", async () => {
   const storage = memoryStorage();
   const lock = createMutexExclusiveLock();
   const first = await runCustomerCheckout({
@@ -108,18 +108,14 @@ test("tab A completa, tab B no re-sync ni llama RPC", async () => {
     items,
     storage,
     lock,
-    syncNow: async () => {
-      throw new Error("no-sync");
-    },
-    rpc: async () => {
-      throw new Error("no-rpc");
-    },
+    syncNow: async () => true,
+    rpc: async () => ({ error: null }),
   });
   assert.equal(second.success, true);
-  assert.equal(second.skipped, true);
-  assert.equal(second.syncCalls, 0);
-  assert.equal(second.rpcCalls, 0);
-  assert.equal(second.operationId, first.operationId);
+  assert.equal(second.skipped, undefined);
+  assert.equal(second.syncCalls, 1);
+  assert.equal(second.rpcCalls, 1);
+  assert.notEqual(second.operationId, first.operationId);
 });
 
 test("tab A falla antes del RPC y tab B puede recuperar con un operation_id nuevo", async () => {
@@ -230,7 +226,7 @@ test("refresh pending con carrito vacío en server: sync de recuperación y mism
   assert.equal(resumed.syncCalls, 1);
 });
 
-test("replay después de completed no vuelve a sync ni RPC", async () => {
+test("carrito igual después de completed inicia checkout nuevo", async () => {
   const storage = memoryStorage();
   const lock = createMutexExclusiveLock();
   const first = await runCustomerCheckout({
@@ -249,18 +245,13 @@ test("replay después de completed no vuelve a sync ni RPC", async () => {
     items,
     storage,
     lock,
-    syncNow: async () => {
-      throw new Error("replay-sync");
-    },
-    rpc: async () => {
-      throw new Error("replay-rpc");
-    },
+    syncNow: async () => true,
+    rpc: async () => ({ error: null }),
   });
   assert.equal(replay.success, true);
-  assert.equal(replay.skipped, true);
-  assert.equal(replay.operationId, first.operationId);
-  assert.equal(replay.syncCalls, 0);
-  assert.equal(replay.rpcCalls, 0);
+  assert.notEqual(replay.operationId, first.operationId);
+  assert.equal(replay.syncCalls, 1);
+  assert.equal(replay.rpcCalls, 1);
 });
 
 test("locks de clientes distintos no se bloquean entre sí", async () => {

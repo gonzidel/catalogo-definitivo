@@ -153,10 +153,10 @@ export default function OrderEditModal({ order, onClose }: OrderEditModalProps) 
       const enriched = await enrichDraftItemsWithStock(supabase, draft);
       // Ventas: descuentan stock acá. Devoluciones (precio < 0): solo se insertan;
       // el reingreso ocurre al finalizar con is_return (como public-sales).
-      await addItemsToExistingOrder(supabase, liveOrder.id, enriched);
-    }
-
-    if (notesChanged || draft.length > 0) {
+      await addItemsToExistingOrder(supabase, liveOrder.id, enriched, {
+        notesExtras,
+      });
+    } else if (notesChanged) {
       await syncOrderTotalAndNotes(
         supabase,
         liveOrder.id,

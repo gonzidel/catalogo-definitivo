@@ -324,6 +324,10 @@ export function orderHasCancelledItems(order: AdminOrder): boolean {
  */
 export function cancelledItemNeedsStockConfirmation(item: AdminOrderItem): boolean {
   if (!isCancelledOrderItem(item)) return false;
+  // 344: la transición missing -> cancelled es la señal inequívoca de que no
+  // existe una pieza física para devolver. Una fuente concurrente o heredada
+  // no debe volver a mandar ese pedido a Cancelados.
+  if (normalizeOrderItemStatus(item.cancelled_from_status) === "missing") return false;
   const sources = item.order_item_stock_sources ?? [];
   return sources.some((s) => Number(s?.qty ?? 0) > 0);
 }

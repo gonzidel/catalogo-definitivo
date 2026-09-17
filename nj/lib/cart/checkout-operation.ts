@@ -170,15 +170,6 @@ export function peekCheckoutOperation(
   return readStored(storage, customerId);
 }
 
-export function shouldSkipCheckoutSync(
-  customerId: string,
-  fingerprint: string,
-  storage: CheckoutOperationStorage = defaultStorage()
-): boolean {
-  const stored = readStored(storage, customerId);
-  return stored?.status === "completed" && stored.request.cart_fingerprint === fingerprint;
-}
-
 export function clearCheckoutOperation(
   customerId?: string,
   storage: CheckoutOperationStorage = defaultStorage()
@@ -206,10 +197,6 @@ export function resolveCheckoutOperation(
       customerId,
       updatedAt: now(),
     });
-  }
-
-  if (stored?.status === "completed" && stored.request.cart_fingerprint === fingerprint) {
-    return withMutators(storage, stored);
   }
 
   const created: PendingCheckoutOperation = {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import {
@@ -20,7 +20,12 @@ import {
   orderDaysRemainingForOrder,
 } from "@/lib/orders/deadline";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
-import { loadWarehouses, rpcCloseOrder, rpcCustomerRequestClose } from "@/lib/supabase/order-queries";
+import {
+  loadWarehouses,
+  rpcCloseOrder,
+  rpcCustomerCancelOrder,
+  rpcCustomerRequestClose,
+} from "@/lib/supabase/order-queries";
 import { hasCustomerUsedOrderExtension } from "@/lib/order-notes";
 import {
   getOrderCloseMinimumUnits,
@@ -29,6 +34,8 @@ import {
   isLocalPickupShortDeadlineZone,
 } from "@/lib/transport/shipping-helpers";
 import { CATALOG_SOURCE } from "@/lib/utils/catalog";
+import { endExclusive, tryBeginExclusive } from "@/lib/cart/intra-tab-lock";
+import { clearCheckoutOperation } from "@/lib/cart/checkout-operation";
 import { useCartStore } from "@/store/cart";
 import type { WarehouseIds } from "@/types/orders";
 import LineItemRow, { formatItemARS, QuantityUnitLabel } from "@/components/cart/LineItemRow";
@@ -628,6 +635,10 @@ export default function ActiveOrderTab({
   const activeTransportName = confirmedTransportName ?? transportName;
   const isLocalPickupOrder = isLocalPickupTransport(activeTransportName);
   const [sending, setSending]                   = useState(false);
+  const sendLockRef = useRef(false);
+  const cancelUnitsLockRef = useRef(false);
+  const qtyChangeLockRef = useRef(false);
+  const cancelOrderLockRef = useRef(false);
   const [error, setError]                       = useState<string | null>(null);
   const [showMissingHint, setShowMissingHint]   = useState(false);
   // Se mantiene montado un instante más que showMissingHint para poder
@@ -1535,55 +1546,63 @@ export default function ActiveOrderTab({
 
   async function handleConfirmRemoveProduct() {
     if (!pendingRemoveItem || !order) return;
+    if (!tryBeginExclusive(cancelUnitsLockRef)) return;
     const item = pendingRemoveItem;
     const maxUnits = Math.max(1, Number(item.quantity) || 1);
     const keep = Math.max(0, Math.min(maxUnits, Number(keepUnits) || 0));
     const unitsToRemove = maxUnits - keep;
-    if (unitsToRemove <= 0) return;
+    if (unitsToRemove <= 0) {
+      endExclusive(cancelUnitsLockRef);
+      return;
+    }
 
     setCancelingId(item.primaryItemId);
     setError(null);
     const supabase = getSupabaseBrowserClient();
 
-    // Distribuir unidades entre las líneas agrupadas (puede haber varias filas).
-    const rows = (order.order_items || [])
-      .filter((r) => item.itemIds.includes(r.id))
-      .map((r) => ({
-        id: r.id,
-        quantity: Math.max(0, Number(r.quantity || 0) || 0),
-      }))
-      .filter((r) => r.quantity > 0);
+    try {
+      // Distribuir unidades entre las líneas agrupadas (puede haber varias filas).
+      const rows = (order.order_items || [])
+        .filter((r) => item.itemIds.includes(r.id))
+        .map((r) => ({
+          id: r.id,
+          quantity: Math.max(0, Number(r.quantity || 0) || 0),
+        }))
+        .filter((r) => r.quantity > 0);
 
-    let remaining = unitsToRemove;
-    let failed = false;
+      let remaining = unitsToRemove;
+      let failed = false;
 
-    for (const row of rows) {
-      if (remaining <= 0) break;
-      const cancelQty = Math.min(remaining, row.quantity);
-      const { error: rpcErr } = await supabase.rpc("rpc_cancel_order_item_units", {
-        p_item_id: row.id,
-        p_units: cancelQty,
-      });
-      if (rpcErr) {
-        console.error("Error quitando unidades del pedido:", rpcErr);
-        failed = true;
-        break;
+      for (const row of rows) {
+        if (remaining <= 0) break;
+        const cancelQty = Math.min(remaining, row.quantity);
+        const { error: rpcErr } = await supabase.rpc("rpc_cancel_order_item_units", {
+          p_item_id: row.id,
+          p_units: cancelQty,
+        });
+        if (rpcErr) {
+          console.error("Error quitando unidades del pedido:", rpcErr);
+          failed = true;
+          break;
+        }
+        remaining -= cancelQty;
       }
-      remaining -= cancelQty;
-    }
 
-    setCancelingId(null);
-    setPendingRemoveItem(null);
-    setKeepUnits(0);
+      setPendingRemoveItem(null);
+      setKeepUnits(0);
 
-    if (failed || remaining > 0) {
-      setError("No se pudo quitar el producto. Intentá de nuevo.");
+      if (failed || remaining > 0) {
+        setError("No se pudo quitar el producto. Intentá de nuevo.");
+        onOrderRefresh();
+        return;
+      }
+
+      setAltOpenFor(null);
       onOrderRefresh();
-      return;
+    } finally {
+      endExclusive(cancelUnitsLockRef);
+      setCancelingId(null);
     }
-
-    setAltOpenFor(null);
-    onOrderRefresh();
   }
 
   async function openEditQty(item: GroupedCustomerOrderItem & OrderItem) {
@@ -1620,33 +1639,38 @@ export default function ActiveOrderTab({
   async function confirmQtyChange(item: GroupedCustomerOrderItem & OrderItem) {
     const delta = editQtyValue - item.quantity;
     if (delta === 0) { setEditQtyFor(null); return; }
+    if (!tryBeginExclusive(qtyChangeLockRef)) return;
 
     setEditQtyFor(null);
 
-    if (delta < 0) {
-      // Quitar N unidades usando el RPC que soporta cancelación parcial
-      setCancelingId(item.primaryItemId);
-      const supabase = getSupabaseBrowserClient();
-      await supabase.rpc("rpc_cancel_order_item_units", {
-        p_item_id: item.primaryItemId,
-        p_units: Math.abs(delta),
-      });
+    try {
+      if (delta < 0) {
+        // Quitar N unidades usando el RPC que soporta cancelación parcial
+        setCancelingId(item.primaryItemId);
+        const supabase = getSupabaseBrowserClient();
+        await supabase.rpc("rpc_cancel_order_item_units", {
+          p_item_id: item.primaryItemId,
+          p_units: Math.abs(delta),
+        });
+        onOrderRefresh();
+      } else {
+        // Agregar al carrito (exige perfil completo si hay sesión)
+        const profileOk = await requireProfileComplete();
+        if (!profileOk) return;
+        addItem({
+          variant_id: item.variant_id ?? "",
+          product_name: item.product_name,
+          color: item.color,
+          size: item.size,
+          qty: delta,
+          price_snapshot: item.price_snapshot,
+          imagen: item.imagen,
+        });
+        onGoToCart?.();
+      }
+    } finally {
+      endExclusive(qtyChangeLockRef);
       setCancelingId(null);
-      onOrderRefresh();
-    } else {
-      // Agregar al carrito (exige perfil completo si hay sesión)
-      const profileOk = await requireProfileComplete();
-      if (!profileOk) return;
-      addItem({
-        variant_id: item.variant_id ?? "",
-        product_name: item.product_name,
-        color: item.color,
-        size: item.size,
-        qty: delta,
-        price_snapshot: item.price_snapshot,
-        imagen: item.imagen,
-      });
-      onGoToCart?.();
     }
   }
 
@@ -1787,46 +1811,42 @@ export default function ActiveOrderTab({
 
   async function handleSend(): Promise<boolean> {
     if (!order) return false;
+    if (!tryBeginExclusive(sendLockRef)) return false;
     setSending(true);
     setError(null);
     const supabase = getSupabaseBrowserClient();
 
-    const transportOk = await ensureTransportPersistedBeforeClose();
-    if (!transportOk) {
-      setSending(false);
-      return false;
-    }
+    try {
+      const transportOk = await ensureTransportPersistedBeforeClose();
+      if (!transportOk) return false;
 
-    if (allItemsPicked) {
-      if (isCommonLocalPickupOrder(order, activeTransportName)) {
-        // Retiro común: no rpc_close_order — queda active en Apartados hasta cobrar en admin.
-        // Flag vía RPC (RLS bloquea UPDATE directo de customers sobre orders).
+      if (allItemsPicked) {
+        if (isCommonLocalPickupOrder(order, activeTransportName)) {
+          // Retiro común: no rpc_close_order — queda active en Apartados hasta cobrar en admin.
+          // Flag vía RPC (RLS bloquea UPDATE directo de customers sobre orders).
+          try {
+            await rpcCustomerRequestClose(supabase, order.id);
+            setRequestedCloseOrderId(order.id);
+            onOrderRefresh();
+            return true;
+          } catch {
+            setError("No se pudo cerrar el pedido. Intentá de nuevo.");
+            return false;
+          }
+        }
+        // Envío / otros: cerrar vía RPC.
+        // Nota: notes.local_zone_shipping_close ya no se escribe acá — customers
+        // no tienen RLS UPDATE sobre orders; el cierre queda igual vía rpc_close_order.
         try {
-          await rpcCustomerRequestClose(supabase, order.id);
-          setRequestedCloseOrderId(order.id);
-          onOrderRefresh();
+          await rpcCloseOrder(supabase, order.id, "Pendiente");
+          onOrderSent();
           return true;
         } catch {
           setError("No se pudo cerrar el pedido. Intentá de nuevo.");
           return false;
-        } finally {
-          setSending(false);
         }
       }
-      // Envío / otros: cerrar vía RPC.
-      // Nota: notes.local_zone_shipping_close ya no se escribe acá — customers
-      // no tienen RLS UPDATE sobre orders; el cierre queda igual vía rpc_close_order.
-      try {
-        await rpcCloseOrder(supabase, order.id, "Pendiente");
-        onOrderSent();
-        return true;
-      } catch {
-        setError("No se pudo cerrar el pedido. Intentá de nuevo.");
-        return false;
-      } finally {
-        setSending(false);
-      }
-    } else {
+
       // Hay reservados → flag customer_requested_close vía SECURITY DEFINER;
       // el pedido sigue active para el admin y el cliente ve "En preparación".
       try {
@@ -1837,9 +1857,10 @@ export default function ActiveOrderTab({
       } catch {
         setError("No se pudo cerrar el pedido. Intentá de nuevo.");
         return false;
-      } finally {
-        setSending(false);
       }
+    } finally {
+      endExclusive(sendLockRef);
+      setSending(false);
     }
   }
 
@@ -1864,22 +1885,29 @@ export default function ActiveOrderTab({
 
   async function handleCancelEntireOrder() {
     if (!order || cancelingOrder) return;
+    if (!tryBeginExclusive(cancelOrderLockRef)) return;
     setCancelingOrder(true);
     setError(null);
-    const supabase = getSupabaseBrowserClient();
-    const { error: err } = await supabase.rpc("rpc_customer_cancel_order", {
-      p_order_id: order.id,
-    });
-    setCancelingOrder(false);
-    setShowCancelConfirm(false);
-    if (err) {
-      const msg = err.message?.includes("permiso")
+    try {
+      const supabase = getSupabaseBrowserClient();
+      await rpcCustomerCancelOrder(supabase, order.id);
+      if (customerId) clearCheckoutOperation(customerId);
+      setShowCancelConfirm(false);
+      onOrderFullyCancelled();
+    } catch (err) {
+      const rawMessage =
+        err && typeof err === "object" && "message" in err
+          ? String((err as { message?: string }).message || "")
+          : "";
+      const message = rawMessage.includes("permiso")
         ? "No tenés permiso para cancelar este pedido."
-        : err.message || "No se pudo cancelar el pedido. Intentá de nuevo.";
-      setError(msg);
-      return;
+        : rawMessage ||
+          "No se pudo verificar la cancelación. Recargá e intentá de nuevo.";
+      setError(message);
+    } finally {
+      endExclusive(cancelOrderLockRef);
+      setCancelingOrder(false);
     }
-    onOrderFullyCancelled();
   }
 
   const extensionUsed = hasCustomerUsedOrderExtension(order.notes);

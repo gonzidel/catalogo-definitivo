@@ -22,10 +22,24 @@ test("picked cancelado con fuentes pide ✓ aunque admin_confirmed_missing", () 
     cancelledItemNeedsStockConfirmation(
       item({
         admin_confirmed_missing: true,
+        cancelled_from_status: "picked",
         order_item_stock_sources: [{ warehouse_id: "w1", qty: 1 }],
       })
     ),
     true
+  );
+});
+
+test("missing cancelado no pide ✓ aunque una fuente llegue tarde", () => {
+  assert.equal(
+    cancelledItemNeedsStockConfirmation(
+      item({
+        admin_confirmed_missing: true,
+        cancelled_from_status: "missing",
+        order_item_stock_sources: [{ warehouse_id: "w1", qty: 1 }],
+      })
+    ),
+    false
   );
 });
 
@@ -60,6 +74,7 @@ test("pedido con carga admin cancelada va a pendiente de stock", () => {
       item({
         id: "cancelled-admin",
         admin_confirmed_missing: true,
+        cancelled_from_status: "picked",
         order_item_stock_sources: [{ warehouse_id: "w1", qty: 1 }],
       }),
       item({

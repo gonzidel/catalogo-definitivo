@@ -23,6 +23,7 @@ import {
   type PromoGroupableItem,
 } from "@/lib/cart/promo-groups";
 import { CHECKOUT_SYNC_FAILED } from "@/lib/cart/checkout-flow";
+import { hasValidCatalogPrice } from "@/lib/utils/variant-price";
 
 function formatARS(n: number) {
   return formatItemARS(n);
@@ -113,15 +114,19 @@ export default function CartTab({ customerId, onOrderCreated, activeOrderStatus,
     const status = cartLineStockStatus(item.qty, stock);
     const outOfStock = status.kind === "out";
     const limitedStock = status.kind === "limited";
-    return { item, stock, status, outOfStock, limitedStock };
+    const invalidPrice = !hasValidCatalogPrice(item.price_snapshot);
+    return { item, stock, status, outOfStock, limitedStock, invalidPrice };
   });
 
   const outOfStockCount = itemsWithStock.filter((x) => x.outOfStock).length;
+  const invalidPriceCount = itemsWithStock.filter((x) => x.invalidPrice).length;
   const stockConflictCount = itemsWithStock.filter(
     ({ item, stock }) => stock !== null && item.qty > stock
   ).length;
 
-  const inStockItems = itemsWithStock.filter((x) => !x.outOfStock);
+  const inStockItems = itemsWithStock.filter(
+    (x) => !x.outOfStock && !x.invalidPrice
+  );
 
   useEffect(() => {
     const variantIds = inStockItems
@@ -190,6 +195,15 @@ export default function CartTab({ customerId, onOrderCreated, activeOrderStatus,
   }
 
   async function assertSellableBeforeCheckout(): Promise<boolean> {
+    const pricedOk = useCartStore
+      .getState()
+      .items.every((item) => hasValidCatalogPrice(item.price_snapshot));
+    if (!pricedOk) {
+      setCheckoutError(
+        "Hay productos sin precio válido en el carrito. Quitalos para hacer el pedido."
+      );
+      return false;
+    }
     let latest;
     try {
       latest = await revalidateSellable();
@@ -312,6 +326,22 @@ export default function CartTab({ customerId, onOrderCreated, activeOrderStatus,
             </div>
             <div className="cart-tab-banner__text">
               Están marcados en rojo. Quitalos o ajustá el carrito para hacer el pedido.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {invalidPriceCount > 0 && (
+        <div className="cart-tab-banner cart-tab-banner--oos">
+          <span className="cart-tab-banner__icon">⚠️</span>
+          <div>
+            <div className="cart-tab-banner__title">
+              {invalidPriceCount === 1
+                ? "1 producto sin precio cargado"
+                : `${invalidPriceCount} productos sin precio cargado`}
+            </div>
+            <div className="cart-tab-banner__text">
+              No se pueden pedir a $0. Quitalos del carrito para continuar.
             </div>
           </div>
         </div>
@@ -487,6 +517,53 @@ export default function CartTab({ customerId, onOrderCreated, activeOrderStatus,
               />
             </div>
           ))}
+
+        {/* Precio $0 / inválido: fuera de promo y del total */}
+        {itemsWithStock
+          .filter(({ invalidPrice, outOfStock }) => invalidPrice && !outOfStock)
+          .map(({ item }) => (
+            <div
+              key={`${cartItemKey(item)}__noprice`}
+              className="cart-tab-list__row"
+            >
+              <LineItemRow
+                imagen={item.imagen}
+                variantId={item.variant_id}
+                productName={item.product_name}
+                color={item.color}
+                size={item.size}
+                quantity={item.qty}
+                unitPrice={item.price_snapshot}
+                isOffer={item.is_offer === true}
+                highlight="outOfStock"
+                line2={
+                  <span className="cart-tab-line2--oos">
+                    Cant. {item.qty} · sin precio
+                  </span>
+                }
+                trailing={
+                  <button
+                    type="button"
+                    onClick={() => handleRemove(item)}
+                    aria-label="Eliminar"
+                    className="cart-tab-remove is-oos"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="3 6 5 6 21 6"/>
+                      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                      <path d="M10 11v6M14 11v6"/>
+                      <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                    </svg>
+                  </button>
+                }
+                below={
+                  <span className="cart-tab-stock-pill cart-tab-stock-pill--oos">
+                    Sin precio
+                  </span>
+                }
+              />
+            </div>
+          ))}
       </div>
 
       <div className="cart-tab-summary">
@@ -499,6 +576,11 @@ export default function CartTab({ customerId, onOrderCreated, activeOrderStatus,
             {outOfStockCount > 0 && (
               <span className="cart-tab-summary__oos-note">
                 {outOfStockCount} sin stock no incluido{outOfStockCount !== 1 ? "s" : ""}
+              </span>
+            )}
+            {invalidPriceCount > 0 && (
+              <span className="cart-tab-summary__oos-note">
+                {invalidPriceCount} sin precio no incluido{invalidPriceCount !== 1 ? "s" : ""}
               </span>
             )}
           </div>
@@ -603,6 +685,9 @@ export default function CartTab({ customerId, onOrderCreated, activeOrderStatus,
       )}
       {!isValidating && !queryFailed && stockConflictCount > 0 && (
         <p className="cart-tab-submit-hint">Ajustá los productos marcados antes de hacer el pedido.</p>
+      )}
+      {invalidPriceCount > 0 && (
+        <p className="cart-tab-submit-hint">Quitá los productos sin precio antes de hacer el pedido.</p>
       )}
 
       <div className="cart-tab-clarity">

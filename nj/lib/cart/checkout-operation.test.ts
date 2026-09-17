@@ -9,7 +9,6 @@ import {
   peekCheckoutOperation,
   releaseCheckoutInFlight,
   resolveCheckoutOperation,
-  shouldSkipCheckoutSync,
   type CheckoutOperationStorage,
 } from "./checkout-operation";
 
@@ -72,16 +71,15 @@ test("keeps the original request fingerprint even if the local cart changed mid-
   assert.equal(changed.request.cart_fingerprint, first.request.cart_fingerprint);
 });
 
-test("replays the completed operation_id on accidental retry of the same cart", () => {
+test("completed checkout nunca se reutiliza como un pedido nuevo", () => {
   const storage = memoryStorage();
   const fingerprint = buildCartFingerprint(sampleItems);
   const first = resolveCheckoutOperation(fingerprint, CID, storage);
   first.markCompleted();
 
-  const accidental = resolveCheckoutOperation(fingerprint, CID, storage);
-  assert.equal(accidental.operationId, first.operationId);
-  assert.equal(accidental.status, "completed");
-  assert.equal(shouldSkipCheckoutSync(CID, fingerprint, storage), true);
+  const next = resolveCheckoutOperation(fingerprint, CID, storage);
+  assert.notEqual(next.operationId, first.operationId);
+  assert.equal(next.status, "pending");
 });
 
 test("starts a new operation_id after a completed checkout when the cart is a new logical attempt", () => {

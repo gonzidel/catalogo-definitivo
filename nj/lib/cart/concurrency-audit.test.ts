@@ -152,12 +152,17 @@ test("C1 FIX: tras RPC ok no marcado completed, retry misma pestaña reusa id", 
   assert.equal(afterTimeout.operationId, first.operationId);
 });
 
-test("C1 FIX: si otra pestaña ya completó en storage compartido, se reusa el mismo id", () => {
+// Actualizado junto con checkout-operation.ts: reusar el id de una operación ya
+// completada por coincidencia de fingerprint bloqueaba un pedido nuevo legítimo
+// con el mismo carrito (ver checkout-operation.test.ts "completed checkout
+// nunca se reutiliza como un pedido nuevo"). Solo el race real dentro del lock
+// (checkout-flow.ts) debe devolver el resultado ya completado.
+test("una pestaña que ya completó no le presta su id a un pedido nuevo con el mismo carrito", () => {
   const shared = memoryStorage();
   const fp = buildCartFingerprint(items);
   const a = resolveCheckoutOperation(fp, CID, shared);
   a.markCompleted();
   const b = resolveCheckoutOperation(fp, CID, shared);
-  assert.equal(b.operationId, a.operationId);
-  assert.equal(b.status, "completed");
+  assert.notEqual(b.operationId, a.operationId);
+  assert.equal(b.status, "pending");
 });

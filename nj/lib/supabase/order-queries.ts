@@ -9,6 +9,7 @@ import {
   type BoardScope,
 } from "@/lib/orders/board-scope";
 import { isFinalOrderStatus } from "@/lib/orders/classification";
+import { tokenizeCustomerSearch } from "@/lib/orders/customer-search";
 import { enrichOrderItemsWithOfferFlags } from "@/lib/orders/offer-badges";
 import { enrichOrderItemsWithWarehouseLabels } from "@/lib/orders/warehouse-labels";
 import type {
@@ -20,14 +21,14 @@ import type {
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 /** Única fuente de verdad — SSR, fetchOrderById, realtime, post-RPC.
- *  Nota: `deferred_stock_pending` (312) se agrega al select tras aplicar la migración en prod. */
+ *  Nota: `cancelled_from_status` requiere la migración 344 antes de desplegar este frontend. */
 export const ORDER_SELECT = `
   id, order_number, status, customer_id, total_amount, notes, source, payment_method,
   created_at, sent_at, expires_at, dismantle_at, local_deferred_pickup, pickup_timer_started_at, transport_id,
   customers(id, full_name, phone, email, dni, transport_id, city, province, kanban_inbox_owner, kanban_inbox_assigned_at),
   order_items(
     id, order_id, variant_id, product_name, color, size, quantity,
-    price_snapshot, imagen, status, admin_confirmed_missing, checked_by, checked_at,
+    price_snapshot, imagen, status, admin_confirmed_missing, cancelled_from_status, checked_by, checked_at,
     order_item_stock_sources(warehouse_id, qty)
   )
 `;
@@ -39,7 +40,7 @@ const ORDER_SELECT_WITHOUT_INBOX = `
   customers(id, full_name, phone, email, dni, transport_id, city, province),
   order_items(
     id, order_id, variant_id, product_name, color, size, quantity,
-    price_snapshot, imagen, status, admin_confirmed_missing, checked_by, checked_at,
+    price_snapshot, imagen, status, admin_confirmed_missing, cancelled_from_status, checked_by, checked_at,
     order_item_stock_sources(warehouse_id, qty)
   )
 `;
@@ -151,6 +152,8 @@ async function fetchCustomerIdsForGlobalSearch(
   supabase: SupabaseClient,
   escapedQuery: string
 ): Promise<string[]> {
+  const ids = new Set<string>();
+
   const { data, error } = await supabase
     .from("customers")
     .select("id")
@@ -160,19 +163,53 @@ async function fetchCustomerIdsForGlobalSearch(
     .limit(20);
   if (error) {
     console.error("fetchCustomerIdsForGlobalSearch error:", formatQueryError(error) || error);
-    return [];
+  } else {
+    for (const row of (data || []) as { id: string }[]) {
+      if (row?.id) ids.add(row.id);
+    }
   }
-  return ((data || []) as { id: string }[]).map((r) => r.id).filter(Boolean);
+
+  // El picker de Retiro (public_sales_customers) muestra "Apellido, Nombre".
+  // Un ilike literal de "gimenez, belen" nunca matchea full_name="Belen
+  // Gimenez" (orden invertido + coma). Se arma un AND por token (cada
+  // palabra debe aparecer en algún lado de full_name, en cualquier orden) --
+  // ver auditoría 2026-09-15, caso Gimenez, Belen / pedido A56946.
+  const tokens = tokenizeCustomerSearch(escapedQuery);
+  if (tokens.length > 1) {
+    let tokenQuery = supabase.from("customers").select("id");
+    for (const t of tokens) {
+      tokenQuery = tokenQuery.ilike("full_name", `%${t}%`);
+    }
+    const { data: tokenData, error: tokenError } = await tokenQuery.limit(20);
+    if (tokenError) {
+      console.error("fetchCustomerIdsForGlobalSearch (tokens) error:", formatQueryError(tokenError) || tokenError);
+    } else {
+      for (const row of (tokenData || []) as { id: string }[]) {
+        if (row?.id) ids.add(row.id);
+      }
+    }
+  }
+
+  return [...ids];
 }
 
+// "sent"/"devolución" son pedidos ya resueltos (entregados / devueltos) --
+// mostrarlos en "Fuera del tablero" es ruido, no algo que el admin necesite
+// gestionar. Solo interesa lo que quedó "perdido": expired (y cualquier otro
+// status no operativo que aparezca a futuro). Ver feedback 2026-09-15.
+const GLOBAL_SEARCH_EXCLUDED_STATUSES = new Set(["sent", "devolución", "devolucion"]);
+
 /**
- * Búsqueda global sin filtro de status, pensada para el buscador que YA existe
- * en cada columna del Kanban (KanbanColumnSearch / KanbanColumn.tsx). A
- * diferencia del pool operativo (fetchOperationalOrderRows / fetchOrdersInitial),
- * esta consulta sí incluye pedidos en estado terminal (expired/sent/devolución).
+ * Búsqueda global sin filtro de status en la consulta (por nombre/DNI/Nº de
+ * pedido puede coincidir con cualquier pedido), pensada para el buscador que
+ * YA existe en cada columna del Kanban (KanbanColumnSearch / KanbanColumn.tsx).
+ * A diferencia del pool operativo (fetchOperationalOrderRows / fetchOrdersInitial),
+ * esta consulta sí puede traer pedidos en estado terminal -- pero el resultado
+ * final filtra "sent"/"devolución" (ver GLOBAL_SEARCH_EXCLUDED_STATUSES): esos
+ * ya están resueltos y no aportan nada al admin en este buscador.
  *
- * Ver auditoría 2026-09-15: pedidos vencidos "desarmados" por
- * rpc_orders_daily_maintenance quedaban invisibles para siempre en todo el
+ * Ver auditoría 2026-09-15: pedidos vencidos ("expired", desarmados por
+ * rpc_orders_daily_maintenance) quedaban invisibles para siempre en todo el
  * admin, incluso buscando por nombre/DNI/Nº de pedido. Se usa solo para
  * mostrar resultados de solo lectura fuera del tablero (OrderSearchResultCard);
  * no participa de fetchOrdersInitial ni de getOrderKanbanColumn.
@@ -227,6 +264,7 @@ export async function searchOrdersGlobal(
   }
 
   return (full.data as AdminOrder[])
+    .filter((order) => !GLOBAL_SEARCH_EXCLUDED_STATUSES.has(String(order.status || "").trim().toLowerCase()))
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
     .slice(0, GLOBAL_SEARCH_ORDER_LIMIT);
 }
@@ -713,6 +751,73 @@ export async function rpcCustomerRequestClose(
   });
   if (error) throw error;
   return data;
+}
+
+export interface CustomerCancelOrderResult {
+  ok: true;
+  verified: true;
+  idempotent_replay: boolean;
+  order_id: string;
+  order_number: string | null;
+  items_cancelled: number;
+  had_picked: boolean;
+  order_status: "cancelled" | "deleted";
+  order_deleted: boolean;
+}
+
+export function parseCustomerCancelOrderResult(
+  raw: unknown,
+  expectedOrderId: string
+): CustomerCancelOrderResult {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("La cancelación no devolvió una confirmación válida.");
+  }
+
+  const value = raw as Record<string, unknown>;
+  const status = value.order_status;
+  const orderDeleted = value.order_deleted === true;
+  const coherentTerminalState =
+    (status === "deleted" && orderDeleted) ||
+    (status === "cancelled" && !orderDeleted);
+
+  if (
+    value.ok !== true ||
+    value.verified !== true ||
+    value.order_id !== expectedOrderId ||
+    !coherentTerminalState
+  ) {
+    throw new Error(
+      "No pudimos verificar que el pedido quedara cancelado. Recargá antes de volver a intentar."
+    );
+  }
+
+  return {
+    ok: true,
+    verified: true,
+    idempotent_replay: value.idempotent_replay === true,
+    order_id: expectedOrderId,
+    order_number:
+      typeof value.order_number === "string" ? value.order_number : null,
+    items_cancelled:
+      typeof value.items_cancelled === "number" &&
+      Number.isFinite(value.items_cancelled)
+        ? value.items_cancelled
+        : 0,
+    had_picked: value.had_picked === true,
+    order_status: status,
+    order_deleted: orderDeleted,
+  };
+}
+
+export async function rpcCustomerCancelOrder(
+  supabase: SupabaseClient,
+  orderId: string
+): Promise<CustomerCancelOrderResult> {
+  const { data, error } = await supabase.rpc("rpc_customer_cancel_order", {
+    p_order_id: orderId,
+  });
+  if (error) throw error;
+  return parseCustomerCancelOrderResult(data, orderId);
 }
 
 export async function rpcSendOrderToLocal(

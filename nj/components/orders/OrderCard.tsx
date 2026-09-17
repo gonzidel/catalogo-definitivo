@@ -381,8 +381,17 @@ export default function OrderCard({ order }: OrderCardProps) {
     useOrdersStore.getState().showToast("Mensaje copiado", "success");
   };
 
+  // Primer aviso (pedido vencido pero TODAVÍA no procesado por
+  // rpc_orders_daily_maintenance, ver isExpiredPendingAdminDisassembly) debe
+  // avisar que el pedido SE VA a desarmar, no que ya se desarmó -- el cron
+  // recién lo va a tocar en la próxima corrida. Solo una vez que status
+  // realmente pasa a 'expired' (isFullyExpiredStatus) el stock ya volvió de
+  // verdad y corresponde el mensaje en pasado. Ver feedback 2026-09-15.
+  const buildExpiredColumnMessage = () =>
+    isFullyExpiredStatus ? buildExpiredOrderMessage() : buildExpiryWarningMessage();
+
   const copyExpiredOrderMessage = async () => {
-    const msg = buildExpiredOrderMessage();
+    const msg = buildExpiredColumnMessage();
     try {
       await navigator.clipboard.writeText(msg);
       useOrdersStore.getState().showToast("Mensaje copiado", "success");
@@ -392,7 +401,7 @@ export default function OrderCard({ order }: OrderCardProps) {
   };
 
   const sendExpiredOrderMessage = async () => {
-    const msg = buildExpiredOrderMessage();
+    const msg = buildExpiredColumnMessage();
     try {
       await navigator.clipboard.writeText(msg);
     } catch {
@@ -911,7 +920,7 @@ export default function OrderCard({ order }: OrderCardProps) {
                 items={
                   column === "cancelled"
                     ? order.status === "cancelled"
-                      ? appendExtrasToOrderCardItems(cancelledItemsPendingReturn, order)
+                      ? appendExtrasToOrderCardItems(cancelledItems, order)
                       : cancelledItemsPendingReturn
                     : column === "active"
                         ? appendExtrasToOrderCardItems(reservedItems, order)

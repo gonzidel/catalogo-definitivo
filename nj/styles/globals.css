@@ -3215,6 +3215,22 @@ body {
   background: #f0f0f0;
 }
 
+.line-item-row__img-ph--extra {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #ecfdf5;
+  color: #047857;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.line-item-row__img-ph--extra.is-discount {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
 .line-item-row__body {
   flex: 1;
   min-width: 0;
@@ -4906,6 +4922,17 @@ body {
   font-size: 11px;
   color: #888;
   white-space: nowrap;
+}
+
+.active-order-extra-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #047857;
+  background: #ecfdf5;
 }
 
 .active-order-unit-price.is-offer {

@@ -306,6 +306,16 @@ export function getCancelledOrderItems(order: AdminOrder): AdminOrderItem[] {
   return (order.order_items || []).filter(isCancelledOrderItem);
 }
 
+/**
+ * Ítems del pedido para listados operativos (Cerrados, Editar, totales visuales).
+ * Excluye cancelados: el conteo/monto ya los ignora; mostrarlos genera filas
+ * fantasma (A56961: 220 Negro 36 cancelado + re-agregado picked).
+ * Los cancelados pendientes de devolver stock se listan aparte (banner Cancelados).
+ */
+export function getOperationalDisplayOrderItems(order: AdminOrder): AdminOrderItem[] {
+  return (order.order_items || []).filter((item) => !isCancelledOrderItem(item));
+}
+
 export function orderHasCancelledItems(order: AdminOrder): boolean {
   return getCancelledOrderItems(order).length > 0;
 }
@@ -362,11 +372,14 @@ export function countRegularProductUnits(
     variant_id?: string | null;
     color?: string | null;
     size?: string | null;
+    price_snapshot?: number | null;
     is_special_extra?: boolean | null;
   }>
 ): number {
   return items.reduce((sum, item) => {
-    if (isSpecialExtraItem(item)) return sum;
+    // Descuentos (monto negativo) no son "unidades de producto".
+    // Extras especiales positivos (PERFUME, COLLAR, etc.) sí cuentan — A56950.
+    if (isSpecialExtraItem(item) && Number(item.price_snapshot ?? 0) < 0) return sum;
     return sum + (Number(item.quantity) || 0);
   }, 0);
 }

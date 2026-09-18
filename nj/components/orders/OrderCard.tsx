@@ -15,6 +15,7 @@ import {
   getCancelledItemsPendingStockReturn,
   getCancelledOrderItems,
   getCustomerFromOrder,
+  getOperationalDisplayOrderItems,
   getOrderDisplayNumber,
   isCancelledOrderItem,
   isCustomerSourcedOrder,
@@ -220,9 +221,9 @@ export default function OrderCard({ order }: OrderCardProps) {
       countRegularProductUnits(
         column === "cancelled" || column === "expired"
           ? items
-          : items.filter((item) => !isCancelledOrderItem(item))
+          : getOperationalDisplayOrderItems(order)
       ),
-    [column, items]
+    [column, items, order]
   );
   const showExpiryWarningBtn =
     column === "expired" &&
@@ -946,7 +947,13 @@ export default function OrderCard({ order }: OrderCardProps) {
                         ? appendExtrasToOrderCardItems(reservedItems, order)
                         : column === "picked"
                           ? appendExtrasToOrderCardItems(pickedColumnItems, order)
-                          : appendExtrasToOrderCardItems(items, order)
+                          : // Cerrados / stock_pending: mismo criterio que productCount —
+                            // cancelados ya resueltos no deben verse (A56961 Susana Ortiz).
+                            // Los pendientes de devolver stock van en el banner aparte.
+                            appendExtrasToOrderCardItems(
+                              getOperationalDisplayOrderItems(order),
+                              order
+                            )
                 }
                 orderId={order.id}
                 orderSource={order.source}

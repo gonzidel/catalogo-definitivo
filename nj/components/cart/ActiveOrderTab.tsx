@@ -7,6 +7,7 @@ import {
   isLocalPickupOrderFulfilled,
   localPickupFulfilledDismissKey,
   isCommonLocalPickupOrder,
+  isSpecialExtraItem,
 } from "@/lib/orders/domain";
 import { getCustomerFacingItemStatus } from "@/lib/orders/waiting-source";
 import { groupCustomerOrderItems, type GroupedCustomerOrderItem } from "@/lib/orders/customer-order-display";
@@ -1334,17 +1335,19 @@ export default function ActiveOrderTab({
                     );
                   }
                   const item = row.item;
+                  const special = isSpecialExtraItem(item);
                   return (
                     <div key={item.primaryItemId} className="active-order-item-divider">
                       <LineItemRow
                         imagen={item.imagen}
                         variantId={item.variant_id}
                         productName={item.product_name}
-                        color={item.color}
-                        size={item.size}
+                        color={special ? undefined : item.color}
+                        size={special ? undefined : item.size}
                         quantity={item.quantity}
                         unitPrice={item.price_snapshot}
                         isOffer={itemIsOffer(item)}
+                        specialExtra={special}
                       />
                     </div>
                   );
@@ -1976,6 +1979,7 @@ export default function ActiveOrderTab({
     const stock = variantStock[item.primaryItemId] ?? null;
     // Stock disponible neto = stock físico - unidades ya en el pedido
     const availableToAdd = stock !== null ? Math.max(0, stock - item.quantity) : null;
+    const special = isSpecialExtraItem(item);
 
     return (
       <div key={item.primaryItemId}>
@@ -1983,30 +1987,32 @@ export default function ActiveOrderTab({
           imagen={item.imagen}
           variantId={item.variant_id}
           productName={item.product_name}
-          color={item.color}
-          size={item.size}
+          color={special ? undefined : item.color}
+          size={special ? undefined : item.size}
           quantity={item.quantity}
           unitPrice={item.price_snapshot}
-          isOffer={itemIsOffer(item)}
+          isOffer={!special && itemIsOffer(item)}
+          specialExtra={special}
           highlight={isMissing ? "missing" : null}
           mutedPrice={isMissing}
           line2={
             <span className="active-order-line2">
               <QuantityUnitLabel quantity={item.quantity} />
-              {!isMissing && (
+              {!isMissing && !special && (
                 <CustomerItemPrepStatus
                   item={item}
                   warehouseIds={warehouseIds}
                   localDeferredPickup={localDeferredPickup}
                 />
               )}
+              {special ? <span className="active-order-extra-tag">Extra</span> : null}
               {/* En missing el total ya está a la derecha; el c/u compite con
                   «Alternativas» + «Quitar» y overflow:hidden lo corta (360px). */}
               {item.quantity > 1 && !isMissing && (
                 <span
                   className={[
                     "active-order-unit-price",
-                    itemIsOffer(item) ? "is-offer" : "",
+                    !special && itemIsOffer(item) ? "is-offer" : "",
                   ]
                     .filter(Boolean)
                     .join(" ")}
@@ -2027,11 +2033,8 @@ export default function ActiveOrderTab({
           }
           trailing={
             !isReadOnly ? (
-              isMissing ? (
-                // Sin stock no tiene "editar cantidad" ni "ver producto" que
-                // valga la pena esconder detrás de un menú — un solo botón
-                // directo para quitarlo es más rápido que abrir el "⋯" y
-                // después tocar "Quitar producto".
+              isMissing || special ? (
+                // Sin stock / extra admin: quitar directo (sin menú ni PDP).
                 <button
                   onClick={() => handleCancelItem(item.primaryItemId)}
                   disabled={isCanceling}

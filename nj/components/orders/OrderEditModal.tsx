@@ -9,6 +9,7 @@ import {
   countRegularProductUnits,
   formatSignedPriceAr,
   getCustomerFromOrder,
+  getOperationalDisplayOrderItems,
   getOrderDisplayNumber,
   getOrderItemLineTotal,
   isReturnOrderItem,
@@ -72,8 +73,8 @@ export default function OrderEditModal({ order, onClose }: OrderEditModalProps) 
   );
 
   const { products: savedProducts, specialExtras: savedSpecialExtras } = useMemo(
-    () => partitionOrderItemsForDisplay(items),
-    [items]
+    () => partitionOrderItemsForDisplay(getOperationalDisplayOrderItems(liveOrder)),
+    [liveOrder]
   );
 
   const previewLineItems = useMemo(

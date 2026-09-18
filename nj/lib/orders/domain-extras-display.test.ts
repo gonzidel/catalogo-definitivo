@@ -3,6 +3,7 @@ import { test } from "node:test";
 import type { AdminOrder, AdminOrderItem } from "../../types/orders";
 import {
   appendExtrasToOrderCardItems,
+  countRegularProductUnits,
   getOrderExtraDisplayName,
   isNoteExtraDisplayItem,
   isPickedOrderItem,
@@ -76,4 +77,14 @@ test("si no hay extras, la lista visible no cambia", () => {
   const visible = appendExtrasToOrderCardItems([pickedProduct], order);
   assert.equal(visible.length, 1);
   assert.equal(visible[0].id, "p1");
+});
+
+test("countRegularProductUnits incluye extras especiales positivos (A56950)", () => {
+  const items = [
+    product({ id: "p1", quantity: 12 }),
+    specialExtra({ id: "e1", product_name: "PERFUME", quantity: 1, price_snapshot: 6000 }),
+    specialExtra({ id: "e2", product_name: "COLLAR", quantity: 1, price_snapshot: 6000 }),
+    specialExtra({ id: "d1", product_name: "Descuento", quantity: 1, price_snapshot: -1000 }),
+  ];
+  assert.equal(countRegularProductUnits(items), 14);
 });

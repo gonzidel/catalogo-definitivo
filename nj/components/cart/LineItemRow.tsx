@@ -28,6 +28,11 @@ interface LineItemRowProps {
   unitPrice: number;
   /** Oferta activa: 🔥 tras el talle y precio en rojo. */
   isOffer?: boolean;
+  /**
+   * Extra admin (PERFUME/COLLAR/etc.): sin foto de catálogo.
+   * Muestra "+" / "−" en la miniatura y el nombre como producto.
+   */
+  specialExtra?: boolean;
   status?: StatusChip;
   onStatusClick?: () => void;
   highlight?: "missing" | "outOfStock" | null;
@@ -95,6 +100,7 @@ export default function LineItemRow({
   quantity,
   unitPrice,
   isOffer = false,
+  specialExtra = false,
   status,
   onStatusClick,
   highlight = null,
@@ -113,6 +119,10 @@ export default function LineItemRow({
       setResolvedImage(cached);
       return;
     }
+    if (specialExtra) {
+      setResolvedImage(null);
+      return;
+    }
     const vid = String(variantId || "").trim();
     if (!vid) {
       setResolvedImage(null);
@@ -125,14 +135,18 @@ export default function LineItemRow({
     return () => {
       cancelled = true;
     };
-  }, [imagen, variantId]);
+  }, [imagen, variantId, specialExtra]);
 
   const isWarn = highlight === "missing" || highlight === "outOfStock";
   // Sin stock: fila apretada (Alternativas + Quitar) — recortar nombre/color
   // para que el talle no quede en "T. …" (pedido explícito UX móvil).
   const compactTitle = highlight === "missing";
-  const displayTitle = buildTitle(productName, color, size, isOffer, compactTitle);
-  const fullTitle = buildTitle(productName, color, size, isOffer, false);
+  const displayTitle = specialExtra
+    ? String(productName || (unitPrice < 0 ? "Descuento" : "Extra")).trim()
+    : buildTitle(productName, color, size, isOffer, compactTitle);
+  const fullTitle = specialExtra
+    ? displayTitle
+    : buildTitle(productName, color, size, isOffer, false);
   const lineTotal = unitPrice * quantity;
   const statusStyle = status
     ? ({
@@ -140,6 +154,7 @@ export default function LineItemRow({
         "--status-bg": status.bg,
       } as CSSProperties)
     : undefined;
+  const extraGlyph = unitPrice < 0 ? "−" : "+";
 
   return (
     <div>
@@ -148,6 +163,7 @@ export default function LineItemRow({
           "line-item-row__main",
           isWarn ? "is-warn" : "",
           isOffer ? "is-offer" : "",
+          specialExtra ? "is-special-extra" : "",
         ]
           .filter(Boolean)
           .join(" ")}
@@ -159,6 +175,15 @@ export default function LineItemRow({
             alt={fullTitle}
             className="line-item-row__img"
           />
+        ) : specialExtra ? (
+          <div
+            className={`line-item-row__img-ph line-item-row__img-ph--extra${
+              unitPrice < 0 ? " is-discount" : ""
+            }`}
+            aria-hidden="true"
+          >
+            {extraGlyph}
+          </div>
         ) : (
           <div className="line-item-row__img-ph" />
         )}

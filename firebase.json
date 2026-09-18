@@ -59,27 +59,42 @@
     "redirects": [
       {
         "source": "/",
-        "destination": "/catalogo",
+        "destination": "https://www.fylmoda.com.ar/catalogo",
         "type": 301
       },
       {
         "source": "/index.html",
-        "destination": "/catalogo",
+        "destination": "https://www.fylmoda.com.ar/catalogo",
+        "type": 301
+      },
+      {
+        "source": "/catalogo",
+        "destination": "https://www.fylmoda.com.ar/catalogo",
+        "type": 301
+      },
+      {
+        "source": "/catalogo.html",
+        "destination": "https://www.fylmoda.com.ar/catalogo",
+        "type": 301
+      },
+      {
+        "source": "/catalogo/**",
+        "destination": "https://www.fylmoda.com.ar/catalogo",
         "type": 301
       },
       {
         "source": "/client/dashboard.html",
-        "destination": "/catalogo",
+        "destination": "https://www.fylmoda.com.ar/catalogo",
         "type": 302
       },
       {
         "source": "/client/dashboard",
-        "destination": "/catalogo",
+        "destination": "https://www.fylmoda.com.ar/catalogo",
         "type": 302
       },
       {
         "source": "/client/dashboard-debug.html",
-        "destination": "/catalogo",
+        "destination": "https://www.fylmoda.com.ar/catalogo",
         "type": 302
       }
     ],
@@ -99,14 +114,6 @@
       {
         "source": "/terms/**",
         "destination": "/terms.html"
-      },
-      {
-        "source": "/catalogo",
-        "destination": "/catalogo.html"
-      },
-      {
-        "source": "/catalogo/**",
-        "destination": "/catalogo.html"
       },
       {
         "source": "/revendedoras",

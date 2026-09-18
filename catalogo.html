@@ -2,6 +2,13 @@
 <html lang="es" class="catalog-only public-catalog">
 <head>
   <meta charset="UTF-8" />
+  <script>
+    (function () {
+      var host = location.hostname;
+      if (host === "localhost" || host === "127.0.0.1") return;
+      location.replace("https://www.fylmoda.com.ar/catalogo" + location.search + location.hash);
+    })();
+  </script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <!-- Cache bust: subí la versión en app-version.json y ejecutá npm run build (o deploy con predeploy). -->
   <meta name="app-version" content="m260607">

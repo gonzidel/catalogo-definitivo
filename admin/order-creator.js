@@ -13,6 +13,7 @@ import {
   computeWarehouseQtySplitForOrderItem,
   computeOrderItemsPromoDiscount,
   isRetiroBoardOrderForLegacyPedidos,
+  isTransientNetworkError,
 } from "./orders-domain.js?v=m260607";
 import { hasCatalogPrice, catalogPriceGuardMessage } from "../scripts/utils/price.js?v=m260607";
 
@@ -3359,6 +3360,52 @@ async function getVariantIdsForItems(items) {
 // Inyecta y deduce stock para ítems confirmados manualmente sin stock en sistema.
 // Recibe los ítems ya insertados en DB (con su id real) y el orderId.
 // Usa rpc_admin_manual_inject_and_deduct para garantizar transaccionalidad y trazabilidad.
+async function fetchSourcedOrderItemIds(itemIds) {
+  const ids = (itemIds || []).filter(Boolean);
+  if (!ids.length) return new Set();
+  const { data, error } = await supabase
+    .from("order_item_stock_sources")
+    .select("order_item_id")
+    .in("order_item_id", ids);
+  if (error) throw error;
+  return new Set((data || []).map((row) => String(row.order_item_id)));
+}
+
+async function fetchDeductedOrderItemIds(orderId) {
+  const { data, error } = await supabase
+    .from("stock_history")
+    .select("notes")
+    .eq("change_type", "order_deduction")
+    .ilike("notes", `%order_id:${orderId}%`);
+  if (error) return { ok: false, ids: new Set() };
+  const ids = new Set();
+  const re = /order_item_id:([0-9a-fA-F-]{36})/gi;
+  for (const row of data || []) {
+    const notes = String(row.notes || "");
+    let match;
+    while ((match = re.exec(notes))) ids.add(match[1]);
+  }
+  return { ok: true, ids };
+}
+
+async function applyStockAfterInsert(insertedItems, itemsForPersistence, orderId, source) {
+  const itemsWithIds = (itemsForPersistence || []).map((item, index) => ({
+    ...item,
+    order_item_id: insertedItems?.[index]?.id || item.order_item_id || null,
+  }));
+  const run = async (requireHistoryCheck = false) => {
+    await applyManualConfirmedItems(insertedItems || [], orderId);
+    await updateStockBatch(itemsWithIds, orderId, source, { requireHistoryCheck });
+  };
+  try {
+    await run(false);
+  } catch (err) {
+    if (!isTransientNetworkError(err)) throw err;
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    await run(true);
+  }
+}
+
 async function applyManualConfirmedItems(insertedItems, orderId) {
   if (!insertedItems || insertedItems.length === 0) return;
 
@@ -3374,7 +3421,11 @@ async function applyManualConfirmedItems(insertedItems, orderId) {
   );
   if (manualItems.length === 0) return;
 
-  const p_items = manualItems.map((item) => ({
+  const alreadySourced = await fetchSourcedOrderItemIds(manualItems.map((item) => item.id));
+  const pendingManual = manualItems.filter((item) => !alreadySourced.has(item.id));
+  if (pendingManual.length === 0) return;
+
+  const p_items = pendingManual.map((item) => ({
     variant_id:     item.variant_id,
     size:           normalizeSize(item.size),
     warehouse_id:   warehouses.general,
@@ -3524,7 +3575,7 @@ async function validateStockBeforeSave(itemsWithVariants) {
   return { ok: conflicts.length === 0, conflicts };
 }
 
-async function updateStockBatch(itemsWithVariants, orderId = null, source = "order_creation") {
+async function updateStockBatch(itemsWithVariants, orderId = null, source = "order_creation", options = {}) {
   if (!itemsWithVariants || itemsWithVariants.length === 0) {
     console.warn("⚠️ updateStockBatch: No hay items para actualizar stock");
     return;
@@ -3563,6 +3614,21 @@ async function updateStockBatch(itemsWithVariants, orderId = null, source = "ord
     return;
   }
 
+  let pendingItems = itemsToUpdate;
+  if (orderId) {
+    const deducted = await fetchDeductedOrderItemIds(orderId);
+    if (!deducted.ok && options.requireHistoryCheck) {
+      throw new Error("No se pudo verificar el descuento de stock. Reintentá.");
+    }
+    if (deducted.ok) {
+      pendingItems = itemsToUpdate.filter((item) => {
+        const itemId = String(item.order_item_id || "");
+        return !itemId || !deducted.ids.has(itemId);
+      });
+    }
+  }
+  if (pendingItems.length === 0) return;
+
   // ──────────────────────────────────────────────────────────────
   // Construir p_items para rpc_apply_order_stock_deduction.
   // Únicamente a partir de qty_from_general / qty_from_venta ya alineados con quantity
@@ -3570,7 +3636,7 @@ async function updateStockBatch(itemsWithVariants, orderId = null, source = "ord
   // ──────────────────────────────────────────────────────────────
   const deductions = [];
 
-  itemsToUpdate.forEach((item, index) => {
+  pendingItems.forEach((item, index) => {
     const normalizedSize = normalizeSize(item.size);
     if (!normalizedSize) {
       console.warn(`⚠️ updateStockBatch: Item ${index} sin tamaño normalizado:`, item.size);
@@ -3851,10 +3917,33 @@ async function createNewOrder(customerId, items, total, extraValues = {}) {
   // Etapa 2 / Fase corta: descuento transaccional.
   console.log("🔵 createNewOrder: Descontando stock (RPC)...");
   try {
-    await applyManualConfirmedItems(insertedItems || [], order.id);
-    await updateStockBatch(itemsForPersistence, order.id, "order_creation");
+    await applyStockAfterInsert(insertedItems || [], itemsForPersistence, order.id, "order_creation");
   } catch (stockErr) {
     console.error("❌ createNewOrder: Falló descuento de stock:", stockErr);
+
+    if (isTransientNetworkError(stockErr)) {
+      const pendingNotesObj = (() => {
+        try { return notes ? JSON.parse(notes) : {}; } catch { return {}; }
+      })();
+      pendingNotesObj.stock_pending_reason = stockErr?.message || String(stockErr);
+      pendingNotesObj.stock_pending_at = new Date().toISOString();
+      pendingNotesObj.stock_pending_source = "createNewOrder";
+      try {
+        await supabase
+          .from("orders")
+          .update({
+            status: "stock_pending",
+            notes: JSON.stringify(pendingNotesObj),
+          })
+          .eq("id", order.id);
+      } catch (e) {
+        console.error("❌ createNewOrder: No se pudo marcar stock_pending tras corte de red:", e);
+      }
+      throw new Error(
+        `No se pudo completar el descuento de stock (conexión): ${stockErr?.message || stockErr}. ` +
+        "El pedido quedó en Stock Pendiente. Tocá Reintentar, no lo canceles."
+      );
+    }
 
     // 1) Intentar rollback manual: borrar items y luego orden.
     let rollbackOk = true;
@@ -3943,198 +4032,163 @@ async function createNewOrder(customerId, items, total, extraValues = {}) {
   return { success: true, order: order };
 }
 
-// Agregar items a pedido existente
+const ADMIN_ORDER_EDIT_OPERATION_PREFIX = "fyl-admin-order-edit-op:";
+
+function adminOrderEditOperationStorageKey(orderId, intent) {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < intent.length; index += 1) {
+    hash ^= intent.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `${ADMIN_ORDER_EDIT_OPERATION_PREFIX}${orderId}:${(hash >>> 0).toString(16)}`;
+}
+
+function createAdminOrderEditOperationId() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (char) => {
+    const value = Math.floor(Math.random() * 16);
+    return (char === "x" ? value : (value & 0x3) | 0x8).toString(16);
+  });
+}
+
+function readAdminOrderEditOperation(orderId, intent) {
+  try {
+    const raw = localStorage.getItem(
+      adminOrderEditOperationStorageKey(orderId, intent)
+    );
+    const parsed = raw ? JSON.parse(raw) : null;
+    if (
+      !parsed ||
+      typeof parsed.id !== "string" ||
+      parsed.intent !== intent ||
+      !parsed.payload ||
+      typeof parsed.payload !== "object"
+    ) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeAdminOrderEditOperation(orderId, operation) {
+  try {
+    localStorage.setItem(
+      adminOrderEditOperationStorageKey(orderId, operation.intent),
+      JSON.stringify(operation)
+    );
+  } catch {
+    // La RPC conserva atomicidad; solo se degrada el replay tras perder la red.
+  }
+}
+
+function clearAdminOrderEditOperation(orderId, intent) {
+  try {
+    localStorage.removeItem(adminOrderEditOperationStorageKey(orderId, intent));
+  } catch {
+    // No bloquear una edición ya confirmada por el backend.
+  }
+}
+
+// Agregar ítems, stock, total, notes y estado en una sola transacción servidor.
 async function addItemsToExistingOrder(orderId, items, newTotal = null, extraValues = {}) {
-  // OPTIMIZACIÓN: Obtener variant_ids en batch (una sola consulta en lugar de N consultas)
+  void newTotal; // 347 recalcula el total desde líneas vigentes + extras.
+
   const itemsWithVariants = await getVariantIdsForItems(items);
   const itemsForPersistence = itemsWithVariants.map((item) => {
     const hasVariantAndSize = Boolean(item?.variant_id) && Boolean(item?.size);
     const qtyGeneral = Number(item?.qty_from_general) || 0;
     const qtyVenta = Number(item?.qty_from_venta) || 0;
     const hasConfirmedStock = (qtyGeneral + qtyVenta) > 0;
-    if (hasVariantAndSize && !hasConfirmedStock) {
-      // Mismo criterio que createNewOrder: persiste como 'picked' con trazabilidad.
+    if (hasVariantAndSize && Number(item?.price_snapshot) >= 0 && !hasConfirmedStock) {
       return { ...item, status: "picked", admin_confirmed_missing: true };
     }
     return item;
   });
-  const preflight = await validateStockBeforeSave(itemsForPersistence);
-  if (!preflight.ok) {
-    throw buildStockConflictError(preflight.conflicts);
-  }
-  
-  // Obtener el pedido con sus items para verificar el estado
-  const { data: order } = await supabase
-    .from("orders")
-    .select(`
-      status,
-      total_amount,
-      notes,
-      order_items(status)
-    `)
-    .eq("id", orderId)
-    .single();
 
-  if (order?.status === "stock_pending") {
-    throw new Error(
-      "No se puede editar esta orden porque está en estado 'stock_pending'. " +
-      "Resolvela manualmente (ajuste/cancelación) antes de volver a editar."
-    );
-  }
-  
-  // Verificar si todos los items existentes están en estado "picked" (apartado)
-  const existingItems = order?.order_items || [];
-  const allItemsPicked = existingItems.length > 0 && existingItems.every(item => item.status === 'picked');
-  
-  // Admin: al agregar productos manualmente, por defecto quedan "picked" (apartado)
-  const newItemStatus = "picked";
-  
-  // Calcular el nuevo total
-  let finalTotal;
-  if (newTotal !== null) {
-    // Si se proporciona un nuevo total (con valores extra), usarlo
-    finalTotal = newTotal;
-  } else {
-    // Si no, calcular solo sumando los nuevos items
-    const newItemsTotal = itemsForPersistence.reduce((sum, item) => {
-      return sum + ((item.price_snapshot || 0) * (item.quantity || 0));
-    }, 0);
-    finalTotal = (order?.total_amount || 0) + newItemsTotal;
-  }
-  
-  // Crear los items del pedido con el estado apropiado
-  // Usar el estado que tiene cada item (puede ser 'reserved' o 'waiting')
-  const orderItemsData = itemsForPersistence.map(item => ({
-    order_id: orderId,
-    variant_id: item.variant_id,
+  const rpcItems = itemsForPersistence.map((item) => ({
+    variant_id: item.is_special_extra ? null : item.variant_id,
     product_name: item.product_name,
-    color: item.color,
-    size: item.size,
+    color: item.is_special_extra ? null : item.color,
+    size: item.is_special_extra ? null : item.size,
     quantity: item.quantity,
     price_snapshot: item.price_snapshot,
-    imagen: item.imagen,
-    status: item.status || newItemStatus, // Usar el estado del item si existe, sino usar el estado por defecto
-    admin_confirmed_missing: Boolean(item.admin_confirmed_missing)
+    imagen: item.imagen || null,
+    status: item.status || "picked",
+    admin_confirmed_missing: Boolean(item.admin_confirmed_missing),
+    is_special_extra: Boolean(item.is_special_extra),
+    qty_from_general: Number(item.qty_from_general) || 0,
+    qty_from_venta: Number(item.qty_from_venta) || 0,
   }));
-  
-  const { data: insertedItems, error: itemsError } = await supabase
-    .from("order_items")
-    .insert(orderItemsData)
-    .select("id, variant_id, size, quantity, admin_confirmed_missing");
-  
-  if (itemsError) {
-    throw new Error(`Error agregando productos: ${itemsError.message}`);
-  }
-  
-  // Preparar notes con valores extra (combinar con valores existentes si hay)
-  let notes = null;
-  if (Object.keys(extraValues || {}).length > 0) {
-    try {
-      const existingNotes = order?.notes ? JSON.parse(order.notes) : {};
-      const combinedNotes = { ...existingNotes, ...extraValues };
-      notes = JSON.stringify(combinedNotes);
-    } catch (e) {
-      // Si hay error parseando notes existentes, usar solo los nuevos valores
-      notes = JSON.stringify(extraValues);
+  const intent = JSON.stringify({
+    order_id: orderId,
+    items: rpcItems,
+    notes_extras: extraValues || {},
+  });
+
+  let operation = readAdminOrderEditOperation(orderId, intent);
+  if (!operation) {
+    const preflight = await validateStockBeforeSave(itemsForPersistence);
+    if (!preflight.ok) throw buildStockConflictError(preflight.conflicts);
+
+    const { data: order, error: orderError } = await supabase
+      .from("orders")
+      .select("status")
+      .eq("id", orderId)
+      .single();
+
+    if (orderError || !order) {
+      throw new Error("No se pudo cargar el pedido.");
     }
-  } else if (order?.notes) {
-    // Mantener notes existentes si no hay nuevos valores
-    notes = order.notes;
+
+    operation = {
+      id: createAdminOrderEditOperationId(),
+      intent,
+      payload: {
+        expected_status: order.status,
+        items: rpcItems,
+        notes_extras: extraValues || {},
+      },
+    };
+    writeAdminOrderEditOperation(orderId, operation);
   }
-  
-  // Actualizar total del pedido, notes y estado
-  // Admin: mantener "active" (constraint BD). Los items en "picked" hacen que el pedido aparezca en Apartados.
-  const updateData = { 
-    total_amount: finalTotal,
-    status: "active"
-  };
-  if (notes !== null) {
-    updateData.notes = notes;
-  }
-  
-  // Verificar el estado actual del pedido
-  const { data: currentOrder } = await supabase
-    .from("orders")
-    .select("status")
-    .eq("id", orderId)
-    .single();
-  
-  if (currentOrder) {
-    if (currentOrder.status === "stock_pending") {
+
+  const { data, error } = await supabase.rpc("rpc_admin_add_order_items_atomic", {
+    p_order_id: orderId,
+    p_payload: operation.payload,
+    p_idempotency_key: operation.id,
+  });
+
+  if (error) {
+    if (!isTransientNetworkError(error)) {
+      clearAdminOrderEditOperation(orderId, intent);
+    }
+    const msg = String(error.message || "");
+    if (/ORDER_STATE_BLOCKED/i.test(msg) && /devoluci/i.test(msg)) {
       throw new Error(
-        "No se puede editar esta orden porque está en estado 'stock_pending'. " +
-        "Resolvela manualmente (ajuste/cancelación) antes de volver a editar."
+        "No se pueden agregar productos a un pedido en devolución. Resolvé la devolución primero."
       );
     }
-
-    if (currentOrder.status === "closed" || currentOrder.status === "sent" || currentOrder.status === "devolución") {
-      // Si está cerrado, enviado o en devolución, no cambiar el estado
-      delete updateData.status;
-      
-      // Si el pedido está enviado, dejar que el backend mantenga/actualice sent_at
-      
-      // Si el pedido está en devolución, mantener el estado de devolución
-      // No hacer nada adicional, solo preservar el estado
-    }
-  }
-  
-  await supabase
-    .from("orders")
-    .update(updateData)
-    .eq("id", orderId);
-
-  // Etapa 2 / Fase corta: descuento transaccional.
-  // Primero los ítems confirmados manualmente (inject-and-deduct),
-  // luego los ítems normales (rpc_apply_order_stock_deduction).
-  // En EDIT no hacemos rollback manual: si falla, marcamos stock_pending.
-  try {
-    await applyManualConfirmedItems(insertedItems || [], orderId);
-    await updateStockBatch(itemsForPersistence, orderId, "order_edit");
-  } catch (stockErr) {
-    console.error("❌ addItemsToExistingOrder: Falló descuento de stock:", stockErr);
-
-    // Marcar status='stock_pending' preservando notes existentes + razón.
-    const pendingNotesObj = (() => {
-      try { return notes ? JSON.parse(notes) : (order?.notes ? JSON.parse(order.notes) : {}); }
-      catch { return {}; }
-    })();
-    pendingNotesObj.stock_pending_reason = stockErr?.message || String(stockErr);
-    pendingNotesObj.stock_pending_at     = new Date().toISOString();
-    pendingNotesObj.stock_pending_source = "addItemsToExistingOrder";
-
-    let markPendingOk = false;
-    try {
-      await supabase
-        .from("orders")
-        .update({
-          status: "stock_pending",
-          notes:  JSON.stringify(pendingNotesObj),
-        })
-        .eq("id", orderId);
-      markPendingOk = true;
-      console.warn("⚠️ addItemsToExistingOrder: Orden marcada stock_pending:", orderId);
-    } catch (e) {
-      console.error("❌ addItemsToExistingOrder: No se pudo marcar stock_pending:", e);
-      logCriticalOrderConsistencyIssue("addItemsToExistingOrder", {
-        order_id: orderId,
-        stage: "stock_deduction_failed_and_mark_pending_failed",
-        stock_error: stockErr?.message || String(stockErr),
-        mark_pending_error: e?.message || String(e),
-      });
-    }
-
-    if (!markPendingOk) {
+    if (/ORDER_STATE_BLOCKED/i.test(msg)) {
       throw new Error(
-        `No se pudo completar la edición del pedido: ${stockErr?.message || stockErr}. ` +
-        "La orden puede estar inconsistente. Contactar soporte."
+        `No se puede editar este pedido en su estado actual. ${msg}`
       );
     }
-
-    throw new Error(
-      `No se pudo completar la edición del pedido: ${stockErr?.message || stockErr}. ` +
-      "La orden quedó marcada como 'stock_pending' y requiere intervención manual."
-    );
+    throw new Error(`Error agregando productos: ${error.message}`);
   }
+
+  if (
+    !data ||
+    data.ok !== true ||
+    data.order_id !== orderId ||
+    !Array.isArray(data.inserted_items)
+  ) {
+    clearAdminOrderEditOperation(orderId, intent);
+    throw new Error("El servidor no pudo verificar la edición completa del pedido.");
+  }
+
+  clearAdminOrderEditOperation(orderId, intent);
 }
 
 // Cargar pedido para editar

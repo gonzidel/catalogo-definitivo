@@ -31,6 +31,31 @@
 
         .orders-header h1 {
             font-size: 22px;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin: 0;
+        }
+
+        .orders-header-count {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 28px;
+            height: 28px;
+            padding: 0 10px;
+            border-radius: 999px;
+            background: #CD844D;
+            color: #fff;
+            font-size: 14px;
+            font-weight: 700;
+            line-height: 1;
+            letter-spacing: 0.01em;
+        }
+
+        .orders-header-count.is-empty {
+            background: #adb5bd;
         }
 
         .search-bar {
@@ -957,7 +982,7 @@
 <body>
     <div class="orders-container">
         <div class="orders-header">
-            <h1>📦 Pedidos Cerrados</h1>
+            <h1>📦 Pedidos Cerrados <span id="closed-orders-count" class="orders-header-count is-empty" aria-live="polite">0</span></h1>
             <div>
                 <a href="index.html" class="btn btn-secondary">← Panel Admin</a>
                 <a href="orders.html" class="btn btn-primary" style="margin-left: 10px;">Ver Todos los Pedidos</a>
@@ -1157,7 +1182,7 @@
     <script defer src="../scripts/vendor/supabase-js.bundle.min.js?v=m260607"></script>
     <script type="module" src="../scripts/supabase-client.js?v=m260607"></script>
     <script type="module" src="admin-auth.js"></script>
-    <script type="module" src="closed-orders.js"></script>
+    <script type="module" src="closed-orders.js?v=m260607"></script>
 </body>
 
 </html>

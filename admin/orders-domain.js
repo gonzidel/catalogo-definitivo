@@ -130,6 +130,7 @@ export function isPickedManualConfirmed(item) {
 
 export function parseOrderNotesObject(rawNotes) {
   if (!rawNotes) return {};
+  if (typeof rawNotes === "object" && !Array.isArray(rawNotes)) return rawNotes;
   try {
     const parsed = JSON.parse(String(rawNotes));
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
@@ -141,24 +142,17 @@ export function parseOrderNotesObject(rawNotes) {
 
 const LEGACY_PEDIDOS_RETIRO_ORIGINS = new Set(["public_sales", "retiro", "admin_local"]);
 
-function normalizeLegacyTransportKey(value) {
-  return String(value || "")
-    .trim()
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/\s+/g, " ");
-}
-
 /**
  * Pedido que en NJ vive en el Kanban Retiro (`/nj/admin/retiro`), no en Pedidos.
- * Criterio conservador a propósito: NO copia el fallback geo de NJ
- * (`isDashboardRetiroLocalZone`) para no ocultar envíos de Chaco/Corrientes
- * que el admin todavía opera en esta pantalla legacy.
+ * Misma regla que `isLocalPickupBoardOrder`: solo señal explícita.
+ * El transporte "Retira local" del perfil NO oculta el pedido de cerrados
+ * (rótulos). `kanban_scope = shipping` gana. `local_pickup_fulfilled_at`
+ * = ya cobrado en local: no es cerrado de envío.
  *
- * `kanban_scope = shipping` gana (pedido movido a Pedidos desde Retiro).
+ * `transportLabel` se acepta por compatibilidad de callers; ya no clasifica.
  */
 export function isRetiroBoardOrderForLegacyPedidos(order, transportLabel = "") {
+  void transportLabel;
   if (!order) return false;
   const notes = parseOrderNotesObject(order.notes);
   const scope = String(notes.kanban_scope || "").trim().toLowerCase();
@@ -168,8 +162,40 @@ export function isRetiroBoardOrderForLegacyPedidos(order, transportLabel = "") {
   const origin = String(notes.retiro_origin || "").trim().toLowerCase();
   if (LEGACY_PEDIDOS_RETIRO_ORIGINS.has(origin)) return true;
   if (order.local_deferred_pickup === true) return true;
-  const key = normalizeLegacyTransportKey(transportLabel);
-  return key === "retira local" || key === "retiro del local" || key === "retiro de local";
+  if (notes.local_pickup_fulfilled_at) return true;
+  return false;
+}
+
+/** Quitar un producto deja la fila en order_items con status cancelled; no se borra. */
+export function isCancelledOrderItem(item) {
+  return String(item?.status || "").trim().toLowerCase() === "cancelled";
+}
+
+/** Ítems vigentes para imprimir, contar y cobrar. Acepta un pedido o un array. */
+export function getActiveOrderItems(orderOrItems) {
+  const items = Array.isArray(orderOrItems)
+    ? orderOrItems
+    : (Array.isArray(orderOrItems?.order_items) ? orderOrItems.order_items : []);
+  return items.filter((item) => !isCancelledOrderItem(item));
+}
+
+export function sumOrderItemQuantities(items) {
+  return (items || []).reduce((sum, item) => sum + (Number(item?.quantity) || 0), 0);
+}
+
+/** Corte de red / timeout: no es un choque de stock (disponible < solicitado). */
+export function isTransientNetworkError(err) {
+  const name = String(err?.name ?? "");
+  const message = String(err?.message ?? err ?? "");
+  if (name === "AbortError") return true;
+  if (/failed to fetch|networkerror|network request failed|load failed|fyl_timeout|err_network|err_internet|failed to load/i.test(message)) {
+    return true;
+  }
+  return name === "TypeError" && /fetch|network|failed|load/i.test(message);
+}
+
+export function isNetworkStockPendingReason(rawReason) {
+  return isTransientNetworkError(String(rawReason || "").trim());
 }
 
 export function parseStockPendingReasonConflict(rawReason) {

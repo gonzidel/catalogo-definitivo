@@ -16,6 +16,11 @@ import {
   getPendingLabelNameEntry,
   normalizeLabelNameCompare,
 } from "../scripts/utils/label-names.js?v=m260607";
+import {
+  getActiveOrderItems,
+  isRetiroBoardOrderForLegacyPedidos,
+  sumOrderItemQuantities,
+} from "./orders-domain.js?v=m260607";
 
 const TIMEZONE_BUENOS_AIRES = "America/Argentina/Buenos_Aires";
 
@@ -28,6 +33,30 @@ let currentAdminUser = null;
 let realtimeSubscription = null;
 let isRealtimeSubscribed = false;
 const closedOrdersVariantPriceMap = new Map(); // variant_id -> price de catálogo (raw)
+
+/**
+ * Label de transporte (compat). El filtro de Retiro ya no usa el nombre:
+ * solo kanban_scope / caja / deferred / fulfilled.
+ */
+function transportLabelForRetiroFilter(order) {
+  const customer = Array.isArray(order?.customers)
+    ? (order.customers[0] || {})
+    : (order?.customers && typeof order.customers === "object" ? order.customers : {});
+  const transportId = String(
+    order?.transport_id || customer?.transport_id || ""
+  ).trim();
+  if (!transportId) return "";
+  const transport = scheduledTransports.find((t) => String(t.id) === transportId);
+  return canonicalizeTransportName(transport?.name || "") || "";
+}
+
+/** Cerrados de envío solamente: excluye tablero Retiro (Apartados / cobro local). */
+function excludeRetiroBoardOrdersFromClosedList(list) {
+  if (!Array.isArray(list)) return [];
+  return list.filter(
+    (order) => !isRetiroBoardOrderForLegacyPedidos(order, transportLabelForRetiroFilter(order))
+  );
+}
 
 /** Pedido bloqueado hasta confirmar pago o costo Correo (migración 320). */
 function requiresPaymentConfirmation(order) {
@@ -664,11 +693,8 @@ async function prepareShippingLabelFromOrder(order) {
   const transport = scheduledTransports.find(t => t.id === transportId);
   const carrier = transport ? transport.name : (customer.transport_id ? 'Sin transporte' : 'Sin transporte asignado');
 
-  // Calcular cantidad total de productos
-  const itemsCount = (order.order_items || []).reduce(
-    (sum, item) => sum + (item.quantity || 0),
-    0
-  );
+  const activeItems = getActiveOrderItems(order);
+  const itemsCount = sumOrderItemQuantities(activeItems);
 
   // Parsear valores extra desde notes (mismo criterio que ticket/detalle)
   let shippingAmount = 0;
@@ -692,9 +718,10 @@ async function prepareShippingLabelFromOrder(order) {
   // aplicado el descuento de promociones 2x1/2xMonto (bug corregido 2026-07-23 en
   // order-creator.js/rpc_checkout_cart, aún pendiente en pedidos históricos).
   const offersData = await getOffersAndPromotionsForOrder(order);
-  const productsSubtotal = (order.order_items || [])
-    .filter((item) => item.status !== 'cancelled')
-    .reduce((sum, item) => sum + (item.quantity || 0) * getClosedOrderUnitPrice(item), 0);
+  const productsSubtotal = activeItems.reduce(
+    (sum, item) => sum + (item.quantity || 0) * getClosedOrderUnitPrice(item),
+    0
+  );
   const extrasPercentAmount = extrasPercentage > 0 ? (productsSubtotal * extrasPercentage / 100) : 0;
   const total =
     productsSubtotal
@@ -717,6 +744,9 @@ async function prepareShippingLabelFromOrder(order) {
     hasAddress: !!customer.address
   });
 
+  // Misma etiqueta que la tarjeta: COD (SEDE/MyM/Norte) → Contra Reembolso,
+  // aunque en DB quede "Pendiente" del cierre (bug rótulo PENDIENTE).
+  const transportName = transport ? transport.name : "";
   return {
     fullName: getOrderLabelDisplayName(order, customer),
     address: customer.address || "Sin dirección",
@@ -727,7 +757,7 @@ async function prepareShippingLabelFromOrder(order) {
     itemsCount: itemsCount.toString(),
     amount: amount,
     orderCode: order.order_number || order.id.substring(0, 8),
-    paymentMethod: order.payment_method || ''
+    paymentMethod: getClosedOrderPaymentLabel(order, transportName),
   };
 }
 
@@ -1114,7 +1144,7 @@ async function getOffersAndPromotionsForOrder(order, referenceDate) {
     return { offers: [], promotions: [], totalDiscount: 0, itemOffers: new Map(), itemPromos: new Map() };
   }
 
-  const items = order.order_items.filter(item => item.status !== 'cancelled');
+  const items = getActiveOrderItems(order);
   const variantIds = [];
   const itemVariantMap = new Map();
   const itemToVariantMap = new Map();
@@ -1232,6 +1262,7 @@ async function loadClosedOrders() {
       labels_printed,
       labels_count,
       transport_id,
+      local_deferred_pickup,
       payment_method,
       label_customer_name,
       label_customer_dni,
@@ -1380,6 +1411,8 @@ async function loadClosedOrders() {
 
   if (error) {
     console.error("❌ Error cargando pedidos cerrados:", error);
+    orders = [];
+    updateClosedOrdersHeaderCount(0);
     const container = document.getElementById("orders-content");
     if (container) {
       container.innerHTML = `
@@ -1395,6 +1428,9 @@ async function loadClosedOrders() {
     }
     return;
   }
+
+  // Retiro (Apartados / cobro local) no es "cerrado de envío": misma exclusión que Pedidos legacy.
+  data = excludeRetiroBoardOrdersFromClosedList(data || []);
 
   // Cargar precio de catálogo por variante para corregir snapshots legacy corruptos.
   closedOrdersVariantPriceMap.clear();
@@ -1437,11 +1473,8 @@ async function renderOrderCard(order) {
   const customerEmail = customer.email || "Sin email";
   const offersData = await getOffersAndPromotionsForOrder(order);
 
-  // Calcular cantidad total de productos
-  const totalProducts = (order.order_items || []).reduce(
-    (sum, item) => sum + (item.quantity || 0),
-    0
-  );
+  const activeItems = getActiveOrderItems(order);
+  const totalProducts = sumOrderItemQuantities(activeItems);
 
   // Parsear valores extra desde notes
   let shippingAmount = 0;
@@ -1466,9 +1499,10 @@ async function renderOrderCard(order) {
   // promociones 2x1/2xMonto aplicado (bug corregido 2026-07-23 en order-creator.js/rpc_checkout_cart
   // aún pendiente en pedidos históricos), lo que mostraba un total mayor al que corresponde
   // aunque la línea "Descuentos (ofertas/promos)" sí apareciera con el monto correcto.
-  const productsSubtotalForTotal = (order.order_items || [])
-    .filter((item) => item.status !== 'cancelled')
-    .reduce((sum, item) => sum + (item.quantity || 0) * getClosedOrderUnitPrice(item), 0);
+  const productsSubtotalForTotal = activeItems.reduce(
+    (sum, item) => sum + (item.quantity || 0) * getClosedOrderUnitPrice(item),
+    0
+  );
   const total = productsSubtotalForTotal
     + shippingAmount
     - discountAmount
@@ -1686,12 +1720,38 @@ async function renderOrderCard(order) {
   `;
 }
 
+function updateClosedOrdersHeaderCount(totalCount, visibleCount = null) {
+  const badge = document.getElementById("closed-orders-count");
+  const total = Math.max(0, Number(totalCount) || 0);
+  const visible =
+    visibleCount == null ? total : Math.max(0, Number(visibleCount) || 0);
+  const searching = Boolean(String(currentSearch || "").trim());
+
+  if (badge) {
+    badge.textContent = searching && visible !== total
+      ? `${visible}/${total}`
+      : String(total);
+    badge.classList.toggle("is-empty", total === 0);
+    badge.setAttribute(
+      "aria-label",
+      searching && visible !== total
+        ? `${visible} de ${total} pedidos cerrados`
+        : `${total} pedido${total === 1 ? "" : "s"} cerrado${total === 1 ? "" : "s"}`
+    );
+  }
+
+  document.title = total > 0
+    ? `🚚 Pedidos Cerrados (${total}) - Catálogo FYL`
+    : "🚚 Pedidos Cerrados - Catálogo FYL";
+}
+
 // Función para mostrar pedidos
 async function displayOrders() {
   const container = document.getElementById("orders-content");
   if (!container) return;
 
   const filtered = orders.filter(matchesSearch);
+  updateClosedOrdersHeaderCount(orders.length, filtered.length);
 
   if (!filtered.length) {
     container.innerHTML = `
@@ -2327,8 +2387,7 @@ async function showOrderDetail(orderId) {
   }
 
   const offersData = await getOffersAndPromotionsForOrder(order);
-  const allItems = order.order_items || [];
-  const activeItems = allItems.filter(item => item.status !== 'cancelled');
+  const activeItems = getActiveOrderItems(order);
 
   // Parsear valores extra
   let shippingAmount = 0;
@@ -2478,7 +2537,7 @@ async function showOrderDetail(orderId) {
  * @returns {Promise<string>} Ticket formateado en texto plano
  */
 async function buildEscposTicketOrder(order) {
-  const items = order.order_items || [];
+  const items = getActiveOrderItems(order);
   
   // Obtener cliente (puede ser objeto o array)
   let customer = null;
@@ -2607,9 +2666,7 @@ async function buildEscposTicketOrder(order) {
 
   // Subtotal productos (excluye cancelados, igual criterio que el descuento de ofertas/promos
   // calculado en offersData, para que el TOTAL de abajo sea consistente)
-  const productsSubtotal = items
-    .filter((item) => item.status !== 'cancelled')
-    .reduce((sum, item) => {
+  const productsSubtotal = items.reduce((sum, item) => {
       const price = getClosedOrderUnitPrice(item);
       const qty = parseInt(item.quantity || 0);
       return sum + (price * qty);
@@ -3712,9 +3769,7 @@ async function handleFacturarClick(orderId) {
       throw new Error(`No se pudieron cargar los items: ${itemsError.message}`);
     }
 
-    const activeItems = (orderData?.order_items || [])
-      .filter((i) => i.status !== "cancelled")
-      .map((i) => ({
+    const activeItems = getActiveOrderItems(orderData).map((i) => ({
         productName: i.product_name,
         quantity: Number(i.quantity),
         priceSnapshot: Number(i.price_snapshot),
@@ -3900,7 +3955,7 @@ async function enrichShippingListOrdersWithCorrectedTotal(list, referenceDate) {
 
   return Promise.all(
     list.map(async (order) => {
-      const orderItems = (itemsByOrder.get(order.id) || []).filter((item) => item.status !== "cancelled");
+      const orderItems = getActiveOrderItems(itemsByOrder.get(order.id) || []);
       const offersData = await getOffersAndPromotionsForOrder({ order_items: orderItems }, referenceDate);
       const productsSubtotal = orderItems.reduce(
         (sum, item) => sum + (item.quantity || 0) * getClosedOrderUnitPrice(item),

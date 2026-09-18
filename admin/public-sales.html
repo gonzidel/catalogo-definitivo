@@ -1819,6 +1819,18 @@
       <p style="margin: 0 0 24px; color: #666; font-size: 14px;">
         Este producto no tiene stock disponible. ¿Está seguro de que desea agregarlo de todas formas?
       </p>
+      <div style="text-align: left; margin: 0 0 20px;">
+        <label for="no-stock-confirm-reason" style="display: block; font-size: 12px; color: #888; margin-bottom: 6px;">
+          Motivo (opcional): ¿por qué se agrega sin stock?
+        </label>
+        <input
+          type="text"
+          id="no-stock-confirm-reason"
+          placeholder="Ej: conteo desactualizado, prenda extra en el local..."
+          maxlength="200"
+          style="width: 100%; padding: 8px 10px; border: 1px solid #e0e0e0; border-radius: 6px; font-size: 13px; box-sizing: border-box;"
+        />
+      </div>
       <div style="display: flex; gap: 12px; justify-content: center;">
         <button class="btn btn-primary" id="no-stock-confirm-yes" style="padding: 10px 24px; font-size: 14px;">Sí, Agregar</button>
         <button class="btn btn-secondary" id="no-stock-confirm-no" style="padding: 10px 24px; font-size: 14px;">Cancelar</button>

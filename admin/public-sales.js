@@ -686,6 +686,7 @@ let currentVariants = [];
 let selectedColor = null;
 let selectedSizes = {}; // { size: quantity }
 let selectedSizesSource = {}; // { size: { ventaPublico: qty, general: qty } } - rastrear de dónde viene cada cantidad
+let selectedSizesReason = {}; // { size: string|null } - motivo opcional escrito al confirmar "sin stock" (343)
 let saleItems = []; // Array de items en la venta
 let selectedCustomer = null;
 let customerCredits = [];
@@ -698,6 +699,7 @@ let manualSelectedColor = null;
 let manualSelectedSizes = {};
 let manualSelectedSizesSource = {}; // { size: { ventaPublico: qty, general: qty } }
 let manualSelectedSizesConfirmedWithoutStock = {}; // { size: true } - talles confirmados para agregar sin stock
+let manualSelectedSizesReason = {}; // { size: string|null } - motivo opcional escrito al confirmar "sin stock" (343)
 /** Selección pendiente multi-color (como PAU): key variantId|talle → fila con cantidad y fuente de stock */
 let manualPending = new Map();
 
@@ -721,7 +723,7 @@ function getColorPendingQty(color) {
   return n;
 }
 
-function setManualPendingForSize(variant, size, quantity, source, confirmedWithoutStock) {
+function setManualPendingForSize(variant, size, quantity, source, confirmedWithoutStock, reason) {
   if (!variant) return;
   const key = manualPendingKey(variant.id, size);
   if (!quantity || quantity <= 0) {
@@ -738,6 +740,7 @@ function setManualPendingForSize(variant, size, quantity, source, confirmedWitho
       general: source?.general || 0,
     },
     confirmedWithoutStock: !!confirmedWithoutStock,
+    reason: reason || null, // 343: motivo opcional de "agregar sin stock"
   });
 }
 
@@ -745,6 +748,7 @@ function syncManualViewFromPending(color) {
   manualSelectedSizes = {};
   manualSelectedSizesSource = {};
   manualSelectedSizesConfirmedWithoutStock = {};
+  manualSelectedSizesReason = {};
   if (!color) return;
   for (const row of manualPending.values()) {
     if (row.color !== color) continue;
@@ -755,6 +759,7 @@ function syncManualViewFromPending(color) {
     };
     if (row.confirmedWithoutStock) {
       manualSelectedSizesConfirmedWithoutStock[row.size] = true;
+      manualSelectedSizesReason[row.size] = row.reason || null;
     }
   }
 }
@@ -767,7 +772,8 @@ function syncPendingFromCurrentSize(size) {
   const qty = manualSelectedSizes[size] || 0;
   const source = manualSelectedSizesSource[size] || { ventaPublico: 0, general: 0 };
   const confirmed = !!manualSelectedSizesConfirmedWithoutStock[size];
-  setManualPendingForSize(variant, size, qty, source, confirmed);
+  const reason = manualSelectedSizesReason[size] || null;
+  setManualPendingForSize(variant, size, qty, source, confirmed, reason);
 }
 
 function clearManualPending() {
@@ -775,6 +781,16 @@ function clearManualPending() {
   manualSelectedSizes = {};
   manualSelectedSizesSource = {};
   manualSelectedSizesConfirmedWithoutStock = {};
+  manualSelectedSizesReason = {};
+}
+
+// 343: lee y limpia el input de motivo del modal "sin stock" compartido.
+function readAndClearNoStockReasonInput() {
+  const input = document.getElementById("no-stock-confirm-reason");
+  if (!input) return null;
+  const value = input.value.trim();
+  input.value = "";
+  return value || null;
 }
 
 function decorateManualColorButton(btn, qty) {
@@ -2392,6 +2408,7 @@ function updateManualSizeButton(size, generalStock, ventaPublicoStock, totalStoc
             delete manualSelectedSizes[size];
             delete manualSelectedSizesSource[size];
             delete manualSelectedSizesConfirmedWithoutStock[size];
+            delete manualSelectedSizesReason[size];
           }
           syncPendingFromCurrentSize(size);
           // Obtener stock actualizado para este talle (comparar talles normalizados para evitar fallos por formato)
@@ -2617,6 +2634,7 @@ async function renderManualSizeButtons() {
             delete manualSelectedSizes[size];
             delete manualSelectedSizesSource[size];
             delete manualSelectedSizesConfirmedWithoutStock[size];
+            delete manualSelectedSizesReason[size];
           }
           syncPendingFromCurrentSize(size);
           updateManualSizeButton(size, generalStock, ventaPublicoStock, totalStock);
@@ -2734,6 +2752,8 @@ async function renderManualSizeButtons() {
               manualSelectedSizes[size] = currentQty + 1;
               // Marcar que este talle fue confirmado para agregar sin stock
               manualSelectedSizesConfirmedWithoutStock[size] = true;
+              // 343: motivo opcional escrito por el vendedor
+              manualSelectedSizesReason[size] = readAndClearNoStockReasonInput();
 
               // SIEMPRE resetear a 0,0 cuando se confirma sin stock
               // Esto indica que el usuario aceptó agregar sin descontar de ningún warehouse
@@ -2787,6 +2807,8 @@ async function renderManualSizeButtons() {
           manualSelectedSizes[size] = currentQty + 1;
           // Marcar que este talle fue confirmado para agregar sin stock
           manualSelectedSizesConfirmedWithoutStock[size] = true;
+          // 343: motivo opcional escrito por el vendedor
+          manualSelectedSizesReason[size] = readAndClearNoStockReasonInput();
 
           // SIEMPRE resetear a 0,0 cuando se confirma sin stock
           // Esto indica que el usuario aceptó agregar sin descontar de ningún warehouse
@@ -2910,6 +2932,8 @@ if (manualLoadBtn) {
         existingSource &&
         existingSource.ventaPublico === 0 &&
         existingSource.general === 0;
+      // 343: motivo opcional escrito al confirmar "sin stock" (solo aplica si corresponde)
+      const reason = wasConfirmedWithoutStock ? (row.reason || null) : null;
 
       let source;
       if (wasConfirmedWithoutStock) {
@@ -2953,12 +2977,14 @@ if (manualLoadBtn) {
             ventaPublico: (existingSize.source?.ventaPublico || 0) + source.ventaPublico,
             general: (existingSize.source?.general || 0) + source.general
           };
+          if (reason) existingSize.reason = reason;
         } else {
           saleItems[existingIndex].sizes.push({
             size,
             quantity,
             variantId: variant.id,
-            source: { ventaPublico: source.ventaPublico, general: source.general }
+            source: { ventaPublico: source.ventaPublico, general: source.general },
+            reason,
           });
         }
         saleItems[existingIndex].totalQuantity += quantity;
@@ -3015,7 +3041,8 @@ if (manualLoadBtn) {
             size,
             quantity,
             variantId: variant.id,
-            source: { ventaPublico: source.ventaPublico, general: source.general }
+            source: { ventaPublico: source.ventaPublico, general: source.general },
+            reason,
           }],
           totalQuantity: quantity,
           totalValue: itemTotalValue,
@@ -4491,6 +4518,8 @@ async function renderSizeButtons() {
               // SIEMPRE resetear a 0,0 cuando se confirma sin stock
               // Esto indica que el usuario aceptó agregar sin descontar de ningún warehouse
               selectedSizesSource[size] = { ventaPublico: 0, general: 0 };
+              // 343: motivo opcional escrito por el vendedor
+              selectedSizesReason[size] = readAndClearNoStockReasonInput();
 
               renderSizeButtons();
               updateLoadButton();
@@ -4541,6 +4570,8 @@ async function renderSizeButtons() {
           // SIEMPRE resetear a 0,0 cuando se confirma sin stock
           // Esto indica que el usuario aceptó agregar sin descontar de ningún warehouse
           selectedSizesSource[size] = { ventaPublico: 0, general: 0 };
+          // 343: motivo opcional escrito por el vendedor
+          selectedSizesReason[size] = readAndClearNoStockReasonInput();
 
           renderSizeButtons();
           updateLoadButton();
@@ -4583,6 +4614,7 @@ loadToSaleBtn.addEventListener("click", async () => {
 
     // Obtener fuente del stock para este talle
     const source = selectedSizesSource[size] || { ventaPublico: quantity, general: 0 };
+    const reason = selectedSizesReason[size] || null; // 343: motivo opcional "sin stock"
 
     // Si no hay fuente definida, calcularla basándose en el stock disponible
     if (!selectedSizesSource[size]) {
@@ -4604,12 +4636,14 @@ loadToSaleBtn.addEventListener("click", async () => {
           ventaPublico: (existingSize.source?.ventaPublico || 0) + source.ventaPublico,
           general: (existingSize.source?.general || 0) + source.general
         };
+        if (reason) existingSize.reason = reason;
       } else {
         saleItems[existingIndex].sizes.push({
           size,
           quantity,
           variantId: variant.id,
-          source: { ventaPublico: source.ventaPublico, general: source.general }
+          source: { ventaPublico: source.ventaPublico, general: source.general },
+          reason,
         });
       }
       saleItems[existingIndex].totalQuantity += quantity;
@@ -4673,7 +4707,8 @@ loadToSaleBtn.addEventListener("click", async () => {
           size,
           quantity,
           variantId: variant.id,
-          source: { ventaPublico: source.ventaPublico, general: source.general }
+          source: { ventaPublico: source.ventaPublico, general: source.general },
+          reason,
         }],
         totalQuantity: quantity,
         totalValue: itemTotalValue,
@@ -4685,6 +4720,7 @@ loadToSaleBtn.addEventListener("click", async () => {
   // Limpiar selección
   selectedSizes = {};
   selectedSizesSource = {};
+  selectedSizesReason = {};
   selectedColor = null;
   renderSizeButtons();
   renderSaleList();
@@ -4832,7 +4868,7 @@ function renderSaleList() {
           <span class="qty">${s.quantity}</span>
           <button type="button" class="sale-qty-btn" onclick="event.stopPropagation(); increaseSaleItemQuantity(${originalIndex}, ${sizeIndex})" title="Aumentar">+</button>
         </div>
-        ${isWithoutConfirmedStock ? '<div style="margin-top:2px; font-size:10px; color:#b71c1c; font-weight:600;">⚠️ Sin stock confirmado</div>' : ''}
+        ${isWithoutConfirmedStock ? `<div style="margin-top:2px; font-size:10px; color:#b71c1c; font-weight:600;">⚠️ Sin stock confirmado${s.reason ? `: ${escapeHtml(s.reason)}` : ''}</div>` : ''}
       </div>
     `;
     }).join("");
@@ -5200,6 +5236,36 @@ async function getActivePromotionsForVariants(variantIds) {
   }
 }
 
+/** Clave de unidad para promos 2x: no mezclar venta y devolución del mismo artículo. */
+function salePromoUnitKey(item, size) {
+  return `${item.productId}-${item.color}-${size.size}-${item.isReturn ? "r" : "s"}`;
+}
+
+/**
+ * Cambio de talle/color (o producto) a neto $0: hay venta y devolución,
+ * sin extras que muevan dinero. Solo movimiento de stock, sin ticket.
+ */
+function isNetZeroProductExchange(items, finalTotal) {
+  if (Math.abs(Number(finalTotal) || 0) > 0.009) return false;
+  let hasSale = false;
+  let hasReturn = false;
+  let extraMoney = 0;
+  for (const item of items || []) {
+    if (item.isExtra || item.is_special_extra) {
+      extraMoney +=
+        Number(item.totalValue) ||
+        (Number(item.price) || 0) * (Number(item.qty) || Number(item.totalQuantity) || 1);
+      continue;
+    }
+    const qty = Number(item.totalQuantity ?? item.qty ?? 0);
+    if (qty <= 0) continue;
+    if (item.isReturn || item.is_return) hasReturn = true;
+    else hasSale = true;
+  }
+  if (Math.abs(extraMoney) > 0.009) return false;
+  return hasSale && hasReturn;
+}
+
 /**
  * Calcula el subtotal de productos considerando ofertas por color y promociones 2x1/2xMonto,
  * y devuelve además la información necesaria para representar cada promo aplicada como una
@@ -5264,8 +5330,10 @@ async function computeSalePromoGrouping(allSaleItems) {
     unitOverrides.set(key, (unitOverrides.get(key) || 0) + qty);
   };
 
-  // Primero procesar promociones (prioridad)
-  const promoGroups = new Map(); // promotion_id -> items[]
+  // Primero procesar promociones (prioridad).
+  // Venta y devolución no comparten grupo: un cambio 37↔38 del mismo artículo
+  // no debe armar un 2x1 falso.
+  const promoGroups = new Map(); // `${promotion_id}::sale|ret` -> items[]
 
   allSaleItems.forEach(item => {
     item.sizes.forEach(size => {
@@ -5275,22 +5343,24 @@ async function computeSalePromoGrouping(allSaleItems) {
       if (promos.length > 0) {
         // Item está en promoción
         const promo = promos[0]; // Tomar la primera promo si hay múltiples
-        if (!promoGroups.has(promo.promotion_id)) {
-          promoGroups.set(promo.promotion_id, []);
+        const groupKey = `${promo.promotion_id}::${item.isReturn ? "ret" : "sale"}`;
+        if (!promoGroups.has(groupKey)) {
+          promoGroups.set(groupKey, []);
         }
-        promoGroups.get(promo.promotion_id).push({
+        promoGroups.get(groupKey).push({
           item,
           size,
           variantId: size.variantId,
           quantity: size.quantity
         });
-        itemsInPromos.add(`${item.productId}-${item.color}-${size.size}`);
+        itemsInPromos.add(salePromoUnitKey(item, size));
       }
     });
   });
 
   // Aplicar promociones (solo si se cumple la condición mínima)
-  promoGroups.forEach((items, promoId) => {
+  promoGroups.forEach((items, groupKey) => {
+    const promoId = String(groupKey).split("::")[0];
     const promo = promotions.find(p => p.promotion_id === promoId);
     if (!promo) return;
 
@@ -5304,7 +5374,7 @@ async function computeSalePromoGrouping(allSaleItems) {
       // Los items se procesarán como items normales más adelante
       items.forEach(({ item, size, variantId, quantity }) => {
         // Remover de itemsInPromos para que se procese como item normal
-        const itemKey = `${item.productId}-${item.color}-${size.size}`;
+        const itemKey = salePromoUnitKey(item, size);
         itemsInPromos.delete(itemKey);
       });
       return; // Saltar esta promoción
@@ -5316,7 +5386,7 @@ async function computeSalePromoGrouping(allSaleItems) {
       let charged = 0;
       let promoChargedTotal = 0;
       items.forEach(({ item, size, variantId, quantity }) => {
-        const itemKey = `${item.productId}-${item.color}-${size.size}`;
+        const itemKey = salePromoUnitKey(item, size);
         // Todo el grupo 2x1 (pagas + gratis) se representa en una sola línea de oferta.
         addUnitOverride(itemKey, quantity);
 
@@ -5364,7 +5434,7 @@ async function computeSalePromoGrouping(allSaleItems) {
         const totalToCover = groups * 2;
         items.forEach(({ item, size, quantity }) => {
           if (coveredSoFar >= totalToCover) return;
-          const itemKey = `${item.productId}-${item.color}-${size.size}`;
+          const itemKey = salePromoUnitKey(item, size);
           const qtyForThisGroup = Math.min(quantity, totalToCover - coveredSoFar);
           addUnitOverride(itemKey, qtyForThisGroup);
           coveredSoFar += qtyForThisGroup;
@@ -5376,7 +5446,7 @@ async function computeSalePromoGrouping(allSaleItems) {
           let remaining = remainderQty;
           for (const { item, size, variantId, quantity } of items) {
             if (remaining <= 0) break;
-            const itemKey = `${item.productId}-${item.color}-${size.size}`;
+            const itemKey = salePromoUnitKey(item, size);
             const alreadyCovered = unitOverrides.get(itemKey) || 0;
             const availableAsRemainder = quantity - alreadyCovered;
             if (availableAsRemainder <= 0) continue;
@@ -5394,7 +5464,7 @@ async function computeSalePromoGrouping(allSaleItems) {
       } else {
         // Si no hay grupos completos, remover de itemsInPromos para procesar como normal
         items.forEach(({ item, size }) => {
-          const itemKey = `${item.productId}-${item.color}-${size.size}`;
+          const itemKey = salePromoUnitKey(item, size);
           itemsInPromos.delete(itemKey);
         });
       }
@@ -5408,7 +5478,7 @@ async function computeSalePromoGrouping(allSaleItems) {
     if (item.isExtra) return;
 
     item.sizes.forEach(size => {
-      const itemKey = `${item.productId}-${item.color}-${size.size}`;
+      const itemKey = salePromoUnitKey(item, size);
       if (itemsInPromos.has(itemKey)) {
         // Ya procesado en promoción
         return;
@@ -5509,10 +5579,11 @@ async function calculateTotals() {
       }
     }
   } else {
-    // Total cero
-    totalAmount.textContent = `$0`;
+    // Total cero: cambio de talle/color (venta + devolución) o lista vacía de monto
+    const isExchange = isNetZeroProductExchange(saleItems, finalTotal);
+    totalAmount.textContent = isExchange ? `$0 · cambio` : `$0`;
     totalAmount.style.color = "#333";
-    totalAmount.style.fontWeight = "normal";
+    totalAmount.style.fontWeight = isExchange ? "700" : "normal";
     totalAmount.style.fontSize = "inherit";
 
     // Ocultar casilla si el total es cero
@@ -6017,11 +6088,13 @@ finalizeSaleBtn.addEventListener("click", async () => {
         const srcGen = source.general || 0;
         // Confirmación "agregar sin stock" → rpc_create_public_sale no descuenta depósitos (conteo desfasado, producto físico existe)
         const sellWithoutStock = size.quantity > 0 && srcVp === 0 && srcGen === 0;
+        // 343: motivo opcional escrito por el vendedor al confirmar "sin stock" (null si no aplica/no se escribió)
+        const sellWithoutStockReason = sellWithoutStock ? (size.reason || null) : null;
 
         // Si esta línea (producto+color+talle) forma parte de un grupo 2x completo, esas unidades
         // se cobran a $0 acá (su valor ya está incluido en la línea sintética "N ofertas 2x...").
         // El resto (si sobra alguna unidad que no completó pareja) se cobra a precio normal.
-        const promoKey = `${item.productId}-${item.color}-${size.size}`;
+        const promoKey = salePromoUnitKey(item, size);
         const availableOverride = promoUnitOverridesRemaining.get(promoKey) || 0;
         const qtyAbsorbedByPromo = Math.min(availableOverride, size.quantity);
         if (qtyAbsorbedByPromo > 0) {
@@ -6044,6 +6117,7 @@ finalizeSaleBtn.addEventListener("click", async () => {
             is_return: item.isReturn || false,
             from_local_order: item.fromLocalOrder || false,
             sell_without_stock: sellWithoutStock,
+            sell_without_stock_reason: sellWithoutStockReason,
             source: {
               venta_publico: vpForPromo,
               general: genForPromo
@@ -6060,6 +6134,7 @@ finalizeSaleBtn.addEventListener("click", async () => {
             is_return: item.isReturn || false,
             from_local_order: item.fromLocalOrder || false, // Flag para indicar que viene de pedido local
             sell_without_stock: sellWithoutStock,
+            sell_without_stock_reason: sellWithoutStockReason,
             source: {
               venta_publico: vpForNormal,
               general: genForNormal
@@ -6181,6 +6256,11 @@ finalizeSaleBtn.addEventListener("click", async () => {
       notes += ` | [PAYMENT_METHOD: ${paymentMethod}]`;
     } else {
       notes = `[PAYMENT_METHOD: ${paymentMethod}]`;
+    }
+
+    const isStockExchange = isNetZeroProductExchange(saleItems, finalTotal);
+    if (isStockExchange) {
+      notes = notes ? `${notes} | [EXCHANGE]` : `[EXCHANGE]`;
     }
 
     // Caja 2 y 3: enviar compra pendiente a Caja 1 en lugar de finalizar aquí
@@ -6331,6 +6411,8 @@ finalizeSaleBtn.addEventListener("click", async () => {
     } else if (finalTotal < 0 && selectedCustomer?.id && !loadAsCredit) {
       // Saldo a favor pero NO se carga como crédito - el cliente verá $0 en su historial
       showMessage(`Venta registrada exitosamente: ${data.sale_number}. El saldo a favor no se cargó como crédito al cliente.`, "success");
+    } else if (isStockExchange) {
+      showMessage(`Cambio registrado (sin ticket): ${data.sale_number}`, "success");
     } else {
       showMessage(`Venta registrada exitosamente: ${data.sale_number}`, "success");
     }
@@ -6339,10 +6421,18 @@ finalizeSaleBtn.addEventListener("click", async () => {
     const { data: saleDetails, error: detailsError } = await supabase
       .rpc("rpc_get_public_sale_details", { p_sale_id: data.sale_id });
     
-    if (!detailsError && saleDetails) {
-      // Imprimir directamente sin mostrar modal
-      // Pasar finalTotal para que el ticket muestre el total correcto con todos los extras
-      await printDirectly(saleDetails, selectedCustomer, finalTotal);
+    if (!isStockExchange && !detailsError && saleDetails) {
+      // Cambio a $0: solo stock, sin ticket. Si la impresión falla, la venta ya está
+      // grabada — no abortar el cleanup (antes parecía que Finalizar no hacía nada).
+      try {
+        await printDirectly(saleDetails, selectedCustomer, finalTotal);
+      } catch (printErr) {
+        console.warn("Impresión venta:", printErr);
+        showMessage(
+          `Venta ${data.sale_number} registrada. No se pudo imprimir el ticket.`,
+          "error"
+        );
+      }
     }
 
     // Si esta venta proviene de una compra pendiente, marcarla como completada
@@ -8216,10 +8306,13 @@ document.getElementById("order-edit-finalize-btn")?.addEventListener("click", as
       });
     }
     const finalTotal = getEditOrderTotal();
+    const isStockExchange = isNetZeroProductExchange(saleItems, finalTotal);
     const { data: saleData, error: saleError } = await supabase.rpc("rpc_create_public_sale", {
       p_items: saleItems,
       p_customer_id: editOrderCustomer.id,
-      p_notes: `Pedido local ${editOrder.order_number || editOrderId}`,
+      p_notes: isStockExchange
+        ? `Pedido local ${editOrder.order_number || editOrderId} | [EXCHANGE]`
+        : `Pedido local ${editOrder.order_number || editOrderId}`,
       p_apply_credit: true,
       p_total_amount: finalTotal,
       p_operation_id: createSaleOperationId,
@@ -8265,14 +8358,19 @@ document.getElementById("order-edit-finalize-btn")?.addEventListener("click", as
       console.warn("Cierre espejo Retiro:", mirrorCloseErr);
     }
     const { data: saleDetails, error: detailsError } = await supabase.rpc("rpc_get_public_sale_details", { p_sale_id: saleData.sale_id });
-    if (!detailsError && saleDetails) {
+    if (!isStockExchange && !detailsError && saleDetails) {
       try {
         await printDirectly(saleDetails, editOrderCustomer, finalTotal);
       } catch (printErr) {
         console.warn("Impresión:", printErr);
       }
     }
-    showOrderEditMessage(`Pedido finalizado. Venta ${saleData.sale_number} registrada.`, "success");
+    showOrderEditMessage(
+      isStockExchange
+        ? `Cambio registrado (sin ticket): ${saleData.sale_number}`
+        : `Pedido finalizado. Venta ${saleData.sale_number} registrada.`,
+      "success"
+    );
     document.getElementById("order-edit-modal").classList.remove("active");
     loadLocalOrders();
   } catch (e) {

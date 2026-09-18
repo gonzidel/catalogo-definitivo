@@ -33,6 +33,10 @@ async function applyStockPermissions() {
   }
 
   // Ocultar/mostrar elementos según permisos
+  const bulkQrOpenBtn = document.getElementById("bulk-qr-open");
+  if (bulkQrOpenBtn) {
+    bulkQrOpenBtn.style.display = canEditStock ? "" : "none";
+  }
   if (!canEditStock) {
     // Ocultar botones de guardar y editar
     const saveAllBtn = document.getElementById("save-all");
@@ -195,7 +199,7 @@ let activeSearchRequest = 0;
 let isStockUiReady = true;
 let stockLoadingWatchdog = null;
 let mobileKeyboardViewportListenersBound = false;
-const STOCK_BUILD_VERSION = "build-m270426";
+const STOCK_BUILD_VERSION = "build-m270904-bulkqr";
 const MOBILE_STOCK_BREAKPOINT = 767;
 const AUTH_SLOW_NOTICE_MS = 8000;
 const SEARCH_LOAD_TIMEOUT_MS = 15000;
@@ -3200,6 +3204,7 @@ if (mobileWizardOverlay) {
 }
 
 window.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && bulkQrEls.overlay?.classList.contains("show")) return;
   if (e.key === "Escape" && mobileWizardState.open) {
     closeMobileStockWizard();
   }
@@ -4072,6 +4077,768 @@ function bindImmobileModalEvents() {
 }
 
 bindImmobileModalEvents();
+
+const BULK_QR_STORAGE_KEY = "fyl.stock.bulkQr.v1";
+const BULK_QR_PAGE_SIZE = 800;
+const BULK_QR_BATCH_SIZE = 200;
+const BULK_QR_SCAN_LOG_LIMIT = 100;
+const BULK_QR_SCAN_LIST_LIMIT = 40;
+const bulkQrMap = new Map();
+let bulkQrMapReady = false;
+let bulkQrMapLoading = null;
+let bulkQrSession = null;
+let bulkQrScanQueue = [];
+let bulkQrIsProcessingQueue = false;
+let bulkQrInputTimeout = null;
+let bulkQrPersistTimer = null;
+let bulkQrSaving = false;
+let bulkQrListenersBound = false;
+
+const bulkQrEls = {
+  overlay: document.getElementById("bulk-qr-overlay"),
+  openBtn: document.getElementById("bulk-qr-open"),
+  closeBtn: document.getElementById("bulk-qr-close"),
+  subtitle: document.getElementById("bulk-qr-subtitle"),
+  stepResume: document.getElementById("bulk-qr-step-resume"),
+  stepWarehouse: document.getElementById("bulk-qr-step-warehouse"),
+  stepScan: document.getElementById("bulk-qr-step-scan"),
+  stepReview: document.getElementById("bulk-qr-step-review"),
+  stepSaving: document.getElementById("bulk-qr-step-saving"),
+  stepDone: document.getElementById("bulk-qr-step-done"),
+  resumeMeta: document.getElementById("bulk-qr-resume-meta"),
+  resumeBtn: document.getElementById("bulk-qr-resume"),
+  discardBtn: document.getElementById("bulk-qr-discard"),
+  warehouseChip: document.getElementById("bulk-qr-warehouse-chip"),
+  totalUnits: document.getElementById("bulk-qr-total-units"),
+  totalSkus: document.getElementById("bulk-qr-total-skus"),
+  input: document.getElementById("bulk-qr-input"),
+  status: document.getElementById("bulk-qr-status"),
+  list: document.getElementById("bulk-qr-list"),
+  undoBtn: document.getElementById("bulk-qr-undo"),
+  cancelBtn: document.getElementById("bulk-qr-cancel-session"),
+  finishBtn: document.getElementById("bulk-qr-finish"),
+  reviewWarehouse: document.getElementById("bulk-qr-review-warehouse"),
+  reviewUnits: document.getElementById("bulk-qr-review-units"),
+  reviewSkus: document.getElementById("bulk-qr-review-skus"),
+  reviewList: document.getElementById("bulk-qr-review-list"),
+  reviewInactiveWrap: document.getElementById("bulk-qr-review-inactive"),
+  reviewInactiveList: document.getElementById("bulk-qr-review-inactive-list"),
+  reviewErrorsWrap: document.getElementById("bulk-qr-review-errors"),
+  reviewErrorList: document.getElementById("bulk-qr-review-error-list"),
+  backScanBtn: document.getElementById("bulk-qr-back-scan"),
+  confirmBtn: document.getElementById("bulk-qr-confirm"),
+  saveProgress: document.getElementById("bulk-qr-save-progress"),
+  saveError: document.getElementById("bulk-qr-save-error"),
+  retryBtn: document.getElementById("bulk-qr-retry"),
+  doneSummary: document.getElementById("bulk-qr-done-summary"),
+  doneCloseBtn: document.getElementById("bulk-qr-done-close"),
+};
+
+function escapeBulkQrHtml(str) {
+  return String(str ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function bulkQrItemKey(variantId, size) {
+  return `${String(variantId || "")}__${normalizeSize(size)}`;
+}
+
+function createEmptyBulkQrSession(warehouse) {
+  return {
+    v: 1,
+    warehouseCode: warehouse.code,
+    warehouseId: warehouse.id,
+    warehouseName: warehouse.name,
+    startedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    items: {},
+    scanLog: [],
+    errors: {},
+    save: null,
+  };
+}
+
+function readStoredBulkQrSession() {
+  try {
+    const raw = window.localStorage.getItem(BULK_QR_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || parsed.v !== 1 || !parsed.warehouseCode) return null;
+    if (!parsed.items || typeof parsed.items !== "object") return null;
+    return parsed;
+  } catch (err) {
+    console.warn("[stock] bulk QR session inválida:", err);
+    return null;
+  }
+}
+
+function persistBulkQrSession() {
+  if (!bulkQrSession) return;
+  bulkQrSession.updatedAt = new Date().toISOString();
+  try {
+    window.localStorage.setItem(BULK_QR_STORAGE_KEY, JSON.stringify(bulkQrSession));
+  } catch (err) {
+    console.warn("[stock] no se pudo persistir carga masiva:", err);
+  }
+}
+
+function schedulePersistBulkQrSession() {
+  if (bulkQrPersistTimer) clearTimeout(bulkQrPersistTimer);
+  bulkQrPersistTimer = window.setTimeout(() => {
+    bulkQrPersistTimer = null;
+    persistBulkQrSession();
+  }, 180);
+}
+
+function clearBulkQrSessionStorage() {
+  try {
+    window.localStorage.removeItem(BULK_QR_STORAGE_KEY);
+  } catch (_) {
+    // ignore
+  }
+}
+
+function bulkQrSessionHasWork(session) {
+  if (!session) return false;
+  return Object.keys(session.items || {}).length > 0
+    || Object.keys(session.errors || {}).length > 0
+    || Boolean(session.save);
+}
+
+function countBulkQrUnits(session) {
+  return Object.values(session?.items || {}).reduce((acc, item) => acc + (Number(item.qty) || 0), 0);
+}
+
+function switchBulkQrStep(target) {
+  const steps = [
+    bulkQrEls.stepResume,
+    bulkQrEls.stepWarehouse,
+    bulkQrEls.stepScan,
+    bulkQrEls.stepReview,
+    bulkQrEls.stepSaving,
+    bulkQrEls.stepDone,
+  ];
+  steps.forEach((step) => {
+    if (!step) return;
+    step.classList.toggle("active", step === target);
+  });
+}
+
+function setBulkQrStatus(message, kind) {
+  if (!bulkQrEls.status) return;
+  bulkQrEls.status.textContent = message || "";
+  bulkQrEls.status.classList.remove("is-error", "is-success", "is-warn");
+  if (kind === "error") bulkQrEls.status.classList.add("is-error");
+  else if (kind === "success") bulkQrEls.status.classList.add("is-success");
+  else if (kind === "warn") bulkQrEls.status.classList.add("is-warn");
+}
+
+function focusBulkQrInput() {
+  if (!bulkQrEls.input || !bulkQrEls.overlay?.classList.contains("show")) return;
+  window.setTimeout(() => {
+    try {
+      bulkQrEls.input.focus({ preventScroll: true });
+    } catch (_) {
+      bulkQrEls.input.focus();
+    }
+  }, 20);
+}
+
+function warehouseLabelFromCode(code) {
+  return code === "venta-publico" ? "Venta al Público" : "Almacén General";
+}
+
+async function resolveBulkQrWarehouse(code) {
+  const { data, error } = await supabase
+    .from("warehouses")
+    .select("id, code, name")
+    .eq("code", code)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data?.id) throw new Error(`No se encontró el depósito ${code}`);
+  return {
+    id: data.id,
+    code: data.code,
+    name: data.name || warehouseLabelFromCode(data.code),
+  };
+}
+
+function ingestBulkQrMapRows(rows) {
+  for (const row of rows || []) {
+    const qr = String(row?.qr_code ?? "").trim();
+    if (!qr) continue;
+    const variant = row.product_variants || {};
+    const product = variant.products || {};
+    const variantId = String(row.variant_id || variant.id || "");
+    const size = normalizeSize(row.size);
+    if (!variantId || !size) continue;
+    const productStatus = String(product.status || "");
+    const variantActive = variant.active !== false;
+    bulkQrMap.set(qr, {
+      qr_code: qr,
+      variant_id: variantId,
+      size,
+      product_id: String(variant.product_id || product.id || ""),
+      name: String(product.name || "Sin nombre"),
+      color: String(variant.color || "Sin color"),
+      sku: String(row.sku || variant.sku || ""),
+      inactive: !variantActive || productStatus !== "active",
+    });
+  }
+}
+
+async function preloadBulkQrMap() {
+  if (bulkQrMapReady && bulkQrMap.size > 0) return bulkQrMap;
+  if (bulkQrMapLoading) return bulkQrMapLoading;
+
+  bulkQrMapLoading = (async () => {
+    bulkQrMap.clear();
+    let offset = 0;
+    let hasMore = true;
+    while (hasMore) {
+      const { data, error } = await supabase
+        .from("variant_sizes")
+        .select("qr_code, size, sku, variant_id, product_variants(id, sku, color, active, product_id, products(id, name, status))")
+        .not("qr_code", "is", null)
+        .order("qr_code")
+        .range(offset, offset + BULK_QR_PAGE_SIZE - 1);
+      if (error) throw error;
+      const rows = data || [];
+      ingestBulkQrMapRows(rows);
+      hasMore = rows.length === BULK_QR_PAGE_SIZE;
+      offset += BULK_QR_PAGE_SIZE;
+    }
+    bulkQrMapReady = true;
+    return bulkQrMap;
+  })().finally(() => {
+    bulkQrMapLoading = null;
+  });
+
+  return bulkQrMapLoading;
+}
+
+function sortedBulkQrItems(session, limit) {
+  const items = Object.values(session?.items || {});
+  items.sort((a, b) => {
+    const ta = Number(b.touchedAt || 0) - Number(a.touchedAt || 0);
+    if (ta !== 0) return ta;
+    const nameCmp = String(a.name || "").localeCompare(String(b.name || ""), "es", { sensitivity: "base" });
+    if (nameCmp !== 0) return nameCmp;
+    const colorCmp = String(a.color || "").localeCompare(String(b.color || ""), "es", { sensitivity: "base" });
+    if (colorCmp !== 0) return colorCmp;
+    return compareCatalogSizes(a.size, b.size);
+  });
+  return typeof limit === "number" ? items.slice(0, limit) : items;
+}
+
+function renderBulkQrItemRow(item) {
+  const inactive = item.inactive
+    ? `<div class="bulk-qr-item-meta">Producto inactivo</div>`
+    : "";
+  return `<div class="bulk-qr-item${item.inactive ? " is-inactive" : ""}">
+    <div class="bulk-qr-item-main">
+      <div class="bulk-qr-item-title">${escapeBulkQrHtml(item.name)} · ${escapeBulkQrHtml(item.color)} · ${escapeBulkQrHtml(item.size)}</div>
+      <div class="bulk-qr-item-meta">${escapeBulkQrHtml(item.sku || "")}</div>
+      ${inactive}
+    </div>
+    <div class="bulk-qr-item-qty">x${Number(item.qty) || 0}</div>
+  </div>`;
+}
+
+function renderBulkQrScanUi() {
+  if (!bulkQrSession) return;
+  const units = countBulkQrUnits(bulkQrSession);
+  const combos = Object.keys(bulkQrSession.items).length;
+  if (bulkQrEls.warehouseChip) {
+    bulkQrEls.warehouseChip.textContent = bulkQrSession.warehouseName || warehouseLabelFromCode(bulkQrSession.warehouseCode);
+  }
+  if (bulkQrEls.totalUnits) bulkQrEls.totalUnits.textContent = String(units);
+  if (bulkQrEls.totalSkus) bulkQrEls.totalSkus.textContent = String(combos);
+  if (bulkQrEls.list) {
+    const rows = sortedBulkQrItems(bulkQrSession, BULK_QR_SCAN_LIST_LIMIT);
+    bulkQrEls.list.innerHTML = rows.map(renderBulkQrItemRow).join("");
+  }
+  if (bulkQrEls.undoBtn) {
+    bulkQrEls.undoBtn.disabled = (bulkQrSession.scanLog || []).length === 0;
+  }
+}
+
+function renderBulkQrReviewUi() {
+  if (!bulkQrSession) return;
+  const units = countBulkQrUnits(bulkQrSession);
+  const items = Object.values(bulkQrSession.items).sort((a, b) => {
+    const nameCmp = String(a.name || "").localeCompare(String(b.name || ""), "es", { sensitivity: "base" });
+    if (nameCmp !== 0) return nameCmp;
+    const colorCmp = String(a.color || "").localeCompare(String(b.color || ""), "es", { sensitivity: "base" });
+    if (colorCmp !== 0) return colorCmp;
+    return compareCatalogSizes(a.size, b.size);
+  });
+  if (bulkQrEls.reviewWarehouse) {
+    bulkQrEls.reviewWarehouse.textContent = bulkQrSession.warehouseName || warehouseLabelFromCode(bulkQrSession.warehouseCode);
+  }
+  if (bulkQrEls.reviewUnits) bulkQrEls.reviewUnits.textContent = String(units);
+  if (bulkQrEls.reviewSkus) bulkQrEls.reviewSkus.textContent = String(items.length);
+  if (bulkQrEls.reviewList) {
+    bulkQrEls.reviewList.innerHTML = items.map(renderBulkQrItemRow).join("");
+  }
+  const inactive = items.filter((item) => item.inactive);
+  if (bulkQrEls.reviewInactiveWrap && bulkQrEls.reviewInactiveList) {
+    bulkQrEls.reviewInactiveWrap.hidden = inactive.length === 0;
+    bulkQrEls.reviewInactiveList.innerHTML = inactive
+      .map((item) => `<li>${escapeBulkQrHtml(item.name)} · ${escapeBulkQrHtml(item.color)} · ${escapeBulkQrHtml(item.size)} · x${item.qty}</li>`)
+      .join("");
+  }
+  const errors = Object.entries(bulkQrSession.errors || {});
+  if (bulkQrEls.reviewErrorsWrap && bulkQrEls.reviewErrorList) {
+    bulkQrEls.reviewErrorsWrap.hidden = errors.length === 0;
+    bulkQrEls.reviewErrorList.innerHTML = errors
+      .map(([qr, count]) => `<li>QR ${escapeBulkQrHtml(qr)} (${count} lectura${count === 1 ? "" : "s"})</li>`)
+      .join("");
+  }
+}
+
+function closeBulkQrOverlay() {
+  if (!bulkQrEls.overlay) return;
+  bulkQrEls.overlay.classList.remove("show");
+  bulkQrEls.overlay.setAttribute("aria-hidden", "true");
+  if (bulkQrEls.input) bulkQrEls.input.value = "";
+}
+
+function openBulkQrOverlay() {
+  if (!bulkQrEls.overlay) return;
+  if (mobileWizardState.open) closeMobileStockWizard();
+  bulkQrEls.overlay.classList.add("show");
+  bulkQrEls.overlay.setAttribute("aria-hidden", "false");
+}
+
+async function ensureBulkQrMapForScan() {
+  if (bulkQrEls.subtitle) bulkQrEls.subtitle.textContent = "Cargando códigos QR...";
+  setBulkQrStatus("Precargando mapa de QR...", "");
+  await preloadBulkQrMap();
+  if (bulkQrEls.subtitle) {
+    bulkQrEls.subtitle.textContent = `${bulkQrMap.size} códigos listos · ${bulkQrSession.warehouseName}`;
+  }
+}
+
+async function enterBulkQrScanStep() {
+  switchBulkQrStep(bulkQrEls.stepScan);
+  renderBulkQrScanUi();
+  if (bulkQrEls.input) bulkQrEls.input.disabled = true;
+  try {
+    await ensureBulkQrMapForScan();
+    if (bulkQrEls.input) bulkQrEls.input.disabled = false;
+    setBulkQrStatus("Listo para escanear.", "success");
+    focusBulkQrInput();
+  } catch (err) {
+    console.error("[stock] preload QR carga masiva:", err);
+    if (bulkQrEls.input) bulkQrEls.input.disabled = false;
+    setBulkQrStatus("No se pudo precargar el mapa QR. Reintentá.", "error");
+  }
+}
+
+function processBulkQrCode(raw) {
+  const qrCode = String(raw ?? "").trim();
+  if (!qrCode || !bulkQrSession) return;
+  if (!bulkQrMapReady) {
+    setBulkQrStatus("Esperá, cargando mapa de QR...", "warn");
+    return;
+  }
+  const meta = bulkQrMap.get(qrCode);
+  if (!meta) {
+    bulkQrSession.errors[qrCode] = (Number(bulkQrSession.errors[qrCode]) || 0) + 1;
+    setBulkQrStatus(`QR ${qrCode} no encontrado`, "error");
+    triggerMobileHapticFeedback(60);
+    schedulePersistBulkQrSession();
+    return;
+  }
+
+  const key = bulkQrItemKey(meta.variant_id, meta.size);
+  const prev = bulkQrSession.items[key];
+  const nextQty = (Number(prev?.qty) || 0) + 1;
+  bulkQrSession.items[key] = {
+    variant_id: meta.variant_id,
+    product_id: meta.product_id || prev?.product_id || null,
+    size: meta.size,
+    name: meta.name,
+    color: meta.color,
+    sku: meta.sku,
+    qty: nextQty,
+    inactive: Boolean(meta.inactive),
+    touchedAt: Date.now(),
+  };
+  bulkQrSession.scanLog.push({ key, qr: qrCode });
+  if (bulkQrSession.scanLog.length > BULK_QR_SCAN_LOG_LIMIT) {
+    bulkQrSession.scanLog = bulkQrSession.scanLog.slice(-BULK_QR_SCAN_LOG_LIMIT);
+  }
+
+  const label = `Art. ${meta.name} · ${meta.color} · ${meta.size} · x${nextQty}`;
+  if (meta.inactive) {
+    setBulkQrStatus(`Producto inactivo. ${label}`, "warn");
+  } else {
+    setBulkQrStatus(`OK. ${label}`, "success");
+  }
+  renderBulkQrScanUi();
+  triggerMobileHapticFeedback(15);
+  schedulePersistBulkQrSession();
+}
+
+function submitBulkQrScan(raw) {
+  const trimmed = String(raw ?? "").trim();
+  if (!trimmed || !bulkQrSession) return;
+  if (!isCompleteMobileLectorCode(trimmed)) return;
+  bulkQrScanQueue.push(trimmed);
+  if (bulkQrEls.input) {
+    bulkQrEls.input.value = "";
+    focusBulkQrInput();
+  }
+  if (bulkQrIsProcessingQueue) return;
+  bulkQrIsProcessingQueue = true;
+  void (async () => {
+    try {
+      while (bulkQrScanQueue.length > 0) {
+        const nextCode = bulkQrScanQueue.shift();
+        if (!nextCode) continue;
+        try {
+          processBulkQrCode(nextCode);
+        } catch (err) {
+          console.error("[stock] bulk QR scan:", err);
+          setBulkQrStatus("Error al procesar el QR.", "error");
+          triggerMobileHapticFeedback(60);
+        }
+      }
+    } finally {
+      bulkQrIsProcessingQueue = false;
+    }
+  })();
+}
+
+function undoLastBulkQrScan() {
+  if (!bulkQrSession || !bulkQrSession.scanLog.length) return;
+  const last = bulkQrSession.scanLog.pop();
+  const item = bulkQrSession.items[last.key];
+  if (!item) {
+    renderBulkQrScanUi();
+    schedulePersistBulkQrSession();
+    return;
+  }
+  const nextQty = Math.max(0, (Number(item.qty) || 0) - 1);
+  if (nextQty === 0) {
+    delete bulkQrSession.items[last.key];
+    setBulkQrStatus(`Deshecho: ${item.name} · ${item.color} · ${item.size} · x0`, "success");
+  } else {
+    item.qty = nextQty;
+    item.touchedAt = Date.now();
+    setBulkQrStatus(`Deshecho: ${item.name} · ${item.color} · ${item.size} · x${nextQty}`, "success");
+  }
+  renderBulkQrScanUi();
+  schedulePersistBulkQrSession();
+  focusBulkQrInput();
+}
+
+function discardBulkQrSession() {
+  bulkQrSession = null;
+  bulkQrScanQueue = [];
+  bulkQrIsProcessingQueue = false;
+  clearBulkQrSessionStorage();
+  if (bulkQrEls.input) bulkQrEls.input.value = "";
+  setBulkQrStatus("", "");
+}
+
+function buildBulkQrPayload(session) {
+  return Object.values(session.items)
+    .filter((item) => Number(item.qty) > 0 && item.variant_id && item.size)
+    .map((item) => ({
+      variant_id: item.variant_id,
+      product_id: item.product_id || null,
+      size: item.size,
+      warehouse_id: session.warehouseId,
+      stock_qty: Number(item.qty) || 0,
+    }));
+}
+
+async function writeBulkQrBatches() {
+  if (!bulkQrSession) return;
+  if (!canEditStock) {
+    alert("No tienes permiso para editar el stock.");
+    return;
+  }
+
+  if (!bulkQrSession.save) {
+    const payload = buildBulkQrPayload(bulkQrSession);
+    if (!payload.length) {
+      setBulkQrStatus("No hay unidades para cargar.", "error");
+      switchBulkQrStep(bulkQrEls.stepScan);
+      return;
+    }
+    bulkQrSession.save = {
+      payload,
+      nextBatchIndex: 0,
+      lastError: null,
+    };
+    persistBulkQrSession();
+  }
+
+  const { payload, nextBatchIndex } = bulkQrSession.save;
+  const total = payload.length;
+  switchBulkQrStep(bulkQrEls.stepSaving);
+  if (bulkQrEls.retryBtn) bulkQrEls.retryBtn.hidden = true;
+  if (bulkQrEls.saveError) {
+    bulkQrEls.saveError.hidden = true;
+    bulkQrEls.saveError.textContent = "";
+  }
+
+  bulkQrSaving = true;
+  try {
+    for (let start = nextBatchIndex; start < total; start += BULK_QR_BATCH_SIZE) {
+      const end = Math.min(start + BULK_QR_BATCH_SIZE, total);
+      if (bulkQrEls.saveProgress) {
+        bulkQrEls.saveProgress.textContent = `Guardando ${end} / ${total}...`;
+      }
+      const chunk = payload.slice(start, end);
+      const { data: rpcData, error: rpcError } = await supabase.rpc(
+        "rpc_set_variant_size_stock_batch",
+        { p_items: chunk, p_source: "initial_load" }
+      );
+      if (rpcError) throw rpcError;
+      if (!rpcData?.ok) {
+        throw new Error("La RPC no confirmó la carga (ok=false).");
+      }
+      bulkQrSession.save.nextBatchIndex = end;
+      bulkQrSession.save.lastError = null;
+      persistBulkQrSession();
+    }
+
+    const units = payload.reduce((acc, item) => acc + (Number(item.stock_qty) || 0), 0);
+    const warehouseName = bulkQrSession.warehouseName;
+    const comboCount = payload.length;
+    if (bulkQrEls.doneSummary) {
+      bulkQrEls.doneSummary.textContent =
+        `${warehouseName}: ${units} unidades en ${comboCount} combinaciones.`;
+    }
+    discardBulkQrSession();
+    switchBulkQrStep(bulkQrEls.stepDone);
+    if (currentProductIds.length) {
+      await runStockLoad();
+    }
+    if (msg) msg.textContent = `Carga masiva aplicada en ${warehouseName}.`;
+  } catch (err) {
+    console.error("[stock] carga masiva RPC:", err);
+    if (bulkQrSession?.save) {
+      bulkQrSession.save.lastError = err?.message || String(err);
+      persistBulkQrSession();
+    }
+    const failedFrom = bulkQrSession?.save?.nextBatchIndex || 0;
+    if (bulkQrEls.saveProgress) {
+      bulkQrEls.saveProgress.textContent = `Error desde el lote ${failedFrom + 1} / ${total}.`;
+    }
+    if (bulkQrEls.saveError) {
+      bulkQrEls.saveError.hidden = false;
+      bulkQrEls.saveError.textContent = err?.message || "Error guardando stock.";
+    }
+    if (bulkQrEls.retryBtn) bulkQrEls.retryBtn.hidden = false;
+  } finally {
+    bulkQrSaving = false;
+  }
+}
+
+async function startBulkQrFromWarehouse(code) {
+  if (!canEditStock) {
+    alert("No tienes permiso para editar el stock.");
+    return;
+  }
+  try {
+    const warehouse = await resolveBulkQrWarehouse(code);
+    bulkQrSession = createEmptyBulkQrSession(warehouse);
+    persistBulkQrSession();
+    await enterBulkQrScanStep();
+  } catch (err) {
+    console.error("[stock] warehouse carga masiva:", err);
+    alert(err?.message || "No se pudo resolver el depósito.");
+  }
+}
+
+async function continueStoredBulkQrSession() {
+  const stored = bulkQrSession || readStoredBulkQrSession();
+  if (!stored) {
+    switchBulkQrStep(bulkQrEls.stepWarehouse);
+    return;
+  }
+  try {
+    const warehouse = await resolveBulkQrWarehouse(stored.warehouseCode);
+    stored.warehouseId = warehouse.id;
+    stored.warehouseName = warehouse.name;
+    bulkQrSession = stored;
+    persistBulkQrSession();
+    if (stored.save && Array.isArray(stored.save.payload) && stored.save.payload.length) {
+      switchBulkQrStep(bulkQrEls.stepSaving);
+      if (bulkQrEls.saveProgress) {
+        const done = stored.save.nextBatchIndex || 0;
+        bulkQrEls.saveProgress.textContent = `Quedó pendiente desde ${done} / ${stored.save.payload.length}.`;
+      }
+      if (stored.save.lastError && bulkQrEls.saveError) {
+        bulkQrEls.saveError.hidden = false;
+        bulkQrEls.saveError.textContent = stored.save.lastError;
+      }
+      if (bulkQrEls.retryBtn) bulkQrEls.retryBtn.hidden = false;
+      return;
+    }
+    await enterBulkQrScanStep();
+  } catch (err) {
+    console.error("[stock] continuar carga masiva:", err);
+    alert(err?.message || "No se pudo recuperar la sesión.");
+  }
+}
+
+function openBulkQrFlow() {
+  if (!canEditStock) {
+    alert("No tienes permiso para editar el stock.");
+    return;
+  }
+  openBulkQrOverlay();
+  const stored = readStoredBulkQrSession();
+  if (stored && bulkQrSessionHasWork(stored)) {
+    bulkQrSession = stored;
+    const units = countBulkQrUnits(stored);
+    const combos = Object.keys(stored.items || {}).length;
+    if (bulkQrEls.resumeMeta) {
+      bulkQrEls.resumeMeta.textContent =
+        `${warehouseLabelFromCode(stored.warehouseCode)} · ${units} unidades · ${combos} combinaciones.`;
+    }
+    switchBulkQrStep(bulkQrEls.stepResume);
+    return;
+  }
+  bulkQrSession = stored;
+  switchBulkQrStep(bulkQrEls.stepWarehouse);
+}
+
+function bindBulkQrUi() {
+  if (bulkQrListenersBound || !bulkQrEls.overlay) return;
+  bulkQrListenersBound = true;
+
+  bulkQrEls.openBtn?.addEventListener("click", () => {
+    openBulkQrFlow();
+  });
+
+  bulkQrEls.closeBtn?.addEventListener("click", () => {
+    persistBulkQrSession();
+    closeBulkQrOverlay();
+  });
+
+  bulkQrEls.overlay.addEventListener("click", (e) => {
+    if (e.target !== bulkQrEls.overlay) return;
+    persistBulkQrSession();
+    closeBulkQrOverlay();
+  });
+
+  bulkQrEls.resumeBtn?.addEventListener("click", () => {
+    void continueStoredBulkQrSession();
+  });
+
+  bulkQrEls.discardBtn?.addEventListener("click", () => {
+    discardBulkQrSession();
+    switchBulkQrStep(bulkQrEls.stepWarehouse);
+  });
+
+  bulkQrEls.overlay.querySelectorAll("[data-bulk-warehouse]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const code = btn.getAttribute("data-bulk-warehouse");
+      if (code !== "general" && code !== "venta-publico") return;
+      void startBulkQrFromWarehouse(code);
+    });
+  });
+
+  if (bulkQrEls.input) {
+    bulkQrEls.input.addEventListener("input", () => {
+      if (!bulkQrSession) return;
+      const v = bulkQrEls.input.value.trim();
+      if (v.length === 0) return;
+      if (bulkQrInputTimeout) clearTimeout(bulkQrInputTimeout);
+      bulkQrInputTimeout = window.setTimeout(() => {
+        bulkQrInputTimeout = null;
+        const current = bulkQrEls.input.value.trim();
+        if (isCompleteMobileLectorCode(current)) {
+          submitBulkQrScan(current);
+        }
+      }, 50);
+    });
+
+    bulkQrEls.input.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      if (bulkQrInputTimeout) {
+        clearTimeout(bulkQrInputTimeout);
+        bulkQrInputTimeout = null;
+      }
+      submitBulkQrScan(bulkQrEls.input.value);
+    });
+  }
+
+  bulkQrEls.undoBtn?.addEventListener("click", () => {
+    undoLastBulkQrScan();
+  });
+
+  bulkQrEls.cancelBtn?.addEventListener("click", () => {
+    if (bulkQrSessionHasWork(bulkQrSession)) {
+      const ok = window.confirm("¿Descartar la carga masiva? Se pierde el recuento local.");
+      if (!ok) {
+        focusBulkQrInput();
+        return;
+      }
+    }
+    discardBulkQrSession();
+    closeBulkQrOverlay();
+    switchBulkQrStep(bulkQrEls.stepWarehouse);
+  });
+
+  bulkQrEls.finishBtn?.addEventListener("click", () => {
+    if (!bulkQrSession || !Object.keys(bulkQrSession.items).length) {
+      setBulkQrStatus("Escaneá al menos un QR válido.", "error");
+      focusBulkQrInput();
+      return;
+    }
+    persistBulkQrSession();
+    renderBulkQrReviewUi();
+    switchBulkQrStep(bulkQrEls.stepReview);
+  });
+
+  bulkQrEls.backScanBtn?.addEventListener("click", () => {
+    if (bulkQrSession?.save?.nextBatchIndex > 0) {
+      alert("Ya hay lotes guardados. Reintentá el lote pendiente o cerrá y retomá la sesión.");
+      return;
+    }
+    bulkQrSession.save = null;
+    persistBulkQrSession();
+    void enterBulkQrScanStep();
+  });
+
+  bulkQrEls.confirmBtn?.addEventListener("click", () => {
+    if (bulkQrSaving) return;
+    void writeBulkQrBatches();
+  });
+
+  bulkQrEls.retryBtn?.addEventListener("click", () => {
+    if (bulkQrSaving) return;
+    void writeBulkQrBatches();
+  });
+
+  bulkQrEls.doneCloseBtn?.addEventListener("click", () => {
+    closeBulkQrOverlay();
+    switchBulkQrStep(bulkQrEls.stepWarehouse);
+  });
+}
+
+window.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (!bulkQrEls.overlay?.classList.contains("show")) return;
+  e.stopPropagation();
+  persistBulkQrSession();
+  closeBulkQrOverlay();
+}, true);
+
+bindBulkQrUi();
 
 async function bootstrapStockUi() {
   isStockUiReady = false;

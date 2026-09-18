@@ -38,6 +38,7 @@ const state = {
   lastPubPerformance: [], // B5: ventas 24/72/7d tras última publicación (solo last_published_at)
   publicationEventsPerformance: [], // B6: ventas 24/72/7d por evento (FASE 2)
   publicationPerformanceSource: "last_published_at", // publication_events | last_published_at
+  untrackedWatchlist: [], // 341: talles vendidos/apartados sin descuento real de stock (30d)
   tagSummary: [],       // AI: agregados por tag para preguntas comerciales
   productFlags: new Map(), // clasificación: is_own_manufacturing, supplier_code, supplier_name
   superAdmin: false,
@@ -146,8 +147,9 @@ function classifyStatus() {
   const hasInflated = (state.inflatedTotal > 0) || (state.inflated.length > 0);
   const hasSizesDiff = (g.variant_sizes_diffs ?? 0) > 0;
   const hasOrphan = (g.orphan_rows ?? 0) > 0;
+  const hasUntracked = state.untrackedWatchlist.length > 0;
 
-  if (hasInflated || hasSizesDiff || hasOrphan) return "atencion";
+  if (hasInflated || hasSizesDiff || hasOrphan || hasUntracked) return "atencion";
 
   return "saludable";
 }
@@ -378,6 +380,22 @@ async function loadPubInefficiency() {
   return data || [];
 }
 
+// 341: talles vendidos/apartados en los últimos 30 días SIN descuento real en
+// variant_size_warehouse_stock (venta pública sell_without_stock, o alta admin
+// con admin_confirmed_missing). Cada fila es candidata a overselling online si
+// el conteo previo ya estaba inflado — requiere conteo físico antes de vender.
+async function loadUntrackedSalesWatchlist() {
+  const { data, error } = await supabase
+    .from("vw_stock_audit_untracked_sales_watchlist")
+    .select(
+      "variant_id, product_name, variant_color, variant_sku, size, untracked_events_30d, untracked_qty_30d, last_event_at, source_types, last_admin_email, last_reason"
+    )
+    .order("last_event_at", { ascending: false })
+    .limit(MAX_ROWS);
+  if (error) throw error;
+  return data || [];
+}
+
 // P1: productos activos sin movimiento >= 90 días (análisis de oportunidad)
 async function loadDeadStock() {
   const { data, error } = await supabase
@@ -411,6 +429,7 @@ async function loadAll() {
     loadTagSummary(),
     loadLastPubPerformance(),
     loadPublicationEventsPerformance(),
+    loadUntrackedSalesWatchlist(),
   ]);
 
   state.gate = gateResult.status === "fulfilled" ? gateResult.value : null;
@@ -448,6 +467,8 @@ async function loadAll() {
     dataResults[12].status === "fulfilled" ? dataResults[12].value : [];
   state.publicationEventsPerformance =
     dataResults[13].status === "fulfilled" ? dataResults[13].value : [];
+  state.untrackedWatchlist =
+    dataResults[14].status === "fulfilled" ? dataResults[14].value : [];
   state.publicationPerformanceSource =
     state.publicationEventsPerformance.length >= MIN_EVENTS_FOR_HISTORY
       ? "publication_events"
@@ -789,6 +810,41 @@ function renderCardOrphan() {
   });
 }
 
+// 341: talles vendidos/apartados sin descuento real de stock (30d) — watchlist
+// de conteo físico. No es auto-reconciliable: requiere verificar la unidad
+// físicamente antes de reactivarla online.
+function renderCardUntrackedWatchlist() {
+  const items = state.untrackedWatchlist;
+
+  const sourceLabel = (types) => {
+    const list = Array.isArray(types) ? types : [];
+    if (list.includes("removido_sin_restaurar_pendiente_revision")) return "Retiro sin restaurar";
+    if (list.includes("public_sale_sin_stock")) return "Venta local sin stock";
+    if (list.includes("admin_order_confirmado_sin_verificar")) return "Apartado admin sin verificar";
+    return list[0] || "—";
+  };
+
+  buildCard({
+    containerId: "card-untracked-watchlist",
+    type: "atencion",
+    title: "Talles vendidos sin descuento real de stock (30d)",
+    desc: `${items.length} ${items.length === 1 ? "talle tuvo" : "talles tuvieron"} ventas o apartados en los últimos 30 días sin que se descontara stock real. Si el conteo previo ya estaba inflado, el catálogo puede estar ofreciendo unidades que no existen.`,
+    count: items.length,
+    hintHtml: "Requiere conteo físico antes de confiar en el stock online de estos talles.",
+    variantsHtml: renderVariantRows(items, (v) => `
+      <span class="sh-vr-product">${escapeHtml(v.product_name || "—")}</span>
+      <span class="sh-vr-color">${escapeHtml(v.variant_color || "—")}</span>
+      <span class="sh-vr-sku">${escapeHtml(v.variant_sku || "—")}</span>
+      ${v.size ? `<span class="sh-vr-detail">Talle: ${escapeHtml(v.size)}</span>` : ""}
+      <span class="sh-vr-detail">${escapeHtml(sourceLabel(v.source_types))} · último: ${fmtDate(v.last_event_at)}</span>
+      ${v.last_admin_email ? `<span class="sh-vr-detail">Vendedor: ${escapeHtml(v.last_admin_email)}</span>` : ""}
+      ${v.last_reason ? `<span class="sh-vr-detail">Motivo: ${escapeHtml(v.last_reason)}</span>` : ""}
+      <span class="sh-vr-badge warning">${v.untracked_qty_30d || 0} u en ${v.untracked_events_30d || 0} evento(s)</span>
+    `),
+    footerHtml: `<span style="font-size:12px;color:#374151;">Verificación manual: contar unidades físicas antes de reactivar el talle online.</span>`,
+  });
+}
+
 // ─────────────────────────────────────────────────────────────────
 // RENDER — BLOQUE OPERATIVO
 // ─────────────────────────────────────────────────────────────────
@@ -1124,11 +1180,13 @@ function renderAll() {
   renderCardInflated();
   renderCardSizesDiff();
   renderCardOrphan();
+  renderCardUntrackedWatchlist();
   const hasAttention =
     state.inflatedTotal > 0 ||
     state.inflated.length > 0 ||
     state.sizesDiff.length > 0 ||
-    state.orphan.length > 0;
+    state.orphan.length > 0 ||
+    state.untrackedWatchlist.length > 0;
   const blockAttention = $("block-attention");
   if (blockAttention) blockAttention.classList.toggle("hidden", !hasAttention);
 

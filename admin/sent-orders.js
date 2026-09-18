@@ -1,12 +1,47 @@
 // Importar dinámicamente para asegurar que se cargue después
 import { qzConnect } from "./qz-printing.js?v=m260607";
+import { canonicalizeTransportName } from "../scripts/transport-canonical.js";
 import { parseARSNumber, resolveOrderItemUnitPrice } from "../scripts/utils/price.js?v=m260607";
+import { getActiveOrderItems, sumOrderItemQuantities } from "./orders-domain.js?v=m260607";
 import { formatDniDisplay } from "../scripts/utils/dni.js?v=m260607";
 import {
   buildCustomerLabelNamePoolDetailed,
   getOrderActiveLabelButtonIndex,
   getOrderLabelDisplayName,
 } from "../scripts/utils/label-names.js?v=m260607";
+
+/** Paridad con closed-orders.js: rótulo no debe imprimir "Pendiente" crudo en COD. */
+const COD_TRANSPORT_CANONICAL = new Set(["MyM", "SEDE", "Expreso Norte"]);
+const ORDER_PAYMENT_METHOD = {
+  CONTRA_REEMBOLSO: "Contra Reembolso",
+  PAGADO: "Pagado",
+};
+
+function isCodTransportName(transportName) {
+  return COD_TRANSPORT_CANONICAL.has(canonicalizeTransportName(transportName || ""));
+}
+
+function isPagadoPaymentMethod(value) {
+  const key = String(value || "").trim().toLowerCase();
+  return key === "pagado" || key === "pago" || key === "transferencia" || key === "transferencia bancaria";
+}
+
+function requiresPaymentConfirmation(order) {
+  const status = order?.closed_fulfillment_status;
+  return (
+    status === "awaiting_payment" ||
+    status === "awaiting_correo_cost" ||
+    status === "awaiting_customer_message"
+  );
+}
+
+function getSentOrderPaymentLabel(order, transportName) {
+  const pm = String(order?.payment_method || "").trim();
+  if (isPagadoPaymentMethod(pm)) return ORDER_PAYMENT_METHOD.PAGADO;
+  if (requiresPaymentConfirmation(order)) return ORDER_PAYMENT_METHOD.PAGADO;
+  if (isCodTransportName(transportName)) return ORDER_PAYMENT_METHOD.CONTRA_REEMBOLSO;
+  return pm || "Sin especificar";
+}
 
 function generateOperationId() {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -865,7 +900,7 @@ function openCustomerModal(customer) {
           minute: "2-digit"
         });
         const orderNumber = order.order_number || order.id.substring(0, 8);
-        const orderItems = order.order_items || [];
+        const orderItems = getActiveOrderItems(order);
 
         // Calcular subtotal excluyendo items faltantes
         const validItems = orderItems.filter(item => item.status !== 'missing');
@@ -1783,17 +1818,14 @@ function prepareShippingLabelFromOrder(order, customer) {
   const transport = scheduledTransports.find(t => t.id === transportId);
   const carrier = transport ? transport.name : (customer.transport_id ? 'Sin transporte' : 'Sin transporte asignado');
 
-  // Calcular cantidad total de productos
-  const itemsCount = (order.order_items || []).reduce(
-    (sum, item) => sum + (item.quantity || 0),
-    0
-  );
+  const activeItems = getActiveOrderItems(order);
+  const itemsCount = sumOrderItemQuantities(activeItems);
 
   // Obtener monto total
   const hasStoredTotal = order.total_amount != null && String(order.total_amount).trim() !== "";
   const total = hasStoredTotal
     ? parseARSNumber(order.total_amount)
-    : (order.order_items || []).reduce(
+    : activeItems.reduce(
       (sum, item) => sum + (item.quantity || 0) * getSentOrderUnitPrice(item),
       0
     );
@@ -1801,6 +1833,7 @@ function prepareShippingLabelFromOrder(order, customer) {
   // Formatear monto sin símbolo de moneda para el rótulo
   const amount = total.toLocaleString("es-AR", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 
+  const transportName = transport ? transport.name : "";
   return {
     fullName: getOrderLabelDisplayName(order, customer),
     address: customer.address || "Sin dirección",
@@ -1811,7 +1844,7 @@ function prepareShippingLabelFromOrder(order, customer) {
     itemsCount: itemsCount.toString(),
     amount: amount,
     orderCode: order.order_number || order.id.substring(0, 8),
-    paymentMethod: order.payment_method || ''
+    paymentMethod: getSentOrderPaymentLabel(order, transportName),
   };
 }
 
@@ -2878,7 +2911,7 @@ function setupDevolucionButtons() {
  * @returns {Promise<string>} Ticket formateado en texto plano
  */
 async function buildEscposTicketOrder(order) {
-  const items = order.order_items || [];
+  const items = getActiveOrderItems(order);
   
   // Obtener cliente desde allCustomersData
   let customer = null;

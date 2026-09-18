@@ -14,6 +14,7 @@ import {
   isRetiroBoardOrderForLegacyPedidos,
   parseStockPendingReasonConflict,
   describeStockPendingConflict,
+  isNetworkStockPendingReason,
   clampIncidentPoints,
 } from "./orders-domain.js?v=m260607";
 
@@ -6748,6 +6749,107 @@ async function deleteOrderItemImmediate(itemId) {
   alert("✅ Producto eliminado del pedido.");
 }
 
+async function retryNetworkStockPendingOrder(orderRow) {
+  const warehouses = await loadWarehouses();
+  if (!warehouses.general) {
+    alert("No se pudieron cargar los depósitos para reintentar el descuento.");
+    return false;
+  }
+
+  const items = (orderRow.order_items || []).filter((item) => {
+    const status = String(item?.status || "").trim().toLowerCase();
+    if (status === "cancelled") return false;
+    return Boolean(item?.variant_id && item?.size && Number(item?.quantity) > 0);
+  });
+
+  const manualItems = items.filter((item) => Boolean(item.admin_confirmed_missing));
+  if (manualItems.length) {
+    const { data: sourcedRows, error: sourcedError } = await supabase
+      .from("order_item_stock_sources")
+      .select("order_item_id")
+      .in("order_item_id", manualItems.map((item) => item.id));
+    if (sourcedError) {
+      alert(sourcedError.message || "No se pudo verificar el stock manual.");
+      return false;
+    }
+    const sourced = new Set((sourcedRows || []).map((row) => String(row.order_item_id)));
+    const pendingManual = manualItems.filter((item) => !sourced.has(item.id));
+    if (pendingManual.length) {
+      const { error: injectError } = await supabase.rpc("rpc_admin_manual_inject_and_deduct", {
+        p_items: pendingManual.map((item) => ({
+          variant_id: item.variant_id,
+          size: normalizeSize(item.size),
+          warehouse_id: warehouses.general,
+          qty: Number(item.quantity),
+          order_item_id: item.id,
+        })),
+        p_order_id: orderRow.id,
+      });
+      if (injectError) {
+        alert(injectError.message || "No se pudo reintentar la carga manual.");
+        return false;
+      }
+    }
+  }
+
+  const regularItems = items.filter((item) => !item.admin_confirmed_missing);
+  if (regularItems.length) {
+    const { data: historyRows, error: historyError } = await supabase
+      .from("stock_history")
+      .select("notes")
+      .eq("change_type", "order_deduction")
+      .ilike("notes", `%order_id:${orderRow.id}%`);
+    if (historyError) {
+      alert("No se pudo verificar qué stock ya se descontó. Reintentá en un momento.");
+      return false;
+    }
+    const deductedIds = new Set();
+    const re = /order_item_id:([0-9a-fA-F-]{36})/gi;
+    for (const row of historyRows || []) {
+      const notes = String(row.notes || "");
+      let match;
+      while ((match = re.exec(notes))) deductedIds.add(match[1]);
+    }
+    const pendingRegular = regularItems.filter((item) => !deductedIds.has(item.id));
+    if (pendingRegular.length) {
+      const { data: rpcData, error: rpcErr } = await supabase.rpc("rpc_apply_order_stock_deduction", {
+        p_items: pendingRegular.map((item) => ({
+          variant_id: item.variant_id,
+          size: normalizeSize(item.size),
+          warehouse_id: warehouses.general,
+          qty_to_deduct: Number(item.quantity),
+          order_item_id: item.id,
+        })),
+        p_order_id: orderRow.id,
+        p_source: "order_edit",
+      });
+      if (rpcErr || !rpcData?.ok) {
+        alert(rpcErr?.message || "No se pudo reintentar el descuento de stock.");
+        return false;
+      }
+    }
+  }
+
+  const notesObj = parseOrderNotesObject(orderRow.notes);
+  delete notesObj.stock_pending_reason;
+  delete notesObj.stock_pending_at;
+  delete notesObj.stock_pending_source;
+  const nextNotesRaw = JSON.stringify(notesObj);
+  const { error: updateError } = await supabase
+    .from("orders")
+    .update({
+      status: "active",
+      notes: nextNotesRaw === "{}" ? null : nextNotesRaw,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", orderRow.id);
+  if (updateError) {
+    alert(updateError.message || "El stock se descontó, pero no se pudo sacar el pedido de Stock Pendiente.");
+    return false;
+  }
+  return true;
+}
+
 async function resolveStockPendingOrder(orderId) {
   if (!canDeleteOrders) {
     alert("No tienes permiso para resolver pedidos en stock pendiente.");
@@ -6762,7 +6864,7 @@ async function resolveStockPendingOrder(orderId) {
 
   const { data: orderRow, error: orderError } = await supabase
     .from("orders")
-    .select("id, status, notes, order_items(id, variant_id, size, product_name, color, status)")
+    .select("id, status, notes, order_items(id, variant_id, size, quantity, product_name, color, status, admin_confirmed_missing)")
     .eq("id", orderId)
     .maybeSingle();
 
@@ -6778,6 +6880,21 @@ async function resolveStockPendingOrder(orderId) {
 
   const notesObj = parseOrderNotesObject(orderRow.notes);
   const reasonRaw = String(notesObj.stock_pending_reason || "").trim();
+  if (isNetworkStockPendingReason(reasonRaw)) {
+    const retried = await retryNetworkStockPendingOrder(orderRow);
+    if (retried) {
+      await loadOrders(true);
+      if (historyVisible) await loadClosedOrders();
+      updateActiveOrdersBadge();
+      updatePickedOrdersBadge();
+      updateWaitingOrdersBadge();
+      updateClosedOrdersBadge();
+      updateCancelledOrdersBadge();
+      alert("Stock descontado. El pedido volvió a Activos/Apartados.");
+    }
+    return;
+  }
+
   const parsed = parseStockPendingReasonConflict(reasonRaw);
   if (!parsed?.variant_id) {
     alert("No se pudo identificar automáticamente el producto en conflicto. Cancelá el pedido manualmente.");

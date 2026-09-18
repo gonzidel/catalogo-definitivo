@@ -407,6 +407,48 @@
       appearance:textfield;
     }
 
+    /* Carga masiva QR — desktop y móvil */
+    .bulk-qr-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:flex-end;justify-content:center;z-index:1200;padding:0}
+    .bulk-qr-overlay.show{display:flex}
+    .bulk-qr-modal{width:100%;max-width:520px;max-height:94vh;overflow:auto;background:#fff;border-radius:16px 16px 0 0;padding:14px 14px 12px;box-sizing:border-box}
+    .bulk-qr-header{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:12px}
+    .bulk-qr-title{margin:0;font-size:18px;line-height:1.2}
+    .bulk-qr-subtitle{margin:4px 0 0;font-size:12px;color:#666}
+    .bulk-qr-close{border:1px solid #ddd;background:#fafafa;border-radius:8px;padding:6px 10px;font-size:12px;min-height:36px}
+    .bulk-qr-step{display:none}
+    .bulk-qr-step.active{display:block}
+    .bulk-qr-choice-grid{display:grid;grid-template-columns:1fr;gap:10px}
+    .bulk-qr-choice-btn{width:100%;min-height:72px;text-align:left;padding:12px 14px;border-radius:12px;border:1px solid #d8d8d8;background:#fff;font-size:15px;font-weight:700;cursor:pointer}
+    .bulk-qr-choice-btn small{display:block;font-size:12px;font-weight:600;color:#666;margin-top:4px}
+    .bulk-qr-meta-row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
+    .bulk-qr-chip{display:inline-flex;align-items:center;min-height:28px;padding:4px 8px;border-radius:999px;border:1px solid #d7d5cc;background:#f6f5f1;font-size:12px;font-weight:700;color:#374151}
+    .bulk-qr-stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:10px}
+    .bulk-qr-stat{border:1px solid #e7e6e1;border-radius:10px;background:#fafaf8;padding:8px 10px}
+    .bulk-qr-stat-label{font-size:10px;text-transform:uppercase;letter-spacing:.03em;color:#747474;font-weight:700}
+    .bulk-qr-stat-value{font-size:22px;font-weight:800;line-height:1.1;margin-top:3px;font-variant-numeric:tabular-nums}
+    .bulk-qr-input{width:100%;box-sizing:border-box;padding:12px;border:1px solid var(--line-strong);border-radius:10px;font-size:18px;font-weight:700;background:#fff;margin-bottom:8px}
+    .bulk-qr-status{margin:0 0 10px;min-height:1.35em;font-size:13px;line-height:1.35;color:#555;font-weight:600}
+    .bulk-qr-status.is-error{color:var(--danger)}
+    .bulk-qr-status.is-success{color:var(--primary)}
+    .bulk-qr-status.is-warn{color:var(--warning)}
+    .bulk-qr-list{display:grid;gap:6px;max-height:38vh;overflow:auto;margin-bottom:10px}
+    .bulk-qr-item{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;border:1px solid #ecebe7;border-radius:10px;padding:8px 10px;background:#fff}
+    .bulk-qr-item.is-inactive{border-color:#f3cfab;background:#fff8ee}
+    .bulk-qr-item-main{min-width:0}
+    .bulk-qr-item-title{font-size:13px;font-weight:700;overflow-wrap:anywhere}
+    .bulk-qr-item-meta{font-size:11px;color:#666;margin-top:2px}
+    .bulk-qr-item-qty{font-size:18px;font-weight:800;font-variant-numeric:tabular-nums;white-space:nowrap}
+    .bulk-qr-error-list{margin:0 0 10px;padding-left:18px;font-size:12px;color:var(--danger)}
+    .bulk-qr-nav{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;position:sticky;bottom:0;background:#fff;padding-top:8px;padding-bottom:calc(env(safe-area-inset-bottom, 0px) + 2px)}
+    .bulk-qr-nav button{flex:1 1 calc(50% - 4px);min-height:44px;font-weight:700}
+    .bulk-qr-nav .btn-wide{flex:1 1 100%}
+    .bulk-qr-progress{font-size:14px;font-weight:700;margin:8px 0}
+    .bulk-qr-note{font-size:12px;color:#555;margin:8px 0 0}
+    @media (min-width:768px){
+      .bulk-qr-overlay{align-items:center;padding:20px}
+      .bulk-qr-modal{border-radius:14px;max-height:88vh}
+    }
+
     @media (max-width:767px){
       #incomplete-alert{display:none!important}
       .stock-nav{display:none}
@@ -434,6 +476,7 @@
       #f-low-wrap{display:none}
       #low-alert,
       #old-products{display:none}
+      #bulk-qr-open{order:2;flex:1 1 100%}
 
       #products-container{gap:8px;margin-top:8px}
       .product-card{padding:9px;border-radius:10px}
@@ -587,6 +630,7 @@
         <div class="controls-row">
           <button id="low-alert" class="btn btn-alert" title="Ver productos con bajo stock">Alertas bajo stock (<span id="low-alert-count">0</span>)</button>
           <button id="old-products" class="btn" title="Productos antiguos (18+ meses)">Productos antiguos</button>
+          <button id="bulk-qr-open" class="btn btn-primary" type="button" title="Inventario rápido por QR">Carga masiva</button>
           <span class="spacer"></span>
           <button id="save-all" class="btn btn-primary">Guardar cambios (<span id="pending-count" class="counter">0</span>)</button>
           <button id="discard-all" class="btn btn-danger">Descartar</button>
@@ -846,6 +890,119 @@
         <div class="mobile-stock-nav">
           <button id="mobile-stock-summary-back" type="button">Atras</button>
           <button id="mobile-stock-save" type="button" class="btn btn-primary">Guardar</button>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <div id="bulk-qr-overlay" class="bulk-qr-overlay" aria-hidden="true">
+    <div class="bulk-qr-modal" role="dialog" aria-modal="true" aria-labelledby="bulk-qr-title">
+      <div class="bulk-qr-header">
+        <div>
+          <h3 id="bulk-qr-title" class="bulk-qr-title">Carga masiva</h3>
+          <p id="bulk-qr-subtitle" class="bulk-qr-subtitle">Inventario por QR a un depósito</p>
+        </div>
+        <button id="bulk-qr-close" class="bulk-qr-close" type="button">Cerrar</button>
+      </div>
+
+      <section id="bulk-qr-step-resume" class="bulk-qr-step">
+        <p><strong>Hay una carga masiva sin finalizar.</strong></p>
+        <p id="bulk-qr-resume-meta" class="bulk-qr-note"></p>
+        <div class="bulk-qr-nav">
+          <button id="bulk-qr-resume" type="button" class="btn btn-primary">Continuar</button>
+          <button id="bulk-qr-discard" type="button" class="btn btn-danger">Descartar</button>
+        </div>
+      </section>
+
+      <section id="bulk-qr-step-warehouse" class="bulk-qr-step">
+        <p><strong>¿Dónde querés cargar el stock?</strong></p>
+        <div class="bulk-qr-choice-grid">
+          <button type="button" class="bulk-qr-choice-btn" data-bulk-warehouse="general">
+            Almacén General
+            <small>Carga absoluta en depósito general</small>
+          </button>
+          <button type="button" class="bulk-qr-choice-btn" data-bulk-warehouse="venta-publico">
+            Venta al Público
+            <small>Carga absoluta en local</small>
+          </button>
+        </div>
+      </section>
+
+      <section id="bulk-qr-step-scan" class="bulk-qr-step">
+        <div class="bulk-qr-meta-row">
+          <span id="bulk-qr-warehouse-chip" class="bulk-qr-chip">Depósito</span>
+        </div>
+        <div class="bulk-qr-stats">
+          <div class="bulk-qr-stat">
+            <div class="bulk-qr-stat-label">Unidades</div>
+            <div id="bulk-qr-total-units" class="bulk-qr-stat-value">0</div>
+          </div>
+          <div class="bulk-qr-stat">
+            <div class="bulk-qr-stat-label">Combinaciones</div>
+            <div id="bulk-qr-total-skus" class="bulk-qr-stat-value">0</div>
+          </div>
+        </div>
+        <input
+          id="bulk-qr-input"
+          class="bulk-qr-input"
+          type="text"
+          inputmode="none"
+          autocomplete="off"
+          autocorrect="off"
+          spellcheck="false"
+          placeholder="Escaneá QR..."
+        />
+        <p id="bulk-qr-status" class="bulk-qr-status" aria-live="polite"></p>
+        <div id="bulk-qr-list" class="bulk-qr-list"></div>
+        <div class="bulk-qr-nav">
+          <button id="bulk-qr-undo" type="button" class="btn">Deshacer última lectura</button>
+          <button id="bulk-qr-cancel-session" type="button" class="btn btn-danger">Cancelar sesión</button>
+          <button id="bulk-qr-finish" type="button" class="btn btn-primary btn-wide">Finalizar / Revisar</button>
+        </div>
+      </section>
+
+      <section id="bulk-qr-step-review" class="bulk-qr-step">
+        <div class="bulk-qr-meta-row">
+          <span id="bulk-qr-review-warehouse" class="bulk-qr-chip"></span>
+        </div>
+        <div class="bulk-qr-stats">
+          <div class="bulk-qr-stat">
+            <div class="bulk-qr-stat-label">Unidades</div>
+            <div id="bulk-qr-review-units" class="bulk-qr-stat-value">0</div>
+          </div>
+          <div class="bulk-qr-stat">
+            <div class="bulk-qr-stat-label">Combinaciones</div>
+            <div id="bulk-qr-review-skus" class="bulk-qr-stat-value">0</div>
+          </div>
+        </div>
+        <div id="bulk-qr-review-list" class="bulk-qr-list"></div>
+        <div id="bulk-qr-review-inactive" hidden>
+          <p class="bulk-qr-note"><strong>Productos inactivos contados</strong></p>
+          <ul id="bulk-qr-review-inactive-list" class="bulk-qr-error-list"></ul>
+        </div>
+        <div id="bulk-qr-review-errors" hidden>
+          <p class="bulk-qr-note"><strong>QR no encontrados</strong></p>
+          <ul id="bulk-qr-review-error-list" class="bulk-qr-error-list"></ul>
+        </div>
+        <div class="bulk-qr-nav">
+          <button id="bulk-qr-back-scan" type="button" class="btn">Volver a escanear</button>
+          <button id="bulk-qr-confirm" type="button" class="btn btn-primary">Confirmar carga</button>
+        </div>
+      </section>
+
+      <section id="bulk-qr-step-saving" class="bulk-qr-step">
+        <p id="bulk-qr-save-progress" class="bulk-qr-progress">Guardando...</p>
+        <p id="bulk-qr-save-error" class="bulk-qr-status is-error" hidden></p>
+        <div class="bulk-qr-nav">
+          <button id="bulk-qr-retry" type="button" class="btn btn-primary btn-wide" hidden>Reintentar lote</button>
+        </div>
+      </section>
+
+      <section id="bulk-qr-step-done" class="bulk-qr-step">
+        <p><strong>Carga masiva aplicada</strong></p>
+        <p id="bulk-qr-done-summary" class="bulk-qr-note"></p>
+        <div class="bulk-qr-nav">
+          <button id="bulk-qr-done-close" type="button" class="btn btn-primary btn-wide">Cerrar</button>
         </div>
       </section>
     </div>

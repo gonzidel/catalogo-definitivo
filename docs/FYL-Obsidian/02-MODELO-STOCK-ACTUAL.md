@@ -16,7 +16,7 @@ Toda lógica de “cuánto hay en depósito X para talle Y” debe alinearse con
 |--------|-----|------------|
 | `variant_sizes` | `stock_qty` agregado por talle (todas las bodegas) | **Derivado**; trigger **84** (`trigger_sync_variant_sizes_on_warehouse_stock` en comentarios 146) |
 | `variant_warehouse_stock` | `stock_qty` por `variant_id` + `warehouse_id` sin talle | **Derivado**; trigger **145** |
-| `product_variants.reserved_qty` | Reserva agregada a nivel variante (carritos + pedidos vía fuentes) | Actualizado por flujos de negocio / reconciliación; **auditar** con `vw_stock_audit_reserved_qty_diff` |
+| `product_variants.reserved_qty` | Legacy inflado (8221 stored vs 13 reales al 2026-09-04). No gobierna sellable/Next/checkout/309 | Sigue escrito por checkout/309/188/cancel/admin; vanilla todavía lo resta. Ver [[55-SELLABLE-STOCK-FASE6-AUDITORIA-2026-09-04]] |
 | `order_item_stock_sources` | Cantidad descontada por depósito por línea de pedido | Escrito por RPCs de pedido / cancelación; base para trazabilidad y reserved |
 
 **Deprecado / no usar para “disponible” en UI de catálogo:**
@@ -37,6 +37,38 @@ Toda lógica de “cuánto hay en depósito X para talle Y” debe alinearse con
 | Confiar en columnas `product_variants.stock_*` / `size` para UI pública | Legacy |
 
 *Pendiente de verificación puntual:* si queda **algún** `upsert` legacy en `admin/*.js` hacia canónica — usar grep recomendado en [[99-AUDITORIA-FINAL]].
+
+## `catalog_public_available_view` (NJ / catálogo con disponibilidad) — 330
+
+Desde **330**, la disponibilidad pública de esta vista es:
+
+```text
+sellable_qty = greatest(sum(variant_size_warehouse_stock.stock_qty), 0)
+  WHERE warehouses.code IN ('general', 'venta-publico')
+  AND fn_norm_size(size) coincide
+```
+
+Un producto/variante entra a la vista solo si tiene **al menos un talle con `sellable_qty > 0`**, más filtros vigentes (producto activo, variante activa, imagen).
+
+**No restar** de sellable: `order_item_stock_sources`, `cart_items`, `product_variants.reserved_qty`, `awaiting_apartado`.
+
+Motivo: checkout/commit ya descuentan `stock_qty` al comprometer mercadería; OISS es trazabilidad de stock ya descontado, no un segundo hold. Restar OISS otra vez double-count.
+
+Funciones canónicas (Fase 1):
+
+- `fn_norm_size(text)` — misma semántica que checkout (trim; numérico → parte entera)
+- `fn_sellable_qty(variant_id, size)`
+- `fn_sellable_stock_batch(uuid[])`
+
+El snapshot `catalog_public_snapshot` **no** se refresca en 330. Hasta un refresh admin explícito, el index NJ puede seguir leyendo la copia vieja.
+
+PDP / CartTab (Fase 2) y el checkout **normal** (Fase 3) usan la semántica sellable. `reserved_qty` ya no gobierna disponibilidad ni el gate de `rpc_checkout_cart` (rama normal). El write legacy de `reserved_qty` en checkout sigue por compatibilidad hasta Fase 6. Flujo 309 intacto. Ver [[51-SELLABLE-STOCK-FASE1-2026-09-04]] y [[52-SELLABLE-STOCK-FASE3-2026-09-04]].
+
+Listados públicos (Fase 4): `hasStock` / `hasAnyStock` salen del snapshot/vista sellable. El enrich de cards no vuelve a sumar `variant_sizes`. Unknown ≠ comprable. Ver [[53-SELLABLE-STOCK-FASE4-2026-09-04]].
+
+Fase 5: el snapshot se marca dirty ante cambios de stock/catálogo y el cron `*/5` lo reconstruye si hace falta. Ver [[54-SELLABLE-STOCK-FASE5-2026-09-04]].
+
+Fase 6C (333C aplicada): writes de catálogo/stock ya no están abiertos a cualquier authenticated. Ver [[57-SELLABLE-STOCK-FASE6C-333C-2026-09-04]]. Auditoría previa: [[55-SELLABLE-STOCK-FASE6-AUDITORIA-2026-09-04]].
 
 ## Cómo lee `catalog_public_view` el stock (importante)
 

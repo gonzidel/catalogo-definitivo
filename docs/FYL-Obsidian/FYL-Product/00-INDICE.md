@@ -82,6 +82,8 @@ FYL-Product/
 
 ### Clarity — base
 
+- [[Clarity/00-INDICE]] — indice de lecturas Clarity del flujo NJ
+- [[CLAR-2026-09-08-Auditoria-Post-Fix-Stock-PDP]] — seguimiento post-fix de carrito sin stock + decision talle/cantidad
 - [[2026-05-12-Metricas-Iniciales]] — lectura base de Web Vitals
 
 ### Integraciones (catálogo externo)
@@ -91,6 +93,7 @@ FYL-Product/
 ### Arquitectura
 
 - [[01-Boot-Sequence-Catalogo]] — secuencia real de boot tal como está hoy
+- [[../59-NJ-BUSCADOR-SMART-SEARCH]] — buscador canónico `/nj` (resolver, ranking, analytics, admin de vocabulario). No es el `search-manager.js` vanilla.
 
 ### Decisiones
 

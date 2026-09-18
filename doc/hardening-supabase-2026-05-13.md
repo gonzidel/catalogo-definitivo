@@ -481,8 +481,8 @@ Permitidos temporalmente para `anon`:
 - `catalog_public_view`: compatibilidad temporal.
 - `catalog_public_available_view`: compatibilidad temporal.
 - `get_meta_feed()`: Meta Commerce, mientras no haya endpoint firmado/cacheado.
-- `rpc_get_variant_size_reserved(uuid[])`: dependencia temporal de catálogo/PDP.
-- `products`, `product_variants`, `variant_warehouse_stock`, `variant_size_warehouse_stock`: dependencia temporal hasta completar migración a snapshot.
+- `rpc_get_variant_size_reserved(uuid[])`: temporal vanilla residual; NJ no lo llama. 333C no revocó EXECUTE anon. Retirar post-cutover.
+- `products`, `product_variants`, `variant_warehouse_stock`, `variant_size_warehouse_stock`: SELECT anon intacto (enrich/sellable). 333C revocó I/U/D anon. Writes solo admin.
 
 Denylist cerrada:
 

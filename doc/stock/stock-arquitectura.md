@@ -18,18 +18,24 @@ Esta tabla modela stock fisico por:
 - `variant_sizes`: stock derivado por talle (sin deposito), sincronizado por trigger.
 - `variant_warehouse_stock`: stock derivado por variante y deposito, sincronizado por trigger.
 - `product_variants.reserved_qty`: reserva agregada historica a nivel variante.
-- `order_item_stock_sources` + `cart_items`: reservas reales activas que permiten calcular disponible por talle.
+- `order_item_stock_sources`: trazabilidad de stock **ya descontado** al comprometer (checkout/commit). Sirve para restaurar en cancel/expire. No es un segundo hold.
+- `cart_items`: persistencia de carrito. `status = 'reserved'` **no** gobierna disponibilidad pública desde 330.
 
-## Reservas y stock disponible
+## Stock vendible público (330)
 
-Para visibilidad publica y validaciones de compra, la referencia correcta es:
+Fuente canónica para catálogo / PDP futuro:
 
-- `disponible = stock_fisico - reservas_activas`
+- `sellable_qty = greatest(sum(stock_qty), 0)` en `variant_size_warehouse_stock` para warehouses `general` + `venta-publico`
 
-En FYL, las reservas activas por talle se consolidan desde:
+Funciones: `fn_norm_size`, `fn_sellable_qty`, `fn_sellable_stock_batch`.
 
-- pedidos no finalizados (`order_item_stock_sources` + `orders.status` excluyendo estados tipo `sent`, `expired`, `devolución`)
-- carritos: `carts.status = 'open'` con lineas `cart_items.status = 'reserved'` (criterio usado en `catalog_public_available_view`)
+`catalog_public_available_view` usa esa semántica. **No** resta OISS, `cart_items`, `reserved_qty` ni `awaiting_apartado`.
+
+`rpc_checkout_cart` (rama normal, 331) valida el físico web del talle **después** de `FOR UPDATE` de `variant_size_warehouse_stock` (`general` + `venta-publico`). `reserved_qty` se escribe pero **no** gobierna el accept/reject. La rama 309 no usa este gate.
+
+Listados NJ (Fase 4): `hasStock` sale del snapshot/vista sellable. El enrich no vuelve a leer `variant_sizes`.
+
+Fase 5: `fn_mark_catalog_snapshot_dirty` + `rpc_refresh_catalog_snapshot_if_dirty` (pg_cron cada 5 min). El snapshot no es una segunda lógica: copia la vista.
 
 ## Por que NO usar `variant_sizes` para decisiones criticas
 

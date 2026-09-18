@@ -21,6 +21,16 @@ Riesgos detectados en auditorias:
 | Public Sales exige sesion pero no se detecto permiso frontend granular en `public-sales.js` | [[18-AUDITORIA-MODULO-PUBLIC-SALES]] |
 | Funciones/RPCs `SECURITY DEFINER` pueden saltar RLS si grants son amplios | [[15-OBSERVACIONES-PRODUCTS-A-REVISAR]] |
 
+## Permiso `search` (buscador `/nj`, 2026-09-04)
+
+`admin_permissions.permission_key = 'search'`. Super admin pasa. Collaborator necesita `can_view` / `can_edit`.
+
+- UI: `nj/lib/auth/admin.ts` (`SEARCH_ADMIN_PERMISSION_KEY`)
+- DB: `is_admin()` en writes de `search_keywords` / `search_aliases` / `search_ignored_terms` y en RPCs `search_admin_*`
+- Anon: lee diccionario **activo** (`search_dictionary_public`); no lee analytics; no escribe vocabulario
+
+No duplicar autorización. Detalle: [[59-NJ-BUSCADOR-SMART-SEARCH]], [[41-SEARCH-ADMIN-FASE5-2026-09-03]].
+
 ## Regla para cambios
 
 Si una accion modifica stock, costos, pedidos, ventas, creditos o customers, la DB debe validar permisos reales. El frontend sirve para UX, no como barrera de seguridad.
@@ -30,3 +40,4 @@ Si una accion modifica stock, costos, pedidos, ventas, creditos o customers, la 
 - [[15-OBSERVACIONES-PRODUCTS-A-REVISAR]]
 - [[13-RPCS-DEPLOY-STATE]]
 - [[12-CHECKLIST-CAMBIOS-FUTUROS]]
+- [[59-NJ-BUSCADOR-SMART-SEARCH]]

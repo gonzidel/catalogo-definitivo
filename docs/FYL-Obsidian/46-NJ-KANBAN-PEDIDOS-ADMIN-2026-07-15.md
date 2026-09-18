@@ -34,7 +34,7 @@ Complementa: [[41-MIGRACION-NEXTJS-NJ-2026-06-08]] (arquitectura `/nj`), [[43-NJ
 
 **Solución:** `nj/components/orders/PartialAcceptModal.tsx` (nuevo) — modal de 1 paso que pregunta cuántas unidades hay disponibles y permite repartir el resto entre **picked / espera (con origen Fábrica o Local) / falta**.
 
-- Se dispara desde `OrderCardItems.tsx` (`isMultiUnitReserved()`) interceptando **✓**, **⏳** y **✕** cuando el ítem reservado tiene `quantity > 1`.
+- Se dispara desde `OrderCardItems.tsx` (`isMultiUnitReserved()`) interceptando **✓**, **⏳** y **✕** cuando el ítem reservado tiene `quantity > 1`, tanto en pedidos `customer` como `admin` (el origen no filtra el modal).
 - Aplica el reparto vía `rpc_split_order_item_status` (129) → `splitReservedItem` en `useOrders.ts`. Esta RPC ya era canónica (usada también por `admin/public-sales.js`, ver §5), solo se conectó al Kanban `nj`.
 - Columna Activos: si el reparto incluye "falta" → el resto del flujo de §3 aplica automáticamente (pasa a Apartados con el signo `!`).
 - **Móvil / draftMode (2026-09-02):** el ✓ en `OrderCardItemActions` ya no stagea directo en borrador; siempre pasa por el padre para abrir este panel en multi-unidad. ✕ usa `onRequestMissing`. Layout móvil: sheet inferior apilado (`globals.css` `@media max-width: 767px`), botones ~40px, CTAs sticky. Compartido Pedidos + Retiro.
@@ -82,9 +82,10 @@ El botón **+** en la columna Apartados (y en el header mobile, "+ Pedido") no t
 | Archivo nuevo | Rol |
 |---|---|
 | `nj/lib/data/argentina-cities-data.ts` | Copia de `admin/argentina-cities-data.js` (provincias/ciudades para el form de cliente nuevo) |
-| `nj/lib/supabase/customer-directory.ts` | Búsqueda de clientas existentes (ranking por nombre/DNI/teléfono), validación y alta (`rpc_create_admin_customer`, RPC legacy reusada, no nueva) |
-| `nj/lib/supabase/order-create.ts` | `findOpenOrderForCustomer` (evita duplicar pedido activo) + `createManualOrder` (inserta `orders` + `order_items`, aplica descuento de stock, rollback si falla algún paso) |
-| `nj/components/orders/OrderCreateModal.tsx` | Modal principal: buscar/seleccionar clienta, o crear una nueva en un **modal separado** (`createPortal`, no inline — pedido explícito del usuario), selector de productos (`OrderEditProductPicker`), extras (`OrderEditExtrasPanel`) |
+| `nj/lib/supabase/customer-directory.ts` | Pedidos (`/nj/admin/orders`): búsqueda/alta en `customers` (`rpc_create_admin_customer`) |
+| `nj/lib/supabase/public-sales-customer-directory.ts` | Retiro (`/nj/admin/retiro`): búsqueda/alta en `public_sales_customers` (`rpc_create_public_customer`) + puente a `orders.customer_id` |
+| `nj/lib/supabase/order-create.ts` | `findOpenOrderForCustomer` / `findOpenRetiroOrderForCustomer` + `createManualOrder` (en Retiro: `kanban_scope=local_pickup`, `local_deferred_pickup`, `retiro_origin=admin_local`) |
+| `nj/components/orders/OrderCreateModal.tsx` | Modal único; elige directorio según `boardScope` |
 
 Reuso de lógica ya existente en la edición de pedidos (`nj/lib/supabase/order-edit.ts`): se exportaron `itemQualifiesForStockDeduction`, `applyManualConfirmedItems`, `applyOrderStockDeduction` (ahora acepta un `source` para distinguir en `stock_history` si el descuento vino de edición o de creación) para no duplicar la lógica de descuento entre crear y editar.
 
@@ -143,12 +144,36 @@ Pedido explícito: en mobile, la pantalla principal debe mostrar **solo Activos*
 **Draft mode (`nj/lib/orders/draft-changes.ts`):**
 
 - Tipos `DraftChangeKind` (`picked` / `waiting-fabrica` / `waiting-local` / `missing` / `split`) y `DraftChangesMap` (por `order_item_id`).
-- En `OrderCard.tsx`, si `draftMode = column === "active" && (isMobile || boardScope === "local_pickup")`: tocar ✓/⏳/✕ (`OrderCardItemActions.tsx`) o el wizard de reparto (§2) solo llama `onStage*` (cambia de color: verde/amarillo-con-letra-F-o-L/rojo) en vez del RPC real. Excepción: ítem multi-unidad reservado → primero abre `PartialAcceptModal` y el resultado se stagea como `kind: "split"`.
+- En `OrderCard.tsx`, si `draftMode = column === "active" && (isMobile || boardScope === "local_pickup")`: tocar ✓/⏳/✕ (`OrderCardItemActions.tsx`) o el wizard de reparto (§2) solo llama `onStage*` (cambia de color: verde/amarillo-con-letra-F-o-L/rojo) en vez del RPC real. Excepción: ítem multi-unidad reservado → primero abre `PartialAcceptModal` y el resultado se stagea como `kind: "split"` (guarda `nFabrica` y `nLocal` por separado). Si hay al menos una unidad en espera local (Pedidos) o depósito (Retiro, mismo `nLocal`), **Mensaje/Enviar no se muestran** (`draftDefersCustomerMessage`); el aviso queda para la campana al resolver. Un split mixto ya no se colapsa a “solo fábrica”. `/nj/admin/retiro` usa el mismo `KanbanBoard`/`OrderCard`.
 - Barra `order-draft-bar` al pie de la tarjeta con resumen (`summarizeDraftChanges`) y botones **Confirmar cambios** / descartar — solo al confirmar se ejecutan las RPCs reales (`confirmChanges` en `OrderCard.tsx`), en el mismo orden en que se tocaron los botones.
+- **Gate Enviar → Confirmar (Activos, 2026-09-05):** si se muestran Mensaje/Enviar y hay teléfono, **Confirmar** queda deshabilitado hasta pulsar **Enviar**. Tras enviar, Enviar se ve gris (`order-draft-bar__btn-send--sent`) pero sigue siendo clickeable (reenvío). Si cambian los cambios pendientes, hay que volver a enviar. Sin teléfono, Confirmar no se bloquea. No aplica a Cancelados. Campana (`OrderMessageBell`): al Enviar, la tarjeta queda gris (`order-msg-bell__card--sent`) y sigue funcional; el id se recuerda en `sessionStorage` (`fyl-order-msg-bell-sent`). Mismo código en Pedidos y Retiro.
 - Badge (●) en el header de la tarjeta colapsada si tiene cambios pendientes sin confirmar.
 - Botón "Apartar todos" (`OrderActions.tsx`) oculto mientras hay `draftMode` activo (no tiene sentido aplicar todo de golpe si se está revisando ítem por ítem).
 
 **Bug de layout encontrado y resuelto durante esta implementación:** al envolver cada `KanbanColumn` en un `div.kanban-column-slot` para poder ocultarlo en mobile, las columnas del **desktop** dejaron de ser parejas (`grid-template-columns: repeat(4, 1fr)` ya no alcanzaba). Causa: `min-width: 0` — necesario para que un hijo de grid no fuerce el ancho de su columna por contenido — estaba en `.kanban-column` (el hijo del slot) pero el hijo directo del grid pasó a ser `.kanban-column-slot`. Fix: mover `min-width: 0` a `.kanban-column-slot`.
+
+---
+
+## 10b. Inbox Ani / Fati (2026-09-06) — dos celulares, misma cuenta
+
+**Problema:** dos personas usan la misma cuenta admin en dos celulares sobre `/nj/admin/orders`. Sin dueña, ambas podían abrir el mismo pedido en Activos y mandar el mismo WhatsApp.
+
+**Regla:** la dueña vive en la **clienta** (`customers.kanban_inbox_owner` = `ani` | `fati`), no en el pedido ni en `auth.uid()`.
+
+**Vistas (switch del header):** Ani (rosa) / Fati (celeste) / General. En móvil el switch **reemplaza** el título “Pedidos”. Persistido en `localStorage` (`fyl-orders-inbox-view`). Primera visita: General.
+
+| Columna / superficie | Vista Ani o Fati | General |
+|---|---|---|
+| Activos, Espera, Cancelados, Cerrados, Stock Pend., campana | Solo clientas de esa dueña | Todas |
+| Apartados | Todas (sin distinción) | Todas |
+
+**Asignación automática:** al primer pedido de alcance Pedidos (no Retiro / no `local_deferred_pickup` / no `kanban_scope=local_pickup`), un trigger asigna Ani o Fati en round-robin (`kanban_inbox_rr`) y no vuelve a cambiar. Migración `338_kanban_inbox_ani_fati.sql` + RPC `rpc_set_kanban_inbox_owner`.
+
+**Chip en tarjeta:** junto al 📞, botones Ani/Fati; al tocar abre picker ¿Ani o Fati? y reasigna sin terminar el pedido. Estrella ★ si la clienta tiene exactamente un pedido en el sistema (primera vez).
+
+**Fuera de alcance:** `/nj/admin/retiro` (sin switch, chip ni filtro), Pagos, Enviados.
+
+**Prod:** migración `338` aplicada en fyl-core (2026-09-06). Rollback: `338_ROLLBACK_kanban_inbox_ani_fati.sql`. Frontend tolera columnas ausentes vía fallback de `ORDER_SELECT`.
 
 ---
 
@@ -247,6 +272,27 @@ Se confirmó además que `rpc_cancel_order_item` (la RPC que corre cuando la cli
 
 ---
 
+## 13. Extras/descuentos visibles en la lista del pedido (2026-09-08)
+
+**Síntoma:** al crear o editar un pedido en `/nj/admin/retiro` o `/nj/admin/orders` y agregar un extra (nombre libre, Extra $, Descuento, Envío), el total cambiaba pero **la fila no aparecía** en la lista de productos de la tarjeta.
+
+**Causas:**
+1. Los extras especiales se guardan como `order_items` con `status = picked` y sin variante, pero `isPickedOrderItem` los excluía. En Apartados la lista filtra por ese helper, así que desaparecían.
+2. Envío / descuento / extra $ / extra % viven en `orders.notes` y solo se listaban en el pie, no como filas.
+
+**Fix:**
+- `appendExtrasToOrderCardItems` (`nj/lib/orders/domain.ts`) vuelve a poner extras especiales en la lista y convierte los valores de notes en filas con el nombre asignado (`Extra`, `Descuento`, `Joyas`, etc.).
+- `OrderCard` / `OrderCardItems` los muestran como un producto más (sin acciones de stock). Los extras de notes no se pueden borrar con ✕ (se editan desde Editar).
+- `OrderCreateModal` también lista envío/descuento/extra mientras se crea el pedido.
+
+### Cantidad de extras con + / − (2026-09-08)
+
+Al cargar un extra (crear o editar) se puede elegir unidades con **+ / −**. Ejemplo: nombre `remera` y cantidad 2 → 2 unidades del extra Remera (el monto es por unidad). Sin nombre queda como `Extra`. El mismo extra (mismo nombre y precio) se acumula en una sola fila. La lista del pedido muestra `Extra ×2`.
+
+**Verificación:** tests en `nj/lib/orders/domain-extras-display.test.ts` y `nj/lib/supabase/order-edit.merge-extra.test.ts`. No hay cambio de SQL ni de total: solo presentación.
+
+---
+
 ## Verificación realizada
 
 - `npx tsc --noEmit` en `nj/` sin errores tras cada cambio relevante (clasificación, wizard, mobile, leyenda de colores).
@@ -271,10 +317,64 @@ Se confirmó además que `rpc_cancel_order_item` (la RPC que corre cuando la cli
 
 ---
 
+## 14. Campana: reabrir pedido retira aviso de cierre no enviado (2026-09-08)
+
+Caso **A56670** (Susana Ortiz, PAU): cierre → aviso `customer_closed_cod` → la clienta reabrió y volvió a cerrar → no se fabricó otro aviso (duplicado pendiente). Además la campana ocultaba el aviso PAU mientras el pedido estaba en el tablero.
+
+- Migración **339** aplicada en fyl-core 2026-09-08 (`reopen_retract_unsent_closed_bell_339`): al reabrir, si el mensaje no se envió, se retira; el próximo cierre encola uno nuevo.
+- `messageBellAllowsOrderSource`: avisos `customer_closed_*` visibles aunque `source` sea admin/PAU.
+- Detalle de flujo: [[05-FLUJO-PEDIDOS]] § cierre clienta.
+
+---
+
+## 15. Botón Local: pedido desaparece de Retiro (2026-09-10)
+
+**Caso:** A56595 ROSANA KARINA GOMEZ (Villa Berthet / SEDE). En Pedidos → Apartados se tocó **Local**. El write fue correcto (`kanban_scope=local_pickup`, `retiro_origin=moved_from_orders`, ítems todos `picked`), pero en `/nj/admin/retiro` Apartados no aparecía.
+
+**Causa:** `fetchOrdersInitial` pedía `.limit(200)` de *todos* los operativos (no sent/devolución/expired) y *después* filtraba Pedidos vs Retiro. Había 266 operativos; Rosana era el **#203** por `created_at`. Al recargar Retiro no entraba en el fetch. El botón sí la sacaba del store de Pedidos.
+
+**Fix:** `fetchOperationalOrderRows` pagina de a 200 hasta cubrir el universo (tope 2000).
+
+**Seguimiento (2026-09-11):** el corte de filas **seguía** si la página 2 del SELECT pesado (ítems + fotos + fuentes) fallaba: el catch devolvía solo los 200 más nuevos como si estuviera completo. Hoy hay 258 operativos y **21** con `kanban_scope=local_pickup` fuera de esa tanda. El botón Local (Pedidos → Apartados) manda a **Retiro → Apartados**, no a Activos (en mobile Activos es la vista default).
+
+**Fix 2:** primero se leen claves livianas de todos los operativos, se filtra Pedidos/Retiro, y recién ahí se hidratan los IDs del tablero. Si una página grande falla, reintenta de a 50. El UPDATE de `kanban_scope` exige fila devuelta (RLS silencioso). El toast dice a qué columna fue. `refreshAll` usa el scope de la página, no el default `shipping` del store.
+
+## 16. Alta manual quitada por la clienta → Cancelados (2026-09-10)
+
+**Casos:** A56782 Ana Chamorro, A56807 Jaqueline Mazzeto. El admin cargó productos a mano (`picked` + `admin_confirmed_missing` + fuentes inyectadas). La clienta los quitó; el Kanban los dejaba en Apartados sin ✓.
+
+**Causa:** `cancelledItemNeedsStockConfirmation` cortaba si `admin_confirmed_missing` (protección §14 de [[17-AUDITORIA-MODULO-ORDERS]] para trazas `missing`). Ese flag también cubre el alta manual.
+
+**Fix:** si hay `order_item_stock_sources.qty > 0`, va a Cancelados y pide ✓, aunque el flag esté en true. Espejo SQL en `340_cancelled_pending_stock_count_sources.sql` para no borrar el pedido al confirmar un ítem (ver §16 de la auditoría / A56391).
+
+## 17. Retiro: Imprimir cobraba y el pedido seguía en Apartados (2026-09-11)
+
+**Síntoma:** Cerrar pedido → Efectivo/Tarjeta → Imprimir. El ticket salía bien y la tarjeta seguía en Apartados.
+
+**Causa:** el UPDATE de `closed` + `local_pickup_fulfilled_at` no se verificaba (RLS puede devolver 0 filas sin error). El toast daba OK y `removeOrder` sacaba la card; al recargar/hydrate el SSR viejo o un refresh la volvía a meter. Si el pedido ya estaba `closed` + Pendiente (cierre de la clienta), `matchesPickedTab` lo deja en Apartados hasta que hay cobro real.
+
+**Fix:** el cierre exige fila devuelta (`status=closed` + `local_pickup_fulfilled_at`); si no, no se da por finalizado. `hydrate` no pisa el store si ya está hidratado en el mismo tablero. Tras imprimir se hace `refreshAll(local_pickup)`.
+
+**Seguimiento (2026-09-14, A56752 María Alejandra Del Valle):** `isLocalPickupOrderFulfilled` trataba cualquier pago ≠ Pendiente como cobrado en local. Un PAU cerrado con Contra Reembolso y perfil Retira Local desaparecía del Kanban. Ahora solo Efectivo/Tarjeta o `local_pickup_fulfilled_at` lo sacan del tablero.
+
+**Rótulos vs Local (2026-09-14):** el perfil Retira local ya no enruta a `/nj/admin/retiro`. Sin botón **Local**, el pedido vive en Pedidos; al cerrar va a `admin/closed-orders.html` (rótulos). **Enviar al local** ahí sí lo manda a Retiro. COD en un pedido que **sí** está en Retiro (Local explícito) sigue en Retiro → Cerrados.
+
+## 18. Retiro deja de heredar el pool paginado de Pedidos (2026-09-14)
+
+**Reporte:** pese al Fix 2 de §15, seguía la sospecha de que `/nj/admin/retiro` "no es una lista propia, es solo un filtro" sobre los mismos datos de `/nj/admin/orders`. Cierto en la arquitectura (no en el bug puntual de esa fecha): ambos boards llamaban a `fetchOrdersInitial()` con distinto `scope`, y la función SIEMPRE paginaba primero *todos* los operativos (tope 2000) y filtraba Pedidos/Retiro recién después en JS. Con ~290 operativos hoy eso no cortaba nada, pero la dependencia seguía ahí — iba a volver a romperse en cuanto el volumen operativo pase de 2000, y no hay ninguna garantía SQL de que Retiro vea todo lo que le corresponde.
+
+**Fix:** para `scope === "local_pickup"` se agregó `fetchRetiroOrdersDirect()` en `order-queries.ts`, que **ya no depende del pool de Pedidos**: consulta directo en SQL por las mismas señales que usa `isLocalPickupBoardOrder()` (`local_deferred_pickup = true`, o `notes ILIKE` por `kanban_scope:"local_pickup"` / `retiro_origin` / `mirrored_from_local_order:true` / `local_pickup_fulfilled_at`), más un pool chico de pedidos con algún `order_item.status = 'waiting'` (para las excepciones cruzadas de la columna Espera, `orderHasPedidosLocalWaiting`). `notes` es `text` (no `jsonb`), por eso el filtro es `ILIKE` sobre el string JSON y no `notes->>campo`. `/nj/admin/orders` (scope `shipping`, el board grande) sigue con la paginación de siempre — no tenía el bug reportado.
+
+**Nota sobre el ejemplo de "monto que no correspondía" que motivó el audit:** se investigó el pedido A56978 (Patricia Brite, $13.800) y el número **coincidía exactamente** con `total_amount` y con el único ítem (`price_snapshot × quantity`) en `orders`. La confusión fue entre dos sistemas distintos: el botón "📦 Pedidos" de `admin/public-sales.html` (legado, puerto 5500) lee de `local_orders` vía `rpc_get_local_orders`, una tabla separada de `orders` (la que usa `/nj`), y busca por nombre de cliente. Patricia Brite tiene 20+ pedidos históricos en ambas tablas; buscar "brit" en el modal legado trae un pedido *distinto* con el mismo nombre de cliente (ninguno de sus `local_orders` tiene $13.800 — se confirmó contra producción), no una copia desincronizada del mismo pedido. No hay bug de datos ahí, sí hay riesgo real de confusión al comparar dos paneles con búsquedas por nombre sobre tablas distintas.
+
+---
+
 ## Referencias
 
 - Clasificación de columnas: `nj/lib/orders/classification.ts`, `nj/lib/orders/domain.ts`, `nj/lib/orders/waiting-source.ts`
 - Draft mode: `nj/lib/orders/draft-changes.ts`, `nj/hooks/useIsMobile.ts`
+- Inbox Ani/Fati: `nj/lib/orders/kanban-inbox.ts`, `supabase/canonical/338_kanban_inbox_ani_fati.sql`, `nj/components/orders/KanbanInboxSwitch.tsx`, `OrderInboxOwnerChip.tsx`
+- Columna Vencido (2026-09-18): `KanbanColumnId="expired"`, semáforo amarillo/rojo/azul, mig `349_admin_expiry_kanban.sql` — ver [[65-AUDITORIA-PEDIDOS-EXPIRED-INVISIBLES-Y-STOCK-FANTASMA-2026-09-15]] § seguimiento
 - Creación manual: `nj/lib/supabase/order-create.ts`, `nj/lib/supabase/customer-directory.ts`, `nj/components/orders/OrderCreateModal.tsx`
 - Zero-stock: `supabase/canonical/250_rpc_admin_zero_variant_size_stock.sql`, `nj/components/orders/OrderCardItemActions.tsx`, `admin/public-sales.js` (`checkAndOfferZeroStock`)
 - Stock/`reserved_qty` (mismo trabajo de auditoría): [[06-RESERVED-QTY-Y-RECONCILE]] §246, §249

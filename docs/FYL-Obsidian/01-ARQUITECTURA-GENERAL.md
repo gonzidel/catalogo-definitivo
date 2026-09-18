@@ -21,7 +21,7 @@
 | `admin/` | Backoffice: products, stock, orders, public sales, customers, permisos |
 | `supabase/canonical/` | SQL canonico, migraciones, RPCs, triggers |
 | `docs/FYL-Obsidian/` | Documentacion viva |
-| `nj/` | **Migración Next.js 15 App Router** (paralela, solo lectura por ahora) — ver [[41-MIGRACION-NEXTJS-NJ-2026-06-08]] |
+| `nj/` | Next.js 15 App Router (`/nj`): catálogo, auth, dashboard, admin (orders, products, search). Origen: [[41-MIGRACION-NEXTJS-NJ-2026-06-08]]. Buscador: [[59-NJ-BUSCADOR-SMART-SEARCH]] |
 
 ## Modulos auditados
 
@@ -32,6 +32,7 @@
 | Orders | `admin/orders.js`, `admin/order-creator.js`, `client/dashboard-instant.js` | [[17-AUDITORIA-MODULO-ORDERS]] |
 | Public Sales | `admin/public-sales.js`, `admin/local-order-edit.js` | [[18-AUDITORIA-MODULO-PUBLIC-SALES]] |
 | Cliente/Carrito | `scripts/cart-persistent.js`, `client/dashboard-instant.js`, `client/cart.js` | [[19-AUDITORIA-MODULO-CLIENTE-CARRITO]] |
+| Buscador `/nj` | `nj/lib/search/*`, `/nj/admin/search` | [[59-NJ-BUSCADOR-SMART-SEARCH]] |
 
 ## Nota de consistencia
 

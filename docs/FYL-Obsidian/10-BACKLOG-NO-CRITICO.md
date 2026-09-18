@@ -13,7 +13,11 @@
 | Baja | `import-export.js` rutas con notas “actualizar canónica” (ver grep) | Revisar si queda write directo o ya RPC. **Pendiente de verificación** con búsqueda. |
 | Baja | Documentar transiciones exactas de `order_items.status` en una matriz (pedido+admin) | Mejora operativa, no corregiría lógica. |
 | Baja | Tests automatizados de idempotencia (Playwright + asserts en `rpc_operations`) | Aumenta confianza en deploys. |
+| Baja | Checkout 309 marca snapshot `dirty` sin tocar VSS | Cron 332 converge. No tocar triggers dirty pre-launch. |
+| Baja | Cancel clienta post-apartado 309 no restaura stock | Restore vía Desarmar admin. Aceptado; no modificar ahora. |
+| Baja | Reuso de `order_number` tras borrar pedido | Auditoría post-launch. No modificar ahora. |
 
 ## Enlaces
 
 - [[00-INDICE]] · [[14-AUDITORIA-MODULO-PRODUCTS]] · [[15-OBSERVACIONES-PRODUCTS-A-REVISAR]] · `supabase/canonical/165_*.sql` (comentarios iniciales)
+- Tres ítems 309/`order_number` (2026-09-04): evidencia en [[59-NJ-CHECKOUT-IDEMPOTENCY-ROOT-PREP-2026-09-04]] §4

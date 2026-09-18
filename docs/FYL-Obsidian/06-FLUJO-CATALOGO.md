@@ -20,7 +20,8 @@ Esta nota resume catalogo, PDP y carrito. Para el detalle real de carrito/checko
 | Area | Archivos/RPCs |
 |---|---|
 | Filtros | `scripts/filtros.js`, `scripts/size-filter.js` |
-| Busqueda | `scripts/search-manager.js` |
+| Búsqueda **legacy vanilla** | `scripts/search-manager.js` |
+| Búsqueda **canónica `/nj`** | Resolver + ranking + analytics + admin. Hub: [[59-NJ-BUSCADOR-SMART-SEARCH]]. Código: `doc/nj/smart-search.md`. Admin: `/nj/admin/search` ([[41-SEARCH-ADMIN-FASE5-2026-09-03]]). |
 | Tags/atributos | `scripts/tag-service.js`, RPCs `get_types_by_category`, `get_attributes_by_type`, `get_product_details` |
 | Alternativas/similares | `scripts/product-alternatives.js` |
 | Ofertas | `get_active_offers_with_images`, `get_active_promotions_for_variants`, `get_effective_price` |
@@ -54,6 +55,7 @@ Flujo vivo:
 
 ## Enlaces
 
+- [[59-NJ-BUSCADOR-SMART-SEARCH]]
 - [[21-CONTEXTO-AGENTE-HARDENING-2026-04]]
 - [[19-AUDITORIA-MODULO-CLIENTE-CARRITO]]
 - [[03-MAPA-DE-RPCS]]

@@ -11,6 +11,7 @@ Antes de merge/deploy, revisar el area afectada y actualizar Obsidian si cambia 
 - [ ] Toca Cliente/Carrito, checkout, `cart_items`, localStorage o dashboard cliente: revisar [[19-AUDITORIA-MODULO-CLIENTE-CARRITO]], [[06-FLUJO-CATALOGO]].
 - [ ] Toca RPCs o migraciones: actualizar [[03-MAPA-DE-RPCS]] y [[13-RPCS-DEPLOY-STATE]].
 - [ ] Toca RLS, permisos o colaboradores: revisar [[08-PERMISOS-Y-ROLES]] y observaciones en [[15-OBSERVACIONES-PRODUCTS-A-REVISAR]].
+- [ ] Toca buscador `/nj`, keywords, aliases, `search_events` o `/admin/search`: revisar [[59-NJ-BUSCADOR-SMART-SEARCH]] y [[41-SEARCH-ADMIN-FASE5-2026-09-03]]. No agregar aliases automáticos. No limpiar `tags` desde search.
 - [ ] Toca documentacion: verificar que los links entre mapas generales y auditorias 14-19 sigan vigentes.
 
 ## Regla para documentar

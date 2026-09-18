@@ -45,7 +45,8 @@ Verificadas el 2026-05-04 contra `pg_proc` en producción. Todas con `security_d
 | `rpc_set_variant_warehouse_stock_batch` | 1 firma con `p_items, p_source` | CONFIRMADO ACTIVO | Stock sin talle. |
 | `rpc_move_size_stock` | 2 firmas (legacy + idempotente con `operation_id`) | CONFIRMADO ACTIVO | Ambas coexisten; JS usa la idempotente. |
 | `rpc_reconcile_stock(boolean)` | 1 firma con `p_fix_reserved_qty default false` | CONFIRMADO ACTIVO | Reconciliación derivadas + optional reserved_qty. |
-| `rpc_create_public_sale` | 3 firmas históricas (v1, v2, v3 con `operation_id`) | CONFIRMADO ACTIVO | 3 versiones coexisten; flujo vivo usa la última. |
+| `rpc_create_public_sale` | 3 firmas históricas (v1, v2, v3 con `operation_id`) | CONFIRMADO ACTIVO | 3 versiones coexisten; flujo vivo usa la última. 334 la **llama** (5 args) desde el cierre de pedido; no la reescribe. |
+| `rpc_finalize_local_order_to_public_sale` | 1 firma en repo (`334`) | **NO DESPLEGADA** 2026-09-04 | Cierre atómico `local_orders` → `public_sales`. Ver [[60-LOCAL-ORDER-ATOMIC-CLOSE-FYLA10223-2026-09-04]]. |
 | `rpc_void_public_sale` | 2 firmas (legacy + idempotente) | CONFIRMADO ACTIVO | Anulación/reversión. |
 | `rpc_mark_order_as_devolucion` | 2 firmas (legacy + idempotente) | CONFIRMADO ACTIVO | Devolución. |
 | `rpc_mark_order_items_picked` | 1 firma con `p_order_item_ids, p_operation_id` | CONFIRMADO ACTIVO | Picking idempotente. |
@@ -267,6 +268,28 @@ SELECT proname FROM pg_proc WHERE proname = 'rpc_get_public_curated_banner_by_sl
 ```
 
 Detalle: [[42-HOME-BANNERS-FEED-NJ-2026-06-09]].
+
+---
+
+## Buscador `/nj` (2026-09-04, fyl-core)
+
+| Objeto | Migración | Estado | Nota |
+|--------|-----------|--------|------|
+| `search_normalize_text` + keywords/aliases + vista pública | 327 | **DEPLOY** fyl-core | Seed mínimo. Tags no tocados |
+| `search_events` + RLS INSERT anon / SELECT admin | 328 | **DEPLOY** fyl-core | Sin PII |
+| `search_ignored_terms` + RPCs `search_admin_*` | 329 | **DEPLOY** 2026-09-04 | `is_admin()`; EXECUTE authenticated only |
+| REVOKE writes anon sobre diccionario | `329_search_admin_anon_revoke` | **DEPLOY** 2026-09-04 | Defensa en profundidad; ya incluido en el SQL canónico 329 |
+
+Verificación:
+
+```sql
+SELECT to_regclass('public.search_ignored_terms');
+SELECT proname FROM pg_proc WHERE proname LIKE 'search_admin_%';
+SELECT has_function_privilege('anon', 'public.search_admin_dashboard_stats()', 'execute'); -- false
+SELECT has_table_privilege('anon', 'public.search_keywords', 'insert'); -- false
+```
+
+Detalle: [[59-NJ-BUSCADOR-SMART-SEARCH]], [[41-SEARCH-ADMIN-FASE5-2026-09-03]].
 
 ---
 

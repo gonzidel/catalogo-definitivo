@@ -17,7 +17,7 @@ Clientes en **Resistencia, Barranqueras, Puerto Vilelas o Fontana** (Chaco):
 
 1. **Checkout** (`rpc_checkout_cart`): valida stock disponible pero **no lo descuenta**. Ítems → `awaiting_apartado`. `orders.local_deferred_pickup = true`, `dismantle_at` y `expires_at` = NULL.
 2. **Cliente** (`ActiveOrderTab`): spinner + copy “todavía no fue apartado”; **sin countdown** hasta apartado.
-3. **Admin retiro** (`/nj/admin/retiro`, Kanban `scope=local_pickup`): pedidos con transporte Retira local / Retiro de Local, `local_deferred_pickup`, o geo del dashboard (`isDashboardRetiroLocalZone`: Chaco especial + Corrientes Capital), aunque el customer tenga un `transport_id` viejo tipo MyM. Botón Apartar → `rpc_mark_order_items_picked` descuenta stock, crea `order_item_stock_sources`, pasa a `picked`. En el **primer** apartado del pedido: `dismantle_at := fn_compute_local_pickup_deadline(now())`, `expires_at := dismantle_at - 12 h`.
+3. **Admin retiro** (`/nj/admin/retiro`, Kanban `scope=local_pickup`): solo pedidos con señal explícita (`kanban_scope=local_pickup`, espejo caja, `local_deferred_pickup` 36 h, o `local_pickup_fulfilled_at`). El perfil **Retira local** y la geo Chaco/Corrientes **no** mandan solos al tablero. Botón Apartar → `rpc_mark_order_items_picked` descuenta stock, crea `order_item_stock_sources`, pasa a `picked`. En el **primer** apartado del pedido: `dismantle_at := fn_compute_local_pickup_deadline(now())`, `expires_at := dismantle_at - 12 h`.
    - En la columna **Apartados** del Kanban NJ de Retiro, el botón **"Local" / "Depósito"** solo mueve entre `/nj/admin/orders` y `/nj/admin/retiro` mediante `orders.notes.kanban_scope` (no envía a `admin/public-sales.html`).
    - **Espera en Zona (312):** ítems `awaiting_apartado` pueden marcarse ⏳ (Fábrica / **Depósito** en Retiro). `rpc_mark_order_item_waiting_source` guarda depósito preferido en `order_item_stock_sources` con `order_items.deferred_stock_pending = true` **sin** descontar stock. Al confirmar ✓ en columna **Espera**, `fn_commit_deferred_order_item_stock` descuenta **solo** del depósito elegido y pasa a Apartados. Cancelar/quitar ítems con `deferred_stock_pending` no devuelve stock fantasma.
    - **UI Espera Depósito (Retiro):** tarjetas/etiquetas **moradas** (pendiente confirmación del depósito), distinto del verde **Local** en Pedidos. Esos pedidos también aparecen en **Pedidos → Espera** (morado) para que el área confirme con ✓.
@@ -79,10 +79,24 @@ Desde `admin/public-sales.html` → Guardar Pedido (`rpc_create_local_order`):
    - `local_orders.source_order_id` solo si el local viene del Kanban Pedidos (“Desde Pedidos”), no el espejo
 3. Los pedidos `local_deferred_pickup` no cuentan para el índice “un pedido abierto por cliente” (313): pueden coexistir con un pedido dashboard.
 4. Al finalizar el local (`rpc_create_public_sale` + `status=completed`) se llama `rpc_close_mirrored_retiro_from_local_order` para cerrar el espejo.
-5. **Cierre desde Retiro** (`/nj/admin/retiro`, Apartados → Cerrar pedido): `finalizeRetiroOrderSale` en `nj/lib/orders/retiro-finalize-sale.ts` — misma finalización contable que public-sales (`rpc_create_public_sale` + ticket + `daily_sales`), con cliente en `public_sales_customers`, créditos del cliente, extras del pedido local en `notes`, y cierre de `local_orders` si el pedido es espejo de caja.
-6. **Un pedido por cliente (318):** el índice `orders_one_open_per_customer_idx` incluye `active`, `closing_soon`, `closed` y **`cancelled`**. Cancelar desde dashboard borra el pedido si no hay stock pendiente; si no, bloquea checkout hasta que admin **Desarmar** en Cancelados.
+5. **Cierre desde Retiro** (`/nj/admin/retiro`, Apartados → Cerrar pedido): `finalizeRetiroOrderSale` en `nj/lib/orders/retiro-finalize-sale.ts` — misma finalización contable que public-sales (`rpc_create_public_sale` + ticket + `daily_sales`), con cliente en `public_sales_customers`, créditos del cliente, extras del pedido local en `notes`, y cierre de `local_orders` si el pedido es espejo de caja. **Ticket:** se imprime por **GZ** (`gz-agent` en `127.0.0.1:8785`, mismo ESC/POS que venta al público). Si el agente no está, fallback a `window.print()`.
+5b. **Pedido manual desde Retiro** (`OrderCreateModal` con `boardScope=local_pickup`): busca/crea en `public_sales_customers` (no en `customers` de Pedidos). Al guardar, resuelve/crea el puente `customers.public_sales_customer_id` y crea `orders` con `local_deferred_pickup=true` + `notes.kanban_scope=local_pickup` + `retiro_origin=admin_local`. Pedidos (`/nj/admin/orders`) sigue usando `customers`.
+6. **Un pedido por cliente (336 + 337):** el índice `orders_one_open_per_customer_idx` cubre `active`, `closing_soon` y `closed` pendiente. **No bloquean** un pedido nuevo: `cancelled` (Kanban Cancelados, stock a Desarmar) y `closed` ya cobrado en retiro (`notes.local_pickup_fulfilled_at`). `closed` de envío (sin fulfilled) sí bloquea (251). Cancelar desde dashboard sigue borrando el pedido si no hay stock pendiente.
 7. Backfill histórico: `rpc_backfill_pending_local_orders_to_retiro(limit)` (admin) para pending sin espejo.
-8. **Enviar desde cerrados al local (nuevo):** en `admin/closed-orders.html` el botón **"Enviar al local"** reabre el pedido en el Kanban NJ de Retiro: setea `orders.notes.kanban_scope = local_pickup` + `orders.notes.retiro_origin = moved_from_closed` y luego revierte `orders.status` a `active` con `rpc_revert_order_to_picked`, para que aparezca en `/nj/admin/retiro` columna **Apartados** con tarjeta naranja.
+8. **Enviar desde cerrados al local:** en `admin/closed-orders.html` el botón **"Enviar al local"** reabre el pedido en el Kanban NJ de Retiro: setea `orders.notes.kanban_scope = local_pickup` + `orders.notes.retiro_origin = moved_from_closed` y luego revierte `orders.status` a `active` con `rpc_revert_order_to_picked`, para que aparezca en `/nj/admin/retiro` columna **Apartados** con tarjeta naranja.
+
+### Rótulos vs botón Local (2026-09-14)
+
+Caso tipo **A56752**: el perfil puede decir Retira local. Si en `/nj/admin/orders` **no** se tocó **Local**, el pedido se opera como envío.
+
+| Paso | Dónde | Qué decide |
+|---|---|---|
+| Preparar | `/nj/admin/orders` | Sigue en Pedidos aunque el perfil diga Retira local |
+| Cerrar sin Local | `admin/closed-orders.html` | Rótulos, igual que un envío |
+| Enviar al local | botón en cerrados | `kanban_scope=local_pickup` + `retiro_origin=moved_from_closed` → Retiro Apartados |
+| Local durante el apartado | botón **Local** en Pedidos | `kanban_scope=local_pickup` + `retiro_origin=moved_from_orders` → Retiro **sin** pasar por rótulos |
+
+Código: `isLocalPickupBoardOrder` (`nj/lib/orders/board-scope.ts`) y `isRetiroBoardOrderForLegacyPedidos` (`admin/orders-domain.js`). Checkout 36 h (`local_deferred_pickup`) sigue yendo a Retiro.
 
 Migraciones: `311_mirror_local_order_to_retiro.sql`, `313_local_orders_retiro_mirror_fix.sql`. Ver también [[18-AUDITORIA-MODULO-PUBLIC-SALES]].
 
@@ -140,9 +154,10 @@ Los estados `sent`, `expired` y `devolución` están excluidos del cálculo de r
 Pantalla: `admin/closed-orders.html`.
 
 1. **Cerrar** (`rpc_close_order`) → `status = closed`, `closed_at = now()`. Aparece en la grilla de cerrados; **no** en «Imprimir Lista de Envíos».
-2. Imprimir rótulos → `labels_printed`.
+2. Imprimir rótulos → `labels_printed`. **Conteo de productos (2026-09-09):** rótulo, tarjeta y ticket de `closed-orders.js` / reimpresión en `sent-orders.js` usan `getActiveOrderItems` (`orders-domain.js`): solo ítems no `cancelled`. Quitar un sin-stock deja la fila cancelada (no la borra); el monto ya se recalculaba sin ella, la cantidad no. Lista de envíos (`rpc_get_shipping_orders`) y factura ya filtraban.
 3. **Finalizar (Enviar)** → `rpc_mark_order_as_sent` → `status = sent`, **`sent_at = now()`**.
 4. Lista del día: buscar por transporte y fecha; la RPC filtra solo pedidos `sent` cuya fecha **Argentina** de `sent_at` coincide (sin usar `closed_at`).
+5. **Exclusión Retiro (paridad Pedidos legacy):** `closed-orders.js` filtra con `isRetiroBoardOrderForLegacyPedidos` (`orders-domain.js`). Pedidos del Kanban Retiro (`/nj/admin/retiro`) — `kanban_scope=local_pickup`, `local_deferred_pickup`, espejos caja, `local_pickup_fulfilled_at` — **no** aparecen aquí aunque `orders.status = closed`. El transporte **Retira local** del perfil **sí** aparece (rótulos), salvo que se haya tocado Local o Enviar al local. En Retiro, `closed`+Pendiente puede seguir en **Apartados** (cobro); eso no es el cerrado de envío de esta pantalla. **Prod 2026-09-10:** `app.fylmoda.com.ar` servía `closed-orders.js` sin este filtro y listaba retiros cobrados que nunca se envían.
 
 Detalle del incidente sábado→lunes y deploy: [[39-LISTA-ENVIOS-SENT-AT-2026-05-26]]. Runbook: `doc/shipping-list-sent-at-deploy-2026-05-26.md`.
 
@@ -155,6 +170,7 @@ Cuando la clienta cierra desde `/nj/dashboard` con **todos los productos confirm
 **Regla campana de cierre:** solo pedidos que la clienta auto-gestiona desde su dashboard:
 - Cierre directo clienta (`auth.uid() = customer_id`) → sí
 - Auto-cierre admin tras `customer_requested_close` (clienta lo inició) → sí
+- **348 (2026-09-18):** si la clienta llama `rpc_customer_request_close` con el pedido ya 100% apartado y transporte ≠ retiro local, la RPC cierra sola vía `rpc_close_order` (evita stuck Apartados tipo A56955)
 - Cierre manual admin (`orders.html` / botón Cerrar Kanban) → **no** campana; queda `ready`
 
 **Panel Pagos:** misma regla de origen — solo `isCustomerSourcedOrder` / `fn_order_is_customer_self_managed`. Pedidos `admin` / PAU (p. ej. BARRERA vía + Pedido) no deben listarse aunque quede fila residual en `admin_order_payment_pending`. Migración **322 aplicada** 2026-09-03.
@@ -175,6 +191,10 @@ Cuando la clienta cierra desde `/nj/dashboard` con **todos los productos confirm
 **RPCs nuevas:** `rpc_complete_customer_closed_notification`, `rpc_set_correo_shipping_cost`, `rpc_confirm_closed_order_payment`, `rpc_list_admin_payment_pending`, `rpc_list_correo_pending_shipping_cost`, `rpc_switch_cod_order_to_pagado`.
 
 **Frontend NJ:** `nj/lib/orders/closed-order-messages.ts`, `OrderMessageBell`, `OrderPaymentsPanel` (botón Pagos en header Kanban).
+
+**Reabrir y volver a cerrar (migración 339 aplicada en fyl-core 2026-09-08):** si la clienta usa "Editar pedido" / `rpc_customer_reopen_order_for_editing` (o `rpc_reopen_order`) y el aviso `customer_closed_*` **nunca se envió** (`copied_at` y `dismissed_at` nulos), se retira de la campana. Al cerrar de nuevo, `rpc_enqueue_customer_closed_notifications` fabrica un aviso nuevo (el chequeo de duplicado solo mira pendientes). Si el mensaje ya se había enviado, no se toca el histórico; el re-cierre igual puede crear uno nuevo.
+
+**Campana PAU/admin:** el aviso de cierre clienta (`customer_closed_*`) se muestra aunque `orders.source` sea admin/PAU. Espera y vencimiento siguen filtrados por `isCustomerSourcedOrder`.
 
 **Checklist manual por transporte:**
 1. Cierre con ítem reservado → sin campana; auto-cierre admin → campana según transporte.

@@ -109,6 +109,23 @@ Validación de 9 escenarios hipotéticos de estado de pedido/ítems provistos po
 - **Fix frontend:** llamar `rpc_customer_request_close` (`rpcCustomerRequestClose` en `order-queries.ts`) — SECURITY DEFINER ya presente en fyl-core. Repo: `supabase/canonical/324_rpc_customer_request_close.sql` (documenta la RPC existente).
 - **Flujo esperado:** clienta cierra → `customer_requested_close: true` + UI "En preparación" → admin aparta → `refreshAndMaybeAutoClose` → `closed`.
 
+### Fix 2026-09-18 (A56955) — request_close con pedido ya listo no cerraba
+
+- **Síntoma:** Rosa Tamara Vargas, pedido `A56955` (SEDE, 16/16 `picked`) tocó "Cerrar pedido" y quedó en Apartados (`status=active`, solo `notes.customer_requested_close=true`).
+- **Causa:** el front tomó el path `rpc_customer_request_close` (creía que aún había reserved) y esa RPC **solo** seteaba el flag. El auto-cierre solo corre si después un admin dispara `refreshAndMaybeAutoClose` — nadie lo hizo → stuck en Apartados.
+- **Cierre manual:** `status=closed`, `payment_method=Pendiente`, `closed_at=now()`.
+- **Fix servidor (348, aplicado prod):** `rpc_customer_request_close` marca el flag y, si no quedan `reserved`/`waiting`/`awaiting_apartado` y el transporte **no** es Retira Local / Retiro de Local, llama `rpc_close_order(..., 'Pendiente')`. Retorno JSON incluye `closed`, `pending_items`, `local_pickup`.
+- **Fix front:** `ActiveOrderTab.handleSend` si la RPC responde `closed: true` → `onOrderSent()` (Cerrados), no "En preparación".
+- **Rollback:** `supabase/canonical/348_ROLLBACK_rpc_customer_request_close_auto_close_when_ready.sql`.
+- **Hardening admin 2026-09-18:** `refreshAndMaybeAutoClose` ya no traga el error de `rpc_close_order` (devuelve `autoCloseError` + toast). `cancelItem` y `resolveStockPending` también pasan por auto-cierre.
+- **Prevención 2026-09-18 (post A56950 Sotelo):** (1) self-heal en `ActiveOrderTab` si "En preparación" + todo picked + no retiro local → intenta cerrar solo. (2) Migración **349** `rpc_close_stuck_customer_requested_orders` en cron cada 15 min.
+
+### Fix 2026-09-18 (A56961 Susana Ortiz) — cancelado fantasma en listado admin Cerrados
+
+- **Síntoma:** pedido cerrado con 12 u. / $179.600 correctos, pero la card admin listaba 13 filas: `220 Negro 36` cancelado (sin fuentes de stock) + el mismo SKU re-agregado en `picked`.
+- **Causa:** `OrderCard` en columna Cerrados pasaba `order.order_items` completo a `OrderCardItems`. El conteo/monto ya filtraban `cancelled`; el listado no.
+- **Fix:** `getOperationalDisplayOrderItems` + uso en Cerrados/stock_pending y en Editar pedido. Cancelados pendientes de ✓ siguen en el banner aparte.
+
 ### Nota — label visible vs. status real de un ítem "waiting"
 
 Detalle de negocio confirmado post-fix: la clienta **ve** un ítem interno en `waiting` con el label "Apartado" (espera de fábrica) o "Reservado" (espera de stock local) vía `getCustomerFacingItemStatus` (`nj/lib/orders/waiting-source.ts`) — esto es puramente cosmético (`itemStatusInfo` en `ActiveOrderTab.tsx`), nunca toca `item.status` real. Es clave que `allItemsPicked` compare contra el `status` real y no contra este label remapeado: si comparara contra el label, un ítem en espera de fábrica (mostrado como "Apartado" a la clienta) se contaría como listo para cerrar, reproduciendo el mismo bug que se acaba de corregir. Cuando el admin marca ese ítem `waiting` como `picked` de verdad (mismo botón/acción `markItemPicked` que ya dispara `refreshAndMaybeAutoClose`), el pedido se cierra solo en esa misma llamada si no queda nada más pendiente.

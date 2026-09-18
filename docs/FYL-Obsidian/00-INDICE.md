@@ -85,6 +85,15 @@ Ver [[10-BACKLOG-NO-CRITICO]]: columnas legacy, RLS fino, helpers duplicados, `r
 - [[50-AUDITORIA-CLOUDINARY-CONSUMO-2026-08-15]] — **Auditoría consumo Cloudinary** (`dnuedzuzm`): pico ~15 días atribuible a `next/image` srcset (14 anchos) vs vanilla (2–3); 6007 originales; OAuth del plugin pendiente para usage real.
 - [[57-GZ-AGENTE-IMPRESION-REEMPLAZO-QZ-2026-08-25]] — **GZ**: agente de impresión local propio (`gz-agent/`), reemplaza QZ Tray por completo en `closed-orders`, `labels`, `public-sales`, `sent-orders`, `stock`, `local-order-edit`. Sin certificados/firma, helper nativo `GZNative.exe` (sin PowerShell), `.exe` único sin ventana, autoarranque con Windows. Incluye fix de desperdicio de etiquetas en "Imprimir Todo".
 - [[58-SENT-ORDERS-META-TRANSPORTE-REIMPRESION-2026-08-25]] — **Sent-orders**: chips de transporte / reimpresión / fecha original→nueva en tarjeta del pedido; migración 304 (`original_sent_at`, `sent_transport_id`, `rpc_record_sent_order_label_reprint`).
+- [[59-NJ-BUSCADOR-SMART-SEARCH]] — **Buscador `/nj`**: Fases 1–5 (flujo unificado, resolver, ranking, GA4 + `search_events`, admin `/admin/search`). Vocabulario ≠ tags. Apply Fase 5: [[41-SEARCH-ADMIN-FASE5-2026-09-03]].
+- [[58-NJ-PRELAUNCH-CUTOVER-2026-09-04]] — **Pre-launch NJ** (auditoría build + plan cutover; no publicar). Varias secciones stale.
+- [[59-NJ-CHECKOUT-IDEMPOTENCY-ROOT-PREP-2026-09-04]] — **Prep 2026-09-04**: idempotencia checkout frontend, NJ sin `basePath` local, pruebas checkout/309, Redirect URLs raíz + OAuth localhost. Cutover `www` **no** ejecutado.
+- [[61-AUDITORIA-PDP-CARRITO-OOS-2026-09-07]] — **PDP vs carrito “no disponible”**: CartTab live restaba `reserved_qty` (Clarity 14:05). Fix: misma fuente `fn_sellable_stock_batch` que el PDP. Sin tocar checkout, reserved, Retiro local ni schema.
+- [[62-NJ-CHECKOUT-CROSS-TAB-LOCK-2026-09-08]] — **Checkout cross-tab + locks intra-tab + hydrate/remove/409**. Sin deploy. Sin mutar `rpc_checkout_cart` ni schema. C3 Retiro local: solo evidencia.
+- [[63-VANILLA-APP-CATALOGO-REDIRECT-2026-09-08]] — **`app.fylmoda.com.ar/catalogo` 301 → `www.fylmoda.com.ar/catalogo`** (live 2026-09-08). Admin `/admin` intacto.
+- [[64-AUDITORIA-STOCK-FANTASMA-CHECKOUT-2026-09-14]] — **Stock fantasma real**: cliente compró un talle "sin stock" por bug en `rpc_remove_order_item_restore_stock` (fix 342) + ventas sin descuento real (`sell_without_stock`, `admin_confirmed_missing`, watchlist 341). Endurecido checkout client-side (cache 20s, `available===null`). Corrupción silenciosa hallada y reparada en `client/dashboard-instant.js`.
+- [[65-AUDITORIA-PEDIDOS-EXPIRED-INVISIBLES-Y-STOCK-FANTASMA-2026-09-15]] — **Pedidos invisibles y stock fantasma**: `expired` vuelve al Kanban, búsqueda global, fixes 344/345 y cancelación cliente verificada 346.
+- [[66-AUDITORIA-RPCS-PEDIDOS-DUPLICADOS-Y-CARRERAS-2026-09-17]] — **Auditoría profunda RPCs/pedidos**: duplicados ejecutables, drift del mapa/guard canónico, alta admin que puede resucitar terminales, atomicidad, grants y staging no reproducible. Plan 347+.
 
 ---
 
@@ -120,6 +129,12 @@ Ver [[10-BACKLOG-NO-CRITICO]]: columnas legacy, RLS fino, helpers duplicados, `r
 *Actualización 2026-06-13 — Fork `/catalogo1` para lanzamiento público (WhatsApp, sin auth/carrito). Misma base Supabase. Ver [[44-CATALOGO1-LANZAMIENTO-2026-06-13]].*
 
 *Actualización 2026-06-08 — Migración Next.js 15 App Router iniciada en `/nj`: catálogo público solo lectura, banners, PDP, como-comprar, quienes-somos. Ver [[41-MIGRACION-NEXTJS-NJ-2026-06-08]].*
+
+*Actualización 2026-09-04 — Buscador `/nj` Fases 1–5 en live (fyl-core 327–329). Admin de vocabulario en `/nj/admin/search`. Tags no se tocan. Ver [[59-NJ-BUSCADOR-SMART-SEARCH]] y [[41-SEARCH-ADMIN-FASE5-2026-09-03]].*
+
+*Actualización 2026-09-04 — Auditoría carga masiva de stock por QR (solo lectura, sin implementar): [[60-AUDITORIA-CARGA-MASIVA-QR-2026-09-04]].*
+
+*Actualización 2026-09-04 — Sellable Fases 1–5 + 6C: [[51-SELLABLE-STOCK-FASE1-2026-09-04]] … [[54-SELLABLE-STOCK-FASE5-2026-09-04]], auditoría [[55-SELLABLE-STOCK-FASE6-AUDITORIA-2026-09-04]], frontends [[56-FRONTENDS-CATALOGO-VS-NJ-2026-09-04]], grants 333C aplicados [[57-SELLABLE-STOCK-FASE6C-333C-2026-09-04]]. Pre-launch NJ (build + plan cutover, sin publicar): [[58-NJ-PRELAUNCH-CUTOVER-2026-09-04]]. Prep checkout/raíz/OAuth (código local + allowlist live, sin cutover): [[59-NJ-CHECKOUT-IDEMPOTENCY-ROOT-PREP-2026-09-04]].*
 
 *Actualización 2026-06-23 — GEO fase 1: JSON-LD (Organization, WebSite, FAQPage, CollectionPage, Breadcrumb), sitemap.xml, robots.txt, llms.txt. Score 25→55. Ver [[45-GEO-OPTIMIZACION-IA-2026-06-23]].*
 

@@ -66,6 +66,16 @@ En `nj/admin/orders` (mobile y desktop) las `OrderCard` muestran un chip con dí
 
 Cuando faltan **≤2 días** (y aún no venció), la card pasa a fondo **rosa** (`.order-card--expiring-soon`, `#fce7f3` / borde `#f472b6`) — distinto del azul de pedidos clienta y del borde rojo `aged` de vencidos. Pedidos admin/PAU sin `dismantle_at` no muestran countdown.
 
+## Seguimiento 2026-09-18: columna **Vencido** (semáforo)
+
+Pedidos con ≤1 día o ya vencidos salen de Cancelados y van a la columna **Vencido** (Pedidos + Retiro). Semáforo:
+
+- **Amarillo** ≤1 día — mensaje `buildExpiryWarningMessage`
+- **Rojo** vencido — `buildExpiredOrderMessage`
+- **Azul** 24h tras Enviar WhatsApp (`admin_order_expiry_warn_sent.sent_at`); luego vuelve a rojo
+
+`+24hs` limpia el aviso → amarillo de inmediato. Migración `349_admin_expiry_kanban.sql` (list con `sent_at` + clear). Detalle: [[65-AUDITORIA-PEDIDOS-EXPIRED-INVISIBLES-Y-STOCK-FANTASMA-2026-09-15]].
+
 ---
 
 ## Pendiente (no incluido en este cambio)

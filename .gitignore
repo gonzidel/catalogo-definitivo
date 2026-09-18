@@ -118,9 +118,21 @@ scripts/outputs/*
 # Config local de Vercel
 .vercel/
 
+# Staging 334: dumps y secretos (nunca commitear)
+supabase/staging-334/dumps/
+supabase/staging-334/.env
+supabase/staging-334/.password
+
 # Temporales y basura local de Windows
 tmp/
 *.lnk
 nul
 backend/nul
 .vercel
+
+# Temporales de sesiones de migración/auditoría (nunca commitear)
+/.tmp-*
+/tmp-*
+supabase/.branches/
+supabase/canonical/tests/_*.out.json
+supabase/canonical/tests/_apply_*.json

@@ -5,10 +5,10 @@ import Link from "next/link";
 import { getTransporte, canonicalizeTransportName, getTransportesDisponibles } from "@/lib/transport";
 import { resolveShippingOptions, getTransportExplanationText, isLocalPickupTransport, getOrderCloseMinimumUnits, isLocalPickupShortDeadlineZone } from "@/lib/transport/shipping-helpers";
 import { useRouter, useSearchParams } from "next/navigation";
-import { getCustomerFacingItemStatus } from "@/lib/orders/waiting-source";
 import {
   isLocalPickupOrderFulfilled,
   localPickupFulfilledDismissKey,
+  isSpecialExtraItem,
 } from "@/lib/orders/domain";
 import { getCustomerOrderDeadlineDate, isShortPickupDeadlineWindow } from "@/lib/orders/deadline";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -16,6 +16,7 @@ import { loadWarehouses } from "@/lib/supabase/order-queries";
 import type { WarehouseIds } from "@/types/orders";
 import CartTab from "@/components/cart/CartTab";
 import ActiveOrderTab from "@/components/cart/ActiveOrderTab";
+import LineItemRow from "@/components/cart/LineItemRow";
 import ProfileTab from "@/components/profile/ProfileTab";
 import { useProfileGate } from "@/components/profile/ProfileGateProvider";
 import { useCartStore, selectCartCount } from "@/store/cart";
@@ -100,12 +101,6 @@ function buildDeadlineNotifications(
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-// Estados visibles para cliente: solo mostramos incidencias reales.
-const ITEM_STATUS_INFO: Record<string, { label: string; color: string; bg: string }> = {
-  missing:   { label: "Sin stock",       color: "#991b1b", bg: "#fee2e2" },
-  cancelled: { label: "Cancelado",       color: "#991b1b", bg: "#fee2e2" },
-};
-
 interface OrderItem {
   id: string;
   product_name: string;
@@ -131,7 +126,7 @@ interface Order {
   dismantle_at?: string | null;
   local_deferred_pickup?: boolean | null;
   expires_at?: string | null;
-  notes?: string | null;
+  notes: string | null;
   order_items: OrderItem[];
 }
 
@@ -236,8 +231,8 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-function OrderCard({ order, expanded, onToggle, warehouseIds }: {
-  order: Order; expanded: boolean; onToggle: () => void; warehouseIds: WarehouseIds;
+function OrderCard({ order, expanded, onToggle }: {
+  order: Order; expanded: boolean; onToggle: () => void;
 }) {
   // Historial = "qué se le mandó finalmente" -- un ítem cancelado (ej. se
   // marcó sin stock y la clienta lo quitó, o un reemplazo por alternativa)
@@ -278,37 +273,27 @@ function OrderCard({ order, expanded, onToggle, warehouseIds }: {
       {expanded && (
         <div style={{ borderTop: "1px solid #f0f0f0", padding: "0 16px 16px" }}>
           {visibleItems.map((item) => {
-            const displayKey = getCustomerFacingItemStatus(item, warehouseIds);
-            const ist = ITEM_STATUS_INFO[displayKey];
+            const special = isSpecialExtraItem(item);
             return (
-              <div key={item.id} style={{
-                display: "flex", gap: 10, paddingTop: 12, alignItems: "flex-start",
-              }}>
-                {item.imagen && (
-                  <img src={item.imagen} alt={item.product_name} style={{
-                    width: 48, height: 48, borderRadius: 6,
-                    objectFit: "cover", flexShrink: 0, background: "#f5f5f5",
-                  }} />
-                )}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: "#333" }}>{item.product_name}</div>
-                  <div style={{ fontSize: 12, color: "#888", marginTop: 2 }}>
-                    {[item.color, item.size && `Talle ${item.size}`].filter(Boolean).join(" · ")}
-                    {" · "}Cant. {item.quantity}
-                  </div>
-                  {ist && (
-                    <span style={{
-                      display: "inline-block", marginTop: 4,
-                      fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 20,
-                      color: ist.color, background: ist.bg,
-                    }}>
-                      {ist.label}
-                    </span>
-                  )}
-                </div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: "#555", flexShrink: 0 }}>
-                  {formatARS(item.price_snapshot * item.quantity)}
-                </div>
+              <div key={item.id} style={{ paddingTop: 12 }}>
+                <LineItemRow
+                  imagen={item.imagen}
+                  variantId={item.variant_id}
+                  productName={item.product_name}
+                  color={special ? undefined : item.color}
+                  size={special ? undefined : item.size}
+                  quantity={item.quantity}
+                  unitPrice={item.price_snapshot}
+                  specialExtra={special}
+                  line2={
+                    special ? (
+                      <span className="active-order-line2">
+                        <span className="line-item-qty-label">{item.quantity} uni</span>
+                        <span className="active-order-extra-tag">Extra</span>
+                      </span>
+                    ) : undefined
+                  }
+                />
               </div>
             );
           })}
@@ -447,6 +432,18 @@ export default function DashboardClient({ user, customer: initialCustomer, order
       return r !== 0 ? r : new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
     })[0] ?? null;
 
+  // Carrito: "en preparación" solo si hay un closed de envío pendiente.
+  // Retiro ya cobrado (A56703 / local_pickup_fulfilled_at) no debe avisar eso:
+  // Mi pedido muestra "Ya retiraste" y el checkout ya no bloquea (337).
+  const blockingCartOrderStatus =
+    activeOrder &&
+    !(
+      activeOrder.status === "closed" &&
+      isLocalPickupOrderFulfilled(activeOrder, orderTransportName)
+    )
+      ? activeOrder.status
+      : null;
+
   // History = everything NOT shown in Mi pedido
   const historyOrders = orders.filter((o) => {
     if (o.id === activeOrder?.id) return false;
@@ -554,13 +551,13 @@ export default function DashboardClient({ user, customer: initialCustomer, order
 
   // Sync active order status + synthetic notifications to Zustand
   useEffect(() => {
-    setActiveOrderStatus(activeOrder?.status ?? null);
+    setActiveOrderStatus(blockingCartOrderStatus);
     setSyntheticNotifications(buildDeadlineNotifications(
       activeOrder,
       customer?.province ?? null,
       customer?.city ?? null,
     ));
-  }, [activeOrder?.id, activeOrder?.status, activeOrder?.order_items, customer?.province, customer?.city, setActiveOrderStatus, setSyntheticNotifications]);
+  }, [activeOrder?.id, activeOrder?.status, activeOrder?.order_items, blockingCartOrderStatus, customer?.province, customer?.city, setActiveOrderStatus, setSyntheticNotifications]);
 
   useEffect(() => {
     void loadWarehouses(getSupabaseBrowserClient()).then(setWarehouseIds);
@@ -885,7 +882,7 @@ export default function DashboardClient({ user, customer: initialCustomer, order
               <CartTab
                 customerId={user.id}
                 onOrderCreated={handleOrderCreated}
-                activeOrderStatus={activeOrder?.status ?? null}
+                activeOrderStatus={blockingCartOrderStatus}
                 onGoToOrder={() => setTab("active-order")}
               />
             </div>
@@ -946,7 +943,6 @@ export default function DashboardClient({ user, customer: initialCustomer, order
                   key={order.id}
                   order={order}
                   expanded={expandedOrder === order.id}
-                  warehouseIds={warehouseIds}
                   onToggle={() =>
                     setExpandedOrder(expandedOrder === order.id ? null : order.id)
                   }

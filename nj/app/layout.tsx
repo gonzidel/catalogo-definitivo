@@ -7,12 +7,18 @@ import BottomNav from "@/components/layout/BottomNav";
 import CartFloatingBar from "@/components/cart/CartFloatingBar";
 import ProfileGateProvider from "@/components/profile/ProfileGateProvider";
 import GaLoader from "@/components/analytics/GaLoader";
-import ClarityLoader from "@/components/analytics/ClarityLoader";
+import { NJ_INDEXING_ENABLED } from "@/lib/seo/indexing";
+import { getSiteUrl } from "@/lib/site-url";
 
 export const metadata: Metadata = {
+  metadataBase: new URL(getSiteUrl()),
   title: "FYL Moda | Calzado e Indumentaria Femenina por Mayor",
   description:
     "Mayorista de calzado e indumentaria femenina con fábrica propia. Stock visible, surtido libre de talles desde 4 pares. Envíos a todo el país.",
+  alternates: { canonical: "/" },
+  robots: NJ_INDEXING_ENABLED
+    ? { index: true, follow: true }
+    : { index: false, follow: false },
   openGraph: {
     type: "website",
     siteName: "FYL Moda",
@@ -36,7 +42,7 @@ function HeaderFallback() {
       <div className="header-left">
         <Link href="/" className="header-logo-btn" aria-label="Inicio">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/nj/logo.png" alt="Logo F&L" className="header-logo" />
+          <img src="/logo.png" alt="Logo F&L" className="header-logo" />
         </Link>
       </div>
       <div className="search-bar-wrapper" />
@@ -56,7 +62,7 @@ export default function RootLayout({
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link rel="preconnect" href="https://res.cloudinary.com" crossOrigin="anonymous" />
-        <link rel="icon" href="/nj/favicon.ico" sizes="any" />
+        <link rel="icon" href="/favicon.ico" sizes="any" />
         <link
           rel="stylesheet"
           href="https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,400;0,600&display=swap"
@@ -64,7 +70,18 @@ export default function RootLayout({
         <meta name="theme-color" content="#CD844D" />
       </head>
       <body>
-        {process.env.VERCEL_ENV === "preview" ? <ClarityLoader /> : null}
+        {/* Unregister SW vanilla/Firebase (scope /) so it cannot intercept NJ. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+          if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistrations().then(function(regs) {
+              regs.forEach(function(r) { r.unregister(); });
+            });
+          }
+        `,
+          }}
+        />
         <GaLoader />
         <ProfileGateProvider>
           {/* Header needs Suspense because SearchBar uses useSearchParams */}

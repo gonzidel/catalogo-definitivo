@@ -19,6 +19,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   return {
     title: `${cat} — FYL Moda | Mayorista`,
     description: `Catálogo mayorista de ${cat.toLowerCase()} femenino. Stock visible, desde 4 pares. Envíos a todo el país.`,
+    alternates: { canonical: `/${slug}` },
   };
 }
 

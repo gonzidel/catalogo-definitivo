@@ -65,7 +65,7 @@ assert(/order_amount_changed_since_approval/.test(sql280), "280: monto cambiado 
 assert(/order_confirmed_elsewhere/.test(sql280), "280: carrera otra rendición");
 assert(/FOR UPDATE/.test(sql280), "280: usa FOR UPDATE");
 assert(
-  /WHERE o\.id = v_row\.matched_order_id\s+FOR UPDATE/s.test(sql280),
+  /WHERE o\.id = v_row\.matched_order_id[\s\S]+FOR UPDATE/.test(sql280),
   "280: lock orders antes de validar"
 );
 assert(/matched_order_not_in_cod_universe/.test(sql280), "280: valida universo post-lock");

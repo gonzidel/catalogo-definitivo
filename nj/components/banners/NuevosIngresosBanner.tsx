@@ -4,6 +4,7 @@ import { useRef } from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import { fetchNuevosIngresos } from "@/lib/banners/nuevos-ingresos";
+import { useCatalogSnapshotRevalidate } from "@/lib/catalog/snapshot-version";
 import {
   BannerCarouselCard,
   BannerCarouselSkeleton,
@@ -12,7 +13,7 @@ import {
 export default function NuevosIngresosBanner() {
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const { data: products, isLoading } = useSWR(
+  const { data: products, isLoading, mutate } = useSWR(
     "nuevos-ingresos-banner",
     fetchNuevosIngresos,
     {
@@ -21,6 +22,7 @@ export default function NuevosIngresosBanner() {
       dedupingInterval: 300_000,
     }
   );
+  useCatalogSnapshotRevalidate(mutate);
 
   const visible = products ?? [];
 

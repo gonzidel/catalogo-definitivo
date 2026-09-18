@@ -11,17 +11,17 @@ const SLIDES = [
   {
     title: "Ahora podés hacer tu pedido cuando quieras",
     text: "Ya no necesitás esperar una respuesta por WhatsApp. Elegí tus productos, colores y talles directamente desde nuestro catálogo, en cualquier momento.",
-    image: "/nj/history/launch-mobile-cart.webp?v=20260826",
+    image: "/history/launch-mobile-cart.webp?v=20260826",
   },
   {
     title: "Reservá y seguí agregando productos",
     text: "Al armar tu pedido, los productos disponibles se reservan para vos. Tu pedido queda abierto durante 7 días para que puedas seguir sumando productos cuando quieras.",
-    image: "/nj/history/launch-mobile-order.webp?v=20260826",
+    image: "/history/launch-mobile-order.webp?v=20260826",
   },
   {
     title: "Cuando estés lista, cerrá tu pedido",
     text: "¿Terminaste de elegir? Cerrá tu pedido y nosotros nos encargamos de prepararlo. Después te contactamos para coordinar el pago, envío o retiro.",
-    image: "/nj/history/launch-mobile-coordinate.webp?v=20260826",
+    image: "/history/launch-mobile-coordinate.webp?v=20260826",
   },
 ] as const;
 

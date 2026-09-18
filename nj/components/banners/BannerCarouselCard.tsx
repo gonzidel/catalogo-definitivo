@@ -2,21 +2,29 @@ import Image from "next/image";
 import Link from "next/link";
 import { resolveImageSrc } from "@/lib/cloudinary";
 import { formatARS } from "@/lib/utils/catalog";
+import { pickDisplayColorDetail } from "@/lib/utils/catalog-variant-enrich";
+import { getColorEffectivePrice } from "@/lib/utils/variant-price";
+import { productIsOutOfStock } from "@/lib/stock/catalog-availability";
 import type { GroupedProduct } from "@/types/catalog";
 
-function isOfferActive(product: GroupedProduct): boolean {
-  return product.OfertaActiva === true;
-}
-
 export function BannerCarouselCard({ product }: { product: GroupedProduct }) {
-  const src = resolveImageSrc(product.VariantePrincipal);
+  const displayColor = pickDisplayColorDetail(product);
+  const pricing = getColorEffectivePrice(displayColor, product);
+  const src = resolveImageSrc(
+    displayColor?.images?.[0] ?? product.VariantePrincipal
+  );
   const colors = product.DetalleColor ?? [];
-  const hasOffer = isOfferActive(product) && Boolean(product.PrecioOferta);
-  const precio = hasOffer ? product.PrecioOferta : product.Precio;
+  const hasOffer = pricing.isOffer;
+  const precio = pricing.effectivePrice || product.Precio;
+  const showSinStock = productIsOutOfStock(product);
+  const hrefColor = displayColor?.color ?? "";
+  const href = hrefColor
+    ? `/producto/${encodeURIComponent(product.Articulo)}?color=${encodeURIComponent(hrefColor)}`
+    : `/producto/${encodeURIComponent(product.Articulo)}`;
 
   return (
     <Link
-      href={`/producto/${encodeURIComponent(product.Articulo)}`}
+      href={href}
       className={`fyl-originals-card${hasOffer ? " fyl-originals-card--offer" : ""}`}
       style={{
         display: "flex",
@@ -36,6 +44,11 @@ export function BannerCarouselCard({ product }: { product: GroupedProduct }) {
           />
         ) : (
           <div className="skeleton-shimmer" style={{ width: "100%", height: "100%" }} />
+        )}
+        {showSinStock && (
+          <div className="card-stock-overlay" aria-hidden="true">
+            <span className="card-stock-overlay__label">Sin stock</span>
+          </div>
         )}
         <div className="fyl-originals-badge">{product.Articulo}</div>
         {hasOffer && (
@@ -60,8 +73,9 @@ export function BannerCarouselCard({ product }: { product: GroupedProduct }) {
                 background: c.hex_color ?? "#ccc",
                 display: "inline-block",
                 flexShrink: 0,
+                opacity: c.hasStock === false ? 0.35 : 1,
               }}
-              title={c.color}
+              title={c.hasStock === false ? `${c.color} (sin stock)` : c.color}
             />
           ))}
           {colors.length > 3 && (

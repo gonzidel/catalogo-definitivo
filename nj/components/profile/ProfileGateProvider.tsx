@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { useRouter } from "next/navigation";
+import type { Session } from "@supabase/supabase-js";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { isInitialProfileComplete } from "@/lib/auth/profile-complete";
 import ProfileOnboardingModal from "@/components/profile/ProfileOnboardingModal";
@@ -105,11 +106,11 @@ export default function ProfileGateProvider({ children }: { children: ReactNode 
       if (!ok) setModalOpen(true);
     }
 
-    void supabase.auth.getSession().then(({ data }) => {
+    void supabase.auth.getSession().then(({ data }: { data: { session: Session | null } }) => {
       void applySession(data.session);
     });
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: listener } = supabase.auth.onAuthStateChange((_event: string, session: Session | null) => {
       void applySession(session);
     });
 

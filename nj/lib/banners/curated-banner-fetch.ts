@@ -10,6 +10,41 @@ import type { CatalogRow, GroupedProduct, ColorDetail } from "@/types/catalog";
 import type { CuratedBannerConfig, CuratedVariantCard, CuratedVariantCardEnriched } from "@/types/banners";
 import { CURATED_PUBLIC_TAGS, CURATED_TAG } from "@/lib/banners/curated-banner-tags";
 
+function groupedProductFromOosCard(card: CuratedVariantCard): GroupedProduct {
+  const color: ColorDetail = {
+    color: card.Color || "Sin color",
+    hex_color: card.ColorHex ?? null,
+    ColorDisplayNumber: null,
+    talles: [],
+    images: card["Imagen Principal"] ? [card["Imagen Principal"]] : [],
+    Precio: card.Precio,
+    OfertaActiva: card.OfertaActiva === true,
+    PrecioOferta: card.PrecioOferta != null ? String(card.PrecioOferta) : "",
+    PromoActiva: "",
+    variant_id: card.variant_id,
+    hasStock: false,
+  };
+  return {
+    Articulo: card.Articulo,
+    Descripcion: card.Descripcion ?? "",
+    Precio: card.Precio,
+    VariantePrincipal: card["Imagen Principal"],
+    Oferta: "",
+    FechaIngreso: "",
+    FechaPublicacion: "",
+    Categoria: "",
+    Filtro1: "",
+    Filtro2: "",
+    Filtro3: "",
+    DetallesSimilitud: "",
+    OfertaActiva: false,
+    PrecioOferta: "",
+    PromoActiva: "",
+    DetalleColor: color.images.length ? [color] : [],
+    hasAnyStock: false,
+  };
+}
+
 export const CURATED_VARIANT_SELECT =
   'variant_id,Articulo,Descripcion,Color,Precio,"Imagen Principal",OfertaActiva,PrecioOferta,ColorHex';
 
@@ -43,7 +78,18 @@ export async function fetchCuratedVariantCards(
     const id = String(row.variant_id ?? "");
     if (!id || byVariant.has(id)) continue;
     if (!row["Imagen Principal"]) continue;
-    byVariant.set(id, row as unknown as CuratedVariantCard);
+    byVariant.set(id, {
+      ...(row as unknown as CuratedVariantCard),
+      hasStock: true,
+    });
+  }
+
+  const stillMissing = variantIds.filter((id) => !byVariant.has(id));
+  if (stillMissing.length > 0) {
+    const fallback = await fetchCuratedOosFallback(stillMissing, supabase);
+    for (const card of fallback) {
+      if (!byVariant.has(card.variant_id)) byVariant.set(card.variant_id, card);
+    }
   }
 
   const cards: CuratedVariantCard[] = [];
@@ -89,7 +135,11 @@ export async function enrichCuratedCardsWithProductColors(
     const key = card.Articulo.trim().toLowerCase();
     const colors = colorsByArticulo.get(key);
     if (colors?.length) {
-      return { ...card, colors };
+      const marked =
+        card.hasStock === false
+          ? colors.map((c) => ({ ...c, hasStock: false }))
+          : colors;
+      return { ...card, colors: marked };
     }
     const fallback: ColorDetail[] = card.Color
       ? [
@@ -102,11 +152,88 @@ export async function enrichCuratedCardsWithProductColors(
             OfertaActiva: card.OfertaActiva,
             PrecioOferta: card.PrecioOferta ? String(card.PrecioOferta) : "",
             PromoActiva: "",
+            hasStock: card.hasStock !== false,
           },
         ]
       : [];
     return { ...card, colors: fallback };
   });
+}
+
+type FallbackVariantRow = {
+  id: string;
+  color: string | null;
+  price: number | null;
+  products:
+    | {
+        name: string | null;
+        description: string | null;
+        status: string | null;
+      }
+    | {
+        name: string | null;
+        description: string | null;
+        status: string | null;
+      }[]
+    | null;
+  variant_images:
+    | Array<{ url: string | null; secure_url?: string | null; position: number | null }>
+    | null;
+};
+
+async function fetchCuratedOosFallback(
+  variantIds: string[],
+  supabase: SupabaseClient
+): Promise<CuratedVariantCard[]> {
+  const { data, error } = await supabase
+    .from("product_variants")
+    .select(
+      "id, color, price, products!inner(name, description, status), variant_images(url, secure_url, position)"
+    )
+    .in("id", variantIds)
+    .eq("active", true);
+
+  if (error || !data?.length) return [];
+
+  const colorNames = [
+    ...new Set(
+      data
+        .map((r) => String((r as FallbackVariantRow).color ?? "").trim())
+        .filter(Boolean)
+    ),
+  ];
+  const { data: colorRows } = colorNames.length
+    ? await supabase.from("colors").select("name, hex_color").in("name", colorNames)
+    : { data: [] as Array<{ name: string; hex_color: string | null }> };
+  const hexByColor = new Map(
+    (colorRows ?? []).map((c) => [String(c.name).trim().toLowerCase(), c.hex_color])
+  );
+
+  const cards: CuratedVariantCard[] = [];
+  for (const raw of data as FallbackVariantRow[]) {
+    const prod = Array.isArray(raw.products) ? raw.products[0] : raw.products;
+    if (!prod || prod.status !== "active") continue;
+    const images = [...(raw.variant_images ?? [])].sort(
+      (a, b) => (a.position ?? 0) - (b.position ?? 0)
+    );
+    const img = images.find((i) => i.secure_url || i.url);
+    const imageUrl = img?.secure_url || img?.url || null;
+    if (!imageUrl) continue;
+    const color = String(raw.color ?? "").trim();
+    cards.push({
+      variant_id: raw.id,
+      Articulo: String(prod.name ?? "").trim(),
+      Descripcion: String(prod.description ?? ""),
+      Color: color,
+      Precio: Number(raw.price ?? 0),
+      "Imagen Principal": imageUrl,
+      OfertaActiva: false,
+      PrecioOferta: null,
+      ColorHex: hexByColor.get(color.toLowerCase()) ?? null,
+      hasStock: false,
+    });
+  }
+  return cards;
 }
 
 export function collectArticulosInBannerOrder(cards: CuratedVariantCard[]): string[] {
@@ -180,6 +307,13 @@ export async function fetchCuratedGroupedProductsBySlug(
   }
 
   const grouped = agruparProductos(rows);
+  const present = new Set(grouped.map((p) => p.Articulo.trim().toLowerCase()));
+  for (const card of cards) {
+    const key = card.Articulo.trim().toLowerCase();
+    if (present.has(key)) continue;
+    grouped.push(groupedProductFromOosCard(card));
+    present.add(key);
+  }
   const order = new Map(articulos.map((art, i) => [art.toLowerCase(), i]));
   grouped.sort(
     (a, b) =>

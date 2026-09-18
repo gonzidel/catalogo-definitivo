@@ -5,6 +5,7 @@ import Link from "next/link";
 import useSWR from "swr";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { formatARS } from "@/lib/utils/catalog";
+import { getColorEffectivePrice } from "@/lib/utils/variant-price";
 import { resolveImageSrc } from "@/lib/cloudinary";
 import {
   enrichCuratedCardsWithProductColors,
@@ -16,6 +17,7 @@ import {
   toColumnPairs,
 } from "@/lib/banners/curated-banner-layout";
 import type { CuratedBannerConfig, CuratedVariantCardEnriched } from "@/types/banners";
+import { useCatalogSnapshotRevalidate } from "@/lib/catalog/snapshot-version";
 
 import { CURATED_TAG } from "@/lib/banners/curated-banner-tags";
 
@@ -61,20 +63,27 @@ function VariantCard({ card }: { card: CuratedVariantCardEnriched }) {
   const imageSrc = resolveImageSrc(
     card["Imagen Principal"] as Parameters<typeof resolveImageSrc>[0]
   );
-  const hasOffer =
-    (card.OfertaActiva === true ||
-      (card.OfertaActiva as unknown) === "true") &&
-    Boolean(card.PrecioOferta);
-  const precio = hasOffer ? card.PrecioOferta : card.Precio;
+  const pricing = getColorEffectivePrice({
+    Precio: card.Precio,
+    PrecioOferta: card.PrecioOferta,
+    OfertaActiva: card.OfertaActiva,
+  });
+  const hasOffer = pricing.isOffer;
+  const precio = pricing.effectivePrice || card.Precio;
   const colors = card.colors ?? [];
+  const showSinStock = card.hasStock === false;
+  const hrefColor = String(card.Color ?? "").trim();
+  const href = hrefColor
+    ? `/producto/${encodeURIComponent(card.Articulo)}?color=${encodeURIComponent(hrefColor)}`
+    : `/producto/${encodeURIComponent(card.Articulo)}`;
 
   return (
     <Link
-      href={`/producto/${encodeURIComponent(card.Articulo)}`}
+      href={href}
       className={`custom-banner-card${hasOffer ? " custom-banner-card--offer" : ""}`}
       style={{ textDecoration: "none", color: "inherit" }}
     >
-      <div className="custom-banner-card-image-wrap">
+      <div className="custom-banner-card-image-wrap" style={{ position: "relative" }}>
         {imageSrc ? (
           <Image
             src={imageSrc}
@@ -86,6 +95,11 @@ function VariantCard({ card }: { card: CuratedVariantCardEnriched }) {
           />
         ) : (
           <div className="custom-banner-card-image skeleton-shimmer" aria-hidden="true" />
+        )}
+        {showSinStock && (
+          <div className="card-stock-overlay" aria-hidden="true">
+            <span className="card-stock-overlay__label">Sin stock</span>
+          </div>
         )}
         <div className="custom-banner-badge">{card.Articulo}</div>
         {hasOffer && (
@@ -172,11 +186,12 @@ function SkeletonScrollPage() {
 }
 
 export default function CuratedBanner() {
-  const { data, isLoading } = useSWR("curated-banner", fetchCuratedBanner, {
+  const { data, isLoading, mutate } = useSWR("curated-banner", fetchCuratedBanner, {
     revalidateOnFocus: false,
     revalidateOnReconnect: false,
     dedupingInterval: 300_000,
   });
+  useCatalogSnapshotRevalidate(mutate);
 
   if (!isLoading && !data) return null;
 

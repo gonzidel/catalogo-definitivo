@@ -3,11 +3,20 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import type { NextRequest } from "next/server";
 import { isInitialProfileComplete } from "@/lib/auth/profile-complete";
+import { resolveAuthRedirectBase } from "@/lib/site-url";
 
 export async function GET(request: NextRequest) {
-  const { searchParams, origin } = new URL(request.url);
+  const { searchParams } = new URL(request.url);
   const code = searchParams.get("code");
   const next = searchParams.get("next") ?? "/dashboard";
+  const redirectBase = resolveAuthRedirectBase({
+    nextUrlPathname: request.nextUrl.pathname,
+    requestUrl: request.url,
+    forwardedHost: request.headers.get("x-forwarded-host"),
+    forwardedProto: request.headers.get("x-forwarded-proto"),
+    host: request.headers.get("host"),
+    pfx: searchParams.get("pfx"),
+  });
 
   if (code) {
     const cookieStore = await cookies();
@@ -30,10 +39,10 @@ export async function GET(request: NextRequest) {
 
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     if (!error) {
-      // Ensure `next` is a relative path to prevent open redirects
       let safeNext = next.startsWith("/") ? next : "/dashboard";
+      if (safeNext.startsWith("/nj/")) safeNext = safeNext.slice(3) || "/";
+      else if (safeNext === "/nj") safeNext = "/";
 
-      // Cuenta nueva (Google/magic): si falta perfil, ir al dashboard con onboarding.
       const {
         data: { user },
       } = await supabase.auth.getUser();
@@ -48,10 +57,9 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      return NextResponse.redirect(`${origin}/nj${safeNext}`);
+      return NextResponse.redirect(`${redirectBase}${safeNext}`);
     }
   }
 
-  // Auth error — redirect to login with error param
-  return NextResponse.redirect(`${origin}/nj/login?error=auth_error`);
+  return NextResponse.redirect(`${redirectBase}/login?error=auth_error`);
 }

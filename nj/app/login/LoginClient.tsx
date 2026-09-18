@@ -2,8 +2,8 @@
 
 import { useState } from "react";
 import { useSearchParams } from "next/navigation";
-import Image from "next/image";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { getAuthCallbackUrl } from "@/lib/site-url";
 
 export default function LoginClient() {
   const searchParams = useSearchParams();
@@ -14,8 +14,7 @@ export default function LoginClient() {
 
   const supabase = getSupabaseBrowserClient();
 
-  const origin = typeof window !== "undefined" ? window.location.origin : "";
-  const callbackUrl = `${origin}/nj/auth/callback?next=${encodeURIComponent(next)}`;
+  const callbackUrl = getAuthCallbackUrl(next);
 
   async function loginWithGoogle() {
     setError("");
@@ -55,7 +54,7 @@ export default function LoginClient() {
       }}>
         {/* Logo */}
         <div style={{ marginBottom: 24 }}>
-          <img src="/nj/logo.png" alt="FYL" style={{ height: 48, objectFit: "contain" }} />
+          <img src="/logo.png" alt="FYL" style={{ height: 48, objectFit: "contain" }} />
         </div>
 
         <h1 style={{ fontSize: 20, fontWeight: 700, color: "#222", marginBottom: 6 }}>

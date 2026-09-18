@@ -8,7 +8,7 @@ export default function Header() {
       <div className="header-left">
         <Link href="/" className="header-logo-btn" aria-label="Volver al inicio">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/nj/logo.png" alt="Logo F&L" className="header-logo" />
+          <img src="/logo.png" alt="Logo F&L" className="header-logo" />
         </Link>
       </div>
       <div className="search-bar-wrapper">

@@ -6,7 +6,8 @@ import Link from "next/link";
 import { resolveImageSrc } from "@/lib/cloudinary";
 import { formatARS, colorDetailHasImage } from "@/lib/utils/catalog";
 import { pickDisplayColorDetail } from "@/lib/utils/catalog-variant-enrich";
-import type { GroupedProduct } from "@/types/catalog";
+import { getColorEffectivePrice } from "@/lib/utils/variant-price";
+import type { ColorDetail, GroupedProduct } from "@/types/catalog";
 
 interface ProductCardProps {
   product: GroupedProduct;
@@ -39,16 +40,16 @@ function renderBadges(product: GroupedProduct) {
   return null;
 }
 
-function renderPrice(product: GroupedProduct) {
-  const hasOffer = product.OfertaActiva;
+function renderPrice(product: GroupedProduct, colorDetail: ColorDetail | null) {
+  const pricing = getColorEffectivePrice(colorDetail, product);
   const hasPromo = Boolean(product.PromoActiva);
-  const original = formatARS(product.Precio);
-  const offerPrice = formatARS(product.PrecioOferta);
+  const original = formatARS(pricing.normalPrice);
+  const offerPrice = pricing.isOffer ? formatARS(pricing.effectivePrice) : "";
 
   if (hasPromo) {
     return <div className="price">{original}</div>;
   }
-  if (hasOffer && offerPrice) {
+  if (pricing.isOffer && offerPrice) {
     return (
       <div className="price">
         <span className="price-original">{original}</span>
@@ -56,7 +57,7 @@ function renderPrice(product: GroupedProduct) {
       </div>
     );
   }
-  return <div className="price">{original}</div>;
+  return <div className="price">{original || formatARS(product.Precio)}</div>;
 }
 
 export default function ProductCard({
@@ -86,9 +87,8 @@ export default function ProductCard({
     setActiveColor(pickCardColor(product, activeSizes, categoria));
   }, [product.Articulo, sizesKey, categoria]);
 
-  const passColorInHref = userPickedColor || activeSizes.length > 0;
   const productHref =
-    passColorInHref && activeColor
+    activeColor
       ? `${href}${href.includes("?") ? "&" : "?"}color=${encodeURIComponent(activeColor)}`
       : href;
 
@@ -104,6 +104,7 @@ export default function ProductCard({
   const showSinStock = activeDetail?.hasStock === false;
   const mainImage = resolveImageSrc(activeDetail?.images?.[0]);
   const artCode = String(product.Articulo ?? "").trim();
+  const pricing = getColorEffectivePrice(activeDetail, product);
 
   const colors = useMemo(() => {
     const list = (product.DetalleColor ?? []).filter(colorDetailHasImage);
@@ -162,7 +163,7 @@ export default function ProductCard({
             Art. {artCode}
           </div>
         )}
-        {product.OfertaActiva && (
+        {pricing.isOffer && (
           <span className="product-card-offer-label" aria-label="Oferta">
             Oferta
           </span>
@@ -174,9 +175,9 @@ export default function ProductCard({
       <div className="card-footer">
         <div className="card-footer-top">
           <div
-            className={`card-price${product.OfertaActiva ? " card-price--offer" : ""}`}
+            className={`card-price${pricing.isOffer ? " card-price--offer" : ""}`}
           >
-            {renderPrice(product)}
+            {renderPrice(product, activeDetail)}
             <div className="price-wholesale">Precio por mayor</div>
           </div>
         </div>

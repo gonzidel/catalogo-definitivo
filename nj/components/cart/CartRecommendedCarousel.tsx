@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { getColorEffectivePrice } from "@/lib/utils/variant-price";
 
 interface CatalogRow {
   Articulo: string;
@@ -88,7 +89,7 @@ export default function CartRecommendedCarousel({ daysLeft, remaining }: Props) 
         let candidates: CatalogRow[];
         if (urgentMode) {
           const cheap = unique.filter((p) => {
-            const price = toNum(p.OfertaActiva ? (p.PrecioOferta ?? p.Precio) : p.Precio);
+            const price = getColorEffectivePrice(p).effectivePrice;
             return price > 0 && price <= CHEAP_THRESHOLD;
           });
           const extra = unique
@@ -152,10 +153,9 @@ export default function CartRecommendedCarousel({ daysLeft, remaining }: Props) 
           ) : (
             pool.map((p) => {
               const img = p["Imagen Principal"];
-              const price = toNum(p.Precio);
-              const offerPrice = p.OfertaActiva ? toNum(p.PrecioOferta) : 0;
-              const hasOffer = offerPrice > 0 && offerPrice < price;
-              const displayPrice = hasOffer ? offerPrice : price;
+              const pricing = getColorEffectivePrice(p);
+              const hasOffer = pricing.isOffer;
+              const displayPrice = pricing.effectivePrice;
               const color = String(p.Color ?? "").trim();
               const href = color
                 ? `/producto/${encodeURIComponent(p.Articulo)}?color=${encodeURIComponent(color)}`

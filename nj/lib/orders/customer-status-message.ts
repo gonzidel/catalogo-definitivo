@@ -8,6 +8,7 @@ import type { DraftChangesMap } from "@/lib/orders/draft-changes";
 import {
   draftDefersCustomerMessage,
   draftHasWaitingLocal,
+  splitWaitingCounts,
   usesRetiroLocalDeferredMessages,
 } from "@/lib/orders/draft-changes";
 import { calendarDaysUntil, getOrderDeadlineDate } from "@/lib/orders/deadline";
@@ -19,6 +20,9 @@ import {
 } from "@/lib/orders/domain";
 import { getWaitingSourceKind } from "@/lib/orders/waiting-source";
 import type { AdminOrder, AdminOrderItem, WarehouseIds } from "@/types/orders";
+import { getDashboardActiveOrderUrl } from "@/lib/site-url";
+
+export { getDashboardActiveOrderUrl };
 
 export type MessageProfile = "shipping" | "retiro_local";
 
@@ -31,13 +35,6 @@ export function formatItemProductLabel(item: {
   size?: string | null;
 }): string {
   return [item.product_name || "Producto", item.color || "-", item.size || "-"].join(" · ");
-}
-
-export function getDashboardActiveOrderUrl(): string {
-  if (typeof window !== "undefined" && window.location?.origin) {
-    return `${window.location.origin}/nj/dashboard?tab=active-order`;
-  }
-  return "/nj/dashboard?tab=active-order";
 }
 
 /** Plazo legible para WhatsApp: "mañana a las 15:00", "el 03/09 a las 15:00". */
@@ -264,10 +261,9 @@ export function buildMessageFromOrderAndDraft(
       } else if (change.kind === "missing") {
         missingLabels.push(label);
       } else if (change.kind === "split") {
+        const { nFabrica } = splitWaitingCounts(change);
         if (change.nPicked) confirmedCount += 1;
-        if (change.nWaiting && change.waitingSource !== "local" && !localDeferred) {
-          confirmedCount += 1;
-        }
+        if (nFabrica && !localDeferred) confirmedCount += 1;
         if (change.nMissing) missingLabels.push(label);
       }
       continue;
@@ -332,10 +328,9 @@ export function buildPriorDecisionFromDraft(
     } else if (change.kind === "missing") {
       missingLabels.push(label);
     } else if (change.kind === "split") {
+      const { nFabrica } = splitWaitingCounts(change);
       if (change.nPicked) confirmedCount += 1;
-      if (change.nWaiting && change.waitingSource !== "local" && !localDeferred) {
-        confirmedCount += 1;
-      }
+      if (nFabrica && !localDeferred) confirmedCount += 1;
       if (change.nMissing) missingLabels.push(label);
     }
   }
@@ -393,11 +388,7 @@ export function collectWaitingLocalItemIdsFromDraft(
   const ids = new Set<string>();
   for (const [itemId, change] of Object.entries(draftSnapshot)) {
     if (change.kind === "waiting-local") ids.add(itemId);
-    else if (
-      change.kind === "split" &&
-      (change.nWaiting ?? 0) > 0 &&
-      change.waitingSource === "local"
-    ) {
+    else if (change.kind === "split" && splitWaitingCounts(change).nLocal > 0) {
       ids.add(itemId);
     }
   }
@@ -418,11 +409,7 @@ export function collectWaitingFabricaItemIdsFromDraft(
   const ids = new Set<string>();
   for (const [itemId, change] of Object.entries(draftSnapshot)) {
     if (change.kind === "waiting-fabrica") ids.add(itemId);
-    else if (
-      change.kind === "split" &&
-      (change.nWaiting ?? 0) > 0 &&
-      change.waitingSource === "fabrica"
-    ) {
+    else if (change.kind === "split" && splitWaitingCounts(change).nFabrica > 0) {
       ids.add(itemId);
     }
   }

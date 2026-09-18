@@ -182,7 +182,7 @@ interface ActiveOrder {
   expires_at?: string | null;
   local_deferred_pickup?: boolean | null;
   pickup_timer_started_at?: string | null;
-  notes?: string | null;
+  notes: string | null;
   order_items: OrderItem[];
 }
 
@@ -473,12 +473,12 @@ function AlternativesPanel({
   const seeMoreHref = (() => {
     const qs = new URLSearchParams({ talle: item.size }).toString();
     if (tags.length > 0) {
-      return `/nj/tags/${tags.map((t) => encodeURIComponent(t)).join("/")}?${qs}`;
+      return `/tags/${tags.map((t) => encodeURIComponent(t)).join("/")}?${qs}`;
     }
     if (categoria) {
-      return `/nj/${encodeURIComponent(categoria)}?${qs}`;
+      return `/${encodeURIComponent(categoria)}?${qs}`;
     }
-    return `/nj?${qs}`;
+    return `/?${qs}`;
   })();
 
   // Portal a document.body: #catalog-view tiene view-transition-name (usado para
@@ -718,7 +718,7 @@ export default function ActiveOrderTab({
     const supabase = getSupabaseBrowserClient();
     void supabase
       .rpc("rpc_refresh_my_order_availability", { p_order_id: order.id })
-      .then(({ data, error }) => {
+      .then(({ data, error }: { data: unknown; error: { message?: string } | null }) => {
         if (cancelled || error) return;
         const updated =
           data &&
@@ -780,7 +780,18 @@ export default function ActiveOrderTab({
       .from(CATALOG_SOURCE)
       .select('"Articulo","Color","OfertaActiva","PrecioOferta"')
       .in("Articulo", articulos)
-      .then(({ data, error }) => {
+      .then(({
+        data,
+        error,
+      }: {
+        data: Array<{
+          Articulo?: string;
+          Color?: string;
+          OfertaActiva?: boolean | string;
+          PrecioOferta?: number | string;
+        }> | null;
+        error: { message?: string } | null;
+      }) => {
         if (cancelled) return;
         if (error) {
           console.warn("ActiveOrderTab ofertas:", error.message);
@@ -2074,7 +2085,7 @@ export default function ActiveOrderTab({
                       </button>
 
                       <a
-                        href={`/nj/producto/${productSlug}`}
+                        href={`/producto/${productSlug}`}
                         onClick={() => setMenuOpenFor(null)}
                         className="active-order-menu__item active-order-menu__item--row"
                       >

@@ -116,13 +116,11 @@ export default function CatalogShell({
     const withImages = enrichedProducts.filter(
       (p) => (p.DetalleColor?.length ?? 0) > 0
     );
-    const browsing =
-      searchTerm.length < 2 && activeSizes.length === 0 && tags.length === 0;
-    // No filtrar por stock mientras el enriquecimiento está en curso para evitar
-    // el flash de productos sin stock que luego desaparecen.
-    if (fixedProductSet || !browsing || isEnriching) return withImages;
+    const browsing = searchTerm.length < 2;
+    // Grid normal: solo sellable. Búsqueda y banners curados conservan OOS.
+    if (fixedProductSet || !browsing) return withImages;
     return withImages.filter(productHasAnyStock);
-  }, [enrichedProducts, searchTerm, activeSizes, tags, fixedProductSet, isEnriching]);
+  }, [enrichedProducts, searchTerm, fixedProductSet]);
 
   const tagFiltered = React.useMemo(
     () => filterProductsByTags(catalogPool, tags),

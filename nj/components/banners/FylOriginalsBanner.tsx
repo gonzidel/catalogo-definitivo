@@ -4,6 +4,7 @@ import { useRef } from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import { fetchFylOriginalsCurated } from "@/lib/banners/fyl-originals";
+import { useCatalogSnapshotRevalidate } from "@/lib/catalog/snapshot-version";
 import {
   BannerCarouselCard,
   BannerCarouselSkeleton,
@@ -12,7 +13,7 @@ import {
 export default function FylOriginalsBanner() {
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const { data: products, isLoading } = useSWR(
+  const { data: products, isLoading, mutate } = useSWR(
     "fyl-originals",
     fetchFylOriginalsCurated,
     {
@@ -21,6 +22,7 @@ export default function FylOriginalsBanner() {
       dedupingInterval: 300_000,
     }
   );
+  useCatalogSnapshotRevalidate(mutate);
 
   const visible = products ?? [];
 

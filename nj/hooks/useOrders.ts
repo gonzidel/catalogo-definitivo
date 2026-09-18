@@ -826,7 +826,7 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
         orderId,
         type: "ORDER_MISSING_ITEMS",
         message: "1 producto no está disponible. Por favor revisalo en tu pedido.",
-        payload: { missingCount: 1, action_url: "/nj/dashboard?tab=active-order" },
+        payload: { missingCount: 1, action_url: "/dashboard?tab=active-order" },
         dedupeTypes: ["ORDER_MISSING_ITEMS", "ORDER_ALL_RESERVED"],
       });
 

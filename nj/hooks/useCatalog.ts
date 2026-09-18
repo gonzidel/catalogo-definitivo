@@ -10,6 +10,7 @@ import {
   compareCatalogRecency,
 } from "@/lib/utils/catalog";
 import type { CatalogRow, GroupedProduct, ColorDetail } from "@/types/catalog";
+import { useCatalogSnapshotRevalidate } from "@/lib/catalog/snapshot-version";
 
 // Rows fetched per SWR page (raw rows, not grouped products).
 // The snapshot has ~1680 rows, ~2 rows/product on average.
@@ -99,7 +100,7 @@ function mergeGroupedProducts(products: GroupedProduct[]): GroupedProduct[] {
 export function useCatalog({
   categoria = "all",
   tags = [] as string[],
-  basePath: _basePath = "/nj", // kept for API compat, unused
+  basePath: _basePath = "", // kept for API compat, unused
   enabled = true,
 }: {
   categoria?: string;
@@ -117,7 +118,7 @@ export function useCatalog({
     return { _type: "catalog", categoria, tags, page: pageIndex + 1 };
   };
 
-  const { data, error, isLoading, size, setSize } = useSWRInfinite<CatalogPage>(
+  const { data, error, isLoading, size, setSize, mutate } = useSWRInfinite<CatalogPage>(
     getKey,
     fetchPageFromSupabase,
     {
@@ -128,6 +129,8 @@ export function useCatalog({
       dedupingInterval: 60_000,
     }
   );
+
+  useCatalogSnapshotRevalidate(mutate);
 
   const pages = data ?? [];
   const hasMore = pages.length > 0 ? pages[pages.length - 1].hasMore : true;

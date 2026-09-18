@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { productIsPurchasable } from "@/lib/stock/catalog-availability";
 import { CATALOG_SOURCE, CATALOG_SELECT } from "@/lib/utils/catalog";
 import { parseCatalogDateMs } from "@/lib/banners/catalog-dates";
 import type {
@@ -115,26 +116,6 @@ function isActiveProduct(producto: GroupedProduct): boolean {
   return true;
 }
 
-function hasPositiveStock(producto: GroupedProduct): boolean {
-  let total = 0;
-  let sawNumericSignal = false;
-
-  for (const detalleColor of producto?.DetalleColor || []) {
-    const details = (detalleColor as ColorDetail & { variantDetails?: VariantDetail[] })
-      .variantDetails;
-    for (const vd of details || []) {
-      if (vd?.available === null || vd?.available === undefined) continue;
-      const num = Number(vd.available);
-      if (!Number.isNaN(num)) {
-        total += num;
-        sawNumericSignal = true;
-      }
-    }
-  }
-
-  if (!sawNumericSignal) return true;
-  return total > 0;
-}
 
 function isRenderableProduct(producto: GroupedProduct): boolean {
   const image = getMainImage(producto);
@@ -402,12 +383,12 @@ export function curateFylOriginalsSlots(
 ): GroupedProduct[] {
   if (!Array.isArray(products) || products.length === 0) return [];
 
-  const eligible = dedupeBySafeIdentity(
-    products
-      .filter(isActiveProduct)
-      .filter(isRenderableProduct)
-      .filter(hasPositiveStock)
+  const renderable = dedupeBySafeIdentity(
+    products.filter(isActiveProduct).filter(isRenderableProduct)
   );
+  const inStock = renderable.filter(productIsPurchasable);
+  // Preferir sellable; si todo está OOS no vaciar la curaduría.
+  const eligible = inStock.length > 0 ? inStock : renderable;
 
   if (eligible.length === 0) {
     console.warn("[FYL] Curaduría no aplicada: eligible vacío", {
@@ -514,9 +495,12 @@ export function agruparFylOriginals(rows: CatalogRow[]): GroupedProduct[] {
         ColorDisplayNumber: row.ColorDisplayNumber ?? null,
         talles: talles.length > 0 ? talles : ["Único"],
         images: rowImages(row),
+        Precio: row.Precio ?? "",
         OfertaActiva: row.OfertaActiva === true || row.OfertaActiva === "true",
         PrecioOferta: row.PrecioOferta ?? "",
         PromoActiva: row.PromoActiva ?? "",
+        variant_id: row.variant_id ?? null,
+        hasStock: true,
         __recencyMs: rowRecencyMs,
       });
     } else {
@@ -533,6 +517,7 @@ export function agruparFylOriginals(rows: CatalogRow[]): GroupedProduct[] {
 
   const grouped = Object.values(grupos);
   for (const g of grouped) {
+    g.hasAnyStock = (g.DetalleColor ?? []).some((c) => c.hasStock === true);
     const colorMs = (g.DetalleColor || []).map((c) => Number(c.__recencyMs) || 0);
     const maxColor = colorMs.length ? Math.max(...colorMs) : 0;
     const productPub = parseDateMs(g.FechaPublicacion);

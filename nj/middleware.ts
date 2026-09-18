@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { stripPublicAppPrefix } from "@/lib/site-url";
 
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
@@ -25,29 +26,26 @@ export async function middleware(request: NextRequest) {
     }
   );
 
-  // Refresh session (required for @supabase/ssr)
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
-  const { pathname } = request.nextUrl;
+  const pathname = stripPublicAppPrefix(request.nextUrl.pathname);
+  const prefix = pathname === request.nextUrl.pathname ? "" : "/nj";
 
-  // Protect /dashboard and /admin routes — redirect to /login if not authenticated.
-  // /admin also requires the user to be present in public.admins (checked in
-  // lib/auth/admin.ts per-page, since middleware can't easily join tables) —
-  // this only guarantees a logged-in session reaches /admin, not that they're staff.
   if (
     (pathname.startsWith("/dashboard") || pathname.startsWith("/admin")) &&
     !user
   ) {
     const loginUrl = request.nextUrl.clone();
-    loginUrl.pathname = "/login";
+    loginUrl.pathname = `${prefix}/login`;
     loginUrl.searchParams.set("next", pathname);
     return NextResponse.redirect(loginUrl);
   }
 
-  // Redirect authenticated users away from /login
   if (pathname === "/login" && user) {
     const dashUrl = request.nextUrl.clone();
-    dashUrl.pathname = "/dashboard";
+    dashUrl.pathname = `${prefix}/dashboard`;
     dashUrl.searchParams.delete("next");
     return NextResponse.redirect(dashUrl);
   }
@@ -56,5 +54,12 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/admin/:path*", "/login"],
+  matcher: [
+    "/dashboard/:path*",
+    "/admin/:path*",
+    "/login",
+    "/nj/dashboard/:path*",
+    "/nj/admin/:path*",
+    "/nj/login",
+  ],
 };

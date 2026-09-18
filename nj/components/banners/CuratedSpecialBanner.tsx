@@ -14,6 +14,7 @@ import {
   parseSpecialBannerMeta,
 } from "@/lib/banners/curated-banner-tags";
 import type { CuratedBannerConfig, CuratedVariantCardEnriched } from "@/types/banners";
+import { useCatalogSnapshotRevalidate } from "@/lib/catalog/snapshot-version";
 
 async function fetchCuratedSpecialBanner(): Promise<{
   config: CuratedBannerConfig;
@@ -89,11 +90,12 @@ function HeroPhoto({
 }
 
 export default function CuratedSpecialBanner() {
-  const { data, isLoading } = useSWR("curated-special-banner", fetchCuratedSpecialBanner, {
+  const { data, isLoading, mutate } = useSWR("curated-special-banner", fetchCuratedSpecialBanner, {
     revalidateOnFocus: false,
     revalidateOnReconnect: false,
     dedupingInterval: 300_000,
   });
+  useCatalogSnapshotRevalidate(mutate);
 
   if (!isLoading && !data) return null;
   if (!isLoading && data && data.heroCards.length === 0) return null;

@@ -130,11 +130,13 @@ export async function listCodRemittances(
     .limit(limit);
 
   if (error && isMissingRevisionColumn(error.message)) {
-    ({ data, error } = await supabase
+    const fallback = await supabase
       .from("cod_remittances")
       .select(selectLegacy)
       .order("created_at", { ascending: false })
-      .limit(limit));
+      .limit(limit);
+    data = fallback.data as typeof data;
+    error = fallback.error;
   }
 
   if (error) throw new Error(error.message);
@@ -209,11 +211,13 @@ export async function getCodRemittanceRowsForRevision(
   let { data: rows, error: rowsError } = await q;
 
   if (rowsError && isMissingRevisionColumn(rowsError.message)) {
-    ({ data: rows, error: rowsError } = await supabase
+    const fallback = await supabase
       .from("cod_remittance_rows")
       .select(selectLegacy)
       .eq("remittance_id", remittanceId)
-      .order("row_index", { ascending: true }));
+      .order("row_index", { ascending: true });
+    rows = fallback.data as typeof rows;
+    rowsError = fallback.error;
   }
 
   if (rowsError) throw new Error(rowsError.message);

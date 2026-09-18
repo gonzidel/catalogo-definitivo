@@ -33,6 +33,7 @@ export interface CatalogRow {
   ColorDisplayNumber: number | null;
   SupplierCode: string | null;
   DetallesSimilitud?: string | null;
+  variant_id?: string | null;
 }
 
 // ─── Grouped product (one per Articulo) ──────────────────────────────────────
@@ -43,9 +44,13 @@ export interface ColorDetail {
   ColorDisplayNumber: number | null;
   talles: string[];
   images: CatalogImage[];
+  /** Precio de lista de ESTA variante. No heredar el del artículo. */
+  Precio?: number | string | null;
   OfertaActiva: boolean;
   PrecioOferta: string;
   PromoActiva: string;
+  variant_id?: string | null;
+  sku?: string | null;
   /** Enriquecimiento: false si la variante no tiene stock en ningún talle. */
   hasStock?: boolean;
   /** Enriquecimiento banner FYL Originals (recencia por fila catálogo). */

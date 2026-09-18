@@ -101,7 +101,7 @@ export default function QuienesSomosPage() {
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src="/nj/assets/maps/mapa-fyl.jpg"
+              src="/assets/maps/mapa-fyl.jpg"
               alt="Ubicación FYL Moda"
               className="map-preview"
             />
@@ -134,7 +134,7 @@ export default function QuienesSomosPage() {
           >
             <span className="about-fyl__socialIcon">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/nj/assets/icons/instagram.svg" alt="Instagram" />
+              <img src="/assets/icons/instagram.svg" alt="Instagram" />
             </span>
             <span className="about-fyl__socialText">
               <span className="about-fyl__socialLabel">Instagram</span>
@@ -151,7 +151,7 @@ export default function QuienesSomosPage() {
           >
             <span className="about-fyl__socialIcon">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/nj/assets/icons/facebook.svg" alt="Facebook" />
+              <img src="/assets/icons/facebook.svg" alt="Facebook" />
             </span>
             <span className="about-fyl__socialText">
               <span className="about-fyl__socialLabel">Facebook</span>

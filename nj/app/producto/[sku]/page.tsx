@@ -13,6 +13,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   const decoded = decodeURIComponent(sku);
   return {
     title: `Art. ${decoded} — FYL Moda`,
+    alternates: { canonical: `/producto/${encodeURIComponent(decoded)}` },
   };
 }
 

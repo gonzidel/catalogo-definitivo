@@ -6,6 +6,7 @@ import { isCommonLocalPickupAwaitingAdminSale } from "@/lib/orders/domain";
 import { retiroActiveColumnSortKey } from "@/lib/orders/board-scope";
 import { orderMatchesCustomerSearch } from "@/lib/orders/customer-search";
 import { useExpiryWarnSentStore } from "@/lib/orders/expiry-warning-sent";
+import { isExpiryWarnCooldownActive } from "@/lib/orders/deadline";
 import { getWaitingColumnSortKey } from "@/lib/orders/waiting-source";
 import { filterOrdersByKanbanInboxView } from "@/lib/orders/kanban-inbox";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -41,7 +42,7 @@ export default function KanbanColumn({
   const warehouseIds = useOrdersStore((s) => s.warehouseIds);
   const boardScope = useOrdersStore((s) => s.boardScope);
   const inboxView = useOrdersStore((s) => s.inboxView);
-  const expiryWarnSentIds = useExpiryWarnSentStore((s) => s.sentIds);
+  const expiryWarnSentAt = useExpiryWarnSentStore((s) => s.sentAtByOrderId);
   const hydrateExpiryWarn = useExpiryWarnSentStore((s) => s.hydrate);
 
   useEffect(() => {
@@ -57,18 +58,34 @@ export default function KanbanColumn({
       boardScope,
       warehouseIds,
     });
+    const now = Date.now();
+    const isCooldown = (id: string) => {
+      const sentAt = expiryWarnSentAt.get(id);
+      return isExpiryWarnCooldownActive(sentAt, now);
+    };
     const sentToEnd = (a: { id: string }, b: { id: string }) => {
-      const aSent = expiryWarnSentIds.has(a.id);
-      const bSent = expiryWarnSentIds.has(b.id);
+      const aSent = isCooldown(a.id);
+      const bSent = isCooldown(b.id);
       if (aSent === bSent) return 0;
       return aSent ? 1 : -1;
     };
+    const byCreatedAsc = (a: AdminOrder, b: AdminOrder) =>
+      new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+
     if (columnId === "waiting") {
       return [...filtered].sort(
         (a, b) =>
           getWaitingColumnSortKey(a, warehouseIds, boardScope) -
           getWaitingColumnSortKey(b, warehouseIds, boardScope)
       );
+    }
+    if (columnId === "expired") {
+      // Sin aviso vigente (rojo/amarillo) arriba por antigüedad; azules (cooldown) abajo.
+      return [...filtered].sort((a, b) => {
+        const byCooldown = sentToEnd(a, b);
+        if (byCooldown !== 0) return byCooldown;
+        return byCreatedAsc(a, b);
+      });
     }
     if (columnId === "cancelled") {
       return [...filtered].sort(sentToEnd);
@@ -98,7 +115,7 @@ export default function KanbanColumn({
       return [...filtered].sort(sentToEnd);
     }
     return filtered;
-  }, [allOrders, columnId, warehouseIds, boardScope, expiryWarnSentIds, inboxView]);
+  }, [allOrders, columnId, warehouseIds, boardScope, expiryWarnSentAt, inboxView]);
   const visibleOrders = useMemo(() => {
     const q = searchQuery.trim();
     if (!q) return orders;

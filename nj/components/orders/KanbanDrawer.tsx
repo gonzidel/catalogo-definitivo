@@ -13,6 +13,7 @@ const DRAWER_LABELS: Record<DrawerColumnId, string> = {
   closed: "Cerrados",
   stock_pending: "Stock Pendiente",
   cancelled: "Cancelados",
+  expired: "Vencido",
 };
 
 const SENT_ORDERS_HREF = "http://localhost:5500/admin/sent-orders.html";

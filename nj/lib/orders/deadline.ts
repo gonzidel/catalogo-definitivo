@@ -178,6 +178,37 @@ export function isOrderExpiringToday(
   return calendarDaysUntil(deadline, now) === 0;
 }
 
+/**
+ * Columna Vencido (amarillo): falta ≤1 día calendario y todavía no venció.
+ * Incluye "Hoy" y "Mañana".
+ */
+export function isOrderExpiringWithinOneDay(
+  order: OrderDeadlineInput,
+  now = Date.now()
+): boolean {
+  if (isOrderExpired(order, now)) return false;
+  if (order.local_deferred_pickup && !order.dismantle_at) return false;
+  const dismantleAt = getCustomerFacingDismantleAt(order);
+  if (!dismantleAt && !order.created_at) return false;
+  const deadline = getCustomerOrderDeadlineDate(order);
+  if (Number.isNaN(deadline.getTime())) return false;
+  const days = calendarDaysUntil(deadline, now);
+  return days >= 0 && days <= 1;
+}
+
+/** Cooldown visual azul tras Enviar WhatsApp en columna Vencido (24 h literales). */
+export const EXPIRY_WARN_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+
+export function isExpiryWarnCooldownActive(
+  sentAt: string | null | undefined,
+  now = Date.now()
+): boolean {
+  if (!sentAt) return false;
+  const t = new Date(sentAt).getTime();
+  if (Number.isNaN(t)) return false;
+  return now - t < EXPIRY_WARN_COOLDOWN_MS;
+}
+
 /** Chip corto para admin Kanban: "5 días" / "Mañana" / "Hoy" / "Vencido". */
 export function formatAdminDeadlineCountdown(calendarDaysLeft: number): string {
   if (calendarDaysLeft < 0) return "Vencido";

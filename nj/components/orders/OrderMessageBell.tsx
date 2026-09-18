@@ -7,7 +7,10 @@ import {
   isCustomerClosedNotificationKind,
   messageBellAllowsOrderSource,
 } from "@/lib/orders/closed-order-messages";
-import { useExpiryWarnSentStore } from "@/lib/orders/expiry-warning-sent";
+import {
+  useExpiryWarnSentStore,
+  getExpiryWarnCooldownActiveIdsFromMap,
+} from "@/lib/orders/expiry-warning-sent";
 import { buildWhatsAppUrl } from "@/lib/orders/domain";
 import { orderMatchesKanbanInboxView } from "@/lib/orders/kanban-inbox";
 import {
@@ -118,7 +121,7 @@ export default function OrderMessageBell({ boardScope }: OrderMessageBellProps) 
 
   const hydrateExpirySent = useExpiryWarnSentStore((s) => s.hydrate);
   const markExpirySent = useExpiryWarnSentStore((s) => s.markSent);
-  const expirySentIds = useExpiryWarnSentStore((s) => s.sentIds);
+  const expirySentAtByOrderId = useExpiryWarnSentStore((s) => s.sentAtByOrderId);
 
   const orders = useOrdersStore((s) => s.orders);
   const warehouseIds = useOrdersStore((s) => s.warehouseIds);
@@ -162,10 +165,12 @@ export default function OrderMessageBell({ boardScope }: OrderMessageBellProps) 
 
   const expiryNotifications = useMemo(
     () =>
-      buildExpiryBellNotifications(orders, expirySentIds, dismissedExpiryIds).filter(
-        notificationBelongsToBoard
-      ),
-    [orders, expirySentIds, dismissedExpiryIds, notificationBelongsToBoard]
+      buildExpiryBellNotifications(
+        orders,
+        getExpiryWarnCooldownActiveIdsFromMap(expirySentAtByOrderId),
+        dismissedExpiryIds
+      ).filter(notificationBelongsToBoard),
+    [orders, expirySentAtByOrderId, dismissedExpiryIds, notificationBelongsToBoard]
   );
 
   const messageNotifications = useMemo(() => {

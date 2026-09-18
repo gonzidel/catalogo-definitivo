@@ -26,7 +26,8 @@ export type KanbanColumnId =
   | "waiting"
   | "closed"
   | "stock_pending"
-  | "cancelled";
+  | "cancelled"
+  | "expired";
 
 export interface OrderItemStockSource {
   warehouse_id: string;
@@ -92,6 +93,8 @@ export interface AdminOrder {
   sent_at?: string | null;
   expires_at?: string | null;
   dismantle_at?: string | null;
+  /** Momento en que el cron pasó el pedido a status=expired (si aplica). */
+  expired_at?: string | null;
   local_deferred_pickup?: boolean | null;
   pickup_timer_started_at?: string | null;
   transport_id?: string | null;
@@ -118,4 +121,5 @@ export const KANBAN_COLUMNS: { id: KanbanColumnId; label: string }[] = [
   { id: "closed", label: "Cerrados" },
   { id: "stock_pending", label: "Stock Pend." },
   { id: "cancelled", label: "Cancelados" },
+  { id: "expired", label: "Vencido" },
 ];

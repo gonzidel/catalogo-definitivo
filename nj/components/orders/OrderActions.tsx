@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import {
   getPrimaryColumnForActions,
-  isExpiredPendingAdminDisassembly,
 } from "@/lib/orders/classification";
 import {
   describeStockPendingConflict,
@@ -250,21 +249,16 @@ export default function OrderActions({ order, draftMode = false }: OrderActionsP
           </>
         ) : null}
 
-        {column === "cancelled" &&
-        (isExpiredPendingAdminDisassembly(order) ||
-          order.status === "cancelled" ||
-          order.status === "expired") ? (
+        {column === "expired" ? (
           <>
-            {(isExpiredPendingAdminDisassembly(order) || isFullyExpired) && (
-              <button
-                type="button"
-                className="order-card__btn order-card__btn--grow"
-                disabled={busy}
-                onClick={() => setExtendModalOpen(true)}
-              >
-                +24hs
-              </button>
-            )}
+            <button
+              type="button"
+              className="order-card__btn order-card__btn--grow"
+              disabled={busy}
+              onClick={() => setExtendModalOpen(true)}
+            >
+              +24hs
+            </button>
             {isFullyExpired && (
               <button
                 type="button"
@@ -285,6 +279,17 @@ export default function OrderActions({ order, draftMode = false }: OrderActionsP
               {order.status === "expired" ? "Archivar" : "Desarmar"}
             </button>
           </>
+        ) : null}
+
+        {column === "cancelled" && order.status === "cancelled" ? (
+          <button
+            type="button"
+            className="order-card__btn order-card__btn--danger order-card__btn--grow"
+            disabled={busy}
+            onClick={() => setDismantleModalOpen(true)}
+          >
+            Desarmar
+          </button>
         ) : null}
       </div>
 
@@ -463,7 +468,7 @@ export default function OrderActions({ order, draftMode = false }: OrderActionsP
             </h3>
             <p className="order-modal__text">
               {order.status === "expired"
-                ? "El stock ya volvió al sistema automáticamente al vencer el plazo. Confirmá para archivar el pedido y sacarlo de Cancelados."
+                ? "El stock ya volvió al sistema automáticamente al vencer el plazo. Confirmá para archivar el pedido y sacarlo de Vencido."
                 : "¿Confirmar desarme? Todo el stock regresa al sistema."}
             </p>
             {order.status === "expired" ? (
@@ -558,7 +563,7 @@ export default function OrderActions({ order, draftMode = false }: OrderActionsP
             <p className="order-modal__text">
               Usá esto cuando el pedido en realidad ya se entregó/envió fuera del
               sistema (ej. WhatsApp) y el cron lo dejó como vencido por error de
-              carga. El pedido pasa a &quot;Enviado&quot; y sale de Cancelados.
+              carga. El pedido pasa a &quot;Enviado&quot; y sale de Vencido.
             </p>
             <p className="order-modal__text" style={{ fontWeight: 700, color: "#1f2937" }}>
               No se toca el stock ni los productos del pedido.

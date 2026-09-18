@@ -27,6 +27,7 @@ import {
   parseStockPendingReasonConflict,
 } from "@/lib/orders/domain";
 import { retryNetworkStockPendingOrder } from "@/lib/supabase/order-edit";
+import { useExpiryWarnSentStore } from "@/lib/orders/expiry-warning-sent";
 import { normalizeSize } from "@/lib/utils/size-normalizer";
 import {
   fetchOrderById,
@@ -240,6 +241,13 @@ async function fetchOrderWhenReady(
   return last;
 }
 
+export type MaybeAutoCloseResult = {
+  order: AdminOrder | null;
+  autoClosed: boolean;
+  /** La clienta pedía cerrar y el pedido estaba listo, pero `rpc_close_order` falló. */
+  autoCloseError?: string;
+};
+
 /**
  * Refresca el pedido después de resolver un ítem (apartar, marcar sin stock, dividir,
  * confirmar cancelado, etc.) y, si la clienta ya había pedido cerrar (`customer_requested_close`)
@@ -249,21 +257,16 @@ async function fetchOrderWhenReady(
  *
  * Si el intento de auto-cierre falla (ej. `rpc_close_order` rechaza por `dismantle_at`
  * ya vencido, carrera con el cron de mantenimiento), la acción que sí tuvo éxito
- * (apartar/dividir/confirmar) NO se revierte: solo queda sin auto-cerrar, para que
- * el admin lo cierre a mano. El caller no debe volver a lanzar este error.
- */
-/**
- * Exportada (no solo de uso interno del store) porque cualquier flujo que pueda
- * dejar un pedido "todo apartado" mientras la clienta ya pidió cerrar necesita
- * este mismo chequeo -- no solo las acciones del store. Ver bug real: agregar un
- * producto desde "Editar pedido"/"Crear pedido" (admin) marcándolo apartado de
- * una podía completar el pedido sin que nadie consumiera `customer_requested_close`,
- * dejándolo trabado en Apartados con el botón "Cerrar pedido" pendiente para siempre.
+ * (apartar/dividir/confirmar) NO se revierte: se devuelve `autoCloseError` para que el
+ * caller avise al admin (antes el catch vacío dejaba el stuck silencioso tipo A56955).
+ *
+ * Exportada porque flujos fuera del store (Editar/Crear pedido) también pueden dejar
+ * el pedido "todo apartado" con el flag pendiente.
  */
 export async function refreshAndMaybeAutoClose(
   supabase: ReturnType<typeof getSupabaseBrowserClient>,
   orderId: string
-): Promise<{ order: AdminOrder | null; autoClosed: boolean }> {
+): Promise<MaybeAutoCloseResult> {
   const refreshed = await fetchOrderById(supabase, orderId);
   if (!refreshed) return { order: null, autoClosed: false };
   if (!shouldAutoCloseAfterCustomerRequest(refreshed)) {
@@ -271,8 +274,12 @@ export async function refreshAndMaybeAutoClose(
   }
   try {
     await rpcCloseOrder(supabase, orderId, "Pendiente");
-  } catch {
-    return { order: refreshed, autoClosed: false };
+  } catch (err) {
+    return {
+      order: refreshed,
+      autoClosed: false,
+      autoCloseError: getErrorMessage(err),
+    };
   }
   const customer = getCustomerFromOrder(refreshed);
   if (
@@ -294,6 +301,27 @@ export async function refreshAndMaybeAutoClose(
   }
   const closed = await fetchOrderById(supabase, orderId);
   return { order: closed ?? refreshed, autoClosed: true };
+}
+
+/** Toast unificado tras una acción admin + posible auto-cierre. */
+function notifyAfterMaybeAutoClose(
+  showToast: (message: string, kind?: ToastKind) => void,
+  result: MaybeAutoCloseResult,
+  successWhenOpen: string
+) {
+  if (result.autoClosed) {
+    showToast("Pedido cerrado — el cliente ya había pedido el cierre", "success");
+    return;
+  }
+  if (result.autoCloseError) {
+    showToast(successWhenOpen, "success");
+    showToast(
+      `El cliente ya había pedido cerrar, pero no se pudo cerrar solo: ${result.autoCloseError}. Cerralo a mano.`,
+      "error"
+    );
+    return;
+  }
+  showToast(successWhenOpen, "success");
 }
 
 export const useOrdersStore = create<OrdersState>((set, get) => ({
@@ -550,12 +578,9 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
     try {
       const supabase = getSupabaseBrowserClient();
       await rpcMarkOrderItemsPicked(supabase, reservedIds, "pick_all");
-      const { order: refreshed, autoClosed } = await refreshAndMaybeAutoClose(supabase, orderId);
-      if (refreshed) get().patchOrder(refreshed);
-      get().showToast(
-        autoClosed ? "Pedido cerrado — el cliente ya había pedido el cierre" : "Ítems apartados",
-        "success"
-      );
+      const result = await refreshAndMaybeAutoClose(supabase, orderId);
+      if (result.order) get().patchOrder(result.order);
+      notifyAfterMaybeAutoClose(get().showToast, result, "Ítems apartados");
     } catch (err) {
       set({ orders: snapshot });
       get().showToast(getErrorMessage(err), "error");
@@ -590,10 +615,10 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
         return;
       }
 
-      const refreshed = await fetchOrderById(supabase, orderId);
-      if (refreshed) get().patchOrder(refreshed);
+      const result = await refreshAndMaybeAutoClose(supabase, orderId);
+      if (result.order) get().patchOrder(result.order);
       else get().removeOrder(orderId);
-      get().showToast("Ítem quitado del pedido", "success");
+      notifyAfterMaybeAutoClose(get().showToast, result, "Ítem quitado del pedido");
     } catch (err) {
       set({ orders: snapshot });
       get().showToast(getErrorMessage(err), "error");
@@ -644,16 +669,15 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
         }
       }
 
-      const { order: refreshed, autoClosed } = await refreshAndMaybeAutoClose(supabase, orderId);
-      if (refreshed) get().patchOrder(refreshed);
+      const result = await refreshAndMaybeAutoClose(supabase, orderId);
+      if (result.order) get().patchOrder(result.order);
       else get().removeOrder(orderId);
-      get().showToast(
-        autoClosed
-          ? "Pedido cerrado — el cliente ya había pedido el cierre"
-          : pending.length === 1
-            ? "Cancelación confirmada — stock actualizado"
-            : `${pending.length} cancelaciones confirmadas — stock actualizado`,
-        "success"
+      notifyAfterMaybeAutoClose(
+        get().showToast,
+        result,
+        pending.length === 1
+          ? "Cancelación confirmada — stock actualizado"
+          : `${pending.length} cancelaciones confirmadas — stock actualizado`
       );
     } catch (err) {
       set({ orders: snapshot });
@@ -687,25 +711,24 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
 
     try {
       const supabase = getSupabaseBrowserClient();
-      const result = await rpcRemoveOrderItemRestoreStock(supabase, itemId);
+      const removeResult = await rpcRemoveOrderItemRestoreStock(supabase, itemId);
 
       // Solo quitar el pedido si el backend lo borró (p. ej. ya no quedan ítems).
       // No usar remainingItems.length: al confirmar 1 de varios cancelados con stock
       // pendiente, el pedido debe seguir visible hasta devolver todo (319).
-      if (result?.order_deleted) {
+      if (removeResult?.order_deleted) {
         get().removeOrder(orderId);
         get().showToast("Cancelación confirmada — pedido actualizado", "success");
         return;
       }
 
-      const { order: refreshed, autoClosed } = await refreshAndMaybeAutoClose(supabase, orderId);
-      if (refreshed) get().patchOrder(refreshed);
+      const result = await refreshAndMaybeAutoClose(supabase, orderId);
+      if (result.order) get().patchOrder(result.order);
       else get().removeOrder(orderId);
-      get().showToast(
-        autoClosed
-          ? "Pedido cerrado — el cliente ya había pedido el cierre"
-          : "Cancelación confirmada — stock actualizado",
-        "success"
+      notifyAfterMaybeAutoClose(
+        get().showToast,
+        result,
+        "Cancelación confirmada — stock actualizado"
       );
     } catch (err) {
       set({ orders: snapshot });
@@ -742,22 +765,21 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
 
     try {
       const supabase = getSupabaseBrowserClient();
-      const result = await rpcRemoveCancelledItemWriteoff(supabase, itemId);
+      const writeoffResult = await rpcRemoveCancelledItemWriteoff(supabase, itemId);
 
-      if (result?.order_deleted) {
+      if (writeoffResult?.order_deleted) {
         get().removeOrder(orderId);
         get().showToast("Confirmado sin devolver stock — pedido actualizado", "success");
         return;
       }
 
-      const { order: refreshed, autoClosed } = await refreshAndMaybeAutoClose(supabase, orderId);
-      if (refreshed) get().patchOrder(refreshed);
+      const result = await refreshAndMaybeAutoClose(supabase, orderId);
+      if (result.order) get().patchOrder(result.order);
       else get().removeOrder(orderId);
-      get().showToast(
-        autoClosed
-          ? "Pedido cerrado — el cliente ya había pedido el cierre"
-          : "Confirmado sin devolver stock",
-        "success"
+      notifyAfterMaybeAutoClose(
+        get().showToast,
+        result,
+        "Confirmado sin devolver stock"
       );
     } catch (err) {
       set({ orders: snapshot });
@@ -902,26 +924,23 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
           get().showToast("Mensaje listo en la campana", "success");
         }
       }
-      const { order: refreshed, autoClosed } = await refreshAndMaybeAutoClose(supabase, orderId);
-      if (refreshed) {
-        get().patchOrder(refreshed);
+      const result = await refreshAndMaybeAutoClose(supabase, orderId);
+      if (result.order) {
+        get().patchOrder(result.order);
         if (!wasWaitingDeferred) {
           try {
             await syncOrderSnapshotPriorFromOrder(
               orderId,
-              refreshed.order_items || [],
+              result.order.order_items || [],
               get().warehouseIds,
-              refreshed
+              result.order
             );
           } catch {
             // sin snapshot activo
           }
         }
       }
-      get().showToast(
-        autoClosed ? "Pedido cerrado — el cliente ya había pedido el cierre" : "Producto apartado",
-        "success"
-      );
+      notifyAfterMaybeAutoClose(get().showToast, result, "Producto apartado");
     } catch (err) {
       set({ orders: snapshot });
       get().showToast(getErrorMessage(err), "error");
@@ -983,7 +1002,7 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
       } = await supabase.auth.getUser();
       if (!user?.id) throw new Error("Sesión admin no disponible");
 
-      const result = await rpcSplitOrderItemStatus(
+      const splitResult = await rpcSplitOrderItemStatus(
         supabase,
         itemId,
         nPicked,
@@ -992,20 +1011,19 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
         user.id
       );
 
-      const newWaitingItemId = (result as { split_item_ids?: { waiting?: string | null } } | null)
+      const newWaitingItemId = (splitResult as { split_item_ids?: { waiting?: string | null } } | null)
         ?.split_item_ids?.waiting;
       if (nWaiting > 0 && waitingSource && newWaitingItemId) {
         const sourceCode = waitingSource === "local" ? "venta-publico" : "general";
         await rpcMarkOrderItemWaitingSource(supabase, newWaitingItemId, sourceCode, user.id);
       }
 
-      const { order: refreshed, autoClosed } = await refreshAndMaybeAutoClose(supabase, orderId);
-      if (refreshed) get().patchOrder(refreshed);
-      get().showToast(
-        autoClosed
-          ? "Pedido cerrado — el cliente ya había pedido el cierre"
-          : `Apartados: ${nPicked} · Espera: ${nWaiting} · Sin stock: ${nMissing}`,
-        "success"
+      const result = await refreshAndMaybeAutoClose(supabase, orderId);
+      if (result.order) get().patchOrder(result.order);
+      notifyAfterMaybeAutoClose(
+        get().showToast,
+        result,
+        `Apartados: ${nPicked} · Espera: ${nWaiting} · Sin stock: ${nMissing}`
       );
     } catch (err) {
       set({ orders: snapshot });
@@ -1061,13 +1079,12 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
         }
       }
 
-      const { order: refreshed, autoClosed } = await refreshAndMaybeAutoClose(supabase, orderId);
-      if (refreshed) get().patchOrder(refreshed);
-      get().showToast(
-        autoClosed
-          ? "Pedido cerrado — el cliente ya había pedido el cierre"
-          : `Apartados: ${nPicked} · Espera fábrica: ${nFabrica} · Espera local: ${nLocal} · Sin stock: ${nMissing}`,
-        "success"
+      const result = await refreshAndMaybeAutoClose(supabase, orderId);
+      if (result.order) get().patchOrder(result.order);
+      notifyAfterMaybeAutoClose(
+        get().showToast,
+        result,
+        `Apartados: ${nPicked} · Espera fábrica: ${nFabrica} · Espera local: ${nLocal} · Sin stock: ${nMissing}`
       );
     } catch (err) {
       set({ orders: snapshot });
@@ -1144,9 +1161,11 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
               ? " → Espera"
               : destCol === "cancelled"
                 ? " → Cancelados"
-                : destCol === "closed"
-                  ? " → Cerrados"
-                  : "";
+                : destCol === "expired"
+                  ? " → Vencido"
+                  : destCol === "closed"
+                    ? " → Cerrados"
+                    : "";
       get().showToast(`Pedido enviado a ${targetTitle}${destHint}`, "success");
     } catch (err) {
       set({ orders: snapshot });
@@ -1195,9 +1214,13 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
       try {
         const supabase = getSupabaseBrowserClient();
         await retryNetworkStockPendingOrder(supabase, order);
-        const refreshed = await fetchOrderById(supabase, orderId);
-        if (refreshed) get().patchOrder(refreshed);
-        get().showToast("Stock descontado. El pedido volvió a Activos/Apartados", "success");
+        const result = await refreshAndMaybeAutoClose(supabase, orderId);
+        if (result.order) get().patchOrder(result.order);
+        notifyAfterMaybeAutoClose(
+          get().showToast,
+          result,
+          "Stock descontado. El pedido volvió a Activos/Apartados"
+        );
       } catch (err) {
         get().showToast(getErrorMessage(err), "error");
       } finally {
@@ -1248,8 +1271,13 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
         order,
         targetItem.id
       );
-      if (refreshed) get().patchOrder(refreshed);
-      get().showToast("Conflicto resuelto", "success");
+      // resolveStockPendingOrderRpc ya trae el pedido; si quedó listo + flag, cerrar.
+      const result = refreshed
+        ? await refreshAndMaybeAutoClose(supabase, orderId)
+        : { order: null, autoClosed: false as const };
+      if (result.order) get().patchOrder(result.order);
+      else if (refreshed) get().patchOrder(refreshed);
+      notifyAfterMaybeAutoClose(get().showToast, result, "Conflicto resuelto");
     } catch (err) {
       set({ orders: snapshot });
       get().showToast(getErrorMessage(err), "error");
@@ -1331,9 +1359,15 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
 
       if (error) throw error;
 
+      try {
+        await useExpiryWarnSentStore.getState().clearSent(orderId);
+      } catch {
+        // no bloquear la prórroga si falla el clear del aviso
+      }
+
       const refreshed = await fetchOrderById(supabase, orderId);
       if (refreshed) get().patchOrder(refreshed);
-      get().showToast("Prórroga aplicada", "success");
+      get().showToast("Prórroga aplicada — vuelve a amarillo", "success");
     } catch (err) {
       set({ orders: snapshot });
       get().showToast(getErrorMessage(err), "error");
@@ -1354,9 +1388,15 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
 
       if (error) throw error;
 
+      try {
+        await useExpiryWarnSentStore.getState().clearSent(orderId);
+      } catch {
+        // no bloquear
+      }
+
       const refreshed = await fetchOrderById(supabase, orderId);
       if (refreshed) get().patchOrder(refreshed);
-      get().showToast("Pedido reabierto en Apartados", "success");
+      get().showToast("Pedido reabierto — 24hs más en Vencido", "success");
     } catch (err) {
       set({ orders: snapshot });
       get().showToast(getErrorMessage(err), "error");

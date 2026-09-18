@@ -33,7 +33,6 @@ import {
   formatAdminDeadlineCountdown,
   getOrderDeadlineDate,
   isOrderExpired,
-  isOrderExpiringToday,
 } from "@/lib/orders/deadline";
 import { buildExpiryWarningMessage, buildExpiredOrderMessage } from "@/lib/orders/customer-status-message";
 import { useExpiryWarnSentStore } from "@/lib/orders/expiry-warning-sent";
@@ -139,7 +138,9 @@ export default function OrderCard({ order }: OrderCardProps) {
   const [confirmBusy, setConfirmBusy] = useState(false);
   const [pendingConfirmAllCancelled, setPendingConfirmAllCancelled] = useState(false);
   const hydrateExpiryWarn = useExpiryWarnSentStore((s) => s.hydrate);
-  const expiryWarnSent = useExpiryWarnSentStore((s) => s.sentIds.has(order.id));
+  const expiryWarnCooldown = useExpiryWarnSentStore((s) =>
+    s.isCooldownActive(order.id)
+  );
 
   useEffect(() => {
     hydrateExpiryWarn();
@@ -169,13 +170,23 @@ export default function OrderCard({ order }: OrderCardProps) {
     showInboxOwnerChip &&
     Boolean(order.customer_id) &&
     firstOrderCustomerIds.includes(order.customer_id);
-  /** ≤2 días para vencer → alerta rosa (solo tablero Pedidos/shipping).
+  /** ≤2 días para vencer → alerta rosa (solo fuera de Vencido; ahí usa semáforo amarillo/rojo/azul).
    *  En Retiro no pintar “por vencer”: solo el rojo de ya vencido. */
   const expiringSoon =
+    column !== "expired" &&
     boardScope !== "local_pickup" &&
     calendarDaysLeft !== null &&
     !deadlineExpired &&
     calendarDaysLeft <= 2;
+  /** Semáforo columna Vencido */
+  const vencidoTone: "yellow" | "red" | "blue" | null =
+    column !== "expired"
+      ? null
+      : expiryWarnCooldown
+        ? "blue"
+        : deadlineExpired || String(order.status || "").toLowerCase() === "expired"
+          ? "red"
+          : "yellow";
   const countdownLabel =
     calendarDaysLeft === null
       ? null
@@ -193,7 +204,11 @@ export default function OrderCard({ order }: OrderCardProps) {
     column === "active" && (isMobile || boardScope === "local_pickup");
   /** Mobile: tap en la card expande/colapsa — no hace falta el link Expandir. */
   const expandOnCardClick =
-    isMobile || column === "active" || column === "waiting" || column === "cancelled";
+    isMobile ||
+    column === "active" ||
+    column === "waiting" ||
+    column === "cancelled" ||
+    column === "expired";
   const showItemRemove = column === "picked";
   const showActiveReservedActions = column === "active";
   const items = order.order_items || [];
@@ -203,31 +218,22 @@ export default function OrderCard({ order }: OrderCardProps) {
   const productCount = useMemo(
     () =>
       countRegularProductUnits(
-        column === "cancelled" ? items : items.filter((item) => !isCancelledOrderItem(item))
+        column === "cancelled" || column === "expired"
+          ? items
+          : items.filter((item) => !isCancelledOrderItem(item))
       ),
     [column, items]
   );
-  const operationalProductCount = useMemo(
-    () => countRegularProductUnits(items.filter((item) => !isCancelledOrderItem(item))),
-    [items]
-  );
   const showExpiryWarningBtn =
-    isMobile &&
+    column === "expired" &&
     hasDeadline &&
-    isOrderExpiringToday(order) &&
-    operationalProductCount >= 4 &&
-    (column === "cancelled" ||
-      column === "active" ||
-      column === "picked" ||
-      column === "waiting");
-  // A diferencia de showExpiryWarningBtn (que sigue siendo mobile-only, es otro
-  // flujo), este botón de "avisar que venció" también debe verse en desktop --
-  // era justo lo que el admin necesitaba y no aparecía ahí. Ver 2026-09-15.
+    !deadlineExpired &&
+    String(order.status || "").toLowerCase() !== "expired";
+  // Mensaje rojo (ya venció): columna Vencido. Desktop + mobile.
   const showExpiredOrderMessageBtn =
-    column === "cancelled" &&
+    column === "expired" &&
     hasDeadline &&
-    deadlineExpired &&
-    !showExpiryWarningBtn;
+    (deadlineExpired || String(order.status || "").toLowerCase() === "expired");
   const cancelledItems = useMemo(() => getCancelledOrderItems(order), [order]);
   const cancelledItemsPendingReturn = useMemo(
     () => getCancelledItemsPendingStockReturn(order),
@@ -235,13 +241,16 @@ export default function OrderCard({ order }: OrderCardProps) {
   );
   const operationalWhileCancelled = useMemo(
     () =>
-      column === "cancelled"
+      column === "cancelled" || column === "expired"
         ? items.filter((item) => !isCancelledOrderItem(item))
         : [],
     [column, items]
   );
   const showCancelledBanner =
-    cancelledItemsPendingReturn.length > 0 && column !== "cancelled" && column !== "waiting";
+    cancelledItemsPendingReturn.length > 0 &&
+    column !== "cancelled" &&
+    column !== "waiting" &&
+    column !== "expired";
   // Pedido que superó su plazo (o la prórroga de 24hs) sin que se hayan tocado sus
   // ítems: distinto de un pedido con ítems cancelados por la clienta (ahí "Desarmar"
   // ni se ofrece, ver OrderActions). Acá SÍ se ofrece, y todo lo que sigue "activo"
@@ -253,7 +262,7 @@ export default function OrderCard({ order }: OrderCardProps) {
   // solo archivar. Ver auditoría 2026-09-15.
   const isFullyExpiredStatus = String(order.status || "").trim().toLowerCase() === "expired";
   const isExpiredPending =
-    column === "cancelled" &&
+    column === "expired" &&
     (isExpiredPendingAdminDisassembly(order) || isFullyExpiredStatus);
   // Pedido vencido pendiente de desarmar: "Desarmar" ya resuelve TODO en un
   // solo paso (incluidos los ítems cancelados-pendientes de confirmar, ver
@@ -262,7 +271,8 @@ export default function OrderCard({ order }: OrderCardProps) {
   // todo lo que vuelve a stock. En cambio, cuando el pedido NO está vencido
   // (ítems activos + algún ítem cancelado suelto, sin botón "Desarmar"
   // disponible), el ✓ individual sigue siendo la única forma de resolverlo.
-  const dismantleAllPending = column === "cancelled" && order.status !== "cancelled" && isExpiredPending;
+  const dismantleAllPending =
+    column === "expired" && order.status !== "cancelled" && isExpiredPending;
   const showCancelledColumnPending =
     column === "cancelled" &&
     !dismantleAllPending &&
@@ -366,19 +376,19 @@ export default function OrderCard({ order }: OrderCardProps) {
       useOrdersStore.getState().showToast("No se pudo copiar el mensaje", "error");
       return;
     }
+    const url = buildWhatsAppUrl(phone, msg);
+    if (!url) {
+      useOrdersStore.getState().showToast("Sin teléfono del cliente", "error");
+      return;
+    }
     try {
       await useExpiryWarnSentStore.getState().markSent(order.id);
     } catch {
       useOrdersStore.getState().showToast("No se pudo registrar el aviso", "error");
       return;
     }
-    const url = buildWhatsAppUrl(phone, msg);
-    if (!url) {
-      useOrdersStore.getState().showToast("Sin teléfono del cliente", "error");
-      return;
-    }
     window.open(url, "_blank", "noopener,noreferrer");
-    useOrdersStore.getState().showToast("Mensaje copiado", "success");
+    useOrdersStore.getState().showToast("Mensaje enviado — recordatorio en 24hs", "success");
   };
 
   // Primer aviso (pedido vencido pero TODAVÍA no procesado por
@@ -388,7 +398,9 @@ export default function OrderCard({ order }: OrderCardProps) {
   // realmente pasa a 'expired' (isFullyExpiredStatus) el stock ya volvió de
   // verdad y corresponde el mensaje en pasado. Ver feedback 2026-09-15.
   const buildExpiredColumnMessage = () =>
-    isFullyExpiredStatus ? buildExpiredOrderMessage() : buildExpiryWarningMessage();
+    isFullyExpiredStatus || deadlineExpired
+      ? buildExpiredOrderMessage()
+      : buildExpiryWarningMessage();
 
   const copyExpiredOrderMessage = async () => {
     const msg = buildExpiredColumnMessage();
@@ -413,8 +425,14 @@ export default function OrderCard({ order }: OrderCardProps) {
       useOrdersStore.getState().showToast("Sin teléfono del cliente", "error");
       return;
     }
+    try {
+      await useExpiryWarnSentStore.getState().markSent(order.id);
+    } catch {
+      useOrdersStore.getState().showToast("No se pudo registrar el aviso", "error");
+      return;
+    }
     window.open(url, "_blank", "noopener,noreferrer");
-    useOrdersStore.getState().showToast("Mensaje copiado", "success");
+    useOrdersStore.getState().showToast("Mensaje enviado — recordatorio en 24hs", "success");
   };
 
   const stagePicked = (itemId: string) => {
@@ -645,7 +663,7 @@ export default function OrderCard({ order }: OrderCardProps) {
 
   return (
     <article
-      className={`order-card${deadlineExpired ? " order-card--aged" : ""}${expiringSoon ? " order-card--expiring-soon" : ""}${expanded ? " order-card--expanded" : ""}${customerCardClass}${retiroToneClass}${expandOnCardClick ? " order-card--click-expand" : ""}${wantsCloseMobile ? " order-card--wants-close" : ""}${isWaitingColumn ? " order-card--waiting-inline" : ""}${waitingCardToneClass}`}
+      className={`order-card${deadlineExpired && column !== "expired" ? " order-card--aged" : ""}${expiringSoon ? " order-card--expiring-soon" : ""}${vencidoTone === "yellow" ? " order-card--vencido-yellow" : ""}${vencidoTone === "red" ? " order-card--vencido-red" : ""}${vencidoTone === "blue" ? " order-card--vencido-blue" : ""}${expanded ? " order-card--expanded" : ""}${customerCardClass}${retiroToneClass}${expandOnCardClick ? " order-card--click-expand" : ""}${wantsCloseMobile ? " order-card--wants-close" : ""}${isWaitingColumn ? " order-card--waiting-inline" : ""}${waitingCardToneClass}`}
       onClick={expandOnCardClick ? handleCardClick : undefined}
     >
       <div className="order-card__header">
@@ -680,7 +698,7 @@ export default function OrderCard({ order }: OrderCardProps) {
               <span className="order-card__header-count">
                 {productCount} prod.
               </span>
-              {column !== "cancelled" ? (
+              {column !== "cancelled" && column !== "expired" ? (
                 <span className="order-card__header-price">
                   {formatPriceAr(order.total_amount)}
                 </span>
@@ -805,7 +823,7 @@ export default function OrderCard({ order }: OrderCardProps) {
               ) : null}
             </div>
           ) : null}
-          {showWaitingHeaderTotals && column !== "cancelled" ? (
+          {showWaitingHeaderTotals && column !== "cancelled" && column !== "expired" ? (
             <span className="order-card__meta-price">
               {formatPriceAr(order.total_amount)}
             </span>
@@ -922,7 +940,9 @@ export default function OrderCard({ order }: OrderCardProps) {
                     ? order.status === "cancelled"
                       ? appendExtrasToOrderCardItems(cancelledItems, order)
                       : cancelledItemsPendingReturn
-                    : column === "active"
+                    : column === "expired"
+                      ? appendExtrasToOrderCardItems(items, order)
+                      : column === "active"
                         ? appendExtrasToOrderCardItems(reservedItems, order)
                         : column === "picked"
                           ? appendExtrasToOrderCardItems(pickedColumnItems, order)
@@ -970,10 +990,13 @@ export default function OrderCard({ order }: OrderCardProps) {
                 emptyLabel={
                   column === "cancelled"
                     ? order.status === "cancelled" ? "Sin productos" : "Sin productos cancelados"
-                    : column === "active"
-                      ? "Sin productos pendientes de apartar"
-                      : "Sin ítems"
+                    : column === "expired"
+                      ? "Sin productos"
+                      : column === "active"
+                        ? "Sin productos pendientes de apartar"
+                        : "Sin ítems"
                 }
+                mutedBadges={column === "expired"}
               />
             ) : null}
             {dismantleAllPending ? (
@@ -985,7 +1008,7 @@ export default function OrderCard({ order }: OrderCardProps) {
                 </p>
                 <p className="order-card__cancelled-rest-hint">
                   {isFullyExpiredStatus
-                    ? "Tocá Archivar para sacar este pedido de Cancelados."
+                    ? "Tocá Archivar para sacar este pedido de Vencido."
                     : "Lo marcado en amarillo nunca se separó físicamente del depósito (reservado/espera) — el resto sí estaba apartado."}
                 </p>
                 <OrderCardItems
@@ -1084,7 +1107,7 @@ export default function OrderCard({ order }: OrderCardProps) {
           <OrderCardFooter
             order={order}
             productCount={productCount}
-            showTotal={column !== "cancelled"}
+            showTotal={column !== "cancelled" && column !== "expired"}
             showNoteExtras={false}
           />
         </>
@@ -1138,37 +1161,47 @@ export default function OrderCard({ order }: OrderCardProps) {
         </div>
       ) : null}
 
-      {showExpiryWarningBtn ? (
-        <div className="order-expiry-warn" onClick={(event) => event.stopPropagation()}>
-          <button
-            type="button"
-            className={`order-expiry-warn__btn${expiryWarnSent ? " order-expiry-warn__btn--sent" : ""}`}
-            disabled={expiryWarnSent || !phone}
-            onClick={() => void sendExpiryWarningMessage()}
-          >
-            {expiryWarnSent ? "Mensaje enviado" : "Enviar mensaje"}
-          </button>
-        </div>
-      ) : null}
-
-      {showExpiredOrderMessageBtn ? (
+      {showExpiryWarningBtn || showExpiredOrderMessageBtn ? (
         <div className="order-expiry-warn" onClick={(event) => event.stopPropagation()}>
           <div className="order-draft-bar order-expiry-warn__bar">
             <div className="order-draft-bar__row order-draft-bar__row--msg">
               <button
                 type="button"
                 className="order-card__btn order-draft-bar__btn-msg"
-                onClick={() => void copyExpiredOrderMessage()}
+                onClick={() =>
+                  void (showExpiryWarningBtn
+                    ? (async () => {
+                        const msg = buildExpiryWarningMessage();
+                        try {
+                          await navigator.clipboard.writeText(msg);
+                          useOrdersStore.getState().showToast("Mensaje copiado", "success");
+                        } catch {
+                          useOrdersStore.getState().showToast("No se pudo copiar el mensaje", "error");
+                        }
+                      })()
+                    : copyExpiredOrderMessage())
+                }
               >
                 Mensaje
               </button>
               <button
                 type="button"
-                className="order-card__btn order-draft-bar__btn-send"
+                className={`order-card__btn order-draft-bar__btn-send${
+                  expiryWarnCooldown ? " order-draft-bar__btn-send--sent" : ""
+                }`}
                 disabled={!phone}
-                onClick={() => void sendExpiredOrderMessage()}
+                title={
+                  expiryWarnCooldown
+                    ? "Ya enviado — se puede reenviar (reinicia las 24hs)"
+                    : "Enviar por WhatsApp"
+                }
+                onClick={() =>
+                  void (showExpiryWarningBtn
+                    ? sendExpiryWarningMessage()
+                    : sendExpiredOrderMessage())
+                }
               >
-                Enviar
+                {expiryWarnCooldown ? "Reenviar" : "Enviar"}
               </button>
             </div>
           </div>

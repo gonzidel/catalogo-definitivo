@@ -249,37 +249,81 @@ export async function dismissAdminOrderMessage(
 
 
 export async function fetchAdminExpiryWarnSentOrderIds(
-
   supabase: SupabaseClient
-
 ): Promise<Set<string>> {
-
-  const { data, error } = await supabase.rpc("rpc_list_admin_expiry_warn_sent");
-
-  if (error) throw error;
-
-  return new Set(parseOrderIdsPayload(data));
-
+  const entries = await fetchAdminExpiryWarnSentEntries(supabase);
+  return new Set(entries.map((e) => e.orderId));
 }
 
+export type AdminExpiryWarnSentEntry = {
+  orderId: string;
+  sentAt: string;
+};
 
+function parseExpiryWarnEntriesPayload(data: unknown): AdminExpiryWarnSentEntry[] {
+  if (!data || typeof data !== "object") return [];
+  const obj = data as { entries?: unknown; order_ids?: unknown };
+
+  if (Array.isArray(obj.entries)) {
+    const out: AdminExpiryWarnSentEntry[] = [];
+    for (const raw of obj.entries) {
+      if (!raw || typeof raw !== "object") continue;
+      const row = raw as { order_id?: unknown; sent_at?: unknown };
+      if (typeof row.order_id !== "string") continue;
+      if (typeof row.sent_at !== "string") continue;
+      out.push({ orderId: row.order_id, sentAt: row.sent_at });
+    }
+    return out;
+  }
+
+  // Fallback legacy: solo order_ids (sin timestamp) — se trata como recién enviado.
+  if (Array.isArray(obj.order_ids)) {
+    const now = new Date().toISOString();
+    return obj.order_ids
+      .filter((id): id is string => typeof id === "string")
+      .map((orderId) => ({ orderId, sentAt: now }));
+  }
+
+  return [];
+}
+
+export async function fetchAdminExpiryWarnSentEntries(
+  supabase: SupabaseClient
+): Promise<AdminExpiryWarnSentEntry[]> {
+  const { data, error } = await supabase.rpc("rpc_list_admin_expiry_warn_sent");
+  if (error) throw error;
+  return parseExpiryWarnEntriesPayload(data);
+}
 
 export async function markAdminExpiryWarnSent(
-
   supabase: SupabaseClient,
-
   orderId: string
-
 ): Promise<void> {
-
   const { error } = await supabase.rpc("rpc_mark_admin_expiry_warn_sent", {
-
     p_order_id: orderId,
-
   });
-
   if (error) throw error;
+}
 
+export async function clearAdminExpiryWarnSent(
+  supabase: SupabaseClient,
+  orderId: string
+): Promise<void> {
+  const { error } = await supabase.rpc("rpc_clear_admin_expiry_warn_sent", {
+    p_order_id: orderId,
+  });
+  if (error) {
+    // Fallback si 349 aún no está aplicada: borrar fila directa (RLS admin).
+    if (isRpcSignatureMismatch(error)) {
+      const { error: delErr } = await supabase
+        .from("admin_order_expiry_warn_sent")
+        .delete()
+        .eq("order_id", orderId);
+      if (delErr) throw delErr;
+      return;
+    }
+    throw error;
+  }
 }
 
 

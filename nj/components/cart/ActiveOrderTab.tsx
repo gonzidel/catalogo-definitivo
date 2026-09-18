@@ -896,6 +896,57 @@ export default function ActiveOrderTab({
     setRequestedCloseOrderId(null);
   }, [order, notesRequestClose, requestedCloseOrderId]);
 
+  // Auto-reparo A56955/A56950: flag de cierre + todo apartado + no retiro local,
+  // pero status sigue active → la UI queda en "En preparación" sin botón.
+  // 348 ya cierra al pedir cierre; esto recupera pedidos stuck previos / fallos.
+  const stuckCloseHealAttemptedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!order?.id) return;
+    if (!["active", "closing_soon"].includes(order.status)) return;
+    if (!notesRequestClose) return;
+    if (isLocalPickupOrder) return;
+    if (order.local_deferred_pickup) return;
+
+    const operational = (order.order_items || []).filter(
+      (i) => i.status !== "cancelled" && Number(i.quantity ?? 0) > 0
+    );
+    if (operational.length === 0) return;
+    if (operational.some((i) => i.status === "missing")) return;
+    if (!operational.every((i) => i.status === "picked")) return;
+
+    if (stuckCloseHealAttemptedRef.current === order.id) return;
+    stuckCloseHealAttemptedRef.current = order.id;
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const supabase = getSupabaseBrowserClient();
+        // Reusar 348: si ya está listo, cierra; si no, no empeora.
+        const req = await rpcCustomerRequestClose(supabase, order.id);
+        if (cancelled) return;
+        if (req.closed) {
+          onOrderSent();
+          return;
+        }
+        // Fallback por si la RPC vieja aún no tiene auto-close en este entorno.
+        await rpcCloseOrder(supabase, order.id, "Pendiente");
+        if (!cancelled) onOrderSent();
+      } catch {
+        // Deja la pantalla de preparación; el sweep 349 / admin puede cerrar.
+        stuckCloseHealAttemptedRef.current = null;
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    order,
+    notesRequestClose,
+    isLocalPickupOrder,
+    onOrderSent,
+  ]);
+
   useEffect(() => {
     if (!customerId || !order?.id || !["active", "closing_soon"].includes(order.status)) {
       setShowFirstOrderGuide(false);
@@ -1847,10 +1898,14 @@ export default function ActiveOrderTab({
         }
       }
 
-      // Hay reservados → flag customer_requested_close vía SECURITY DEFINER;
-      // el pedido sigue active para el admin y el cliente ve "En preparación".
+      // Front cree que hay reservados → pedir cierre. Si en servidor ya está
+      // todo apartado (y no es retiro local), la RPC 348 cierra sola.
       try {
-        await rpcCustomerRequestClose(supabase, order.id);
+        const req = await rpcCustomerRequestClose(supabase, order.id);
+        if (req.closed) {
+          onOrderSent();
+          return true;
+        }
         setRequestedCloseOrderId(order.id);
         onOrderRefresh();
         return true;

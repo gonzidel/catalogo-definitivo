@@ -191,7 +191,7 @@ export default function OrderEditModal({ order, onClose }: OrderEditModalProps) 
 
       // Si la clienta ya había pedido cerrar y este guardado dejó el pedido
       // completo, cerrarlo acá (sin esto quedaba trabado en Apartados).
-      const { order: refreshed, autoClosed } = await refreshAndMaybeAutoClose(
+      const { order: refreshed, autoClosed, autoCloseError } = await refreshAndMaybeAutoClose(
         supabase,
         liveOrder.id
       );
@@ -200,13 +200,18 @@ export default function OrderEditModal({ order, onClose }: OrderEditModalProps) 
         initialNotesRef.current = parseOrderNotesExtrasValues(refreshed.notes);
         setNotesExtras(parseOrderNotesExtrasValues(refreshed.notes));
       }
-      showToast(
-        autoClosed
-          ? "Pedido actualizado y cerrado (la clienta ya lo había enviado)"
-          : "Pedido actualizado",
-        "success"
-      );
-      if (autoClosed) onClose();
+      if (autoClosed) {
+        showToast("Pedido actualizado y cerrado (la clienta ya lo había enviado)", "success");
+        onClose();
+      } else if (autoCloseError) {
+        showToast("Pedido actualizado", "success");
+        showToast(
+          `La clienta ya había pedido cerrar, pero no se pudo cerrar solo: ${autoCloseError}. Cerralo a mano.`,
+          "error"
+        );
+      } else {
+        showToast("Pedido actualizado", "success");
+      }
     } catch (err) {
       const refreshed = await fetchOrderById(getSupabaseBrowserClient(), liveOrder.id);
       if (refreshed) patchOrder(refreshed);

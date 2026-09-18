@@ -27,13 +27,14 @@ interface KanbanBoardProps {
   scope?: BoardScope;
 }
 
-type DrawerId = "closed" | "stock_pending" | "picked" | "waiting" | "cancelled" | null;
+type DrawerId = "closed" | "stock_pending" | "picked" | "waiting" | "cancelled" | "expired" | null;
 /** Vista inline mobile: el header (☰, + Pedido, Enviados, botones) se mantiene siempre. */
-type MobileQuickView = "active" | "waiting" | "cancelled";
+type MobileQuickView = "active" | "waiting" | "cancelled" | "expired";
 
 const MAIN_COLUMNS = [
   { id: "active" as const, label: "Activos" },
   { id: "picked" as const, label: "Apartados" },
+  { id: "expired" as const, label: "Vencido" },
   { id: "cancelled" as const, label: "Cancelados" },
   { id: "waiting" as const, label: "Espera" },
 ];
@@ -96,6 +97,12 @@ export default function KanbanBoard({
   const cancelledCount = useMemo(
     () =>
       filterOrdersForColumn(inboxFilteredOrders, "cancelled", columnFilterCtx)
+        .length,
+    [inboxFilteredOrders, columnFilterCtx]
+  );
+  const expiredCount = useMemo(
+    () =>
+      filterOrdersForColumn(inboxFilteredOrders, "expired", columnFilterCtx)
         .length,
     [inboxFilteredOrders, columnFilterCtx]
   );
@@ -302,6 +309,29 @@ export default function KanbanBoard({
             <span className="kanban-mobile-quick__count">{waitingCount}</span>
           </button>
         )}
+        {mobileView === "expired" ? (
+          <button
+            type="button"
+            className="kanban-mobile-quick__btn kanban-mobile-quick__btn--activos"
+            onClick={() => setMobileView("active")}
+            aria-label={`Volver a Activos: ${activeCount} pedidos`}
+          >
+            <span className="kanban-mobile-quick__label">Activos</span>
+            <span className="kanban-mobile-quick__count">{activeCount}</span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="kanban-mobile-quick__btn kanban-mobile-quick__btn--expired"
+            onClick={() => setMobileView("expired")}
+            aria-label={`Vencido: ${expiredCount} pedidos`}
+          >
+            <span className="kanban-mobile-quick__label">
+              <span aria-hidden="true">⏰</span> Vencido
+            </span>
+            <span className="kanban-mobile-quick__count">{expiredCount}</span>
+          </button>
+        )}
         {mobileView === "cancelled" ? (
           <button
             type="button"
@@ -329,12 +359,14 @@ export default function KanbanBoard({
 
       <div className="kanban-main">
         {MAIN_COLUMNS.map((col) => {
-          // Mobile: solo la vista actual (Activos / Espera / Cancelados). Desktop: las 4.
+          // Mobile: solo la vista actual (Activos / Espera / Vencido / Cancelados).
           const showOnMobile = col.id === mobileView;
           return (
             <div
               key={col.id}
-              className={`kanban-column-slot${showOnMobile ? "" : " kanban-column-slot--mobile-hidden"}`}
+              className={`kanban-column-slot${
+                col.id === "active" ? " kanban-column-slot--active" : ""
+              }${showOnMobile ? "" : " kanban-column-slot--mobile-hidden"}`}
             >
               <KanbanColumn
                 columnId={col.id}

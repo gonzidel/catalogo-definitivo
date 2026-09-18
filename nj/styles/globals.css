@@ -5788,7 +5788,8 @@ body:has(.kanban-admin-shell) [data-nextjs-toast] {
 
 .kanban-main {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  /* Activos ~25% (como antes con 4 cols); las otras 4 comparten el resto */
+  grid-template-columns: 1fr 0.75fr 0.75fr 0.75fr 0.75fr;
   gap: 12px;
   padding: 0 12px 12px;
   align-items: flex-start;
@@ -6218,6 +6219,64 @@ body:has(.kanban-admin-shell) [data-nextjs-toast] {
 
 .order-card--aged {
   border-color: #fca5a5;
+}
+
+/* Columna Vencido — semáforo */
+.order-card--vencido-yellow {
+  background: #fef9c3;
+  border-color: #eab308;
+  box-shadow: 0 1px 3px rgba(234, 179, 8, 0.28);
+}
+
+.order-card--vencido-red {
+  background: #fee2e2;
+  border-color: #ef4444;
+  box-shadow: 0 1px 3px rgba(239, 68, 68, 0.28);
+}
+
+.order-card--vencido-blue {
+  background: #dbeafe;
+  border-color: #3b82f6;
+  box-shadow: 0 1px 3px rgba(59, 130, 246, 0.28);
+}
+
+.order-card--customer.order-card--vencido-yellow,
+.order-card--retiro-origin-customer.order-card--vencido-yellow,
+.order-card--retiro-origin-moved.order-card--vencido-yellow,
+.order-card--retiro-origin-admin_local.order-card--vencido-yellow {
+  background: #fef9c3;
+  border-color: #eab308;
+}
+
+.order-card--customer.order-card--vencido-red,
+.order-card--retiro-origin-customer.order-card--vencido-red,
+.order-card--retiro-origin-moved.order-card--vencido-red,
+.order-card--retiro-origin-admin_local.order-card--vencido-red {
+  background: #fee2e2;
+  border-color: #ef4444;
+}
+
+.order-card--customer.order-card--vencido-blue,
+.order-card--retiro-origin-customer.order-card--vencido-blue,
+.order-card--retiro-origin-moved.order-card--vencido-blue,
+.order-card--retiro-origin-admin_local.order-card--vencido-blue {
+  background: #dbeafe;
+  border-color: #3b82f6;
+}
+
+.order-card--vencido-yellow .order-card__header,
+.order-card--vencido-yellow .order-card__body,
+.order-card--vencido-yellow .order-card__footer,
+.order-card--vencido-yellow .order-card__actions,
+.order-card--vencido-red .order-card__header,
+.order-card--vencido-red .order-card__body,
+.order-card--vencido-red .order-card__footer,
+.order-card--vencido-red .order-card__actions,
+.order-card--vencido-blue .order-card__header,
+.order-card--vencido-blue .order-card__body,
+.order-card--vencido-blue .order-card__footer,
+.order-card--vencido-blue .order-card__actions {
+  background: transparent;
 }
 
 .order-card--customer.order-card--aged {
@@ -9324,6 +9383,16 @@ a.order-card__wa-btn:active {
   background: #fee2e2;
 }
 
+.kanban-mobile-quick__btn--expired {
+  border-color: #fbbf24;
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.kanban-mobile-quick__btn--expired:active {
+  background: #fef3c7;
+}
+
 /* Reemplaza Espera/Cancelados mientras estás en esa vista — vuelve a Activos */
 .kanban-mobile-quick__btn--activos {
   border-color: #93c5fd;
@@ -9380,6 +9449,19 @@ a.order-card__wa-btn:active {
 
   .kanban-mobile-quick {
     display: flex;
+  }
+
+  .kanban-mobile-quick__btn {
+    min-height: 36px;
+    padding: 6px 8px;
+    font-size: 0.72rem;
+    gap: 4px;
+  }
+
+  .kanban-mobile-quick__count {
+    min-width: 1.35rem;
+    height: 1.25rem;
+    font-size: 0.7rem;
   }
 
   .kanban-main {
@@ -9585,10 +9667,10 @@ a.order-card__wa-btn:active {
 }
 
 .order-expiry-warn__btn--sent {
-  background: #dc2626;
-  border-color: #dc2626;
+  background: #3b82f6;
+  border-color: #2563eb;
   color: #fff;
-  cursor: default;
+  cursor: pointer;
   opacity: 1;
 }
 

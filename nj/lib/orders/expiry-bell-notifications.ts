@@ -15,7 +15,7 @@ import {
 import type { OrderMsgNotification } from "@/lib/orders/local-wait-notifications";
 import type { AdminOrder } from "@/types/orders";
 
-const EXPIRY_BELL_COLUMNS = new Set(["cancelled", "active", "picked", "waiting"]);
+const EXPIRY_BELL_COLUMNS = new Set(["expired", "active", "picked", "waiting"]);
 
 export function orderQualifiesForExpiryBell(order: AdminOrder): boolean {
   // Solo auto-gestión clienta (misma regla que campana cierre / local_wait).

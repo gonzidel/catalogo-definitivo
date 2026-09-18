@@ -24,7 +24,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
  *  Nota: `cancelled_from_status` requiere la migración 344 antes de desplegar este frontend. */
 export const ORDER_SELECT = `
   id, order_number, status, customer_id, total_amount, notes, source, payment_method,
-  created_at, sent_at, expires_at, dismantle_at, local_deferred_pickup, pickup_timer_started_at, transport_id,
+  created_at, sent_at, expires_at, dismantle_at, expired_at, local_deferred_pickup, pickup_timer_started_at, transport_id,
   customers(id, full_name, phone, email, dni, transport_id, city, province, kanban_inbox_owner, kanban_inbox_assigned_at),
   order_items(
     id, order_id, variant_id, product_name, color, size, quantity,
@@ -36,7 +36,7 @@ export const ORDER_SELECT = `
 /** Fallback si 338 aún no está aplicada (columnas inbox ausentes). */
 const ORDER_SELECT_WITHOUT_INBOX = `
   id, order_number, status, customer_id, total_amount, notes, source, payment_method,
-  created_at, sent_at, expires_at, dismantle_at, local_deferred_pickup, pickup_timer_started_at, transport_id,
+  created_at, sent_at, expires_at, dismantle_at, expired_at, local_deferred_pickup, pickup_timer_started_at, transport_id,
   customers(id, full_name, phone, email, dni, transport_id, city, province),
   order_items(
     id, order_id, variant_id, product_name, color, size, quantity,
@@ -469,8 +469,8 @@ export async function fetchOrdersInitial(
   }
 
   // Estados finales: no viven en el Kanban operativo ("sent"/"devolución").
-  // "expired" SÍ se incluye: getOrderKanbanColumn lo manda a "Cancelados" para
-  // poder avisar a la clienta y "Desarmar"/archivar (ver auditoría 2026-09-15).
+  // "expired" SÍ se incluye: getOrderKanbanColumn lo manda a "Vencido" para
+  // avisar a la clienta y "Desarmar"/archivar (ver auditoría 2026-09-15 / columna Vencido).
   // "cancelled" (a nivel pedido) también sigue incluido -- se resuelve vía
   // orderHasCancelledItems() y aparece en la columna "Cancelados" con acción "Desarmar".
   let keys = await fetchOperationalOrderRows(supabase, ORDER_BOARD_KEY_SELECT);
@@ -738,19 +738,35 @@ export async function rpcCloseOrder(
 }
 
 /**
- * Cliente pide cerrar con ítems todavía reserved/waiting: setea
- * notes.customer_requested_close vía SECURITY DEFINER (no hay RLS UPDATE
- * de customers sobre orders — un .update() directo falla en silencio).
+ * Cliente pide cerrar (ítems reserved/waiting o retiro local):
+ * setea notes.customer_requested_close. Desde 348, si el pedido ya está
+ * todo apartado y NO es retiro local, la RPC también cierra (closed).
  */
+export type CustomerRequestCloseResult = {
+  ok: true;
+  order_id: string;
+  closed?: boolean;
+  pending_items?: number;
+  local_pickup?: boolean;
+};
+
 export async function rpcCustomerRequestClose(
   supabase: SupabaseClient,
   orderId: string
-) {
+): Promise<CustomerRequestCloseResult> {
   const { data, error } = await supabase.rpc("rpc_customer_request_close", {
     p_order_id: orderId,
   });
   if (error) throw error;
-  return data;
+  const raw = (data ?? {}) as Record<string, unknown>;
+  return {
+    ok: true,
+    order_id: String(raw.order_id ?? orderId),
+    closed: raw.closed === true,
+    pending_items:
+      typeof raw.pending_items === "number" ? raw.pending_items : undefined,
+    local_pickup: raw.local_pickup === true,
+  };
 }
 
 export interface CustomerCancelOrderResult {

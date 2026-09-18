@@ -298,14 +298,25 @@ export default function OrderCreateModal({ onClose }: OrderCreateModalProps) {
         // Si la clienta ya había pedido cerrar (customer_requested_close) y estos
         // productos nuevos (agregados ya apartados) completan el pedido, hay que
         // cerrarlo acá -- sin esto quedaba trabado en Apartados para siempre.
-        const { order: refreshed, autoClosed } = await refreshAndMaybeAutoClose(supabase, existingOrder.id);
-        if (refreshed) patchOrder(refreshed);
-        showToast(
-          autoClosed
-            ? "Productos agregados y pedido cerrado (la clienta ya lo había enviado)"
-            : "Productos agregados al pedido activo del cliente",
-          "success"
+        const { order: refreshed, autoClosed, autoCloseError } = await refreshAndMaybeAutoClose(
+          supabase,
+          existingOrder.id
         );
+        if (refreshed) patchOrder(refreshed);
+        if (autoClosed) {
+          showToast(
+            "Productos agregados y pedido cerrado (la clienta ya lo había enviado)",
+            "success"
+          );
+        } else if (autoCloseError) {
+          showToast("Productos agregados al pedido activo del cliente", "success");
+          showToast(
+            `La clienta ya había pedido cerrar, pero no se pudo cerrar solo: ${autoCloseError}. Cerralo a mano.`,
+            "error"
+          );
+        } else {
+          showToast("Productos agregados al pedido activo del cliente", "success");
+        }
       } else {
         const newOrderId = await createManualOrder(
           supabase,

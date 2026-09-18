@@ -6,8 +6,12 @@ import {
   orderHasCancelledItems,
   orderHasCancelledItemsPendingStockReturn,
   wantsCustomerClose,
+  isCustomerSourcedOrder,
 } from "@/lib/orders/domain";
-import { isOrderExpired } from "@/lib/orders/deadline";
+import {
+  isOrderExpired,
+  isOrderExpiringWithinOneDay,
+} from "@/lib/orders/deadline";
 import { isLocalPickupBoardOrder, type BoardScope } from "@/lib/orders/board-scope";
 import { orderHasRetiroDepositWaiting, orderHasPedidosLocalWaiting } from "@/lib/orders/retiro-deposit-waiting";
 import type { AdminOrder, KanbanColumnId, WarehouseIds } from "@/types/orders";
@@ -31,10 +35,8 @@ const norm = (s: unknown) => String(s ?? "").trim().toLowerCase();
 /**
  * Estados de pedido finales/terminales: no tienen columna propia en este Kanban.
  *
- * "expired" NO está acá a propósito (ver auditoría 2026-09-15): antes se
- * trataba como terminal y quedaba invisible para siempre en todo el admin
- * (no se podía avisar a la clienta ni "Desarmar"/archivar). Ahora
- * getOrderKanbanColumn lo clasifica explícitamente en "cancelled".
+ * "expired" NO está acá a propósito (ver auditoría 2026-09-15 / columna Vencido):
+ * getOrderKanbanColumn lo clasifica en "expired" para avisar, prorrogar o archivar.
  */
 export function isFinalOrderStatus(order: AdminOrder): boolean {
   const statusNorm = norm(order.status);
@@ -133,6 +135,34 @@ export function isExpiredPendingAdminDisassembly(order: AdminOrder): boolean {
     return false;
   }
   return hasOrderPassedCustomerEditWindow(order) && hasOperationalItems(order);
+}
+
+/**
+ * ¿Tiene plazo admin visible y entra en semáforo de columna Vencido (amarillo)?
+ * Pedidos admin/PAU sin dismantle_at no entran (igual que el countdown de la card).
+ */
+function orderHasAdminDeadline(order: AdminOrder): boolean {
+  if (order.local_deferred_pickup && !order.dismantle_at) return false;
+  return Boolean(order.dismantle_at) || (isCustomerSourcedOrder(order) && !order.local_deferred_pickup);
+}
+
+/**
+ * Columna Vencido: status=expired, vencidos pendientes de desarme, o ≤1 día para vencer.
+ */
+export function matchesExpiredTab(order: AdminOrder, now = Date.now()): boolean {
+  if (!order || isFinalOrderStatus(order)) return false;
+  if (norm(order.status) === STATUS.CLOSED) return false;
+  if (norm(order.status) === STATUS.EXPIRED) return true;
+  if (isExpiredPendingAdminDisassembly(order)) return true;
+  if (!orderHasAdminDeadline(order)) return false;
+  return isOrderExpiringWithinOneDay(
+    {
+      created_at: order.created_at,
+      dismantle_at: order.dismantle_at,
+      local_deferred_pickup: order.local_deferred_pickup,
+    },
+    now
+  );
 }
 
 function matchesActiveTab(order: AdminOrder): boolean {
@@ -249,21 +279,15 @@ export function shouldAutoCloseAfterCustomerRequest(order: AdminOrder): boolean 
 }
 
 export function getOrderKanbanColumn(order: AdminOrder): KanbanColumnId | null {
-  // Estados terminales (sent/devolución/expired) no tienen columna: no son operacionales.
+  // Estados terminales (sent/devolución) no tienen columna: no son operacionales.
   // Guard explícito acá (además del filtro en fetchOrdersInitial) por si un pedido llega
   // a este estado vía patchOrder en tiempo real mientras ya estaba cargado en memoria.
   if (isFinalOrderStatus(order)) return null;
   if (matchesStockPendingTab(order)) return "stock_pending";
   if (matchesClosedTab(order)) return "closed";
-  // Pedido ya vencido Y desarmado por rpc_orders_daily_maintenance (status='expired',
-  // items en 'expired', stock ya devuelto por el cron) -- sigue viviendo en Cancelados
-  // para poder avisar a la clienta y "Desarmar"/archivar en vez de desaparecer para
-  // siempre. hasOperationalItems() da false para estos (sus items ya no son
-  // reserved/picked/etc.), por eso necesita esta rama explícita además de la de abajo.
-  if (norm(order.status) === STATUS.EXPIRED) return "cancelled";
-  // Vencidos ≥7d con ítems operacionales, TODAVÍA sin pasar por el cron (status
-  // sigue active/closing_soon) → Cancelados también (antes que Apartados/Activos).
-  if (isExpiredPendingAdminDisassembly(order)) return "cancelled";
+  // Vencidos / por vencer (≤1 día) → columna Vencido (antes vivían en Cancelados).
+  // Antes que Activos/Apartados/Espera para que el semáforo tenga prioridad operativa.
+  if (matchesExpiredTab(order)) return "expired";
   if (matchesActiveTab(order)) return "active";
   if (matchesWaitingTab(order)) return "waiting";
   if (matchesPickedTab(order)) {

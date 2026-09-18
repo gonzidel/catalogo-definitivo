@@ -2914,6 +2914,54 @@ async function clearCurrentCart() {
   }
 }
 
+/**
+ * Revalida stock con datos frescos (forceFresh: true) justo antes de confirmar
+ * el checkout, para cerrar la ventana de caché de fetchVariantInfo (hasta 20s)
+ * en el momento más crítico. Muta currentCartItems in-place con la info fresca
+ * y devuelve true si algún ítem quedó sin stock suficiente.
+ */
+async function revalidateCartStockBeforeCheckout() {
+  if (!Array.isArray(currentCartItems) || currentCartItems.length === 0) {
+    return false;
+  }
+  let anyOutOfStock = false;
+  await Promise.all(
+    currentCartItems.map(async (item) => {
+      try {
+        const freshVariantInfo = await fetchVariantInfo(
+          item.product_name,
+          item.color,
+          item.size,
+          item.variant_id,
+          { forceFresh: true }
+        );
+        const qtyValue = Number(item.quantity ?? item.qty ?? 0) || 0;
+        const realAvailableStock = freshVariantInfo
+          ? Math.max(0, freshVariantInfo.available ?? 0)
+          : 0;
+        const isOutOfStock = !freshVariantInfo || qtyValue > realAvailableStock;
+
+        item.variantInfo = freshVariantInfo;
+        item.realAvailableStock = realAvailableStock;
+        item.remainingStock = Math.max(0, realAvailableStock - qtyValue);
+        item.maxQty = Math.max(0, Math.floor(realAvailableStock));
+        item.isOutOfStock = isOutOfStock;
+
+        if (isOutOfStock) anyOutOfStock = true;
+      } catch (revalidateError) {
+        // Si falla la revalidación puntual, no bloqueamos el checkout por un
+        // error de red aislado: el checkout RPC igual valida stock real bajo
+        // FOR UPDATE del lado del servidor.
+        console.warn(
+          "⚠️ No se pudo revalidar stock fresco antes de checkout:",
+          revalidateError?.message || revalidateError
+        );
+      }
+    })
+  );
+  return anyOutOfStock;
+}
+
 async function submitCurrentCart() {
   if (isSubmittingCurrentCart) return;
   isSubmittingCurrentCart = true;
@@ -3086,6 +3134,21 @@ async function submitCurrentCart() {
     releaseSubmitBtnLoading = setButtonLoading(submitBtn, "Enviando...");
     const bagSection = document.getElementById("section-bag");
     if (bagSection) bagSection.classList.add("dash-fx-pending");
+
+    // Revalidación final con stock fresco (forceFresh) justo antes de confirmar:
+    // cierra la ventana de caché de 20s en el momento más crítico del flujo.
+    const staleOutOfStock = await revalidateCartStockBeforeCheckout();
+    if (staleOutOfStock) {
+      releaseSubmitBtnLoading();
+      if (bagSection) bagSection.classList.remove("dash-fx-pending");
+      await loadCart(currentUserId);
+      void showDashboardMessageModal({
+        title: "Revisá tu bolsa",
+        bodyHtml:
+          "<p class=\"dash-app-message-modal__text\">El stock de algún producto cambió justo ahora. Ajustá las cantidades o quitá esos productos antes de continuar.</p>",
+      });
+      return;
+    }
 
     // Generar o reutilizar operation_id. Se mantiene entre intentos para que
     // un retry tras error de red reciba el resultado idempotente del servidor.
@@ -6465,77 +6528,37 @@ async function cancelEntireOrder(orderId) {
     const confirmed = await showDashboardConfirmModal({
       title: "¿Seguro que querés cancelar todo el pedido?",
       bodyHtml: `<ul class="dash-confirm-bullets">
-        <li>Los productos ya apartados notificarán al administrador y el pedido quedará como <strong>Cerrado</strong>.</li>
-        <li>Los productos que aún no fueron apartados se cancelarán sin notificar y, si no había nada apartado, el pedido se eliminará.</li>
+        <li>El pedido completo quedará <strong>Cancelado</strong> y no podrá recibir productos nuevos.</li>
+        <li>Si volvés a comprar, se creará otro pedido con un número nuevo.</li>
       </ul>`,
       confirmLabel: "Sí, cancelar",
       cancelLabel: "No",
     });
     if (!confirmed) return;
 
-    // Obtener items del pedido
-    const { data: items, error } = await supabase
-      .from("order_items")
-      .select("id, status")
-      .eq("order_id", orderId);
+    const { data, error } = await supabase.rpc("rpc_customer_cancel_order", {
+      p_order_id: orderId,
+    });
 
-    if (error) {
-      showFylToastError({
-        message: "No pudimos obtener los productos del pedido.",
-      });
-      console.error("âŒ Error listando items:", error);
-      return;
+    if (error) throw error;
+
+    const terminalStateIsCoherent =
+      (data?.order_status === "cancelled" && data?.order_deleted === false) ||
+      (data?.order_status === "deleted" && data?.order_deleted === true);
+
+    if (
+      data?.ok !== true ||
+      data?.verified !== true ||
+      data?.order_id !== orderId ||
+      !terminalStateIsCoherent
+    ) {
+      throw new Error(
+        "No pudimos verificar que el pedido quedara cancelado. Recargá antes de volver a intentar."
+      );
     }
 
-    if (!items || items.length === 0) {
-      // Si ya no tiene items, eliminar el pedido
-      await supabase.from("orders").delete().eq("id", orderId);
-      await loadOrders(currentUserId);
-      return;
-    }
-
-    let hadPicked = false;
-
-    // Cancelar cada item usando la misma lÃ³gica de cancelaciÃ³n
-    for (const it of items) {
-      // Reusar cancelOrderItem para cada Ã­tem
-      // Pero sin confirmaciÃ³n individual
-      try {
-        if ((it.status || '').toLowerCase() === 'missing') {
-          // Forzar eliminaciÃ³n directa (ramas de missing ya manejan total/update)
-          await cancelOrderItem(it.id);
-        } else {
-          const { data: res, error: rpcErr } = await supabase.rpc("rpc_cancel_order_item", { p_item_id: it.id });
-          if (rpcErr) {
-            console.warn("âš ï¸ No se pudo cancelar item:", it.id, rpcErr.message);
-          } else if (res?.was_picked) {
-            hadPicked = true;
-          }
-        }
-      } catch (e) {
-        console.warn("âš ï¸ Error cancelando item:", it.id, e?.message || e);
-      }
-    }
-
-    // Si hubo algÃºn 'picked', dejar el pedido como 'closed' (visible para admin)
-    if (hadPicked) {
-      await supabase.from("orders").update({ status: "closed", updated_at: new Date().toISOString() }).eq("id", orderId);
-      await loadOrders(currentUserId);
-      return;
-    }
-
-    // Si no hubo 'picked', verificar si quedÃ³ vacÃ­o y eliminar pedido entero
-    const { count } = await supabase
-      .from("order_items")
-      .select("id", { count: "exact", head: true })
-      .eq("order_id", orderId);
-
-    if ((Number(count) || 0) === 0) {
-      await supabase.from("orders").delete().eq("id", orderId);
-    } else {
-      // AÃºn hay items cancelados, borrar tambiÃ©n los cancelados y eliminar pedido
-      await supabase.from("order_items").delete().eq("order_id", orderId);
-      await supabase.from("orders").delete().eq("id", orderId);
+    if (currentUserId) {
+      localStorage.removeItem(`fyl-nj-checkout-op:${currentUserId}`);
     }
 
     await loadOrders(currentUserId);

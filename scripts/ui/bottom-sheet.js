@@ -130,15 +130,20 @@ import { parseARSNumber, formatARS } from '../utils/price.js?v=m260607';
     const tallesHTML = variantDetails.map(vd => {
       const key = `${colorActual}_${vd.talle}`;
       const quantity = Number(selectedQuantities.get(key)) || 0;
-      const sinStock = vd.available !== null && vd.available <= 0;
-      const disponible = vd.available !== null ? vd.available : null;
+      const stockUnknown = vd.available === null;
+      // Disponibilidad desconocida ya NO habilita cantidad "ilimitada": se
+      // bloquea igual que sin stock hasta que el dato se pueda confirmar.
+      const sinStock = stockUnknown || vd.available <= 0;
+      const disponible = stockUnknown ? null : vd.available;
 
       if (sinStock) {
-        // Renderizar sin stock: talle tachado en rojo y texto "Sin stock"
+        // Renderizar bloqueado: "Sin stock" (confirmado) o "Disponibilidad
+        // por confirmar" (dato inconsistente/sin verificar) — en ambos casos
+        // no se puede sumar cantidad.
         return `
           <div class="bottom-sheet-size-item out-of-stock">
             <span class="bottom-sheet-size-label">Talle ${vd.talle}</span>
-            <span class="bottom-sheet-no-stock">Sin stock</span>
+            <span class="bottom-sheet-no-stock">${stockUnknown ? 'A confirmar' : 'Sin stock'}</span>
           </div>
         `;
       }
@@ -155,7 +160,7 @@ import { parseARSNumber, formatARS } from '../utils/price.js?v=m260607';
             <span class="bottom-sheet-size-quantity ${quantity > 0 ? 'has-quantity' : ''}">${quantity}</span>
             <button class="bottom-sheet-size-plus" 
                     data-key="${key}"
-                    data-available="${disponible !== null ? disponible : 'null'}"
+                    data-available="${disponible}"
                     type="button">+</button>
           </div>
         </div>
@@ -272,10 +277,12 @@ import { parseARSNumber, formatARS } from '../utils/price.js?v=m260607';
         e.preventDefault();
         e.stopPropagation();
         const key = e.target.dataset.key;
-        const available = e.target.dataset.available === 'null' ? null : parseInt(e.target.dataset.available, 10);
+        const available = parseInt(e.target.dataset.available, 10);
         const currentQty = Number(selectedQuantities.get(key)) || 0;
         
-        if (available === null || currentQty < available) {
+        // Defensivo: si el dato de disponibilidad no es un número válido,
+        // no se permite incrementar (nunca se debe tratar como "ilimitado").
+        if (Number.isFinite(available) && currentQty < available) {
           selectedQuantities.set(key, currentQty + 1);
           updateQuantityDisplay(key);
           updateTotalCounter();
@@ -342,12 +349,9 @@ import { parseARSNumber, formatARS } from '../utils/price.js?v=m260607';
     }
 
     if (plusBtn) {
-      const available = plusBtn.dataset.available === 'null' ? null : parseInt(plusBtn.dataset.available, 10);
-      if (available !== null && quantity >= available) {
-        plusBtn.disabled = true;
-      } else {
-        plusBtn.disabled = false;
-      }
+      const available = parseInt(plusBtn.dataset.available, 10);
+      // Defensivo: dato inválido/ausente => bloquear (nunca tratar como ilimitado).
+      plusBtn.disabled = !Number.isFinite(available) || quantity >= available;
     }
   }
 

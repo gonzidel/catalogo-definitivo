@@ -5060,24 +5060,27 @@ function renderizarVariantesModalPDP(producto, colorSeleccionado, colorActual) {
   const chips = variantDetails.map((vd) => {
     const key = `${colorActual}_${vd.talle}`;
     const availableVisual = getVisualAvailableFromCart(vd, producto?.Articulo, colorActual, cartQtyMap);
-    const sinStock = availableVisual !== null && availableVisual <= 0;
-    const max = availableVisual !== null ? availableVisual : 999;
     const stockUnknown = availableVisual === null;
+    // Disponibilidad desconocida (dato inconsistente/sin confirmar) ya NO habilita
+    // cantidad "ilimitada" (999): se bloquea igual que sin stock, para que el
+    // checkout nunca reciba un ítem cuyo stock nunca se pudo confirmar.
+    const sinStock = stockUnknown || availableVisual <= 0;
+    const max = stockUnknown ? 0 : availableVisual;
     const sizeDisplay = formatTalleDisplay(vd.talle);
-    const titleHint = sinStock
-      ? "Sin stock"
-      : stockUnknown
-        ? "Disponibilidad por confirmar"
+    const titleHint = stockUnknown
+      ? "Disponibilidad por confirmar — no se puede agregar por ahora"
+      : sinStock
+        ? "Sin stock"
         : `Disponibles: ${availableVisual}`;
 
     if (sinStock) {
       return `
-        <button type="button" class="size-chip size-chip--disabled" disabled data-key="${key}" data-size="${sizeDisplay}" data-max="0" data-qty="0" data-stock-unknown="0" title="${titleHint.replace(/"/g, "&quot;")}" aria-disabled="true">
+        <button type="button" class="size-chip size-chip--disabled" disabled data-key="${key}" data-size="${sizeDisplay}" data-max="0" data-qty="0" data-stock-unknown="${stockUnknown ? "1" : "0"}" title="${titleHint.replace(/"/g, "&quot;")}" aria-disabled="true">
           <span class="size-chip__size">${sizeDisplay}</span>
         </button>`;
     }
     return `
-      <button type="button" class="size-chip" data-key="${key}" data-size="${sizeDisplay}" data-max="${max}" data-qty="0" data-stock-unknown="${stockUnknown ? "1" : "0"}" title="${titleHint.replace(/"/g, "&quot;")}" aria-disabled="false">
+      <button type="button" class="size-chip" data-key="${key}" data-size="${sizeDisplay}" data-max="${max}" data-qty="0" data-stock-unknown="0" title="${titleHint.replace(/"/g, "&quot;")}" aria-disabled="false">
         <span class="size-chip__size">${sizeDisplay}</span>
       </button>`;
   });
@@ -5648,7 +5651,8 @@ function initModalEvents() {
       if (!activeChip) return;
 
       let qty = parseInt(activeChip.dataset.qty || '0', 10) || 0;
-      const max = parseInt(activeChip.dataset.max || '0', 10) || 999;
+      const maxRaw = parseInt(activeChip.dataset.max, 10);
+      const max = Number.isFinite(maxRaw) ? maxRaw : 0;
       const action = btn.dataset.action;
 
       if (action === 'dec') qty = Math.max(qty - 1, 0);
@@ -5678,7 +5682,8 @@ function initModalEvents() {
 
       e.preventDefault();
       const sizeDisplay = chip.dataset.size || '';
-      const max = parseInt(chip.dataset.max || '0', 10) || 999;
+      const maxRaw = parseInt(chip.dataset.max, 10);
+      const max = Number.isFinite(maxRaw) ? maxRaw : 0;
       const stockUnknown = chip.dataset.stockUnknown === '1';
       let qty = parseInt(chip.dataset.qty || '0', 10) || 0;
 

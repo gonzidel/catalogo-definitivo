@@ -1035,6 +1035,7 @@ async function syncCartWithSupabase(options = {}) {
 
         // Sin variant_id el checkout falla (rpc_checkout_cart). Resolución p. ej. tras login con carrito local sin variant.
         let resolvedVariantId = item.variant_id || null;
+        let variantInfoForCap = null;
         if (!resolvedVariantId) {
           const vi = await fetchVariantInfo(
             item.articulo,
@@ -1046,6 +1047,7 @@ async function syncCartWithSupabase(options = {}) {
           if (vi?.id) {
             resolvedVariantId = vi.id;
             item.variant_id = vi.id;
+            variantInfoForCap = vi;
           }
         }
         if (!resolvedVariantId) {
@@ -1056,13 +1058,47 @@ async function syncCartWithSupabase(options = {}) {
           continue;
         }
 
+        // Merge tras login: el carrito de invitado puede traer cantidades viejas
+        // (dato local, sin validar hace rato). Revalidar stock fresco acá evita
+        // persistir en Supabase una cantidad mayor a la disponible real.
+        let finalQty = qty;
+        if (mergeWithRemote) {
+          if (!variantInfoForCap) {
+            variantInfoForCap = await fetchVariantInfo(
+              item.articulo,
+              item.color || "Único",
+              item.talle ?? item.size,
+              resolvedVariantId,
+              { forceFresh: true }
+            );
+          }
+          const freshAvailable = variantInfoForCap
+            ? Math.max(0, Math.floor(Number(variantInfoForCap.available ?? 0)))
+            : 0;
+          if (freshAvailable <= 0) {
+            fylDevLog(
+              "⚠️ [cart sync merge] Se omite línea sin stock real al fusionar carrito de invitado:",
+              getCartItemKey(item)
+            );
+            continue;
+          }
+          if (freshAvailable < finalQty) {
+            fylDevLog(
+              `⚠️ [cart sync merge] Se ajusta cantidad de ${finalQty} a ${freshAvailable} (stock real) para`,
+              getCartItemKey(item)
+            );
+            finalQty = freshAvailable;
+            item.cantidad = finalQty;
+          }
+        }
+
         const payload = {
           cart_id: cartId,
           product_name: item.articulo,
           color: item.color,
           size: normalizedSize,
-          quantity: qty,
-          qty: qty,
+          quantity: finalQty,
+          qty: finalQty,
           price_snapshot: Number(item.precio) || 0,
           status: "reserved",
           imagen: imagen || null,

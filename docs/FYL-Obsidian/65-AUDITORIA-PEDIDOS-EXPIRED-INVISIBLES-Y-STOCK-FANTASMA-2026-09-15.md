@@ -170,5 +170,7 @@ Los pedidos por tiempo ya **no viven en Cancelados**. Nueva columna `expired` / 
 | Azul | `admin_order_expiry_warn_sent.sent_at` &lt; 24h | mismo set; baja al final de la lista |
 
 - Cancelados queda solo para cancelaciones reales (ítems/pedido), respetando `cancelled_from_status` (344).
-- Migración canónica `349_admin_expiry_kanban.sql`: versiona reopen/mark-sent (ya en prod), lista con `sent_at`, clear tras +24hs. **Aplicar en prod con aprobación explícita.**
+- Orden desktop: Activos → Apartados → **Cancelados** → **Vencido** → Espera (Vencido a la derecha de Cancelados).
+- Migración canónica `349_admin_expiry_kanban.sql`: versiona reopen/mark-sent, lista con `sent_at`, clear tras +24hs. **Aplicada en fyl-core** (`admin_expiry_kanban`, 2026-09-18).
 - Riesgo reopen sin stock: sin cambio de política (sigue sin tocar stock; ver §2 y nota 60).
+- UI 2026-09-19: chip Ani/Fati fuera del ellipsis de ciudad/tel (no se corta en columnas angostas); badge marrón “⏰ Vencido” oculto dentro de la columna Vencido.

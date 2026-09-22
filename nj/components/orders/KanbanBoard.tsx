@@ -34,8 +34,8 @@ type MobileQuickView = "active" | "waiting" | "cancelled" | "expired";
 const MAIN_COLUMNS = [
   { id: "active" as const, label: "Activos" },
   { id: "picked" as const, label: "Apartados" },
-  { id: "expired" as const, label: "Vencido" },
   { id: "cancelled" as const, label: "Cancelados" },
+  { id: "expired" as const, label: "Vencido" },
   { id: "waiting" as const, label: "Espera" },
 ];
 
@@ -309,6 +309,29 @@ export default function KanbanBoard({
             <span className="kanban-mobile-quick__count">{waitingCount}</span>
           </button>
         )}
+        {mobileView === "cancelled" ? (
+          <button
+            type="button"
+            className="kanban-mobile-quick__btn kanban-mobile-quick__btn--activos"
+            onClick={() => setMobileView("active")}
+            aria-label={`Volver a Activos: ${activeCount} pedidos`}
+          >
+            <span className="kanban-mobile-quick__label">Activos</span>
+            <span className="kanban-mobile-quick__count">{activeCount}</span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="kanban-mobile-quick__btn kanban-mobile-quick__btn--cancelled"
+            onClick={() => setMobileView("cancelled")}
+            aria-label={`Cancelados: ${cancelledCount} pedidos`}
+          >
+            <span className="kanban-mobile-quick__label">
+              <span aria-hidden="true">🚫</span> Cancel.
+            </span>
+            <span className="kanban-mobile-quick__count">{cancelledCount}</span>
+          </button>
+        )}
         {mobileView === "expired" ? (
           <button
             type="button"
@@ -332,30 +355,17 @@ export default function KanbanBoard({
             <span className="kanban-mobile-quick__count">{expiredCount}</span>
           </button>
         )}
-        {mobileView === "cancelled" ? (
-          <button
-            type="button"
-            className="kanban-mobile-quick__btn kanban-mobile-quick__btn--activos"
-            onClick={() => setMobileView("active")}
-            aria-label={`Volver a Activos: ${activeCount} pedidos`}
-          >
-            <span className="kanban-mobile-quick__label">Activos</span>
-            <span className="kanban-mobile-quick__count">{activeCount}</span>
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="kanban-mobile-quick__btn kanban-mobile-quick__btn--cancelled"
-            onClick={() => setMobileView("cancelled")}
-            aria-label={`Cancelados: ${cancelledCount} pedidos`}
-          >
-            <span className="kanban-mobile-quick__label">
-              <span aria-hidden="true">🚫</span> Cancelados
-            </span>
-            <span className="kanban-mobile-quick__count">{cancelledCount}</span>
-          </button>
-        )}
       </div>
+
+      {mobileView !== "active" ? (
+        <p className="kanban-mobile-view-count" aria-live="polite">
+          {mobileView === "waiting"
+            ? `Espera · ${waitingCount} ${waitingCount === 1 ? "pedido" : "pedidos"}`
+            : mobileView === "cancelled"
+              ? `Cancelados · ${cancelledCount} ${cancelledCount === 1 ? "pedido" : "pedidos"}`
+              : `Vencido · ${expiredCount} ${expiredCount === 1 ? "pedido" : "pedidos"}`}
+        </p>
+      ) : null}
 
       <div className="kanban-main">
         {MAIN_COLUMNS.map((col) => {

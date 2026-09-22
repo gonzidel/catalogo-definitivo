@@ -105,21 +105,37 @@ export function resolvePickupDeadlineLabel(
   return formatPickupDeadlineForMessage(deadline, now);
 }
 
-/** Aviso WhatsApp: último día de plazo antes del desarme (mín. 4 productos). */
+/** Aviso WhatsApp: último día de plazo (columna Vencido amarillo).
+ *  La prórroga self-service solo existe DESPUÉS de vencer (RPC 258), por eso
+ *  acá no prometemos “solicitalo desde tu pedido”. */
 export function buildExpiryWarningMessage(dashboardUrl?: string): string {
   const url = dashboardUrl ?? getDashboardActiveOrderUrl();
   return `Hola 👋 Tu pedido está a punto de vencer.
 
-Recordá finalizarlo antes de que termine el plazo de reserva para evitar que se desarme.
+Recordá finalizarlo antes de que termine el plazo de reserva para evitar que se desarme. Si necesitás más tiempo, cuando venza el plazo podés solicitar una prórroga desde tu pedido.
+
+Podés revisarlo acá: ${url} 😊`;
+}
+
+/**
+ * Aviso WhatsApp: plazo vencido pero todavía recuperable (Vencido rojo).
+ * La clienta puede pedir prórroga en Mi pedido mientras status sea
+ * active/closing_soon (rpc_customer_request_order_extension_24h).
+ */
+export function buildExpiredOrderMessage(dashboardUrl?: string): string {
+  const url = dashboardUrl ?? getDashboardActiveOrderUrl();
+  return `Hola 👋 El plazo de reserva de tu pedido venció.
+
+Si todavía querés conservarlo, solicitá más tiempo antes de que se desarme.
 
 Podés revisar tu pedido acá: ${url} 😊`;
 }
 
-/** Aviso WhatsApp: pedido ya vencido (columna Cancelados). */
-export function buildExpiredOrderMessage(): string {
+/** Pedido ya desarmado por cron/admin (status=expired). Cierra el ciclo. */
+export function buildDismantledOrderMessage(): string {
   return `Hola 👋 Tu pedido venció y se desarmó porque finalizó el plazo de reserva.
 
-Si tenés alguna duda o necesitás ayuda, estamos a disposición 😊`;
+Cualquier consulta, podés escribirnos 😊`;
 }
 
 export function buildCustomerStatusMessage(opts: {

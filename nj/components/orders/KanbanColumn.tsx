@@ -18,6 +18,7 @@ import NewOrderForm from "./NewOrderForm";
 import OrderCard from "./OrderCard";
 import OrderSearchResultCard from "./OrderSearchResultCard";
 import RetiroOriginLegend from "./RetiroOriginLegend";
+import VencidoLegend from "./VencidoLegend";
 import WaitingLegend from "./WaitingLegend";
 
 const GLOBAL_SEARCH_MIN_LEN = 2;
@@ -165,6 +166,7 @@ export default function KanbanColumn({
           <div className="kanban-column__title-group">
             <h2 className="kanban-column__title">{label}</h2>
             {columnId === "waiting" ? <WaitingLegend /> : null}
+            {columnId === "expired" ? <VencidoLegend /> : null}
             {columnId === "picked" && boardScope === "local_pickup" ? (
               <RetiroOriginLegend />
             ) : null}

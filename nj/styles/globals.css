@@ -3574,7 +3574,7 @@ body {
 
 .active-order-card--items {
   margin-bottom: 10px;
-  /* El menú ⋯ es absolute; overflow:hidden del card lo recortaba (sobre todo el último ítem). */
+  /* Panel de acciones del ítem (desplegable); overflow:hidden del card lo recortaba. */
   overflow: visible;
 }
 
@@ -4445,7 +4445,7 @@ body {
   padding: 28px 24px 36px;
 }
 
-/* Confirmación quitar producto (Mi pedido · menú ⋯) */
+/* Confirmación quitar producto (Mi pedido · panel de acciones) */
 .active-order-remove-stepper {
   margin: 4px 0 18px;
   padding: 14px 12px;
@@ -4821,7 +4821,6 @@ body {
   background: #f4f1ec;
   border: none;
   cursor: pointer;
-  font-size: 16px;
   color: #999;
   width: 26px;
   height: 26px;
@@ -4830,22 +4829,76 @@ body {
   justify-content: center;
   line-height: 1;
   border-radius: 50%;
-  font-weight: 400;
   font-family: inherit;
   padding: 0;
 }
 
-.active-order-item-menu__btn.is-editing {
-  background: #f0fdf4;
-  border: 1px solid #86efac;
+.active-order-item-menu__btn.is-open {
+  background: #efeae3;
+  color: #666;
+}
+
+.active-order-item-menu__chevron {
+  display: block;
+  transition: transform 0.18s ease;
+}
+
+.active-order-item-menu__btn.is-open .active-order-item-menu__chevron {
+  transform: rotate(180deg);
+}
+
+.active-order-actions-wrap {
+  padding: 6px 0 2px;
+}
+
+.active-order-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.active-order-actions__btn {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: 8px;
+  border: 1.5px solid #e8e2da;
+  background: #fff;
+  color: #444;
   font-size: 11px;
-  color: #16a34a;
-  padding: 3px 7px;
-  border-radius: 6px;
   font-weight: 600;
+  font-family: inherit;
+  text-decoration: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
   white-space: nowrap;
-  width: auto;
-  height: auto;
+}
+
+.active-order-actions__btn svg {
+  flex-shrink: 0;
+}
+
+.active-order-actions__btn:hover,
+.active-order-actions__btn:active {
+  background: #faf7f3;
+  border-color: #ddd5cb;
+}
+
+.active-order-actions__btn--danger {
+  color: #b91c1c;
+  border-color: #f0d4d4;
+}
+
+.active-order-actions__btn--danger:hover,
+.active-order-actions__btn--danger:active {
+  background: #fef2f2;
+  border-color: #e8b4b4;
 }
 
 .active-order-menu--item {
@@ -4942,6 +4995,10 @@ body {
 
 .active-order-qty-wrap {
   padding: 8px 0 4px;
+}
+
+.active-order-qty-wrap.is-arming {
+  pointer-events: none;
 }
 
 .active-order-qty__hint--inline {
@@ -5533,7 +5590,8 @@ body:has(.kanban-admin-shell) [data-nextjs-toast] {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  margin-left: 6px;
+  margin-left: 2px;
+  flex-shrink: 0;
   vertical-align: middle;
 }
 
@@ -5891,6 +5949,26 @@ body:has(.kanban-admin-shell) [data-nextjs-toast] {
 
 .kanban-column__legend-swatch--fabrica {
   background: #eab308;
+}
+
+.kanban-column__legend-swatch--vencido-yellow {
+  background: #fde047;
+  border: 1px solid #eab308;
+}
+
+.kanban-column__legend-swatch--vencido-red {
+  background: #fca5a5;
+  border: 1px solid #ef4444;
+}
+
+.kanban-column__legend-swatch--vencido-blue {
+  background: #93c5fd;
+  border: 1px solid #3b82f6;
+}
+
+.kanban-column__legend--vencido {
+  flex-wrap: wrap;
+  row-gap: 2px;
 }
 
 .kanban-column__header {
@@ -6433,24 +6511,31 @@ body:has(.kanban-admin-shell) [data-nextjs-toast] {
 .order-card__meta-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 4px;
+  row-gap: 4px;
   margin-top: 2px;
   min-width: 0;
 }
 
 .order-card__location {
-  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1 1 auto;
   min-width: 0;
   font-size: 0.72rem;
   color: #6b7280;
+  overflow: visible;
+  line-height: 1.25;
+}
+
+/* Ciudad/tel se truncan; el chip Ani/Fati queda afuera y no se corta */
+.order-card__location-text {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  line-height: 1.25;
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 2px 4px;
 }
 
 .order-card__location a {
@@ -6537,10 +6622,19 @@ a.order-card__wa-btn:active {
   .order-card__location {
     display: inline-flex;
     align-items: center;
-    gap: 2px;
+    gap: 4px;
     flex: 1 1 auto;
+    min-width: 0;
     font-size: 0.72rem;
     line-height: 1.2;
+    overflow: visible;
+  }
+
+  .order-card__location-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .order-card__meta-price {
@@ -6582,8 +6676,10 @@ a.order-card__wa-btn:active {
 .order-card__meta-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 4px;
   flex-shrink: 0;
+  max-width: 100%;
 }
 
 .order-card__toggle {
@@ -9435,6 +9531,9 @@ a.order-card__wa-btn:active {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -9442,14 +9541,27 @@ a.order-card__wa-btn:active {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
   min-width: 1.6rem;
   height: 1.4rem;
   padding: 0 6px;
   border-radius: 999px;
-  background: rgba(0, 0, 0, 0.08);
+  background: rgba(0, 0, 0, 0.12);
+  color: inherit;
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.kanban-mobile-view-count {
+  display: none;
+  margin: 0;
+  padding: 0 14px 8px;
   font-size: 0.78rem;
   font-weight: 700;
-  line-height: 1;
+  color: #4b5563;
+  font-variant-numeric: tabular-nums;
 }
 
 .kanban-mobile-add-btn {
@@ -9478,6 +9590,10 @@ a.order-card__wa-btn:active {
     display: flex;
   }
 
+  .kanban-mobile-view-count {
+    display: block;
+  }
+
   .kanban-mobile-quick__btn {
     min-height: 36px;
     padding: 6px 8px;
@@ -9486,8 +9602,15 @@ a.order-card__wa-btn:active {
   }
 
   .kanban-mobile-quick__count {
-    min-width: 1.35rem;
-    height: 1.25rem;
+    min-width: 1.4rem;
+    height: 1.3rem;
+    padding: 0 5px;
+    font-size: 0.72rem;
+    flex-shrink: 0;
+  }
+
+  /* Con 3 botones el label largo empujaba el número fuera de vista */
+  .kanban-mobile-quick__label {
     font-size: 0.7rem;
   }
 
@@ -10961,5 +11084,42 @@ body.modal-open nextjs-portal {
     min-height: 40px;
     padding-inline: 13px;
     font-size: 0.78rem;
+  }
+}
+
+/* ── CLS: slots de banners home con geometría estable (skeleton = final) ─── */
+/* Alturas derivadas de componentes reales (card 110px 1:1 + head + padding). */
+.home-banner-slot.home-banner-slot--carousel {
+  box-sizing: border-box;
+  min-height: 186px;
+}
+
+.orig-block.fyl-originals-banner.home-banner-slot--carousel {
+  /* padding 12+14 + head ~28 + carousel ~148 */
+  min-height: 202px;
+}
+
+.home-banner-slot.home-banner-slot--curated {
+  box-sizing: border-box;
+  /* header ~36 + 2 filas card (~2×(aspect + precio)) + padding */
+  min-height: 268px;
+}
+
+.home-banner-slot.home-banner-slot--special {
+  box-sizing: border-box;
+  min-height: 156px; /* wrap padding + curated-special min-height 132 */
+}
+
+.home-banner-slot.is-loading {
+  /* evita colapso a 0 mientras SWR resuelve */
+  overflow: hidden;
+}
+
+@media (min-width: 769px) {
+  .home-banner-slot.home-banner-slot--carousel {
+    min-height: 200px;
+  }
+  .home-banner-slot.home-banner-slot--curated {
+    min-height: 300px;
   }
 }

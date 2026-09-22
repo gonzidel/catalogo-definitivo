@@ -40,6 +40,9 @@ test("perfil Retira local sin botón Local queda en Pedidos", () => {
       full_name: "Maria",
       province: "Formosa",
       city: "El Colorado",
+      phone: null,
+      email: null,
+      dni: null,
     },
   });
   assert.equal(isLocalPickupBoardOrder(o), false);
@@ -53,6 +56,9 @@ test("geo Corrientes Capital sin botón Local queda en Pedidos", () => {
       full_name: "Ana",
       province: "Corrientes",
       city: "Corrientes",
+      phone: null,
+      email: null,
+      dni: null,
     },
   });
   assert.equal(isLocalPickupBoardOrder(o), false);

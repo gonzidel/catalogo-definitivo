@@ -138,3 +138,20 @@ Ahora vamos a prepararlo para el despacho. Una vez enviado, te enviaremos los da
 
 Cualquier consulta, podés escribirnos 😊`;
 }
+
+/** WhatsApp al marcar pedido como enviado / despachado (Cerrados → Enviados). */
+export function buildOrderDispatchedMessage(opts: {
+  transporte: string;
+  seguimiento: string;
+}): string {
+  const transporte = opts.transporte.trim() || "tu transporte";
+  const seguimiento = opts.seguimiento.trim() || "—";
+  return `Hola 👋 ¡Tu pedido ya fue despachado! 📦
+
+🚚 Transporte: ${transporte}
+🔎 Seguimiento: ${seguimiento}
+
+Podés utilizar estos datos para consultar el estado de tu envío.
+
+Cualquier consulta, podés escribirnos 😊`;
+}

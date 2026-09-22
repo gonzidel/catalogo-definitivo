@@ -35,7 +35,7 @@ import {
   getOrderDeadlineDate,
   isOrderExpired,
 } from "@/lib/orders/deadline";
-import { buildExpiryWarningMessage, buildExpiredOrderMessage } from "@/lib/orders/customer-status-message";
+import { buildExpiryWarningMessage, buildExpiredOrderMessage, buildDismantledOrderMessage } from "@/lib/orders/customer-status-message";
 import { useExpiryWarnSentStore } from "@/lib/orders/expiry-warning-sent";
 import {
   getWaitingSourceKind,
@@ -392,16 +392,13 @@ export default function OrderCard({ order }: OrderCardProps) {
     useOrdersStore.getState().showToast("Mensaje enviado — recordatorio en 24hs", "success");
   };
 
-  // Primer aviso (pedido vencido pero TODAVÍA no procesado por
-  // rpc_orders_daily_maintenance, ver isExpiredPendingAdminDisassembly) debe
-  // avisar que el pedido SE VA a desarmar, no que ya se desarmó -- el cron
-  // recién lo va a tocar en la próxima corrida. Solo una vez que status
-  // realmente pasa a 'expired' (isFullyExpiredStatus) el stock ya volvió de
-  // verdad y corresponde el mensaje en pasado. Ver feedback 2026-09-15.
-  const buildExpiredColumnMessage = () =>
-    isFullyExpiredStatus || deadlineExpired
-      ? buildExpiredOrderMessage()
-      : buildExpiryWarningMessage();
+  // Amarillo: por vencer. Rojo recuperable: plazo vencido + aún active/closing_soon
+  // (la clienta puede pedir prórroga). Negro/desarmado: status=expired (cron).
+  const buildExpiredColumnMessage = () => {
+    if (isFullyExpiredStatus) return buildDismantledOrderMessage();
+    if (deadlineExpired) return buildExpiredOrderMessage();
+    return buildExpiryWarningMessage();
+  };
 
   const copyExpiredOrderMessage = async () => {
     const msg = buildExpiredColumnMessage();
@@ -710,33 +707,35 @@ export default function OrderCard({ order }: OrderCardProps) {
 
         <div className="order-card__meta-row">
           <div className="order-card__location">
-            {city ? <span>{city}</span> : null}
-            {city && phone ? <span> · </span> : null}
-            {phone ? (
-              waUrl ? (
-                <a
-                  href={waUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={isMobile ? "order-card__wa-btn" : undefined}
-                  aria-label={`Abrir WhatsApp de ${customerName}`}
-                  title={isMobile ? `WhatsApp ${phone}` : undefined}
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  {isMobile ? "📞" : `📞 ${phone}`}
-                </a>
-              ) : isMobile ? (
-                <span
-                  className="order-card__wa-btn order-card__wa-btn--disabled"
-                  title={phone}
-                  aria-label={`Teléfono ${phone} (sin WhatsApp)`}
-                >
-                  📞
-                </span>
-              ) : (
-                <span>📞 {phone}</span>
-              )
-            ) : null}
+            <span className="order-card__location-text">
+              {city ? <span>{city}</span> : null}
+              {city && phone ? <span> · </span> : null}
+              {phone ? (
+                waUrl ? (
+                  <a
+                    href={waUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={isMobile ? "order-card__wa-btn" : undefined}
+                    aria-label={`Abrir WhatsApp de ${customerName}`}
+                    title={isMobile ? `WhatsApp ${phone}` : undefined}
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    {isMobile ? "📞" : `📞 ${phone}`}
+                  </a>
+                ) : isMobile ? (
+                  <span
+                    className="order-card__wa-btn order-card__wa-btn--disabled"
+                    title={phone}
+                    aria-label={`Teléfono ${phone} (sin WhatsApp)`}
+                  >
+                    📞
+                  </span>
+                ) : (
+                  <span>📞 {phone}</span>
+                )
+              ) : null}
+            </span>
             {showInboxOwnerChip ? (
               <OrderInboxOwnerChip
                 order={order}
@@ -782,7 +781,9 @@ export default function OrderCard({ order }: OrderCardProps) {
                   {Object.keys(pendingChanges).length} sin confirmar
                 </span>
               ) : null}
-              {isExpiredPending ? (
+              {/* En columna Vencido el countdown + semáforo ya indican el estado;
+                  el badge marrón solo aporta ruido y empuja el chip Ani/Fati. */}
+              {isExpiredPending && column !== "expired" ? (
                 <span
                   className="order-card__draft-badge"
                   title="Superó su plazo (o la prórroga de 24hs) sin resolverse — pendiente de desarmar"

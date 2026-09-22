@@ -150,7 +150,7 @@ interface OrdersState {
     nLocal: number,
     nMissing: number
   ) => Promise<void>;
-  closeOrder: (orderId: string, paymentMethod: string) => Promise<void>;
+  closeOrder: (orderId: string, paymentMethod?: string | null) => Promise<void>;
   sendToLocal: (orderId: string) => Promise<void>;
   /** Apartados: mueve el pedido al otro tablero (Pedidos ↔ Retiro). */
   moveOrderToOtherBoard: (orderId: string) => Promise<void>;
@@ -273,7 +273,8 @@ export async function refreshAndMaybeAutoClose(
     return { order: refreshed, autoClosed: false };
   }
   try {
-    await rpcCloseOrder(supabase, orderId, "Pendiente");
+    // Pago lo resuelve rpc_close_order por transporte (351): COD→Contra Reembolso.
+    await rpcCloseOrder(supabase, orderId);
   } catch (err) {
     return {
       order: refreshed,

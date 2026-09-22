@@ -728,11 +728,18 @@ export async function emitCustomerOrderNotification(
 export async function rpcCloseOrder(
   supabase: SupabaseClient,
   orderId: string,
-  paymentMethod: string
+  /**
+   * Método explícito (admin/PAU: Pagado, Contra Reembolso, Efectivo, Tarjeta…).
+   * Si se omite o viene "Pendiente", el servidor asigna por transporte
+   * (COD→Contra Reembolso, resto→Pagado). Ver canonical:351.
+   */
+  paymentMethod?: string | null
 ) {
+  const explicit = String(paymentMethod ?? "").trim();
   const { error } = await supabase.rpc("rpc_close_order", {
     p_order_id: orderId,
-    p_payment_method: paymentMethod,
+    p_payment_method:
+      !explicit || explicit.toLowerCase() === "pendiente" ? null : explicit,
   });
   if (error) throw error;
 }

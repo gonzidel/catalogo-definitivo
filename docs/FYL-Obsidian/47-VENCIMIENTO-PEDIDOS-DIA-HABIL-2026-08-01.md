@@ -66,6 +66,34 @@ En `nj/admin/orders` (mobile y desktop) las `OrderCard` muestran un chip con dí
 
 Cuando faltan **≤2 días** (y aún no venció), la card pasa a fondo **rosa** (`.order-card--expiring-soon`, `#fce7f3` / borde `#f472b6`) — distinto del azul de pedidos clienta y del borde rojo `aged` de vencidos. Pedidos admin/PAU sin `dismantle_at` no muestran countdown.
 
+## Seguimiento 2026-09-18: columna **Vencido** (semáforo)
+
+Pedidos con ≤1 día o ya vencidos salen de Cancelados y van a la columna **Vencido** (Pedidos + Retiro). Semáforo:
+
+- **Amarillo** ≤1 día — `buildExpiryWarningMessage`: por vencer; avisa que al vencer pueden pedir prórroga en Mi pedido
+- **Rojo recuperable** plazo vencido + status aún `active`/`closing_soon` — `buildExpiredOrderMessage`: solicitar más tiempo desde el pedido (RPC 258)
+- **Desarmado** `status=expired` (cron) — `buildDismantledOrderMessage`: ya se desarmó; sin URL
+- **Azul** 24h tras Enviar WhatsApp (`admin_order_expiry_warn_sent.sent_at`); luego vuelve al tono según plazo/status
+
+Despacho (Cerrados → Finalizar): `buildOrderDispatchedMessage` + prompt de seguimiento en `admin/closed-orders.js`.
+
+`+24hs` limpia el aviso → amarillo de inmediato. Migración `349_admin_expiry_kanban.sql` (list con `sent_at` + clear). Detalle: [[65-AUDITORIA-PEDIDOS-EXPIRED-INVISIBLES-Y-STOCK-FANTASMA-2026-09-15]].
+
+## Seguimiento 2026-09-22: Vencido soft cede a Activos / Espera
+
+Caso real **A57061** (Valeria Santillan): pedido `active` con `dismantle_at` a 1 día calendario y 2 ítems `reserved` agregados desde la web. Quedaba en columna **Vencido** (amarillo) y el admin no lo veía en Activos para apartar.
+
+**Regla actualizada** en `matchesExpiredTab` (`nj/lib/orders/classification.ts`):
+
+| Situación | Columna |
+|-----------|---------|
+| Plazo **ya vencido** / `status=expired` / pendiente desarme | **Vencido** (prioridad hard) |
+| ≤1 día y **aún no venció**, con `reserved` / `awaiting_apartado` | **Activos** |
+| ≤1 día y **aún no venció**, con `waiting` (sin reserved) | **Espera** |
+| ≤1 día, solo `picked` (sin trabajo operativo) | **Vencido** amarillo |
+
+Al apartar / resolver, si sigue ≤1 día sin reserved/waiting, vuelve solo a Vencido. Tests: `classification-expired-column.test.ts`.
+
 ---
 
 ## Pendiente (no incluido en este cambio)

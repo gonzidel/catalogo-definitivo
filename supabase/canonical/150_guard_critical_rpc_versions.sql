@@ -33,13 +33,15 @@ BEGIN
   END IF;
 
   SELECT obj_description('public.rpc_close_order(uuid,text)'::regprocedure, 'pg_proc') INTO v_comment;
-  IF coalesce(v_comment, '') !~ '^canonical:83([[:space:]]|$)' THEN
+  -- 351: pago por transporte (COD→Contra Reembolso); supersede canonical:83 fingerprint.
+  IF coalesce(v_comment, '') !~ '^canonical:351([[:space:]]|$)' THEN
     RAISE EXCEPTION
-      'Guard RPC crítico: rpc_close_order fuera de canon (esperado canonical:83, actual: %)',
+      'Guard RPC crítico: rpc_close_order fuera de canon (esperado canonical:351, actual: %)',
       coalesce(v_comment, '<sin comentario>');
   END IF;
 
   IF position('stock ya se descontó en rpc_checkout_cart' in v_def) = 0
+     OR position('fn_resolve_order_close_payment_method' in v_def) = 0
      OR position('status = ''closed''' in v_def) = 0 THEN
     RAISE EXCEPTION 'Guard RPC crítico: rpc_close_order no coincide con fingerprint canónico esperado';
   END IF;

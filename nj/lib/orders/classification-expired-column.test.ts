@@ -66,9 +66,98 @@ test("status=expired → columna expired", () => {
   assert.equal(getOrderKanbanColumn(order), "expired");
 });
 
-test("≤1 día para vencer → expired (no cancelled)", () => {
+test("≤1 día para vencer + solo picked → expired (amarillo)", () => {
   const order = baseOrder();
   assert.equal(isOrderExpiringWithinOneDay(order), true);
+  assert.equal(getOrderKanbanColumn(order), "expired");
+});
+
+test("≤1 día + reserved → Activos (no Vencido soft)", () => {
+  const order = baseOrder({
+    order_items: [
+      {
+        id: "i1",
+        order_id: "o1",
+        variant_id: "v1",
+        product_name: "Picked",
+        color: null,
+        size: "38",
+        quantity: 1,
+        price_snapshot: 1000,
+        status: "picked",
+      } as AdminOrderItem,
+      {
+        id: "i2",
+        order_id: "o1",
+        variant_id: "v2",
+        product_name: "Nuevo",
+        color: null,
+        size: "40",
+        quantity: 1,
+        price_snapshot: 1000,
+        status: "reserved",
+      } as AdminOrderItem,
+    ],
+  });
+  assert.equal(isOrderExpiringWithinOneDay(order), true);
+  assert.equal(matchesExpiredTab(order), false);
+  assert.equal(getOrderKanbanColumn(order), "active");
+});
+
+test("≤1 día + waiting (sin reserved) → Espera (no Vencido soft)", () => {
+  const order = baseOrder({
+    order_items: [
+      {
+        id: "i1",
+        order_id: "o1",
+        variant_id: "v1",
+        product_name: "Picked",
+        color: null,
+        size: "38",
+        quantity: 1,
+        price_snapshot: 1000,
+        status: "picked",
+      } as AdminOrderItem,
+      {
+        id: "i2",
+        order_id: "o1",
+        variant_id: "v2",
+        product_name: "Espera",
+        color: null,
+        size: "40",
+        quantity: 1,
+        price_snapshot: 1000,
+        status: "waiting",
+      } as AdminOrderItem,
+    ],
+  });
+  assert.equal(isOrderExpiringWithinOneDay(order), true);
+  assert.equal(matchesExpiredTab(order), false);
+  assert.equal(getOrderKanbanColumn(order), "waiting");
+});
+
+test("ya vencido + reserved → expired (hard; desarme pendiente)", () => {
+  const past = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+  const order = baseOrder({
+    created_at: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString(),
+    dismantle_at: past,
+    status: "active",
+    order_items: [
+      {
+        id: "i1",
+        order_id: "o1",
+        variant_id: "v1",
+        product_name: "Nuevo tarde",
+        color: null,
+        size: "38",
+        quantity: 1,
+        price_snapshot: 1000,
+        status: "reserved",
+      } as AdminOrderItem,
+    ],
+  });
+  assert.equal(isExpiredPendingAdminDisassembly(order), true);
+  assert.equal(matchesExpiredTab(order), true);
   assert.equal(getOrderKanbanColumn(order), "expired");
 });
 

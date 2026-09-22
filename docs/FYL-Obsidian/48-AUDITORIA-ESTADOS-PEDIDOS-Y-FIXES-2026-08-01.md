@@ -120,6 +120,15 @@ Validación de 9 escenarios hipotéticos de estado de pedido/ítems provistos po
 - **Hardening admin 2026-09-18:** `refreshAndMaybeAutoClose` ya no traga el error de `rpc_close_order` (devuelve `autoCloseError` + toast). `cancelItem` y `resolveStockPending` también pasan por auto-cierre.
 - **Prevención 2026-09-18 (post A56950 Sotelo):** (1) self-heal en `ActiveOrderTab` si "En preparación" + todo picked + no retiro local → intenta cerrar solo. (2) Migración **349** `rpc_close_stuck_customer_requested_orders` en cron cada 15 min.
 
+### Fix 2026-09-22 (A56696 Ayelen Diaz) — Pendiente no entra a conciliación COD
+
+- **Síntoma:** remesa SEDE `ef65eba1-…` fila `DIAZ AYELEN` $205.300 `unassigned`. Pedido `A56696` (SEDE, `sent`) tenía `payment_method=Pendiente` → fuera del universo COD (`Contra Reembolso`).
+- **Causa:** cierres web/cliente hardcodeaban `Pendiente` (348, ActiveOrderTab, auto-close NJ). En cerrados la UI *mostraba* Contra Reembolso por transporte; la conciliación exige el valor en DB.
+- **Regla:** al cerrar, nunca persistir `Pendiente`. SEDE/MyM/Expreso Norte → `Contra Reembolso` (salvo preferencia Pagado del cliente); resto → `Pagado`. Métodos explícitos admin/PAU (Efectivo/Tarjeta/…) se respetan.
+- **Fix:** migración **351** `fn_resolve_order_close_payment_method` + `rpc_close_order` / `rpc_customer_request_close` / sweep 349. Front NJ deja de pasar `"Pendiente"`.
+- **Backfill (requiere OK prod):** `351_BACKFILL_pending_payment_by_transport.sql` — solo filas `closed`/`sent` con literal `Pendiente` (~14). Luego re-analizar remesa.
+- **Rollback RPC:** `351_ROLLBACK_rpc_close_order_resolve_payment_by_transport.sql`.
+
 ### Fix 2026-09-18 (A56961 Susana Ortiz) — cancelado fantasma en listado admin Cerrados
 
 - **Síntoma:** pedido cerrado con 12 u. / $179.600 correctos, pero la card admin listaba 13 filas: `220 Negro 36` cancelado (sin fuentes de stock) + el mismo SKU re-agregado en `picked`.

@@ -147,7 +147,12 @@ function orderHasAdminDeadline(order: AdminOrder): boolean {
 }
 
 /**
- * Columna Vencido: status=expired, vencidos pendientes de desarme, o ≤1 día para vencer.
+ * Columna Vencido:
+ * - Hard: status=expired, o plazo ya vencido pendiente de desarme.
+ * - Soft (amarillo): ≤1 día calendario y todavía no venció — solo si no hay
+ *   trabajo operativo en Activos (reserved) ni Espera (waiting). Si la clienta
+ *   agregó ítems nuevos o hay waiting, esas columnas ganan; al resolverlos,
+ *   si sigue ≤1 día, vuelve a Vencido.
  */
 export function matchesExpiredTab(order: AdminOrder, now = Date.now()): boolean {
   if (!order || isFinalOrderStatus(order)) return false;
@@ -155,14 +160,22 @@ export function matchesExpiredTab(order: AdminOrder, now = Date.now()): boolean 
   if (norm(order.status) === STATUS.EXPIRED) return true;
   if (isExpiredPendingAdminDisassembly(order)) return true;
   if (!orderHasAdminDeadline(order)) return false;
-  return isOrderExpiringWithinOneDay(
-    {
-      created_at: order.created_at,
-      dismantle_at: order.dismantle_at,
-      local_deferred_pickup: order.local_deferred_pickup,
-    },
-    now
-  );
+  if (
+    !isOrderExpiringWithinOneDay(
+      {
+        created_at: order.created_at,
+        dismantle_at: order.dismantle_at,
+        local_deferred_pickup: order.local_deferred_pickup,
+      },
+      now
+    )
+  ) {
+    return false;
+  }
+  // Próximo a vencer (aún no venció): Activos / Espera tienen prioridad operativa.
+  if (hasReservedItems(order) || hasItemsNeedingAttention(order)) return false;
+  if (hasWaitingItems(order)) return false;
+  return true;
 }
 
 function matchesActiveTab(order: AdminOrder): boolean {
@@ -285,8 +298,8 @@ export function getOrderKanbanColumn(order: AdminOrder): KanbanColumnId | null {
   if (isFinalOrderStatus(order)) return null;
   if (matchesStockPendingTab(order)) return "stock_pending";
   if (matchesClosedTab(order)) return "closed";
-  // Vencidos / por vencer (≤1 día) → columna Vencido (antes vivían en Cancelados).
-  // Antes que Activos/Apartados/Espera para que el semáforo tenga prioridad operativa.
+  // Vencido hard (ya venció / expired) o soft (≤1 día sin reserved/waiting).
+  // matchesExpiredTab ya cede a Activos/Espera cuando solo está próximo a vencer.
   if (matchesExpiredTab(order)) return "expired";
   if (matchesActiveTab(order)) return "active";
   if (matchesWaitingTab(order)) return "waiting";

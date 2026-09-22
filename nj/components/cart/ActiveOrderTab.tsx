@@ -954,7 +954,8 @@ export default function ActiveOrderTab({
           return;
         }
         // Fallback por si la RPC vieja aún no tiene auto-close en este entorno.
-        await rpcCloseOrder(supabase, order.id, "Pendiente");
+        // Pago por transporte en servidor (351); no usar Pendiente.
+        await rpcCloseOrder(supabase, order.id);
         if (!cancelled) onOrderSent();
       } catch {
         // Deja la pantalla de preparación; el sweep 349 / admin puede cerrar.
@@ -1920,7 +1921,8 @@ export default function ActiveOrderTab({
         // Nota: notes.local_zone_shipping_close ya no se escribe acá — customers
         // no tienen RLS UPDATE sobre orders; el cierre queda igual vía rpc_close_order.
         try {
-          await rpcCloseOrder(supabase, order.id, "Pendiente");
+          // Pago por transporte en servidor (351); no usar Pendiente.
+          await rpcCloseOrder(supabase, order.id);
           onOrderSent();
           return true;
         } catch {

@@ -79,6 +79,21 @@ Despacho (Cerrados → Finalizar): `buildOrderDispatchedMessage` + prompt de seg
 
 `+24hs` limpia el aviso → amarillo de inmediato. Migración `349_admin_expiry_kanban.sql` (list con `sent_at` + clear). Detalle: [[65-AUDITORIA-PEDIDOS-EXPIRED-INVISIBLES-Y-STOCK-FANTASMA-2026-09-15]].
 
+## Seguimiento 2026-09-22: Vencido soft cede a Activos / Espera
+
+Caso real **A57061** (Valeria Santillan): pedido `active` con `dismantle_at` a 1 día calendario y 2 ítems `reserved` agregados desde la web. Quedaba en columna **Vencido** (amarillo) y el admin no lo veía en Activos para apartar.
+
+**Regla actualizada** en `matchesExpiredTab` (`nj/lib/orders/classification.ts`):
+
+| Situación | Columna |
+|-----------|---------|
+| Plazo **ya vencido** / `status=expired` / pendiente desarme | **Vencido** (prioridad hard) |
+| ≤1 día y **aún no venció**, con `reserved` / `awaiting_apartado` | **Activos** |
+| ≤1 día y **aún no venció**, con `waiting` (sin reserved) | **Espera** |
+| ≤1 día, solo `picked` (sin trabajo operativo) | **Vencido** amarillo |
+
+Al apartar / resolver, si sigue ≤1 día sin reserved/waiting, vuelve solo a Vencido. Tests: `classification-expired-column.test.ts`.
+
 ---
 
 ## Pendiente (no incluido en este cambio)

@@ -42,11 +42,6 @@ export default function HomeLaunchOnboarding() {
   useEffect(() => {
     setMounted(true);
 
-    SLIDES.forEach((slide) => {
-      const image = new window.Image();
-      image.src = slide.image;
-    });
-
     try {
       const dismissed = window.localStorage.getItem(DISMISS_KEY) === "1";
       const viewCount = Number(window.localStorage.getItem(VIEW_COUNT_KEY) ?? "0");
@@ -68,6 +63,21 @@ export default function HomeLaunchOnboarding() {
     }, shouldForceOpen ? 0 : 1200);
     return () => window.clearTimeout(timer);
   }, [shouldForceOpen]);
+
+  // Solo al abrir: diapositiva activa; como máximo la siguiente (no las 3 al montar).
+  useEffect(() => {
+    if (!open) return;
+    const active = SLIDES[activeIndex];
+    if (active) {
+      const current = new window.Image();
+      current.src = active.image;
+    }
+    const nextSlide = SLIDES[activeIndex + 1];
+    if (nextSlide) {
+      const upcoming = new window.Image();
+      upcoming.src = nextSlide.image;
+    }
+  }, [open, activeIndex]);
 
   useEffect(() => {
     if (!open) return;

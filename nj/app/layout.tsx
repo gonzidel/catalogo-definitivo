@@ -42,7 +42,13 @@ function HeaderFallback() {
       <div className="header-left">
         <Link href="/" className="header-logo-btn" aria-label="Inicio">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo.png" alt="Logo F&L" className="header-logo" />
+          <img
+            src="/logo.webp"
+            alt="Logo F&L"
+            className="header-logo"
+            width={47}
+            height={40}
+          />
         </Link>
       </div>
       <div className="search-bar-wrapper" />

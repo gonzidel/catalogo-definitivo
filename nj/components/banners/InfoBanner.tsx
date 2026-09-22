@@ -13,10 +13,13 @@ export default function InfoBanner() {
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               className="info-banner-top__icon"
-              src="/assets/icono-carrito-x4.png"
+              src="/assets/icono-carrito-x4.webp"
               alt=""
+              width={86}
+              height={86}
               loading="lazy"
               decoding="async"
+              fetchPriority="low"
             />
           </div>
           <div className="info-banner-top__content">

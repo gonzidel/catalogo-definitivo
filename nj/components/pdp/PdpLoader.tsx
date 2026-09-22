@@ -4,20 +4,15 @@ import useSWR from "swr";
 import { useMemo } from "react";
 import Link from "next/link";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
-import { CATALOG_SOURCE, CATALOG_SELECT, agruparProductos } from "@/lib/utils/catalog";
-import { calculateRecommendedPrice } from "@/lib/products/pricing";
-import {
-  enrichGroupedProductsWithVariants,
-  pickDisplayColorDetail,
-  stripColorsWithoutImages,
-} from "@/lib/utils/catalog-variant-enrich";
+import { pickDisplayColorDetail } from "@/lib/utils/catalog-variant-enrich";
 import {
   applySellableHasStockToProduct,
   applySellableToPdpVariants,
   type PdpVariantInfo,
 } from "@/lib/stock/sellable-stock";
 import { useSellableStock } from "@/hooks/useSellableStock";
-import type { CatalogRow, GroupedProduct } from "@/types/catalog";
+import { loadPdpProductBase } from "@/lib/pdp/load-product-base";
+import type { GroupedProduct } from "@/types/catalog";
 import PdpInteractive from "./PdpInteractive";
 import PdpLoading from "@/app/producto/[sku]/loading";
 
@@ -25,133 +20,34 @@ interface PdpLoaderProps {
   sku: string;
   backUrl: string;
   initialColorFromUrl?: string;
+  /** Producto ya resuelto en SSR (sin stock sellable). */
+  initialProduct?: GroupedProduct | null;
+  /** Color inicial resuelto en SSR (respeta ?color=). */
+  initialColor?: string;
 }
 
-async function stubFromProductsTable(
-  supabase: ReturnType<typeof getSupabaseBrowserClient>,
-  articulo: string
-): Promise<GroupedProduct | null> {
-  const { data: row } = await supabase
-    .from("products")
-    .select("name, description, category, cost, price_percentage, logistic_amount")
-    .eq("name", articulo.trim())
-    .eq("status", "active")
-    .maybeSingle();
-
-  if (!row) return null;
-
-  const precio = calculateRecommendedPrice(
-    Number(row.cost ?? 0),
-    Number(row.price_percentage ?? 0),
-    Number(row.logistic_amount ?? 0)
-  );
-
-  return {
-    Articulo: String(row.name ?? articulo).trim(),
-    Descripcion: String(row.description ?? ""),
-    Precio: precio || "",
-    VariantePrincipal: null,
-    Oferta: "",
-    FechaIngreso: "",
-    FechaPublicacion: "",
-    Categoria: String(row.category ?? ""),
-    Filtro1: "",
-    Filtro2: "",
-    Filtro3: "",
-    DetallesSimilitud: "",
-    OfertaActiva: false,
-    PrecioOferta: "",
-    PromoActiva: "",
-    DetalleColor: [],
-    hasAnyStock: false,
-  };
-}
-
-async function loadGroupedByArticulo(
-  supabase: ReturnType<typeof getSupabaseBrowserClient>,
-  articulo: string
-): Promise<GroupedProduct | null> {
-  const { data: rows } = await supabase
-    .from(CATALOG_SOURCE)
-    .select(CATALOG_SELECT)
-    .eq("Articulo", articulo.trim())
-    .limit(80);
-
-  if (rows?.length) {
-    const grouped = agruparProductos(rows as unknown as CatalogRow[]);
-    if (grouped[0]) return grouped[0];
-  }
-
-  return stubFromProductsTable(supabase, articulo);
-}
-
-async function fetchProductForSku(sku: string): Promise<{
+type PdpFetchResult = {
   product: GroupedProduct;
   initialColor?: string;
-} | null> {
+};
+
+async function fetchProductForSku(sku: string): Promise<PdpFetchResult | null> {
   const supabase = getSupabaseBrowserClient();
-  const key = sku.trim();
-  let requestedColor: string | undefined;
-
-  let base: GroupedProduct | null = await loadGroupedByArticulo(supabase, key);
-
-  if (!base) {
-    const { data: sizeData } = await supabase
-      .from("variant_sizes")
-      .select("variant_id, size")
-      .eq("sku", key)
-      .limit(1)
-      .maybeSingle();
-
-    let variantId: string | null = (sizeData as { variant_id?: string })?.variant_id ?? null;
-
-    if (!variantId) {
-      const { data: variantData } = await supabase
-        .from("product_variants")
-        .select("id")
-        .eq("sku", key)
-        .eq("active", true)
-        .limit(1)
-        .maybeSingle();
-      variantId = (variantData as { id?: string })?.id ?? null;
-    }
-
-    if (variantId) {
-      const { data: variantFull } = await supabase
-        .from("product_variants")
-        .select("color, products!inner(name)")
-        .eq("id", variantId)
-        .limit(1)
-        .maybeSingle();
-
-      const articulo = (variantFull as { products?: { name?: string } })?.products?.name ?? "";
-      requestedColor = (variantFull as { color?: string })?.color ?? undefined;
-      if (articulo) {
-        base = await loadGroupedByArticulo(supabase, articulo);
-      }
-    }
-  }
-
+  const base = await loadPdpProductBase(supabase, sku);
   if (!base) return null;
 
-  const [enriched] = await enrichGroupedProductsWithVariants(supabase, [base]);
-  if (!enriched) return null;
-
-  const product = stripColorsWithoutImages(enriched);
-  if (product.DetalleColor.length === 0) return null;
-
-  let initialColor = requestedColor;
+  let initialColor = base.skuResolvedColor;
   if (initialColor) {
-    const exists = product.DetalleColor.some(
+    const exists = base.product.DetalleColor.some(
       (d) => d.color.toLowerCase() === initialColor!.toLowerCase()
     );
     if (!exists) initialColor = undefined;
   }
   if (!initialColor) {
-    initialColor = pickDisplayColorDetail(product)?.color;
+    initialColor = pickDisplayColorDetail(base.product)?.color;
   }
 
-  return { product, initialColor };
+  return { product: base.product, initialColor };
 }
 
 type PdpVariantCatalogRow = {
@@ -216,12 +112,30 @@ function PdpNotFound({ backUrl }: { backUrl: string }) {
   );
 }
 
-export default function PdpLoader({ sku, backUrl, initialColorFromUrl }: PdpLoaderProps) {
-  const { data, isLoading, error } = useSWR(`pdp:${sku}`, () => fetchProductForSku(sku), {
-    revalidateOnFocus: false,
-    revalidateOnReconnect: false,
-    dedupingInterval: 300_000,
-  });
+export default function PdpLoader({
+  sku,
+  backUrl,
+  initialColorFromUrl,
+  initialProduct = null,
+  initialColor,
+}: PdpLoaderProps) {
+  const ssrFallback: PdpFetchResult | undefined = initialProduct
+    ? { product: initialProduct, initialColor }
+    : undefined;
+
+  const { data, isLoading, error, isValidating } = useSWR(
+    `pdp:${sku}`,
+    () => fetchProductForSku(sku),
+    {
+      fallbackData: ssrFallback,
+      // Con SSR: no refetch inmediato del mismo producto (evita doble consulta + flash).
+      // Sin SSR: fetch cliente como antes.
+      revalidateOnMount: !ssrFallback,
+      revalidateOnFocus: false,
+      revalidateOnReconnect: !ssrFallback,
+      dedupingInterval: 300_000,
+    }
+  );
 
   const resolvedInitialColor = useMemo(() => {
     if (initialColorFromUrl && data?.product) {
@@ -230,8 +144,8 @@ export default function PdpLoader({ sku, backUrl, initialColorFromUrl }: PdpLoad
       );
       if (exists) return initialColorFromUrl;
     }
-    return data?.initialColor;
-  }, [data, initialColorFromUrl]);
+    return data?.initialColor ?? initialColor;
+  }, [data, initialColorFromUrl, initialColor]);
 
   const { data: variantCatalog } = useSWR(
     data?.product ? `pdp-variant-catalog:${data.product.Articulo}` : null,
@@ -272,8 +186,14 @@ export default function PdpLoader({ sku, backUrl, initialColorFromUrl }: PdpLoad
     return applySellableHasStockToProduct(data.product, variantSizes);
   }, [data?.product, byVariant, variantSizes]);
 
-  if (isLoading) return <PdpLoading />;
-  if (error || !data || !productWithSellable) return <PdpNotFound backUrl={backUrl} />;
+  // Skeleton solo si no hay SSR y aún no hay datos.
+  if (!data && isLoading) return <PdpLoading />;
+  if (error && !data) return <PdpNotFound backUrl={backUrl} />;
+  if (!data || !productWithSellable) {
+    // SSR ausente + fetch fallido, o producto sin colores.
+    if (!isLoading && !isValidating) return <PdpNotFound backUrl={backUrl} />;
+    return <PdpLoading />;
+  }
 
   return (
     <PdpInteractive

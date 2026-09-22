@@ -1,10 +1,10 @@
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import type { Metadata } from "next";
-import { getCatalogPage } from "@/lib/supabase/queries";
+import { getCatalogPage, hasActiveOfertas } from "@/lib/supabase/queries";
 import { isCollectionSlug } from "@/lib/banners/collections";
 import CatalogShell from "@/components/catalog/CatalogShell";
-import SkeletonCard from "@/components/catalog/SkeletonCard";
+import CatalogShellSkeleton from "@/components/catalog/CatalogShellSkeleton";
 
 export const revalidate = 300;
 
@@ -21,21 +21,22 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   };
 }
 
-function CatalogSkeleton() {
-  return (
-    <div id="catalogo" className="catalogo">
-      <div id="catalog-container">
-        {Array.from({ length: 8 }).map((_, i) => (
-          <SkeletonCard key={i} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-async function CatalogContent({ tags }: { tags: string[] }) {
+async function CatalogContent({
+  tags,
+  hasOfertas,
+}: {
+  tags: string[];
+  hasOfertas: boolean;
+}) {
   const { products } = await getCatalogPage("all", 1);
-  return <CatalogShell initialProducts={products} categoria="all" tags={tags} />;
+  return (
+    <CatalogShell
+      initialProducts={products}
+      categoria="all"
+      tags={tags}
+      hasOfertas={hasOfertas}
+    />
+  );
 }
 
 export default async function TagsPage({ params }: PageProps) {
@@ -46,9 +47,15 @@ export default async function TagsPage({ params }: PageProps) {
     redirect(`/coleccion/${encodeURIComponent(tags[0].trim().toLowerCase())}`);
   }
 
+  const hasOfertas = await hasActiveOfertas();
+
   return (
-    <Suspense fallback={<CatalogSkeleton />}>
-      <CatalogContent tags={tags} />
+    <Suspense
+      fallback={
+        <CatalogShellSkeleton categoria="all" hasOfertas={hasOfertas} />
+      }
+    >
+      <CatalogContent tags={tags} hasOfertas={hasOfertas} />
     </Suspense>
   );
 }

@@ -686,8 +686,10 @@ export default function ActiveOrderTab({
   const [showMinInfo, setShowMinInfo]       = useState(false);
   const [editQtyFor, setEditQtyFor]         = useState<string | null>(null);
   const [editQtyValue, setEditQtyValue]     = useState<number>(0);
+  /** Evita que el tap de "Cantidad" atraviese al botón + recién montado. */
+  const [editQtyArmed, setEditQtyArmed]     = useState(false);
   const [variantStock, setVariantStock]     = useState<Record<string, number>>({});
-  /** Confirmación al quitar desde el menú ⋯ de Mi pedido */
+  /** Confirmación al quitar desde el panel de acciones de Mi pedido */
   const [pendingRemoveItem, setPendingRemoveItem] = useState<(GroupedCustomerOrderItem & OrderItem) | null>(null);
   /** Unidades que quedan en el pedido (como en la lista). Quitar = cantidad actual − keepUnits. */
   const [keepUnits, setKeepUnits]           = useState(0);
@@ -706,6 +708,17 @@ export default function ActiveOrderTab({
   useEffect(() => {
     setConfirmedTransportName(transportName ?? null);
   }, [transportName]);
+
+  // Armar ± del editor de cantidad tras un breve delay (anti click-through móvil).
+  useEffect(() => {
+    if (!editQtyFor) {
+      setEditQtyArmed(false);
+      return;
+    }
+    setEditQtyArmed(false);
+    const t = window.setTimeout(() => setEditQtyArmed(true), 320);
+    return () => window.clearTimeout(t);
+  }, [editQtyFor]);
 
   useEffect(() => {
     void loadWarehouses(getSupabaseBrowserClient()).then(setWarehouseIds);
@@ -1671,8 +1684,10 @@ export default function ActiveOrderTab({
   }
 
   async function openEditQty(item: GroupedCustomerOrderItem & OrderItem) {
+    const currentQty = Math.max(0, Number(item.quantity) || 0);
     setEditQtyFor(item.primaryItemId);
-    setEditQtyValue(item.quantity);
+    setEditQtyValue(currentQty);
+    setEditQtyArmed(false);
     setMenuOpenFor(null);
     // Fetch available stock for this variant+size
     if (item.variant_id && !variantStock[item.primaryItemId]) {
@@ -1693,10 +1708,12 @@ export default function ActiveOrderTab({
   }
 
   function handleQtyDecrement(item: GroupedCustomerOrderItem & OrderItem) {
+    if (!editQtyArmed) return;
     setEditQtyValue((v) => Math.max(0, v - 1));
   }
 
   function handleQtyIncrement(item: GroupedCustomerOrderItem & OrderItem, availableToAdd: number | null) {
+    if (!editQtyArmed) return;
     if (availableToAdd !== null && availableToAdd <= 0) return;
     setEditQtyValue((v) => v + 1);
   }
@@ -2058,73 +2075,46 @@ export default function ActiveOrderTab({
                 <button
                   type="button"
                   onClick={() => {
-                    if (isEditingQty) { setEditQtyFor(null); return; }
-                    setMenuOpenFor(isMenuOpen ? null : item.primaryItemId);
+                    if (isEditingQty || isMenuOpen) {
+                      setEditQtyFor(null);
+                      setMenuOpenFor(null);
+                      return;
+                    }
+                    setMenuOpenFor(item.primaryItemId);
                   }}
-                  aria-label="Opciones"
-                  className={`active-order-item-menu__btn${isEditingQty ? " is-editing" : ""}`}
+                  aria-label={isEditingQty || isMenuOpen ? "Cerrar opciones" : "Abrir opciones"}
+                  aria-expanded={isEditingQty || isMenuOpen}
+                  className={`active-order-item-menu__btn${isEditingQty || isMenuOpen ? " is-open" : ""}`}
                 >
-                  {isEditingQty ? "Listo" : "⋯"}
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.4"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                    className="active-order-item-menu__chevron"
+                  >
+                    <polyline points="6 9 12 15 18 9" />
+                  </svg>
                 </button>
-
-                {isMenuOpen && !isEditingQty && (
-                  <>
-                    <div className="active-order-menu-backdrop" onClick={() => setMenuOpenFor(null)} />
-                    <div className="active-order-menu active-order-menu--item">
-                      <button
-                        type="button"
-                        onClick={() => openEditQty(item)}
-                        className="active-order-menu__item active-order-menu__item--row"
-                      >
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-                          stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="active-order-svg-icon">
-                          <path d="M12 20h9" />
-                          <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
-                        </svg>
-                        Editar cantidad
-                      </button>
-
-                      <a
-                        href={`/producto/${productSlug}`}
-                        onClick={() => setMenuOpenFor(null)}
-                        className="active-order-menu__item active-order-menu__item--row"
-                      >
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-                          stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="active-order-svg-icon">
-                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z" />
-                          <circle cx="12" cy="12" r="3" />
-                        </svg>
-                        Ver producto
-                      </a>
-
-                      <button
-                        type="button"
-                        onClick={() => openRemoveProductConfirm(item)}
-                        className="active-order-menu__item active-order-menu__item--row active-order-menu__item--danger"
-                      >
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-                          stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="active-order-svg-icon">
-                          <path d="M3 6h18" />
-                          <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6h16Z" />
-                        </svg>
-                        Quitar producto
-                      </button>
-                    </div>
-                  </>
-                )}
               </div>
               )
             ) : undefined
           }
           below={
             isEditingQty ? (
-              <div className="active-order-qty-wrap">
+              <div className={`active-order-qty-wrap${editQtyArmed ? "" : " is-arming"}`}>
                 <div className="active-order-qty">
                   <button
                     type="button"
                     onClick={() => handleQtyDecrement(item)}
                     aria-label="Quitar 1"
                     className="active-order-qty__btn"
+                    disabled={!editQtyArmed}
                   >−</button>
 
                   <span className={`active-order-qty__value${editQtyValue === 0 ? " is-zero" : ""}`}>
@@ -2137,7 +2127,7 @@ export default function ActiveOrderTab({
                       <button
                         type="button"
                         onClick={() => handleQtyIncrement(item, availableToAdd)}
-                        disabled={!canAdd}
+                        disabled={!editQtyArmed || !canAdd}
                         aria-label="Agregar 1"
                         className={`active-order-qty__btn${!canAdd ? " is-max" : ""}`}
                       >+</button>
@@ -2170,6 +2160,49 @@ export default function ActiveOrderTab({
                     Las unidades extra se agregan al carrito y se suman al pedido cuando lo actualices.
                   </div>
                 )}
+              </div>
+            ) : isMenuOpen ? (
+              <div className="active-order-actions-wrap">
+                <div className="active-order-actions" role="group" aria-label="Acciones del producto">
+                  <button
+                    type="button"
+                    onClick={() => openEditQty(item)}
+                    className="active-order-actions__btn"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M12 20h9" />
+                      <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                    </svg>
+                    <span>Cantidad</span>
+                  </button>
+
+                  <a
+                    href={`/producto/${productSlug}`}
+                    onClick={() => setMenuOpenFor(null)}
+                    className="active-order-actions__btn"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z" />
+                      <circle cx="12" cy="12" r="3" />
+                    </svg>
+                    <span>Ver</span>
+                  </a>
+
+                  <button
+                    type="button"
+                    onClick={() => openRemoveProductConfirm(item)}
+                    className="active-order-actions__btn active-order-actions__btn--danger"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M3 6h18" />
+                      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6h16Z" />
+                    </svg>
+                    <span>Quitar</span>
+                  </button>
+                </div>
               </div>
             ) : undefined
           }
@@ -3016,7 +3049,7 @@ export default function ActiveOrderTab({
         document.body
       )}
 
-      {/* ── Quitar producto (menú ⋯) ─────────────────────────────────────────── */}
+      {/* ── Quitar producto (panel de acciones) ──────────────────────────────── */}
       {pendingRemoveItem && (() => {
         const removeMaxUnits = Math.max(1, Number(pendingRemoveItem.quantity) || 1);
         const removeKeep = Math.max(0, Math.min(removeMaxUnits, Number(keepUnits) || 0));

@@ -21,6 +21,11 @@ import CategoryTabs from "@/components/filters/CategoryTabs";
 import CategoryContextBar from "@/components/filters/CategoryContextBar";
 import SizeFilterSheet from "@/components/filters/SizeFilterSheet";
 import TagFilterBar from "@/components/filters/TagFilterBar";
+import {
+  reconcileDisplayProducts,
+  resolvePreviousForFilter,
+  type PaintedGridState,
+} from "@/lib/catalog/reconcile-display-products";
 import type { GroupedProduct } from "@/types/catalog";
 
 const INITIAL_DISPLAY = 14;
@@ -112,15 +117,19 @@ export default function CatalogShell({
 
   const canLoadMore = !fixedProductSet && hasMore;
 
+  const browsing = searchTerm.length < 2;
+  const useStableGrid = browsing && !fixedProductSet;
+
   const catalogPool = React.useMemo(() => {
     const withImages = enrichedProducts.filter(
       (p) => (p.DetalleColor?.length ?? 0) > 0
     );
-    const browsing = searchTerm.length < 2;
-    // Grid normal: solo sellable. Búsqueda y banners curados conservan OOS.
+    // Búsqueda / set fijo: no filtrar OOS acá.
+    // Browse: el filtro comprable ocurre en reconcile (slots estables).
     if (fixedProductSet || !browsing) return withImages;
+    if (isEnriching) return withImages;
     return withImages.filter(productHasAnyStock);
-  }, [enrichedProducts, searchTerm, fixedProductSet]);
+  }, [enrichedProducts, browsing, fixedProductSet, isEnriching]);
 
   const tagFiltered = React.useMemo(
     () => filterProductsByTags(catalogPool, tags),
@@ -168,12 +177,44 @@ export default function CatalogShell({
     }
   }, [catalogPool]);
 
-  // Reset display count when filters change
+  const filterKey = `${categoria}|${tags.join(",")}|${searchTerm}|${activeSizes.join(",")}`;
+  /** Clave + productos del último paint (reset síncrono en render). */
+  const paintedStateRef = useRef<PaintedGridState>({
+    filterKey: "",
+    products: [],
+  });
+
+  // Contador de infinite-scroll: reset aparte (no toca painted → sin carrera OOS).
   useEffect(() => {
     setDisplayCount(INITIAL_DISPLAY);
-  }, [searchTerm, activeSizes.join(","), categoria, tags.join(",")]);
+  }, [filterKey]);
 
-  const displayProducts = filtered.slice(0, displayCount);
+  const previousForReconcile = resolvePreviousForFilter(
+    paintedStateRef.current,
+    filterKey
+  );
+
+  const displayProducts = React.useMemo(() => {
+    if (!useStableGrid) {
+      return filtered.slice(0, displayCount);
+    }
+    return reconcileDisplayProducts({
+      previous: previousForReconcile,
+      nextPool: filtered,
+      slotCount: displayCount,
+      isEnriching,
+    });
+  }, [
+    filtered,
+    displayCount,
+    isEnriching,
+    useStableGrid,
+    filterKey,
+    previousForReconcile,
+  ]);
+
+  // Tras el cálculo del render: persistir clave + productos (sin useEffect).
+  paintedStateRef.current = { filterKey, products: displayProducts };
 
   // Always-up-to-date refs for the observer callback (avoids stale closures)
   const sentinelRef = useRef<HTMLDivElement | null>(null);

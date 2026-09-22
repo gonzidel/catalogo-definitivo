@@ -18,6 +18,11 @@ import {
 } from "@/lib/banners/curated-banner-layout";
 import type { CuratedBannerConfig, CuratedVariantCardEnriched } from "@/types/banners";
 import { useCatalogSnapshotRevalidate } from "@/lib/catalog/snapshot-version";
+import {
+  shouldFetchBanner,
+  shouldReserveBannerSlot,
+  type BannerPresenceState,
+} from "@/lib/banners/home-banner-presence";
 
 import { CURATED_TAG } from "@/lib/banners/curated-banner-tags";
 
@@ -185,13 +190,25 @@ function SkeletonScrollPage() {
   );
 }
 
-export default function CuratedBanner() {
-  const { data, isLoading, mutate } = useSWR("curated-banner", fetchCuratedBanner, {
-    revalidateOnFocus: false,
-    revalidateOnReconnect: false,
-    dedupingInterval: 300_000,
-  });
+export default function CuratedBanner({
+  expectedVisible = "unknown",
+}: {
+  expectedVisible?: BannerPresenceState;
+}) {
+  const enabled = shouldFetchBanner(expectedVisible);
+  const reserve = shouldReserveBannerSlot(expectedVisible);
+  const { data, isLoading, mutate } = useSWR(
+    enabled ? "curated-banner" : null,
+    fetchCuratedBanner,
+    {
+      revalidateOnFocus: false,
+      revalidateOnReconnect: false,
+      dedupingInterval: 300_000,
+    }
+  );
   useCatalogSnapshotRevalidate(mutate);
+
+  if (!enabled) return null;
 
   if (!isLoading && !data) return null;
 
@@ -203,12 +220,27 @@ export default function CuratedBanner() {
     ? `/banner/${encodeURIComponent(config.slug)}`
     : "#";
 
+  // Config presente pero sin items válidos → no reservar hueco.
   if (!isLoading && allCards.length === 0) return null;
 
-  const showGrid = isLoading || carouselCards.length > 0;
+  const showSkeleton = isLoading && allCards.length === 0;
+  if (showSkeleton && !reserve) return null;
+
+  const showGrid = showSkeleton || carouselCards.length > 0;
 
   return (
-    <div className="custom-banner-wrapper curated-dynamic-banner">
+    <div
+      className={[
+        "custom-banner-wrapper",
+        "curated-dynamic-banner",
+        "home-banner-slot",
+        "home-banner-slot--curated",
+        showSkeleton ? "is-loading" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      aria-busy={showSkeleton || undefined}
+    >
       <div className="custom-banner-container" style={{ display: "block" }}>
         <div className="custom-banner-header">
           <h2 className="custom-banner-title">
@@ -238,7 +270,7 @@ export default function CuratedBanner() {
 
         {showGrid && (
           <div className="custom-banner-scroll">
-            {isLoading ? (
+            {showSkeleton ? (
               <SkeletonScrollPage />
             ) : (
               pages.map((pagePairs, index) => (

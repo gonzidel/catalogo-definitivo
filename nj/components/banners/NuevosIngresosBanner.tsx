@@ -6,15 +6,29 @@ import useSWR from "swr";
 import { fetchNuevosIngresos } from "@/lib/banners/nuevos-ingresos";
 import { useCatalogSnapshotRevalidate } from "@/lib/catalog/snapshot-version";
 import {
+  shouldFetchBanner,
+  shouldReserveBannerSlot,
+  type BannerPresenceState,
+} from "@/lib/banners/home-banner-presence";
+import {
   BannerCarouselCard,
   BannerCarouselSkeleton,
 } from "@/components/banners/BannerCarouselCard";
 
-export default function NuevosIngresosBanner() {
+type Props = {
+  /** Tri-state SSR: present reserva; absent omite; unknown consulta sin afirmar ausencia. */
+  expectedVisible?: BannerPresenceState;
+};
+
+export default function NuevosIngresosBanner({
+  expectedVisible = "unknown",
+}: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const enabled = shouldFetchBanner(expectedVisible);
+  const reserve = shouldReserveBannerSlot(expectedVisible);
 
   const { data: products, isLoading, mutate } = useSWR(
-    "nuevos-ingresos-banner",
+    enabled ? "nuevos-ingresos-banner" : null,
     fetchNuevosIngresos,
     {
       revalidateOnFocus: false,
@@ -24,14 +38,27 @@ export default function NuevosIngresosBanner() {
   );
   useCatalogSnapshotRevalidate(mutate);
 
-  const visible = products ?? [];
+  if (!enabled) return null;
 
+  const visible = products ?? [];
   if (!isLoading && visible.length === 0) return null;
+
+  const showSkeleton = isLoading && visible.length === 0;
+  // unknown + loading: no reservar hueco grande (aparece al resolver SWR).
+  if (showSkeleton && !reserve) return null;
 
   return (
     <section
-      className="nuevos-ingresos-banner"
+      className={[
+        "nuevos-ingresos-banner",
+        "home-banner-slot",
+        "home-banner-slot--carousel",
+        showSkeleton ? "is-loading" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
       aria-label="Nuevos ingresos"
+      aria-busy={showSkeleton || undefined}
     >
       <div className="nuevos-ingresos-head">
         <h2 className="nuevos-ingresos-title">Nuevos ingresos</h2>
@@ -49,7 +76,7 @@ export default function NuevosIngresosBanner() {
         className="fyl-originals-scroll orig-carousel"
         style={{ display: "flex", overflowX: "auto" }}
       >
-        {isLoading
+        {showSkeleton
           ? Array.from({ length: 6 }).map((_, i) => (
               <BannerCarouselSkeleton key={i} />
             ))

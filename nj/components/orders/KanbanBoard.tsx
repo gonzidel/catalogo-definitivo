@@ -157,8 +157,9 @@ export default function KanbanBoard({
   }, [drawer, closedCount, stockPendingCount]);
 
   return (
-    <div className={`kanban-shell${scope === "local_pickup" ? " kanban-shell--retiro" : ""}`}>
-      <div className="kanban-header">
+    <div className="kanban-admin-shell">
+      <div className={`kanban-shell${scope === "local_pickup" ? " kanban-shell--retiro" : ""}`}>
+        <div className="kanban-header">
         <div className="kanban-header__mobile-nav">
           <button
             type="button"
@@ -395,6 +396,7 @@ export default function KanbanBoard({
         <OrderPaymentsPanel open={paymentsOpen} onClose={() => setPaymentsOpen(false)} />
       ) : null}
       <OrdersToastContainer />
+      </div>
     </div>
   );
 }

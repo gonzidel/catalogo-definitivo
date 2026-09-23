@@ -367,6 +367,22 @@ Caso **A56670** (Susana Ortiz, PAU): cierre → aviso `customer_closed_cod` → 
 
 **Nota sobre el ejemplo de "monto que no correspondía" que motivó el audit:** se investigó el pedido A56978 (Patricia Brite, $13.800) y el número **coincidía exactamente** con `total_amount` y con el único ítem (`price_snapshot × quantity`) en `orders`. La confusión fue entre dos sistemas distintos: el botón "📦 Pedidos" de `admin/public-sales.html` (legado, puerto 5500) lee de `local_orders` vía `rpc_get_local_orders`, una tabla separada de `orders` (la que usa `/nj`), y busca por nombre de cliente. Patricia Brite tiene 20+ pedidos históricos en ambas tablas; buscar "brit" en el modal legado trae un pedido *distinto* con el mismo nombre de cliente (ninguno de sus `local_orders` tiene $13.800 — se confirmó contra producción), no una copia desincronizada del mismo pedido. No hay bug de datos ahí, sí hay riesgo real de confusión al comparar dos paneles con búsquedas por nombre sobre tablas distintas.
 
+## 19. Mobile: pedido largo no scrolleaba en la columna (2026-09-23)
+
+**Síntoma:** en `/nj/admin/orders` (móvil), al expandir un pedido con muchos ítems no se podía scrollear hacia abajo para seguir revisándolo.
+
+**Causa (cadena):**
+1. En agosto 2026 el layout admin pasó de `.kanban-admin-shell` → `.admin-app-shell` (para COD/productos). El comentario decía que el Kanban debía reenvolverse solo, **pero nunca se hizo**.
+2. En mobile (`max-width: 767px`) se quitaba `max-height` de la columna y se ponía `overflow-y: auto` en `.kanban-main`, mientras `.kanban-column__list` seguía con `overflow-y: auto` + `overscroll-behavior: contain`.
+3. La lista crecía con el contenido (sin scroll interno) y el gesto táctil quedaba atrapado: no scrolleaba la lista ni propagaba al padre.
+
+**Fix:**
+- `KanbanBoard` (y loadings Pedidos/Retiro) vuelven a envolver con `.kanban-admin-shell` (lock `100dvh` + overflow body).
+- Mobile: un solo scrollport = `.kanban-column__list`; `.kanban-main` queda `overflow: hidden` + `align-items: stretch`; columna `height: 100%` / `min-height: 0`.
+- Drawer: columna usa altura del body del drawer (no `100vh - 72px` fijo).
+
+**Archivos:** `nj/components/orders/KanbanBoard.tsx`, `nj/styles/globals.css`, `nj/app/admin/orders/loading.tsx`, `nj/app/admin/retiro/loading.tsx`.
+
 ---
 
 ## Referencias

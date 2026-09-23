@@ -2369,59 +2369,8 @@ async function finalizeOrder(orderId) {
 
   console.log("✅ Pedido finalizado correctamente");
 
-  // Mensaje WhatsApp de despacho (transporte + seguimiento) — cumple la promesa
-  // del aviso de pago confirmado.
-  try {
-    const customer = Array.isArray(order?.customers)
-      ? order.customers[0] || {}
-      : order?.customers && typeof order.customers === "object"
-        ? order.customers
-        : {};
-    const transportId = String(order?.transport_id || customer?.transport_id || "").trim();
-    const transport = scheduledTransports.find((t) => String(t.id) === transportId);
-    const transporteName =
-      canonicalizeTransportName(transport?.name || "") ||
-      String(transport?.name || "").trim() ||
-      "tu transporte";
-    const phone = String(customer?.phone || "").trim();
-    const seguimiento = window.prompt(
-      "Número de seguimiento para el mensaje WhatsApp (podés cancelar para omitir el mensaje):",
-      ""
-    );
-    if (seguimiento !== null && String(seguimiento).trim() !== "") {
-      const msg =
-        `Hola 👋 ¡Tu pedido ya fue despachado! 📦\n\n` +
-        `🚚 Transporte: ${transporteName}\n` +
-        `🔎 Seguimiento: ${String(seguimiento).trim()}\n\n` +
-        `Podés utilizar estos datos para consultar el estado de tu envío.\n\n` +
-        `Cualquier consulta, podés escribirnos 😊`;
-      try {
-        await navigator.clipboard.writeText(msg);
-      } catch {
-        /* ignore */
-      }
-      const digits = String(phone).replace(/\D/g, "");
-      let national = digits;
-      if (national.startsWith("549") && national.length >= 12) {
-        /* already wa format */
-      } else if (national.startsWith("54") && national.length >= 11) {
-        national = "9" + national.slice(2);
-        national = "54" + national;
-      } else if (national.length === 10) {
-        national = "549" + national;
-      } else if (national.startsWith("0")) {
-        national = "549" + national.replace(/^0+/, "");
-      }
-      if (national.length >= 11) {
-        const wa = `https://wa.me/${national}?text=${encodeURIComponent(msg)}`;
-        window.open(wa, "_blank", "noopener,noreferrer");
-      } else {
-        alert("Mensaje de despacho copiado. No hay teléfono válido para abrir WhatsApp.");
-      }
-    }
-  } catch (e) {
-    console.warn("⚠️ No se pudo armar el mensaje de despacho:", e);
-  }
+  // Seguimiento WhatsApp al finalizar: desactivado por ahora (el flujo real es
+  // imprimir papeles → enviar; se retomará en un flujo aparte más adelante).
 
   await loadClosedOrders();
 }

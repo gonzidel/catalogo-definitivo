@@ -5864,11 +5864,16 @@ body:has(.kanban-admin-shell) [data-nextjs-toast] {
   min-height: 0;
   overflow: hidden;
   padding: 12px;
+  display: flex;
+  flex-direction: column;
 }
 
 .kanban-drawer__body .kanban-column {
-  max-height: calc(100vh - 72px);
+  /* Altura del body del drawer (no vh fijo): el header del drawer varía. */
+  max-height: none;
   height: 100%;
+  min-height: 0;
+  flex: 1;
 }
 
 .kanban-main {
@@ -5887,11 +5892,13 @@ body:has(.kanban-admin-shell) [data-nextjs-toast] {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
   width: 100%;
 }
 
 .kanban-main .kanban-column {
   min-width: 0;
+  min-height: 0;
   max-height: calc(100vh - 72px);
   width: 100%;
   flex: none;
@@ -6065,7 +6072,10 @@ body:has(.kanban-admin-shell) [data-nextjs-toast] {
 
 .kanban-column__list {
   flex: 1;
+  overflow-x: hidden;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   padding: 6px;
   display: flex;
   flex-direction: column;
@@ -9614,20 +9624,28 @@ a.order-card__wa-btn:active {
     font-size: 0.7rem;
   }
 
+  /*
+   * Scroll mobile: un solo scrollport = `.kanban-column__list`.
+   * Antes: max-height:none + overflow-y en `.kanban-main` + overscroll contain
+   * en la lista → la lista crecía sin scroll interno y atrapaba el gesto táctil
+   * (pedido largo no se podía revisar hasta abajo).
+   */
   .kanban-main {
     grid-template-columns: 1fr;
-    overflow-x: hidden;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    -webkit-overflow-scrolling: touch;
+    align-items: stretch;
+    overflow: hidden;
+  }
+
+  .kanban-column-slot:not(.kanban-column-slot--mobile-hidden) {
+    height: 100%;
+    min-height: 0;
   }
 
   .kanban-main .kanban-column {
     max-height: none;
-  }
-
-  .kanban-column__list {
-    overscroll-behavior: contain;
+    height: 100%;
+    flex: 1;
+    min-height: 0;
   }
 
   .kanban-drawer {

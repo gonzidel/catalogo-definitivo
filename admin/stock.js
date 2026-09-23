@@ -4969,6 +4969,28 @@ async function showStockHistory(productId, productName) {
         changeTypeLabel = "Movimiento → Local";
         changeTypeClass = "history-move";
         break;
+      case "order_deduction":
+        changeTypeLabel = "Descuento por pedido";
+        changeTypeClass = "history-other";
+        break;
+      case "cancelacion_confirmada_reingreso":
+        changeTypeLabel = "Cancelación confirmada → reingreso";
+        changeTypeClass = "history-load";
+        break;
+      case "sin_stock_baja":
+      case "writeoff_missing":
+        changeTypeLabel = "Sin stock (baja sin reingresar)";
+        changeTypeClass = "history-other";
+        break;
+      case "quitado_sin_reingreso":
+      case "no_restore_no_sources_review":
+        changeTypeLabel = "Quitado sin reingreso (revisar)";
+        changeTypeClass = "history-adjust";
+        break;
+      case "admin_manual_confirmation":
+        changeTypeLabel = "Confirmación manual admin";
+        changeTypeClass = "history-adjust";
+        break;
       case "adjustment":
         changeTypeLabel = "Ajuste";
         changeTypeClass = "history-adjust";

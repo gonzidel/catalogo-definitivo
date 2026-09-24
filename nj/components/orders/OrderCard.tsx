@@ -843,7 +843,7 @@ export default function OrderCard({ order }: OrderCardProps) {
           <OrderCardItems
             items={missingOnlyItems}
             showRemove
-            onRemoveItem={(itemId) => removeItem(order.id, itemId)}
+            onRemoveItem={(itemId, options) => removeItem(order.id, itemId, options)}
             loadingItemId={loadingAction}
           />
         </div>
@@ -984,7 +984,7 @@ export default function OrderCard({ order }: OrderCardProps) {
                 }
                 showActiveReservedActions={showActiveReservedActions}
                 enableWaitingPick={false}
-                onRemoveItem={(itemId) => removeItem(order.id, itemId)}
+                onRemoveItem={(itemId, options) => removeItem(order.id, itemId, options)}
                 onMarkMissing={markItemMissing}
                 onMarkPicked={markItemPicked}
                 onMarkWaiting={markItemWaiting}
@@ -1056,7 +1056,7 @@ export default function OrderCard({ order }: OrderCardProps) {
                   <OrderCardItems
                     items={pickedItems}
                     showRemove={showItemRemove}
-                    onRemoveItem={(itemId) => removeItem(order.id, itemId)}
+                    onRemoveItem={(itemId, options) => removeItem(order.id, itemId, options)}
                     loadingItemId={loadingAction}
                   />
                 ) : null}

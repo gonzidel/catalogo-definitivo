@@ -12,6 +12,22 @@ export function isPickedManualConfirmed(item: AdminOrderItem | null | undefined)
   return status === "picked" && Boolean(item?.admin_confirmed_missing);
 }
 
+/** Hay fuentes trazadas: al quitar, el servidor podría reingresar stock. */
+export function itemHasRestorableStockSources(item: AdminOrderItem | null | undefined): boolean {
+  const sources = item?.order_item_stock_sources || [];
+  return sources.some((s) => Number(s?.qty || 0) > 0);
+}
+
+/**
+ * Al quitar un ítem con fuentes: default de "¿vuelve al stock?".
+ * Si se agregó con confirmación sin stock (admin_confirmed_missing), default No.
+ */
+export function defaultRestoreStockOnRemove(item: AdminOrderItem | null | undefined): boolean {
+  if (!item) return true;
+  if (Boolean(item.admin_confirmed_missing)) return false;
+  return true;
+}
+
 export function parseOrderNotesObject(rawNotes: string | null | undefined): Record<string, unknown> {
   if (!rawNotes) return {};
   try {

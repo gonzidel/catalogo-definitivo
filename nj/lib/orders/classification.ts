@@ -138,6 +138,37 @@ export function isExpiredPendingAdminDisassembly(order: AdminOrder): boolean {
 }
 
 /**
+ * Columna Vencido: mostrar "Cerrar pedido" cuando el plazo todavía no pasó
+ * (amarillo / tras +24hs) y no hay reserved/waiting/awaiting_apartado.
+ * Usa `dismantle_at` crudo (igual que `rpc_close_order`), no el plazo
+ * “customer-facing” que puede ocultar ventanas cortas de 24hs.
+ * No aplica a status=expired (cron): ahí van Archivar / +24hs reopen / Ya enviado.
+ */
+export function canCloseOrderFromExpiredColumn(
+  order: AdminOrder,
+  now = Date.now()
+): boolean {
+  if (!order) return false;
+  const status = norm(order.status);
+  if (status === STATUS.EXPIRED) return false;
+  if (status === STATUS.CLOSED || isFinalOrderStatus(order)) return false;
+  if (order.dismantle_at) {
+    const t = new Date(order.dismantle_at).getTime();
+    if (!Number.isNaN(t) && now >= t) return false;
+  }
+  const items = order.order_items || [];
+  const hasPendingCloseBlockers = items.some((item) => {
+    const s = norm(item.status);
+    return s === "reserved" || s === STATUS.WAITING || s === "awaiting_apartado";
+  });
+  if (hasPendingCloseBlockers) return false;
+  return items.some((item) => {
+    const s = norm(item.status);
+    return s === STATUS.PICKED || s === "missing";
+  });
+}
+
+/**
  * ¿Tiene plazo admin visible y entra en semáforo de columna Vencido (amarillo)?
  * Pedidos admin/PAU sin dismantle_at no entran (igual que el countdown de la card).
  */

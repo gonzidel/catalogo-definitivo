@@ -3,7 +3,9 @@ import test from "node:test";
 import type { AdminOrder, AdminOrderItem } from "../../types/orders";
 import {
   cancelledItemNeedsStockConfirmation,
+  defaultRestoreStockOnRemove,
   getOperationalDisplayOrderItems,
+  itemHasRestorableStockSources,
   orderHasCancelledItemsPendingStockReturn,
 } from "./domain";
 
@@ -117,4 +119,40 @@ test("getOperationalDisplayOrderItems oculta cancelados resueltos", () => {
   const visible = getOperationalDisplayOrderItems(order);
   assert.equal(visible.length, 1);
   assert.equal(visible[0]?.id, "readded-picked");
+});
+
+test("defaultRestoreStockOnRemove es false si admin_confirmed_missing", () => {
+  assert.equal(
+    defaultRestoreStockOnRemove(
+      item({
+        status: "picked",
+        admin_confirmed_missing: true,
+        order_item_stock_sources: [{ warehouse_id: "w1", qty: 1 }],
+      })
+    ),
+    false
+  );
+  assert.equal(
+    defaultRestoreStockOnRemove(
+      item({
+        status: "picked",
+        admin_confirmed_missing: false,
+        order_item_stock_sources: [{ warehouse_id: "w1", qty: 1 }],
+      })
+    ),
+    true
+  );
+});
+
+test("itemHasRestorableStockSources solo con qty > 0", () => {
+  assert.equal(
+    itemHasRestorableStockSources(
+      item({ order_item_stock_sources: [{ warehouse_id: "w1", qty: 1 }] })
+    ),
+    true
+  );
+  assert.equal(
+    itemHasRestorableStockSources(item({ order_item_stock_sources: [] })),
+    false
+  );
 });

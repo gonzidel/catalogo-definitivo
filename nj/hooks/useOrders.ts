@@ -104,7 +104,11 @@ interface OrdersState {
   ) => Promise<boolean>;
 
   pickAllReserved: (orderId: string) => Promise<void>;
-  cancelItem: (orderId: string, itemId: string) => Promise<void>;
+  cancelItem: (
+    orderId: string,
+    itemId: string,
+    options?: { restoreStock?: boolean }
+  ) => Promise<void>;
   confirmCancelledItem: (orderId: string, itemId: string) => Promise<void>;
   /** Igual que confirmCancelledItem pero sin devolver stock (producto sin
    *  stock real). Ver rpc_admin_remove_cancelled_item_writeoff. */
@@ -590,12 +594,13 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
     }
   },
 
-  cancelItem: async (orderId, itemId) => {
+  cancelItem: async (orderId, itemId, options) => {
     const snapshot = cloneOrders(get().orders);
     const order = findOrder(get(), orderId);
     if (!order) return;
 
     const remainingItems = (order.order_items || []).filter((item) => item.id !== itemId);
+    const restoreStock = options?.restoreStock !== false;
 
     set((state) => ({
       orders: state.orders
@@ -608,18 +613,25 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
 
     try {
       const supabase = getSupabaseBrowserClient();
-      await rpcRemoveOrderItemRestoreStock(supabase, itemId);
+      await rpcRemoveOrderItemRestoreStock(supabase, itemId, { restoreStock });
 
       if (remainingItems.length === 0) {
         get().removeOrder(orderId);
-        get().showToast("Ítem quitado — pedido vacío", "success");
+        get().showToast(
+          restoreStock ? "Ítem quitado — pedido vacío" : "Ítem quitado sin devolver stock — pedido vacío",
+          "success"
+        );
         return;
       }
 
       const result = await refreshAndMaybeAutoClose(supabase, orderId);
       if (result.order) get().patchOrder(result.order);
       else get().removeOrder(orderId);
-      notifyAfterMaybeAutoClose(get().showToast, result, "Ítem quitado del pedido");
+      notifyAfterMaybeAutoClose(
+        get().showToast,
+        result,
+        restoreStock ? "Ítem quitado del pedido" : "Ítem quitado sin devolver stock"
+      );
     } catch (err) {
       set({ orders: snapshot });
       get().showToast(getErrorMessage(err), "error");

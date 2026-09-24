@@ -174,3 +174,18 @@ Los pedidos por tiempo ya **no viven en Cancelados**. Nueva columna `expired` / 
 - Migración canónica `349_admin_expiry_kanban.sql`: versiona reopen/mark-sent, lista con `sent_at`, clear tras +24hs. **Aplicada en fyl-core** (`admin_expiry_kanban`, 2026-09-18).
 - Riesgo reopen sin stock: sin cambio de política (sigue sin tocar stock; ver §2 y nota 60).
 - UI 2026-09-19: chip Ani/Fati fuera del ellipsis de ciudad/tel (no se corta en columnas angostas); badge marrón “⏰ Vencido” oculto dentro de la columna Vencido.
+
+---
+
+## Seguimiento 2026-09-22 — A57282 missing en total + labels de stock
+
+**Caso:** Analia Uro / `A57282`. RT Gris Único marcado `missing` seguía en `total_amount` al cerrar ($118.800 vs $107.800 de ítems `picked`).
+
+**Corrección datos (prod, 2026-09-22):** ítem `09cfe942-…` → `cancelled` + `cancelled_from_status=missing` + `admin_confirmed_missing`; `total_amount=107800`.
+
+**Causa del fantasma que permitió el checkout:** el 17/09, confirmación Kanban ✓ sobre **A56917** (Romina Fester) corrió `rpc_remove_order_item_restore_stock` y reingresó +1 RT Gris. No fue devolución de local ni carga manual: fue “cancelación confirmada → reingreso”. El historial decía `adjustment` / “devolución por fuentes” (confuso).
+
+**Fix sistema (canonical, aplicada fyl-core 2026-09-22):**
+- `354_exclude_missing_from_order_total.sql` — `rpc_admin_mark_item_missing` resta la línea del total; `rpc_close_order` + trigger `trg_orders_total_exclude_missing` evitan facturar missing (cubre también recalc de checkout). **Aplicada.**
+- `355_stock_history_readable_labels.sql` — `change_type` legibles: `cancelacion_confirmada_reingreso`, `sin_stock_baja`, `quitado_sin_reingreso` + backfill; UI `admin/stock.js`. **Aplicada.**
+- `356_order_item_missing_total_trigger.sql` — trigger en `order_items` al pasar a `missing` (cubre split / refresh / update status); mark ya no resta a mano; quitar missing no vuelve a restar. **Aplicada fyl-core 2026-09-22.**

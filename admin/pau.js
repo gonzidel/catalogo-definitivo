@@ -22,6 +22,7 @@ import {
   closeOrder,
   sendOrderToLocal,
   removeOrderItemRestoreStock,
+  askRestoreStockOnRemove,
   ORDER_PAYMENT_METHOD,
   fetchOrderById,
   getOrderStatusChipForCustomers,
@@ -1357,12 +1358,41 @@ async function handleRemoveOrderItem(orderItemId) {
     ? `${item.product_name || "Producto"} · ${item.color || "-"} · Talle ${item.size || "-"} · x${item.quantity}`
     : "este producto";
 
-  if (!confirm(`¿Quitar ${label} del pedido?\n\nEl stock se devolverá como en Pedidos.`)) {
+  const sources = item?.order_item_stock_sources || [];
+  const hasSources = sources.some((s) => Number(s?.qty || 0) > 0);
+  const adminMissing = Boolean(item?.admin_confirmed_missing);
+  let restoreStock = true;
+
+  if (hasSources) {
+    const decision = await askRestoreStockOnRemove({
+      productLabel: label,
+      defaultRestore: !adminMissing,
+      adminConfirmedMissing: adminMissing,
+    });
+    if (decision === null) return;
+    restoreStock = decision;
+    try {
+      const result = await removeOrderItemRestoreStock(orderItemId, { restoreStock });
+      if (result.order_deleted) {
+        state.order = null;
+        showToast(restoreStock ? "Producto quitado. El pedido quedó vacío." : "Quitado sin devolver stock. Pedido vacío.");
+      } else {
+        showToast(restoreStock ? "Producto quitado del pedido" : "Producto quitado sin devolver stock");
+      }
+      await refreshOrderUi();
+    } catch (err) {
+      console.error(err);
+      alert(err.message || "No se pudo quitar el producto.");
+    }
+    return;
+  }
+
+  if (!confirm(`¿Quitar ${label} del pedido?\n\nNo hay fuentes de stock: se quita sin reingreso automático.`)) {
     return;
   }
 
   try {
-    const result = await removeOrderItemRestoreStock(orderItemId);
+    const result = await removeOrderItemRestoreStock(orderItemId, { restoreStock: false });
     if (result.order_deleted) {
       state.order = null;
       showToast("Producto quitado. El pedido quedó vacío.");

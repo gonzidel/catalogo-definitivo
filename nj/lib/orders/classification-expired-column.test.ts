@@ -8,6 +8,7 @@ import {
   getOrderKanbanColumn,
   matchesExpiredTab,
   isExpiredPendingAdminDisassembly,
+  canCloseOrderFromExpiredColumn,
 } from "./classification";
 import {
   isExpiryWarnCooldownActive,
@@ -241,6 +242,44 @@ test("vencido pendiente de desarme → expired", () => {
   });
   assert.equal(isExpiredPendingAdminDisassembly(order), true);
   assert.equal(getOrderKanbanColumn(order), "expired");
+});
+
+test("Vencido soft (≤1 día, picked) → se puede cerrar", () => {
+  const order = baseOrder(); // dismantle_at ~+12h, solo picked
+  assert.equal(getOrderKanbanColumn(order), "expired");
+  assert.equal(canCloseOrderFromExpiredColumn(order), true);
+});
+
+test("Vencido soft + reserved → no cerrar (hay que apartar)", () => {
+  const order = baseOrder({
+    order_items: [
+      {
+        id: "i1",
+        order_id: "o1",
+        variant_id: "v1",
+        product_name: "Prod",
+        color: "Negro",
+        size: "38",
+        quantity: 1,
+        price_snapshot: 1000,
+        status: "reserved",
+      } as AdminOrderItem,
+    ],
+  });
+  assert.equal(canCloseOrderFromExpiredColumn(order), false);
+});
+
+test("plazo ya pasado → no cerrar (falta +24hs primero)", () => {
+  const now = Date.now();
+  const order = baseOrder({
+    dismantle_at: new Date(now - 60 * 60 * 1000).toISOString(),
+  });
+  assert.equal(canCloseOrderFromExpiredColumn(order, now), false);
+});
+
+test("status=expired → no cerrar (Archivar / reopen)", () => {
+  const order = baseOrder({ status: "expired" });
+  assert.equal(canCloseOrderFromExpiredColumn(order), false);
 });
 
 test("cooldown activo dentro de 24h", () => {

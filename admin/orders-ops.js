@@ -540,16 +540,18 @@ export async function sendOrderToLocal(orderId) {
   return data;
 }
 
-/** Quitar ítem del pedido y devolver stock (mismo RPC que `orders.js` → `deleteOrderItemImmediate`). */
-export async function removeOrderItemRestoreStock(orderItemId) {
+/** Quitar ítem del pedido; opcionalmente devolver stock (default true). */
+export async function removeOrderItemRestoreStock(orderItemId, options = {}) {
   if (!isValidUUID(orderItemId)) {
     throw new Error("Ítem inválido");
   }
   const sb = await getSb();
   if (!sb) throw new Error("Supabase no disponible");
 
+  const restoreStock = options.restoreStock !== false;
   const { data, error } = await sb.rpc("rpc_remove_order_item_restore_stock", {
     p_order_item_id: orderItemId,
+    p_restore_stock: restoreStock,
   });
   if (error) throw error;
   if (!data || data.ok !== true) {
@@ -564,6 +566,24 @@ export async function removeOrderItemRestoreStock(orderItemId) {
     }
   }
   return data;
+}
+
+/**
+ * Pregunta si el producto vuelve al stock al quitarlo.
+ * @returns {Promise<boolean|null>} true=reingresa, false=no, null=canceló
+ */
+export async function askRestoreStockOnRemove({ productLabel, defaultRestore = true, adminConfirmedMissing = false } = {}) {
+  const label = String(productLabel || "este producto").trim() || "este producto";
+  const hint = adminConfirmedMissing
+    ? "\n\n(Se agregó con confirmación sin stock: por defecto no debería volver.)"
+    : "";
+  const first = confirm(`¿Quitar ${label} del pedido?${hint}`);
+  if (!first) return null;
+
+  const msg = defaultRestore
+    ? `¿${label} vuelve al stock físico?\n\nAceptar = SÍ vuelve\nCancelar = NO vuelve`
+    : `¿${label} vuelve al stock físico?\n\nSe recomienda NO (agregado sin stock).\n\nAceptar = SÍ vuelve\nCancelar = NO vuelve`;
+  return confirm(msg);
 }
 
 export { resolveQrCodeToOrderItem };

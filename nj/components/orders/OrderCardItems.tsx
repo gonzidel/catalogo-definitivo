@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import {
+  defaultRestoreStockOnRemove,
   formatPriceAr,
   formatSignedPriceAr,
   getOrderExtraDisplayKind,
@@ -10,6 +11,7 @@ import {
   isMissingOrderItem,
   isNoteExtraDisplayItem,
   isSpecialExtraItem,
+  itemHasRestorableStockSources,
   normalizeOrderItemStatus,
 } from "@/lib/orders/domain";
 import { getWaitingSourceKind } from "@/lib/orders/waiting-source";
@@ -45,7 +47,7 @@ interface OrderCardItemsProps {
    *  en espera, sin importar si su origen es local o fábrica -- ambos se
    *  muestran juntos, diferenciados solo por la etiqueta de origen. */
   enableWaitingPick?: boolean;
-  onRemoveItem?: (itemId: string) => void;
+  onRemoveItem?: (itemId: string, options?: { restoreStock?: boolean }) => void;
   onConfirmCancelled?: (itemId: string) => void;
   /** Cancelados: confirmar SIN devolver stock -- para cuando el producto en
    *  realidad no existe en el depósito (ver rpc_admin_remove_cancelled_item_writeoff,
@@ -195,10 +197,11 @@ export default function OrderCardItems({
     await splitReservedItem(orderId, targetId, nPicked, nWaiting, nMissing, waitingSource);
   };
 
-  const handleConfirmRemove = async () => {
+  const handleConfirmRemove = async (restoreStock?: boolean) => {
     if (!pendingItemId || !onRemoveItem) return;
-    await onRemoveItem(pendingItemId);
+    const id = pendingItemId;
     setPendingItemId(null);
+    await onRemoveItem(id, restoreStock === undefined ? undefined : { restoreStock });
   };
 
   const handleConfirmMarkMissing = async () => {
@@ -475,30 +478,98 @@ export default function OrderCardItems({
                 ? getOrderExtraDisplayName(pendingItem)
                 : `${pendingItem.product_name || "Producto"} · ${pendingItem.color || "-"} · ${pendingItem.size || "-"}`}
             </p>
-            <p className="order-modal__text" style={{ fontWeight: 700, color: "#1f2937", marginBottom: 4 }}>
-              {isSpecialExtraItem(pendingItem)
-                ? "Se quita este extra del pedido. No afecta stock."
-                : isMissingOrderItem(pendingItem)
-                  ? "No había stock reservado para este producto — solo se quita del pedido."
-                  : "El producto vuelve al stock disponible."}
-            </p>
-            <div className="order-modal__actions order-modal__actions--big">
-              <button
-                type="button"
-                className="order-card__btn"
-                onClick={() => setPendingItemId(null)}
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                className="order-card__btn order-card__btn--danger"
-                disabled={loadingItemId === pendingItemId}
-                onClick={handleConfirmRemove}
-              >
-                Quitar
-              </button>
-            </div>
+            {isSpecialExtraItem(pendingItem) || isMissingOrderItem(pendingItem) ? (
+              <>
+                <p className="order-modal__text" style={{ fontWeight: 700, color: "#1f2937", marginBottom: 4 }}>
+                  {isSpecialExtraItem(pendingItem)
+                    ? "Se quita este extra del pedido. No afecta stock."
+                    : "No había stock reservado para este producto — solo se quita del pedido."}
+                </p>
+                <div className="order-modal__actions order-modal__actions--big">
+                  <button
+                    type="button"
+                    className="order-card__btn"
+                    onClick={() => setPendingItemId(null)}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    className="order-card__btn order-card__btn--danger"
+                    disabled={loadingItemId === pendingItemId}
+                    onClick={() => void handleConfirmRemove(false)}
+                  >
+                    Quitar
+                  </button>
+                </div>
+              </>
+            ) : itemHasRestorableStockSources(pendingItem) ? (
+              <>
+                <p className="order-modal__text" style={{ fontWeight: 700, color: "#1f2937", marginBottom: 4 }}>
+                  ¿Este producto vuelve al stock físico?
+                  {Boolean(pendingItem.admin_confirmed_missing) ? (
+                    <>
+                      <br />
+                      <span style={{ fontWeight: 500, color: "#b45309" }}>
+                        Se agregó con confirmación sin stock: por defecto no debería volver.
+                      </span>
+                    </>
+                  ) : null}
+                </p>
+                <div className="order-modal__actions order-modal__actions--big" style={{ flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    className="order-card__btn"
+                    onClick={() => setPendingItemId(null)}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    className={`order-card__btn${
+                      defaultRestoreStockOnRemove(pendingItem) ? "" : " order-card__btn--danger"
+                    }`}
+                    disabled={loadingItemId === pendingItemId}
+                    onClick={() => void handleConfirmRemove(false)}
+                  >
+                    No vuelve
+                  </button>
+                  <button
+                    type="button"
+                    className={`order-card__btn${
+                      defaultRestoreStockOnRemove(pendingItem) ? " order-card__btn--primary" : ""
+                    }`}
+                    disabled={loadingItemId === pendingItemId}
+                    onClick={() => void handleConfirmRemove(true)}
+                  >
+                    Sí, vuelve
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="order-modal__text" style={{ fontWeight: 700, color: "#1f2937", marginBottom: 4 }}>
+                  No hay fuentes de stock registradas — se quita sin reingreso automático.
+                </p>
+                <div className="order-modal__actions order-modal__actions--big">
+                  <button
+                    type="button"
+                    className="order-card__btn"
+                    onClick={() => setPendingItemId(null)}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    className="order-card__btn order-card__btn--danger"
+                    disabled={loadingItemId === pendingItemId}
+                    onClick={() => void handleConfirmRemove(false)}
+                  >
+                    Quitar
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       ) : null}

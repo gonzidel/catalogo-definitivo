@@ -902,10 +902,13 @@ export async function rpcRevertOrderToPicked(
 
 export async function rpcRemoveOrderItemRestoreStock(
   supabase: SupabaseClient,
-  orderItemId: string
+  orderItemId: string,
+  options?: { restoreStock?: boolean }
 ) {
+  const restoreStock = options?.restoreStock !== false;
   const { data, error } = await supabase.rpc("rpc_remove_order_item_restore_stock", {
     p_order_item_id: orderItemId,
+    p_restore_stock: restoreStock,
   });
   if (error) throw error;
   if (!data || data.ok !== true) {
@@ -957,7 +960,7 @@ export async function resolveStockPendingOrderRpc(
   const notesObj = parseOrderNotesObject(order.notes);
   const { data: removeData, error: removeError } = await supabase.rpc(
     "rpc_remove_order_item_restore_stock",
-    { p_order_item_id: targetItemId }
+    { p_order_item_id: targetItemId, p_restore_stock: true }
   );
   if (removeError) throw removeError;
   if (removeData && removeData.ok === false) {

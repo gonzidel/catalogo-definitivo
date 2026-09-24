@@ -7,13 +7,16 @@ import {
   computeItemsLineSubtotal,
   computeOrderTotalFromItems,
   countRegularProductUnits,
+  defaultRestoreStockOnRemove,
   formatSignedPriceAr,
   getCustomerFromOrder,
   getOperationalDisplayOrderItems,
   getOrderDisplayNumber,
   getOrderItemLineTotal,
+  isMissingOrderItem,
   isReturnOrderItem,
   isSpecialExtraItem,
+  itemHasRestorableStockSources,
   parseOrderNotesExtrasValues,
   partitionOrderItemsForDisplay,
   type OrderNotesExtras,
@@ -245,10 +248,15 @@ export default function OrderEditModal({ order, onClose }: OrderEditModalProps) 
     }
   };
 
-  const handleConfirmRemove = async () => {
+  const handleConfirmRemove = async (restoreStock?: boolean) => {
     if (!pendingRemoveId) return;
-    await cancelItem(liveOrder.id, pendingRemoveId);
+    const id = pendingRemoveId;
     setPendingRemoveId(null);
+    await cancelItem(
+      liveOrder.id,
+      id,
+      restoreStock === undefined ? undefined : { restoreStock }
+    );
     if (!useOrdersStore.getState().orders.some((o) => o.id === liveOrder.id)) {
       onClose();
     }
@@ -584,23 +592,86 @@ export default function OrderEditModal({ order, onClose }: OrderEditModalProps) 
               {pendingRemoveItem.product_name || "Producto"} · {pendingRemoveItem.color || "-"} ·{" "}
               {pendingRemoveItem.size || "-"}
             </p>
-            <div className="order-modal__actions">
-              <button
-                type="button"
-                className="order-card__btn"
-                onClick={() => setPendingRemoveId(null)}
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                className="order-card__btn order-card__btn--danger"
-                disabled={loadingAction === pendingRemoveId}
-                onClick={() => void handleConfirmRemove()}
-              >
-                Quitar
-              </button>
-            </div>
+            {isSpecialExtraItem(pendingRemoveItem) || isMissingOrderItem(pendingRemoveItem) ? (
+              <div className="order-modal__actions">
+                <button
+                  type="button"
+                  className="order-card__btn"
+                  onClick={() => setPendingRemoveId(null)}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  className="order-card__btn order-card__btn--danger"
+                  disabled={loadingAction === pendingRemoveId}
+                  onClick={() => void handleConfirmRemove(false)}
+                >
+                  Quitar
+                </button>
+              </div>
+            ) : itemHasRestorableStockSources(pendingRemoveItem) ? (
+              <>
+                <p className="order-modal__text" style={{ fontWeight: 700, marginBottom: 4 }}>
+                  ¿Este producto vuelve al stock físico?
+                  {Boolean(pendingRemoveItem.admin_confirmed_missing) ? (
+                    <>
+                      <br />
+                      <span style={{ fontWeight: 500, color: "#b45309" }}>
+                        Se agregó con confirmación sin stock: por defecto no debería volver.
+                      </span>
+                    </>
+                  ) : null}
+                </p>
+                <div className="order-modal__actions" style={{ flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    className="order-card__btn"
+                    onClick={() => setPendingRemoveId(null)}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    className={`order-card__btn${
+                      defaultRestoreStockOnRemove(pendingRemoveItem) ? "" : " order-card__btn--danger"
+                    }`}
+                    disabled={loadingAction === pendingRemoveId}
+                    onClick={() => void handleConfirmRemove(false)}
+                  >
+                    No vuelve
+                  </button>
+                  <button
+                    type="button"
+                    className={`order-card__btn${
+                      defaultRestoreStockOnRemove(pendingRemoveItem) ? " order-card__btn--primary" : ""
+                    }`}
+                    disabled={loadingAction === pendingRemoveId}
+                    onClick={() => void handleConfirmRemove(true)}
+                  >
+                    Sí, vuelve
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="order-modal__actions">
+                <button
+                  type="button"
+                  className="order-card__btn"
+                  onClick={() => setPendingRemoveId(null)}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  className="order-card__btn order-card__btn--danger"
+                  disabled={loadingAction === pendingRemoveId}
+                  onClick={() => void handleConfirmRemove(false)}
+                >
+                  Quitar
+                </button>
+              </div>
+            )}
           </div>
         </div>
       ) : null}

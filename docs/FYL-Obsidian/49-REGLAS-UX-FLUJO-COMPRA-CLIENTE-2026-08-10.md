@@ -1,5 +1,7 @@
 # 49 - Reglas UX del flujo de compra cliente (`/nj`) - 2026-08-10
 
+> **Nota de normalización (2026-09-23):** la referencia histórica de 48 horas para retiro local fue reemplazada por la regla **CANÓNICA** de 36 horas desde la comunicación de que el pedido está listo. No reutilizar el plazo de 48 horas en textos nuevos.
+
 > Nota canónica para agentes y futuras iteraciones UX. Antes de tocar PDP, carrito, dashboard cliente, textos de pedido, home/index o guía de compra, leer esta nota y mantener coherencia con estas reglas.
 
 Ver también: [[41-MIGRACION-NEXTJS-NJ-2026-06-08]], [[43-NJ-DASHBOARD-PRORROGA-CANCELACION-2026-06-09]], [[46-NJ-KANBAN-PEDIDOS-ADMIN-2026-07-15]], [[48-AUDITORIA-ESTADOS-PEDIDOS-Y-FIXES-2026-08-01]], [[19-AUDITORIA-MODULO-CLIENTE-CARRITO]].

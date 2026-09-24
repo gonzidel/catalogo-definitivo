@@ -2596,7 +2596,7 @@ function setupPrintLabelsButtons() {
 }
 
 // Función para eliminar un item del pedido
-async function deleteOrderItem(itemId, orderId) {
+async function deleteOrderItem(itemId, orderId, options = {}) {
   if (!supabase) {
     supabase = await getSupabase();
   }
@@ -2605,10 +2605,12 @@ async function deleteOrderItem(itemId, orderId) {
     return;
   }
 
+  const restoreStock = options.restoreStock !== false;
+
   try {
     const { data: rpcResult, error: rpcError } = await supabase.rpc(
       "rpc_remove_order_item_restore_stock",
-      { p_order_item_id: itemId }
+      { p_order_item_id: itemId, p_restore_stock: restoreStock }
     );
 
     if (rpcError) {
@@ -2688,8 +2690,36 @@ function setupDeleteItemButtons() {
 
       // Confirmar antes de eliminar
       const productName = deleteBtn.closest('.order-item-detail')?.querySelector('.order-item-detail-name')?.textContent?.trim() || 'este producto';
-      if (!confirm(`¿Estás seguro de que deseas eliminar ${productName} de este pedido?\n\nEl stock se restaurará según la trazabilidad registrada del pedido.`)) {
+      if (!confirm(`¿Estás seguro de que deseas eliminar ${productName} de este pedido?`)) {
         return;
+      }
+
+      if (!supabase) {
+        supabase = await getSupabase();
+      }
+      if (!supabase) {
+        alert("No se pudo conectar con la base de datos.");
+        return;
+      }
+
+      let restoreStock = true;
+      const { data: itemProbe } = await supabase
+        .from("order_items")
+        .select("admin_confirmed_missing, order_item_stock_sources(qty)")
+        .eq("id", itemId)
+        .maybeSingle();
+      const sources = itemProbe?.order_item_stock_sources || [];
+      const hasSources = sources.some((s) => Number(s?.qty || 0) > 0);
+      if (hasSources) {
+        const adminMissing = Boolean(itemProbe?.admin_confirmed_missing);
+        const hint = adminMissing
+          ? "\n\n(Se agregó con confirmación sin stock: por defecto no debería volver.)"
+          : "";
+        restoreStock = confirm(
+          `¿${productName} vuelve al stock físico?${hint}\n\nAceptar = SÍ vuelve\nCancelar = NO vuelve`
+        );
+      } else {
+        restoreStock = false;
       }
 
       // Deshabilitar el botón mientras se procesa
@@ -2697,7 +2727,7 @@ function setupDeleteItemButtons() {
       deleteBtn.textContent = "Eliminando...";
 
       try {
-        await deleteOrderItem(itemId, orderId);
+        await deleteOrderItem(itemId, orderId, { restoreStock });
       } catch (error) {
         console.error("❌ Error en setupDeleteItemButtons:", error);
         alert("Error al eliminar el producto: " + (error.message || "Error desconocido"));

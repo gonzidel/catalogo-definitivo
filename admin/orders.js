@@ -1352,6 +1352,7 @@ async function orders2RemoveMissingItemImmediate(itemId) {
 
   const { data: rpcData, error: rpcErr } = await supabase.rpc("rpc_remove_order_item_restore_stock", {
     p_order_item_id: itemId,
+    p_restore_stock: false,
   });
   if (rpcErr) return { ok: false, orderId, reason: rpcErr.message || "rpc failed" };
   if (!rpcData || rpcData.ok !== true) {
@@ -5299,6 +5300,7 @@ async function removeMissingItem(itemId) {
 
   const { error: rpcError } = await supabase.rpc("rpc_remove_order_item_restore_stock", {
     p_order_item_id: itemId,
+    p_restore_stock: false,
   });
 
   if (rpcError) {
@@ -5370,6 +5372,7 @@ async function cleanupCancelledItem(itemId) {
 
   const { error: rpcError } = await supabase.rpc("rpc_remove_order_item_restore_stock", {
     p_order_item_id: itemId,
+    p_restore_stock: true,
   });
 
   if (rpcError) {
@@ -6718,8 +6721,6 @@ async function deleteOrderItemImmediate(itemId) {
   }
   
   if (!itemId) return;
-  const confirmed = confirm("¿Eliminar este producto del pedido? Se ajustará el total y (si corresponde) el stock.");
-  if (!confirmed) return;
 
   if (!supabase) supabase = await getSupabase();
   if (!supabase) {
@@ -6727,8 +6728,46 @@ async function deleteOrderItemImmediate(itemId) {
     return;
   }
 
+  const { data: itemRow, error: itemErr } = await supabase
+    .from("order_items")
+    .select("id, product_name, color, size, quantity, status, admin_confirmed_missing, order_item_stock_sources(qty)")
+    .eq("id", itemId)
+    .maybeSingle();
+  if (itemErr || !itemRow) {
+    alert("No se pudo cargar el producto a eliminar.");
+    return;
+  }
+
+  const label = [
+    itemRow.product_name || "Producto",
+    itemRow.color || "-",
+    itemRow.size ? `Talle ${itemRow.size}` : null,
+  ].filter(Boolean).join(" · ");
+  const status = String(itemRow.status || "").toLowerCase();
+  const sources = itemRow.order_item_stock_sources || [];
+  const hasSources = sources.some((s) => Number(s?.qty || 0) > 0);
+  const adminMissing = Boolean(itemRow.admin_confirmed_missing);
+  let restoreStock = true;
+
+  if (status === "missing") {
+    if (!confirm(`¿Eliminar ${label} del pedido? (faltante — no reingresa stock)`)) return;
+    restoreStock = false;
+  } else if (hasSources) {
+    if (!confirm(`¿Eliminar ${label} del pedido?`)) return;
+    const hint = adminMissing
+      ? "\n\n(Se agregó con confirmación sin stock: por defecto no debería volver.)"
+      : "";
+    restoreStock = confirm(
+      `¿${label} vuelve al stock físico?${hint}\n\nAceptar = SÍ vuelve\nCancelar = NO vuelve`
+    );
+  } else {
+    if (!confirm(`¿Eliminar ${label} del pedido?\n\nSin fuentes de stock: no habrá reingreso automático.`)) return;
+    restoreStock = false;
+  }
+
   const { data: rpcData, error: rpcErr } = await supabase.rpc("rpc_remove_order_item_restore_stock", {
     p_order_item_id: itemId,
+    p_restore_stock: restoreStock,
   });
   if (rpcErr) {
     console.error("❌ rpc_remove_order_item_restore_stock:", rpcErr);
@@ -6746,7 +6785,7 @@ async function deleteOrderItemImmediate(itemId) {
   updateCancelledOrdersBadge();
   await loadOrders();
   if (historyVisible) await loadClosedOrders();
-  alert("✅ Producto eliminado del pedido.");
+  alert(restoreStock ? "✅ Producto eliminado (stock reingresado si correspondía)." : "✅ Producto eliminado sin reingresar stock.");
 }
 
 async function retryNetworkStockPendingOrder(orderRow) {
@@ -6920,6 +6959,7 @@ async function resolveStockPendingOrder(orderId) {
 
   const { data: removeData, error: removeError } = await supabase.rpc("rpc_remove_order_item_restore_stock", {
     p_order_item_id: targetItem.id,
+    p_restore_stock: true,
   });
   if (removeError) {
     console.error("❌ resolveStockPendingOrder: error removiendo ítem conflictivo:", removeError);

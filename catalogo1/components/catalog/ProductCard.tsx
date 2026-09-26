@@ -6,7 +6,8 @@ import Link from "next/link";
 import { resolveImageSrc } from "@/lib/cloudinary";
 import { formatARS, colorDetailHasImage } from "@/lib/utils/catalog";
 import { pickDisplayColorDetail, productHasAnyStock } from "@/lib/utils/catalog-variant-enrich";
-import type { GroupedProduct } from "@/types/catalog";
+import { getColorEffectivePrice } from "@/lib/utils/variant-price";
+import type { ColorDetail, GroupedProduct } from "@/types/catalog";
 
 interface ProductCardProps {
   product: GroupedProduct;
@@ -14,6 +15,7 @@ interface ProductCardProps {
   priority?: boolean;
   activeSizes?: string[];
   categoria?: string;
+  onNavigate?: (element: HTMLElement) => void;
 }
 
 function pickCardColor(
@@ -34,26 +36,19 @@ function renderBadges(product: GroupedProduct) {
       </div>
     );
   }
-  if (product.OfertaActiva) {
-    return (
-      <div className="tags">
-        <div className="talle tag-chip oferta-chip">Oferta</div>
-      </div>
-    );
-  }
   return null;
 }
 
-function renderPrice(product: GroupedProduct) {
-  const hasOffer = product.OfertaActiva;
+function renderPrice(product: GroupedProduct, colorDetail: ColorDetail | null) {
+  const pricing = getColorEffectivePrice(colorDetail, product);
   const hasPromo = Boolean(product.PromoActiva);
-  const original = formatARS(product.Precio);
-  const offerPrice = formatARS(product.PrecioOferta);
+  const original = formatARS(pricing.normalPrice);
+  const offerPrice = pricing.isOffer ? formatARS(pricing.effectivePrice) : "";
 
   if (hasPromo) {
     return <div className="price">{original}</div>;
   }
-  if (hasOffer && offerPrice) {
+  if (pricing.isOffer && offerPrice) {
     return (
       <div className="price">
         <span className="price-original">{original}</span>
@@ -61,7 +56,54 @@ function renderPrice(product: GroupedProduct) {
       </div>
     );
   }
-  return <div className="price">{original}</div>;
+  return <div className="price">{original || formatARS(product.Precio)}</div>;
+}
+
+function SizeRangeLabel({ product }: { product: GroupedProduct }) {
+  const SIZE_ORDER: Record<string, number> = {
+    XS: 0,
+    S: 1,
+    M: 2,
+    L: 3,
+    XL: 4,
+    XXL: 5,
+    XXXL: 6,
+  };
+  const allTalles = Array.from(
+    new Set((product.DetalleColor ?? []).flatMap((dc) => dc.talles ?? []))
+  ).filter(Boolean);
+  const nums = allTalles
+    .map(Number)
+    .filter((n) => !isNaN(n))
+    .sort((a, b) => a - b);
+  if (nums.length >= 2) {
+    return (
+      <span className="card-size-range">
+        {nums[0]} al {nums[nums.length - 1]}
+      </span>
+    );
+  }
+  if (nums.length === 1) {
+    return <span className="card-size-range">T. {nums[0]}</span>;
+  }
+  const letters = allTalles
+    .filter((t) => t.toUpperCase() in SIZE_ORDER)
+    .sort(
+      (a, b) => SIZE_ORDER[a.toUpperCase()] - SIZE_ORDER[b.toUpperCase()]
+    );
+  if (letters.length >= 2) {
+    return (
+      <span className="card-size-range">
+        {letters[0].toUpperCase()} al {letters[letters.length - 1].toUpperCase()}
+      </span>
+    );
+  }
+  if (letters.length === 1) {
+    return (
+      <span className="card-size-range">T. {letters[0].toUpperCase()}</span>
+    );
+  }
+  return null;
 }
 
 export default function ProductCard({
@@ -70,6 +112,7 @@ export default function ProductCard({
   priority = false,
   activeSizes = [],
   categoria = "all",
+  onNavigate,
 }: ProductCardProps) {
   const [activeColor, setActiveColor] = useState(() =>
     pickCardColor(product, activeSizes, categoria)
@@ -78,7 +121,6 @@ export default function ProductCard({
 
   const sizesKey = activeSizes.join(",");
 
-  // Tras enriquecer o cambiar filtro de talle, elegir variante que lo tenga.
   useEffect(() => {
     if (userPickedColor) return;
     const next = pickCardColor(product, activeSizes, categoria);
@@ -129,6 +171,7 @@ export default function ProductCard({
     displayDetail?.images?.[0] ?? product.VariantePrincipal
   );
   const artCode = String(product.Articulo ?? "").trim();
+  const pricing = getColorEffectivePrice(displayDetail, product);
 
   const colors = useMemo(() => {
     const list = visibleColors;
@@ -158,6 +201,7 @@ export default function ProductCard({
       data-filtro2={product.Filtro2 ?? ""}
       data-filtro3={product.Filtro3 ?? ""}
       style={{ display: "block", textDecoration: "none", color: "inherit" }}
+      onClick={(e) => onNavigate?.(e.currentTarget)}
     >
       <div className="main-image-wrapper">
         {mainImage ? (
@@ -186,42 +230,26 @@ export default function ProductCard({
             Art. {artCode}
           </div>
         )}
+        {pricing.isOffer && (
+          <span className="product-card-offer-label" aria-label="Oferta">
+            Oferta
+          </span>
+        )}
       </div>
 
       {renderBadges(product)}
 
       <div className="card-footer">
         <div className="card-footer-top">
-          <div className="card-price">
-            {renderPrice(product)}
+          <div
+            className={`card-price${pricing.isOffer ? " card-price--offer" : ""}`}
+          >
+            {renderPrice(product, displayDetail)}
             <div className="price-wholesale">Precio por mayor</div>
           </div>
         </div>
         <div className="colors-row">
-          {(() => {
-            const SIZE_ORDER: Record<string, number> = { XS: 0, S: 1, M: 2, L: 3, XL: 4, XXL: 5, XXXL: 6 };
-            const allTalles = Array.from(
-              new Set(
-                (product.DetalleColor ?? []).flatMap((dc) => dc.talles ?? [])
-              )
-            ).filter(Boolean);
-            const nums = allTalles.map(Number).filter((n) => !isNaN(n)).sort((a, b) => a - b);
-            if (nums.length >= 2) {
-              return <span className="card-size-range">{nums[0]} al {nums[nums.length - 1]}</span>;
-            }
-            if (nums.length === 1) {
-              return <span className="card-size-range">T. {nums[0]}</span>;
-            }
-            const letters = allTalles.filter((t) => t.toUpperCase() in SIZE_ORDER)
-              .sort((a, b) => SIZE_ORDER[a.toUpperCase()] - SIZE_ORDER[b.toUpperCase()]);
-            if (letters.length >= 2) {
-              return <span className="card-size-range">{letters[0].toUpperCase()} al {letters[letters.length - 1].toUpperCase()}</span>;
-            }
-            if (letters.length === 1) {
-              return <span className="card-size-range">T. {letters[0].toUpperCase()}</span>;
-            }
-            return null;
-          })()}
+          <SizeRangeLabel product={product} />
           <div className="colors">
             {visible.map((dc) => {
               const selected =

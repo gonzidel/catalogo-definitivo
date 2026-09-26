@@ -5,6 +5,7 @@ import Link from "next/link";
 import useSWR from "swr";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { formatARS } from "@/lib/utils/catalog";
+import { getColorEffectivePrice } from "@/lib/utils/variant-price";
 import { resolveImageSrc } from "@/lib/cloudinary";
 import {
   enrichCuratedCardsWithProductColors,
@@ -16,6 +17,12 @@ import {
   toColumnPairs,
 } from "@/lib/banners/curated-banner-layout";
 import type { CuratedBannerConfig, CuratedVariantCardEnriched } from "@/types/banners";
+import { useCatalogSnapshotRevalidate } from "@/lib/catalog/snapshot-version";
+import {
+  shouldFetchBanner,
+  shouldReserveBannerSlot,
+  type BannerPresenceState,
+} from "@/lib/banners/home-banner-presence";
 
 import { CURATED_TAG } from "@/lib/banners/curated-banner-tags";
 
@@ -61,17 +68,27 @@ function VariantCard({ card }: { card: CuratedVariantCardEnriched }) {
   const imageSrc = resolveImageSrc(
     card["Imagen Principal"] as Parameters<typeof resolveImageSrc>[0]
   );
-  const precio =
-    card.OfertaActiva && card.PrecioOferta ? card.PrecioOferta : card.Precio;
+  const pricing = getColorEffectivePrice({
+    Precio: card.Precio,
+    PrecioOferta: card.PrecioOferta,
+    OfertaActiva: card.OfertaActiva,
+  });
+  const hasOffer = pricing.isOffer;
+  const precio = pricing.effectivePrice || card.Precio;
   const colors = card.colors ?? [];
+  const showSinStock = card.hasStock === false;
+  const hrefColor = String(card.Color ?? "").trim();
+  const href = hrefColor
+    ? `/producto/${encodeURIComponent(card.Articulo)}?color=${encodeURIComponent(hrefColor)}`
+    : `/producto/${encodeURIComponent(card.Articulo)}`;
 
   return (
     <Link
-      href={`/producto/${encodeURIComponent(card.Articulo)}`}
-      className="custom-banner-card"
+      href={href}
+      className={`custom-banner-card${hasOffer ? " custom-banner-card--offer" : ""}`}
       style={{ textDecoration: "none", color: "inherit" }}
     >
-      <div className="custom-banner-card-image-wrap">
+      <div className="custom-banner-card-image-wrap" style={{ position: "relative" }}>
         {imageSrc ? (
           <Image
             src={imageSrc}
@@ -84,7 +101,17 @@ function VariantCard({ card }: { card: CuratedVariantCardEnriched }) {
         ) : (
           <div className="custom-banner-card-image skeleton-shimmer" aria-hidden="true" />
         )}
+        {showSinStock && (
+          <div className="card-stock-overlay" aria-hidden="true">
+            <span className="card-stock-overlay__label">Sin stock</span>
+          </div>
+        )}
         <div className="custom-banner-badge">{card.Articulo}</div>
+        {hasOffer && (
+          <span className="custom-banner-offer-label" aria-label="Oferta">
+            Oferta
+          </span>
+        )}
       </div>
       {colors.length > 0 && (
         <div className="custom-banner-colors">
@@ -104,7 +131,11 @@ function VariantCard({ card }: { card: CuratedVariantCardEnriched }) {
         </div>
       )}
       <div className="custom-banner-card-content">
-        <div className="custom-banner-card-price">{formatARS(precio)}</div>
+        <div
+          className={`custom-banner-card-price${hasOffer ? " custom-banner-card-price--offer" : ""}`}
+        >
+          {formatARS(precio)}
+        </div>
         <div className="custom-banner-card-wholesale">Precio por Mayor</div>
       </div>
     </Link>
@@ -159,12 +190,25 @@ function SkeletonScrollPage() {
   );
 }
 
-export default function CuratedBanner() {
-  const { data, isLoading } = useSWR("curated-banner", fetchCuratedBanner, {
-    revalidateOnFocus: false,
-    revalidateOnReconnect: false,
-    dedupingInterval: 300_000,
-  });
+export default function CuratedBanner({
+  expectedVisible = "unknown",
+}: {
+  expectedVisible?: BannerPresenceState;
+}) {
+  const enabled = shouldFetchBanner(expectedVisible);
+  const reserve = shouldReserveBannerSlot(expectedVisible);
+  const { data, isLoading, mutate } = useSWR(
+    enabled ? "curated-banner" : null,
+    fetchCuratedBanner,
+    {
+      revalidateOnFocus: false,
+      revalidateOnReconnect: false,
+      dedupingInterval: 300_000,
+    }
+  );
+  useCatalogSnapshotRevalidate(mutate);
+
+  if (!enabled) return null;
 
   if (!isLoading && !data) return null;
 
@@ -176,12 +220,27 @@ export default function CuratedBanner() {
     ? `/banner/${encodeURIComponent(config.slug)}`
     : "#";
 
+  // Config presente pero sin items válidos → no reservar hueco.
   if (!isLoading && allCards.length === 0) return null;
 
-  const showGrid = isLoading || carouselCards.length > 0;
+  const showSkeleton = isLoading && allCards.length === 0;
+  if (showSkeleton && !reserve) return null;
+
+  const showGrid = showSkeleton || carouselCards.length > 0;
 
   return (
-    <div className="custom-banner-wrapper curated-dynamic-banner">
+    <div
+      className={[
+        "custom-banner-wrapper",
+        "curated-dynamic-banner",
+        "home-banner-slot",
+        "home-banner-slot--curated",
+        showSkeleton ? "is-loading" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      aria-busy={showSkeleton || undefined}
+    >
       <div className="custom-banner-container" style={{ display: "block" }}>
         <div className="custom-banner-header">
           <h2 className="custom-banner-title">
@@ -211,7 +270,7 @@ export default function CuratedBanner() {
 
         {showGrid && (
           <div className="custom-banner-scroll">
-            {isLoading ? (
+            {showSkeleton ? (
               <SkeletonScrollPage />
             ) : (
               pages.map((pagePairs, index) => (

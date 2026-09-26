@@ -462,3 +462,231 @@ body {
   flex-shrink: 0;
   margin-left: auto;
 }
+
+/* ── Search bar (port NJ a11y / suggest) ───────────────────────────────── */
+.search-bar-inner {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+}
+
+.search-bar__field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #f5f5f5;
+  border-radius: 20px;
+  padding: 0 10px;
+  border: 1.5px solid #e8e8e8;
+  transition: border-color 0.15s;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.search-bar__field.is-open,
+.search-bar__field:focus-within {
+  border-color: #CD844D;
+  background: #fff;
+}
+
+.search-bar__icon {
+  flex-shrink: 0;
+  color: #aaa;
+}
+
+.search-bar__input {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  background: none;
+  border: none;
+  outline: none;
+  font-size: 13px;
+  padding: 8px 0;
+  color: #222;
+}
+
+.search-bar-wrapper .search-bar-mobile {
+  display: block !important;
+}
+
+.search-bar__clear {
+  background: #ddd;
+  border: none;
+  border-radius: 50%;
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #666;
+  padding: 0;
+}
+
+.search-bar__clear:active {
+  background: #ccc;
+}
+
+.search-suggest {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  background: #fff;
+  border-radius: 14px;
+  z-index: 999;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.14);
+  border: 1px solid #f0e8df;
+  overflow: hidden;
+}
+
+.search-suggest__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 11px 14px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid #f5f5f5;
+  cursor: pointer;
+  text-align: left;
+}
+
+.search-suggest__row.is-active,
+.search-suggest__row:hover {
+  background: #FFF5EE;
+}
+
+.search-suggest__icon {
+  flex-shrink: 0;
+  color: #999;
+}
+
+.search-suggest__icon--tag {
+  color: #CD844D;
+}
+
+.search-suggest__icon--product {
+  color: #8a5a32;
+}
+
+.search-suggest__row--product .search-suggest__type {
+  color: #8a5a32;
+  font-weight: 600;
+}
+
+.search-suggest__label {
+  flex: 1;
+  font-size: 14px;
+  color: #222;
+  font-weight: 500;
+  min-width: 0;
+}
+
+.search-suggest__type {
+  font-size: 10px;
+  color: #bbb;
+  flex-shrink: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.search-suggest__mark {
+  background: #fde68a;
+  border-radius: 2px;
+  padding: 0 1px;
+  color: inherit;
+}
+
+.search-suggest__all {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 14px;
+  background: #fafafa;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  font-size: 13px;
+  color: #888;
+}
+
+.search-suggest__all strong {
+  color: #CD844D;
+  font-weight: 600;
+}
+
+.search-suggest__all .search-bar__icon {
+  color: #aaa;
+}
+
+/* ── Tag filter bar (chips + footer fijo) ─────────────────────────────── */
+.tag-filter-chips-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.tag-filter-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tag-filter-bar[data-filter-type="search"] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px 9px 13px;
+}
+
+.tag-filter-search-summary {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+/* ── CLS: slots de banners home ───────────────────────────────────────── */
+.home-banner-slot.home-banner-slot--carousel {
+  box-sizing: border-box;
+  min-height: 186px;
+}
+
+.orig-block.fyl-originals-banner.home-banner-slot--carousel {
+  min-height: 202px;
+}
+
+.home-banner-slot.home-banner-slot--curated {
+  box-sizing: border-box;
+  min-height: 268px;
+}
+
+.home-banner-slot.home-banner-slot--special {
+  box-sizing: border-box;
+  min-height: 156px;
+}
+
+.home-banner-slot.is-loading {
+  overflow: hidden;
+}
+
+@media (min-width: 769px) {
+  .home-banner-slot.home-banner-slot--carousel {
+    min-height: 200px;
+  }
+  .home-banner-slot.home-banner-slot--curated {
+    min-height: 300px;
+  }
+}

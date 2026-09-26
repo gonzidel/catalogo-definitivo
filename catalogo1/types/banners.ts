@@ -36,6 +36,8 @@ export interface CuratedVariantCard {
   OfertaActiva: boolean;
   PrecioOferta: number | null;
   ColorHex?: string | null;
+  /** false = no está en snapshot/vista sellable; se muestra OOS. */
+  hasStock?: boolean;
 }
 
 export type CuratedVariantCardEnriched = CuratedVariantCard & {

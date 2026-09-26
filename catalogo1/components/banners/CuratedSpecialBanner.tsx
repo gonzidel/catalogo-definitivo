@@ -14,6 +14,12 @@ import {
   parseSpecialBannerMeta,
 } from "@/lib/banners/curated-banner-tags";
 import type { CuratedBannerConfig, CuratedVariantCardEnriched } from "@/types/banners";
+import { useCatalogSnapshotRevalidate } from "@/lib/catalog/snapshot-version";
+import {
+  shouldFetchBanner,
+  shouldReserveBannerSlot,
+  type BannerPresenceState,
+} from "@/lib/banners/home-banner-presence";
 
 async function fetchCuratedSpecialBanner(): Promise<{
   config: CuratedBannerConfig;
@@ -88,14 +94,28 @@ function HeroPhoto({
   );
 }
 
-export default function CuratedSpecialBanner() {
-  const { data, isLoading } = useSWR("curated-special-banner", fetchCuratedSpecialBanner, {
-    revalidateOnFocus: false,
-    revalidateOnReconnect: false,
-    dedupingInterval: 300_000,
-  });
+export default function CuratedSpecialBanner({
+  expectedVisible = "unknown",
+}: {
+  expectedVisible?: BannerPresenceState;
+}) {
+  const enabled = shouldFetchBanner(expectedVisible);
+  const reserve = shouldReserveBannerSlot(expectedVisible);
+  const { data, isLoading, mutate } = useSWR(
+    enabled ? "curated-special-banner" : null,
+    fetchCuratedSpecialBanner,
+    {
+      revalidateOnFocus: false,
+      revalidateOnReconnect: false,
+      dedupingInterval: 300_000,
+    }
+  );
+  useCatalogSnapshotRevalidate(mutate);
+
+  if (!enabled) return null;
 
   if (!isLoading && !data) return null;
+  // Config presente pero sin items válidos → colapsar.
   if (!isLoading && data && data.heroCards.length === 0) return null;
 
   const config = data?.config;
@@ -105,12 +125,25 @@ export default function CuratedSpecialBanner() {
   const verTodoHref = config
     ? `/banner/${encodeURIComponent(config.slug)}`
     : "#";
+  const showSkeleton = isLoading && !data;
+  if (showSkeleton && !reserve) return null;
 
   return (
-    <section className="curated-special-banner-wrap" aria-label={title}>
+    <section
+      className={[
+        "curated-special-banner-wrap",
+        "home-banner-slot",
+        "home-banner-slot--special",
+        showSkeleton ? "is-loading" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      aria-label={title}
+      aria-busy={showSkeleton || undefined}
+    >
       <Link href={verTodoHref} className="curated-special-banner">
         <div className="curated-special-banner__photos" aria-hidden="true">
-          {isLoading ? (
+          {showSkeleton ? (
             Array.from({ length: 3 }).map((_, i) => (
               <div key={i} className="curated-special-banner__photo" data-index={i}>
                 <div className="curated-special-banner__photo-img skeleton-shimmer" />
@@ -124,7 +157,7 @@ export default function CuratedSpecialBanner() {
         </div>
 
         <div className="curated-special-banner__copy">
-          {isLoading ? (
+          {showSkeleton ? (
             <>
               <span
                 className="curated-special-banner__overline skeleton-shimmer"

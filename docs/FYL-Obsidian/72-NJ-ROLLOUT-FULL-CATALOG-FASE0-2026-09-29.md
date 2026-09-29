@@ -34,6 +34,14 @@ nj pasa a ser el único frontend de `www`. catalogo1 no se forkea: se reproduce 
 
 **Clasificación del seed (datos existentes, no supuestos):** `super_admin` en `admins` → `admin`; otro rol en `admins` → `staff`; resto de `auth.users` → `tester`. Al 2026-09-29: 1 / 9 / 41. Verificar con `362_rollout_experience_verify.sql` §5 antes de aplicar.
 
+**Revisión previa (2026-09-29, sin aplicar en producción):**
+- Producción (solo lectura): 51 cuentas = 1 admin / 9 staff / 41 tester; 0 objetos `rollout_*`; `service_role` con BYPASSRLS y `SELECT` sobre `public.admins`; los default ACL de `public` otorgan todo a anon/authenticated en tablas nuevas (por eso el `REVOKE ALL` explícito).
+- Postgres 17.6 local con la misma composición: aplica, reaplica (idempotente, seed 0 filas nuevas), `_tests` → `362 tests OK`, `_verify` según lo esperado, rollback limpio (0 objetos, `auth.users`/`admins` intactos) y reaplicación posterior OK.
+- Concurrencia: cupo 15 con 60 visitantes en paralelo → 15 `quota` / 45 `quota_full`; 20 requests simultáneos del mismo visitante → 1 grant (1 `quota` + 19 `existing_grant`); 20 cruces `resolve`/`link_user` de la misma cuenta y dispositivo → 1 grant activo, sin deadlocks. Contador = grants quota.
+- **Dependencia:** las RPC son `SECURITY INVOKER`: requieren que `service_role` conserve `SELECT` en `public.admins` (sin eso fallan con `permission denied` y nj cae a catalog sin firmar).
+- **Límite conocido:** el cupo es por `visitor_id`/cuenta. Un dispositivo nuevo sin sesión (o cookies borradas) es un visitante nuevo y puede consumir otro cupo en modo `quota`; el total diario nunca supera `daily_quota`.
+- **Revocación:** `revoked_at` se refleja cuando nj revalida el full firmado (hasta 7 días) o al rotar `ROLLOUT_COOKIE_SECRET`; `kill` es inmediato (cache de modo ≤ 30 s).
+
 ## Código nj
 
 - **Bandera única:** `NEXT_PUBLIC_ROLLOUT_ENABLED=1` (server + boot script; requiere rebuild). Apagada = nj exactamente como antes (todos `full`, sin cookies, `html[data-exp="full"]` en SSR).

@@ -5,6 +5,8 @@ import { getCatalogPage, hasActiveOfertas } from "@/lib/supabase/queries";
 import { slugToCategoria } from "@/lib/utils/catalog";
 import CatalogShell from "@/components/catalog/CatalogShell";
 import CatalogShellSkeleton from "@/components/catalog/CatalogShellSkeleton";
+import JsonLdScript from "@/lib/seo/JsonLdScript";
+import { catalogCategoryJsonLd } from "@/lib/seo/json-ld";
 
 export const revalidate = 300;
 
@@ -50,12 +52,21 @@ export default async function CategoriaPage({ params }: PageProps) {
   const hasOfertas = await hasActiveOfertas();
 
   return (
-    <Suspense
-      fallback={
-        <CatalogShellSkeleton categoria={cat} hasOfertas={hasOfertas} />
-      }
-    >
-      <CatalogContent cat={cat} hasOfertas={hasOfertas} />
-    </Suspense>
+    <>
+      <JsonLdScript
+        data={catalogCategoryJsonLd({
+          name: `${cat} — FYL Moda`,
+          description: `Catálogo mayorista de ${cat.toLowerCase()} femenino. Stock visible, desde 4 pares.`,
+          path: `/${slug}`,
+        })}
+      />
+      <Suspense
+        fallback={
+          <CatalogShellSkeleton categoria={cat} hasOfertas={hasOfertas} />
+        }
+      >
+        <CatalogContent cat={cat} hasOfertas={hasOfertas} />
+      </Suspense>
+    </>
   );
 }

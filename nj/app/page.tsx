@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import type { Metadata } from "next";
 import {
   getCatalogPage,
   hasActiveOfertas,
@@ -16,8 +17,13 @@ import CuratedSpecialBanner from "@/components/banners/CuratedSpecialBanner";
 import CuratedBanner from "@/components/banners/CuratedBanner";
 import InfoBanner from "@/components/banners/InfoBanner";
 import HomeLaunchOnboarding from "@/components/guide/HomeLaunchOnboarding";
+import FullOnly from "@/components/rollout/FullOnly";
 
 export const revalidate = 300;
+
+export const metadata: Metadata = {
+  alternates: { canonical: "/" },
+};
 
 function HomeBannersSlot({
   presence,
@@ -113,7 +119,9 @@ export default async function HomePage() {
 
   return (
     <>
-      <HomeLaunchOnboarding />
+      <FullOnly>
+        <HomeLaunchOnboarding />
+      </FullOnly>
       <Suspense
         fallback={
           <CatalogShellSkeleton

@@ -4,7 +4,30 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { NJ_TEST_CLARITY_PROJECT_ID, isNjTestClarityHost } from "./clarity";
+import {
+  NJ_TEST_CLARITY_PROJECT_ID,
+  PRODUCTION_CLARITY_PROJECT_ID,
+  clarityProjectForHost,
+  isNjTestClarityHost,
+} from "./clarity";
+import { shouldUseProductionAnalytics } from "./hosts";
+
+test("www con rollout activo mide con el proyecto productivo de catalogo1", () => {
+  assert.equal(clarityProjectForHost("www.fylmoda.com.ar", true), PRODUCTION_CLARITY_PROJECT_ID);
+  assert.equal(clarityProjectForHost("fylmoda.com.ar", true), PRODUCTION_CLARITY_PROJECT_ID);
+});
+
+test("www sin rollout (proxy desde catalogo1) no carga Clarity desde nj", () => {
+  assert.equal(clarityProjectForHost("www.fylmoda.com.ar", false), null);
+  assert.equal(shouldUseProductionAnalytics("www.fylmoda.com.ar", false), false);
+});
+
+test("host de test sigue con su proyecto; previews sin Clarity", () => {
+  assert.equal(clarityProjectForHost("nj-fyl-testing.vercel.app", true), NJ_TEST_CLARITY_PROJECT_ID);
+  assert.equal(clarityProjectForHost("nj-fyl-testing.vercel.app", false), NJ_TEST_CLARITY_PROJECT_ID);
+  assert.equal(clarityProjectForHost("nj-abc123-gonzidel.vercel.app", true), null);
+  assert.equal(shouldUseProductionAnalytics("nj-abc123-gonzidel.vercel.app", true), false);
+});
 
 test("el ID del proyecto de test es yekz20nia8", () => {
   assert.equal(NJ_TEST_CLARITY_PROJECT_ID, "yekz20nia8");

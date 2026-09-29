@@ -21,6 +21,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   const banner = banners.find((b) => b.slug === decoded);
   if (!banner) return { title: "Colección — FYL Moda" };
   return {
+    alternates: { canonical: `/banner/${encodeURIComponent(decoded)}` },
     title: `${banner.title} — FYL Moda`,
     description:
       banner.description ||

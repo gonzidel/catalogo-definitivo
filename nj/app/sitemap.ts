@@ -1,6 +1,6 @@
 import type { MetadataRoute } from "next";
-import { NJ_INDEXING_ENABLED } from "@/lib/seo/indexing";
-import { getSiteUrl } from "@/lib/site-url";
+import { LEGACY_LANDING_PATHS, NJ_INDEXING_ENABLED } from "@/lib/seo/indexing";
+import { CANONICAL_SITE_URL } from "@/lib/site-url";
 
 const PUBLIC_PATHS = [
   "/",
@@ -16,12 +16,19 @@ const PUBLIC_PATHS = [
 export default function sitemap(): MetadataRoute.Sitemap {
   if (!NJ_INDEXING_ENABLED) return [];
 
-  const base = getSiteUrl();
   const now = new Date();
-  return PUBLIC_PATHS.map((path) => ({
-    url: `${base}${path === "/" ? "" : path}`,
-    lastModified: now,
-    changeFrequency: path === "/" ? "daily" : "weekly",
-    priority: path === "/" ? 1 : 0.7,
-  }));
+  return [
+    ...PUBLIC_PATHS.map((path) => ({
+      url: path === "/" ? `${CANONICAL_SITE_URL}/` : `${CANONICAL_SITE_URL}${path}`,
+      lastModified: now,
+      changeFrequency: path === "/" ? ("daily" as const) : ("weekly" as const),
+      priority: path === "/" ? 1 : 0.7,
+    })),
+    ...LEGACY_LANDING_PATHS.map((path) => ({
+      url: `${CANONICAL_SITE_URL}${path}`,
+      lastModified: now,
+      changeFrequency: "monthly" as const,
+      priority: 0.6,
+    })),
+  ];
 }

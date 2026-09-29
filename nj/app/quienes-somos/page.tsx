@@ -2,12 +2,38 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
 import HowtoTabs from "@/components/howto/HowtoTabs";
+import { EXP_CATALOG_ONLY, EXP_FULL_ONLY, ROLLOUT_UI_ENABLED } from "@/lib/rollout/client";
 
 export const metadata: Metadata = {
   title: "Quiénes somos | FYL Moda",
   description:
-    "Somos un mayorista familiar de calzado e indumentaria con fábrica propia. Enviamos a todo el país.",
+    "Somos un mayorista familiar de calzado e indumentaria para revendedoras. Enviamos a todo el país.",
+  alternates: { canonical: "/quienes-somos" },
 };
+
+/** Landings servidas desde Firebase: solo existen en este host con el rollout activo (next.config). */
+const RESOURCE_LINKS = [
+  {
+    href: "/revendedoras",
+    label: "Cómo ser revendedora de calzado y ropa femenina",
+  },
+  {
+    href: "/calzado-femenino-por-mayor",
+    label: "Calzado femenino por mayor — modelos y categorías",
+  },
+  {
+    href: "/ropa-femenina-por-mayor",
+    label: "Ropa femenina por mayor — indumentaria mayorista",
+  },
+  {
+    href: "/accesorios-por-mayor",
+    label: "Accesorios por mayor — carteras, cintos y bufandas",
+  },
+  {
+    href: "/lenceria-por-mayor",
+    label: "Lencería y bodies por mayor — surtido libre de talles",
+  },
+];
 
 export default function QuienesSomosPage() {
   return (
@@ -57,17 +83,29 @@ export default function QuienesSomosPage() {
             <span className="about-fyl__check" aria-hidden="true">✔</span>
             Gran variedad de modelos, talles y colores
           </li>
-          <li className="about-fyl__li">
+          <li className={`about-fyl__li ${EXP_FULL_ONLY}`}>
             <span className="about-fyl__check" aria-hidden="true">✔</span>
             Pedido flexible: combiná modelos y talles
           </li>
-          <li className="about-fyl__li">
+          <li className={`about-fyl__li ${EXP_FULL_ONLY}`}>
             <span className="about-fyl__check" aria-hidden="true">✔</span>
             Compra mínima accesible
           </li>
-          <li className="about-fyl__li">
+          <li className={`about-fyl__li ${EXP_FULL_ONLY}`}>
             <span className="about-fyl__check" aria-hidden="true">✔</span>
             Stock visible por color y talle
+          </li>
+          <li className={`about-fyl__li ${EXP_CATALOG_ONLY}`}>
+            <span className="about-fyl__check" aria-hidden="true">✔</span>
+            Consultas por modelo, talle y color
+          </li>
+          <li className={`about-fyl__li ${EXP_CATALOG_ONLY}`}>
+            <span className="about-fyl__check" aria-hidden="true">✔</span>
+            Fotos listas para descargar y compartir
+          </li>
+          <li className={`about-fyl__li ${EXP_CATALOG_ONLY}`}>
+            <span className="about-fyl__check" aria-hidden="true">✔</span>
+            Atención por WhatsApp para coordinar pedidos
           </li>
           <li className="about-fyl__li">
             <span className="about-fyl__check" aria-hidden="true">✔</span>
@@ -162,10 +200,60 @@ export default function QuienesSomosPage() {
         </div>
       </section>
 
+      {ROLLOUT_UI_ENABLED && (
+        <section
+          className={`howto-section about-fyl__block ${EXP_CATALOG_ONLY}`}
+          aria-label="Guías y recursos"
+        >
+          <div className="howto-section__head">
+            <h2>Guías y recursos</h2>
+            <p className="muted">
+              Información detallada sobre cada categoría y cómo trabajamos.
+            </p>
+          </div>
+          <nav
+            style={{ display: "grid", gap: 8, marginTop: 12 }}
+            aria-label="Páginas de recursos"
+          >
+            {RESOURCE_LINKS.map((item) => (
+              <a
+                key={item.href}
+                href={item.href}
+                className="info-card"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 8,
+                  fontWeight: 600,
+                  fontSize: 14,
+                  color: "var(--howto-ink)",
+                  textDecoration: "none",
+                }}
+              >
+                <span>{item.label}</span>
+                <span
+                  style={{
+                    color: "var(--howto-accent)",
+                    flexShrink: 0,
+                    fontSize: 16,
+                  }}
+                >
+                  ›
+                </span>
+              </a>
+            ))}
+          </nav>
+        </section>
+      )}
+
       <section className="howto-final about-fyl__final" aria-label="Acción final">
         <h2>¿Querés empezar?</h2>
-        <Link href="/como-comprar" className="btn btn-ghost btn-wide">
+        <Link href="/como-comprar" className={`btn btn-ghost btn-wide ${EXP_FULL_ONLY}`}>
           Ver cómo comprar
+        </Link>
+        <Link href="/como-comprar" className={`btn btn-ghost btn-wide ${EXP_CATALOG_ONLY}`}>
+          Ver cómo usar el catálogo
         </Link>
       </section>
     </main>

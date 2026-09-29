@@ -6,6 +6,11 @@ import { usePathname } from "next/navigation";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useCartStore } from "@/store/cart";
 import NotificationsPanel from "@/components/notifications/NotificationsPanel";
+import WhatsAppButton from "@/components/contact/WhatsAppButton";
+import WhatsAppIcon from "@/components/contact/WhatsAppIcon";
+import FullOnly from "@/components/rollout/FullOnly";
+import { openAccountPendingNotice } from "@/components/rollout/AccountPendingNotice";
+import { EXP_CATALOG_ONLY, EXP_FULL_ONLY } from "@/lib/rollout/client";
 
 interface UserInfo {
   id: string;
@@ -57,11 +62,63 @@ export default function HeaderActions() {
 
   const isLoggedIn = userInfo !== null;
 
+  const profileStyle = {
+    display: "flex", alignItems: "center", justifyContent: "center",
+    width: 34, height: 34, borderRadius: "50%",
+    textDecoration: "none", overflow: "hidden",
+    border: isLoggedIn ? "2px solid #CD844D" : "none",
+    flexShrink: 0,
+  } as const;
+
+  const profileContent = isLoggedIn && userInfo?.avatarUrl ? (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={userInfo.avatarUrl}
+      alt="Foto de perfil"
+      width={34} height={34}
+      style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "50%" }}
+      referrerPolicy="no-referrer"
+    />
+  ) : isLoggedIn ? (
+    <div style={{
+      width: "100%", height: "100%",
+      background: "#CD844D", color: "#fff",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      fontSize: 13, fontWeight: 700, borderRadius: "50%",
+    }}>
+      {userInfo?.initials}
+    </div>
+  ) : (
+    <svg
+      width="22" height="22" viewBox="0 0 24 24"
+      fill="none" stroke="#555" strokeWidth="1.8"
+      strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+    >
+      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+      <circle cx="12" cy="7" r="4" />
+    </svg>
+  );
+
   return (
     <>
       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+        {/* ── catalog: consulta por WhatsApp en lugar de la campana ── */}
+        <WhatsAppButton
+          variant="header"
+          className={EXP_CATALOG_ONLY}
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "center",
+            width: 36, height: 36, borderRadius: "50%",
+            background: "#25D366", color: "#fff",
+            textDecoration: "none", flexShrink: 0,
+          }}
+        >
+          <WhatsAppIcon width={20} height={20} fill="currentColor" />
+        </WhatsAppButton>
+
         {/* ── Campana de notificaciones ── */}
         <button
+          className={EXP_FULL_ONLY}
           onClick={() => setPanelOpen((v) => !v)}
           aria-label="Notificaciones"
           style={{
@@ -94,55 +151,37 @@ export default function HeaderActions() {
         {!isDashboard && (
           <Link
             href={isLoggedIn ? "/dashboard" : "/login"}
-            aria-label={isLoggedIn ? "Mi cuenta" : "Iniciar sesión"}
-            style={{
-              display: "flex", alignItems: "center", justifyContent: "center",
-              width: 34, height: 34, borderRadius: "50%",
-              textDecoration: "none", overflow: "hidden",
-              border: isLoggedIn ? "2px solid #CD844D" : "none",
-              flexShrink: 0,
-            }}
+            className={isLoggedIn ? EXP_FULL_ONLY : undefined}
+            aria-label={isLoggedIn ? "Mi cuenta" : "Ingresar"}
+            style={profileStyle}
           >
-            {isLoggedIn && userInfo?.avatarUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={userInfo.avatarUrl}
-                alt="Foto de perfil"
-                width={34} height={34}
-                style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "50%" }}
-                referrerPolicy="no-referrer"
-              />
-            ) : isLoggedIn ? (
-              <div style={{
-                width: "100%", height: "100%",
-                background: "#CD844D", color: "#fff",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                fontSize: 13, fontWeight: 700, borderRadius: "50%",
-              }}>
-                {userInfo?.initials}
-              </div>
-            ) : (
-              <svg
-                width="22" height="22" viewBox="0 0 24 24"
-                fill="none" stroke="#555" strokeWidth="1.8"
-                strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
-              >
-                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-                <circle cx="12" cy="7" r="4" />
-              </svg>
-            )}
+            {profileContent}
           </Link>
+        )}
+        {/* catalog + cuenta sin full: el avatar explica cómo seguir en vez de ir al dashboard */}
+        {!isDashboard && isLoggedIn && (
+          <button
+            type="button"
+            className={EXP_CATALOG_ONLY}
+            onClick={openAccountPendingNotice}
+            aria-label="Mi cuenta"
+            style={{ ...profileStyle, background: "none", padding: 0, cursor: "pointer" }}
+          >
+            {profileContent}
+          </button>
         )}
       </div>
 
       {/* ── Notifications panel (portal) ── */}
-      <NotificationsPanel
-        customerId={userInfo?.id ?? null}
-        syntheticNotifications={syntheticNotifications}
-        open={panelOpen}
-        onClose={() => setPanelOpen(false)}
-        onUnreadCountChange={handleUnreadCount}
-      />
+      <FullOnly>
+        <NotificationsPanel
+          customerId={userInfo?.id ?? null}
+          syntheticNotifications={syntheticNotifications}
+          open={panelOpen}
+          onClose={() => setPanelOpen(false)}
+          onUnreadCountChange={handleUnreadCount}
+        />
+      </FullOnly>
     </>
   );
 }

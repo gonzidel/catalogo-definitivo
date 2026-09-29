@@ -25,6 +25,85 @@ body {
   --cfb-bar-h: 50px;
 }
 
+/* ── Rollout full/catalog ────────────────────────────────────────────────
+   html[data-exp] lo fija un script inline antes del primer paint. Sin
+   atributo se pinta catalog: nunca se muestra carrito/pedido y luego se oculta. */
+html:not([data-exp="full"]) .exp-full-only {
+  display: none !important;
+}
+html[data-exp="full"] .exp-catalog-only {
+  display: none !important;
+}
+
+.pdp-size-chip--readonly {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  cursor: default;
+}
+
+.info-banner-top--visual .info-banner-top__wa-icon {
+  width: 46px;
+  height: 46px;
+  transform: none;
+  flex-shrink: 0;
+  filter: drop-shadow(0 2px 4px rgba(184, 114, 63, 0.25));
+}
+
+.account-notice {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+  z-index: 70;
+  max-width: 420px;
+  margin: 0 auto;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: #fff;
+  border: 1px solid #f0ebe4;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.14);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.account-notice__text {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.45;
+  color: #333;
+}
+.account-notice__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.account-notice__cta {
+  flex: 1;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: #25d366;
+  color: #fff;
+  font-weight: 700;
+  text-decoration: none;
+  touch-action: manipulation;
+}
+.account-notice__close {
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 10px;
+  background: #f5f1ec;
+  color: #666;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
 /* logo.png es ~544×459; sin height el header se come el viewport en desktop. */
 .header-logo {
   height: 40px;

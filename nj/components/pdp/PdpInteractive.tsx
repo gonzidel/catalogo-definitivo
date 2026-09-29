@@ -8,6 +8,9 @@ import PdpGallery from "./PdpGallery";
 import PdpRecommended from "./PdpRecommended";
 import { useCartStore } from "@/store/cart";
 import { useProfileGate } from "@/components/profile/ProfileGateProvider";
+import WhatsAppButton from "@/components/contact/WhatsAppButton";
+import { useExperience } from "@/hooks/useExperience";
+import { EXP_CATALOG_ONLY, EXP_FULL_ONLY } from "@/lib/rollout/client";
 import { endExclusive, tryBeginExclusive } from "@/lib/cart/intra-tab-lock";
 import { formatARS, colorDetailHasImage } from "@/lib/utils/catalog";
 import {
@@ -139,6 +142,7 @@ export default function PdpInteractive({
   const addItem = useCartStore((s) => s.addItem);
   const setPdpOwnBarActive = useCartStore((s) => s.setPdpOwnBarActive);
   const { requireProfileComplete } = useProfileGate();
+  const experience = useExperience();
 
   // Always resolve to a valid color — fallback to first if not found
   const colorDetail: ColorDetail | null =
@@ -283,6 +287,7 @@ export default function PdpInteractive({
   }, [sellableFor, sellableStatus]);
 
   async function handleAddAllToCart() {
+    if (experience !== "full") return;
     if (totalSelectedQty === 0) return;
     if (sellableStatus !== "ready") return;
     if (!tryBeginExclusive(addInFlightRef)) return;
@@ -530,11 +535,12 @@ export default function PdpInteractive({
             allSelections={allSelectedRows}
             onSelectionChange={handleSizeChange}
             qtyListRef={qtyListRef}
+            readOnly={experience !== "full"}
           />
 
           {/* Hint solo antes del primer talle tocado; al seleccionar, desaparece. */}
           {!hasAnySelectionRows && !addedFlash && (
-            <div className="pdp-hint">
+            <div className={`pdp-hint ${EXP_FULL_ONLY}`}>
               <svg
                 className="pdp-hint__icon"
                 width="16"
@@ -586,6 +592,7 @@ export default function PdpInteractive({
               .filter(Boolean)
               .join(" ")}
           />
+          <div className={EXP_CATALOG_ONLY} style={{ height: 80 }} aria-hidden="true" />
 
           <PdpRecommended
             articulo={product.Articulo}
@@ -598,8 +605,32 @@ export default function PdpInteractive({
       </div>
 
       <div
+        id="product-modal-footer"
+        className={EXP_CATALOG_ONLY}
+        style={{
+          position: "fixed",
+          bottom: 60,
+          left: 0,
+          right: 0,
+          zIndex: 60,
+          background: "#fff",
+          borderTop: "1px solid #f0ebe4",
+          padding: "10px 16px 12px",
+          boxShadow: "0 -4px 20px rgba(0,0,0,0.1)",
+        }}
+      >
+        <WhatsAppButton
+          articulo={product.Articulo}
+          sku={variantInfo?.sku ?? product.Articulo}
+          color={activeColor}
+          variant="pdp"
+        />
+      </div>
+
+      <div
         className={[
           "pdp-sticky-bar",
+          EXP_FULL_ONLY,
           stickyVisible ? "is-visible" : "",
         ]
           .filter(Boolean)

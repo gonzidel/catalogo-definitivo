@@ -94,6 +94,7 @@ Ver [[10-BACKLOG-NO-CRITICO]]: columnas legacy, RLS fino, helpers duplicados, `r
 - [[64-AUDITORIA-STOCK-FANTASMA-CHECKOUT-2026-09-14]] — **Stock fantasma real**: cliente compró un talle "sin stock" por bug en `rpc_remove_order_item_restore_stock` (fix 342) + ventas sin descuento real (`sell_without_stock`, `admin_confirmed_missing`, watchlist 341). Endurecido checkout client-side (cache 20s, `available===null`). Corrupción silenciosa hallada y reparada en `client/dashboard-instant.js`.
 - [[65-AUDITORIA-PEDIDOS-EXPIRED-INVISIBLES-Y-STOCK-FANTASMA-2026-09-15]] — **Pedidos invisibles y stock fantasma**: `expired` vuelve al Kanban, búsqueda global, fixes 344/345 y cancelación cliente verificada 346.
 - [[66-AUDITORIA-RPCS-PEDIDOS-DUPLICADOS-Y-CARRERAS-2026-09-17]] — **Auditoría profunda RPCs/pedidos**: duplicados ejecutables, drift del mapa/guard canónico, alta admin que puede resucitar terminales, atomicidad, grants y staging no reproducible. Plan 347+.
+- [[72-NJ-ROLLOUT-FULL-CATALOG-FASE0-2026-09-29]] — **Rollout `full`/`catalog` en nj (Fase 0)**: catalogo1 como modo `catalog` dentro de nj, cupo diario atómico (migración 362 **no aplicada**), cookies firmadas, `/nj` puerta de testers, SEO/analytics host-aware. Sin cambios en producción.
 
 ---
 

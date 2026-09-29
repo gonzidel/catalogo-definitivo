@@ -8,6 +8,13 @@ import CartFloatingBar from "@/components/cart/CartFloatingBar";
 import ProfileGateProvider from "@/components/profile/ProfileGateProvider";
 import GaLoader from "@/components/analytics/GaLoader";
 import ClarityLoader from "@/components/analytics/ClarityLoader";
+import MetaPixelLoader from "@/components/analytics/MetaPixelLoader";
+import FullOnly from "@/components/rollout/FullOnly";
+import ExperienceSync from "@/components/rollout/ExperienceSync";
+import AccountPendingNotice from "@/components/rollout/AccountPendingNotice";
+import JsonLdScript from "@/lib/seo/JsonLdScript";
+import { organizationJsonLd, webSiteJsonLd } from "@/lib/seo/json-ld";
+import { ROLLOUT_UI_ENABLED, experienceBootScript } from "@/lib/rollout/client";
 import { NJ_INDEXING_ENABLED } from "@/lib/seo/indexing";
 import { getSiteUrl } from "@/lib/site-url";
 
@@ -15,8 +22,7 @@ export const metadata: Metadata = {
   metadataBase: new URL(getSiteUrl()),
   title: "FYL Moda | Calzado e Indumentaria Femenina por Mayor",
   description:
-    "Mayorista de calzado e indumentaria femenina con fábrica propia. Stock visible, surtido libre de talles desde 4 pares. Envíos a todo el país.",
-  alternates: { canonical: "/" },
+    "Mayorista de calzado e indumentaria femenina para revendedoras. Stock visible y surtido libre de modelos y talles. Envíos a todo el país.",
   robots: NJ_INDEXING_ENABLED
     ? { index: true, follow: true }
     : { index: false, follow: false },
@@ -64,8 +70,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="es">
+    // data-exp lo fija el boot script antes de hidratar.
+    <html lang="es" data-exp={ROLLOUT_UI_ENABLED ? undefined : "full"} suppressHydrationWarning>
       <head>
+        <script dangerouslySetInnerHTML={{ __html: experienceBootScript() }} />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link rel="preconnect" href="https://res.cloudinary.com" crossOrigin="anonymous" />
@@ -89,8 +97,11 @@ export default function RootLayout({
         `,
           }}
         />
+        <JsonLdScript data={[organizationJsonLd(), webSiteJsonLd()]} />
         <GaLoader />
         <ClarityLoader />
+        <MetaPixelLoader />
+        <ExperienceSync />
         <ProfileGateProvider>
           {/* Header needs Suspense because SearchBar uses useSearchParams */}
           <Suspense fallback={<HeaderFallback />}>
@@ -99,7 +110,10 @@ export default function RootLayout({
           <div id="catalog-view">
             {children}
           </div>
-          <CartFloatingBar />
+          <FullOnly>
+            <CartFloatingBar />
+          </FullOnly>
+          <AccountPendingNotice />
           <Suspense fallback={null}>
             <BottomNav />
           </Suspense>

@@ -5,16 +5,110 @@ import HowtoTabs from "@/components/howto/HowtoTabs";
 import FaqSection from "@/components/howto/FaqSection";
 import { PurchaseFlowInline } from "@/components/guide/PurchaseFlowGuide";
 import { PurchaseGuideButton } from "@/components/guide/PurchaseGuideClient";
+import JsonLdScript from "@/lib/seo/JsonLdScript";
+import { faqJsonLd } from "@/lib/seo/json-ld";
+import { CATALOG_FAQ_ITEMS, FULL_FAQ_ITEMS } from "@/lib/constants/faq";
+import { EXP_CATALOG_ONLY, EXP_FULL_ONLY } from "@/lib/rollout/client";
 
+// Metadata y FAQ JSON-LD de catalog: es la variante que ven los crawlers (sin cookie full).
 export const metadata: Metadata = {
-  title: "Cómo comprar | FYL Moda",
+  title: "Cómo usar el catálogo | FYL Moda",
   description:
-    "Comprá por mayor en 4 pasos. Mínimo 4 productos combinables. Enviamos a todo el país.",
+    "Explorá productos, revisá stock, descargá fotos y consultanos por WhatsApp para coordinar tu pedido.",
+  alternates: { canonical: "/como-comprar" },
 };
 
-export default function ComoComprarPage() {
+function CatalogHowto() {
   return (
-    <main className="howto" aria-label="Cómo comprar por mayor">
+    <div className={EXP_CATALOG_ONLY} style={{ display: "contents" }}>
+      <section className="howto-hero" aria-labelledby="howto-title-catalog">
+        <Suspense>
+          <HowtoTabs />
+        </Suspense>
+        <h2 id="howto-title-catalog">Cómo usar el catálogo</h2>
+        <p className="howto-hero__lead">
+          Explorá productos, revisá stock, descargá fotos y consultanos por
+          WhatsApp para coordinar tu pedido.
+        </p>
+      </section>
+
+      <section className="howto-section" aria-labelledby="howto-steps-title-catalog">
+        <div className="howto-section__head">
+          <h2 id="howto-steps-title-catalog">Cómo hacer tu pedido</h2>
+        </div>
+        <ol className="steps" aria-label="Pasos para comprar">
+          <li className="step">
+            <div className="step__num">1</div>
+            <div className="step__body">
+              <h3>Elegí los modelos que querés vender</h3>
+              <p>Explorá el catálogo y revisá fotos, talles y stock disponible</p>
+            </div>
+          </li>
+          <li className="step">
+            <div className="step__num">2</div>
+            <div className="step__body">
+              <h3>Prepará tus ventas con las fotos</h3>
+              <p>Podés descargar o compartir imágenes con tus clientas</p>
+            </div>
+          </li>
+          <li className="step">
+            <div className="step__num">3</div>
+            <div className="step__body">
+              <h3>Consultanos por WhatsApp</h3>
+              <p>Te ayudamos a armar y confirmar tu pedido</p>
+            </div>
+          </li>
+        </ol>
+        <div className="howto-hero__actions">
+          <Link href="/" className="btn btn-primary btn-wide">
+            Volver al catálogo
+          </Link>
+        </div>
+      </section>
+
+      <section className="howto-section" aria-labelledby="howto-notes-title-catalog">
+        <div className="howto-section__head">
+          <h2 id="howto-notes-title-catalog">Antes de hacer tu pedido</h2>
+          <p className="muted">Datos importantes para comprar</p>
+        </div>
+        <div className="cards">
+          <article className="info-card">
+            <h3>Stock disponible</h3>
+            <p>Podés ver qué hay disponible antes de consultar</p>
+          </article>
+          <article className="info-card">
+            <h3>Envíos a todo el país</h3>
+            <p>
+              Hacemos envíos a todo el país. También podés retirar en
+              Resistencia con coordinación previa
+            </p>
+            <p>Resistencia, Chaco.</p>
+          </article>
+          <article className="info-card">
+            <h3>Pagos simples</h3>
+            <p>Transferencia o contra reembolso según tu localidad</p>
+          </article>
+        </div>
+      </section>
+
+      <FaqSection items={CATALOG_FAQ_ITEMS} id="howto-faq-catalog" />
+
+      <section className="howto-final" aria-label="Acción final">
+        <h2>¿Querés consultar un modelo?</h2>
+        <p className="muted">
+          Entrá al catálogo, elegí el producto y escribinos por WhatsApp.
+        </p>
+        <Link href="/" className="btn btn-primary btn-wide">
+          Ver catálogo
+        </Link>
+      </section>
+    </div>
+  );
+}
+
+function FullHowto() {
+  return (
+    <div className={EXP_FULL_ONLY} style={{ display: "contents" }}>
       <section className="howto-hero" aria-labelledby="howto-title">
         <Suspense>
           <HowtoTabs />
@@ -121,7 +215,7 @@ export default function ComoComprarPage() {
         </div>
       </section>
 
-      <FaqSection />
+      <FaqSection items={FULL_FAQ_ITEMS} />
 
       <section className="howto-final" aria-label="Acción final">
         <h2>¿Lista para armar tu pedido?</h2>
@@ -133,6 +227,18 @@ export default function ComoComprarPage() {
           Ir al catálogo
         </Link>
       </section>
+    </div>
+  );
+}
+
+export default function ComoComprarPage() {
+  return (
+    <main className="howto" aria-label="Cómo comprar por mayor">
+      <JsonLdScript
+        data={faqJsonLd(CATALOG_FAQ_ITEMS.map((item) => ({ question: item.q, answer: item.a })))}
+      />
+      <CatalogHowto />
+      <FullHowto />
 
       <section className="howto-section" aria-label="Redes sociales">
         <div className="howto-section__head">

@@ -1,9 +1,14 @@
 import type { MetadataRoute } from "next";
+import { headers } from "next/headers";
 import { NJ_INDEXING_ENABLED } from "@/lib/seo/indexing";
-import { getSiteUrl } from "@/lib/site-url";
+import { CANONICAL_SITE_URL } from "@/lib/site-url";
+import { isCanonicalHost } from "@/lib/rollout/request";
 
-export default function robots(): MetadataRoute.Robots {
-  if (!NJ_INDEXING_ENABLED) {
+export default async function robots(): Promise<MetadataRoute.Robots> {
+  const h = await headers();
+  const host = h.get("x-forwarded-host") ?? h.get("host");
+
+  if (!NJ_INDEXING_ENABLED || !isCanonicalHost(host)) {
     return {
       rules: [{ userAgent: "*", disallow: "/" }],
       sitemap: undefined,
@@ -12,8 +17,12 @@ export default function robots(): MetadataRoute.Robots {
 
   return {
     rules: [
-      { userAgent: "*", allow: "/", disallow: ["/admin", "/dashboard", "/api/"] },
+      {
+        userAgent: "*",
+        allow: "/",
+        disallow: ["/admin", "/dashboard", "/login", "/api/", "/auth/", "/client/"],
+      },
     ],
-    sitemap: `${getSiteUrl()}/sitemap.xml`,
+    sitemap: `${CANONICAL_SITE_URL}/sitemap.xml`,
   };
 }

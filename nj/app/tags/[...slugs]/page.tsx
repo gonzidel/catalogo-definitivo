@@ -18,6 +18,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   return {
     title: `${tags.join(" · ")} — FYL Moda`,
     description: `Catálogo mayorista filtrado por: ${tags.join(", ")}. Stock visible, desde 4 pares.`,
+    alternates: { canonical: `/tags/${slugs.join("/")}` },
   };
 }
 

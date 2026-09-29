@@ -1,6 +1,8 @@
 # 58 — Pre-launch NJ / plan de cutover — 2026-09-04
 
 > Auditoría previa del 2026-09-04. **Fuente de verdad de lo hecho después:** [[59-NJ-CHECKOUT-IDEMPOTENCY-ROOT-PREP-2026-09-04]]. Varias secciones de abajo (basePath local, UUID por click, “no hay cuenta test”, “no se crearon pedidos 309”) quedaron stale.
+>
+> **2026-09-29:** el cutover pasa a ser un rollout gradual `full`/`catalog` dentro de nj. §H (SEO), §I (redirects: ahora 302 hasta el 100 %) y §M (analytics) quedan reemplazados por [[72-NJ-ROLLOUT-FULL-CATALOG-FASE0-2026-09-29]].
 
 Preparación para que `nj/` sea el frontend público. **Cutover no ejecutado.**
 

@@ -4,6 +4,17 @@ import { cookies } from "next/headers";
 import type { NextRequest } from "next/server";
 import { isInitialProfileComplete } from "@/lib/auth/profile-complete";
 import { resolveAuthRedirectBase } from "@/lib/site-url";
+import { EXPERIENCE_MIRROR_COOKIE, VISITOR_COOKIE } from "@/lib/rollout/constants";
+import { rolloutDay } from "@/lib/rollout/day";
+import { isVisitorId } from "@/lib/rollout/decide";
+import { writeExperienceCookies } from "@/lib/rollout/response";
+import {
+  isRolloutMisconfigured,
+  isStaffUser,
+  linkUserExperience,
+  readRolloutEnv,
+  type RolloutDecision,
+} from "@/lib/rollout/server";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -46,6 +57,49 @@ export async function GET(request: NextRequest) {
       const {
         data: { user },
       } = await supabase.auth.getUser();
+
+      const env = readRolloutEnv();
+      const rolloutActive = env.enabled && !isRolloutMisconfigured(env) && !env.forceExperience;
+      let decision: RolloutDecision | null = null;
+      const cookieVid = cookieStore.get(VISITOR_COOKIE)?.value;
+      const visitorId = isVisitorId(cookieVid) ? cookieVid : crypto.randomUUID();
+
+      if (user && rolloutActive) {
+        try {
+          decision = await linkUserExperience(env, { visitorId, authUserId: user.id });
+        } catch (err) {
+          // El middleware vuelve a decidir en /dashboard con la sesión ya creada.
+          console.error("[rollout] link_user failed", err);
+        }
+      }
+
+      // En kill el grant se conserva firmado, pero /dashboard queda solo para staff verificado.
+      const killMode = decision?.reason === "kill";
+      const keepsGrant = killMode && decision?.hasGrant === true;
+      const entersFullArea =
+        decision !== null &&
+        (decision.experience === "full" || (killMode && user !== null && (await isStaffUser(env, user.id))));
+
+      if (decision && !entersFullArea) {
+        const res = NextResponse.redirect(`${redirectBase}/`);
+        await writeExperienceCookies(res, {
+          secure: request.nextUrl.protocol === "https:",
+          visitorId,
+          setVisitor: !isVisitorId(cookieVid),
+          sign: keepsGrant
+            ? { experience: "full", source: decision.source, day: rolloutDay() }
+            : killMode
+              ? null
+              : { experience: "catalog", source: null, day: rolloutDay() },
+          cookieSecret: env.cookieSecret,
+          display: "catalog",
+          displaySource: null,
+          currentMirror: cookieStore.get(EXPERIENCE_MIRROR_COOKIE)?.value,
+          notice: true,
+        });
+        return res;
+      }
+
       if (user) {
         const { data: customer } = await supabase
           .from("customers")
@@ -57,7 +111,20 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      return NextResponse.redirect(`${redirectBase}${safeNext}`);
+      const res = NextResponse.redirect(`${redirectBase}${safeNext}`);
+      if (decision && entersFullArea) {
+        await writeExperienceCookies(res, {
+          secure: request.nextUrl.protocol === "https:",
+          visitorId,
+          setVisitor: !isVisitorId(cookieVid),
+          sign: decision.hasGrant ? { experience: "full", source: decision.source, day: rolloutDay() } : null,
+          cookieSecret: env.cookieSecret,
+          display: decision.experience,
+          displaySource: decision.experience === "full" ? decision.source : null,
+          currentMirror: cookieStore.get(EXPERIENCE_MIRROR_COOKIE)?.value,
+        });
+      }
+      return res;
     }
   }
 

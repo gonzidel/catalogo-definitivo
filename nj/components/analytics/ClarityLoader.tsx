@@ -2,22 +2,20 @@
 
 import { useEffect, useState } from "react";
 import Script from "next/script";
-import {
-  NJ_TEST_CLARITY_PROJECT_ID,
-  isNjTestClarityHost,
-} from "@/lib/analytics/clarity";
+import { clarityProjectForHost } from "@/lib/analytics/clarity";
+import { ROLLOUT_UI_ENABLED } from "@/lib/rollout/client";
 
-/** Microsoft Clarity — solo en los hosts de NJ_TEST_CLARITY_HOSTS. */
+/** Microsoft Clarity: proyecto de test en NJ_TEST_CLARITY_HOSTS, productivo en www tras el cambio de host. */
 export default function ClarityLoader() {
   // El host solo se conoce en el navegador; el primer render debe ser null en
   // servidor y cliente para no romper la hidratación.
-  const [enabled, setEnabled] = useState(false);
+  const [projectId, setProjectId] = useState<string | null>(null);
 
   useEffect(() => {
-    setEnabled(isNjTestClarityHost(window.location.hostname));
+    setProjectId(clarityProjectForHost(window.location.hostname, ROLLOUT_UI_ENABLED));
   }, []);
 
-  if (!enabled) return null;
+  if (!projectId) return null;
 
   return (
     <Script id="nj-clarity-init" strategy="afterInteractive">
@@ -27,7 +25,7 @@ export default function ClarityLoader() {
           c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
           t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
           y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
-        })(window, document, "clarity", "script", "${NJ_TEST_CLARITY_PROJECT_ID}");
+        })(window, document, "clarity", "script", "${projectId}");
       `}
     </Script>
   );

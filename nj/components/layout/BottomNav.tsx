@@ -3,6 +3,9 @@
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { useCartStore, selectCartCount } from "@/store/cart";
+import WhatsAppButton from "@/components/contact/WhatsAppButton";
+import WhatsAppIcon from "@/components/contact/WhatsAppIcon";
+import { EXP_CATALOG_ONLY, EXP_FULL_ONLY } from "@/lib/rollout/client";
 
 /** Rutas donde "Pedido" es el tab activo. */
 function isPedidoPath(pathname: string | null | undefined): boolean {
@@ -84,9 +87,20 @@ export default function BottomNav() {
         <span className="label">Buscar</span>
       </button>
 
+      <WhatsAppButton
+        variant="nav"
+        className={`bottom-nav-item ${EXP_CATALOG_ONLY}`}
+        style={{ textDecoration: "none", color: "inherit" }}
+      >
+        <div className="icon">
+          <WhatsAppIcon fill="#25D366" />
+        </div>
+        <span className="label">WhatsApp</span>
+      </WhatsAppButton>
+
       <Link
         href={cartCount > 0 ? "/dashboard?tab=cart" : "/dashboard?tab=active-order"}
-        className={`bottom-nav-item${isPedido ? " active" : ""}`}
+        className={`bottom-nav-item ${EXP_FULL_ONLY}${isPedido ? " active" : ""}`}
         id="nav-pedidos"
         style={{ position: "relative" }}
       >

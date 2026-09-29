@@ -4,6 +4,8 @@ Auditoría **solo de arquitectura/deploy**. Sin cambios de routing.
 
 Evidencia: `catalogo1/vercel.json`, `catalogo1/next.config.ts`, `nj/next.config.ts`, `firebase.json`, HEAD/GET a URLs vivas el 2026-09-04.
 
+**2026-09-29:** diseño aprobado para que nj sea dueño de `www` y catalogo1 se reproduzca como modo `catalog` dentro de nj (Fase 0 en rama, sin deploy). Ver [[72-NJ-ROLLOUT-FULL-CATALOG-FASE0-2026-09-29]].
+
 **Drift 2026-09-04 noche:** el **código local** de `nj/` ya no tiene `basePath: "/nj"` (rewrites internos `/nj` → raíz). El **deploy live** (`nj-gonzidel` y rewrite de `www`) sigue como este mapa. No se movió `www`. Ver [[59-NJ-CHECKOUT-IDEMPOTENCY-ROOT-PREP-2026-09-04]] §3.
 
 ---

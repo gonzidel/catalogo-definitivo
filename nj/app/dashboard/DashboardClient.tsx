@@ -10,7 +10,13 @@ import {
   localPickupFulfilledDismissKey,
   isSpecialExtraItem,
 } from "@/lib/orders/domain";
-import { getCustomerOrderDeadlineDate, isShortPickupDeadlineWindow } from "@/lib/orders/deadline";
+import {
+  calendarDaysUntil,
+  customerDaysLeft,
+  getCustomerOrderDeadlineDate,
+  isOrderExpired,
+  isShortPickupDeadlineWindow,
+} from "@/lib/orders/deadline";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { loadWarehouses } from "@/lib/supabase/order-queries";
 import type { WarehouseIds } from "@/types/orders";
@@ -37,12 +43,13 @@ function buildDeadlineNotifications(
   if (!order || !["active", "closing_soon"].includes(order.status)) return [];
   if (order.local_deferred_pickup && !order.dismantle_at) return [];
 
-  const oneDayMs = 1000 * 60 * 60 * 24;
   const now = Date.now();
-  const deadline = getCustomerOrderDeadlineDate(order).getTime();
-  const daysLeft = Math.max(0, Math.ceil((deadline - now) / oneDayMs));
+  const deadline = getCustomerOrderDeadlineDate(order);
+  const isExpired = isOrderExpired(order, now);
+  const calendarDays = calendarDaysUntil(deadline, now);
+  const daysLeft = customerDaysLeft(deadline, now);
 
-  if (daysLeft !== 1 && daysLeft !== 2 && daysLeft !== 0) return [];
+  if (!isExpired && (calendarDays < 0 || calendarDays > 2)) return [];
 
   const totalItems = order.order_items
     .filter((i) => i.status !== "cancelled" && i.status !== "missing" && Number(i.quantity ?? 0) > 0)
@@ -54,21 +61,32 @@ function buildDeadlineNotifications(
   );
   const hasMin = totalItems >= closeMin;
   const missing = Math.max(0, closeMin - totalItems);
-  const tier = daysLeft === 2 ? 5 : 6;
+  const tier = calendarDays === 2 ? 5 : 6;
+  const isToday = daysLeft === 0;
+  const deadlineTime = deadline.toLocaleTimeString("es-AR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
 
   const message = isLocalZone
     ? tier === 5
       ? "Tu pedido vence pronto. Cerralo cuando quieras para que lo preparemos."
-      : "Tu pedido vence mañana.<br>Cerralo hoy para que podamos prepararlo."
+      : isToday
+        ? `Tu pedido vence hoy.<br>Cerralo antes de las ${deadlineTime} para que podamos prepararlo.`
+        : "Tu pedido vence mañana.<br>Cerralo hoy para que podamos prepararlo."
     : tier === 5
       ? hasMin
-        ? "Faltan 2 días para que se cierre tu pedido. Cerralo cuando quieras para que lo preparemos."
-        : `Faltan 2 días para que se cierre tu pedido.<br>Te faltan ${missing} productos para alcanzar el mínimo y poder cerrarlo.`
-      : hasMin
-        ? "Tu pedido se cierra mañana.<br>Cerralo hoy para que podamos prepararlo."
-        : `Tu pedido se cierra mañana.<br>Te faltan ${missing} productos para alcanzar el mínimo.<br>Si no lo completás, el pedido se desarmará.`;
+        ? `Faltan ${daysLeft} días para que se cierre tu pedido. Cerralo cuando quieras para que lo preparemos.`
+        : `Faltan ${daysLeft} días para que se cierre tu pedido.<br>Te faltan ${missing} productos para alcanzar el mínimo y poder cerrarlo.`
+      : isToday
+        ? hasMin
+          ? `Tu pedido se cierra hoy.<br>Cerralo antes de las ${deadlineTime} para que podamos prepararlo.`
+          : `Tu pedido se cierra hoy a las ${deadlineTime}.<br>Te faltan ${missing} productos para alcanzar el mínimo.<br>Si no lo completás, el pedido se desarmará.`
+        : hasMin
+          ? "Tu pedido se cierra mañana.<br>Cerralo hoy para que podamos prepararlo."
+          : `Tu pedido se cierra mañana.<br>Te faltan ${missing} productos para alcanzar el mínimo.<br>Si no lo completás, el pedido se desarmará.`;
 
-  const isExpired = daysLeft === 0;
   const shortWindow = Boolean(
     order.local_deferred_pickup &&
       (isShortPickupDeadlineWindow(order.created_at, order.dismantle_at) ||

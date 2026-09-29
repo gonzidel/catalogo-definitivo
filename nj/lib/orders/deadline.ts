@@ -112,32 +112,6 @@ export function getCustomerOrderDeadlineDate(order: OrderDeadlineInput): Date {
   return getOrderDeadlineDate(order.created_at, getCustomerFacingDismantleAt(order));
 }
 
-export function orderDaysRemainingForOrder(
-  order: OrderDeadlineInput,
-  now = Date.now()
-): number {
-  return orderDaysRemaining(
-    order.created_at,
-    getCustomerFacingDismantleAt(order),
-    now
-  );
-}
-
-/** Días restantes en bloques de 24hs (no calendario) hasta el vencimiento. */
-export function orderDaysRemaining(
-  createdAt: string,
-  dismantleAt?: string | null,
-  now = Date.now()
-): number {
-  if (dismantleAt) {
-    const t = new Date(dismantleAt).getTime();
-    if (!Number.isNaN(t)) return Math.max(0, Math.ceil((t - now) / ONE_DAY_MS));
-  }
-  const created = new Date(createdAt).getTime();
-  const elapsed = Math.floor((now - created) / ONE_DAY_MS);
-  return Math.max(0, ORDER_DISMANTLE_DAYS - elapsed);
-}
-
 /**
  * Diferencia en días CALENDARIO (no bloques de 24hs) entre el vencimiento y
  * ahora, para que "mañana" y "hoy más tarde" no se confundan aunque falten
@@ -149,6 +123,18 @@ export function calendarDaysUntil(deadline: Date, now: number): number {
   const n = new Date(now);
   n.setHours(0, 0, 0, 0);
   return Math.round((d.getTime() - n.getTime()) / ONE_DAY_MS);
+}
+
+/**
+ * Días restantes que ve la clienta (header, chip, banner y campanita deben
+ * usar solo este valor). 0 = "Hoy" y 1 = "Mañana" por calendario; desde 2
+ * días calendario cuenta bloques de 24 h hacia arriba (2d 10h → 3), porque
+ * el chip no muestra horas. Negativo si ya pasó el día del vencimiento.
+ */
+export function customerDaysLeft(deadline: Date, now: number): number {
+  const calendarDays = calendarDaysUntil(deadline, now);
+  if (calendarDays <= 1) return calendarDays;
+  return Math.ceil((deadline.getTime() - now) / ONE_DAY_MS);
 }
 
 export function isOrderExpired(order: OrderDeadlineInput, now = Date.now()): boolean {

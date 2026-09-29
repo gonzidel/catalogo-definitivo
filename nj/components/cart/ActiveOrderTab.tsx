@@ -13,12 +13,11 @@ import { getCustomerFacingItemStatus } from "@/lib/orders/waiting-source";
 import { groupCustomerOrderItems, type GroupedCustomerOrderItem } from "@/lib/orders/customer-order-display";
 import {
   getCustomerOrderDeadlineDate,
-  calendarDaysUntil,
+  customerDaysLeft,
   isOrderExpired,
   getLocalPickupDeadlineExplanation,
   isShortPickupDeadlineWindow,
   formatRemainingCountdown,
-  orderDaysRemainingForOrder,
 } from "@/lib/orders/deadline";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import {
@@ -286,32 +285,32 @@ function formatTime(d: Date): string {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
-function formatDeadlineChip(calendarDaysLeft: number, deadline: Date): string {
-  if (calendarDaysLeft > 5) return `Vence ${formatShortDate(deadline)}`;
-  if (calendarDaysLeft >= 2) return `${calendarDaysLeft} días`;
-  if (calendarDaysLeft === 1) return "Mañana";
+function formatDeadlineChip(daysLeft: number, deadline: Date): string {
+  if (daysLeft > 5) return `Vence ${formatShortDate(deadline)}`;
+  if (daysLeft >= 2) return `${daysLeft} días`;
+  if (daysLeft === 1) return "Mañana";
   return `Hoy · ${formatTime(deadline)}`;
 }
 
-function getDeadlineExplanation(calendarDaysLeft: number, deadline: Date): string {
+function getDeadlineExplanation(daysLeft: number, deadline: Date): string {
   const when = formatWeekdayDate(deadline);
   const time = formatTime(deadline);
-  if (calendarDaysLeft > 5) {
+  if (daysLeft > 5) {
     return `Fecha límite de tu pedido. Podés agregar productos y cerrarlo hasta el ${when} a las ${time}. Después quedará cerrado para cambios.`;
   }
-  if (calendarDaysLeft === 5) {
+  if (daysLeft === 5) {
     return `Te quedan 5 días. Podés seguir agregando productos y cerrar tu pedido cuando termines. Vence el ${when} a las ${time}.`;
   }
-  if (calendarDaysLeft === 4) {
+  if (daysLeft === 4) {
     return `Te quedan 4 días. Podés seguir agregando productos hasta el ${when} a las ${time}. Recordá cerrarlo antes del vencimiento.`;
   }
-  if (calendarDaysLeft === 3) {
+  if (daysLeft === 3) {
     return `Te quedan 3 días. Terminá de agregar productos y cerrá tu pedido antes del ${when} a las ${time}.`;
   }
-  if (calendarDaysLeft === 2) {
+  if (daysLeft === 2) {
     return `Te quedan 2 días. Tu pedido vence el ${when} a las ${time}. Cerralo antes de ese horario para evitar que quede cerrado para cambios.`;
   }
-  if (calendarDaysLeft === 1) {
+  if (daysLeft === 1) {
     return `Tu pedido vence mañana. Cerrá tu pedido antes de las ${time}. Después de ese horario quedará cerrado para cambios.`;
   }
   return `Tu pedido vence hoy. Cerrá tu pedido antes de las ${time}. Después ya no podrás agregar ni modificar productos.`;
@@ -1566,15 +1565,11 @@ export default function ActiveOrderTab({
 
   const _now         = nowMs ?? 0;
   const isExpired    = nowMs !== null ? (isOrderExpired(order, _now) && !isClosed) : false;
-  const daysLeft     = nowMs !== null ? orderDaysRemainingForOrder(order, _now) : 99;
   const isReadOnly   = isExpired;
 
-  // Fecha real de vencimiento — en días CALENDARIO (no bloques de 24hs,
-  // para no confundir "mañana" con "hoy más tarde"). Se usa tanto para
-  // el chip "N días"/"Mañana"/"Hoy" del header como para el aviso de
-  // abajo, para que ambos siempre digan lo mismo.
-  const deadlineDate      = getCustomerOrderDeadlineDate(order);
-  const calendarDaysLeft  = nowMs !== null ? calendarDaysUntil(deadlineDate, _now) : 99;
+  // Único conteo de días para título, chip, banner y panel del header.
+  const deadlineDate = getCustomerOrderDeadlineDate(order);
+  const daysLeft     = nowMs !== null ? customerDaysLeft(deadlineDate, _now) : 99;
   const shortPickupWindow = Boolean(
     order.local_deferred_pickup &&
       (isShortPickupDeadlineWindow(order.created_at, order.dismantle_at) ||
@@ -1593,8 +1588,8 @@ export default function ActiveOrderTab({
     !isLocalDeferredReady &&
     !isExpired &&
     !isClosed &&
-    calendarDaysLeft >= 0 &&
-    calendarDaysLeft <= 3;
+    daysLeft >= 0 &&
+    daysLeft <= 3;
 
   async function handleCancelItem(itemId: string) {
     setCancelingId(itemId);
@@ -2483,9 +2478,13 @@ export default function ActiveOrderTab({
                 ? (missingItems.length === 1
                     ? "Falta resolver 1 producto sin stock"
                     : `Falta resolver ${missingItems.length} productos sin stock`)
-                : daysLeft <= 3 && !isExpired
+                : daysLeft >= 0 && daysLeft <= 3 && !isExpired
                   ? headerAltPhase
-                    ? (daysLeft === 0 ? "Vence hoy: cerrá el pedido" : `Te quedan ${daysLeft} día${daysLeft !== 1 ? "s" : ""} para cerrarlo`)
+                    ? (daysLeft === 0
+                        ? "Vence hoy: cerrá el pedido"
+                        : daysLeft === 1
+                          ? "Vence mañana: cerrá el pedido"
+                          : `Te quedan ${daysLeft} días para cerrarlo`)
                     : "Pedido abierto"
                   : "Pedido abierto"}
           </div>
@@ -2508,7 +2507,7 @@ export default function ActiveOrderTab({
               )}
               {showPickupCountdown
                 ? formatRemainingCountdown(deadlineDate, _now)
-                : formatDeadlineChip(calendarDaysLeft, deadlineDate)}
+                : formatDeadlineChip(daysLeft, deadlineDate)}
             </button>
           )}
         </div>
@@ -2556,7 +2555,7 @@ export default function ActiveOrderTab({
                 ? `Tenés ${formatRemainingCountdown(deadlineDate, _now)} para retirarlo (vence el ${formatWeekdayDate(deadlineDate)} a las ${formatTime(deadlineDate)}).`
                 : shortPickupWindow
                   ? getLocalPickupDeadlineExplanation(deadlineDate, _now)
-                  : getDeadlineExplanation(calendarDaysLeft, deadlineDate)
+                  : getDeadlineExplanation(daysLeft, deadlineDate)
               : order.status === "closing_soon"
                 ? isDeferredLocalZone
                   ? `Tu pedido está próximo a vencer. Cerralo para que podamos prepararlo.`
@@ -2582,18 +2581,18 @@ export default function ActiveOrderTab({
         {warnSoon && !showStatusInfo && !showDaysInfo && (
           <div className="active-order-header__deadline-banner">
             <div className="active-order-header__deadline-title">
-              {calendarDaysLeft === 0
+              {daysLeft === 0
                 ? "Tu pedido vence hoy"
-                : calendarDaysLeft === 1
+                : daysLeft === 1
                   ? "Tu pedido vence mañana"
-                  : `Tu pedido vence en ${calendarDaysLeft} días`}
+                  : `Tu pedido vence en ${daysLeft} días`}
             </div>
             <div className="active-order-header__deadline-text">
-              {calendarDaysLeft === 0
+              {daysLeft === 0
                 ? `Cerrá el pedido antes de las ${formatTime(deadlineDate)}. Si vence el plazo, el pedido se cancelará.`
-                : calendarDaysLeft === 1
+                : daysLeft === 1
                   ? "Cerrá el pedido hoy. Si vence el plazo, el pedido se cancelará."
-                : calendarDaysLeft === 2
+                : daysLeft === 2
                     ? "Cerrá tu pedido para mantener estos productos en el pedido."
                     : "Cerrá tu pedido antes del vencimiento para mantener estos productos."}
               {!canSend && !isLocalPickupZone && ` Te faltan ${remaining} unidad${remaining !== 1 ? "es" : ""} para poder cerrarlo.`}

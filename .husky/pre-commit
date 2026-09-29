@@ -1,5 +1,6 @@
 #!/usr/bin/env sh
-.
+. "$(dirname -- "$0")/_/husky.sh"
+
 # Ejecutar escaneo de secretos solo en archivos staged antes de permitir el commit
 echo "Running staged secrets scan (pre-commit)..."
 npm run test:staged-secrets || {

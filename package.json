@@ -13,7 +13,7 @@
     "test": "node test/check-config.js",
     "test:critical-rpcs": "node test/check-critical-rpc-whitelist.mjs",
     "test:secrets": "node test/scan-secrets.js",
-    "test:staged-secrets": "node test/scan-staged-secrets.js",
+    "test:staged-secrets": "node test/scan-staged-secrets.cjs",
     "prepare": "husky install",
     "generate-customers-sql": "node scripts/generate-customers-sql.js",
     "generate-customers-batches": "node scripts/generate-customers-sql-batches.js",

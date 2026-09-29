@@ -1,7 +1,7 @@
 # 72 — Rollout `full` / `catalog` en nj — Fase 0 — 2026-09-29
 
 > **Estado:** Fase 0 terminada en rama `feat/nj-rollout-fase0` (worktree `E:\PROYECTOS\fyl-rollout-fase0`, rebaseada sobre `af349fb` = `fix/customer-link-nj-onboarding` con `origin/main` integrado; commit local, sin push).
-> **Nada aplicado en producción:** migración 362 sin aplicar, dominio sin mover, sin deploy productivo (solo preview), sin indexación, sin 301.
+> **Producción:** migración 362 **aplicada** el 2026-09-29 (ver §Aplicación en producción), modo `paused`. Dominio sin mover, sin deploy productivo de nj (solo preview), sin indexación, sin 301.
 > Reemplaza los planes de SEO (§H), redirects (§I) y analytics (§M) de [[58-NJ-PRELAUNCH-CUTOVER-2026-09-04]].
 
 ## Qué es
@@ -26,7 +26,19 @@ nj pasa a ser el único frontend de `www`. catalogo1 no se forkea: se reproduce 
 - Avatar de una cuenta logueada en catalog: tarjeta “Tu cuenta: {nombre o email}” + **Cerrar sesión** (en catalog no hay otra forma de cerrar sesión: el logout vive en `/dashboard`). Sin dashboard nuevo ni menciones a rollout/FULL/cupos.
 - Procedimiento de lanzamiento: `paused` → comprobar producción → `quota` = 15. Al activar `quota`, quien quedó en catalog durante `paused` ese mismo día vuelve a ser candidato.
 
-## Base de datos — `supabase/canonical/362_*` (NO aplicada)
+## Base de datos — `supabase/canonical/362_*`
+
+### Aplicación en producción (TÉCNICA VERIFICADA, 2026-09-29)
+
+- Proyecto `dtfznewwvsadkorxwzft`. `apply_migration` con nombre `362_rollout_experience` y versión `20260929231113`. Se envió el archivo del commit `7b06dd9` sin cambios (SHA256 `A0D42BB6…E95226`).
+- Chequeos previos: 51 cuentas (1/9/41), 0 altas posteriores al corte, `service_role` con SELECT en `public.admins`, 0 objetos `rollout_*`.
+- `_verify` (solo lectura):
+  - 3 tablas con RLS activo y 0 policies. Privilegios solo para `postgres` y `service_role`; `service_role` recibe `ALL` por el default ACL del proyecto, igual que en las demás tablas. anon/authenticated no tienen acceso.
+  - 5 funciones: EXECUTE solo para `service_role`, sin SECURITY DEFINER, con `search_path=""`.
+  - Configuración: 1 fila, `paused`, `daily_quota` 15.
+  - 51 grants, todos `seed:362`: `super_admin` → admin 1, `collaborator` → staff 9, tester 41. Ninguno tiene `visitor_id`, vínculo ni revocación.
+  - Ninguna cuenta del grupo previo quedó sin grant. Contador diario vacío y 0 grants de cuota.
+- `_tests` **no** se ejecutó en producción. El modo no se cambió y no se hicieron llamadas a las RPC.
 
 | Archivo | Contenido |
 |---|---|

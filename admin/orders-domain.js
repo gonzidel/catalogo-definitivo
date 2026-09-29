@@ -171,12 +171,23 @@ export function isCancelledOrderItem(item) {
   return String(item?.status || "").trim().toLowerCase() === "cancelled";
 }
 
-/** Ítems vigentes para imprimir, contar y cobrar. Acepta un pedido o un array. */
+/** Ítem marcado sin stock (no se factura ni se imprime en ticket/rótulo). */
+export function isMissingOrderItem(item) {
+  return String(item?.status || "").trim().toLowerCase() === "missing";
+}
+
+/**
+ * Ítems vigentes para imprimir, contar y cobrar.
+ * Excluye cancelled (quitados) y missing (sin stock) — paridad con
+ * orders.total_amount post-354/356. Acepta un pedido o un array.
+ */
 export function getActiveOrderItems(orderOrItems) {
   const items = Array.isArray(orderOrItems)
     ? orderOrItems
     : (Array.isArray(orderOrItems?.order_items) ? orderOrItems.order_items : []);
-  return items.filter((item) => !isCancelledOrderItem(item));
+  return items.filter(
+    (item) => !isCancelledOrderItem(item) && !isMissingOrderItem(item)
+  );
 }
 
 export function sumOrderItemQuantities(items) {

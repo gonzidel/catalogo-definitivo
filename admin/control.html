@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex" />
+  <title>Control | Publicaciones recientes</title>
+  <link rel="stylesheet" href="../styles.css" />
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #f5f5f5;
+      margin: 0;
+      color: #222;
+    }
+    .ctrl-wrap {
+      max-width: none;
+      margin: 0 auto;
+      padding: 12px;
+    }
+    .ctrl-topbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+    .ctrl-topbar h1 {
+      font-size: 16px;
+      font-weight: 700;
+      margin: 0;
+      flex: 1 1 auto;
+    }
+    .ctrl-topbar a {
+      padding: 6px 10px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      text-decoration: none;
+      color: inherit;
+      font-size: 13px;
+      background: #fff;
+    }
+    .ctrl-topbar a:hover { background: #f9fafb; }
+
+    .ctrl-filters {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 10px;
+    }
+    .ctrl-filters button {
+      flex: 1 1 0;
+      min-width: 90px;
+      padding: 10px 12px;
+      border: 2px solid #ddd;
+      border-radius: 8px;
+      background: #fff;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      color: #444;
+    }
+    .ctrl-filters button.active {
+      border-color: #CD844D;
+      background: #CD844D;
+      color: #fff;
+    }
+
+    .ctrl-days {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 10px;
+    }
+    .ctrl-days button {
+      flex: 1 1 0;
+      min-width: 90px;
+      padding: 8px 12px;
+      border: 2px solid #ddd;
+      border-radius: 8px;
+      background: #fff;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      color: #444;
+    }
+    .ctrl-days button.active {
+      border-color: #059669;
+      background: #059669;
+      color: #fff;
+    }
+
+    .ctrl-search {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 10px 12px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      font-size: 14px;
+      margin-bottom: 10px;
+      background: #fff;
+    }
+
+    .ctrl-footwear {
+      display: none;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+    .ctrl-footwear.visible { display: flex; }
+    .ctrl-footwear button {
+      flex: 1 1 0;
+      min-width: 90px;
+      padding: 8px 12px;
+      border: 2px solid #ddd;
+      border-radius: 8px;
+      background: #fff;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      color: #444;
+    }
+    .ctrl-footwear button.active {
+      border-color: #2563eb;
+      background: #2563eb;
+      color: #fff;
+    }
+
+    .ctrl-meta {
+      font-size: 12px;
+      color: #666;
+      margin: 0 0 8px;
+    }
+    .ctrl-meta .drop-hint { color: #b45309; }
+
+    .ctrl-status {
+      padding: 24px 12px;
+      text-align: center;
+      color: #666;
+      font-size: 14px;
+    }
+    .ctrl-status.error { color: #b91c1c; }
+
+    .ctrl-scroll {
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      background: #fff;
+      border-radius: 10px;
+      border: 1px solid #e5e7eb;
+    }
+
+    .ctrl-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      min-width: 640px;
+    }
+    .ctrl-table th,
+    .ctrl-table td {
+      border-bottom: 1px solid #eee;
+      padding: 8px 6px;
+      text-align: center;
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+    .ctrl-table th {
+      background: #f8fafc;
+      font-weight: 700;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+    .ctrl-table th.size-col {
+      min-width: 36px;
+      font-size: 11px;
+      padding: 6px 4px;
+    }
+    .ctrl-table td.size-col {
+      font-variant-numeric: tabular-nums;
+      font-weight: 600;
+      padding: 6px 4px;
+      color: #333;
+    }
+    .ctrl-table td.size-col.empty { color: #ccc; font-weight: 400; }
+
+    .ctrl-table .col-thumb { width: 48px; padding: 6px; }
+    .ctrl-table .col-name {
+      text-align: left;
+      min-width: 120px;
+      max-width: 180px;
+      white-space: normal;
+      font-weight: 600;
+      font-size: 12px;
+      line-height: 1.3;
+    }
+    .ctrl-table .col-name .color {
+      display: block;
+      font-weight: 500;
+      color: #666;
+      font-size: 11px;
+    }
+    .ctrl-table .col-total,
+    .ctrl-table .col-inbound {
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      min-width: 52px;
+      background: #fff;
+    }
+    .ctrl-table .col-supplier {
+      text-align: left;
+      min-width: 88px;
+      max-width: 120px;
+      white-space: normal;
+      font-size: 11px;
+      color: #555;
+      background: #fff;
+    }
+    .ctrl-table .col-date {
+      font-size: 11px;
+      color: #555;
+      min-width: 76px;
+      background: #fff;
+    }
+
+    /* Columnas finales siempre visibles al scrollear talles */
+    .ctrl-table th.col-total,
+    .ctrl-table td.col-total {
+      position: sticky;
+      right: 238px;
+      z-index: 2;
+      box-shadow: -4px 0 6px -4px rgba(0,0,0,0.12);
+    }
+    .ctrl-table th.col-inbound,
+    .ctrl-table td.col-inbound {
+      position: sticky;
+      right: 178px;
+      z-index: 2;
+    }
+    .ctrl-table th.col-supplier,
+    .ctrl-table td.col-supplier {
+      position: sticky;
+      right: 78px;
+      z-index: 2;
+      min-width: 100px;
+    }
+    .ctrl-table th.col-date,
+    .ctrl-table td.col-date {
+      position: sticky;
+      right: 0;
+      z-index: 2;
+      min-width: 78px;
+      box-shadow: -2px 0 4px -2px rgba(0,0,0,0.08);
+    }
+    .ctrl-table th.col-total,
+    .ctrl-table th.col-inbound,
+    .ctrl-table th.col-supplier,
+    .ctrl-table th.col-date {
+      background: #f8fafc;
+      z-index: 3;
+    }
+    .ctrl-table tr.stock-drop td.col-total,
+    .ctrl-table tr.stock-drop td.col-inbound,
+    .ctrl-table tr.stock-drop td.col-supplier,
+    .ctrl-table tr.stock-drop td.col-date {
+      background: #fff7ed;
+    }
+
+    .ctrl-thumb {
+      width: 40px;
+      height: 40px;
+      object-fit: cover;
+      border-radius: 6px;
+      background: #f3f4f6;
+      display: block;
+    }
+    .ctrl-thumb-ph {
+      width: 40px;
+      height: 40px;
+      border-radius: 6px;
+      background: #e5e7eb;
+      display: block;
+    }
+
+    .ctrl-table tr.stock-drop {
+      background: #fff7ed;
+    }
+    .ctrl-table tr.stock-drop td:first-child {
+      box-shadow: inset 3px 0 0 #ea580c;
+    }
+
+    @media (min-width: 768px) {
+      .ctrl-wrap { padding: 20px; }
+      .ctrl-topbar h1 { font-size: 18px; }
+      .ctrl-filters button { flex: 0 0 auto; min-width: 110px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="ctrl-wrap">
+    <div class="ctrl-topbar">
+      <h1 id="ctrl-title">Control — publicados</h1>
+      <a href="./index.html">← Admin</a>
+      <a href="./publications.html">Publicaciones</a>
+    </div>
+
+    <div class="ctrl-days" role="group" aria-label="Período">
+      <button type="button" data-days="7" class="active">7 días</button>
+      <button type="button" data-days="30">30 días</button>
+    </div>
+
+    <div class="ctrl-filters" role="group" aria-label="Categoría">
+      <button type="button" data-category="calzado" class="active">Calzado</button>
+      <button type="button" data-category="ropa">Ropa</button>
+      <button type="button" data-category="otro">Otro</button>
+    </div>
+
+    <input
+      type="search"
+      id="ctrl-search"
+      class="ctrl-search"
+      placeholder="Buscar por nombre o color…"
+      autocomplete="off"
+    />
+
+    <div id="ctrl-footwear" class="ctrl-footwear visible" role="group" aria-label="Talles calzado">
+      <button type="button" data-segment="nino">Niño</button>
+      <button type="button" data-segment="adulto" class="active">Adulto</button>
+    </div>
+
+    <p id="ctrl-meta" class="ctrl-meta"></p>
+    <div id="ctrl-status" class="ctrl-status">Cargando…</div>
+    <div id="ctrl-table-wrap" class="ctrl-scroll" hidden></div>
+  </div>
+
+  <script type="module" src="../scripts/config.js"></script>
+  <script defer src="../scripts/vendor/supabase-js.bundle.min.js?v=m260607"></script>
+  <script type="module" src="../scripts/supabase-client.js?v=m260607"></script>
+  <script type="module" src="./control.js?v=m260925b"></script>
+</body>
+</html>

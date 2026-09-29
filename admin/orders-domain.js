@@ -166,6 +166,16 @@ export function isRetiroBoardOrderForLegacyPedidos(order, transportLabel = "") {
   return false;
 }
 
+/**
+ * Paridad con `orders_one_open_per_customer_idx`: un retiro ya cobrado queda
+ * `closed` para siempre (nunca pasa a `sent`) y no bloquea un pedido nuevo.
+ */
+export function countsAsOpenOrderForCustomer(order) {
+  if (!order) return false;
+  if (String(order.status || "").trim().toLowerCase() !== "closed") return true;
+  return !parseOrderNotesObject(order.notes).local_pickup_fulfilled_at;
+}
+
 /** Quitar un producto deja la fila en order_items con status cancelled; no se borra. */
 export function isCancelledOrderItem(item) {
   return String(item?.status || "").trim().toLowerCase() === "cancelled";

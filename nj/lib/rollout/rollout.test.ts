@@ -29,64 +29,68 @@ function headers(values: Record<string, string>) {
 
 // ── Cookie firmada ─────────────────────────────────────────────────────────
 
-test("firma y verifica full con source", async () => {
-  const raw = await signExperience(SECRET, VID, { experience: "full", source: "quota", day: "2026-09-29" });
-  assert.match(raw, /^v1\.f\.q\.2026-09-29\.[A-Za-z0-9_-]+$/);
+test("firma y verifica full con source y modo", async () => {
+  const raw = await signExperience(SECRET, VID, { experience: "full", source: "quota", mode: "quota", day: "2026-09-29" });
+  assert.match(raw, /^v2\.f\.q\.q\.2026-09-29\.[A-Za-z0-9_-]+$/);
   assert.deepEqual(await verifyExperience(SECRET, VID, raw), {
     experience: "full",
     source: "quota",
+    mode: "quota",
     day: "2026-09-29",
   });
 });
 
-test("catalog firmado no lleva source", async () => {
-  const raw = await signExperience(SECRET, VID, { experience: "catalog", source: "quota", day: "2026-09-29" });
-  assert.match(raw, /^v1\.c\.-\.2026-09-29\./);
+test("catalog firmado no lleva source pero sí el modo en que se decidió", async () => {
+  const raw = await signExperience(SECRET, VID, { experience: "catalog", source: "quota", mode: "paused", day: "2026-09-29" });
+  assert.match(raw, /^v2\.c\.-\.p\.2026-09-29\./);
   assert.deepEqual(await verifyExperience(SECRET, VID, raw), {
     experience: "catalog",
     source: null,
+    mode: "paused",
     day: "2026-09-29",
   });
 });
 
 test("cambiar catalog por full invalida la firma", async () => {
-  const raw = await signExperience(SECRET, VID, { experience: "catalog", source: null, day: "2026-09-29" });
-  const forged = raw.replace("v1.c.-.", "v1.f.q.");
+  const raw = await signExperience(SECRET, VID, { experience: "catalog", source: null, mode: "quota", day: "2026-09-29" });
+  const forged = raw.replace("v2.c.-.", "v2.f.q.");
   assert.equal(await verifyExperience(SECRET, VID, forged), null);
 });
 
-test("cambiar el día o el source invalida la firma", async () => {
-  const raw = await signExperience(SECRET, VID, { experience: "full", source: "tester", day: "2026-09-01" });
+test("cambiar el día, el source o el modo invalida la firma", async () => {
+  const raw = await signExperience(SECRET, VID, { experience: "full", source: "tester", mode: "paused", day: "2026-09-01" });
   assert.equal(await verifyExperience(SECRET, VID, raw.replace("2026-09-01", "2026-09-29")), null);
-  assert.equal(await verifyExperience(SECRET, VID, raw.replace("v1.f.t.", "v1.f.a.")), null);
+  assert.equal(await verifyExperience(SECRET, VID, raw.replace("v2.f.t.", "v2.f.a.")), null);
+  const cat = await signExperience(SECRET, VID, { experience: "catalog", source: null, mode: "paused", day: "2026-09-29" });
+  assert.equal(await verifyExperience(SECRET, VID, cat.replace("v2.c.-.p.", "v2.c.-.q.")), null);
 });
 
 test("la cookie copiada a otro visitor_id no vale", async () => {
-  const raw = await signExperience(SECRET, VID, { experience: "full", source: "quota", day: "2026-09-29" });
+  const raw = await signExperience(SECRET, VID, { experience: "full", source: "quota", mode: "quota", day: "2026-09-29" });
   assert.equal(await verifyExperience(SECRET, OTHER_VID, raw), null);
 });
 
 test("otro secreto no verifica (rotación de ROLLOUT_COOKIE_SECRET)", async () => {
-  const raw = await signExperience(SECRET, VID, { experience: "full", source: "quota", day: "2026-09-29" });
+  const raw = await signExperience(SECRET, VID, { experience: "full", source: "quota", mode: "quota", day: "2026-09-29" });
   assert.equal(await verifyExperience("x".repeat(40), VID, raw), null);
 });
 
-test("valores malformados devuelven null sin lanzar", async () => {
+test("valores malformados o formato v1 devuelven null sin lanzar", async () => {
   for (const raw of [
     undefined,
     null,
     "",
     "full",
-    "v1.f.q.2026-09-29",
-    "v2.f.q.2026-09-29.abc",
-    "v1.x.q.2026-09-29.abc",
-    "v1.f.q.29-09-2026.abc",
-    "v1.f.q.2026-09-29.%%%",
-    "v1.f.q.2026-09-29.abc.extra",
+    "v2.f.q.q.2026-09-29",
+    "v1.f.q.2026-09-29.abc",
+    "v2.x.q.q.2026-09-29.abc",
+    "v2.f.q.q.29-09-2026.abc",
+    "v2.f.q.q.2026-09-29.%%%",
+    "v2.f.q.q.2026-09-29.abc.extra",
   ]) {
     assert.equal(await verifyExperience(SECRET, VID, raw), null, String(raw));
   }
-  assert.equal(await verifyExperience("", VID, "v1.f.q.2026-09-29.abc"), null);
+  assert.equal(await verifyExperience("", VID, "v2.f.q.q.2026-09-29.abc"), null);
 });
 
 // ── Cookie espejo (solo UI) ────────────────────────────────────────────────
@@ -113,26 +117,50 @@ test("isVisitorId solo acepta UUID", () => {
   }
 });
 
-test("catalog firmado vale solo el mismo día ART", () => {
-  const signed = { experience: "catalog" as const, source: null, day: "2026-09-29" };
-  for (const mode of ["paused", "quota", "kill"] as const) {
-    assert.deepEqual(evaluateSigned(signed, "2026-09-29", mode), { usable: true, fresh: true }, mode);
-    assert.deepEqual(evaluateSigned(signed, "2026-09-30", mode), { usable: false, fresh: false }, mode);
+const catalogIn = (mode: "paused" | "quota" | null, day = "2026-09-29") =>
+  ({ experience: "catalog" as const, source: null, mode, day });
+
+test("catalog firmado vale el mismo día ART y con el mismo modo", () => {
+  for (const mode of ["paused", "quota"] as const) {
+    assert.deepEqual(evaluateSigned(catalogIn(mode), "2026-09-29", mode), { usable: true, fresh: true }, mode);
+    assert.deepEqual(evaluateSigned(catalogIn(mode), "2026-09-30", mode), { usable: false, fresh: false }, mode);
   }
 });
 
-test("open_all ignora el catalog firmado del día: se vuelve a resolver", () => {
-  const signed = { experience: "catalog" as const, source: null, day: "2026-09-29" };
-  const { usable, fresh } = evaluateSigned(signed, "2026-09-29", "open_all");
-  assert.deepEqual({ usable, fresh }, { usable: false, fresh: false });
-  const base = { mode: "open_all" as const, fresh, door: false, bot: false, eligibleRequest: true };
-  assert.equal(shouldResolve({ ...base, current: usable ? signed : null }), true);
-  assert.equal(shouldResolve({ ...base, current: null, eligibleRequest: false }), false, "RSC/prefetch no resuelven");
-  assert.equal(shouldResolve({ ...base, current: null, bot: true }), false, "bots no resuelven");
+/** Lo que hace el middleware con la cookie: ¿se vuelve a llamar a la RPC en esta navegación? */
+function resolvesOnPageLoad(signed: ReturnType<typeof catalogIn>, mode: "paused" | "quota" | "open_all" | "kill") {
+  const { usable, fresh } = evaluateSigned(signed, "2026-09-29", mode);
+  return shouldResolve({ mode, current: usable ? signed : null, fresh, door: false, bot: false, eligibleRequest: true });
+}
+
+test("paused → quota: el catalog decidido en paused vuelve a ser candidato al cupo", () => {
+  assert.equal(resolvesOnPageLoad(catalogIn("paused"), "paused"), false, "sigue paused: sin consulta");
+  assert.equal(resolvesOnPageLoad(catalogIn("paused"), "quota"), true, "pasó a quota: resolve");
+  assert.equal(resolvesOnPageLoad(catalogIn("quota"), "quota"), false, "ya decidido en quota (cupo lleno): sin consulta");
+});
+
+test("open_all ignora cualquier catalog firmado del día", () => {
+  assert.equal(resolvesOnPageLoad(catalogIn("paused"), "open_all"), true);
+  assert.equal(resolvesOnPageLoad(catalogIn("quota"), "open_all"), true);
+  const { usable, fresh } = evaluateSigned(catalogIn("quota"), "2026-09-29", "open_all");
+  const base = { mode: "open_all" as const, current: usable ? catalogIn("quota") : null, fresh, door: false, bot: false };
+  assert.equal(shouldResolve({ ...base, eligibleRequest: false }), false, "RSC/prefetch no resuelven");
+  assert.equal(shouldResolve({ ...base, eligibleRequest: true, bot: true }), false, "bots no resuelven");
+});
+
+test("kill conserva el catalog firmado y no resuelve; al salir de kill vale según su modo", () => {
+  assert.deepEqual(evaluateSigned(catalogIn("quota"), "2026-09-29", "kill"), { usable: true, fresh: true });
+  assert.equal(resolvesOnPageLoad(catalogIn("quota"), "kill"), false);
+  assert.equal(resolvesOnPageLoad(catalogIn("quota"), "paused"), true, "quota → kill → paused: se redecide una vez");
+});
+
+test("catalog sin modo (formato viejo o respuesta sin mode) se vuelve a resolver", () => {
+  assert.equal(resolvesOnPageLoad(catalogIn(null), "paused"), true);
+  assert.equal(resolvesOnPageLoad(catalogIn(null), "quota"), true);
 });
 
 test("full firmado siempre vale; se revalida a los 7 días", () => {
-  const signed = { experience: "full" as const, source: "quota" as const, day: "2026-09-20" };
+  const signed = { experience: "full" as const, source: "quota" as const, mode: "paused" as const, day: "2026-09-20" };
   for (const mode of ["paused", "quota", "open_all", "kill"] as const) {
     assert.deepEqual(evaluateSigned(signed, "2026-09-26", mode), { usable: true, fresh: true }, mode);
     assert.deepEqual(evaluateSigned(signed, "2026-09-27", mode), { usable: true, fresh: false }, mode);
@@ -140,8 +168,8 @@ test("full firmado siempre vale; se revalida a los 7 días", () => {
   }
 });
 
-const full = { experience: "full" as const, source: "quota" as const, day: "2026-09-29" };
-const catalog = { experience: "catalog" as const, source: null, day: "2026-09-29" };
+const full = { experience: "full" as const, source: "quota" as const, mode: "quota" as const, day: "2026-09-29" };
+const catalog = catalogIn("quota");
 const base = { mode: "quota" as const, current: null, fresh: false, door: false, bot: false, eligibleRequest: true };
 
 test("shouldResolve: visitante nuevo en navegación de documento", () => {

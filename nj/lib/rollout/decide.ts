@@ -10,8 +10,9 @@ export function isVisitorId(value: string | undefined | null): value is string {
 
 /**
  * Cookie firmada vigente:
- *  - catalog: solo el mismo día ART (al día siguiente vuelve a ser candidata) y nunca
- *    en open_all, donde todos deben recibir full apenas cambia el modo.
+ *  - catalog: solo el mismo día ART y mientras siga el modo con el que se decidió
+ *    (paused → quota vuelve a hacerla candidata; open_all nunca decide catalog).
+ *    En kill se conserva: no se resuelve y así no se pide el usuario en cada request.
  *  - full: siempre; `fresh` indica si toca revalidar contra la base.
  */
 export function evaluateSigned(
@@ -21,7 +22,7 @@ export function evaluateSigned(
 ): { usable: boolean; fresh: boolean } {
   if (!signed) return { usable: false, fresh: false };
   if (signed.experience === "catalog") {
-    const current = signed.day === today && mode !== "open_all";
+    const current = signed.day === today && (mode === "kill" || signed.mode === mode);
     return { usable: current, fresh: current };
   }
   return { usable: true, fresh: daysBetween(signed.day, today) < FULL_REVALIDATE_AFTER_DAYS };

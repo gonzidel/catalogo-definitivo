@@ -30,6 +30,7 @@ import {
   isRolloutMisconfigured,
   isStaffUser,
   readRolloutEnv,
+  rememberRolloutMode,
   resolveExperience,
   type RolloutEnv,
 } from "@/lib/rollout/server";
@@ -170,7 +171,12 @@ async function rolloutMiddleware(request: NextRequest, env: RolloutEnv) {
   const userId = needsUser ? await auth.getUserId() : null;
 
   if (env.forceExperience) {
-    current = { experience: env.forceExperience, source: env.forceExperience === "full" ? "manual" : null, day: today };
+    current = {
+      experience: env.forceExperience,
+      source: env.forceExperience === "full" ? "manual" : null,
+      mode,
+      day: today,
+    };
   } else if (
     !misconfigured &&
     shouldResolve({
@@ -188,15 +194,18 @@ async function rolloutMiddleware(request: NextRequest, env: RolloutEnv) {
         authUserId: userId,
         testerLink: door,
       });
+      // El modo de la RPC es el de la base (el cache puede estar desfasado hasta 30 s).
+      if (!env.forceMode && decision.mode) rememberRolloutMode(env, decision.mode);
+      mode = env.forceMode ?? decision.mode ?? mode;
       if (decision.reason === "kill") {
-        // Cache de modo desfasado: la base ya está en kill. No firmar catalog sobre un grant.
+        // No firmar catalog sobre un grant: al salir de kill vuelve a full.
         mode = "kill";
         if (decision.hasGrant) {
-          current = { experience: "full", source: decision.source, day: today };
+          current = { experience: "full", source: decision.source, mode, day: today };
           sign = current;
         }
       } else {
-        current = { experience: decision.experience, source: decision.source, day: today };
+        current = { experience: decision.experience, source: decision.source, mode, day: today };
         sign = current;
       }
     } catch (err) {

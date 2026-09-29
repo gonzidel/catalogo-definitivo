@@ -11,7 +11,7 @@ import ClarityLoader from "@/components/analytics/ClarityLoader";
 import MetaPixelLoader from "@/components/analytics/MetaPixelLoader";
 import FullOnly from "@/components/rollout/FullOnly";
 import ExperienceSync from "@/components/rollout/ExperienceSync";
-import AccountPendingNotice from "@/components/rollout/AccountPendingNotice";
+import CatalogAccountNotice from "@/components/rollout/CatalogAccountNotice";
 import JsonLdScript from "@/lib/seo/JsonLdScript";
 import { organizationJsonLd, webSiteJsonLd } from "@/lib/seo/json-ld";
 import { ROLLOUT_UI_ENABLED, experienceBootScript } from "@/lib/rollout/client";
@@ -113,7 +113,7 @@ export default function RootLayout({
           <FullOnly>
             <CartFloatingBar />
           </FullOnly>
-          <AccountPendingNotice />
+          <CatalogAccountNotice />
           <Suspense fallback={null}>
             <BottomNav />
           </Suspense>

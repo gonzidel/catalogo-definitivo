@@ -22,7 +22,9 @@ nj pasa a ser el único frontend de `www`. catalogo1 no se forkea: se reproduce 
 - Textos al cliente: sin cupos, rollout, cohortes ni A/B.
 - `kill`: `/dashboard` cerrado para clientes aunque tengan grant `full`; los grants se conservan. Staff/admin mantiene acceso para operación/diagnóstico.
 - `/quienes-somos`: se mantiene la página nj, sin rewrite a Firebase.
-- Aviso a cuenta logueada que sigue en catalog (aprobado 2026-09-29, reemplaza al anterior «Por ahora podés…»): «¡Listo, ya ingresaste! 👋 Podés seguir viendo el catálogo y consultarnos por WhatsApp cuando quieras.» Aparece tras el login y al tocar el avatar en catalog.
+- Aviso a cuenta logueada que sigue en catalog (aprobado 2026-09-29, reemplaza al anterior «Por ahora podés…»): «¡Listo, ya ingresaste! 👋 Podés seguir viendo el catálogo y consultarnos por WhatsApp cuando quieras.» Aparece **solo una vez, tras el login** (cookie `fyl_notice` de 120 s).
+- Avatar de una cuenta logueada en catalog: tarjeta “Tu cuenta: {nombre o email}” + **Cerrar sesión** (en catalog no hay otra forma de cerrar sesión: el logout vive en `/dashboard`). Sin dashboard nuevo ni menciones a rollout/FULL/cupos.
+- Procedimiento de lanzamiento: `paused` → comprobar producción → `quota` = 15. Al activar `quota`, quien quedó en catalog durante `paused` ese mismo día vuelve a ser candidato.
 
 ## Base de datos — `supabase/canonical/362_*` (NO aplicada)
 
@@ -41,12 +43,20 @@ nj pasa a ser el único frontend de `www`. catalogo1 no se forkea: se reproduce 
 
 **Precondición:** la 362 empieza con una guarda que aborta si `service_role` no tiene `SELECT` en `public.admins`.
 
-**`open_all` inmediato:** en nj, `evaluateSigned(signed, today, mode)` ignora el `catalog` firmado del día cuando el modo es `open_all`, así que la siguiente navegación de documento vuelve a resolver (una RPC por visitante, después queda `full` firmado; RSC/prefetch/bots siguen sin consultar). En SQL, `rpc_rollout_link_user` crea un grant `open_all` para la cuenta sin grant que inicia sesión en ese modo. Demora máxima: cache del modo (≤ 30 s por instancia).
+**Catalog atado al modo (cambios de modo inmediatos):** las RPC devuelven `mode` (el `rollout_config.mode` leído en esa decisión) y nj lo firma en la cookie (`v2.<f|c>.<source>.<mode>.<día>.<hmac>`). Un `catalog` firmado vale solo el mismo día ART **y con el mismo modo** (`evaluateSigned(signed, today, mode)`):
+- `paused → quota`: el catalog decidido en `paused` deja de valer; en la siguiente navegación de documento se resuelve: `full` si queda cupo, si no `catalog` firmado con `quota` (y ya no se consulta más ese día).
+- `→ open_all`: ningún catalog vale (open_all nunca decide catalog); se resuelve y queda `full`. En SQL, `rpc_rollout_link_user` también crea grant `open_all` a la cuenta sin grant que inicia sesión.
+- `kill`: el catalog firmado se conserva y no se resuelve (evita pedir el usuario en cada request). Al salir de `kill`, vale si coincide con el modo nuevo; si no, se redecide una vez.
+- `full` firmado no depende del modo (revalida a los 7 días como antes).
+- El modo que devuelve la RPC refresca el cache del isolate (`rememberRolloutMode`), así instancias con cache viejo convergen tras una sola consulta. Demora máxima del cambio: cache del modo (≤ 30 s por instancia) + siguiente carga real de página. RSC/prefetch/bots siguen sin consultar. Con `ROLLOUT_FORCE_MODE` se firma el modo forzado.
+
+**Cambiar `daily_quota` en el mismo día (semántica, sin lógica extra):** el contador del día se compara contra el cupo vigente en cada decisión. Subirlo abre lugares al instante para visitantes nuevos, para quien tenga su catalog invalidado por cambio de modo y para el día siguiente; quien ya fue rechazado hoy con el cupo lleno (catalog firmado en `quota`) **no** reintenta hasta medianoche ART. Bajarlo no revoca a nadie: si `granted ≥ cupo nuevo`, no entra nadie más hoy. `quota` con cupo 0 = nadie nuevo (catalog `quota`). Si se quisiera que subir el cupo reabra a los rechazados del día, habría que firmar también el cupo en la cookie (no implementado).
 
 **Revisión previa (2026-09-29, sin aplicar en producción):**
 - Producción (solo lectura): 51 cuentas = 1 admin / 9 staff / 41 tester; 0 objetos `rollout_*`; `service_role` con BYPASSRLS y `SELECT` sobre `public.admins`; los default ACL de `public` otorgan todo a anon/authenticated en tablas nuevas (por eso el `REVOKE ALL` explícito).
 - Postgres 17.6 local con la misma composición: aplica, reaplica (idempotente, seed 0 filas nuevas), `_tests` → `362 tests OK`, `_verify` según lo esperado, rollback limpio (0 objetos, `auth.users`/`admins` intactos) y reaplicación posterior OK.
 - Segunda revisión (ajustes del usuario): guarda sin `SELECT` → aborta con 0 objetos; grupo previo de 52 → aborta con 0 objetos; 2 altas posteriores al corte (una exactamente en el corte) → sin seed; reaplicar con un grant revocado → sigue revocado; `_tests` ampliados (login en `open_all`, alta posterior en `paused`) → OK antes y después de rollback/reaplicación; nj 176/176 tests, tsc y build OK.
+- Tercera revisión (paused → quota y avatar): `fn_rollout_result` devuelve `mode` (firma nueva con `text`, actualizada en GRANT/REVOKE y ROLLBACK); `_tests` verifican `mode` en paused/quota/kill/login → OK antes y después de rollback/reaplicación. Lanzamiento simulado: 60 visitantes en `paused` (60 `paused/paused`) → `quota` 15 → los mismos 60 en paralelo = 15 `quota` / 45 `quota_full`. nj 179/179 tests (cookie v2, cambio de modo, kill, formato viejo), tsc y build OK.
 - Concurrencia: cupo 15 con 60 visitantes en paralelo → 15 `quota` / 45 `quota_full`; 20 requests simultáneos del mismo visitante → 1 grant (1 `quota` + 19 `existing_grant`); 20 cruces `resolve`/`link_user` de la misma cuenta y dispositivo → 1 grant activo, sin deadlocks. Contador = grants quota.
 - **Dependencia:** las RPC son `SECURITY INVOKER`: requieren que `service_role` conserve `SELECT` en `public.admins` (sin eso fallan con `permission denied` y nj cae a catalog sin firmar).
 - **Límite conocido:** el cupo es por `visitor_id`/cuenta. Un dispositivo nuevo sin sesión (o cookies borradas) es un visitante nuevo y puede consumir otro cupo en modo `quota`; el total diario nunca supera `daily_quota`.
@@ -56,11 +66,11 @@ nj pasa a ser el único frontend de `www`. catalogo1 no se forkea: se reproduce 
 
 - **Bandera única:** `NEXT_PUBLIC_ROLLOUT_ENABLED=1` (server + boot script; requiere rebuild). Apagada = nj exactamente como antes (todos `full`, sin cookies, `html[data-exp="full"]` en SSR).
 - **Middleware** (`nj/middleware.ts`): decide server-side; bots, prefetch/RSC y landings Firebase nunca resuelven. RPC 1 vez por visitante/día (catalog) o cada 7 días (full).
-- **Cookies:** `fyl_vid` (httpOnly, UUID), `fyl_exp` (httpOnly, HMAC-SHA256 sobre `v1|vid|exp|src|day`; única que habilita `/dashboard`), `fyl_x` (espejo legible, solo UI), `fyl_notice` (120 s). `catalog` vence a medianoche ART; `full` 400 días.
+- **Cookies:** `fyl_vid` (httpOnly, UUID), `fyl_exp` (httpOnly, HMAC-SHA256 sobre `v2|vid|exp|src|mode|day`; única que habilita `/dashboard`; las `v1` se descartan y se redecide), `fyl_x` (espejo legible, solo UI), `fyl_notice` (120 s). `catalog` vence a medianoche ART; `full` 400 días.
 - **UI sin flash:** script inline en `<head>` fija `html[data-exp]`; variantes por CSS (`exp-full-only` / `exp-catalog-only`); `FullOnly` para componentes con efectos (carrito, onboarding, notificaciones). Sin atributo = catalog.
 - **Catalog:** WhatsApp en Header/BottomNav/PDP (número de catalogo1 `5493625172874`, ver contradicción), talles solo lectura, sin carrito ni “Pedido”, FAQ/cómo usar/quiénes somos de catalogo1.
 - **Auth callback:** vincula la cuenta (`rpc_rollout_link_user`); sin grant → vuelve a `/` en catalog con aviso (en `open_all` la cuenta recibe grant y entra a `full`).
-- **Catalog firmado y `open_all`:** un `catalog` firmado del día no vale en `open_all`; se vuelve a resolver en la siguiente navegación de documento.
+- **Catalog firmado y cambio de modo:** un `catalog` firmado vale solo con el modo con que se decidió (ver “Catalog atado al modo”); `CatalogAccountNotice` muestra el aviso post-login y la tarjeta de cuenta del avatar.
 - **`kill` y `/dashboard`:** `canEnterFullArea(mode, current, isVerifiedStaff)`. En `kill` solo pasa staff verificado **en vivo** contra `public.admins` (`isStaffUser`, service_role; ante error → no pasa). No se confía en el `source` firmado de la cookie. Middleware (`/dashboard`, `/login`) y callback aplican la misma regla; la clienta con grant vuelve a `/` con el aviso y su `full` firmado se conserva para cuando se salga de `kill`. Con `ROLLOUT_FORCE_MODE=kill` y la base caída, staff tampoco entra (fail-closed).
 - **SEO:** `NJ_INDEXING_ENABLED` = `NEXT_PUBLIC_NJ_INDEXING=1` **y** rollout activo (apagado). `robots.ts` host-aware (Disallow fuera de `www`); `X-Robots-Tag: noindex` en hosts no canónicos y en `/nj`; canonical por página; JSON-LD org/website/categoría/FAQ con `www`.
 - **Analytics:** Pixel y Clarity productiva solo con rollout activo y host `www`/apex; GA `user_properties` `experience` + `rollout_source` (sin eventos duplicados).

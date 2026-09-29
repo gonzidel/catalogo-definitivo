@@ -60,6 +60,25 @@ export function isRolloutMode(value: unknown): value is RolloutMode {
   return value === "paused" || value === "quota" || value === "open_all" || value === "kill";
 }
 
+const MODE_CODES: Record<RolloutMode, string> = {
+  paused: "p",
+  quota: "q",
+  open_all: "o",
+  kill: "k",
+};
+
+const CODE_MODES = Object.fromEntries(
+  Object.entries(MODE_CODES).map(([mode, code]) => [code, mode])
+) as Record<string, RolloutMode>;
+
+export function modeToCode(mode: RolloutMode | null): string {
+  return mode ? MODE_CODES[mode] : "-";
+}
+
+export function codeToMode(code: string | undefined): RolloutMode | null {
+  return code ? CODE_MODES[code] ?? null : null;
+}
+
 /** Valor de EXPERIENCE_MIRROR_COOKIE: `f.q`, `f.t`, … o `c`. */
 export function buildMirrorValue(experience: Experience, source: GrantSource | null): string {
   return experience === "full" ? `f.${sourceToCode(source)}` : "c";

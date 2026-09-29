@@ -9,7 +9,8 @@
 --   public.rpc_rollout_link_user  vincula visitante ↔ cuenta al loguear (auth/callback)
 --
 -- Reglas:
---   * `catalog` NUNCA se persiste: sin fila = catalog. La cookie firmada vence al fin del día ART.
+--   * `catalog` NUNCA se persiste: sin fila = catalog. La cookie firmada vence al fin del día ART
+--     o cuando cambia el modo con el que se decidió (la respuesta incluye `mode`).
 --   * Solo source='quota' consume rollout_daily_counter.
 --   * Loguearse no concede full: rpc_rollout_link_user solo vincula o reconoce grants existentes
 --     (excepciones: staff/admin verificado y mode='open_all', donde todos reciben full).
@@ -155,20 +156,23 @@ CREATE OR REPLACE FUNCTION public.fn_rollout_result(
   p_experience text,
   p_reason text,
   p_grant public.rollout_grants,
-  p_day date
+  p_day date,
+  p_mode text
 )
 RETURNS jsonb
 LANGUAGE sql
 IMMUTABLE
 SET search_path = ''
 AS $$
+  -- mode = rollout_config.mode leído en esta decisión: nj ata el catalog firmado a ese modo.
   SELECT jsonb_build_object(
     'experience', p_experience,
     'reason', p_reason,
     'has_grant', (p_grant).id IS NOT NULL,
     'source', (p_grant).source,
     'grant_id', (p_grant).id,
-    'day', p_day
+    'day', p_day,
+    'mode', p_mode
   );
 $$;
 
@@ -249,13 +253,13 @@ BEGIN
     END IF;
 
     IF v_mode = 'kill' THEN
-      RETURN public.fn_rollout_result('catalog', 'kill', v_grant, v_day);
+      RETURN public.fn_rollout_result('catalog', 'kill', v_grant, v_day, v_mode);
     END IF;
-    RETURN public.fn_rollout_result('full', 'existing_grant', v_grant, v_day);
+    RETURN public.fn_rollout_result('full', 'existing_grant', v_grant, v_day, v_mode);
   END IF;
 
   IF v_mode = 'kill' THEN
-    RETURN public.fn_rollout_result('catalog', 'kill', NULL, v_day);
+    RETURN public.fn_rollout_result('catalog', 'kill', NULL, v_day, v_mode);
   END IF;
 
   v_staff := public.fn_rollout_staff_source(p_auth_user_id);
@@ -263,7 +267,7 @@ BEGIN
     INSERT INTO public.rollout_grants (visitor_id, auth_user_id, source, grant_day, linked_at, note)
     VALUES (p_visitor_id, p_auth_user_id, v_staff, v_day, now(), 'resolve: staff verificado')
     RETURNING * INTO v_grant;
-    RETURN public.fn_rollout_result('full', 'staff', v_grant, v_day);
+    RETURN public.fn_rollout_result('full', 'staff', v_grant, v_day, v_mode);
   END IF;
 
   IF p_source_hint = 'tester_link' THEN
@@ -273,7 +277,7 @@ BEGIN
       CASE WHEN p_auth_user_id IS NOT NULL THEN now() END
     )
     RETURNING * INTO v_grant;
-    RETURN public.fn_rollout_result('full', 'tester_link', v_grant, v_day);
+    RETURN public.fn_rollout_result('full', 'tester_link', v_grant, v_day, v_mode);
   END IF;
 
   IF v_mode = 'open_all' THEN
@@ -283,7 +287,7 @@ BEGIN
       CASE WHEN p_auth_user_id IS NOT NULL THEN now() END
     )
     RETURNING * INTO v_grant;
-    RETURN public.fn_rollout_result('full', 'open_all', v_grant, v_day);
+    RETURN public.fn_rollout_result('full', 'open_all', v_grant, v_day, v_mode);
   END IF;
 
   IF v_mode = 'quota' AND v_quota > 0 THEN
@@ -306,13 +310,13 @@ BEGIN
         CASE WHEN p_auth_user_id IS NOT NULL THEN now() END
       )
       RETURNING * INTO v_grant;
-      RETURN public.fn_rollout_result('full', 'quota', v_grant, v_day);
+      RETURN public.fn_rollout_result('full', 'quota', v_grant, v_day, v_mode);
     END IF;
 
-    RETURN public.fn_rollout_result('catalog', 'quota_full', NULL, v_day);
+    RETURN public.fn_rollout_result('catalog', 'quota_full', NULL, v_day, v_mode);
   END IF;
 
-  RETURN public.fn_rollout_result('catalog', v_mode, NULL, v_day);
+  RETURN public.fn_rollout_result('catalog', v_mode, NULL, v_day, v_mode);
 END;
 $$;
 
@@ -400,12 +404,12 @@ BEGIN
   END IF;
 
   IF v_user_grant.id IS NULL THEN
-    RETURN public.fn_rollout_result('catalog', 'no_grant', NULL, v_day);
+    RETURN public.fn_rollout_result('catalog', 'no_grant', NULL, v_day, v_mode);
   END IF;
   IF v_mode = 'kill' THEN
-    RETURN public.fn_rollout_result('catalog', 'kill', v_user_grant, v_day);
+    RETURN public.fn_rollout_result('catalog', 'kill', v_user_grant, v_day, v_mode);
   END IF;
-  RETURN public.fn_rollout_result('full', 'linked', v_user_grant, v_day);
+  RETURN public.fn_rollout_result('full', 'linked', v_user_grant, v_day, v_mode);
 END;
 $$;
 
@@ -417,13 +421,13 @@ COMMENT ON FUNCTION public.rpc_rollout_link_user(uuid, uuid) IS
 -- ---------------------------------------------------------------------------
 REVOKE ALL ON FUNCTION public.fn_rollout_today() FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.fn_rollout_staff_source(uuid) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.fn_rollout_result(text, text, public.rollout_grants, date) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.fn_rollout_result(text, text, public.rollout_grants, date, text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.rpc_rollout_resolve(uuid, uuid, text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.rpc_rollout_link_user(uuid, uuid) FROM PUBLIC, anon, authenticated;
 
 GRANT EXECUTE ON FUNCTION public.fn_rollout_today() TO service_role;
 GRANT EXECUTE ON FUNCTION public.fn_rollout_staff_source(uuid) TO service_role;
-GRANT EXECUTE ON FUNCTION public.fn_rollout_result(text, text, public.rollout_grants, date) TO service_role;
+GRANT EXECUTE ON FUNCTION public.fn_rollout_result(text, text, public.rollout_grants, date, text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.rpc_rollout_resolve(uuid, uuid, text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.rpc_rollout_link_user(uuid, uuid) TO service_role;
 

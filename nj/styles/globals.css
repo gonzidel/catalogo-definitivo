@@ -92,6 +92,16 @@ html[data-exp="full"] .exp-catalog-only {
   text-decoration: none;
   touch-action: manipulation;
 }
+.account-notice__cta--secondary {
+  border: none;
+  background: #f5f1ec;
+  color: #333;
+  font-size: 15px;
+  cursor: pointer;
+}
+.account-notice__cta--secondary:disabled {
+  opacity: 0.6;
+}
 .account-notice__close {
   width: 44px;
   height: 44px;

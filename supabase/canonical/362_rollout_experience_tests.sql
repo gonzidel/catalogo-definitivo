@@ -99,17 +99,17 @@ BEGIN
   -- paused: visitante nuevo → catalog, sin fila
   UPDATE public.rollout_config SET mode = 'paused', daily_quota = 2 WHERE id = 1;
   r := public.rpc_rollout_resolve(v1);
-  ASSERT r->>'experience' = 'catalog' AND r->>'reason' = 'paused', 'paused → catalog: ' || r;
+  ASSERT r->>'experience' = 'catalog' AND r->>'reason' = 'paused' AND r->>'mode' = 'paused', 'paused → catalog: ' || r;
   ASSERT (SELECT count(*) FROM public.rollout_grants WHERE visitor_id = v1) = 0, 'catalog no se persiste';
 
-  -- quota=2: dos entran, el tercero no
+  -- paused → quota=2: v1 (catalog en paused hoy) vuelve a ser candidata; dos entran, el tercero no
   UPDATE public.rollout_config SET mode = 'quota' WHERE id = 1;
   r := public.rpc_rollout_resolve(v1);
-  ASSERT r->>'experience' = 'full' AND r->>'source' = 'quota', 'v1 quota: ' || r;
+  ASSERT r->>'experience' = 'full' AND r->>'source' = 'quota' AND r->>'mode' = 'quota', 'v1 quota: ' || r;
   r := public.rpc_rollout_resolve(v2);
   ASSERT r->>'experience' = 'full' AND r->>'source' = 'quota', 'v2 quota: ' || r;
   r := public.rpc_rollout_resolve(v3);
-  ASSERT r->>'experience' = 'catalog' AND r->>'reason' = 'quota_full', 'v3 sin cupo: ' || r;
+  ASSERT r->>'experience' = 'catalog' AND r->>'reason' = 'quota_full' AND r->>'mode' = 'quota', 'v3 sin cupo: ' || r;
 
   -- repetir v1 no consume
   r := public.rpc_rollout_resolve(v1);
@@ -126,7 +126,7 @@ BEGIN
   -- login sin grant NO concede full
   UPDATE public.rollout_grants SET revoked_at = now() WHERE auth_user_id = v_tester;
   r := public.rpc_rollout_link_user(v4, v_tester);
-  ASSERT r->>'experience' = 'catalog' AND r->>'reason' = 'no_grant', 'login sin grant: ' || r;
+  ASSERT r->>'experience' = 'catalog' AND r->>'reason' = 'no_grant' AND r->>'mode' = 'quota', 'login sin grant: ' || r;
   ASSERT (SELECT count(*) FROM public.rollout_grants WHERE visitor_id = v4 OR (auth_user_id = v_tester AND revoked_at IS NULL)) = 0,
     'login sin grant no crea filas';
 
@@ -148,7 +148,7 @@ BEGIN
   SELECT count(*) INTO n FROM public.rollout_grants WHERE revoked_at IS NULL;
   UPDATE public.rollout_config SET mode = 'kill' WHERE id = 1;
   r := public.rpc_rollout_resolve(v1);
-  ASSERT r->>'experience' = 'catalog' AND r->>'reason' = 'kill' AND (r->>'has_grant')::boolean,
+  ASSERT r->>'experience' = 'catalog' AND r->>'reason' = 'kill' AND r->>'mode' = 'kill' AND (r->>'has_grant')::boolean,
     'kill conserva grant: ' || r;
   r := public.rpc_rollout_resolve(v6, NULL, 'tester_link');
   ASSERT r->>'experience' = 'catalog', 'kill no concede tester_link: ' || r;

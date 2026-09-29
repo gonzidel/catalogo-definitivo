@@ -87,10 +87,10 @@ export async function GET(request: NextRequest) {
           visitorId,
           setVisitor: !isVisitorId(cookieVid),
           sign: keepsGrant
-            ? { experience: "full", source: decision.source, day: rolloutDay() }
+            ? { experience: "full", source: decision.source, mode: decision.mode, day: rolloutDay() }
             : killMode
               ? null
-              : { experience: "catalog", source: null, day: rolloutDay() },
+              : { experience: "catalog", source: null, mode: decision.mode, day: rolloutDay() },
           cookieSecret: env.cookieSecret,
           display: "catalog",
           displaySource: null,
@@ -117,7 +117,9 @@ export async function GET(request: NextRequest) {
           secure: request.nextUrl.protocol === "https:",
           visitorId,
           setVisitor: !isVisitorId(cookieVid),
-          sign: decision.hasGrant ? { experience: "full", source: decision.source, day: rolloutDay() } : null,
+          sign: decision.hasGrant
+            ? { experience: "full", source: decision.source, mode: decision.mode, day: rolloutDay() }
+            : null,
           cookieSecret: env.cookieSecret,
           display: decision.experience,
           displaySource: decision.experience === "full" ? decision.source : null,

@@ -80,11 +80,18 @@ export async function getRolloutMode(env: RolloutEnv): Promise<RolloutMode> {
   }
 }
 
+/** El modo que devolvió la RPC es el de la base: refresca el cache de este isolate. */
+export function rememberRolloutMode(env: RolloutEnv, mode: RolloutMode) {
+  if (!env.forceMode) modeCache = { mode, at: Date.now() };
+}
+
 export interface RolloutDecision {
   experience: Experience;
   reason: string;
   source: GrantSource | null;
   hasGrant: boolean;
+  /** rollout_config.mode leído por la RPC en esta decisión. */
+  mode: RolloutMode | null;
 }
 
 function parseDecision(value: unknown): RolloutDecision {
@@ -97,6 +104,7 @@ function parseDecision(value: unknown): RolloutDecision {
     reason: typeof v.reason === "string" ? v.reason : "",
     source: isGrantSource(v.source) ? v.source : null,
     hasGrant: v.has_grant === true,
+    mode: isRolloutMode(v.mode) ? v.mode : null,
   };
 }
 

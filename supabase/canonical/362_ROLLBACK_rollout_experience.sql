@@ -19,7 +19,7 @@ BEGIN;
 
 DROP FUNCTION IF EXISTS public.rpc_rollout_link_user(uuid, uuid);
 DROP FUNCTION IF EXISTS public.rpc_rollout_resolve(uuid, uuid, text);
-DROP FUNCTION IF EXISTS public.fn_rollout_result(text, text, public.rollout_grants, date);
+DROP FUNCTION IF EXISTS public.fn_rollout_result(text, text, public.rollout_grants, date, text);
 DROP FUNCTION IF EXISTS public.fn_rollout_staff_source(uuid);
 DROP FUNCTION IF EXISTS public.fn_rollout_today();
 

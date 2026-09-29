@@ -9,7 +9,7 @@ import NotificationsPanel from "@/components/notifications/NotificationsPanel";
 import WhatsAppButton from "@/components/contact/WhatsAppButton";
 import WhatsAppIcon from "@/components/contact/WhatsAppIcon";
 import FullOnly from "@/components/rollout/FullOnly";
-import { openAccountPendingNotice } from "@/components/rollout/AccountPendingNotice";
+import { openCatalogAccount } from "@/components/rollout/CatalogAccountNotice";
 import { EXP_CATALOG_ONLY, EXP_FULL_ONLY } from "@/lib/rollout/client";
 
 interface UserInfo {
@@ -158,12 +158,12 @@ export default function HeaderActions() {
             {profileContent}
           </Link>
         )}
-        {/* catalog + cuenta sin full: el avatar explica cómo seguir en vez de ir al dashboard */}
+        {/* catalog + cuenta sin full: el avatar muestra la cuenta y permite cerrar sesión */}
         {!isDashboard && isLoggedIn && (
           <button
             type="button"
             className={EXP_CATALOG_ONLY}
-            onClick={openAccountPendingNotice}
+            onClick={openCatalogAccount}
             aria-label="Mi cuenta"
             style={{ ...profileStyle, background: "none", padding: 0, cursor: "pointer" }}
           >

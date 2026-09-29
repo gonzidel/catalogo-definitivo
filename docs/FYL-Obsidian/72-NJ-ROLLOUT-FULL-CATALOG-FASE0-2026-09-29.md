@@ -1,7 +1,7 @@
 # 72 — Rollout `full` / `catalog` en nj — Fase 0 — 2026-09-29
 
 > **Estado:** Fase 0 terminada en rama `feat/nj-rollout-fase0` (worktree `E:\PROYECTOS\fyl-rollout-fase0`, rebaseada sobre `af349fb` = `fix/customer-link-nj-onboarding` con `origin/main` integrado; commit local, sin push).
-> **Producción:** migración 362 **aplicada** el 2026-09-29 (ver §Aplicación en producción), modo `paused`. Dominio sin mover, sin deploy productivo de nj (solo preview), sin indexación, sin 301.
+> **Producción:** migración 362 **aplicada** el 2026-09-29 (ver §Aplicación en producción), modo `paused`. Dominio sin mover, sin deploy productivo de nj (solo preview), sin indexación, sin 301. Plan de Fase 1 preparado, **no ejecutado** (ver § Fase 1).
 > Reemplaza los planes de SEO (§H), redirects (§I) y analytics (§M) de [[58-NJ-PRELAUNCH-CUTOVER-2026-09-04]].
 
 ## Qué es
@@ -122,7 +122,7 @@ nj pasa a ser el único frontend de `www`. catalogo1 no se forkea: se reproduce 
 | `/nj`, `/nj/calzado`, `/catalogo`, `/catalogo/calzado`, `/dashboard` | 302 a `/`, `/calzado`, `/`, `/calzado`, `/login?next=…` |
 | Parpadeo full/catalog | Sin flash: boot script inline síncrono en `<head>`; sin atributo (estado SSR) el CSS ya equivale a catalog (0 elementos full visibles) |
 
-Hallazgos del preview (sin cambios, fuera de alcance): las landings Firebase conservan canonical apex (`https://fylmoda.com.ar/...`) y afirman “fábrica propia” / “786+ artículos”; se corrigen solo con deploy de Firebase.
+Hallazgos del preview: las landings Firebase conservaban canonical apex (`https://fylmoda.com.ar/...`) y afirmaban “fábrica propia” / “786+ artículos”. Corregidas en el repo (commit `f066213`), **sin deploy de Firebase** (ver § Fase 1).
 
 ## Diferencias catalog vs catalogo1 (a aceptar o corregir)
 
@@ -148,7 +148,7 @@ Hallazgos del preview (sin cambios, fuera de alcance): las landings Firebase con
   - Se quitó de “Guías y recursos” el link a `/quienes-somos` (en nj apunta a sí misma).
 - **Claims “fábrica propia” (corregido en metadata, 2026-09-29, pedido del usuario):** `layout.tsx` y `/quienes-somos` ya no lo afirman en `description`; el JSON-LD tampoco. Sin ampliar contenido.
 - **Limpieza nj (2026-09-29, pedido del usuario):** se quitó el párrafo visible “Contamos con fábrica propia de calzado…” de `/quienes-somos`; el banner de la home queda “F&L Originals” sin subtítulo y la colección usa “Colección destacada” (antes “Fabricación propia”); la metadata de `[categoria]` y `tags` dice “compra mínima de 4 productos surtidos” (antes “desde 4 pares”). En nj no queda ningún “fábrica/fabricación propia” ni “4 pares”.
-- **Pendiente Fase 1 — landings Firebase (no modificadas):** afirman “fábrica propia” (y “producción nacional”, “precio de fábrica”), muestran “786+ artículos” y declaran canonical apex `https://fylmoda.com.ar/...` en vez de `www`. Requiere cambio del HTML en el repo + deploy de Firebase, con aprobación.
+- **Landings Firebase (preparado 2026-09-29, commit `f066213`, sin deploy):** se quitaron “fábrica propia”, “producción nacional”, “precio de fábrica”, “no somos distribuidores”, 786+/490+/70+ y conteos por categoría; mínimo expresado como “4 productos surtidos” (CANÓNICA); todas las URLs absolutas pasan a `https://www.fylmoda.com.ar` (canonical, og, JSON-LD, breadcrumb, terms, privacy). Se dejaron sin tocar, **sin confirmar**: precios “desde $X” por categoría, “Correo Argentino, OCA y transportes”, “lunes a viernes”, “envíos a todo el país”. `quienes-somos.html` también se corrigió aunque con nj en `www` se sirve la página nj.
 - **Ramas divergentes:** ver § Integración de ramas.
 
 ## Integración de ramas (ejecutada solo en local, 2026-09-29)
@@ -167,12 +167,90 @@ Hallazgos del preview (sin cambios, fuera de alcance): las landings Firebase con
 - Riesgos: el repo principal tiene WIP sin commitear (confirmación de pedido; toca `nj/styles/globals.css`, igual que el rollout); push a `main` podría disparar deploys si algún proyecto Vercel está conectado a git (verificar); la rama trae migraciones 351–361 y Edge Functions: mergear no las aplica, pero `main` pasaría a documentarlas.
 - El rollout (`feat/nj-rollout-fase0`, base `fad9f37`) no se superpone con `f338f9e` (solo `admin/` + test + nota 40): rebase directo sobre la rama integrada.
 
-## Fase 1 (no ejecutada) — orden propuesto
+## Fase 1 — plan de cutover y rollback (preparado 2026-09-29, NO ejecutado)
 
-1. Integrar ramas; aplicar 362 con modo `paused` (aprobación explícita, SQL exacto).
-2. Env prod nj: `SUPABASE_SERVICE_ROLE_KEY`, `ROLLOUT_COOKIE_SECRET` (≥32), `NEXT_PUBLIC_ROLLOUT_ENABLED=1`, `NEXT_PUBLIC_SITE_URL` vacío o `www`; `NEXT_PUBLIC_NJ_INDEXING=1` solo si se decide indexar el día del cambio.
-3. Asignar `www` al proyecto nj **en el mismo redeploy** que activa la bandera (con `www` aún en catalogo1, `/nj`→`/` rompe el rewrite actual).
-4. Supabase Auth Redirect URLs para el preview/host (cambio de config prod: aprobar aparte).
-5. Verificar con `362_rollout_experience_verify.sql`; pasar a `quota` recién en Fase 2.
+Objetivo: nj sirve `www` con rollout `paused` (visitantes → catalog; grants del seed y `/nj` → full). `daily_quota` 15 queda inactivo. catalogo1 no se borra. Sin redirects permanentes nuevos.
 
-**Rollback:** modo `kill` (o `ROLLOUT_FORCE_MODE=kill` sin base) → todos catalog sin borrar grants; bandera en 0 + redeploy → nj actual; devolver `www` a catalogo1; `362_ROLLBACK` solo tras `kill` y rotando `ROLLOUT_COOKIE_SECRET`.
+### Estado de producción (TÉCNICA VERIFICADA, solo lectura, 2026-09-29 20:37 ART)
+
+- `www.fylmoda.com.ar` y apex → proyecto Vercel **`catalogo-definitivo`** (catalogo1; auto-deploy desde `main`, último hace 9 h). Apex → 308 `www` (dominio Vercel). DNS en donweb, sin cambios necesarios.
+- catalogo1 `vercel.json`: `/` y `/catalogo.html` → 308 `/catalogo` (`Cache-Control: max-age=0, must-revalidate`); `/nj*` → rewrite a `nj-gonzidel.vercel.app/nj*`; todo lo que no sea `/catalogo*` ni `/nj*` → rewrite a Firebase `catalogo-fyl-test.web.app` (catch-all `**` → `catalogo.html`).
+- Por eso hoy en `www`: `/dashboard`, `/login`, `/auth/callback` = 200 de `catalogo.html` (JS → `/catalogo`); `/admin` ↔ `/admin/` loop 301/308; `/admin/*.html`, `/customer.html`, `/scripts/*`, `/config.prod.js`, `/qz-site.crt`, `/sw.js` = 200 desde Firebase; `/nj/dashboard` → 307 `/nj/login`.
+- `robots.txt` y `sitemap.xml` en `www` = los de Firebase: `Allow: /`, `Disallow: /admin/ /client/ /auth/…`, `Sitemap: https://fylmoda.com.ar/sitemap.xml`; el sitemap lista URLs **apex** (`/catalogo`, 5 landings, `/quienes-somos`).
+- Proyecto `nj`: producción `nj-drab.vercel.app` / `nj-gonzidel.vercel.app` (deploy `dpl_BHA4AYjEo56jbz9B7xstLjrXYZpP`, hace 5 días). Env **Production**: solo `NEXT_PUBLIC_SUPABASE_URL` y `NEXT_PUBLIC_SUPABASE_ANON_KEY` (también en Preview). Faltan todas las del rollout.
+- Supabase Auth (`auth.flow_state.referrer` de probes previos): aceptadas `https://www.fylmoda.com.ar/auth/callback?next=…`, `https://www.fylmoda.com.ar/nj/auth/callback?next=…&pfx=nj`, `https://nj-gonzidel.vercel.app/auth/callback?…`. Rechazadas (caen a Site URL `https://catalogo-fyl-test.web.app`): apex, `nj-drab`, URLs de deploy. Los probes dejaron 10 filas efímeras en `auth.flow_state` (se limpian solas).
+- URLs hardcodeadas: `CUSTOMER_DASHBOARD_MESSAGE_URL` (nj) y `357_wa_deadline_reached_taxonomy.sql` → `https://nj-fyl-testing.vercel.app/nj/dashboard?tab=cart`; admin vanilla `njUrl()` → `https://www.fylmoda.com.ar/nj/admin/{conciliacion-reembolso,orders,retiro}`; `public-sales.js` y otros arman QR con `${window.location.origin}/customer.html?code=…`; `qz-sign` solo permite origen `catalogo-fyl-test.web.app` / `catalogo-fyl.web.app` (no `www`).
+
+### Variables de entorno nj (Production)
+
+| Variable | Tipo | Estado | Valor |
+|---|---|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` | pública | existe (Prod + Preview) | sin cambios |
+| `SUPABASE_SERVICE_ROLE_KEY` | server-only, Sensitive, **solo Production** | falta | recomendado: secret key dedicada `sb_secret_…` (la ruta `sb_secret` solo está probada en unit tests); alternativa: JWT service_role legacy |
+| `ROLLOUT_COOKIE_SECRET` | server-only, Sensitive, **solo Production** | falta | ≥ 32 caracteres aleatorios (p. ej. `openssl rand -base64 48`) |
+| `NEXT_PUBLIC_ROLLOUT_ENABLED` | pública, build-time | falta | `1` |
+| `NEXT_PUBLIC_NJ_INDEXING` | pública, build-time | falta | `1` recomendado (decisión) |
+| `NEXT_PUBLIC_SITE_URL` | pública | falta | no hace falta (default `www`) |
+| `NEXT_PUBLIC_CUSTOMER_DASHBOARD_URL` | pública | falta | sin definir en Fase 1 = link WA sigue en `nj-fyl-testing` (decisión) |
+| `ROLLOUT_FORCE_MODE` / `ROLLOUT_FORCE_EXPERIENCE` | server-only | falta | **no** definir (emergencia; `FORCE_EXPERIENCE` se ignora en producción) |
+
+Preview no recibe secretos. Con bandera 1 y secretos ausentes o inválidos, nj fuerza `paused` + catalog sin firmar (fail-safe).
+
+### Indexación
+
+- Hoy `www` indexa catalogo1 (`/catalogo`) y landings (sitemap apex). Si el cutover sale con `NEXT_PUBLIC_NJ_INDEXING` ausente, nj publica `Disallow: /` + `noindex` en todo `www` → **desindexa** catálogo y landings. Recomendado: `NEXT_PUBLIC_NJ_INDEXING=1` en el build del cutover.
+- Con 1 y host `www`: `robots` Allow + Disallow `/admin /dashboard /login /api/ /auth/ /client/`; sitemap nj (home, 5 categorías, cómo comprar, quiénes somos, 7 landings) con `www`; canonical `www` por página. Cualquier otro host (deploy URLs, `nj-drab`, `nj-gonzidel`) → `X-Robots-Tag: noindex` + `Disallow: /`. `/nj` siempre `noindex`.
+- Después del cutover: Search Console → enviar `https://www.fylmoda.com.ar/sitemap.xml`; el viejo sitemap apex deja de servirse.
+
+### Redirects durante Fase 1 (todos temporales)
+
+| Ruta | Respuesta |
+|---|---|
+| `/` | 200 nj (catalog; full si hay `fyl_exp` full válido) |
+| `/catalogo`, `/catalogo/` | 302 `/` |
+| `/catalogo/<ruta>` | 302 `/<ruta>` (1:1) |
+| `/nj` | 302 `/` + grant `tester_link` (noindex) |
+| `/nj/<ruta>` | 302 `/<ruta>` + grant `tester_link` |
+| `/nj/admin/<ruta>` | 302 `/admin/<ruta>` sin grant |
+| `/nj/auth/callback` | callback (logins en curso) → termina en `/nj/…` → 302 sin prefijo |
+| `/dashboard` | sin sesión 302 `/login?next=/dashboard`; con full 200; sin grant 302 `/` + aviso |
+| `/login` | sin sesión 200; con full 302 `/dashboard`; sin grant 302 `/` + aviso |
+| landings (`/revendedoras`, `/*-por-mayor`, `/terms`, `/privacy-policy`) | 200 vía rewrite a Firebase (URL no cambia) |
+| `/quienes-somos` | 200 página nj |
+| `/admin/{orders,retiro,products,search,conciliacion-reembolso…}` | admin nj (login) |
+| `/admin`, `/admin/*.html`, `/customer.html`, `/scripts/*`, `/config.prod.js`, `/qz-site.crt`, `/certs/*`, `/catalogo.html`, `/index.html`, `/client/*` | **404 sin el cambio propuesto** (ver riesgo 1) |
+| apex | 308 `www` (existente, a nivel dominio) |
+
+### Riesgos nuevos (a decidir antes del cutover)
+
+1. **Admin vanilla y QR en `www`:** los archivos con extensión no pasan por middleware y nj no los tiene → 404. Propuesta (no implementada), solo con rollout activo en `next.config.ts`: `beforeFiles` rewrites a Firebase para `/customer.html`, `/scripts/:path*`, `/config.prod.js`, `/fyl-flags.json`, `/qz-site.crt`, `/certs/:path*`, `/admin/:file(.+\.(?:html|js|css|json|png|jpg|jpeg|svg|webp|ico|mp3|wav))`; `redirects` temporales `/admin` → `/admin/index.html`, `/catalogo.html` y `/index.html` → `/`, `/client/:path*` → `/`. Alternativa sin código: staff usa `https://catalogo-fyl-test.web.app/admin/` (QZ ya solo funciona ahí) y se aceptan 404 en QR impresos desde `www`.
+2. **Desindexación** si falta `NEXT_PUBLIC_NJ_INDEXING=1`.
+3. **Ventana `/nj`:** `vercel promote` mueve `nj-gonzidel`; mientras `www` siga en catalogo1, `/nj*` queda proxied a un build con rollout (302 a host `nj-gonzidel`). Mitigación: deploy `--skip-domain`, y promote + mover dominio en la misma ventana (minutos).
+4. **Clientas sin cuenta con grant:** 1301 clientas con pedidos no tienen grant (520 activas en 30 días). En `www` con `paused`, si inician sesión quedan en catalog y no ven `/dashboard`. Los links de WhatsApp siguen yendo a `nj-fyl-testing` (deploy aparte, sin rollout), así que el flujo actual no cambia en Fase 1. Cambiar el link a `www/nj/dashboard` daría full `tester_link` a quien lo abra; a `www/dashboard`, catalog. Decisión aparte (el cron SQL necesita aprobación).
+5. **Deploy de Firebase publica todo el árbol** (landings + admin vanilla + scripts). Debe salir del working tree principal (su contenido es el vivo, con el WIP de `admin/control.html`) agregando solo los 8 HTML de `f066213`.
+6. **Auth:** Site URL = `catalogo-fyl-test.web.app`. Un redirect no permitido termina ahí. Recomendado: cambiar Site URL a `https://www.fylmoda.com.ar` (config de producción, aprobación aparte). El login no se puede probar en la URL `--skip-domain` (no está permitida).
+7. `main` auto-despliega `catalogo-definitivo` (sin impacto mientras no se pushee; tras el cutover, un deploy de catalogo1 ya no afecta `www`).
+8. 308 cacheadas de `www/` → `/catalogo`: con `max-age=0, must-revalidate` el riesgo de loop es bajo; probar en un navegador que ya visitó `www`. Service workers viejos: nj los desregistra.
+
+### Pasos (cada uno con verificación y punto de rollback)
+
+0. **Pre-chequeo (solo lectura):** `362_rollout_experience_verify.sql` (paused, 15, 51 seed, contador vacío); anotar deploy productivo actual de nj (`dpl_BHA4AYjEo56jbz9B7xstLjrXYZpP`) y de `catalogo-definitivo`; release actual de Firebase.
+1. **Deploy Firebase de landings** (independiente, sirve igual con catalogo1): en el repo principal `git checkout f066213 -- <8 html>` → `firebase deploy --only hosting --project catalogo-fyl-test`. Verificar por `www/<landing>`: sin claims, canonical `www`, 200. Rollback: Firebase Console → Hosting → release anterior → Rollback. Riesgo: bajo-medio (publica todo el árbol).
+2. **Código (si se aprueba riesgo 1):** rewrites/redirects en `next.config.ts`, tests + `next build` con bandera 1, commit local. Rollback: revert.
+3. **Env de Production en nj** (tabla de arriba). No afecta el deploy vivo hasta un nuevo deploy. Rollback: `vercel env rm`.
+4. **`vercel deploy --prod --skip-domain`** desde el worktree. Sobre la URL del deploy: home catalog, `fyl_vid` + `fyl_exp` firmado con `paused` (prueba service key + secreto + RPC), `noindex`, landings/proxies 200, `/catalogo` 302, logs sin `[rollout]`. No visitar `/nj` anónimo. Rollback: no se promueve.
+5. **Ventana de cutover** (hora de poco tráfico): (a) `vercel promote <deploy>` en nj; (b) quitar `www` y apex del proyecto `catalogo-definitivo` (Settings → Domains → Remove; **nunca** `vercel domains rm`); (c) agregarlos en `nj` (`www` principal, apex → 308 `www`); (d) chequeo rápido: `/`, `/catalogo`, `/revendedoras`, `/nj` logueada con cuenta seed, login Google. Rollback: ver abajo.
+6. **Checklist post-cutover** completo + `_verify` (contador 0, 0 grants quota; `tester_link` solo por usos de `/nj`).
+7. Search Console: sitemap `www`; observar 24–48 h (errores Vercel, Supabase logs, GA/Pixel/Clarity).
+
+### Rollback de Fase 1
+
+- **Nivel 1 (problema de experiencia, nj se queda):** `update public.rollout_config set mode = 'kill', updated_at = now(), updated_by = 'fase1-rollback' where id = 1;` (aprobación; efecto ≤ 30 s por instancia; conserva grants). Volver: mismo UPDATE con `mode = 'paused'`.
+- **Nivel 2 (volver a catalogo1):** 1) quitar `www` y apex de `nj`; 2) agregarlos a `catalogo-definitivo` (`www` principal, apex 308) — su deploy productivo sigue intacto; 3) `vercel rollback`/`promote` de nj a `dpl_BHA4AYjEo56jbz9B7xstLjrXYZpP` (restaura `www/nj` vía rewrite); 4) quitar `NEXT_PUBLIC_ROLLOUT_ENABLED` de Production para que un deploy futuro no salga con bandera. Firebase no se toca (landings `www` valen con catalogo1).
+- **Impacto:** 362 y grants intactos (sin SQL). Cookies `fyl_*` y `sb-*` quedan en `www`; catalogo1 las ignora; si se reintenta el cutover con el mismo secreto siguen válidas. Indexación: URLs nj rastreadas (`/calzado`…) caen al catch-all de Firebase (200 → `/catalogo`) hasta reenviar sitemap; menor.
+- **Verificación:** `www/` → 308 `/catalogo`; `/catalogo` 200; `/nj` 200 (build viejo); `/revendedoras` y `/admin/index.html` 200; `nj-gonzidel` = `dpl_BHA4…`.
+- **362_ROLLBACK** no forma parte del rollback de frontend.
+
+### Checklist post-cutover
+
+Home, categorías, búsqueda, filtros, PDP, WhatsApp (`5493625172874`), 360–430 px, login Google/email desde `www` (termina en `www`, nunca en `/nj` ni host de testing), tester existente → full, cuenta sin grant → catalog + aviso, avatar + cerrar sesión, `/dashboard` (full y sin grant), `/nj` (logueada con cuenta seed), landings Firebase, admin nj y vanilla (según decisión 1), `robots.txt`, `sitemap.xml`, canonical, GA `page_view` + `experience`, Pixel, Clarity `w7h6cytm9j`, logs Vercel/Supabase sin errores, `rollout_daily_counter` vacío, 0 grants `quota`. Sin checkout real en producción sin aprobación.

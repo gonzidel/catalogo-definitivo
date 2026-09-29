@@ -7,6 +7,7 @@ import BottomNav from "@/components/layout/BottomNav";
 import CartFloatingBar from "@/components/cart/CartFloatingBar";
 import ProfileGateProvider from "@/components/profile/ProfileGateProvider";
 import GaLoader from "@/components/analytics/GaLoader";
+import ClarityLoader from "@/components/analytics/ClarityLoader";
 import { NJ_INDEXING_ENABLED } from "@/lib/seo/indexing";
 import { getSiteUrl } from "@/lib/site-url";
 
@@ -89,6 +90,7 @@ export default function RootLayout({
           }}
         />
         <GaLoader />
+        <ClarityLoader />
         <ProfileGateProvider>
           {/* Header needs Suspense because SearchBar uses useSearchParams */}
           <Suspense fallback={<HeaderFallback />}>

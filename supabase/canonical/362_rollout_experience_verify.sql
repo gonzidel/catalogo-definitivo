@@ -43,11 +43,14 @@ ORDER BY g.source, u.email;
 SELECT source, count(*) FROM public.rollout_grants WHERE note = 'seed:362' GROUP BY 1 ORDER BY 1;
 -- Esperado al 2026-09-29: admin 1, staff 9, tester 41.
 
--- 6) Cuentas sin grant (debe ser 0 justo después del seed)
-SELECT count(*) AS users_without_grant
+-- 6) Grupo previo sin grant (debe ser 0) y altas posteriores al corte (sin seed: catalog
+--    salvo staff en admins, cupo, /nj u open_all)
+SELECT (u.created_at < '2026-09-29 00:00:00-03') AS grupo_previo, count(*) AS users_without_grant
 FROM auth.users u
 WHERE NOT EXISTS (SELECT 1 FROM public.rollout_grants g
-                  WHERE g.auth_user_id = u.id AND g.revoked_at IS NULL);
+                  WHERE g.auth_user_id = u.id AND g.revoked_at IS NULL)
+GROUP BY 1 ORDER BY 1 DESC;
+-- Esperado justo después del seed: sin fila grupo_previo = true.
 
 -- 7) Contador vs grants quota (deben coincidir día por día)
 SELECT d.day, d.granted AS counter,

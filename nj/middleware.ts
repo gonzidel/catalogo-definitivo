@@ -161,7 +161,7 @@ async function rolloutMiddleware(request: NextRequest, env: RolloutEnv) {
   const signed = misconfigured
     ? null
     : await verifyExperience(env.cookieSecret, visitorId, request.cookies.get(EXPERIENCE_COOKIE)?.value);
-  const { usable, fresh } = evaluateSigned(signed, today);
+  const { usable, fresh } = evaluateSigned(signed, today, mode);
   let current: SignedExperience | null = usable ? signed : null;
   let sign: SignedExperience | null = null;
 

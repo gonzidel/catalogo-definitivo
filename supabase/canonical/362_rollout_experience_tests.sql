@@ -34,14 +34,21 @@ BEGIN
 END $$;
 
 -- ---------------------------------------------------------------------------
--- B) Seed: todas las cuentas tienen full y ninguna consumió cupo
+-- B) Seed: el grupo previo al corte tiene full; las altas posteriores no; nadie consumió cupo
 -- ---------------------------------------------------------------------------
 DO $$
 BEGIN
   ASSERT (SELECT count(*) FROM auth.users u
-          WHERE NOT EXISTS (SELECT 1 FROM public.rollout_grants g
+          WHERE u.created_at < '2026-09-29 00:00:00-03'
+            AND NOT EXISTS (SELECT 1 FROM public.rollout_grants g
                             WHERE g.auth_user_id = u.id AND g.revoked_at IS NULL)) = 0,
-    'toda cuenta existente debe tener grant';
+    'toda cuenta del grupo previo debe tener grant';
+  ASSERT (SELECT count(*) FROM public.rollout_grants g
+          JOIN auth.users u ON u.id = g.auth_user_id
+          WHERE g.note = 'seed:362' AND u.created_at >= '2026-09-29 00:00:00-03') = 0,
+    'ninguna alta posterior al corte recibe seed';
+  ASSERT (SELECT count(*) FROM public.rollout_grants WHERE note = 'seed:362') = 51,
+    'seed = 51 cuentas';
   ASSERT (SELECT count(*) FROM public.rollout_grants g
           JOIN public.admins a ON a.user_id = g.auth_user_id
           WHERE g.note = 'seed:362' AND g.source = 'tester') = 0,
@@ -57,6 +64,13 @@ END $$;
 -- ---------------------------------------------------------------------------
 -- C) Flujo completo como service_role
 -- ---------------------------------------------------------------------------
+-- Alta posterior al corte sin rol en admins (service_role no lee el esquema auth).
+SELECT set_config('rollout_test.late_user', coalesce((
+  SELECT u.id::text FROM auth.users u
+  WHERE u.created_at >= '2026-09-29 00:00:00-03'
+    AND NOT EXISTS (SELECT 1 FROM public.admins a WHERE a.user_id = u.id)
+  LIMIT 1), ''), true);
+
 SET LOCAL ROLE service_role;
 
 DO $$
@@ -68,8 +82,12 @@ DECLARE
   v5 uuid := '00000000-0000-4000-8000-000000000005';
   v6 uuid := '00000000-0000-4000-8000-000000000006';
   v7 uuid := '00000000-0000-4000-8000-000000000007';
+  v8 uuid := '00000000-0000-4000-8000-000000000008';
+  v9 uuid := '00000000-0000-4000-8000-000000000009';
   v_tester uuid;
   v_admin uuid;
+  v_other uuid;
+  v_late uuid;
   r jsonb;
   n int;
 BEGIN
@@ -147,6 +165,24 @@ BEGIN
   ASSERT r->>'experience' = 'full' AND r->>'source' = 'open_all', 'open_all: ' || r;
   SELECT granted INTO n FROM public.rollout_daily_counter WHERE day = public.fn_rollout_today();
   ASSERT n = 2, 'open_all no consume, contador ' || n;
+
+  -- open_all: login sin grant también recibe full (en paused/quota sigue siendo no_grant)
+  SELECT auth_user_id INTO v_other FROM public.rollout_grants
+  WHERE source = 'tester' AND revoked_at IS NULL LIMIT 1;
+  UPDATE public.rollout_grants SET revoked_at = now() WHERE auth_user_id = v_other;
+  r := public.rpc_rollout_link_user(v8, v_other);
+  ASSERT r->>'experience' = 'full' AND r->>'source' = 'open_all', 'open_all login: ' || r;
+  SELECT granted INTO n FROM public.rollout_daily_counter WHERE day = public.fn_rollout_today();
+  ASSERT n = 2, 'open_all login no consume, contador ' || n;
+
+  -- alta posterior al corte: sin seed; en paused el login no concede full
+  v_late := nullif(current_setting('rollout_test.late_user'), '')::uuid;
+  IF v_late IS NOT NULL THEN
+    UPDATE public.rollout_config SET mode = 'paused' WHERE id = 1;
+    r := public.rpc_rollout_link_user(v9, v_late);
+    ASSERT r->>'experience' = 'catalog' AND r->>'reason' = 'no_grant', 'alta posterior en paused: ' || r;
+    UPDATE public.rollout_config SET mode = 'open_all' WHERE id = 1;
+  END IF;
 
   -- staff verificado sin grant (p.ej. alta nueva en admins) → full staff/admin
   UPDATE public.rollout_config SET mode = 'paused' WHERE id = 1;

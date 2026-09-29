@@ -10,17 +10,19 @@ export function isVisitorId(value: string | undefined | null): value is string {
 
 /**
  * Cookie firmada vigente:
- *  - catalog: solo el mismo día ART (al día siguiente vuelve a ser candidata).
+ *  - catalog: solo el mismo día ART (al día siguiente vuelve a ser candidata) y nunca
+ *    en open_all, donde todos deben recibir full apenas cambia el modo.
  *  - full: siempre; `fresh` indica si toca revalidar contra la base.
  */
 export function evaluateSigned(
   signed: SignedExperience | null,
-  today: string
+  today: string,
+  mode: RolloutMode
 ): { usable: boolean; fresh: boolean } {
   if (!signed) return { usable: false, fresh: false };
   if (signed.experience === "catalog") {
-    const sameDay = signed.day === today;
-    return { usable: sameDay, fresh: sameDay };
+    const current = signed.day === today && mode !== "open_all";
+    return { usable: current, fresh: current };
   }
   return { usable: true, fresh: daysBetween(signed.day, today) < FULL_REVALIDATE_AFTER_DAYS };
 }

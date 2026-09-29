@@ -33,7 +33,7 @@ export default function AccountPendingNotice() {
   return (
     <div className="account-notice" role="status">
       <p className="account-notice__text">
-        ¡Listo, ya ingresaste! 👋 Por ahora podés ver el catálogo y hacer tu pedido por WhatsApp.
+        ¡Listo, ya ingresaste! 👋 Podés seguir viendo el catálogo y consultarnos por WhatsApp cuando quieras.
       </p>
       <div className="account-notice__actions">
         <WhatsAppButton variant="notice" className="account-notice__cta">

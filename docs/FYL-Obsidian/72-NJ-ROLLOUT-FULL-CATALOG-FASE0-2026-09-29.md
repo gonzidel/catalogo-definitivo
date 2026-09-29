@@ -11,15 +11,18 @@ nj pasa a ser el único frontend de `www`. catalogo1 no se forkea: se reproduce 
 **NEGOCIO CONFIRMADO (usuario, 2026-09-29):**
 
 - Cupo diario ≈15 personas nuevas en `full` (Fase 2). El cupo se consume al **conceder**; la asignación `full` es persistente.
-- El registro/login nunca se bloquea. Login **no** concede `full` ni saltea el cupo.
-- Las 51 cuentas existentes conservan `full` sin consumir cupo.
+- El registro/login nunca se bloquea. Login **no** concede `full` ni saltea el cupo (excepciones: staff/admin verificado y `open_all`).
+- El grupo previo al rollout (51 cuentas al 2026-09-29: 1 admin / 9 staff / 41 clientas del test) conserva `full` sin consumir cupo. No es “todo `auth.users` al aplicar”: las altas posteriores al corte no reciben seed.
+- **`catalog` es una experiencia normal y completa** (productos, categorías, búsqueda/filtros, PDP, WhatsApp, páginas informativas, guías/FAQ del catálogo). No es espera, demo ni versión incompleta: nunca explica rollout, cupos, pruebas ni funciones `full` ausentes.
+- `open_all` = desde ese momento todos reciben `full`. `paused` no concede nuevos `full` y conserva los existentes. `kill` fuerza catalog a clientes, conserva grants y deja el acceso operativo de staff/admin.
+- Límite aceptado: incógnito/cookies borradas/dispositivo nuevo sin sesión cuentan como visitante nuevo; lo que se garantiza es el tope global de `daily_quota` por día. Sin fingerprinting.
 - `/nj` = puerta de testers: concede `full` (`tester_link`) sin cupo y hace 302 a la misma ruta sin prefijo.
 - Modos: `paused`, `quota`, `open_all`, `kill`. `kill` no borra nada.
 - `/catalogo*` → 302 (no 301 hasta el 100 %).
 - Textos al cliente: sin cupos, rollout, cohortes ni A/B.
 - `kill`: `/dashboard` cerrado para clientes aunque tengan grant `full`; los grants se conservan. Staff/admin mantiene acceso para operación/diagnóstico.
 - `/quienes-somos`: se mantiene la página nj, sin rewrite a Firebase.
-- Aviso a cuenta logueada que sigue en catalog (aprobado): «¡Listo, ya ingresaste! 👋 Por ahora podés ver el catálogo y hacer tu pedido por WhatsApp.»
+- Aviso a cuenta logueada que sigue en catalog (aprobado 2026-09-29, reemplaza al anterior «Por ahora podés…»): «¡Listo, ya ingresaste! 👋 Podés seguir viendo el catálogo y consultarnos por WhatsApp cuando quieras.» Aparece tras el login y al tocar el avatar en catalog.
 
 ## Base de datos — `supabase/canonical/362_*` (NO aplicada)
 
@@ -32,11 +35,18 @@ nj pasa a ser el único frontend de `www`. catalogo1 no se forkea: se reproduce 
 
 **Mecanismo atómico (TÉCNICA VERIFICADA en PG17 local):** `pg_advisory_xact_lock` por usuario y luego por visitante (orden fijo, sin deadlocks) + upsert `INSERT … ON CONFLICT (day) DO UPDATE SET granted = granted + 1 WHERE granted < quota RETURNING`. Si no devuelve fila, el cupo está lleno. Índices únicos parciales: 1 grant activo por visitante y por usuario.
 
-**Clasificación del seed (datos existentes, no supuestos):** `super_admin` en `admins` → `admin`; otro rol en `admins` → `staff`; resto de `auth.users` → `tester`. Al 2026-09-29: 1 / 9 / 41. Verificar con `362_rollout_experience_verify.sql` §5 antes de aplicar.
+**Clasificación del seed (datos existentes, no supuestos):** `super_admin` en `admins` → `admin`; otro rol en `admins` → `staff`; resto → `tester`. Al 2026-09-29: 1 / 9 / 41. Verificar con `362_rollout_experience_verify.sql` §5 antes de aplicar.
+
+**Seed congelado (decisión del usuario, 2026-09-29):** solo `auth.users.created_at < '2026-09-29 00:00:00-03'` (última alta del grupo: 2026-09-26 21:10 ART). Antes de insertar, la migración cuenta ese grupo y **aborta toda la 362** si no es exactamente 1 / 9 / 41. Descartados: lista de 51 UUIDs (frágil, ilegible) y criterio por actividad (15 de las 41 testers no tienen carrito ni pedido). Cualquier grant previo de la cuenta (también revocado) bloquea el seed: reaplicar no revive revocaciones. Una cuenta del test creada después del corte necesitaría un grant `manual` aparte (UPDATE/INSERT con aprobación).
+
+**Precondición:** la 362 empieza con una guarda que aborta si `service_role` no tiene `SELECT` en `public.admins`.
+
+**`open_all` inmediato:** en nj, `evaluateSigned(signed, today, mode)` ignora el `catalog` firmado del día cuando el modo es `open_all`, así que la siguiente navegación de documento vuelve a resolver (una RPC por visitante, después queda `full` firmado; RSC/prefetch/bots siguen sin consultar). En SQL, `rpc_rollout_link_user` crea un grant `open_all` para la cuenta sin grant que inicia sesión en ese modo. Demora máxima: cache del modo (≤ 30 s por instancia).
 
 **Revisión previa (2026-09-29, sin aplicar en producción):**
 - Producción (solo lectura): 51 cuentas = 1 admin / 9 staff / 41 tester; 0 objetos `rollout_*`; `service_role` con BYPASSRLS y `SELECT` sobre `public.admins`; los default ACL de `public` otorgan todo a anon/authenticated en tablas nuevas (por eso el `REVOKE ALL` explícito).
 - Postgres 17.6 local con la misma composición: aplica, reaplica (idempotente, seed 0 filas nuevas), `_tests` → `362 tests OK`, `_verify` según lo esperado, rollback limpio (0 objetos, `auth.users`/`admins` intactos) y reaplicación posterior OK.
+- Segunda revisión (ajustes del usuario): guarda sin `SELECT` → aborta con 0 objetos; grupo previo de 52 → aborta con 0 objetos; 2 altas posteriores al corte (una exactamente en el corte) → sin seed; reaplicar con un grant revocado → sigue revocado; `_tests` ampliados (login en `open_all`, alta posterior en `paused`) → OK antes y después de rollback/reaplicación; nj 176/176 tests, tsc y build OK.
 - Concurrencia: cupo 15 con 60 visitantes en paralelo → 15 `quota` / 45 `quota_full`; 20 requests simultáneos del mismo visitante → 1 grant (1 `quota` + 19 `existing_grant`); 20 cruces `resolve`/`link_user` de la misma cuenta y dispositivo → 1 grant activo, sin deadlocks. Contador = grants quota.
 - **Dependencia:** las RPC son `SECURITY INVOKER`: requieren que `service_role` conserve `SELECT` en `public.admins` (sin eso fallan con `permission denied` y nj cae a catalog sin firmar).
 - **Límite conocido:** el cupo es por `visitor_id`/cuenta. Un dispositivo nuevo sin sesión (o cookies borradas) es un visitante nuevo y puede consumir otro cupo en modo `quota`; el total diario nunca supera `daily_quota`.
@@ -49,7 +59,8 @@ nj pasa a ser el único frontend de `www`. catalogo1 no se forkea: se reproduce 
 - **Cookies:** `fyl_vid` (httpOnly, UUID), `fyl_exp` (httpOnly, HMAC-SHA256 sobre `v1|vid|exp|src|day`; única que habilita `/dashboard`), `fyl_x` (espejo legible, solo UI), `fyl_notice` (120 s). `catalog` vence a medianoche ART; `full` 400 días.
 - **UI sin flash:** script inline en `<head>` fija `html[data-exp]`; variantes por CSS (`exp-full-only` / `exp-catalog-only`); `FullOnly` para componentes con efectos (carrito, onboarding, notificaciones). Sin atributo = catalog.
 - **Catalog:** WhatsApp en Header/BottomNav/PDP (número de catalogo1 `5493625172874`, ver contradicción), talles solo lectura, sin carrito ni “Pedido”, FAQ/cómo usar/quiénes somos de catalogo1.
-- **Auth callback:** vincula la cuenta (`rpc_rollout_link_user`); sin grant → vuelve a `/` en catalog con aviso.
+- **Auth callback:** vincula la cuenta (`rpc_rollout_link_user`); sin grant → vuelve a `/` en catalog con aviso (en `open_all` la cuenta recibe grant y entra a `full`).
+- **Catalog firmado y `open_all`:** un `catalog` firmado del día no vale en `open_all`; se vuelve a resolver en la siguiente navegación de documento.
 - **`kill` y `/dashboard`:** `canEnterFullArea(mode, current, isVerifiedStaff)`. En `kill` solo pasa staff verificado **en vivo** contra `public.admins` (`isStaffUser`, service_role; ante error → no pasa). No se confía en el `source` firmado de la cookie. Middleware (`/dashboard`, `/login`) y callback aplican la misma regla; la clienta con grant vuelve a `/` con el aviso y su `full` firmado se conserva para cuando se salga de `kill`. Con `ROLLOUT_FORCE_MODE=kill` y la base caída, staff tampoco entra (fail-closed).
 - **SEO:** `NJ_INDEXING_ENABLED` = `NEXT_PUBLIC_NJ_INDEXING=1` **y** rollout activo (apagado). `robots.ts` host-aware (Disallow fuera de `www`); `X-Robots-Tag: noindex` en hosts no canónicos y en `/nj`; canonical por página; JSON-LD org/website/categoría/FAQ con `www`.
 - **Analytics:** Pixel y Clarity productiva solo con rollout activo y host `www`/apex; GA `user_properties` `experience` + `rollout_source` (sin eventos duplicados).

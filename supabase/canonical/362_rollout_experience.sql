@@ -11,13 +11,23 @@
 -- Reglas:
 --   * `catalog` NUNCA se persiste: sin fila = catalog. La cookie firmada vence al fin del día ART.
 --   * Solo source='quota' consume rollout_daily_counter.
---   * Loguearse no concede full: rpc_rollout_link_user solo vincula o reconoce grants existentes.
+--   * Loguearse no concede full: rpc_rollout_link_user solo vincula o reconoce grants existentes
+--     (excepciones: staff/admin verificado y mode='open_all', donde todos reciben full).
 --   * mode='kill' no borra nada: devuelve catalog pero conserva grants y vínculos.
 --   * Todo ejecutable solo por service_role (server-side). RLS activo, sin policies para anon/authenticated.
 --
 -- No toca: checkout, carrito, stock, sellable, reservas, pedidos, auth.
 
 BEGIN;
+
+-- ---------------------------------------------------------------------------
+-- 0) Precondición: las RPC son SECURITY INVOKER y leen public.admins como service_role
+-- ---------------------------------------------------------------------------
+DO $$ BEGIN
+  IF NOT has_table_privilege('service_role', 'public.admins', 'SELECT') THEN
+    RAISE EXCEPTION '362: service_role necesita SELECT en public.admins';
+  END IF;
+END $$;
 
 -- ---------------------------------------------------------------------------
 -- 1) rollout_config
@@ -313,8 +323,8 @@ COMMENT ON FUNCTION public.rpc_rollout_resolve(uuid, uuid, text) IS
 -- 7) rpc_rollout_link_user
 -- ---------------------------------------------------------------------------
 -- Llamada desde auth/callback después de exchangeCodeForSession + getUser.
--- Nunca crea grants por cupo, tester_link ni open_all: loguearse no concede full.
--- Única excepción: staff/admin verificado en public.admins.
+-- Nunca crea grants por cupo ni tester_link: loguearse no concede full.
+-- Excepciones: staff/admin verificado en public.admins y mode='open_all'.
 CREATE OR REPLACE FUNCTION public.rpc_rollout_link_user(
   p_visitor_id uuid,
   p_auth_user_id uuid
@@ -382,6 +392,13 @@ BEGIN
     END IF;
   END IF;
 
+  -- open_all: todos reciben full, también quien inicia sesión sin grant.
+  IF v_user_grant.id IS NULL AND v_mode = 'open_all' THEN
+    INSERT INTO public.rollout_grants (visitor_id, auth_user_id, source, grant_day, linked_at, note)
+    VALUES (p_visitor_id, p_auth_user_id, 'open_all', v_day, now(), 'link: open_all')
+    RETURNING * INTO v_user_grant;
+  END IF;
+
   IF v_user_grant.id IS NULL THEN
     RETURN public.fn_rollout_result('catalog', 'no_grant', NULL, v_day);
   END IF;
@@ -411,8 +428,11 @@ GRANT EXECUTE ON FUNCTION public.rpc_rollout_resolve(uuid, uuid, text) TO servic
 GRANT EXECUTE ON FUNCTION public.rpc_rollout_link_user(uuid, uuid) TO service_role;
 
 -- ---------------------------------------------------------------------------
--- 9) Seed: cuentas existentes conservan full (no consumen cupo)
+-- 9) Seed: el grupo previo al rollout conserva full (no consume cupo)
 -- ---------------------------------------------------------------------------
+-- Grupo previo = cuentas creadas antes del corte de la revisión de 362. Las altas
+-- posteriores al corte NO reciben seed aunque existan en auth.users al aplicar.
+-- Si el grupo ya no es exactamente 1 admin / 9 staff / 41 tester, aborta todo.
 -- Clasificación desde public.admins (misma fuente que public.is_admin()):
 --   role = 'super_admin'      → source 'admin'
 --   otra fila en admins       → source 'staff'
@@ -421,10 +441,28 @@ GRANT EXECUTE ON FUNCTION public.rpc_rollout_link_user(uuid, uuid) TO service_ro
 DO $$
 DECLARE
   v_day date := public.fn_rollout_today();
+  -- Última alta del grupo: 2026-09-26 21:10 ART (auth.users, consulta del 2026-09-29).
+  v_cutoff constant timestamptz := '2026-09-29 00:00:00-03';
   v_admin int;
   v_staff int;
   v_tester int;
 BEGIN
+  SELECT
+    count(*) FILTER (WHERE s.source = 'admin'),
+    count(*) FILTER (WHERE s.source = 'staff'),
+    count(*) FILTER (WHERE s.source = 'tester')
+  INTO v_admin, v_staff, v_tester
+  FROM (
+    SELECT coalesce(public.fn_rollout_staff_source(u.id), 'tester') AS source
+    FROM auth.users u
+    WHERE u.created_at < v_cutoff
+  ) s;
+
+  IF (v_admin, v_staff, v_tester) IS DISTINCT FROM (1, 9, 41) THEN
+    RAISE EXCEPTION '362 seed: grupo previo esperado admin=1 staff=9 tester=41, encontrado admin=% staff=% tester=%',
+      v_admin, v_staff, v_tester;
+  END IF;
+
   INSERT INTO public.rollout_grants (auth_user_id, source, grant_day, note)
   SELECT
     u.id,
@@ -432,10 +470,12 @@ BEGIN
     v_day,
     'seed:362'
   FROM auth.users u
-  WHERE NOT EXISTS (
-    SELECT 1 FROM public.rollout_grants g
-    WHERE g.auth_user_id = u.id AND g.revoked_at IS NULL
-  );
+  WHERE u.created_at < v_cutoff
+    -- Cualquier grant previo (también revocado) bloquea el seed: reaplicar no revive revocaciones.
+    AND NOT EXISTS (
+      SELECT 1 FROM public.rollout_grants g
+      WHERE g.auth_user_id = u.id
+    );
 
   SELECT
     count(*) FILTER (WHERE source = 'admin'),
@@ -445,7 +485,7 @@ BEGIN
   FROM public.rollout_grants
   WHERE note = 'seed:362';
 
-  RAISE NOTICE '362 seed: admin=% staff=% tester=% (esperado al 2026-09-29: 1 / 9 / 41)',
+  RAISE NOTICE '362 seed: admin=% staff=% tester=% (grupo previo al 2026-09-29: 1 / 9 / 41)',
     v_admin, v_staff, v_tester;
 END $$;
 

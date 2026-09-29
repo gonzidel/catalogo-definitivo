@@ -115,15 +115,29 @@ test("isVisitorId solo acepta UUID", () => {
 
 test("catalog firmado vale solo el mismo día ART", () => {
   const signed = { experience: "catalog" as const, source: null, day: "2026-09-29" };
-  assert.deepEqual(evaluateSigned(signed, "2026-09-29"), { usable: true, fresh: true });
-  assert.deepEqual(evaluateSigned(signed, "2026-09-30"), { usable: false, fresh: false });
+  for (const mode of ["paused", "quota", "kill"] as const) {
+    assert.deepEqual(evaluateSigned(signed, "2026-09-29", mode), { usable: true, fresh: true }, mode);
+    assert.deepEqual(evaluateSigned(signed, "2026-09-30", mode), { usable: false, fresh: false }, mode);
+  }
+});
+
+test("open_all ignora el catalog firmado del día: se vuelve a resolver", () => {
+  const signed = { experience: "catalog" as const, source: null, day: "2026-09-29" };
+  const { usable, fresh } = evaluateSigned(signed, "2026-09-29", "open_all");
+  assert.deepEqual({ usable, fresh }, { usable: false, fresh: false });
+  const base = { mode: "open_all" as const, fresh, door: false, bot: false, eligibleRequest: true };
+  assert.equal(shouldResolve({ ...base, current: usable ? signed : null }), true);
+  assert.equal(shouldResolve({ ...base, current: null, eligibleRequest: false }), false, "RSC/prefetch no resuelven");
+  assert.equal(shouldResolve({ ...base, current: null, bot: true }), false, "bots no resuelven");
 });
 
 test("full firmado siempre vale; se revalida a los 7 días", () => {
   const signed = { experience: "full" as const, source: "quota" as const, day: "2026-09-20" };
-  assert.deepEqual(evaluateSigned(signed, "2026-09-26"), { usable: true, fresh: true });
-  assert.deepEqual(evaluateSigned(signed, "2026-09-27"), { usable: true, fresh: false });
-  assert.deepEqual(evaluateSigned(null, "2026-09-27"), { usable: false, fresh: false });
+  for (const mode of ["paused", "quota", "open_all", "kill"] as const) {
+    assert.deepEqual(evaluateSigned(signed, "2026-09-26", mode), { usable: true, fresh: true }, mode);
+    assert.deepEqual(evaluateSigned(signed, "2026-09-27", mode), { usable: true, fresh: false }, mode);
+    assert.deepEqual(evaluateSigned(null, "2026-09-27", mode), { usable: false, fresh: false }, mode);
+  }
 });
 
 const full = { experience: "full" as const, source: "quota" as const, day: "2026-09-29" };

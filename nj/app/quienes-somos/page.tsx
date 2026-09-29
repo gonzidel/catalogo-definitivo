@@ -61,10 +61,6 @@ export default function QuienesSomosPage() {
             calzado e indumentaria. Trabajamos todos los días para acompañar el
             crecimiento de revendedoras y negocios en todo el país.
           </p>
-          <p>
-            Contamos con fábrica propia de calzado, lo que nos permite ofrecer
-            stock constante, variedad y respuesta rápida en cada pedido.
-          </p>
         </article>
       </section>
 

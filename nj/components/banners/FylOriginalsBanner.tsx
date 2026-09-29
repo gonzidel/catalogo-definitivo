@@ -56,14 +56,11 @@ export default function FylOriginalsBanner({
       ]
         .filter(Boolean)
         .join(" ")}
-      aria-label="F&L Originals — fabricación propia"
+      aria-label="F&L Originals"
       aria-busy={showSkeleton || undefined}
     >
       <div className="orig-head">
-        <h2 className="orig-title">
-          F&amp;L Originals{" "}
-          <span className="orig-subInline">• Fabricación propia</span>
-        </h2>
+        <h2 className="orig-title">F&amp;L Originals</h2>
         <Link
           href="/coleccion/fyl-originals"
           className="orig-ver-todo"

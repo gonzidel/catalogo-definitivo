@@ -86,7 +86,7 @@ Hallazgos del preview (sin cambios, fuera de alcance): las landings Firebase con
 ## Diferencias catalog vs catalogo1 (a aceptar o corregir)
 
 - PDP con layout nj (galería/colores/talles distinto orden) — rediseño previo de nj.
-- Filtro “Talles” solo en categorías (decisión previa de nj); subtítulo F&L Originals “Fabricación propia” (nj) vs “… y stock constante”.
+- Filtro “Talles” solo en categorías (decisión previa de nj); F&L Originals sin subtítulo (nj) vs “Fabricación propia y stock constante” (catalogo1).
 - Disponibilidad por `sellable` (nj) vs `stock_qty` (catalogo1).
 - Sin `@vercel/analytics` / speed-insights. JSON-LD con `www` (catalogo1 usaba apex).
 - Botón “Ingresar” visible en catalog (pedido explícito).
@@ -106,7 +106,8 @@ Hallazgos del preview (sin cambios, fuera de alcance): las landings Firebase con
   - Confirmado (CANÓNICA) pero solo implícito en nj: surtido libre y mínimo de 4 productos surtidos (nj full dice “Compra mínima accesible”). No se portó copy; queda a decisión.
   - Se quitó de “Guías y recursos” el link a `/quienes-somos` (en nj apunta a sí misma).
 - **Claims “fábrica propia” (corregido en metadata, 2026-09-29, pedido del usuario):** `layout.tsx` y `/quienes-somos` ya no lo afirman en `description`; el JSON-LD tampoco. Sin ampliar contenido.
-- **CONTRADICCIÓN pendiente (fuera del alcance pedido, sin tocar):** texto visible “Contamos con fábrica propia de calzado” en `/quienes-somos`; banner F&L Originals “Fabricación propia” (`lib/banners/collections.ts`, `FylOriginalsBanner.tsx`); metadata “desde 4 pares” en `[categoria]` y `tags` (contradice el mínimo canónico de 4 productos surtidos).
+- **Limpieza nj (2026-09-29, pedido del usuario):** se quitó el párrafo visible “Contamos con fábrica propia de calzado…” de `/quienes-somos`; el banner de la home queda “F&L Originals” sin subtítulo y la colección usa “Colección destacada” (antes “Fabricación propia”); la metadata de `[categoria]` y `tags` dice “compra mínima de 4 productos surtidos” (antes “desde 4 pares”). En nj no queda ningún “fábrica/fabricación propia” ni “4 pares”.
+- **Pendiente Fase 1 — landings Firebase (no modificadas):** afirman “fábrica propia” (y “producción nacional”, “precio de fábrica”), muestran “786+ artículos” y declaran canonical apex `https://fylmoda.com.ar/...` en vez de `www`. Requiere cambio del HTML en el repo + deploy de Firebase, con aprobación.
 - **Ramas divergentes:** ver § Integración de ramas.
 
 ## Integración de ramas (ejecutada solo en local, 2026-09-29)

@@ -36,3 +36,15 @@ For proposed production changes, include:
 - post-change verification
 
 Never run destructive or stock/checkout-affecting SQL in production without explicit approval and a staging/fixture plan.
+
+# Data API grants (desde 2026-10-30)
+
+Supabase dejó de auto-otorgar acceso Data API a tablas **nuevas** en `public` (proyectos existentes). Las tablas ya creadas no cambian.
+
+En toda migración que haga `CREATE TABLE` (o equivalente) en `public`:
+
+- Incluir `GRANT` explícitos en la **misma** migración.
+- Otorgar solo a los roles que realmente usan la tabla (mínimo privilegio).
+- Tablas sensibles / solo backend (WA, CRM, outbox, etc.): preferir `service_role`; no copiar el template del mail con `anon`/`authenticated` CRUD abierto.
+- Si el cliente o admin lee vía PostgREST: `GRANT` acotado + RLS.
+- Aplica también a preview branches y `supabase db reset` local.

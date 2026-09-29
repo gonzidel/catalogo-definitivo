@@ -190,7 +190,7 @@ interface ActiveOrder {
 // botón atrás, "Mi pedido" lo reabre automáticamente en vez de perderlo.
 const ALT_PANEL_STORAGE_KEY = "fyl-nj-alt-panel-item";
 const FIRST_ORDER_GUIDE_KEY_PREFIX = "fyl-nj-first-order-guide:";
-const WHATSAPP_HREF = "https://wa.me/5493624118637";
+const WHATSAPP_HREF = "https://wa.me/5493624866768";
 /** Local FYL — mismo link que en quiénes somos / cómo comprar. */
 const LOCAL_STORE_MAPS_HREF = "https://maps.app.goo.gl/PoxAhU5AG3m2etSz5";
 

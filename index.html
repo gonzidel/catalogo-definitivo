@@ -1143,16 +1143,28 @@
     </section>
   </main>
 
-  <!-- WhatsApp popup -->
-  <div id="wa-popup">
-    <button id="wa-toggle" title="Chat WhatsApp">
-      <img src="./icons/whatsapp.svg" alt="WhatsApp" />
-    </button>
-    <div id="wa-menu">
-      <a href="https://wa.me/5493624118637" target="_blank">Envíos</a>
-      <a href="https://wa.me/5493624118637" target="_blank">Local</a> 
-    </div>
-  </div>
+  <!-- YCloud WhatsApp Chat Widget -->
+  <script type="text/javascript">
+    ;(function (m, ei, q, i, a, j, s) {
+      m[i] =
+        m[i] ||
+        function () {
+          ;(m[i].a = m[i].a || []).push(arguments)
+        }
+      ;(j = ei.createElement(q)), (s = ei.getElementsByTagName(q)[0]);
+      j.async = true;
+      j.crossorigin = true;
+      j.charset = 'UTF-8';
+      j.src = 'https://sdk.ycloud.com/growth-tool/install.js';
+      s.parentNode.insertBefore(j, s);
+      j.onload = function () {
+        window._YCLOUD.init('B10264428EB45280E5C33A1C3A3553DE', {
+          onWidgetOpen: function (event) {},
+          onWidgetWhatsAppClick: function (event) {}
+        })
+      };
+    })(window, document, 'script', '_YCLOUD')
+  </script>
   <script src="scripts/fyl-header-early.js?v=m260607"></script>
 
   <!-- Botón scroll hacia arriba -->

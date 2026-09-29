@@ -410,11 +410,7 @@
     .talles { display: flex; flex-wrap: wrap; gap: .3rem; }
     .talle { background: #eee; padding: 4px 8px; border-radius: 6px; font-size: .9rem; }
 
-    /* WhatsApp popup */
-    #wa-popup { position: fixed; bottom: 20px; right: 20px; z-index: 1000; }
-    #wa-toggle { width: 50px; height: 50px; border: none; border-radius: 50%; background: #25D366; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 2px 6px rgba(0,0,0,0.3); }
-    #wa-toggle svg { width: 40px; height: 40px; fill: #fff; }
-    #wa-toggle img { width: 40px; height: 40px; }
+    /* WhatsApp popup (legacy, reemplazado por YCloud Chat Widget) */
     #wa-menu {
   display: none;
   position: absolute;
@@ -476,19 +472,28 @@
 
   <div class="container" id="catalogo"></div>
 
-  <!-- WhatsApp popup -->
-  <div id="wa-popup">
-  <button id="wa-toggle" title="Chat WhatsApp">
-    <img src="./icons/whatsapp.svg" alt="WhatsApp" />
-      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-        <path fill="#fff" d="M17.472 14.382c-...z"/>
-      </svg>
-    </button>
-    <div id="wa-menu">
-      <a href="https://wa.me/5493624118637" target="_blank">Envíos</a>
-      <a href="https://wa.me/5493624118637" target="_blank">Local</a> 
-    </div>
-  </div>
+  <!-- YCloud WhatsApp Chat Widget -->
+  <script type="text/javascript">
+    ;(function (m, ei, q, i, a, j, s) {
+      m[i] =
+        m[i] ||
+        function () {
+          ;(m[i].a = m[i].a || []).push(arguments)
+        }
+      ;(j = ei.createElement(q)), (s = ei.getElementsByTagName(q)[0]);
+      j.async = true;
+      j.crossorigin = true;
+      j.charset = 'UTF-8';
+      j.src = 'https://sdk.ycloud.com/growth-tool/install.js';
+      s.parentNode.insertBefore(j, s);
+      j.onload = function () {
+        window._YCLOUD.init('B10264428EB45280E5C33A1C3A3553DE', {
+          onWidgetOpen: function (event) {},
+          onWidgetWhatsAppClick: function (event) {}
+        })
+      };
+    })(window, document, 'script', '_YCLOUD')
+  </script>
   <!-- Botón scroll hacia arriba -->
 
 <button id="btn-scroll-top" title="Volver arriba" aria-label="Volver arriba">

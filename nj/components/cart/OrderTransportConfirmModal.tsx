@@ -12,7 +12,7 @@ import {
   resolveShippingOptions,
 } from "@/lib/transport/shipping-helpers";
 
-const WHATSAPP_HREF = "https://wa.me/5493624118637";
+const WHATSAPP_HREF = "https://wa.me/5493624866768";
 
 interface OrderTransportConfirmModalProps {
   open: boolean;

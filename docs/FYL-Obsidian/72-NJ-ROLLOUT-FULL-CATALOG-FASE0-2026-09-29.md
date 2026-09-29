@@ -1,7 +1,7 @@
 # 72 — Rollout `full` / `catalog` en nj — Fase 0 — 2026-09-29
 
 > **Estado:** Fase 0 terminada en rama `feat/nj-rollout-fase0` (worktree `E:\PROYECTOS\fyl-rollout-fase0`, rebaseada sobre `af349fb` = `fix/customer-link-nj-onboarding` con `origin/main` integrado; commit local, sin push).
-> **Nada aplicado en producción:** migración 362 sin aplicar, dominio sin mover, sin deploy, sin indexación, sin 301.
+> **Nada aplicado en producción:** migración 362 sin aplicar, dominio sin mover, sin deploy productivo (solo preview), sin indexación, sin 301.
 > Reemplaza los planes de SEO (§H), redirects (§I) y analytics (§M) de [[58-NJ-PRELAUNCH-CUTOVER-2026-09-04]].
 
 ## Qué es
@@ -59,6 +59,29 @@ nj pasa a ser el único frontend de `www`. catalogo1 no se forkea: se reproduce 
 | `tsc --noEmit`; `next build` rollout off / on | OK. Home/categoría ya eran dinámicas en la base (no se perdió ISR); `robots.txt` pasa a dinámico |
 | E2E local (middleware real + PG17 + PostgREST, cupo 3) | 21/22: quota, cookies firmadas, bots, prefetch, forja de cookies, `/nj`, `/catalogo` 302, `/dashboard`, robots, noindex, kill/paused/open_all. El caso restante (proxy a Firebase) falla solo por intercepción TLS local; rewrite verificado en `routes-manifest` y destinos 200 |
 | Comparación visual 390 px catalog vs catalogo1 | Ver diferencias abajo |
+
+## Preview Vercel (2026-09-29) — validación final de Fase 0
+
+`https://nj-e11sqau1i-gonzidel.vercel.app` (proyecto `nj`, target preview, commit `650fc5b`). `--build-env/--env NEXT_PUBLIC_ROLLOUT_ENABLED=1`, `ROLLOUT_FORCE_EXPERIENCE=catalog`. Sin dominio, DNS, producción, indexación ni catalogo1 tocados. El proyecto `nj` no está conectado a git (la CLI sugiere `vercel git connect`).
+
+**Límite:** el preview no tiene `SUPABASE_SERVICE_ROLE_KEY` ni `ROLLOUT_COOKIE_SECRET` (no se agregaron secretos) → modo `paused` + catalog forzado; no emite `fyl_exp`. Cupo, grants, `kill`/staff y aviso post-login quedan validados solo en E2E local.
+
+| Verificación (390 px) | Resultado |
+|---|---|
+| Home | OK: header búsqueda + WhatsApp + Ingresar, chips de categorías, banner catalog (igual catalogo1), barra inferior Inicio/Buscar/WhatsApp, sin carrito ni “Pedido” |
+| Categorías (`/calzado`) | OK: 14+ productos; filtro Talles (38 → 132 productos, `?talle=38`) |
+| Búsqueda | OK: `/?q=bota` → resultados |
+| PDP (`/producto/653`) | OK: talles solo lectura, sin agregar, CTA fijo “Consultar por WhatsApp” con modelo/SKU/color |
+| WhatsApp | Solo `wa.me/5493625172874` en todas las páginas |
+| `/quienes-somos` | OK: página nj, bullets catalog, 5 recursos (sin autolink), meta description sin “fábrica propia”, canonical `www` |
+| Landings Firebase (proxy) | **OK en real**: `/revendedoras`, `/*-por-mayor`, `/terms`, `/privacy-policy` 200 con HTML y estilos; assets `/styles.css`, `/logo.png`, `/icons/*` 200; links internos resuelven (`/catalogo` → 302 `/`) |
+| `robots.txt` / `sitemap.xml` | `Disallow: /` / vacío (host no canónico) |
+| noindex | `X-Robots-Tag: noindex, nofollow` en HTML (y `noindex` en assets) + `<meta robots noindex>` en páginas nj |
+| canonical | `https://www.fylmoda.com.ar/...` en home, categoría, PDP, tags, quiénes somos |
+| `/nj`, `/nj/calzado`, `/catalogo`, `/catalogo/calzado`, `/dashboard` | 302 a `/`, `/calzado`, `/`, `/calzado`, `/login?next=…` |
+| Parpadeo full/catalog | Sin flash: boot script inline síncrono en `<head>`; sin atributo (estado SSR) el CSS ya equivale a catalog (0 elementos full visibles) |
+
+Hallazgos del preview (sin cambios, fuera de alcance): las landings Firebase conservan canonical apex (`https://fylmoda.com.ar/...`) y afirman “fábrica propia” / “786+ artículos”; se corrigen solo con deploy de Firebase.
 
 ## Diferencias catalog vs catalogo1 (a aceptar o corregir)
 

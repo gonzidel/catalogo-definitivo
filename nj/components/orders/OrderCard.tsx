@@ -171,23 +171,32 @@ export default function OrderCard({ order }: OrderCardProps) {
     showInboxOwnerChip &&
     Boolean(order.customer_id) &&
     firstOrderCustomerIds.includes(order.customer_id);
-  /** ≤2 días para vencer → alerta rosa (solo fuera de Vencido; ahí usa semáforo amarillo/rojo/azul).
-   *  En Retiro no pintar “por vencer”: solo el rojo de ya vencido. */
+  /** ≤2 días para vencer → alerta rosa (fuera de Vencido; ≤1 día en Apartados usa amarillo).
+   *  En Retiro no pintar “por vencer” rosa: solo el rojo de ya vencido. */
+  const softExpiringYellow =
+    column === "picked" &&
+    hasDeadline &&
+    !deadlineExpired &&
+    String(order.status || "").toLowerCase() !== "expired" &&
+    calendarDaysLeft !== null &&
+    calendarDaysLeft <= 1;
   const expiringSoon =
     column !== "expired" &&
+    !softExpiringYellow &&
     boardScope !== "local_pickup" &&
     calendarDaysLeft !== null &&
     !deadlineExpired &&
     calendarDaysLeft <= 2;
-  /** Semáforo columna Vencido */
-  const vencidoTone: "yellow" | "red" | "blue" | null =
-    column !== "expired"
+  /** Semáforo: amarillo en Apartados (≤1 día); rojo/azul solo en Vencido hard. */
+  const vencidoTone: "yellow" | "red" | "blue" | null = softExpiringYellow
+    ? "yellow"
+    : column !== "expired"
       ? null
       : expiryWarnCooldown
         ? "blue"
         : deadlineExpired || String(order.status || "").toLowerCase() === "expired"
           ? "red"
-          : "yellow";
+          : null;
   const countdownLabel =
     calendarDaysLeft === null
       ? null
@@ -225,11 +234,8 @@ export default function OrderCard({ order }: OrderCardProps) {
       ),
     [column, items, order]
   );
-  const showExpiryWarningBtn =
-    column === "expired" &&
-    hasDeadline &&
-    !deadlineExpired &&
-    String(order.status || "").toLowerCase() !== "expired";
+  // Aviso WhatsApp “falta 1 día”: ahora en Apartados (marco amarillo), no en Vencido.
+  const showExpiryWarningBtn = softExpiringYellow;
   // Mensaje rojo (ya venció): columna Vencido. Desktop + mobile.
   const showExpiredOrderMessageBtn =
     column === "expired" &&

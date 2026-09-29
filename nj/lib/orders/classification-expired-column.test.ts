@@ -67,13 +67,14 @@ test("status=expired → columna expired", () => {
   assert.equal(getOrderKanbanColumn(order), "expired");
 });
 
-test("≤1 día para vencer + solo picked → expired (amarillo)", () => {
+test("≤1 día para vencer + solo picked → Apartados (amarillo en card)", () => {
   const order = baseOrder();
   assert.equal(isOrderExpiringWithinOneDay(order), true);
-  assert.equal(getOrderKanbanColumn(order), "expired");
+  assert.equal(matchesExpiredTab(order), false);
+  assert.equal(getOrderKanbanColumn(order), "picked");
 });
 
-test("≤1 día + reserved → Activos (no Vencido soft)", () => {
+test("≤1 día + reserved → Activos (no Vencido)", () => {
   const order = baseOrder({
     order_items: [
       {
@@ -105,7 +106,7 @@ test("≤1 día + reserved → Activos (no Vencido soft)", () => {
   assert.equal(getOrderKanbanColumn(order), "active");
 });
 
-test("≤1 día + waiting (sin reserved) → Espera (no Vencido soft)", () => {
+test("≤1 día + waiting (sin reserved) → Espera (no Vencido)", () => {
   const order = baseOrder({
     order_items: [
       {
@@ -244,13 +245,13 @@ test("vencido pendiente de desarme → expired", () => {
   assert.equal(getOrderKanbanColumn(order), "expired");
 });
 
-test("Vencido soft (≤1 día, picked) → se puede cerrar", () => {
+test("≤1 día + picked → se puede cerrar (helper; card ya no está en Vencido)", () => {
   const order = baseOrder(); // dismantle_at ~+12h, solo picked
-  assert.equal(getOrderKanbanColumn(order), "expired");
+  assert.equal(getOrderKanbanColumn(order), "picked");
   assert.equal(canCloseOrderFromExpiredColumn(order), true);
 });
 
-test("Vencido soft + reserved → no cerrar (hay que apartar)", () => {
+test("≤1 día + reserved → no cerrar (hay que apartar)", () => {
   const order = baseOrder({
     order_items: [
       {

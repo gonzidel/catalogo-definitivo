@@ -6,11 +6,9 @@ import {
   orderHasCancelledItems,
   orderHasCancelledItemsPendingStockReturn,
   wantsCustomerClose,
-  isCustomerSourcedOrder,
 } from "@/lib/orders/domain";
 import {
   isOrderExpired,
-  isOrderExpiringWithinOneDay,
 } from "@/lib/orders/deadline";
 import { isLocalPickupBoardOrder, type BoardScope } from "@/lib/orders/board-scope";
 import { orderHasRetiroDepositWaiting, orderHasPedidosLocalWaiting } from "@/lib/orders/retiro-deposit-waiting";
@@ -169,44 +167,18 @@ export function canCloseOrderFromExpiredColumn(
 }
 
 /**
- * ¿Tiene plazo admin visible y entra en semáforo de columna Vencido (amarillo)?
- * Pedidos admin/PAU sin dismantle_at no entran (igual que el countdown de la card).
+ * Columna Vencido: solo hard.
+ * - status=expired (cron ya desarmó), o
+ * - plazo ya vencido con ítems operativos pendientes de desarme.
+ * Los que faltan ≤1 día (amarillo) van a Apartados / Activos / Espera
+ * según ítems; el marco amarillo se pinta en la card (OrderCard).
  */
-function orderHasAdminDeadline(order: AdminOrder): boolean {
-  if (order.local_deferred_pickup && !order.dismantle_at) return false;
-  return Boolean(order.dismantle_at) || (isCustomerSourcedOrder(order) && !order.local_deferred_pickup);
-}
-
-/**
- * Columna Vencido:
- * - Hard: status=expired, o plazo ya vencido pendiente de desarme.
- * - Soft (amarillo): ≤1 día calendario y todavía no venció — solo si no hay
- *   trabajo operativo en Activos (reserved) ni Espera (waiting). Si la clienta
- *   agregó ítems nuevos o hay waiting, esas columnas ganan; al resolverlos,
- *   si sigue ≤1 día, vuelve a Vencido.
- */
-export function matchesExpiredTab(order: AdminOrder, now = Date.now()): boolean {
+export function matchesExpiredTab(order: AdminOrder, _now = Date.now()): boolean {
   if (!order || isFinalOrderStatus(order)) return false;
   if (norm(order.status) === STATUS.CLOSED) return false;
   if (norm(order.status) === STATUS.EXPIRED) return true;
   if (isExpiredPendingAdminDisassembly(order)) return true;
-  if (!orderHasAdminDeadline(order)) return false;
-  if (
-    !isOrderExpiringWithinOneDay(
-      {
-        created_at: order.created_at,
-        dismantle_at: order.dismantle_at,
-        local_deferred_pickup: order.local_deferred_pickup,
-      },
-      now
-    )
-  ) {
-    return false;
-  }
-  // Próximo a vencer (aún no venció): Activos / Espera tienen prioridad operativa.
-  if (hasReservedItems(order) || hasItemsNeedingAttention(order)) return false;
-  if (hasWaitingItems(order)) return false;
-  return true;
+  return false;
 }
 
 function matchesActiveTab(order: AdminOrder): boolean {
@@ -329,8 +301,7 @@ export function getOrderKanbanColumn(order: AdminOrder): KanbanColumnId | null {
   if (isFinalOrderStatus(order)) return null;
   if (matchesStockPendingTab(order)) return "stock_pending";
   if (matchesClosedTab(order)) return "closed";
-  // Vencido hard (ya venció / expired) o soft (≤1 día sin reserved/waiting).
-  // matchesExpiredTab ya cede a Activos/Espera cuando solo está próximo a vencer.
+  // Vencido solo hard (ya venció / status=expired). Soft ≤1 día → Apartados.
   if (matchesExpiredTab(order)) return "expired";
   if (matchesActiveTab(order)) return "active";
   if (matchesWaitingTab(order)) return "waiting";

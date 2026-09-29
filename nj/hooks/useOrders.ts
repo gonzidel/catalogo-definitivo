@@ -1380,7 +1380,7 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
 
       const refreshed = await fetchOrderById(supabase, orderId);
       if (refreshed) get().patchOrder(refreshed);
-      get().showToast("Prórroga aplicada — vuelve a amarillo", "success");
+      get().showToast("Prórroga aplicada — vuelve a Apartados (amarillo)", "success");
     } catch (err) {
       set({ orders: snapshot });
       get().showToast(getErrorMessage(err), "error");

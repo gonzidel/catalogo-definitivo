@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import {
-  canCloseOrderFromExpiredColumn,
   getPrimaryColumnForActions,
 } from "@/lib/orders/classification";
 import {
@@ -252,17 +251,6 @@ export default function OrderActions({ order, draftMode = false }: OrderActionsP
 
         {column === "expired" ? (
           <>
-            {canCloseOrderFromExpiredColumn(order) ? (
-              <button
-                type="button"
-                className="order-card__btn order-card__btn--primary order-card__btn--grow"
-                disabled={busy}
-                title="El plazo todavía no venció (o ya se dio +24hs): se puede cerrar como en Apartados"
-                onClick={() => setCloseModalOpen(true)}
-              >
-                Cerrar pedido
-              </button>
-            ) : null}
             <button
               type="button"
               className="order-card__btn order-card__btn--grow"

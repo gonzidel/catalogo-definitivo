@@ -230,10 +230,10 @@ Preview no recibe secretos. Con bandera 1 y secretos ausentes o inválidos, nj f
 
 - Proxy del admin vanilla/QR en nj: ~~sí~~ → **no** (revisado 2026-09-29: el staff nunca usa `www/admin` ni imprime QR desde `www`). Se revirtió lo agregado en `49aec61`; quedan solo los rewrites de las 7 landings + `/icons/*` + `/styles.css`.
 - **Arquitectura (NEGOCIO CONFIRMADO, 2026-09-29):** `www.fylmoda.com.ar` = experiencia pública/clientas (nj); `app.fylmoda.com.ar` (y `catalogo-fyl-test.web.app`) = sistema interno/staff en Firebase. Migrar el sistema interno a nj es un proyecto aparte, fuera de Fase 1.
-- Los 4 commits nj no publicados (`f3b1c42`, `e8be2ba`, `fad9f37`, `6fc90b5`) salen primero como **release interno de nj**, validado por el staff, antes del cutover (ver sección propia).
+- ~~Los 4 commits nj no publicados salen primero como release interno de nj~~ → **abandonado definitivamente (2026-09-30)**: imposible sin tocar catalogo1 o crear una variante con `basePath: "/nj"`, y ninguna de las dos se hace. Esos commits salen directamente con el cutover.
 - `NEXT_PUBLIC_NJ_INDEXING=1` en el build del cutover: **sí**.
 - Link WhatsApp al dashboard (`nj-fyl-testing`): **sin cambios** en Fase 1.
-- Site URL de Supabase Auth → `https://www.fylmoda.com.ar` en la ventana del cutover (con aprobación del cambio).
+- ~~Site URL de Supabase Auth → `www` en la ventana~~ → **sin cambios** en el cutover: los callbacks de `www` ya están permitidos (riesgo 6).
 - Clave server-side: **secret key dedicada `sb_secret_`** para nj (se valida en el paso 4).
 
 ### Riesgos nuevos
@@ -246,7 +246,9 @@ Preview no recibe secretos. Con bandera 1 y secretos ausentes o inválidos, nj f
 7. `main` auto-despliega `catalogo-definitivo` (sin impacto mientras no se pushee; tras el cutover, un deploy de catalogo1 ya no afecta `www`).
 8. 308 cacheadas de `www/` → `/catalogo`: con `max-age=0, must-revalidate` el riesgo de loop es bajo; probar en un navegador que ya visitó `www`. Service workers viejos: nj los desregistra.
 
-### Release interno de nj previo al cutover (preparado 2026-09-29, NO ejecutado)
+### Release interno de nj previo al cutover (HISTÓRICA — abandonado 2026-09-30)
+
+> Se conserva como registro. `www/nj` queda en `dpl_BHA4AYjEo56jbz9B7xstLjrXYZpP` hasta la ventana de cutover; `dpl_8yoD…` queda sin promover (no se borra por ahora).
 
 Objetivo: dejar la producción de nj con el mismo código base que irá a `www` (`af349fb`, sin rollout). Frente a `nj-fyl-testing` son los 4 commits pendientes (`f3b1c42` Kanban Vencido/Apartados, `e8be2ba` alineación de días, `fad9f37` WhatsApp `5493624866768` en dashboard/modal de transporte, `6fc90b5` Clarity solo en `nj-fyl-testing`); frente a la producción nj actual son 81 archivos (ver «Qué está publicado hoy»). Sin tocar `www`, catalogo1, Firebase, Supabase, `nj-fyl-testing` ni la cuota.
 
@@ -285,23 +287,56 @@ Objetivo: dejar la producción de nj con el mismo código base que irá a `www` 
   - Sin quitar ítems ni tocar stock. Durante la prueba, A57340 recibió +24hs a las 10:02:53 desde otra sesión del staff (en nj el +24hs exige confirmar un modal; no se abrió ninguno).
 - **`nj-fyl-testing.vercel.app`:** no se toca en el release interno (decisión 2026-09-29) ni en el cutover; sigue en `dpl_GtM6…` hasta que se decida migrar esos links.
 
-### Pasos (cada uno con verificación y punto de rollback)
+### Runbook de la ventana (aprobado conceptualmente 2026-09-30; ventana y env de Production NO autorizadas todavía)
 
-0. **Pre-chequeo (solo lectura):** `362_rollout_experience_verify.sql` (paused, 15, 51 seed, contador vacío); anotar deploy productivo actual de nj (`dpl_BHA4AYjEo56jbz9B7xstLjrXYZpP`) y de `catalogo-definitivo`; release actual de Firebase.
-1. **Prerrequisito: release interno de nj** hecho y validado por el staff (sección siguiente). El cutover sale de la rama `feat/nj-rollout-fase0` integrada con ese mismo código.
-2. ~~Deploy Firebase de landings~~ y ~~proxy admin/QR~~: **fuera del cutover mínimo** (riesgos 1 y 5). Firebase no se toca.
-3. **Env de Production en nj** (tabla de arriba). No afecta el deploy vivo hasta un nuevo deploy. Rollback: `vercel env rm`.
-4. **`vercel deploy --prod --skip-domain`** desde el worktree. Sobre la URL del deploy: home catalog, `fyl_vid` + `fyl_exp` firmado con `paused` (prueba service key + secreto + RPC), `noindex`, landings/proxies 200, `/catalogo` 302, logs sin `[rollout]`. No visitar `/nj` anónimo. Rollback: no se promueve.
-5. **Ventana de cutover** (hora de poco tráfico): (a) `vercel promote <deploy>` en nj; (b) quitar `www` y apex del proyecto `catalogo-definitivo` (Settings → Domains → Remove; **nunca** `vercel domains rm`); (c) agregarlos en `nj` (`www` principal, apex → 308 `www`); (d) chequeo rápido: `/`, `/catalogo`, `/revendedoras`, `/styles.css`, `/nj` logueada con cuenta seed, login Google, `/nj/admin/orders` (link del admin vanilla). Site URL de Auth: sin cambios. Rollback: ver abajo.
-6. **Checklist post-cutover** completo + `_verify` (contador 0, 0 grants quota; `tester_link` solo por usos de `/nj`).
-7. Search Console: sitemap `www`; observar 24–48 h (errores Vercel, Supabase logs, GA/Pixel/Clarity).
+**Decisiones del usuario (2026-09-30, NEGOCIO CONFIRMADO):**
+
+- Preview previo con secretos temporales exclusivos de Preview (ver «Preview final previo»).
+- Solo se mueve `www.fylmoda.com.ar`. El apex `fylmoda.com.ar` queda en `catalogo-definitivo` con su 308 → `www` a nivel dominio (verificado: preserva ruta y query), que tras el cutover apunta a nj.
+- Rollback de dominio **preaprobado** para la ventana, solo ante un criterio objetivo: devolver `www` a `catalogo-definitivo` y promover `dpl_BHA4…`, primero restaurar y después informar.
+- `kill` por SQL **no** preaprobado: ante un problema solo en FULL, frenar y consultar antes de tocar `rollout_config`.
+- El rollback urgente **no** borra variables de Production; esa limpieza se hace después.
+
+**Build:** commit `d5fcd1df139c4f04485be98a7f0f72ebf5c62efd` (código idéntico a `7419ea2`; contiene `af349fb` y `07ea1b4`), desde worktree limpio `E:\PROYECTOS\fyl-cutover` con `.vercel/project.json` (proyecto `nj`, `rootDirectory: nj`) y `.vercelignore`; sin `.env*`.
+
+**Antes:** congelar push a `main` (auto-deploy de catalogo1), deploys de Firebase/Vercel, Supabase Auth y `rollout_config`. Verificar: producción nj `dpl_BHA4…`; `nj-gonzidel`/`nj-drab` → `dpl_BHA4…`; `nj-fyl-testing` → `dpl_GtM6…`; producción catalogo1 `dpl_J5dwrDkZToajwDay4mUpwtjgzwQA` (`11976e4`) con `www` + apex; 362 `paused`/15/contador vacío/51 seed/0 `quota`. Cargar las 4 variables de Production (la usuaria/el usuario carga los secretos; el agente solo verifica nombres).
+
+**Ventana** (`nj-gonzidel` queda fijo en `dpl_BHA4…` toda la ventana: `www/nj` solo se rompe 5–20 s tras V1 y tras V3):
+
+- V0: re-verificar lo anterior; si difiere, abortar.
+- V1: `vercel deploy --prod --skip-domain --yes` encadenado con `vercel alias set nj-mbdzu2ahz-gonzidel.vercel.app nj-gonzidel.vercel.app`. Si el alias falla dos veces: `vercel promote dpl_BHA4AYjEo56jbz9B7xstLjrXYZpP --yes`.
+- V2: smoke sobre la URL del deploy (cookies `fyl_vid`/`fyl_exp` firmadas `paused`, `/catalogo` 302, 307 legacy, landings, assets, login admin y tester, logs, 362 sin cambios; sin `/nj`). Si falla: no se promueve, fin sin rollback.
+- V3: `vercel promote <deploy> --yes` encadenado con el mismo `alias set`.
+- V4: `vercel domains add www.fylmoda.com.ar nj --force` (**nunca** `vercel domains remove`: quita el dominio de la cuenta). Plan B: dashboard de `nj` → Domains → Add, o `vercel alias set <deploy> www.fylmoda.com.ar`.
+- V5: chequeo crítico en 2 min (`www/` 200 con assets, login Google, `/admin/orders` desde el admin vanilla, apex 308) y luego el checklist completo.
+
+**Criterios de rollback de dominio:** `www/` caído, 404/5xx o sin estilos > 60 s tras V4; assets `/_next/static` con error; loop `/` ↔ `/catalogo`; login Google de cuenta existente falla o termina fuera de `www`; staff sin acceso a `/admin/orders`, Retiro o Conciliación tras recargar; 5xx sostenidos; landings 404/500; `robots.txt` con `Disallow: /` o `[rollout]` mal configurado sin corrección en 10 min. No son criterio: diferencias visuales menores, demora de GA/Clarity.
+
+**Staff durante la ventana:** sigue normal en `app.fylmoda.com.ar` / `catalogo-fyl-test.web.app`; no usar `www/nj/admin/*` (sobre todo acciones que escriben) hasta el «OK»; no mandar a clientas links a `www/nj` (dan `tester_link`); F5 en pestañas viejas.
+
+**Después:** Search Console (sitemap `www`), observar 24–48 h, verificar 0 grants `quota` a 15 min / 1 h / 24 h; decidir más adelante `nj-gonzidel`, apex en catalogo1, `nj-fyl-testing` y el comodín de Auth.
+
+### Preview final previo (TÉCNICA VERIFICADA, 2026-09-30 10:55–11:30 ART)
+
+- **Deploy:** `dpl_2GUg58h7NwTxcx1bj27Niop68MN3` (`https://nj-gdicplqte-gonzidel.vercel.app`), target preview, commit `d5fcd1d` desde `E:\PROYECTOS\fyl-cutover`; `--build-env`/`--env` `NEXT_PUBLIC_ROLLOUT_ENABLED=1` y `NEXT_PUBLIC_NJ_INDEXING=1`. Build OK (38 s).
+- **Secretos temporales (scope Preview, Sensitive):** `SUPABASE_SERVICE_ROLE_KEY` = secret key `nj_preview_temp` (exclusiva del preview) y `ROLLOUT_COOKIE_SECRET` distinto del de Production. Primero se cargaron por error en **Production**; se detectó con `vercel env ls` antes de desplegar y se pasaron a Preview (sin deploy de producción en el medio, sin impacto).
+- **Producción sin cambios** (antes y después): producción nj `dpl_BHA4…`; `nj-gonzidel`/`nj-drab` → `dpl_BHA4…`; `nj-fyl-testing` → `dpl_GtM6…`; catalogo1 `dpl_J5dw…` con `www` + apex; `www/nj` con `/nj/_next/*`. Ni siquiera se movió `nj-gonzidel-8021-gonzidel.vercel.app`.
+- **Sin sesión (sin visitar `/nj`):** `/` 200 catalog (sin carrito, WhatsApp `5493625172874`); cookies `fyl_vid`, `fyl_exp` firmada `v2.c.-.p.<día>.<firma>` (HttpOnly, Secure, vence a medianoche ART) y `fyl_x=c` → secret key `sb_secret_` + secreto + RPC OK en Vercel (antes solo probado en unit tests); 2da visita mismo visitante; bot sin cookies. Categorías (calzado, ropa, ofertas, lencería, marroquinería) y 3 PDP 200 con canonical `www`. `/catalogo` 302 `/`; `/catalogo/` 308 `/catalogo` → 302 `/` (normalización de barra de Next); `/catalogo/calzado` 302 `/calzado`; `/catalogo.html`, `/index.html`, `/client/*` 307 `/`; `/dashboard` y `/admin/orders` → 302 login. 7 landings, `/styles.css`, `/icons/*`, CSS/JS `/_next/static` 200 con content-type correcto. `noindex` + robots `Disallow: /` (host no canónico); sitemap 13 URLs `www`. GA cargado sin `page_view`; Clarity y Pixel no cargan fuera de `www`. 390 px: 2 columnas, sin overflow.
+- **Con sesión (cuenta admin):** Google vuelve al mismo host; `fyl_x=f.a` (full, source admin); PDP con talles y «Agregar al carrito» (no se agregó nada); dashboard (A57551 «Vence 6 oct.»); `/admin/orders` Kanban carga; Retiro: Apartados 55 = 55 `active` con `local_deferred_pickup`; Conciliación carga (377 pendientes, 3.545 conciliados, 12 irregularidades, 162 sin identificar); ficha de producto carga (sin guardar).
+- **Base:** `paused`/15, contador vacío, 51 grants seed; **0 grants creados o vinculados** durante el preview.
+- **Logs:** 0 respuestas 5xx; 0 `resolve failed`. **5 × `[rollout] mode fetch failed` (TimeoutError)** en ráfagas (11:00:10 y 11:00:42) sobre ~1000 requests: la lectura de `rollout_config` tiene timeout de 800 ms y el middleware corre en el edge (`gru1`) contra Supabase en `us-east-2`. El fallback es seguro (último modo conocido o `paused`; nunca concede full), pero suma hasta 0,8 s en esas requests con cache frío. No bloquea el cutover; mejora posible aparte (p. ej. timeout mayor o no leer el modo en prefetch/RSC). Las 160 `OPTIONS /` → 400 y los `HEAD` → 204 vienen del navegador de prueba.
+- **Deuda previa, no regresión:** en ~762 px (tablet) la grilla `.catalogo` de la home genera cientos de columnas de 1 px y queda aplastada; `www/catalogo` (catalogo1 en producción) tiene exactamente lo mismo. Mobile 360–430 y desktop OK.
+- **Pendiente de limpieza (decisión del usuario):** borrar las 2 variables de Preview, revocar la key `nj_preview_temp` y, opcionalmente, borrar el deploy del preview.
 
 ### Rollback de Fase 1
 
-- **Nivel 1 (problema de experiencia, nj se queda):** `update public.rollout_config set mode = 'kill', updated_at = now(), updated_by = 'fase1-rollback' where id = 1;` (aprobación; efecto ≤ 30 s por instancia; conserva grants). Volver: mismo UPDATE con `mode = 'paused'`.
-- **Nivel 2 (volver a catalogo1):** 1) quitar `www` y apex de `nj`; 2) agregarlos a `catalogo-definitivo` (`www` principal, apex 308) — su deploy productivo sigue intacto; 3) `vercel promote` de nj al deploy del **release interno** (no a `dpl_BHA4…`, para no deshacer lo validado por el staff; restaura `www/nj` vía rewrite); 4) quitar `NEXT_PUBLIC_ROLLOUT_ENABLED` de Production para que un deploy futuro no salga con bandera. Site URL y Firebase no se tocaron, no hay nada que revertir.
-- **Impacto:** 362 y grants intactos (sin SQL). Cookies `fyl_*` y `sb-*` quedan en `www`; catalogo1 las ignora; si se reintenta el cutover con el mismo secreto siguen válidas. Indexación: URLs nj rastreadas (`/calzado`…) caen al catch-all de Firebase (200 → `/catalogo`) hasta reenviar sitemap; menor.
-- **Verificación:** `www/` → 308 `/catalogo`; `/catalogo` 200; `/nj` 200 (build del release interno); `/revendedoras` 200; `nj-gonzidel` = deploy del release interno.
+- **Rollback de dominio (preaprobado solo ante criterio objetivo):**
+  1. `vercel domains add www.fylmoda.com.ar catalogo-definitivo --force` → `www` vuelve a la producción de catalogo1; `www/nj` funciona enseguida porque `nj-gonzidel` sigue en `dpl_BHA4…`. Plan B: `vercel alias set catalogo-definitivo-3u4jv520w-gonzidel.vercel.app www.fylmoda.com.ar` o el dashboard.
+  2. `vercel promote dpl_BHA4AYjEo56jbz9B7xstLjrXYZpP --yes` en `nj` (instantáneo).
+  3. Verificar: `www/` → 308 `/catalogo`; `/catalogo` 200; `www/nj` 200 con `/nj/_next/…`; `/nj/admin/orders` → 307 `/nj/login`; apex 308; `nj-gonzidel` → `dpl_BHA4…`. Ahí termina la maniobra urgente.
+  4. Informar. La limpieza de variables/secrets de rollout de Production se decide después, fuera de la maniobra.
+- **`kill` (nj se queda):** `update public.rollout_config set mode = 'kill', updated_at = now(), updated_by = 'fase1-rollback' where id = 1;` — **requiere aprobación explícita en el momento** (no preaprobado). Efecto ≤ 30 s; conserva grants; staff sigue entrando al admin.
+- **Impacto:** 362 y grants intactos (sin SQL). Cookies `fyl_*` y `sb-*` quedan en `www`; catalogo1 las ignora. URLs nj rastreadas caen al catch-all de Firebase hasta reenviar sitemap; menor. Site URL y Firebase no se tocan.
 - **362_ROLLBACK** no forma parte del rollback de frontend.
 
 ### Checklist post-cutover

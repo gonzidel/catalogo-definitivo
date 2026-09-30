@@ -300,6 +300,7 @@ Objetivo: dejar la producción de nj con el mismo código base que irá a `www` 
 **Build:** commit `d5fcd1df139c4f04485be98a7f0f72ebf5c62efd` (código idéntico a `7419ea2`; contiene `af349fb` y `07ea1b4`), desde worktree limpio `E:\PROYECTOS\fyl-cutover` con `.vercel/project.json` (proyecto `nj`, `rootDirectory: nj`) y `.vercelignore`; sin `.env*`.
 
 **Antes:** congelar push a `main` (auto-deploy de catalogo1), deploys de Firebase/Vercel, Supabase Auth y `rollout_config`. Verificar: producción nj `dpl_BHA4…`; `nj-gonzidel`/`nj-drab` → `dpl_BHA4…`; `nj-fyl-testing` → `dpl_GtM6…`; producción catalogo1 `dpl_J5dwrDkZToajwDay4mUpwtjgzwQA` (`11976e4`) con `www` + apex; 362 `paused`/15/contador vacío/51 seed/0 `quota`. Cargar las 4 variables de Production (la usuaria/el usuario carga los secretos; el agente solo verifica nombres).
+  - **Hecho 2026-09-30 ~12:06 ART (autorizado solo esto):** `SUPABASE_SERVICE_ROLE_KEY` (secret key dedicada `nj_rollout_prod`) y `ROLLOUT_COOKIE_SECRET` (nuevo, distinto del de Preview) como Secret; `NEXT_PUBLIC_ROLLOUT_ENABLED` y `NEXT_PUBLIC_NJ_INDEXING` como Config. Las 4 solo en Production (verificado con `vercel env ls`, sin leer valores). Preview sin cambios. Sin deploy: no afectan a `dpl_BHA4…` hasta el build de V1. El valor `1` de las banderas se confirma en V2 (cookies firmadas + sitemap `www`). Hasta la ventana, no hacer Redeploy del proyecto `nj`.
 
 **Ventana** (`nj-gonzidel` queda fijo en `dpl_BHA4…` toda la ventana: `www/nj` solo se rompe 5–20 s tras V1 y tras V3):
 

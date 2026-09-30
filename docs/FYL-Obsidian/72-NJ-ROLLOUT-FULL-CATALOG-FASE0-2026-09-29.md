@@ -326,7 +326,8 @@ Objetivo: dejar la producción de nj con el mismo código base que irá a `www` 
 - **Base:** `paused`/15, contador vacío, 51 grants seed; **0 grants creados o vinculados** durante el preview.
 - **Logs:** 0 respuestas 5xx; 0 `resolve failed`. **5 × `[rollout] mode fetch failed` (TimeoutError)** en ráfagas (11:00:10 y 11:00:42) sobre ~1000 requests: la lectura de `rollout_config` tiene timeout de 800 ms y el middleware corre en el edge (`gru1`) contra Supabase en `us-east-2`. El fallback es seguro (último modo conocido o `paused`; nunca concede full), pero suma hasta 0,8 s en esas requests con cache frío. No bloquea el cutover; mejora posible aparte (p. ej. timeout mayor o no leer el modo en prefetch/RSC). Las 160 `OPTIONS /` → 400 y los `HEAD` → 204 vienen del navegador de prueba.
 - **Deuda previa, no regresión:** en ~762 px (tablet) la grilla `.catalogo` de la home genera cientos de columnas de 1 px y queda aplastada; `www/catalogo` (catalogo1 en producción) tiene exactamente lo mismo. Mobile 360–430 y desktop OK.
-- **Pendiente de limpieza (decisión del usuario):** borrar las 2 variables de Preview, revocar la key `nj_preview_temp` y, opcionalmente, borrar el deploy del preview.
+- **Limpieza (decisión del usuario 2026-09-30):** las 2 variables de Preview, la key `nj_preview_temp` y el deploy del preview se **mantienen hasta la ventana** por si hace falta repetir pruebas; se limpian después del cutover.
+- **Timeout de modo (decisión del usuario 2026-09-30):** se acepta para el cutover; la mejora queda como cambio aparte posterior.
 
 ### Rollback de Fase 1
 

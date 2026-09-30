@@ -147,11 +147,12 @@ export default function HeaderActions() {
           )}
         </button>
 
-        {/* ── Perfil — oculto en el dashboard (la foto aparece en el header propio) ── */}
+        {/* ── Perfil — oculto en el dashboard (la foto aparece en el header propio) ──
+             catalog anónimo: sin «Ingresar», como el catálogo público (/login sigue por URL). */}
         {!isDashboard && (
           <Link
             href={isLoggedIn ? "/dashboard" : "/login"}
-            className={isLoggedIn ? EXP_FULL_ONLY : undefined}
+            className={EXP_FULL_ONLY}
             aria-label={isLoggedIn ? "Mi cuenta" : "Ingresar"}
             style={profileStyle}
           >

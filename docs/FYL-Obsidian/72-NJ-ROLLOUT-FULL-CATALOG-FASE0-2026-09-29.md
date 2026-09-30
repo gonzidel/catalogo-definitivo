@@ -1,7 +1,7 @@
 # 72 — Rollout `full` / `catalog` en nj — Fase 0 — 2026-09-29
 
 > **Estado:** Fase 0 terminada en rama `feat/nj-rollout-fase0` (worktree `E:\PROYECTOS\fyl-rollout-fase0`, rebaseada sobre `af349fb` = `fix/customer-link-nj-onboarding` con `origin/main` integrado; commit local, sin push).
-> **Producción:** migración 362 **aplicada** el 2026-09-29 (ver §Aplicación en producción), modo `paused`. Dominio sin mover, sin deploy productivo de nj (solo preview), sin indexación, sin 301. Plan de Fase 1 preparado, **no ejecutado** (ver § Fase 1).
+> **Producción:** migración 362 **aplicada** el 2026-09-29 (ver §Aplicación en producción), modo `paused`. **Cutover de `www` ejecutado el 2026-09-30 18:21 ART** (ver § Ejecución de la ventana): `www.fylmoda.com.ar` → nj `dpl_CJCgdM8VAN6H2GPRpxvzMUijup4P` por **alias** (el dominio sigue registrado en `catalogo-definitivo`); apex sigue en catalogo1 con 308 → `www`. Rollout `paused`, cupo 15 **no habilitado**, sin 301.
 > Reemplaza los planes de SEO (§H), redirects (§I) y analytics (§M) de [[58-NJ-PRELAUNCH-CUTOVER-2026-09-04]].
 
 ## Qué es
@@ -167,7 +167,7 @@ Hallazgos del preview: las landings Firebase conservaban canonical apex (`https:
 - Riesgos: el repo principal tiene WIP sin commitear (confirmación de pedido; toca `nj/styles/globals.css`, igual que el rollout); push a `main` podría disparar deploys si algún proyecto Vercel está conectado a git (verificar); la rama trae migraciones 351–361 y Edge Functions: mergear no las aplica, pero `main` pasaría a documentarlas.
 - El rollout (`feat/nj-rollout-fase0`, base `fad9f37`) no se superpone con `f338f9e` (solo `admin/` + test + nota 40): rebase directo sobre la rama integrada.
 
-## Fase 1 — plan de cutover y rollback (preparado 2026-09-29, NO ejecutado)
+## Fase 1 — plan de cutover y rollback (preparado 2026-09-29, ejecutado 2026-09-30)
 
 Objetivo: nj sirve `www` con rollout `paused` (visitantes → catalog; grants del seed y `/nj` → full). `daily_quota` 15 queda inactivo. catalogo1 no se borra. Sin redirects permanentes nuevos.
 
@@ -287,7 +287,7 @@ Objetivo: dejar la producción de nj con el mismo código base que irá a `www` 
   - Sin quitar ítems ni tocar stock. Durante la prueba, A57340 recibió +24hs a las 10:02:53 desde otra sesión del staff (en nj el +24hs exige confirmar un modal; no se abrió ninguno).
 - **`nj-fyl-testing.vercel.app`:** no se toca en el release interno (decisión 2026-09-29) ni en el cutover; sigue en `dpl_GtM6…` hasta que se decida migrar esos links.
 
-### Runbook de la ventana (aprobado conceptualmente 2026-09-30; ventana y env de Production NO autorizadas todavía)
+### Runbook de la ventana (aprobado 2026-09-30; ventana autorizada y ejecutada 2026-09-30 18:00–18:30 ART)
 
 **Decisiones del usuario (2026-09-30, NEGOCIO CONFIRMADO):**
 
@@ -317,6 +317,27 @@ Objetivo: dejar la producción de nj con el mismo código base que irá a `www` 
 **Staff durante la ventana:** sigue normal en `app.fylmoda.com.ar` / `catalogo-fyl-test.web.app`; no usar `www/nj/admin/*` (sobre todo acciones que escriben) hasta el «OK»; no mandar a clientas links a `www/nj` (dan `tester_link`); F5 en pestañas viejas.
 
 **Después:** Search Console (sitemap `www`), observar 24–48 h, verificar 0 grants `quota` a 15 min / 1 h / 24 h; decidir más adelante `nj-gonzidel`, apex en catalogo1, `nj-fyl-testing` y el comodín de Auth.
+
+### Ejecución de la ventana (TÉCNICA VERIFICADA, 2026-09-30 18:00–18:30 ART)
+
+Autorizada por el usuario siguiendo este runbook. Rollout `paused` todo el tiempo; sin `quota`/`open_all`/`kill`; sin tocar `nj-fyl-testing`, Firebase, Supabase Auth, stock, pedidos ni reservas. No hizo falta rollback.
+
+- **V0 (~18:00):** estado igual al esperado (7 variables de Production con nombre/scope correctos; 362 `paused`/15/`migration:362`, contador 0, 51 grants = admin 1 / tester 41 / staff 9; worktree `d5fcd1d` limpio; `www/` 308 `/catalogo`, `www/nj` 200, apex 308).
+- **V1 (18:01–18:02):** `dpl_CJCgdM8VAN6H2GPRpxvzMUijup4P` (`https://nj-o35a2z6bh-gonzidel.vercel.app`) READY, target production; `alias set` de `nj-gonzidel` → `dpl_BHA4…` OK al primer intento. Producción nj seguía en `dpl_BHA4…`.
+- **V2 (sobre la URL del deploy, sin `/nj`):** mismos resultados que el preview. Cookies `fyl_vid` + `fyl_exp` firmada `v2.c.-.p.2026-09-30.<firma>` (HttpOnly, Secure, vence a medianoche ART) + `fyl_x=c`; 2.ª visita mismo visitante; bot sin cookies; `/catalogo` 302 `/`, `/catalogo/calzado` 302 `/calzado`, `/catalogo/` 308 → `/catalogo` → 302 `/` (doble salto, aceptado); `/catalogo.html`, `/index.html`, `/client/*` 307 `/`; `/dashboard` y `/admin/orders` → login; 7 landings, `/styles.css`, íconos, `/_next/static`, categorías, PDP 200; `noindex` + robots `Disallow: /` (host no canónico); sitemap 13 URLs `www`. Logs: 37 requests, sin 5xx ni errores. Login admin Google en la URL del deploy: mismo host, `fyl_x=f.a`, `/admin/orders` carga. Tester sin credenciales: no probado (tampoco en el preview).
+  - **Chunk del bundle:** `2870-0017090852cbed7c.js` contiene `https://www.fylmoda.com.ar/nj/dashboard?tab=active-order` y **también** el fallback `nj-fyl-testing…/nj/dashboard?tab=cart` como código muerto: el minificador dejó `"https://www.fylmoda.com.ar/nj/dashboard?tab=active-order".trim().replace(/\/$/,"") || "<fallback>"` (no evalúa `.trim()`). Ejecutada en el deploy, la función devuelve la URL de `www`. El criterio literal «ningún chunk contiene…» no se cumplía; **el usuario lo aceptó como aprobado** (URL efectiva = `www`). El otro `nj-fyl-testing.vercel.app` del layout es una lista de hosts de analytics previa, sin relación.
+- **V3 (18:19:42–18:19:51):** `vercel promote dpl_CJCg… --yes` OK (4 s) + `alias set` `nj-gonzidel` → `dpl_BHA4…` OK. `nj-drab` quedó en `dpl_CJCg…` (lo mueve el promote; no lo usa `www`).
+- **V4:** `vercel domains add www.fylmoda.com.ar nj --force` **falló sin cambios** (18:20:37): `domain_remove_failed` — «Cannot remove "www.fylmoda.com.ar" until existing redirects to "www.fylmoda.com.ar" are removed (409)». El apex de catalogo1 redirige a `www` y Vercel no deja sacar un dominio destino de redirect. Verificado que nada cambió. **Plan B del runbook (18:21:13):** `vercel alias set nj-o35a2z6bh-gonzidel.vercel.app www.fylmoda.com.ar` → OK (3 s).
+- **V5 crítico (18:21:20, ~7 s tras el alias):** `www/` 200 NJ raíz (sin `/nj/_next`), CSS/JS 200, sin loop (`/catalogo` → `/` 200), canonical `https://www.fylmoda.com.ar`, redirects legacy OK, landings/PDP/`/styles.css`/íconos 200, apex 308 → `www` conservando query y llega a NJ, robots `Allow: /` (+ `Disallow` de áreas privadas), sitemap 13 URLs. Navegador (384 px): catalog, sin desborde horizontal, `index, follow`, GA `page_view` con `experience=catalog`, Clarity `w7h6cytm9j` activo, Pixel `988002930324230` cargado con dominio `www` (no se vio salir el request `/tr`: no confirmado). Login Google admin en `www` → vuelve a `www/admin/orders`, `fyl_x=f.a`, `data-exp=full`, Kanban carga.
+- **Checklist:** links del admin vanilla `www/nj/admin/retiro` y `/nj/admin/conciliacion-reembolso` → 302 a `/admin/*` con sesión y cargan; Retiro Apartados 55 = 55 pedidos `active` con `local_deferred_pickup`; Conciliación con datos; `/dashboard` y `?tab=active-order` (A57551 «Vence 6 oct.»); PDP full con talles y «Agregar al carrito» (no se agregó nada). `www/admin/control.html` 404 (esperado, decisión «sin proxy»). Logs `www` 15 min: 100 requests (90 × 200, 9 × 302, 1 abortado por el cliente), sin 4xx/5xx; un `[rollout] mode fetch failed` (timeout 800 ms, riesgo aceptado; la respuesta salió 200 catalog). DB al cierre: `paused`/15, contador 0, 51 grants, 0 `quota`, 0 `tester_link`.
+- **No probado:** tester existente → full, cuenta sin grant → catalog + aviso, avatar/cerrar sesión, login por email, `/nj` logueado con cuenta seed (crear un `tester_link` no hacía falta), checkout real.
+
+**Estado resultante y deuda nueva:**
+
+- `www.fylmoda.com.ar` → `dpl_CJCg…` **por alias**; el dominio sigue siendo del proyecto `catalogo-definitivo`. Consecuencias: (1) **cualquier deploy de producción de catalogo1 (push a `main`) devuelve `www` a catalogo1** — funciona como rollback automático, no como caída, pero hay que **mantener congelado el push a `main`** hasta resolverlo; (2) los próximos `vercel promote`/deploys de nj **no** mueven `www`: cada uno exige `vercel alias set <deploy> www.fylmoda.com.ar`.
+- Solución de fondo (pendiente, requiere aprobación): pasar `www` como dominio del proyecto `nj`, lo que obliga a resolver antes el redirect del apex (moverlo también a nj con su 308, o quitar temporalmente el redirect en catalogo1).
+- `nj-drab` → `dpl_CJCg…`; `nj-gonzidel` → `dpl_BHA4…` (sirve la puerta vieja solo para quien use `nj-gonzidel` directo; `www/nj` ya lo resuelve NJ con su middleware).
+- Recursos temporales del preview (2 variables Preview, key `nj_preview_temp`, deploy `nj-gdicplqte`) pendientes de limpieza.
 
 ### Preview final previo (TÉCNICA VERIFICADA, 2026-09-30 10:55–11:30 ART)
 
@@ -378,7 +399,7 @@ Fuentes: código de `d5fcd1d` (middleware, `next.config.ts`, `request.ts`, `site
 ### Rollback de Fase 1
 
 - **Rollback de dominio (preaprobado solo ante criterio objetivo):**
-  1. `vercel domains add www.fylmoda.com.ar catalogo-definitivo --force` → `www` vuelve a la producción de catalogo1; `www/nj` funciona enseguida porque `nj-gonzidel` sigue en `dpl_BHA4…`. Plan B: `vercel alias set catalogo-definitivo-3u4jv520w-gonzidel.vercel.app www.fylmoda.com.ar` o el dashboard.
+  1. **Desde 2026-09-30 (www movido por alias, el dominio sigue en catalogo1):** `vercel alias set catalogo-definitivo-3u4jv520w-gonzidel.vercel.app www.fylmoda.com.ar` → `www` vuelve a la producción de catalogo1; `www/nj` funciona enseguida porque `nj-gonzidel` sigue en `dpl_BHA4…`. (`vercel domains add … catalogo-definitivo --force` ya no aplica: el dominio nunca salió de ese proyecto.)
   2. `vercel promote dpl_BHA4AYjEo56jbz9B7xstLjrXYZpP --yes` en `nj` (instantáneo).
   3. Verificar: `www/` → 308 `/catalogo`; `/catalogo` 200; `www/nj` 200 con `/nj/_next/…`; `/nj/admin/orders` → 307 `/nj/login`; apex 308; `nj-gonzidel` → `dpl_BHA4…`. Ahí termina la maniobra urgente.
   4. Informar. La limpieza de variables/secrets de rollout de Production se decide después, fuera de la maniobra.

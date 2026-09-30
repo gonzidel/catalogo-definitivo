@@ -1,7 +1,7 @@
 # 72 — Rollout `full` / `catalog` en nj — Fase 0 — 2026-09-29
 
 > **Estado:** Fase 0 terminada en rama `feat/nj-rollout-fase0` (worktree `E:\PROYECTOS\fyl-rollout-fase0`, rebaseada sobre `af349fb` = `fix/customer-link-nj-onboarding` con `origin/main` integrado; commit local, sin push).
-> **Producción:** migración 362 **aplicada** el 2026-09-29 (ver §Aplicación en producción), modo `paused`. **Cutover de `www` ejecutado el 2026-09-30 18:21 ART** (ver § Ejecución de la ventana): `www.fylmoda.com.ar` → nj `dpl_CJCgdM8VAN6H2GPRpxvzMUijup4P` por **alias** (el dominio sigue registrado en `catalogo-definitivo`); apex sigue en catalogo1 con 308 → `www`. Rollout `paused`, cupo 15 **no habilitado**, sin 301.
+> **Producción:** migración 362 **aplicada** el 2026-09-29 (ver §Aplicación en producción), modo `paused`. **Cutover de `www` ejecutado el 2026-09-30 18:21 ART** (ver § Ejecución de la ventana). Desde 20:36 ART `www.fylmoda.com.ar` → nj **`dpl_8beBDFb5NLWfVEVALBemDrztrXsF`** (fix «Ingresar» oculto en catalog anónimo, ver § Fix «Ingresar») por **alias** (el dominio sigue registrado en `catalogo-definitivo`; **freeze de push a `main` de catalogo-definitivo vigente**); apex sigue en catalogo1 con 308 → `www`. Rollout `paused`, cupo 15 **no habilitado**, contador 0, sin 301.
 > Reemplaza los planes de SEO (§H), redirects (§I) y analytics (§M) de [[58-NJ-PRELAUNCH-CUTOVER-2026-09-04]].
 
 ## Qué es
@@ -130,7 +130,7 @@ Hallazgos del preview: las landings Firebase conservaban canonical apex (`https:
 - Filtro “Talles” solo en categorías (decisión previa de nj); F&L Originals sin subtítulo (nj) vs “Fabricación propia y stock constante” (catalogo1).
 - Disponibilidad por `sellable` (nj) vs `stock_qty` (catalogo1).
 - Sin `@vercel/analytics` / speed-insights. JSON-LD con `www` (catalogo1 usaba apex).
-- Botón “Ingresar” visible en catalog (pedido explícito).
+- ~~Botón “Ingresar” visible en catalog (pedido explícito).~~ **Revertido 2026-09-30:** en catalog anónimo el header queda como catalogo1 (logo + búsqueda + WhatsApp); ver § Fix «Ingresar».
 
 ## CONTRADICCIONES / pendientes de decisión
 
@@ -334,10 +334,35 @@ Autorizada por el usuario siguiendo este runbook. Rollout `paused` todo el tiemp
 
 **Estado resultante y deuda nueva:**
 
-- `www.fylmoda.com.ar` → `dpl_CJCg…` **por alias**; el dominio sigue siendo del proyecto `catalogo-definitivo`. Consecuencias: (1) **cualquier deploy de producción de catalogo1 (push a `main`) devuelve `www` a catalogo1** — funciona como rollback automático, no como caída, pero hay que **mantener congelado el push a `main`** hasta resolverlo; (2) los próximos `vercel promote`/deploys de nj **no** mueven `www`: cada uno exige `vercel alias set <deploy> www.fylmoda.com.ar`.
+- `www.fylmoda.com.ar` → `dpl_CJCg…` **por alias** (desde 20:36 ART → `dpl_8beBDFb5…`, ver § Fix «Ingresar»); el dominio sigue siendo del proyecto `catalogo-definitivo`. Consecuencias: (1) **cualquier deploy de producción de catalogo1 (push a `main`) devuelve `www` a catalogo1** — funciona como rollback automático, no como caída, pero hay que **mantener congelado el push a `main`** hasta resolverlo; (2) los próximos `vercel promote`/deploys de nj **no** mueven `www`: cada uno exige `vercel alias set <deploy> www.fylmoda.com.ar`.
 - Solución de fondo (pendiente, requiere aprobación): pasar `www` como dominio del proyecto `nj`, lo que obliga a resolver antes el redirect del apex (moverlo también a nj con su 308, o quitar temporalmente el redirect en catalogo1).
 - `nj-drab` → `dpl_CJCg…`; `nj-gonzidel` → `dpl_BHA4…` (sirve la puerta vieja solo para quien use `nj-gonzidel` directo; `www/nj` ya lo resuelve NJ con su middleware).
 - Recursos temporales del preview (2 variables Preview, key `nj_preview_temp`, deploy `nj-gdicplqte`) pendientes de limpieza.
+
+### Fix «Ingresar» en catalog anónimo (TÉCNICA VERIFICADA, 2026-09-30 20:15–20:40 ART)
+
+**Hallazgo (usuario, incógnito en `www`):** en experiencia catalog el header mostraba el ícono de perfil «Ingresar» → `/login`. catalogo1 (producción `dpl_J5dw…`, verificado en `catalogo-definitivo-delta.vercel.app/catalogo`) no tenía login/perfil visible: header = logo + búsqueda + WhatsApp.
+
+**Causa:** `nj/components/layout/HeaderActions.tsx` daba al link de perfil `className={isLoggedIn ? EXP_FULL_ONLY : undefined}`: sin sesión no tenía clase de experiencia y se veía en catalog y en full. No era un bug de rollout: respondía al diseño aprobado el 2026-09-29 (§4 «Registro y login»: «"Ingresar" disponible en modo catalog», para recuperar FULL desde otro dispositivo).
+
+**Auditoría (solo lectura):**
+- Flujo anónimo en catalog: `/login` (solo Google) → `www/auth/callback` → `rpc_rollout_link_user`. En `paused` una cuenta sin grant recibe `catalog` / `no_grant` → vuelve a `/` con el aviso «¡Listo, ya ingresaste!…»; avatar = tarjeta de cuenta + «Cerrar sesión». Sin dashboard, carrito ni pedidos; `/dashboard` y `/login` con sesión sin grant → `/`. Obtienen FULL solo: grant existente (seed 51), staff/admin verificado en vivo contra `public.admins`, dispositivo que pasó por `/nj` (grant de visitante heredado) u `open_all`. Si la RPC falla → catalog (fail-closed). Cuenta nueva = `auth.users` + fila `customers` vía trigger existente `on_auth_user_created`; sin grant ni cupo.
+- Otros elementos FULL en catalog: ninguno visible (campana, «Pedido», «Agregar al carrito», hints de talle con `exp-full-only`; `CartFloatingBar` y notificaciones montados solo en full).
+- Exposición entre el cutover (18:21:13) y la auditoría (~20:30): 0 usuarios / identidades nuevas en Auth; 1 login (admin, V5, 18:22:57); 0 sesiones de cuentas sin grant; Supabase `auth_logs`: 1 solo `/authorize` Google + 1 `/callback` + 1 intercambio PKCE, todos de nuestra IP (V5) → **nadie inició un login Google** en ese período; el resto = refresh de sesiones existentes (testers seed, admin). 0 grants nuevos / vinculados / revocados (51 = admin 1 / tester 41 / staff 9), contador vacío. 0 `customers` creados o actualizados, 0 pedidos, 0 carritos, 0 `cart_items` en ese período.
+- Logs Vercel: miles de `GET /login` (`cache: HIT`, edge-middleware), compatibles con prefetch del `<Link href="/login">` del header (los logs no traen headers para distinguirlo; la API corta en 2000). `/auth/callback`: 1 (V5). `/dashboard`: 15 (nuestras pruebas + sesiones seed existentes con FULL; los 200 exigen `fyl_exp` full firmado). Auditoría adicional de conteo `/login` 18:21–20:10 cortada por el usuario.
+
+**Decisión (usuario, 2026-09-30, NEGOCIO CONFIRMADO):** durante `paused`, la visitante nueva ve la experiencia pública de catálogo sin acceso visible a cuenta/perfil. Se oculta «Ingresar» **solo en catalog anónimo**; `/login` sigue accesible por URL (lo usa el login de admin: `/admin` → `/login`). Recuperar FULL en un dispositivo nuevo: `www/login` directo, link por `/nj` o link «Mensaje» del staff (`www/nj/dashboard?tab=active-order`). Staff/admin entran por `/admin/*`, sin cambio.
+
+**Cambio:** commit `52ca269` (rama `fix/catalog-hide-ingresar` en `E:\PROYECTOS\fyl-cutover`, sobre `d5fcd1d`), incorporado a `feat/nj-rollout-fase0` como `e124e88`: el link siempre lleva `EXP_FULL_ONLY`. Catalog anónimo → sin link; catalog con sesión → avatar con tarjeta de cuenta (sin cambio); full sin sesión → «Ingresar»; full con sesión / admin / staff → avatar → `/dashboard`. tsc OK, 179/179 tests, `next build` con bandera OK.
+
+**Deploy (autorizado por el usuario, pasos 1–5):**
+1. 20:34–20:35 `vercel deploy --prod --skip-domain --yes` → **`dpl_8beBDFb5NLWfVEVALBemDrztrXsF`** (`nj-l6ecs6da2-gonzidel.vercel.app`) READY + `alias set` `nj-gonzidel` → `dpl_BHA4…`.
+2. Smoke en la URL del deploy: igual que V2 (cookies firmadas `paused`, redirects, landings, assets, PDP, `noindex`; logs sin 5xx; DB sin cambios). «Ingresar» con `exp-full-only` en `/`, `/calzado`, `/producto/DOUF`; `/como-comprar` es estática y su header se pinta en cliente (igual en el deploy anterior); chunk del layout: `className:b.Bv` (antes `className:j?b.Bv:void 0`).
+3. 20:36:35 `vercel promote dpl_8beBDFb5… --yes` → aplicado (producción nj = `dpl_8beBDFb5…`, `nj-drab` movido), pero la CLI informó «Failed to remap all aliases»: `www` apuntaba al deployment productivo anterior y pertenece a otro proyecto, así que el promote no puede moverlo. + `alias set` `nj-gonzidel` → `dpl_BHA4…`.
+4. 20:36:44–48 `vercel alias set nj-l6ecs6da2-gonzidel.vercel.app www.fylmoda.com.ar` → OK.
+5. Chequeo crítico: `www/` 200 desde el deploy nuevo, redirects sin loop, `/dashboard` y `/admin/orders` → login, landings/PDP 200, apex 308, robots indexable, sitemap 13 URLs, «Ingresar» con `exp-full-only` en `www`. El primer barrido dio 404 en un chunk del build anterior (`1255-85128a…`): HTML servido por el deploy anterior durante el cambio. Re-verificado: 3/3 rondas con el deploy nuevo, 22/22 assets 200; el chunk viejo responde 200 con `?dpl=dpl_CJCg…` (skew protection: pestañas ya abiertas no se rompen). Navegador con cuenta admin: `data-exp=full`, campana + avatar «Mi cuenta» → `/dashboard`, elementos catalog ocultos. Logs `www` 10 min: 1000 requests (tope), 880 × 200 / 120 × 302, sin 404/5xx/`[rollout]`. DB: `paused`/15, contador 0, 51 grants, 0 usuarios nuevos desde el cutover. El usuario verificó el comportamiento en producción.
+
+**Estado actual:** `www` y `nj-drab` → `dpl_8beBDFb5…`; producción nj = `dpl_8beBDFb5…`; `nj-gonzidel` → `dpl_BHA4…`; apex → catalogo1 `dpl_J5dw…`; `nj-fyl-testing` → `dpl_GtM6…` (sin tocar). Deploy anterior de `www` (`dpl_CJCgdM8VAN6H2GPRpxvzMUijup4P`, `nj-o35a2z6bh-gonzidel.vercel.app`) queda como rollback de código.
 
 ### Preview final previo (TÉCNICA VERIFICADA, 2026-09-30 10:55–11:30 ART)
 
@@ -398,6 +423,7 @@ Fuentes: código de `d5fcd1d` (middleware, `next.config.ts`, `request.ts`, `site
 
 ### Rollback de Fase 1
 
+- **Rollback del fix «Ingresar» (vuelve a `www` con el deploy del cutover, NJ sigue sirviendo `www`):** `vercel alias set nj-o35a2z6bh-gonzidel.vercel.app www.fylmoda.com.ar` + `vercel promote dpl_CJCgdM8VAN6H2GPRpxvzMUijup4P --yes` + `vercel alias set nj-mbdzu2ahz-gonzidel.vercel.app nj-gonzidel.vercel.app` (el promote vuelve a mover `nj-gonzidel`). Requiere aprobación: no es el rollback de dominio preaprobado. Sin SQL ni variables.
 - **Rollback de dominio (preaprobado solo ante criterio objetivo):**
   1. **Desde 2026-09-30 (www movido por alias, el dominio sigue en catalogo1):** `vercel alias set catalogo-definitivo-3u4jv520w-gonzidel.vercel.app www.fylmoda.com.ar` → `www` vuelve a la producción de catalogo1; `www/nj` funciona enseguida porque `nj-gonzidel` sigue en `dpl_BHA4…`. (`vercel domains add … catalogo-definitivo --force` ya no aplica: el dominio nunca salió de ese proyecto.)
   2. `vercel promote dpl_BHA4AYjEo56jbz9B7xstLjrXYZpP --yes` en `nj` (instantáneo).

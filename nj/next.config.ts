@@ -9,6 +9,16 @@ if (process.env.NODE_ENV === "development") {
 const nextConfig: NextConfig = {
   outputFileTracingRoot: path.join(__dirname),
 
+  async redirects() {
+    // Temporales: URLs del hosting viejo que hoy responden en www no deben pasar a 404.
+    if (process.env.NEXT_PUBLIC_ROLLOUT_ENABLED !== "1") return [];
+    return [
+      { source: "/catalogo.html", destination: "/", permanent: false },
+      { source: "/index.html", destination: "/", permanent: false },
+      { source: "/client/:path*", destination: "/", permanent: false },
+    ];
+  },
+
   async rewrites() {
     // Con nj sirviendo la raíz, las landings deben seguir respondiendo igual que hoy;
     // si no, la ruta dinámica [categoria] las convierte en 404.

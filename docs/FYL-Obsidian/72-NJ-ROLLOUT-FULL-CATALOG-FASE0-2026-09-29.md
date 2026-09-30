@@ -194,7 +194,7 @@ Objetivo: nj sirve `www` con rollout `paused` (visitantes → catalog; grants de
 | `NEXT_PUBLIC_ROLLOUT_ENABLED` | pública, build-time | falta | `1` |
 | `NEXT_PUBLIC_NJ_INDEXING` | pública, build-time | falta | `1` recomendado (decisión) |
 | `NEXT_PUBLIC_SITE_URL` | pública | falta | no hace falta (default `www`) |
-| `NEXT_PUBLIC_CUSTOMER_DASHBOARD_URL` | pública | falta | sin definir en Fase 1 = link WA sigue en `nj-fyl-testing` (decisión) |
+| `NEXT_PUBLIC_CUSTOMER_DASHBOARD_URL` | pública, build-time, **solo Production** | falta (la carga el usuario antes de V1) | `https://www.fylmoda.com.ar/nj/dashboard?tab=active-order` (decisión 2026-09-30, reemplaza «sin definir = `nj-fyl-testing`»; ver «Auditoría de URLs históricas») |
 | `ROLLOUT_FORCE_MODE` / `ROLLOUT_FORCE_EXPERIENCE` | server-only | falta | **no** definir (emergencia; `FORCE_EXPERIENCE` se ignora en producción) |
 
 Preview no recibe secretos. Con bandera 1 y secretos ausentes o inválidos, nj fuerza `paused` + catalog sin firmar (fail-safe).
@@ -301,12 +301,13 @@ Objetivo: dejar la producción de nj con el mismo código base que irá a `www` 
 
 **Antes:** congelar push a `main` (auto-deploy de catalogo1), deploys de Firebase/Vercel, Supabase Auth y `rollout_config`. Verificar: producción nj `dpl_BHA4…`; `nj-gonzidel`/`nj-drab` → `dpl_BHA4…`; `nj-fyl-testing` → `dpl_GtM6…`; producción catalogo1 `dpl_J5dwrDkZToajwDay4mUpwtjgzwQA` (`11976e4`) con `www` + apex; 362 `paused`/15/contador vacío/51 seed/0 `quota`. Cargar las 4 variables de Production (la usuaria/el usuario carga los secretos; el agente solo verifica nombres).
   - **Hecho 2026-09-30 ~12:06 ART (autorizado solo esto):** `SUPABASE_SERVICE_ROLE_KEY` (secret key dedicada `nj_rollout_prod`) y `ROLLOUT_COOKIE_SECRET` (nuevo, distinto del de Preview) como Secret; `NEXT_PUBLIC_ROLLOUT_ENABLED` y `NEXT_PUBLIC_NJ_INDEXING` como Config. Las 4 solo en Production (verificado con `vercel env ls`, sin leer valores). Preview sin cambios. Sin deploy: no afectan a `dpl_BHA4…` hasta el build de V1. El valor `1` de las banderas se confirma en V2 (cookies firmadas + sitemap `www`). Hasta la ventana, no hacer Redeploy del proyecto `nj`.
+  - **Pendiente antes de V1:** `NEXT_PUBLIC_CUSTOMER_DASHBOARD_URL` = `https://www.fylmoda.com.ar/nj/dashboard?tab=active-order`, Config, solo Production (la carga el usuario; el agente verifica nombre y scope).
 
 **Ventana** (`nj-gonzidel` queda fijo en `dpl_BHA4…` toda la ventana: `www/nj` solo se rompe 5–20 s tras V1 y tras V3):
 
 - V0: re-verificar lo anterior; si difiere, abortar.
 - V1: `vercel deploy --prod --skip-domain --yes` encadenado con `vercel alias set nj-mbdzu2ahz-gonzidel.vercel.app nj-gonzidel.vercel.app`. Si el alias falla dos veces: `vercel promote dpl_BHA4AYjEo56jbz9B7xstLjrXYZpP --yes`.
-- V2: smoke sobre la URL del deploy (cookies `fyl_vid`/`fyl_exp` firmadas `paused`, `/catalogo` 302, 307 legacy, landings, assets, login admin y tester, logs, 362 sin cambios; sin `/nj`). Si falla: no se promueve, fin sin rollback.
+- V2: smoke sobre la URL del deploy (cookies `fyl_vid`/`fyl_exp` firmadas `paused`, `/catalogo` 302, 307 legacy, landings, assets, login admin y tester, logs, 362 sin cambios; sin `/nj`). Además: algún chunk JS del deploy contiene `https://www.fylmoda.com.ar/nj/dashboard?tab=active-order` y ninguno contiene `nj-fyl-testing.vercel.app/nj/dashboard` (confirma `NEXT_PUBLIC_CUSTOMER_DASHBOARD_URL` horneada). Si falla: no se promueve, fin sin rollback.
 - V3: `vercel promote <deploy> --yes` encadenado con el mismo `alias set`.
 - V4: `vercel domains add www.fylmoda.com.ar nj --force` (**nunca** `vercel domains remove`: quita el dominio de la cuenta). Plan B: dashboard de `nj` → Domains → Add, o `vercel alias set <deploy> www.fylmoda.com.ar`.
 - V5: chequeo crítico en 2 min (`www/` 200 con assets, login Google, `/admin/orders` desde el admin vanilla, apex 308) y luego el checklist completo.
@@ -329,6 +330,50 @@ Objetivo: dejar la producción de nj con el mismo código base que irá a `www` 
 - **Deuda previa, no regresión:** en ~762 px (tablet) la grilla `.catalogo` de la home genera cientos de columnas de 1 px y queda aplastada; `www/catalogo` (catalogo1 en producción) tiene exactamente lo mismo. Mobile 360–430 y desktop OK.
 - **Limpieza (decisión del usuario 2026-09-30):** las 2 variables de Preview, la key `nj_preview_temp` y el deploy del preview se **mantienen hasta la ventana** por si hace falta repetir pruebas; se limpian después del cutover.
 - **Timeout de modo (decisión del usuario 2026-09-30):** se acepta para el cutover; la mejora queda como cambio aparte posterior.
+
+### Auditoría de URLs y dominios históricos (TÉCNICA VERIFICADA, 2026-09-30 12:30–12:55 ART, solo lectura)
+
+Fuentes: código de `d5fcd1d` (middleware, `next.config.ts`, `request.ts`, `site-url.ts`), `catalogo1/vercel.json`, `firebase.json`, API de Vercel (dominios/alias del team), GETs en vivo, preview `nj-gdicplqte` con UA de bot (sin RPC ni grants; `/nj` no se pidió al preview), `wa_webhook_events` (existe desde 23/09), logs del gateway de Supabase (24 h, host del referer + IP), lista de Redirect URLs de Auth. Base después: `paused`, 51 grants, 0 `tester_link`. Canvas: `auditoria-urls-historicas-cutover.canvas.tsx`.
+
+**Conclusión:** ninguna URL que hoy usan clientas termina en error tras el cutover. `/catalogo/*` y `/nj/*` conservan ruta y query (verificado `?from=`, `?talle=`); apex 308 a nivel dominio conserva ruta y query. Únicos 404 nuevos: `www/admin/*.html`, `/customer.html`, `/scripts/*` (staff, ya decidido).
+
+| URL | Hoy | Tras cutover | Uso |
+|---|---|---|---|
+| `www/catalogo[/<ruta>]` | 200 catalogo1 | 302 → `/[<ruta>]` (ruta + query) | clientas, alto (~70 links PDP reenviados/7 d) |
+| `www/` | 308 → `/catalogo` (max-age=0) | 200 nj | clientas |
+| `www/catalogo.html`, `/index.html`, `/client/*` | 308/301/302/JS → `www/catalogo` | 307 → `/` (query sí) | histórico |
+| `www/nj[/<ruta>]` | 200 nj prod (FULL para todas) | 302 → `/<ruta>` + grant `tester_link` (humanos; bots no) | staff y clientas |
+| `www/nj/dashboard?tab=active-order` | 307 → `/nj/login` | 302 → `/dashboard?tab=active-order` + grant → login | link «Mensaje» del staff: 31 enviados en 7 d |
+| `www/nj/admin/<ruta>` | login/admin | 302 → `/admin/<ruta>` sin grant | staff (admin vanilla) |
+| `www/nj/auth/callback` | callback nj | ruta de compatibilidad | técnico |
+| `www/calzado`, `/producto/X`, `/como-comprar`, `/dashboard` | 200 JS → `www/catalogo` (pierde ruta) | 200 nativo nj | mejora |
+| `www/quienes-somos` | landing Firebase | página nj (ya sin «fábrica propia») | contenido distinto, deseado |
+| 7 landings | Firebase vía catalogo1 | Firebase vía proxy nj | igual |
+| `fylmoda.com.ar/*` | 308 → `www` | igual → nj | 582 mensajes salientes/7 d con `fylmoda.com.ar/`; no borrar `catalogo-definitivo` |
+| `fylmoda.com.ar/catalogo?sku=<SKU talle>` (feed Meta) | home catalogo1 (ignora `sku`) | home nj (ignora `sku`) | no es regresión |
+| `fylmoda.com.ar/catalogo#/pdp/<SKU>` (captions IG/FB, `publications.js`) | home catalogo1 (ignora hash) | home nj | ~100 imágenes reenviadas por clientas/7 d; no es regresión |
+| `nj-fyl-testing.vercel.app/*` | 200 build `07ea1b4`, FULL, sin rollout, noindex | sin cambios | **16 IP/24 h, todas celulares**; plantillas YCloud aprobadas y cron 357 con esa URL |
+| `nj-gonzidel` / `nj-drab` / `nj-gonzidel-8021-gonzidel` | alias técnicos (`/nj` 200, `/` 404) | sin cambios (fijo para rollback) | técnico (2 IP) |
+| `catalogo-definitivo-delta.vercel.app` | catalogo1 | sigue catalogo1 (indexable) | técnico |
+| `app.fylmoda.com.ar`, `catalogo-fyl(-test).web.app`, `*.firebaseapp.com` | 301/302 → `www/catalogo` (pierde ruta; sin cache-control) | → `www/catalogo` → 302 `www/` | staff (2–4 IP) + links viejos; app Android del repo carga `catalogo-fyl.web.app` |
+| `catalogo-definitivo.pages.dev` (Cloudflare) | 200 catálogo vanilla viejo conectado a Supabase prod, indexable | sin cambios | 2 IP escritorio/24 h |
+
+**Hallazgos:**
+
+1. **CONTRADICCIÓN (resuelta):** el admin nj en producción (`de2b505`) arma `${origin}/nj/dashboard?tab=active-order` = `www/nj/dashboard?tab=active-order`; `d5fcd1d` arma `CUSTOMER_DASHBOARD_MESSAGE_URL` = `nj-fyl-testing.vercel.app/nj/dashboard?tab=cart` salvo `NEXT_PUBLIC_CUSTOMER_DASHBOARD_URL`. Sin la variable, desde el cutover el staff enviaría clientas a un build viejo fuera del rollout.
+2. **`/nj` es hoy la vía de FULL para clientas con pedido:** en `paused`/`quota` todo link `www/nj/*` crea grant `tester_link` permanente. Retirarla sin otra regla deja a clientas sin grant en catalog + aviso `account_pending`.
+3. `nj-fyl-testing` tiene clientas reales y URLs fijas en plantillas aprobadas por Meta: el alias debe quedar indefinidamente (al menos como redirect).
+4. `catalogo-definitivo.pages.dev` sirve un catálogo vanilla viejo con datos reales, fuera de Vercel/Firebase.
+
+**Decisiones del usuario (2026-09-30, NEGOCIO CONFIRMADO):**
+
+1. **Link del staff:** durante la transición los mensajes nuevos usan `www.fylmoda.com.ar/nj/dashboard…`. Se agrega `NEXT_PUBLIC_CUSTOMER_DASHBOARD_URL` **solo en Production antes de V1** (la carga el usuario) con valor `https://www.fylmoda.com.ar/nj/dashboard?tab=active-order`. Sin cambio de código ni nuevo preview (única lectura: `getDashboardActiveOrderUrl()` en `site-url.ts`; `build` = `next build`, no corre tests). Alcance: textos de WhatsApp del admin (`OrderCard`: aviso de vencimiento, vencido, estado del pedido y retiro local) y `p_dashboard_url` de los snapshots de campana. **No** afecta `ActiveOrderTab` ni `OrderTransportConfirmModal` (usan `wa.me/5493624866768` fijo) ni el cron SQL 357 (`nj-fyl-testing` fijo en SQL, sin envíos: `wa_outbox` vacía). Mensajes históricos no se reescriben.
+2. **Puerta `/nj`:** se conserva durante la transición; **no** se retira en Fase 1. La regla para que una clienta con pedido recupere FULL sin `/nj` se diseña antes del retiro. Requisitos para retirarla (registrados, **no** autorizan ejecutarlo): (1) ≥ 14 días sin rollback y decisión explícita de no volver a catalogo1; (2) ningún generador produce links `/nj`; (3) ≥ 30 días desde el último `/nj/dashboard` enviado (`wa_webhook_events`); (4) `nj-fyl-testing` ya redirige y pasa a `www/<ruta>` en el mismo cambio; (5) regla de negocio de acceso para clientas con pedido definida; (6) grants `tester_link`/día ≈ 0 durante 7 días. Los grants existentes se conservan.
+3. **`nj-fyl-testing`:** no se toca en el cutover. A las 48–72 h estables se **evalúa** un redirect temporal (302) a `www/nj/<ruta>` conservando ruta y query (regla de host en el middleware + deploy preview + `vercel alias set`; rollback `vercel alias set dpl_GtM6FMT1528xyC42oGwWo4PRWgwx nj-fyl-testing.vercel.app`). Pasa por la puerta: la clienta conserva FULL; re-login una vez en `www`.
+4. **`?sku=` y `#/pdp/`:** mejora posterior (middleware `/catalogo?sku=X` → `/producto/X`; handler cliente `#/pdp/X` → `/producto/X`; el PDP nj resuelve SKU de color y de talle, verificado). Sin cambios de código en el cutover.
+5. **`catalogo-definitivo.pages.dev`:** deuda posterior. No tocar Cloudflare durante el lanzamiento.
+
+**Para «sin vuelta atrás» (deuda, sin fecha):** `/catalogo*` a 308 (SEO); `firebase.json` directo a `www/<ruta>` (el deploy de Firebase publica todo el árbol: riesgo 5); regla de host `nj-gonzidel`/`nj-drab` → `www`; mover el apex a nj antes de cualquier baja de catalogo1; cerrar `catalogo-definitivo-delta`; limpiar Redirect URLs de Auth (`/nj`, `nj-gonzidel`); plantillas YCloud nuevas con `www`; `publications.js` y `get_meta_feed` a `www/producto/<SKU>` (SQL con aprobación).
 
 ### Rollback de Fase 1
 

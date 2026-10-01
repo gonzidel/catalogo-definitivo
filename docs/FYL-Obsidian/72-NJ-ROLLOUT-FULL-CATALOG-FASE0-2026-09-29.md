@@ -1,7 +1,7 @@
 # 72 — Rollout `full` / `catalog` en nj — Fase 0 — 2026-09-29
 
 > **Estado:** Fase 0 terminada en rama `feat/nj-rollout-fase0` (worktree `E:\PROYECTOS\fyl-rollout-fase0`, rebaseada sobre `af349fb` = `fix/customer-link-nj-onboarding` con `origin/main` integrado; commit local, sin push).
-> **Producción:** migración 362 **aplicada** el 2026-09-29 (ver §Aplicación en producción), modo `paused`. **Cutover de `www` ejecutado el 2026-09-30 18:21 ART** (ver § Ejecución de la ventana). Desde 20:36 ART `www.fylmoda.com.ar` → nj **`dpl_8beBDFb5NLWfVEVALBemDrztrXsF`** (fix «Ingresar» oculto en catalog anónimo, ver § Fix «Ingresar») por **alias** (el dominio sigue registrado en `catalogo-definitivo`; **freeze de push a `main` de catalogo-definitivo vigente**); apex sigue en catalogo1 con 308 → `www`. Rollout `paused`, cupo 15 **no habilitado**, contador 0, sin 301.
+> **Producción:** migración 362 **aplicada** el 2026-09-29 (ver §Aplicación en producción), modo `paused`. **Cutover de `www` ejecutado el 2026-09-30 18:21 ART** (ver § Ejecución de la ventana). Desde 20:36 ART `www.fylmoda.com.ar` → nj **`dpl_8beBDFb5NLWfVEVALBemDrztrXsF`** (fix «Ingresar» oculto en catalog anónimo, ver § Fix «Ingresar») por **alias** (el dominio sigue registrado en `catalogo-definitivo`; **freeze de push a `main` de catalogo-definitivo vigente**); apex sigue en catalogo1 con 308 → `www`. **Rollout `quota` con `daily_quota` 15 desde el 2026-10-01 12:48:49 ART** (ver § Fase 2 — activación de quota); sin 301.
 > Reemplaza los planes de SEO (§H), redirects (§I) y analytics (§M) de [[58-NJ-PRELAUNCH-CUTOVER-2026-09-04]].
 
 ## Qué es
@@ -436,3 +436,40 @@ Fuentes: código de `d5fcd1d` (middleware, `next.config.ts`, `request.ts`, `site
 ### Checklist post-cutover
 
 Home, categorías, búsqueda, filtros, PDP, WhatsApp (`5493625172874`), 360–430 px, login Google/email desde `www` (termina en `www`, nunca en `/nj` ni host de testing), tester existente → full, cuenta sin grant → catalog + aviso, avatar + cerrar sesión, `/dashboard` (full y sin grant), `/nj` (logueada con cuenta seed), landings Firebase, admin nj vía links del admin vanilla (`app.fylmoda.com.ar` → `www/nj/admin/*`), `robots.txt`, `sitemap.xml`, canonical, GA `page_view` + `experience`, Pixel, Clarity `w7h6cytm9j`, logs Vercel/Supabase sin errores, `rollout_daily_counter` vacío, 0 grants `quota`. Sin checkout real en producción sin aprobación.
+
+## Fase 2 — activación de quota (TÉCNICA VERIFICADA, 2026-10-01)
+
+Autorizada por el usuario: único cambio `mode` `paused` → `quota`, `daily_quota` sigue en 15. Sin cambios de código, deploy, promote, alias, dominio, variables ni Auth. Sin visitantes de prueba que consuman cupo.
+
+**Control previo (solo lectura, 12:20–12:48 ART):**
+- `www.fylmoda.com.ar` → `dpl_8beBDFb5NLWfVEVALBemDrztrXsF` (`vercel inspect`).
+- DB: `paused` / 15 / `migration:362`; `rollout_daily_counter` vacío; 51 grants (admin 1 / tester 41 / staff 9), 0 revocados, 0 con visitante, 0 vinculados; 0 grants creados/vinculados/revocados desde el 2026-09-30; 0 usuarios Auth nuevos desde el cutover. Huella md5 de los grants seed `42fb1fd7…`.
+- Visita anónima nueva (Chrome headless, perfil limpio, 390 px): `data-exp=catalog`, `fyl_exp` `v2.c.-.p.<día>`, 0 de 5–7 `.exp-full-only` visibles, header = logo + búsqueda + WhatsApp, sin «Ingresar», carrito, «Pedido», campana ni links a `/login`/`/dashboard`; PDP solo «Consultar por WhatsApp».
+- Logs del deploy desde 2026-09-30 20:35: 0 × 5xx; ~50 × 404 únicos de bots/rutas basura (`/meta.json`, `/null`, `/URLs%201–4`, `apple-touch-icon`, `.well-known/*`, `/catalog`).
+- **Hallazgo — `[rollout] mode fetch failed` (TimeoutError):** 150 entre 20:35 y 12:40 ART (conteo por ventanas, completo) sobre ~6.060 lecturas de `rollout_config` en Supabase (≈ 2,5 %); picos 05 h ART (26 / 136 ≈ 19 %, poco tráfico → isolates fríos) y 09 h ART (47 / 562 ≈ 8 %). El middleware corre en el edge de Vercel en São Paulo (GRU) y Supabase está en `us-east-2`: origin p50 157 ms / p95 445 ms / máx 1.228 ms, PostgREST p95 18 ms → la demora es de red, no de la base. `MODE_TIMEOUT_MS` = 800. `rpc_rollout_resolve` (timeout 1.500 ms): 0 fallos, máx 951 ms; 0 `[rollout] resolve failed`.
+- Impacto evaluado (`middleware.ts`, `decide.ts`): visitante nueva → se llama a la RPC igual, que decide con el modo real de la base (sin efecto en la admisión); catalog firmado en `paused` hoy → esa request sigue catalog y se redecide en la siguiente; full firmado → sin efecto. Costo: hasta +800 ms de TTFB en esas requests. El usuario decidió activar igual y **no** corregir ahora (deuda abierta: subir el timeout del modo o ajustar el cache, con deploy aparte).
+
+**Activación — 2026-10-01 12:48:49 ART:**
+
+```sql
+update public.rollout_config
+   set mode = 'quota',
+       updated_at = now(),
+       updated_by = 'fase2-activacion'
+ where id = 1 and mode = 'paused' and daily_quota = 15
+returning mode, daily_quota, updated_by, updated_at;
+```
+
+Resultado: `quota` / 15 / `fase2-activacion` / `2026-10-01 12:48:49.814927-03`.
+
+**Verificación posterior:**
+1. `mode` = `quota`.
+2. `daily_quota` = 15.
+3. Contador: vacío a las 12:48:55 (6 s después); a las 12:49:22, `2026-10-01` = 1; a las 12:49:50 = 2, siempre igual a la cantidad de grants `quota` (tráfico real, no generado; ambos solo por visitante, 0 con cuenta, 0 vinculados). Total de grants 53.
+4. El cambio de modo no creó grants: 51 a las 12:48:55; el primero nuevo es `quota` con `visitor_id` y sin cuenta, 12:49:13 (23 s después, primera visitante real tras vencer el cache de 30 s).
+5. Seed intacto: 51 filas admin / tester / staff, 51 activas, huella `42fb1fd7…` idéntica a la previa.
+- Logs desde la activación (hasta 12:50:05, ya con tráfico registrado): 0 `[rollout]`, 0 × 5xx.
+
+**Rollback de Fase 2 (requiere aprobación en el momento):** `update public.rollout_config set mode = 'paused', updated_at = now(), updated_by = 'fase2-rollback' where id = 1 and mode = 'quota';` — efecto ≤ 30 s; nadie nuevo entra por cupo; los grants `quota` ya otorgados se conservan (para retirarlos haría falta `revoked_at`, aprobación aparte). `kill` sigue como en § Rollback de Fase 1.
+
+**Seguimiento:** contador ≤ 15 por día ART y = grants `quota` del día; `[rollout]` en logs; tasa de timeouts del modo; Search Console; limpieza de recursos del preview.

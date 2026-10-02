@@ -1,6 +1,7 @@
 import {
   computeWarehouseQtySplitForOrderItem,
   computeOrderTotalFromItems,
+  filterOrderTotalItems,
   isTransientNetworkError,
   parseOrderNotesObject,
   type OrderNotesExtras,
@@ -61,13 +62,16 @@ export async function syncOrderTotalAndNotes(
 ): Promise<void> {
   const { data: order, error } = await supabase
     .from("orders")
-    .select("notes, order_items(price_snapshot, quantity)")
+    .select("notes, order_items(price_snapshot, quantity, status)")
     .eq("id", orderId)
     .single();
 
   if (error || !order) throw new Error("No se pudo recalcular el total del pedido.");
 
-  const total = computeOrderTotalFromItems(order.order_items || [], notesExtras);
+  const total = computeOrderTotalFromItems(
+    filterOrderTotalItems(order.order_items || []),
+    notesExtras
+  );
   const notesObj = parseOrderNotesObject(rawNotes ?? order.notes);
   const extrasLabel = String(notesExtras.extras_label || "").trim();
   const nextNotes = {

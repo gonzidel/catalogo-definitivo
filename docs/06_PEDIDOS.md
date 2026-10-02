@@ -57,6 +57,10 @@ Esto coincide con la regla empresarial confirmada: un pedido que queda vacío de
   - Excluye pedidos espejo de venta local (`notes.mirrored_from_local_order = true`), pedidos cerrados/enviados y líneas `cancelled`.
   - `total_amount` baja por la diferencia de las líneas cobrables. Si el total ya coincidía con la suma nueva (descuento ya aplicado desde el PAU), no se toca.
   - Pedidos con ítems `missing` y total por encima de la suma cobrable se saltean y se registran en el resultado (`skipped_orders`) para revisión manual.
+- **TÉCNICA VERIFICADA:** los valores extra cargados por el admin en `orders.notes` (`shipping`, `discount`, `extras_amount` + `extras_label`, `extras_percentage`) forman parte de `total_amount`: subtotal + envío − descuento + extra + subtotal × % / 100 (`rpc_admin_add_order_items_atomic`, editor NJ).
+  - **CONTRADICCIÓN corregida (canonical 366, aplicada en producción 2026-10-02):** `rpc_checkout_cart()` reescribía el total solo con líneas − promos y borraba esos extras en cada compra posterior de la clienta (A57414, extra "ALHAJEROS" $8.500). Desde 366 suma `fn_order_notes_extras_total(notes, subtotal)`. Totales reparados a mano el mismo día: A57414, A57620, A57490, A56741; re-auditoría 45 días: 52 pedidos con extras, 0 desfasados.
+  - El dashboard de la clienta (`ActiveOrderTab`) lista esos extras como filas y los suma a su total; antes solo mostraba líneas de `order_items`.
+  - `syncOrderTotalAndNotes` (guardar solo extras desde el admin NJ) excluye líneas `cancelled`/`expired` del subtotal.
 
 ### Estados de pedido
 
@@ -210,6 +214,7 @@ No se agrega fricción al **agregar** productos.
 - `supabase/canonical/351_rpc_close_order_resolve_payment_by_transport.sql`
 - `supabase/canonical/355_orders_daily_maintenance_grace_window.sql`
 - `supabase/canonical/365_color_offers_reprice_open_orders.sql`
+- `supabase/canonical/366_checkout_preserve_order_notes_extras.sql`
 - `supabase/canonical/119_order_item_operational_and_empty_order_maint.sql`
 - `supabase/canonical/127_rpc_delete_empty_order.sql`
 

@@ -466,6 +466,15 @@ export function buildOrderNoteExtraRows(
   return rows;
 }
 
+/** Envío / descuento / extra de notes para el dashboard de la clienta: filas + neto a sumar al total. */
+export function buildCustomerOrderNoteExtras(
+  rawNotes: string | null | undefined,
+  billableSubtotal: number
+): { rows: OrderNoteExtraRow[]; net: number } {
+  const rows = buildOrderNoteExtraRows(parseOrderNotesExtrasValues(rawNotes), billableSubtotal);
+  return { rows, net: rows.reduce((sum, row) => sum + row.amount, 0) };
+}
+
 export const NOTE_EXTRA_ITEM_ID_PREFIX = "note-extra:";
 
 export function isNoteExtraDisplayItem(
@@ -586,6 +595,14 @@ export function isReturnOrderItem(item: {
   if (item.is_special_extra) return false;
   if (!item.variant_id) return false;
   return Number(item.price_snapshot) < 0;
+}
+
+/** Líneas que entran en total_amount (mismo criterio que rpc_admin_add_order_items_atomic). */
+export function filterOrderTotalItems<T extends { status?: string | null }>(items: T[]): T[] {
+  return items.filter((item) => {
+    const status = normalizeOrderItemStatus(item.status);
+    return status !== "cancelled" && status !== "expired";
+  });
 }
 
 export function computeOrderTotalFromItems(

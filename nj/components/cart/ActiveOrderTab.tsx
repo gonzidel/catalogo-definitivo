@@ -8,6 +8,9 @@ import {
   localPickupFulfilledDismissKey,
   isCommonLocalPickupOrder,
   isSpecialExtraItem,
+  buildCustomerOrderNoteExtras,
+  computeItemsLineSubtotal,
+  type OrderNoteExtraRow,
 } from "@/lib/orders/domain";
 import { getCustomerFacingItemStatus } from "@/lib/orders/waiting-source";
 import { groupCustomerOrderItems, type GroupedCustomerOrderItem } from "@/lib/orders/customer-order-display";
@@ -593,6 +596,30 @@ function AlternativesPanel({
   );
 }
 
+function NoteExtraRows({ rows }: { rows: OrderNoteExtraRow[] }) {
+  return (
+    <>
+      {rows.map((row) => (
+        <div key={`note-extra-${row.key}`} className="active-order-item-divider">
+          <LineItemRow
+            productName={row.label}
+            quantity={1}
+            unitPrice={row.amount}
+            specialExtra
+            line2={
+              <span className="active-order-line2">
+                <span className="active-order-extra-tag">
+                  {row.key === "shipping" ? "Envío" : row.amount < 0 ? "Descuento" : "Extra"}
+                </span>
+              </span>
+            }
+          />
+        </div>
+      ))}
+    </>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 interface ActiveOrderTabProps {
@@ -1151,10 +1178,13 @@ export default function ActiveOrderTab({
       })),
       promotions
     );
-    const totalAmt = sumPromoAwareTotal(
-      prepPromoBuilt.groups,
-      prepPromoBuilt.ungrouped
+    const prepNoteExtras = buildCustomerOrderNoteExtras(
+      order.notes,
+      computeItemsLineSubtotal(prepBillable)
     );
+    const totalAmt =
+      sumPromoAwareTotal(prepPromoBuilt.groups, prepPromoBuilt.ungrouped) +
+      prepNoteExtras.net;
     const prepOperationalItems = prepBillable;
     const allPrepItemsPicked =
       prepOperationalItems.length > 0 &&
@@ -1376,6 +1406,7 @@ export default function ActiveOrderTab({
                     </div>
                   );
                 })}
+                <NoteExtraRows rows={prepNoteExtras.rows} />
               </div>
               {prepRows.length > PREVIEW && (
                 <button
@@ -1529,10 +1560,13 @@ export default function ActiveOrderTab({
     regularItems.map(toPromoGroupable),
     promotions
   );
-  const totalAmount = sumPromoAwareTotal(
-    regularPromoBuilt.groups,
-    regularPromoBuilt.ungrouped
+  const noteExtras = buildCustomerOrderNoteExtras(
+    order.notes,
+    computeItemsLineSubtotal(regularItems)
   );
+  const totalAmount =
+    sumPromoAwareTotal(regularPromoBuilt.groups, regularPromoBuilt.ungrouped) +
+    noteExtras.net;
   // Block send if there are unresolved missing items
   const hasMissing      = missingItems.length > 0;
   const isLocalPickupZone = isLocalPickupShortDeadlineZone(customerProvince, customerCity);
@@ -2762,6 +2796,8 @@ export default function ActiveOrderTab({
             </div>
           )
         )}
+
+        <NoteExtraRows rows={noteExtras.rows} />
 
         {hiddenCount > 0 && !showAllItems && (
           <button

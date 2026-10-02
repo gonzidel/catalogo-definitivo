@@ -421,6 +421,23 @@ Fuentes: código de `d5fcd1d` (middleware, `next.config.ts`, `request.ts`, `site
 
 **Para «sin vuelta atrás» (deuda, sin fecha):** `/catalogo*` a 308 (SEO); `firebase.json` directo a `www/<ruta>` (el deploy de Firebase publica todo el árbol: riesgo 5); regla de host `nj-gonzidel`/`nj-drab` → `www`; mover el apex a nj antes de cualquier baja de catalogo1; cerrar `catalogo-definitivo-delta`; limpiar Redirect URLs de Auth (`/nj`, `nj-gonzidel`); plantillas YCloud nuevas con `www`; `publications.js` y `get_meta_feed` a `www/producto/<SKU>` (SQL con aprobación).
 
+### Release 2026-10-02 (TÉCNICA VERIFICADA, 14:50–15:10 ART)
+
+**Contenido (autorizado por el usuario):** rama `release/nj-2026-10-02` (worktree `E:\PROYECTOS\fyl-release-2026-10-02`) = `origin/nj-main` (`f385ea4`, código idéntico a `52ca269` de `dpl_8beBDFb5`) + merges de `fix/snaider-tacuarendi-cierre` (Tacuarendí en Snaider, modal de cierre respeta el transporte asignado, labels alias/CBU), `feat/ofertas-pedidos-activos` (solo SQL 365 + docs) y `fix/extras-total-pedido` (extras de notes en el dashboard de la clienta, `syncOrderTotalAndNotes` sin cancelados). Merge commit `ade562b`. `nj-main` **no** se tocó. tsc OK, 188/188 tests.
+
+**Deploy:**
+1. `vercel deploy --prod --skip-domain --yes` desde la raíz del worktree (`.vercel/project.json` + `.vercelignore` copiados de `fyl-cutover`) → **`dpl_AZxfJk3kp3tEwCn2LwTmvzAuxL5Q`** (`nj-bh87ir63r-gonzidel.vercel.app`) READY + `alias set` `nj-gonzidel` → `dpl_BHA4…`.
+2. Smoke en la URL del deploy: landings/PDP/login/robots/sitemap 200; redirects `/dashboard`, `/admin/orders`, `/catalogo*`, `/nj/dashboard` idénticos a `dpl_8beBDFb5`; 22/22 assets 200.
+3. `vercel promote dpl_AZxf… --yes` → producción nj y `nj-drab` movidos; mismo aviso «Failed to remap all aliases» (www es de otro proyecto). + `alias set` `nj-gonzidel` → `dpl_BHA4…`.
+4. `vercel alias set nj-bh87ir63r-gonzidel.vercel.app www.fylmoda.com.ar` → OK.
+5. `www`: mismas rutas y redirects, apex 308, 22/22 assets 200, HTML con `dpl_AZxf…`.
+
+**Estado:** `www` y `nj-drab` → `dpl_AZxf…`; `nj-gonzidel` → `dpl_BHA4…`; `nj-fyl-testing` → `dpl_GtM6…`.
+
+**Rollback (código, sin SQL):** `vercel alias set nj-l6ecs6da2-gonzidel.vercel.app www.fylmoda.com.ar` + `vercel promote dpl_8beBDFb5NLWfVEVALBemDrztrXsF --yes` + `vercel alias set nj-mbdzu2ahz-gonzidel.vercel.app nj-gonzidel.vercel.app`. Las migraciones 363–366 ya estaban aplicadas y son independientes del deploy.
+
+**Entorno local:** la CLI de Vercel fallaba con `fetch failed` (`UNABLE_TO_VERIFY_LEAF_SIGNATURE`: inspección TLS local). Se resolvió con `NODE_OPTIONS=--use-system-ca` (almacén de certificados de Windows), sin desactivar la verificación TLS.
+
 ### Rollback de Fase 1
 
 - **Rollback del fix «Ingresar» (vuelve a `www` con el deploy del cutover, NJ sigue sirviendo `www`):** `vercel alias set nj-o35a2z6bh-gonzidel.vercel.app www.fylmoda.com.ar` + `vercel promote dpl_CJCgdM8VAN6H2GPRpxvzMUijup4P --yes` + `vercel alias set nj-mbdzu2ahz-gonzidel.vercel.app nj-gonzidel.vercel.app` (el promote vuelve a mover `nj-gonzidel`). Requiere aprobación: no es el rollback de dominio preaprobado. Sin SQL ni variables.

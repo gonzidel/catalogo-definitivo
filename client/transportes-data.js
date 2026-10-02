@@ -94,8 +94,18 @@ for (const [provincia, localidades] of Object.entries(CREDIFIN_PROVINCIAS)) {
 /** Listado completo generado desde Excel: scripts/import-viacargo-xlsx.mjs */
 const via_cargo = viaCargoLocalities;
 
-/** Listado Transporte Snaider: scripts/import-snaider-xlsx.mjs */
-const snaider_cobertura = snaiderLocalities;
+/**
+ * Localidades con Snaider confirmadas por el negocio que no figuran en el Excel
+ * de scripts/import-snaider-xlsx.mjs (el generado se pisa al reimportar).
+ * "Tacuarendi (Emb. Kilometro 421)" es el nombre del selector de perfil NJ.
+ */
+const SNAIDER_LOCALIDADES_EXTRA = [
+  { provincia: "Santa Fe", localidad: "Tacuarendi", transporte: "Transporte Snaider" },
+  { provincia: "Santa Fe", localidad: "Tacuarendi (Emb. Kilometro 421)", transporte: "Transporte Snaider" },
+];
+
+/** Listado Transporte Snaider: scripts/import-snaider-xlsx.mjs + extras confirmados */
+const snaider_cobertura = [...snaiderLocalities, ...SNAIDER_LOCALIDADES_EXTRA];
 
 // MyM — por ahora solo cubre Corrientes Capital.
 const mym_cobertura = [

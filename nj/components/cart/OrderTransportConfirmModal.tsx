@@ -9,7 +9,7 @@ import {
 } from "@/lib/transport";
 import {
   getTransportExplanationText,
-  resolveShippingOptions,
+  resolveCloseTransportOptions,
 } from "@/lib/transport/shipping-helpers";
 
 const WHATSAPP_HREF = "https://wa.me/5493624866768";
@@ -43,31 +43,9 @@ export default function OrderTransportConfirmModal({
   const shipping = useMemo(() => {
     const prov = String(province || "").trim();
     const locality = String(city || "").trim();
-    const current = canonicalizeTransportName(currentTransport || "");
-
-    if (!prov || !locality) {
-      const fallback = current || "Correo Argentino";
-      return {
-        province: prov,
-        city: locality,
-        options: [fallback],
-        recommended: fallback,
-      };
-    }
-
-    const raw = getTransportesDisponibles(prov, locality);
-    const resolved = resolveShippingOptions(prov, locality, raw);
-    const options = resolved.opciones.length > 0 ? resolved.opciones : [current || "Correo Argentino"];
-    const recommended = current && options.includes(current)
-      ? current
-      : canonicalizeTransportName(resolved.efectivo || options[0]);
-
-    return {
-      province: prov,
-      city: locality,
-      options,
-      recommended: options.includes(recommended) ? recommended : options[0],
-    };
+    const raw = prov && locality ? getTransportesDisponibles(prov, locality) : [];
+    const { options, recommended } = resolveCloseTransportOptions(prov, locality, raw, currentTransport);
+    return { province: prov, city: locality, options, recommended };
   }, [city, currentTransport, province]);
 
   useEffect(() => {

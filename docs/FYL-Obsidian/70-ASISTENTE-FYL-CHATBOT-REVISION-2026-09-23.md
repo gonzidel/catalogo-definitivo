@@ -131,7 +131,9 @@ un endpoint HTTPS propio en tiempo real.
      (fuera del Excel de `import-snaider-xlsx.mjs`). Bot:
      `364_transport_coverage_snaider_tacuarendi.sql` agrega 2 filas
      (`Tacuarendi` y `Tacuarendi (Emb. Kilometro 421)`) → **1007 filas**,
-     snaider=94. Si se re-ejecuta 360, volver a correr 364.
+     snaider=94. Si se re-ejecuta 360, volver a correr 364. **364 aplicada
+     en fyl-core 2026-10-02**; verificado: Tacuarendí → {Snaider, Correo
+     Argentino}, Reconquista sin cambios.
 
 ## 2026-09-26 — Bug de YCloud: guardado de Conocimiento roto (bloqueante)
 

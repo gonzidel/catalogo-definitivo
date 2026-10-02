@@ -192,7 +192,7 @@ Cuando la clienta cierra desde `/nj/dashboard` con **todos los productos confirm
 
 **Frontend NJ:** `nj/lib/orders/closed-order-messages.ts`, `OrderMessageBell`, `OrderPaymentsPanel` (botón Pagos en header Kanban).
 
-**Datos bancarios (fix 363, 2026-10-02):** desde 320 los mensajes de transferencia y Correo salían con etiquetas cruzadas (`Alias: 0170218940000003684953` / `CBU/CVU: calzados.fyl.2025`). Correcto: alias `calzados.fyl.2025`, CBU `0170218940000003684953`. Se corrigen `fn_fyl_transfer_alias()` / `fn_fyl_transfer_cbu()` (`363_fix_transfer_alias_cbu_labels.sql`) y las constantes de `closed-order-messages.ts`. Los avisos ya encolados conservan su texto.
+**Datos bancarios (fix 363, 2026-10-02):** desde 320 los mensajes de transferencia y Correo salían con etiquetas cruzadas (`Alias: 0170218940000003684953` / `CBU/CVU: calzados.fyl.2025`). Correcto: alias `calzados.fyl.2025`, CBU `0170218940000003684953`. Se corrigen `fn_fyl_transfer_alias()` / `fn_fyl_transfer_cbu()` (`363_fix_transfer_alias_cbu_labels.sql`) y las constantes de `closed-order-messages.ts`. Los avisos ya encolados conservan su texto. **363 aplicada en fyl-core 2026-10-02**; verificado: el bloque bancario sale `Alias: calzados.fyl.2025` / `CBU/CVU: 0170218940000003684953`.
 
 **Pedido sin transporte:** si ni `orders.transport_id` ni `customers.transport_id` tienen valor, la categoría es `other` → sin campana y el pedido queda `ready` sin pedir pago.
 

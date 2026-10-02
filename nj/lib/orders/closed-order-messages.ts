@@ -6,8 +6,8 @@
 import { formatPriceAr, isCustomerSourcedOrder } from "@/lib/orders/domain";
 import { canonicalizeTransportName } from "@/lib/transport/index";
 
-export const FYL_TRANSFER_ALIAS = "0170218940000003684953";
-export const FYL_TRANSFER_CBU = "calzados.fyl.2025";
+export const FYL_TRANSFER_ALIAS = "calzados.fyl.2025";
+export const FYL_TRANSFER_CBU = "0170218940000003684953";
 export const FYL_TRANSFER_TITULAR = "DE LA FUENTE FERNANDO";
 
 export type ClosedOrderTransportCategory =

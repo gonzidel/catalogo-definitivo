@@ -243,6 +243,37 @@ export function resolveShippingOptions(province: string, city: string, rawOption
 }
 
 /**
+ * Opciones del modal "Retiro/envío del pedido" al cerrar. El transporte asignado
+ * en BD (customers.transport_id) se ofrece y preselecciona aunque la geo no lo
+ * liste: si no, confirmar el modal lo pisaría con la opción geo.
+ */
+export function resolveCloseTransportOptions(
+  province: string,
+  city: string,
+  rawOptions: string[],
+  currentTransport?: string | null
+): { options: string[]; recommended: string } {
+  const current = canonicalizeTransportName(currentTransport || "");
+
+  if (!province || !city) {
+    const fallback = current || "Correo Argentino";
+    return { options: [fallback], recommended: fallback };
+  }
+
+  const resolved = resolveShippingOptions(province, city, rawOptions);
+  let options = resolved.opciones.length > 0 ? resolved.opciones : [current || "Correo Argentino"];
+  if (current && !options.includes(current)) {
+    options = [current, ...options];
+  }
+
+  const recommended = current || canonicalizeTransportName(resolved.efectivo || options[0]);
+  return {
+    options,
+    recommended: options.includes(recommended) ? recommended : options[0],
+  };
+}
+
+/**
  * Transporte efectivo para UI: prioriza el asignado en BD (customers.transport_id),
  * luego el de geo/localStorage. Si el de BD no está en opciones geo (ej. MyM
  * forzado por admin), igual se respeta.

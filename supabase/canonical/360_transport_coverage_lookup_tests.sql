@@ -16,16 +16,17 @@ BEGIN
   RAISE NOTICE '360 OK: fn_transportes_disponibles no es ejecutable por authenticated/anon';
 END $$;
 
--- Conteo de filas sembradas (mismo total que transportes-data.js: 86+6+17+328+475+92+1).
+-- Conteo de filas (mismo total que transportes-data.js: 86+6+17+328+475+94+1).
+-- 1005 del seed de 360 + 2 de Snaider Tacuarendí (364).
 DO $$
 DECLARE
   v_count int;
 BEGIN
   SELECT count(*) INTO v_count FROM public.transport_coverage;
-  IF v_count <> 1005 THEN
-    RAISE EXCEPTION '360 FAIL: se esperaban 1005 filas en transport_coverage, hay %', v_count;
+  IF v_count <> 1007 THEN
+    RAISE EXCEPTION '360 FAIL: se esperaban 1007 filas en transport_coverage, hay %', v_count;
   END IF;
-  RAISE NOTICE '360 OK: transport_coverage tiene 1005 filas';
+  RAISE NOTICE '360 OK: transport_coverage tiene 1007 filas';
 END $$;
 
 -- SEDE override: Charata (Chaco) está en destinos_transporte -> solo SEDE.

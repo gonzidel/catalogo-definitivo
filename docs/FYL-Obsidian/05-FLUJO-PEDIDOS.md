@@ -192,6 +192,10 @@ Cuando la clienta cierra desde `/nj/dashboard` con **todos los productos confirm
 
 **Frontend NJ:** `nj/lib/orders/closed-order-messages.ts`, `OrderMessageBell`, `OrderPaymentsPanel` (botón Pagos en header Kanban).
 
+**Datos bancarios (fix 363, 2026-10-02):** desde 320 los mensajes de transferencia y Correo salían con etiquetas cruzadas (`Alias: 0170218940000003684953` / `CBU/CVU: calzados.fyl.2025`). Correcto: alias `calzados.fyl.2025`, CBU `0170218940000003684953`. Se corrigen `fn_fyl_transfer_alias()` / `fn_fyl_transfer_cbu()` (`363_fix_transfer_alias_cbu_labels.sql`) y las constantes de `closed-order-messages.ts`. Los avisos ya encolados conservan su texto.
+
+**Pedido sin transporte:** si ni `orders.transport_id` ni `customers.transport_id` tienen valor, la categoría es `other` → sin campana y el pedido queda `ready` sin pedir pago.
+
 **Reabrir y volver a cerrar (migración 339 aplicada en fyl-core 2026-09-08):** si la clienta usa "Editar pedido" / `rpc_customer_reopen_order_for_editing` (o `rpc_reopen_order`) y el aviso `customer_closed_*` **nunca se envió** (`copied_at` y `dismissed_at` nulos), se retira de la campana. Al cerrar de nuevo, `rpc_enqueue_customer_closed_notifications` fabrica un aviso nuevo (el chequeo de duplicado solo mira pendientes). Si el mensaje ya se había enviado, no se toca el histórico; el re-cierre igual puede crear uno nuevo.
 
 **Campana PAU/admin:** el aviso de cierre clienta (`customer_closed_*`) se muestra aunque `orders.source` sea admin/PAU. Espera y vencimiento siguen filtrados por `isCustomerSourcedOrder`.

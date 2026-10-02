@@ -126,6 +126,12 @@ un endpoint HTTPS propio en tiempo real.
 5. Si `client/transportes-data.js` o sus archivos de datos cambian, la
    tabla `transport_coverage` debe volver a sincronizarse manualmente (no
    hay trigger automático).
+   - **2026-10-02:** Snaider en Tacuarendí (Santa Fe) confirmado por el
+     negocio. Web: `SNAIDER_LOCALIDADES_EXTRA` en `client/transportes-data.js`
+     (fuera del Excel de `import-snaider-xlsx.mjs`). Bot:
+     `364_transport_coverage_snaider_tacuarendi.sql` agrega 2 filas
+     (`Tacuarendi` y `Tacuarendi (Emb. Kilometro 421)`) → **1007 filas**,
+     snaider=94. Si se re-ejecuta 360, volver a correr 364.
 
 ## 2026-09-26 — Bug de YCloud: guardado de Conocimiento roto (bloqueante)
 

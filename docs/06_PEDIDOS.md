@@ -51,7 +51,7 @@ Esto coincide con la regla empresarial confirmada: un pedido que queda vacío de
 - Total = suma de líneas no canceladas menos promociones activas aplicables.
 - Migraciones locales recientes excluyen `missing` del total y agregan trigger de recálculo; su despliegue no se prueba solo por existir en el repo.
 - **TÉCNICA VERIFICADA:** los valores extra cargados por el admin en `orders.notes` (`shipping`, `discount`, `extras_amount` + `extras_label`, `extras_percentage`) forman parte de `total_amount`: subtotal + envío − descuento + extra + subtotal × % / 100 (`rpc_admin_add_order_items_atomic`, editor NJ).
-  - **CONTRADICCIÓN corregida (canonical 366):** `rpc_checkout_cart()` reescribía el total solo con líneas − promos y borraba esos extras en cada compra posterior de la clienta (A57414, extra "ALHAJEROS" $8.500). Desde 366 suma `fn_order_notes_extras_total(notes, subtotal)`.
+  - **CONTRADICCIÓN corregida (canonical 366, aplicada en producción 2026-10-02):** `rpc_checkout_cart()` reescribía el total solo con líneas − promos y borraba esos extras en cada compra posterior de la clienta (A57414, extra "ALHAJEROS" $8.500). Desde 366 suma `fn_order_notes_extras_total(notes, subtotal)`. Totales reparados a mano el mismo día: A57414, A57620, A57490, A56741; re-auditoría 45 días: 52 pedidos con extras, 0 desfasados.
   - El dashboard de la clienta (`ActiveOrderTab`) lista esos extras como filas y los suma a su total; antes solo mostraba líneas de `order_items`.
   - `syncOrderTotalAndNotes` (guardar solo extras desde el admin NJ) excluye líneas `cancelled`/`expired` del subtotal.
 

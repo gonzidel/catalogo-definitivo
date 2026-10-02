@@ -50,6 +50,13 @@ Esto coincide con la regla empresarial confirmada: un pedido que queda vacío de
 - Snapshot del carrito se usa para UI/transporte, no como autoridad final.
 - Total = suma de líneas no canceladas menos promociones activas aplicables.
 - Migraciones locales recientes excluyen `missing` del total y agregan trigger de recálculo; su despliegue no se prueba solo por existir en el repo.
+- **NEGOCIO CONFIRMADO (2026-10-02):** si se crea o activa una oferta por color, los pedidos abiertos (`active` / `closing_soon`) que ya tenían ese producto+color también pasan al precio de oferta.
+- **TÉCNICA (canonical 365, pendiente de aplicar en producción):** `fn_apply_color_offers_to_open_orders` se dispara por trigger en `color_price_offers` (alta/activación/cambio de precio o fechas) y por cron diario `color-offers-reprice-open-orders` (00:05 UTC, para ofertas con `start_date` futura).
+  - Solo baja precios (`price_snapshot > offer_price`); al vencer la oferta no se vuelve a subir.
+  - No aplica bajas del precio de lista (`product_variants.price`), solo ofertas.
+  - Excluye pedidos espejo de venta local (`notes.mirrored_from_local_order = true`), pedidos cerrados/enviados y líneas `cancelled`.
+  - `total_amount` baja por la diferencia de las líneas cobrables. Si el total ya coincidía con la suma nueva (descuento ya aplicado desde el PAU), no se toca.
+  - Pedidos con ítems `missing` y total por encima de la suma cobrable se saltean y se registran en el resultado (`skipped_orders`) para revisión manual.
 
 ### Estados de pedido
 
@@ -202,6 +209,7 @@ No se agrega fricción al **agregar** productos.
 - `supabase/canonical/335_rpc_checkout_cart_effective_price.sql`
 - `supabase/canonical/351_rpc_close_order_resolve_payment_by_transport.sql`
 - `supabase/canonical/355_orders_daily_maintenance_grace_window.sql`
+- `supabase/canonical/365_color_offers_reprice_open_orders.sql`
 - `supabase/canonical/119_order_item_operational_and_empty_order_maint.sql`
 - `supabase/canonical/127_rpc_delete_empty_order.sql`
 

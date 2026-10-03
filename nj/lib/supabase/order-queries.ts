@@ -619,11 +619,10 @@ export async function rpcMarkExpiredOrderSent(supabase: SupabaseClient, orderId:
 }
 
 /**
- * Suma cuánto stock real (order_item_stock_sources) devolvería archivar/desarmar
- * estos ítems -- se usa para mostrarle al admin, antes de confirmar "Archivar"
- * en un pedido 'expired', si esa acción va a tocar el depósito o no (la
- * mayoría de los pedidos vencidos por el cron ya no tienen fuentes reales
- * porque el cron las liberó al expirar). Ver auditoría 2026-09-15.
+ * Suma cuánto stock real (order_item_stock_sources) devolvería desarmar estos
+ * ítems -- se le muestra al admin antes de confirmar "Desarmar" en un pedido
+ * 'expired'. Desde 367 el vencimiento conserva las fuentes hasta el desarme;
+ * los vencidos anteriores ya no tienen fuentes. Ver auditoría 2026-09-15.
  */
 export async function fetchPendingStockReturnQty(
   supabase: SupabaseClient,

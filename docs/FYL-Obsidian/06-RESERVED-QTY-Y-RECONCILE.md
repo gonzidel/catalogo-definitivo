@@ -239,6 +239,17 @@ Mientras se validaba 246, la auditoría mostró nuevas filas `reserved_qty_infla
 - **Reconciliación histórica ejecutada el mismo día (2026-08-01), con aprobación explícita del usuario:** `SET LOCAL request.jwt.claim.role = 'service_role'; SELECT public.rpc_reconcile_stock(true);` (necesario porque la sesión MCP no tenía JWT de usuario admin, mismo patrón que 246). Antes de correrlo se verificó la dirección del drift: **944 de 945 filas eran `reserved_qty_inflated`** (stock bloqueado sin motivo real, delta 1–59 u., total 5.107 u. "fantasma") y **1 sola `reserved_qty_deflated`** (-5, riesgo latente de sobreventa). Resultado del JSON de salida: `reserved_qty.fixed = 945`, `remaining_diffs = 0`. Efecto lateral menor dentro del mismo call (bloques 1/2, no relacionados a `reserved_qty`): 13 filas huérfanas de `variant_sizes` resueltas. Verificación posterior: `SELECT count(*) FROM vw_stock_audit_reserved_qty_diff` → `0`. También se confirmó que el trigger `trigger_update_status_on_product_variants` (dispara con cualquier `UPDATE` en `product_variants`) no depende de `reserved_qty` para calcular `products.status` — solo usa `variant_sizes.stock_qty`/imágenes/tags — así que la corrida no tuvo efecto secundario sobre la visibilidad de productos en el catálogo.
 - Detalle completo de la auditoría que originó este fix (incluye hallazgo hermano de `stock_pending` fuera del `CHECK` de `orders.status`, fix 259): [[48-AUDITORIA-ESTADOS-PEDIDOS-Y-FIXES-2026-08-01]].
 
+## Migración 367 — vencidos conservan la reserva hasta el desarme (2026-10-03)
+
+Regla de negocio confirmada: un pedido vencido no devuelve stock hasta que un admin confirma el desarme. Reemplaza el flujo de 260.
+
+- El cron marca `orders.status = 'expired'` sin reingresar stock ni borrar `order_item_stock_sources`; los ítems conservan su estado (`awaiting_apartado` sin fuentes pasa a `expired`).
+- El trigger 188 deja de liberar `reserved_qty` al pasar a `expired`. Lo libera "Desarmar" (`rpc_cancel_order_full`, vía `rpc_cancel_order_item` / `rpc_remove_order_item_restore_stock`) o la transición `expired` → `sent`/`devolución`. `release_reserved_qty_for_order` es idempotente por `order_reserved_qty_released`: los `expired` históricos (ya liberados) no se descuentan otra vez.
+- `vw_stock_audit_reserved_qty_diff` (y por lo tanto `rpc_reconcile_stock`), `fn_reserved_by_variant_size`, `rpc_get_variant_size_reserved` y `get_meta_feed` excluyen solo `sent`/`devolución`: un `expired` con fuentes es reserva activa. Antes de 367 había 0 fuentes en pedidos `expired`, así que el cambio no altera datos existentes.
+- Riesgo de rollback: los pedidos que vencieron con 367 activo quedan con fuentes; desarmarlos antes de revertir o la auditoría los marcará `reserved_qty_inflated`.
+- Archivos: `supabase/canonical/367_*` (migración, ROLLBACK, tests).
+- Aplicada en producción (`fyl-core`) el 2026-10-03 con aprobación explícita del usuario. Verificación: el mantenimiento no contiene escrituras de stock ni `DELETE` de fuentes y conserva la ventana 355; el trigger no incluye `expired`; la vista conserva `security_invoker=on` y `authenticated:SELECT`; md5 de las tres funciones parcheadas = esperado; `vw_stock_audit_reserved_qty_diff` = 452 filas antes y después (drift previo, no relacionado).
+
 ## Enlaces
 
 - [[07-RELEASE-GATE-Y-AUDITORIA]] · [[04-RPCS-CRITICAS]] · [[24-AUDITORIA-STOCK-2026-05-04]] · [[48-AUDITORIA-ESTADOS-PEDIDOS-Y-FIXES-2026-08-01]] · `docs/STOCK_GOVERNANCE.md` §3

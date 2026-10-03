@@ -80,10 +80,9 @@ export default function OrderActions({ order, draftMode = false }: OrderActionsP
   const [dismantleModalOpen, setDismantleModalOpen] = useState(false);
   const [extendModalOpen, setExtendModalOpen] = useState(false);
   const [markSentModalOpen, setMarkSentModalOpen] = useState(false);
-  // Cuánto stock real se sumaría al depósito si se archiva este pedido vencido --
-  // la mayoría de los 'expired' ya no tienen fuentes reales (el cron las liberó
-  // al vencer), pero mostrar el número en vez de asumirlo le da confianza al
-  // admin antes de confirmar (ver auditoría 2026-09-15, caso Gonzalo de la Fuente).
+  // Cuánto stock vuelve al depósito al desarmar este pedido vencido. Desde 367
+  // el vencimiento no reingresa nada: el stock queda reservado hasta esta
+  // confirmación. Los 'expired' anteriores a 367 ya no tienen fuentes (0).
   const [stockImpactQty, setStockImpactQty] = useState<number | null>(null);
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [moveBoardConfirmOpen, setMoveBoardConfirmOpen] = useState(false);
@@ -276,7 +275,7 @@ export default function OrderActions({ order, draftMode = false }: OrderActionsP
               disabled={busy}
               onClick={() => setDismantleModalOpen(true)}
             >
-              {order.status === "expired" ? "Archivar" : "Desarmar"}
+              Desarmar
             </button>
           </>
         ) : null}
@@ -464,11 +463,11 @@ export default function OrderActions({ order, draftMode = false }: OrderActionsP
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="order-modal__title" id={`dismantle-modal-${order.id}`}>
-              {order.status === "expired" ? "Archivar pedido vencido" : "Desarmar pedido"}
+              {order.status === "expired" ? "Desarmar pedido vencido" : "Desarmar pedido"}
             </h3>
             <p className="order-modal__text">
               {order.status === "expired"
-                ? "El stock ya volvió al sistema automáticamente al vencer el plazo. Confirmá para archivar el pedido y sacarlo de Vencido."
+                ? "El stock de este pedido sigue reservado. Confirmá solo cuando las prendas apartadas hayan vuelto al depósito: recién ahí vuelven a estar a la venta."
                 : "¿Confirmar desarme? Todo el stock regresa al sistema."}
             </p>
             {order.status === "expired" ? (
@@ -479,8 +478,8 @@ export default function OrderActions({ order, draftMode = false }: OrderActionsP
                 {stockImpactQty === null
                   ? "Revisando stock…"
                   : stockImpactQty > 0
-                    ? `Ojo: al archivar se van a sumar ${stockImpactQty} unidad${stockImpactQty === 1 ? "" : "es"} al depósito.`
-                    : "No va a sumar nada al depósito (ya se liberó automáticamente al vencer)."}
+                    ? `Al confirmar vuelve${stockImpactQty === 1 ? "" : "n"} ${stockImpactQty} unidad${stockImpactQty === 1 ? "" : "es"} al depósito.`
+                    : "No tiene stock reservado: solo se archiva el pedido."}
               </p>
             ) : null}
             <div className="order-modal__actions order-modal__actions--big">
@@ -497,7 +496,7 @@ export default function OrderActions({ order, draftMode = false }: OrderActionsP
                 disabled={busy}
                 onClick={handleDismantleConfirm}
               >
-                {order.status === "expired" ? "Archivar" : "Desarmar"}
+                Desarmar
               </button>
             </div>
           </div>

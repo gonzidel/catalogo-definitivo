@@ -74,7 +74,7 @@ Esto coincide con la regla empresarial confirmada: un pedido que queda vacío de
 | `sent` | Enviado; terminal para Kanban operativo |
 | `stock_pending` | Alta/edición admin pendiente de resolver stock |
 | `cancelled` | Cancelado; puede requerir devolución física |
-| `expired` | Vencido/desarmado o pendiente de gestión según ventana |
+| `expired` | Vencido; desde 367 conserva el stock reservado hasta que un admin confirma "Desarmar" |
 | `devolución` / `devolucion` | Devolución; terminal |
 
 ### Estados de ítem
@@ -89,7 +89,7 @@ Esto coincide con la regla empresarial confirmada: un pedido que queda vacío de
 | `waiting` | Espera de movimiento/origen, a menudo stock del local |
 | `missing` | Falta confirmada o línea no disponible |
 | `cancelled` | Cancelada; puede conservar fuentes hasta confirmación admin |
-| `expired` | Línea vencida por mantenimiento |
+| `expired` | Línea vencida por mantenimiento (desde 367 solo `awaiting_apartado` sin stock; el resto conserva su estado hasta el desarme) |
 
 ### Kanban administrativo
 
@@ -126,8 +126,10 @@ El equipo puede hablar de un pedido “apartado” o “en espera” según su c
 
 - **CANÓNICA, plazo de reserva:** el pedido normal dispone de 7 días desde su creación. El código calcula `dismantle_at` al día 7, a las 17:00 de Argentina, y lo mueve al siguiente día hábil si corresponde; los feriados viven en `order_deadline_holidays`.
 - **TÉCNICA VERIFICADA, aviso interno:** `expires_at` se calcula 2 días antes de `dismantle_at` y activa `closing_soon`.
-- **TÉCNICA VERIFICADA en trabajo local, vencimiento/desarme:** la migración 355 agrega 24 horas de gracia después de `dismantle_at` para pedidos normales antes de marcar `expired` y devolver stock; `local_deferred_pickup` queda fuera. Su despliegue productivo debe verificarse.
-- **TÉCNICA VERIFICADA:** `rpc_orders_daily_maintenance` devuelve stock por fuentes, marca ítems/pedido expirados y limpia fuentes.
+- **TÉCNICA VERIFICADA (producción, 2026-10-03), ventana de gracia:** la migración 355 está desplegada: los pedidos normales vencen 24 horas después de `dismantle_at`; `local_deferred_pickup` vence al llegar a `dismantle_at`.
+- **NEGOCIO CONFIRMADO (2026-10-03), stock de pedidos vencidos:** un pedido vencido no devuelve stock hasta que un admin confirma el desarme. Las prendas apartadas siguen físicamente en la bolsa del pedido; liberarlas antes permite venderlas a otro cliente sin que estén en el depósito.
+- **TÉCNICA VERIFICADA (migración 367, aplicada en producción 2026-10-03):** `rpc_orders_daily_maintenance` solo marca el pedido `expired`; los ítems `reserved`/`picked`/`waiting`/`missing` conservan estado y `order_item_stock_sources`, y `reserved_qty` no se libera. Solo `awaiting_apartado` sin fuentes pasa a `expired`, porque no tiene stock descontado. "Desarmar" en la columna Vencido (`rpc_cancel_order_full`) reingresa por fuentes, libera `reserved_qty` y borra el pedido. "Ya enviado" (`expired` → `sent`) libera `reserved_qty` sin reingresar. "+24hs" (reabrir) conserva las reservas. Un `expired` con fuentes cuenta como reserva activa en `vw_stock_audit_reserved_qty_diff`, `fn_reserved_by_variant_size`, `rpc_get_variant_size_reserved` y `get_meta_feed`.
+- **HISTÓRICA (hasta 367):** el cron reingresaba stock por fuentes al vencer (incluidos ítems apartados y faltantes), marcaba ítems y pedido `expired` y borraba las fuentes; "Archivar" solo borraba el registro.
 - **TÉCNICA VERIFICADA en trabajo local (2026-09-29), días restantes en el dashboard cliente:** título del header, chip, banner, panel explicativo y campanita usan un único valor, `customerDaysLeft()` en `nj/lib/orders/deadline.ts`. Vencimiento el mismo día calendario: "Hoy". Día calendario siguiente: "Mañana". Desde 2 días calendario: bloques de 24 h redondeados hacia arriba (2 días y 10 horas se muestran como "3 días"). Antes, el título redondeaba hacia arriba y el chip contaba días calendario; como `dismantle_at` cae a las 17:00, antes de esa hora mostraban "3 días" y "2 días" a la vez. La campanita muestra "Faltan N días" durante todo el día calendario ubicado 2 días antes del vencimiento, "mañana" el día anterior y "hoy" el día del vencimiento.
 - **EN EVALUACIÓN, recordatorios:** la UI contiene avisos de 2 y 1 día; documentación histórica contempla 3/2/1 y día de vencimiento; el trabajo YCloud reciente usa plazo cumplido/desarme final. Ninguna cadencia se considera política comercial canónica todavía.
 

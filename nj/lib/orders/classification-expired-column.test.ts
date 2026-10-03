@@ -67,6 +67,27 @@ test("status=expired → columna expired", () => {
   assert.equal(getOrderKanbanColumn(order), "expired");
 });
 
+test("status=expired con ítems apartados/reservados (367, stock sin desarmar) → columna expired", () => {
+  const item = (id: string, status: string) =>
+    ({
+      id,
+      order_id: "o1",
+      variant_id: "v1",
+      product_name: "Prod",
+      color: "Negro",
+      size: "38",
+      quantity: 1,
+      price_snapshot: 1000,
+      status,
+    }) as AdminOrderItem;
+  const order = baseOrder({
+    status: "expired",
+    dismantle_at: new Date(Date.now() - 30 * 60 * 60 * 1000).toISOString(),
+    order_items: [item("i1", "picked"), item("i2", "reserved"), item("i3", "waiting")],
+  });
+  assert.equal(getOrderKanbanColumn(order), "expired");
+});
+
 test("≤1 día para vencer + solo picked → Apartados (amarillo en card)", () => {
   const order = baseOrder();
   assert.equal(isOrderExpiringWithinOneDay(order), true);
@@ -278,7 +299,7 @@ test("plazo ya pasado → no cerrar (falta +24hs primero)", () => {
   assert.equal(canCloseOrderFromExpiredColumn(order, now), false);
 });
 
-test("status=expired → no cerrar (Archivar / reopen)", () => {
+test("status=expired → no cerrar (Desarmar / reopen)", () => {
   const order = baseOrder({ status: "expired" });
   assert.equal(canCloseOrderFromExpiredColumn(order), false);
 });

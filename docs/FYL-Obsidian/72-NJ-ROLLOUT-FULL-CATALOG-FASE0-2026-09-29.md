@@ -436,6 +436,14 @@ Fuentes: código de `d5fcd1d` (middleware, `next.config.ts`, `request.ts`, `site
 
 **Rollback (código, sin SQL):** `vercel alias set nj-l6ecs6da2-gonzidel.vercel.app www.fylmoda.com.ar` + `vercel promote dpl_8beBDFb5NLWfVEVALBemDrztrXsF --yes` + `vercel alias set nj-mbdzu2ahz-gonzidel.vercel.app nj-gonzidel.vercel.app`. Las migraciones 363–366 ya estaban aplicadas y son independientes del deploy.
 
+### Release 2026-10-03, vencidos conservan stock (TÉCNICA VERIFICADA, 13:14–13:20 ART)
+
+**Contenido (autorizado por el usuario):** misma rama `release/nj-2026-10-02` + merge de `fix/vencidos-sin-reingreso-automatico` (`f8da322`): botón y modal "Desarmar" en la columna Vencido con las unidades que vuelven al depósito. SQL 367 aplicada antes del deploy (13:13:54 ART), ver [[06-RESERVED-QTY-Y-RECONCILE]] § 367. `nj-main` **no** se tocó. tsc OK, tests OK.
+
+**Deploy:** mismo procedimiento → **`dpl_Ev2KapMNdi57Sx7tz8kyLiyh3Cvf`** (`nj-fe85y0svw-gonzidel.vercel.app`). Smoke en la URL del deploy idéntico a `www` anterior, 22/22 assets 200. `promote` (aviso «Failed to remap» esperado) + `alias set` `nj-gonzidel` → `dpl_BHA4…` + `alias set` `www`. Verificado con `vercel inspect`: `www` y `nj-drab` → `dpl_Ev2K…`; `nj-gonzidel` → `dpl_BHA4…`.
+
+**Rollback (código):** `vercel alias set nj-bh87ir63r-gonzidel.vercel.app www.fylmoda.com.ar` + `vercel promote dpl_AZxfJk3kp3tEwCn2LwTmvzAuxL5Q --yes` + `vercel alias set nj-mbdzu2ahz-gonzidel.vercel.app nj-gonzidel.vercel.app`. El frontend viejo sigue funcionando con 367 (su modal ya mostraba las unidades a reingresar). Rollback SQL aparte: `367_ROLLBACK_*` (desarmar antes los vencidos con stock reservado).
+
 **Entorno local:** la CLI de Vercel fallaba con `fetch failed` (`UNABLE_TO_VERIFY_LEAF_SIGNATURE`: inspección TLS local). Se resolvió con `NODE_OPTIONS=--use-system-ca` (almacén de certificados de Windows), sin desactivar la verificación TLS.
 
 ### Rollback de Fase 1

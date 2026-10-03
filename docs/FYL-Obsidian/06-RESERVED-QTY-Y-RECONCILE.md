@@ -248,6 +248,7 @@ Regla de negocio confirmada: un pedido vencido no devuelve stock hasta que un ad
 - `vw_stock_audit_reserved_qty_diff` (y por lo tanto `rpc_reconcile_stock`), `fn_reserved_by_variant_size`, `rpc_get_variant_size_reserved` y `get_meta_feed` excluyen solo `sent`/`devolución`: un `expired` con fuentes es reserva activa. Antes de 367 había 0 fuentes en pedidos `expired`, así que el cambio no altera datos existentes.
 - Riesgo de rollback: los pedidos que vencieron con 367 activo quedan con fuentes; desarmarlos antes de revertir o la auditoría los marcará `reserved_qty_inflated`.
 - Archivos: `supabase/canonical/367_*` (migración, ROLLBACK, tests).
+- Aplicada en producción (`fyl-core`) el 2026-10-03 con aprobación explícita del usuario. Verificación: el mantenimiento no contiene escrituras de stock ni `DELETE` de fuentes y conserva la ventana 355; el trigger no incluye `expired`; la vista conserva `security_invoker=on` y `authenticated:SELECT`; md5 de las tres funciones parcheadas = esperado; `vw_stock_audit_reserved_qty_diff` = 452 filas antes y después (drift previo, no relacionado).
 
 ## Enlaces
 

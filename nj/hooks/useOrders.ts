@@ -1330,10 +1330,8 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
     try {
       const supabase = getSupabaseBrowserClient();
       await rpcCancelOrderFull(supabase, orderId);
-      // Pedido ya vencido por rpc_orders_daily_maintenance: el stock volvió solo
-      // al vencer, este RPC solo termina de archivar/borrar el registro.
       get().showToast(
-        wasAlreadyExpired ? "Pedido archivado" : "Pedido desarmado — stock restaurado",
+        wasAlreadyExpired ? "Pedido vencido desarmado" : "Pedido desarmado — stock restaurado",
         "success"
       );
     } catch (err) {

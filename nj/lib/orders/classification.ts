@@ -140,7 +140,7 @@ export function isExpiredPendingAdminDisassembly(order: AdminOrder): boolean {
  * (amarillo / tras +24hs) y no hay reserved/waiting/awaiting_apartado.
  * Usa `dismantle_at` crudo (igual que `rpc_close_order`), no el plazo
  * “customer-facing” que puede ocultar ventanas cortas de 24hs.
- * No aplica a status=expired (cron): ahí van Archivar / +24hs reopen / Ya enviado.
+ * No aplica a status=expired (cron): ahí van Desarmar / +24hs reopen / Ya enviado.
  */
 export function canCloseOrderFromExpiredColumn(
   order: AdminOrder,

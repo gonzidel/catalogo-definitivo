@@ -114,11 +114,18 @@ SET search_path TO 'public', 'pg_catalog'
 AS $function$
 DECLARE
   v_query text := coalesce(current_query(), '');
-  v_match text[];
+  v_name  text;
 BEGIN
-  v_match := regexp_match(v_query, '"?public"?\."?([A-Za-z0-9_]+)"?\s*\(');
-  IF v_match IS NOT NULL THEN
-    RETURN v_match[1];
+  SELECT m.v[1] INTO v_name
+    FROM regexp_matches(v_query, '"?public"?\."?([A-Za-z0-9_]+)"?\s*\(', 'g')
+         WITH ORDINALITY AS m(v, n)
+   WHERE EXISTS (
+           SELECT 1 FROM pg_proc p
+            WHERE p.pronamespace = 'public'::regnamespace AND p.proname = m.v[1])
+   ORDER BY m.n
+   LIMIT 1;
+  IF v_name IS NOT NULL THEN
+    RETURN v_name;
   END IF;
   RETURN 'sql: ' || left(regexp_replace(v_query, '\s+', ' ', 'g'), 80);
 END

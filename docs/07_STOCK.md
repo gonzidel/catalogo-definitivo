@@ -88,7 +88,9 @@ Hay guardas contra escritura directa en capas derivadas. Antes de sumar otra esc
 
 - `rpc_reconcile_stock` recalcula capas derivadas. En las definiciones nuevas, pasar `false` no garantiza un dry-run puro: controla la corrección de `reserved_qty`, pero puede escribir otras capas.
 - Las vistas `vw_stock_*` cubren auditoría, inmovilizados, publicación y rendimiento.
-- `stock_movements` conserva historial; migraciones recientes mejoran etiquetas legibles.
+- `stock_movements` registra pases entre depósitos (`rpc_move_stock`, `rpc_move_size_stock`).
+- `stock_history` lo escriben solo algunas RPCs. **TÉCNICA VERIFICADA (2026-10-05):** no registran ahí `rpc_checkout_cart`, el reingreso de `rpc_cancel_order_item`, el mantenimiento de vencidos anterior a 367 ni el borrado de pedidos; `rpc_save_product_variant_initial_stock` registra solo el total por variante, sin talle. Por eso las auditorías R2776 y L3040 no pudieron identificar qué pedido devolvió cada unidad.
+- `stock_ledger` (migración 368, **preparada, pendiente de aplicar**): registro automático por triggers, sin tocar RPCs. Guarda cada cambio de `variant_size_warehouse_stock.stock_qty` (talle, depósito, antes/después), cada alta/baja de `order_item_stock_sources` con su pedido, y una foto de ítems y pedidos antes de borrarse. Cada fila lleva `txid`, la RPC de origen, `auth.uid()` y el rol de la API; se une por `txid` para saber qué pedido explica un movimiento. Lectura solo admin (RLS `is_admin()`), vista `vw_stock_ledger_readable`. Consultas de ejemplo en `368_..._tests.sql`.
 - Existen controles específicos para ventas públicas sin stock, fuentes pendientes/canceladas y ventas sin trazabilidad.
 
 ### Reglas importantes
@@ -104,7 +106,7 @@ Hay guardas contra escritura directa en capas derivadas. Antes de sumar otra esc
 
 ## Tablas, vistas y RPCs clave
 
-- Tablas: `variant_size_warehouse_stock`, `variant_sizes`, `variant_warehouse_stock`, `product_variants`, `stock_movements`, `order_item_stock_sources`.
+- Tablas: `variant_size_warehouse_stock`, `variant_sizes`, `variant_warehouse_stock`, `product_variants`, `stock_movements`, `order_item_stock_sources`, `stock_ledger` (368).
 - Vistas: `catalog_public_available_view`, `catalog_public_snapshot`, `vw_stock_fast_sellers`, `vw_stock_dead_products`, `vw_stock_publication_inefficiency`, `vw_stock_tag_summary`.
 - RPCs: `fn_sellable_qty`, `fn_sellable_stock_batch`, `rpc_reconcile_stock`, `rpc_move_size_stock`, `rpc_set_variant_size_stock_batch`, `rpc_set_variant_warehouse_stock_batch`.
 

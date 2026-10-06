@@ -11,9 +11,8 @@
 DO $test$
 DECLARE
   v_wh     uuid := (SELECT id FROM public.warehouses WHERE code = 'general');
-  v_cust   uuid := coalesce(
-                     (SELECT id FROM public.customers WHERE kanban_inbox_owner IS NOT NULL LIMIT 1),
-                     (SELECT id FROM public.customers LIMIT 1));
+  v_cust   uuid;
+  v_cust2  uuid;
   v_prod   uuid;
   v_var    uuid;
   v_order  uuid;
@@ -24,6 +23,16 @@ DECLARE
   v_it     record;
   v_errs   text := '';
 BEGIN
+  -- Un pedido abierto/cerrado por cliente (orders_one_open_per_customer_idx);
+  -- validate_customer_user impide crear clientes sin auth.users.
+  SELECT min(id::text)::uuid, max(id::text)::uuid
+    INTO v_cust, v_cust2
+    FROM (SELECT c.id FROM public.customers c
+           WHERE c.kanban_inbox_owner IS NOT NULL
+             AND NOT EXISTS (SELECT 1 FROM public.orders o
+                              WHERE o.customer_id = c.id
+                                AND o.status IN ('active', 'closing_soon', 'closed'))
+           LIMIT 2) x;
   INSERT INTO public.products (handle, name)
   VALUES ('test-369-' || gen_random_uuid(), 'TEST 369') RETURNING id INTO v_prod;
   INSERT INTO public.product_variants (product_id, color, sku, reserved_qty)
@@ -43,7 +52,7 @@ BEGIN
 
   -- Pedido 2: solo un sin stock (no debe quitarse: dejaría el pedido vacío).
   INSERT INTO public.orders (customer_id, order_number, status, total_amount)
-  VALUES (v_cust, 'TEST369B', 'active', 200) RETURNING id INTO v_order2;
+  VALUES (v_cust2, 'TEST369B', 'active', 200) RETURNING id INTO v_order2;
   INSERT INTO public.order_items (order_id, product_name, quantity, price_snapshot, variant_id, size, status)
   VALUES (v_order2, 'TEST 369', 1, 200, v_var, '1', 'missing') RETURNING id INTO v_miss2;
   INSERT INTO public.order_item_stock_sources (order_item_id, warehouse_id, qty) VALUES (v_miss2, v_wh, 1);

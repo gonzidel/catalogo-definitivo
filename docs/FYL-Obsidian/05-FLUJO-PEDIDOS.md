@@ -24,6 +24,7 @@ Clientes en **Resistencia, Barranqueras, Puerto Vilelas o Fontana** (Chaco):
    - **UI Espera Local (Pedidos):** tarjetas/etiquetas **verdes** (depósito venta-publico). Esos pedidos también aparecen en **Retiro → Espera** (verde) para confirmar o rechazar con ✓/✕ — simétrico al flujo Depósito anterior.
    - **Retiro común** (Margarita Belén, Corrientes, etc.): espera igual que Pedidos — stock ya descontado en checkout.
 4. **Sin stock antes de apartar**: `fn_refresh_awaiting_apartado_availability` / `rpc_refresh_my_order_availability` → ítem `missing`.
+   - **Al cerrar (369, 2026-10-06):** trigger `trg_orders_cancel_missing_items_on_close` pasa los `missing` a `cancelled` (sin devolver stock, descuenta `reserved_qty`), salvo que el pedido quede vacío. No aparecen en cerrados ni suman en el aviso de cierre. Detalle en `docs/06_PEDIDOS.md` § Productos sin stock al cerrar.
 5. **Maintenance**: pedidos con `dismantle_at IS NULL` no expiran.
 
 `admin/orders.html` (legacy Pedidos) **no lista** el tablero Retiro: ver [[17-AUDITORIA-MODULO-ORDERS]] §17. El Kanban NJ no cambió.

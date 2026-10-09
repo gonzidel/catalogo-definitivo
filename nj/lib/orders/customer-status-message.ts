@@ -245,6 +245,42 @@ export function buildCustomerStatusMessageForOrder(
   });
 }
 
+/**
+ * Ítems que ya estaban en espera antes de este borrador y cuyo aviso sale por
+ * campana: local/depósito siempre; fábrica solo en local diferido (fuera de eso,
+ * fábrica cuenta como confirmado).
+ */
+export function orderHasPendingDeferredWaiting(
+  items: AdminOrderItem[],
+  pending: DraftChangesMap,
+  warehouseIds: WarehouseIds,
+  order: Pick<AdminOrder, "local_deferred_pickup">
+): boolean {
+  const localDeferred = usesRetiroLocalDeferredMessages(order);
+  return items.some((item) => {
+    if (pending[item.id]) return false;
+    const kind = getWaitingSourceKind(item, warehouseIds);
+    if (kind === "local") return true;
+    return kind === "fabrica" && localDeferred;
+  });
+}
+
+/**
+ * True si el aviso al cliente no se manda al confirmar el borrador sino por
+ * campana al resolver la espera: Mensaje/Enviar se ocultan y Confirmar queda libre.
+ */
+export function shouldDeferDraftCustomerMessage(
+  items: AdminOrderItem[],
+  pending: DraftChangesMap,
+  warehouseIds: WarehouseIds,
+  order: Pick<AdminOrder, "local_deferred_pickup">
+): boolean {
+  return (
+    draftDefersCustomerMessage(pending, order) ||
+    orderHasPendingDeferredWaiting(items, pending, warehouseIds, order)
+  );
+}
+
 /** Clasifica borrador + ítems finalizados para armar el mensaje inmediato. */
 export function buildMessageFromOrderAndDraft(
   items: AdminOrderItem[],
@@ -257,7 +293,7 @@ export function buildMessageFromOrderAndDraft(
   dashboardUrl?: string
 ): string | null {
   if (!Object.keys(pending).length) return null;
-  if (order && draftDefersCustomerMessage(pending, order)) return null;
+  if (order && shouldDeferDraftCustomerMessage(items, pending, warehouseIds, order)) return null;
   if (!order && draftHasWaitingLocal(pending)) return null;
 
   const localDeferred = order ? usesRetiroLocalDeferredMessages(order) : false;

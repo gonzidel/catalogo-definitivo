@@ -45,6 +45,8 @@ Tablero **Retiro** (`/nj/admin/retiro`, `scope=local_pickup`) comparte la campan
 **Flujo espera → campana (igual Pedidos):**
 
 1. Activos: marcar ✓ / ⏳ / ✕ y **Confirmar** con ítem en espera Depósito (o Fábrica solo en local diferido) → **no** mensaje inmediato; `rpc_upsert_admin_local_wait_snapshot` guarda `prior_confirmed_count`, `prior_missing_labels`, `waiting_*_item_ids`.
+   - **2026-10-08:** también se difiere si el pedido **ya tenía** ítems en esa espera de una confirmación anterior (aunque el borrador nuevo solo tenga ✓/✕). Antes Confirmar quedaba bloqueado pidiendo un mensaje que además omitía el ítem en espera. Regla: `shouldDeferDraftCustomerMessage` en `customer-status-message.ts`.
+   - **NEGOCIO CONFIRMADO (2026-10-08):** fuera de local diferido, espera **Fábrica** cuenta como producto confirmado en el mensaje (3 ítems, 2 ✓ + 1 Fábrica → "3 confirmados") y el mensaje sale al confirmar.
 2. Columna **Espera**: resolver ✓ o ✕ → `rpc_record_admin_local_wait_resolution` por ítem.
 3. Al resolver el **último** ítem en espera → INSERT en `admin_order_message_notifications` con mensaje **completo** (prior + resoluciones).
 

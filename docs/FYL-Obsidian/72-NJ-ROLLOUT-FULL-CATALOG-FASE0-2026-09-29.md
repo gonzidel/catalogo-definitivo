@@ -446,6 +446,14 @@ Fuentes: código de `d5fcd1d` (middleware, `next.config.ts`, `request.ts`, `site
 
 **Entorno local:** la CLI de Vercel fallaba con `fetch failed` (`UNABLE_TO_VERIFY_LEAF_SIGNATURE`: inspección TLS local). Se resolvió con `NODE_OPTIONS=--use-system-ca` (almacén de certificados de Windows), sin desactivar la verificación TLS.
 
+### Release 2026-10-09, Espera en Kanban (TÉCNICA VERIFICADA, 11:10–11:20 ART)
+
+**Contenido (autorizado por el usuario):** rama `release/nj-2026-10-09` (worktree `E:\PROYECTOS\fyl-release-2026-10-09`) = `origin/nj-main` (`305368d`; sin cambios en `nj/` respecto de `dpl_Ev2K`) + merges de `fix/espera-confirmar-campana` (Confirmar no exige el mensaje si hay esperas previas que se avisan por campana; Fábrica en pedido normal cuenta como confirmado) y `fix/espera-columna-compacta` (columna Espera: producto · color, talle, ×N solo si > 1, lupa, ✓/✕). Sin SQL: la 370 (campana server-side) **no** está aplicada. `nj-main` **no** se tocó. tsc OK, 196/196 tests.
+
+**Deploy:** mismo procedimiento (con `NODE_OPTIONS=--use-system-ca`) → **`dpl_ASbBKuyFV2zrS5swD2pgn3VVUFRA`** (`nj-99d02qruw-gonzidel.vercel.app`). Smoke en la URL del deploy idéntico a `www` anterior (landings/PDP/login/robots/sitemap 200; `/dashboard`, `/admin/orders`, `/admin/retiro` → 302 login; `/catalogo` → `/`; `/nj/dashboard` → `/dashboard`), 22/22 assets 200. `promote` (aviso «Failed to remap» esperado) + `alias set` `nj-gonzidel` → `dpl_BHA4…` + `alias set` `www`. Verificado con `vercel inspect`: `www` y `nj-drab` → `dpl_ASbB…`; `nj-gonzidel` → `dpl_BHA4…`; HTML de `www` con `dpl_ASbB…`; apex 308.
+
+**Rollback (código, sin SQL):** `vercel alias set nj-fe85y0svw-gonzidel.vercel.app www.fylmoda.com.ar` + `vercel promote dpl_Ev2KapMNdi57Sx7tz8kyLiyh3Cvf --yes` + `vercel alias set nj-mbdzu2ahz-gonzidel.vercel.app nj-gonzidel.vercel.app`.
+
 ### Rollback de Fase 1
 
 - **Rollback del fix «Ingresar» (vuelve a `www` con el deploy del cutover, NJ sigue sirviendo `www`):** `vercel alias set nj-o35a2z6bh-gonzidel.vercel.app www.fylmoda.com.ar` + `vercel promote dpl_CJCgdM8VAN6H2GPRpxvzMUijup4P --yes` + `vercel alias set nj-mbdzu2ahz-gonzidel.vercel.app nj-gonzidel.vercel.app` (el promote vuelve a mover `nj-gonzidel`). Requiere aprobación: no es el rollback de dominio preaprobado. Sin SQL ni variables.

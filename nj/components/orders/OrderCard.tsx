@@ -42,7 +42,6 @@ import {
   orderHasWaitingSource,
 } from "@/lib/orders/waiting-source";
 import {
-  draftDefersCustomerMessage,
   splitWaitingCounts,
   type DraftChangesMap,
 } from "@/lib/orders/draft-changes";
@@ -52,6 +51,7 @@ import {
   collectWaitingFabricaItemIdsFromDraft,
   collectWaitingLocalItemIdsFromDraft,
   resolveMessageProfile,
+  shouldDeferDraftCustomerMessage,
 } from "@/lib/orders/customer-status-message";
 import {
   saveLocalWaitSnapshotFromConfirm,
@@ -499,7 +499,12 @@ export default function OrderCard({ order }: OrderCardProps) {
     setDraftMessageSent(false);
   };
 
-  const defersCustomerMessage = draftDefersCustomerMessage(pendingChanges, order);
+  const defersCustomerMessage = shouldDeferDraftCustomerMessage(
+    items,
+    pendingChanges,
+    warehouseIds,
+    order
+  );
   const showDraftMessageActions =
     draftMode && Object.keys(pendingChanges).length > 0 && !defersCustomerMessage;
   const draftFingerprint = JSON.stringify(pendingChanges);
@@ -540,7 +545,12 @@ export default function OrderCard({ order }: OrderCardProps) {
   const confirmChanges = async () => {
     setConfirmBusy(true);
     const draftSnapshot = { ...pendingChanges };
-    const defersMessage = draftDefersCustomerMessage(draftSnapshot, order);
+    const defersMessage = shouldDeferDraftCustomerMessage(
+      items,
+      draftSnapshot,
+      warehouseIds,
+      order
+    );
     try {
       for (const [itemId, change] of Object.entries(draftSnapshot)) {
         if (change.kind === "picked") await markItemPicked(order.id, itemId);

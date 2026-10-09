@@ -25,6 +25,7 @@ Fuente: Código y base de datos
 - El precio final de cada línea de checkout se vuelve a resolver en base de datos con `get_effective_price(variant_id)`; `cart_items.price_snapshot` no es autoridad de cobro.
 - Existen ofertas por color (`color_price_offers`) y promociones `2x1` / `2xMonto` (`promotions`, `promotion_items`).
 - El total del pedido se recalcula desde `order_items` no cancelados y descuentos activos.
+- **NEGOCIO CONFIRMADO (2026-10-09):** promos 2x por pares completos (2 = 1 oferta, 3 = 1 oferta + 1 a precio normal, 4 = 2 ofertas; agregar después completa el par), sin importar si cargó la clienta o el admin. Una unidad entra si se cargó mientras la promo estaba vigente; si la promo termina después, conserva el descuento. Detalle y estado técnico en `FYL-Obsidian/17-AUDITORIA-MODULO-ORDERS.md` § 20.
 - **NEGOCIO CONFIRMADO (2026-10-02):** una oferta por color nueva o reactivada también se aplica a los pedidos abiertos que ya tenían ese producto+color; nunca sube precios ya congelados. Detalle técnico en `06_PEDIDOS.md` (canonical 365).
 - Productos o variantes con precio inválido/no positivo no deben considerarse comprables.
 

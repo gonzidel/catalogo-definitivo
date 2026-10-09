@@ -39,7 +39,7 @@ No escribir a mano stock derivado. Usar RPCs:
 - `admin_confirmed_missing` no es sinonimo exclusivo de `status = missing`.
 - Tambien aparece con `picked` para "Apartado manual".
 - Ver [[17-AUDITORIA-MODULO-ORDERS]].
-- 370 (2026-10-07, pendiente de aplicar): si el talle confirmado a mano esta reservado por otro pedido abierto, el NJ avisa. Si es el mismo par, se toma la reserva (`take_from_order_item_id`): el otro item pasa a `missing` sin reingreso y se registra `reserva_tomada`. Seguimiento en `vw_stock_audit_manual_confirm_reserved`. Origen: 1632 T37 (A57180/A57453). Detalle en `docs/07_STOCK.md`.
+- 370 y 371 (aplicadas en produccion el 2026-10-07; el aviso requiere publicar el NJ): si el talle confirmado a mano esta reservado por otro pedido abierto, el NJ avisa. Si es el mismo par, se toma la reserva (`take_from_order_item_id`): el otro item pasa a `missing` sin reingreso y se registra `reserva_tomada`. Seguimiento en `vw_stock_audit_manual_confirm_reserved`. Origen: 1632 T37 (A57180/A57453). Detalle en `docs/07_STOCK.md`.
 
 ## Riesgos
 

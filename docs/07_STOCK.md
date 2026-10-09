@@ -93,11 +93,17 @@ Hay guardas contra escritura directa en capas derivadas. Antes de sumar otra esc
 - **Es el par de ese pedido:** se le pasa al pedido nuevo y el otro pedido queda "sin stock" en ese producto. No se suma stock y se le avisa a la clienta.
 - **Hay otro par:** confirmación manual como antes.
 
-Implementación en la migración 370 (`370_manual_confirm_take_reservation.sql`, **pendiente de aplicar**):
+Implementación en la migración 370 (`370_manual_confirm_take_reservation.sql`). **TÉCNICA VERIFICADA:** aplicada en producción el 2026-10-07 después de un ensayo con rollback forzado ("370 TEST OK"). Los hashes de las funciones aplicadas coinciden con el archivo. Rollback en `370_ROLLBACK_...sql`. Contenido:
 
 - `rpc_admin_manual_confirm_candidates` lista las reservas en conflicto.
 - `take_from_order_item_id` en la confirmación manual y en `rpc_admin_add_order_items_atomic`. El ítem origen pasa por `rpc_admin_mark_item_missing` y se registra `stock_history.change_type = 'reserva_tomada'` (stock sin cambio).
-- Vista de seguimiento `vw_stock_audit_manual_confirm_reserved`: confirmaciones manuales de 90 días sobre talles reservados por otro pedido, con qué pasó con ese otro pedido, más las reservas tomadas.
+- Vista de seguimiento `vw_stock_audit_manual_confirm_reserved` (solo admin; filtro ajustado en 371, aplicada el 2026-10-07): confirmaciones manuales de 90 días sobre talles reservados por otro pedido, más las reservas tomadas. Excluye los casos en que el otro pedido también se envió (había más de un par). La columna `outcome` indica una de cuatro situaciones:
+  - el otro pedido quedó sin stock;
+  - venció o se canceló (posible stock fantasma);
+  - pasó a devolución;
+  - sigue pendiente.
+
+  Al aplicarse tenía unas 800 filas, 12 de ellas posibles fantasmas (por ejemplo, A57531 con RB-LDP-NEG T36). No muestra los pedidos que el cron anterior a la 367 borró al vencer, como A57180 del caso 1632.
 
 En el NJ el aviso aparece al guardar en editar pedido y en crear pedido. El admin vanilla (`admin/orders.js`, `admin/order-creator.js`) no muestra el aviso y confirma como antes.
 
@@ -120,7 +126,7 @@ En el NJ el aviso aparece al guardar en editar pedido y en crear pedido. El admi
 | Toda devolución debe seguir las fuentes registradas | Verificado | RPCs de cancelación/mantenimiento | 2026-09-23 |
 | `reserved_qty` no gobierna el gate de venta actual | TÉCNICA VERIFICADA | Migraciones 330 y posteriores | 2026-09-23 |
 | `null` y `0` tienen semánticas distintas | Confirmado por negocio y código | `sellable-stock.ts` y selftest | 2026-09-23 |
-| Confirmar a mano un par reservado por otro pedido: avisar y, si es ese par, el otro pedido queda sin stock (sin stock fantasma) | NEGOCIO CONFIRMADO | Migración 370 (pendiente de aplicar) | 2026-10-07 |
+| Confirmar a mano un par reservado por otro pedido: avisar y, si es ese par, el otro pedido queda sin stock (sin stock fantasma) | NEGOCIO CONFIRMADO | Migración 370 (aplicada 2026-10-07) | 2026-10-07 |
 
 ## Tablas, vistas y RPCs clave
 

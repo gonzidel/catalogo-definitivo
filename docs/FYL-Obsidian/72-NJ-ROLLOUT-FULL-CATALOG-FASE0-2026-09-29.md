@@ -454,6 +454,28 @@ Fuentes: código de `d5fcd1d` (middleware, `next.config.ts`, `request.ts`, `site
 
 **Rollback (código, sin SQL):** `vercel alias set nj-fe85y0svw-gonzidel.vercel.app www.fylmoda.com.ar` + `vercel promote dpl_Ev2KapMNdi57Sx7tz8kyLiyh3Cvf --yes` + `vercel alias set nj-mbdzu2ahz-gonzidel.vercel.app nj-gonzidel.vercel.app`.
 
+### Release 2026-10-09 b: aviso de talle reservado en la confirmación manual (TÉCNICA VERIFICADA, 11:30–11:40 ART)
+
+**Contenido (autorizado por el usuario):**
+- Rama `release/nj-2026-10-09b` (worktree `E:\PROYECTOS\fyl-release-2026-10-09b`) = `release/nj-2026-10-09` (`a362aa9`, lo que estaba en producción) + merge de `feat/confirmacion-manual-reserva`.
+- Cambios en `nj/` contra `dpl_ASbB`: solo seis archivos.
+  - Modal "Talle reservado por otro pedido" al guardar una confirmación manual en editar pedido y crear pedido.
+  - `take_from_order_item_id`.
+  - Aviso a la clienta afectada.
+- SQL previo aplicado el 2026-10-09: canonical 374 y 375, registradas en Supabase como `manual_confirm_take_reservation_370` y `manual_confirm_report_filter_371` (ver [[04-FLUJO-STOCK]] y `docs/07_STOCK.md`).
+- `nj-main` recibió `feat/confirmacion-manual-reserva` (`f004cd2`, autorizado). **No** recibió los fixes de Espera, que siguen solo en las ramas de release.
+- tsc OK, 196/196 tests.
+
+**Deploy:**
+- Mismo procedimiento. La CLI creó dos deploys idénticos del mismo commit `ecacbd8`: `dpl_HZhm…` y **`dpl_2XQz4zwGrkbcMB53GBBPinQrqbAf`** (`nj-e4w8dyo4v-gonzidel.vercel.app`). Se usó el segundo.
+- Smoke idéntico a `www` anterior (12 rutas) y 22/22 assets 200.
+- `promote` (aviso «Failed to remap» esperado) + `alias set` `nj-gonzidel` → `dpl_BHA4…` + `alias set` `www`.
+- Verificado con `vercel inspect`: `www` y `nj-drab` → `dpl_2XQz…`; `nj-gonzidel` → `dpl_BHA4…`; HTML de `www` con `dpl_2XQz…`; apex 308.
+
+**Rollback (código):** `vercel alias set nj-99d02qruw-gonzidel.vercel.app www.fylmoda.com.ar` + `vercel promote dpl_ASbBKuyFV2zrS5swD2pgn3VVUFRA --yes` + `vercel alias set nj-mbdzu2ahz-gonzidel.vercel.app nj-gonzidel.vercel.app`. El frontend anterior funciona igual con 374/375: no manda `take_from_order_item_id` y confirma como antes. El rollback SQL es aparte (`374_ROLLBACK_*`).
+
+**Numeración:** el número 370 quedó usado por los fixes del Advisor (aplicados) y lo nombran también los planes de "campana server-side". Por eso la confirmación manual se renumeró a 374/375 en el repo.
+
 ### Rollback de Fase 1
 
 - **Rollback del fix «Ingresar» (vuelve a `www` con el deploy del cutover, NJ sigue sirviendo `www`):** `vercel alias set nj-o35a2z6bh-gonzidel.vercel.app www.fylmoda.com.ar` + `vercel promote dpl_CJCgdM8VAN6H2GPRpxvzMUijup4P --yes` + `vercel alias set nj-mbdzu2ahz-gonzidel.vercel.app nj-gonzidel.vercel.app` (el promote vuelve a mover `nj-gonzidel`). Requiere aprobación: no es el rollback de dominio preaprobado. Sin SQL ni variables.

@@ -1,6 +1,10 @@
--- 370_manual_confirm_take_reservation.sql
+-- 374_manual_confirm_take_reservation.sql
 --
--- NEGOCIO CONFIRMADO (2026-10-07): si al confirmar manualmente un producto (el
+-- Numeración: aplicada el 2026-10-09 como migración manual_confirm_take_reservation_370
+-- (los COMMENT dicen canonical:370). Se renumeró a 374 porque 370–373 ya eran los
+-- fixes del Security Advisor (fix/supabase-advisors-2026-10-08). El cuerpo es el aplicado.
+--
+-- NEGOCIO CONFIRMADO (2026-10-09): si al confirmar manualmente un producto (el
 -- sistema dice 0 pero el par está en la estantería) ese talle está reservado
 -- para otro pedido abierto, el admin ve el aviso y puede tomar ese par: el otro
 -- pedido queda "sin stock" en ese producto y NO se suma stock fantasma.

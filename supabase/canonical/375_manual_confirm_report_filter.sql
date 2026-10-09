@@ -1,6 +1,6 @@
--- 371_manual_confirm_report_filter.sql
+-- 375_manual_confirm_report_filter.sql (aplicada el 2026-10-09 como manual_confirm_report_filter_371)
 --
--- Ajuste del reporte vw_stock_audit_manual_confirm_reserved (370). Aplicada,
+-- Ajuste del reporte vw_stock_audit_manual_confirm_reserved (374). Aplicada,
 -- la vista devolvía 9778 filas: 8978 eran pedidos que también se enviaron con
 -- su par (había más de uno: sin conflicto). Se excluyen y se etiquetan los
 -- casos de riesgo: vencido/cancelado/devolución (la fuente de ese pedido

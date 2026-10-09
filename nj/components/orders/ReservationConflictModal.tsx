@@ -31,7 +31,7 @@ type PendingChoice = {
 /**
  * Antes de confirmar a mano un talle sin stock, avisa si otro pedido abierto lo
  * tiene reservado y deja elegir: tomar ese par (el otro pedido queda sin stock)
- * o confirmar que hay otro par. Regla de negocio 2026-10-07 (canonical:370).
+ * o confirmar que hay otro par. Regla de negocio 2026-10-09 (canonical:374).
  */
 export function useReservationConflictResolver() {
   const [pending, setPending] = useState<PendingChoice | null>(null);

@@ -1,7 +1,7 @@
--- 370_ROLLBACK_manual_confirm_take_reservation.sql
+-- 374_ROLLBACK_manual_confirm_take_reservation.sql
 --
 -- Restaura rpc_admin_manual_inject_and_deduct y rpc_admin_add_order_items_atomic
--- a su lógica previa a 370 y borra la función de candidatos y la vista.
+-- a su lógica previa a 374 (aplicada como _370) y borra la función de candidatos y la vista.
 -- Las reservas ya tomadas quedan como están: el ítem origen sigue 'missing'
 -- (sin fuente) y el destino conserva su fuente; stock y reserved_qty ya están
 -- consistentes. Las filas 'reserva_tomada' de stock_history se conservan.

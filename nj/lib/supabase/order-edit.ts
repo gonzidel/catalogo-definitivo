@@ -25,7 +25,7 @@ export interface OrderEditDraftItem {
   imagen?: string | null;
   is_special_extra?: boolean;
   order_item_id?: string | null;
-  /** Confirmación manual que toma el par reservado por este ítem de otro pedido (canonical:370). */
+  /** Confirmación manual que toma el par reservado por este ítem de otro pedido (canonical:374). */
   take_from_order_item_id?: string | null;
 }
 

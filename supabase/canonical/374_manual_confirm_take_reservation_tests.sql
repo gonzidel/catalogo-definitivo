@@ -1,7 +1,7 @@
--- 370_manual_confirm_take_reservation_tests.sql
+-- 374_manual_confirm_take_reservation_tests.sql (ensayada como 370)
 --
 -- A) Funcional. Termina SIEMPRE con RAISE EXCEPTION: nada persiste.
---    Ensayo previo: BEGIN; <cuerpo de 370 sin BEGIN/COMMIT>; <bloque A>; COMMIT;
+--    Ensayo previo: BEGIN; <cuerpo de 374 sin BEGIN/COMMIT>; <bloque A>; COMMIT;
 --    Esperado: mensaje que empieza con '370 TEST OK'.
 -- B) Estructura (después de aplicar).
 

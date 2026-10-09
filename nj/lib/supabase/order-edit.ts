@@ -25,6 +25,90 @@ export interface OrderEditDraftItem {
   imagen?: string | null;
   is_special_extra?: boolean;
   order_item_id?: string | null;
+  /** Confirmación manual que toma el par reservado por este ítem de otro pedido (canonical:374). */
+  take_from_order_item_id?: string | null;
+}
+
+export interface ReservationCandidate {
+  order_item_id: string;
+  order_id: string;
+  order_number: string | null;
+  customer_id: string | null;
+  customer_name: string;
+  quantity: number;
+  item_status: string;
+  item_created_at: string;
+  checked_at: string | null;
+  local_deferred_pickup: boolean;
+}
+
+export interface ReservationConflict {
+  variant_id: string;
+  size: string;
+  candidates: ReservationCandidate[];
+}
+
+export interface TakenReservation {
+  order_item_id: string;
+  order_id: string;
+  order_number: string | null;
+  customer_id: string | null;
+}
+
+function isManualConfirmItem(item: OrderEditDraftItem): boolean {
+  return (
+    Boolean(item.admin_confirmed_missing) &&
+    !item.is_special_extra &&
+    Boolean(item.variant_id) &&
+    Boolean(normalizeSize(item.size)) &&
+    Number(item.price_snapshot) >= 0 &&
+    Number(item.quantity) > 0
+  );
+}
+
+export function reservationConflictForItem(
+  item: OrderEditDraftItem,
+  conflicts: ReservationConflict[]
+): ReservationConflict | null {
+  if (!isManualConfirmItem(item)) return null;
+  const size = normalizeSize(item.size);
+  return conflicts.find((c) => c.variant_id === item.variant_id && c.size === size) ?? null;
+}
+
+/**
+ * Talles que se van a confirmar a mano y que otro pedido abierto ya tiene reservados.
+ * Si la consulta falla no bloquea el guardado: se confirma como antes.
+ */
+export async function fetchManualConfirmReservationConflicts(
+  supabase: SupabaseClient,
+  items: OrderEditDraftItem[],
+  excludeOrderId: string | null
+): Promise<ReservationConflict[]> {
+  const manual = items.filter(isManualConfirmItem);
+  if (!manual.length) return [];
+
+  const { data, error } = await supabase.rpc("rpc_admin_manual_confirm_candidates", {
+    p_items: manual.map((item) => ({ variant_id: item.variant_id, size: normalizeSize(item.size) })),
+    p_exclude_order_id: excludeOrderId,
+  });
+  if (error) {
+    console.warn("[order-edit] candidatos de reserva no disponibles:", error.message);
+    return [];
+  }
+  return Array.isArray(data) ? (data as ReservationConflict[]) : [];
+}
+
+function parseTakenReservations(raw: unknown): TakenReservation[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object")
+    .map((row) => ({
+      order_item_id: String(row.order_item_id ?? ""),
+      order_id: String(row.order_id ?? ""),
+      order_number: row.order_number == null ? null : String(row.order_number),
+      customer_id: row.customer_id == null ? null : String(row.customer_id),
+    }))
+    .filter((row) => row.order_item_id && row.order_id);
 }
 
 export function resolveSpecialExtraName(description: string, amount: number): string {
@@ -513,11 +597,12 @@ export async function applyManualConfirmedItems(
     size: string | null;
     quantity: number;
     admin_confirmed_missing?: boolean | null;
+    take_from_order_item_id?: string | null;
   }>,
   orderId: string,
   warehouseIds: WarehouseIds
-) {
-  if (!insertedItems.length || !warehouseIds.general) return;
+): Promise<TakenReservation[]> {
+  if (!insertedItems.length || !warehouseIds.general) return [];
 
   const manualItems = insertedItems.filter(
     (i) =>
@@ -526,14 +611,14 @@ export async function applyManualConfirmedItems(
       i.size &&
       Number(i.quantity) > 0
   );
-  if (!manualItems.length) return;
+  if (!manualItems.length) return [];
 
   const alreadySourced = await fetchSourcedOrderItemIds(
     supabase,
     manualItems.map((item) => item.id)
   );
   const pendingManual = manualItems.filter((item) => !alreadySourced.has(item.id));
-  if (!pendingManual.length) return;
+  if (!pendingManual.length) return [];
 
   const p_items = pendingManual.map((item) => ({
     variant_id: item.variant_id,
@@ -541,13 +626,17 @@ export async function applyManualConfirmedItems(
     warehouse_id: warehouseIds.general,
     qty: Number(item.quantity),
     order_item_id: item.id,
+    ...(item.take_from_order_item_id
+      ? { take_from_order_item_id: item.take_from_order_item_id }
+      : {}),
   }));
 
-  const { error } = await supabase.rpc("rpc_admin_manual_inject_and_deduct", {
+  const { data, error } = await supabase.rpc("rpc_admin_manual_inject_and_deduct", {
     p_items,
     p_order_id: orderId,
   });
   if (error) throw error;
+  return parseTakenReservations(data?.taken_from);
 }
 
 export async function applyOrderStockDeduction(
@@ -632,14 +721,16 @@ export async function applyAdminOrderStockWithRetry(
     size: string | null;
     quantity: number;
     admin_confirmed_missing?: boolean | null;
+    take_from_order_item_id?: string | null;
   }>,
   items: OrderEditDraftItem[],
   orderId: string,
   warehouseIds: WarehouseIds,
   source = "order_edit"
-): Promise<void> {
+): Promise<TakenReservation[]> {
+  const taken: TakenReservation[] = [];
   const run = async (requireHistoryCheck = false) => {
-    await applyManualConfirmedItems(supabase, insertedItems, orderId, warehouseIds);
+    taken.push(...(await applyManualConfirmedItems(supabase, insertedItems, orderId, warehouseIds)));
     await applyOrderStockDeduction(supabase, items, orderId, warehouseIds, source, {
       requireHistoryCheck,
     });
@@ -651,6 +742,7 @@ export async function applyAdminOrderStockWithRetry(
     await sleep(400);
     await run(true);
   }
+  return taken;
 }
 
 export async function retryNetworkStockPendingOrder(
@@ -943,8 +1035,8 @@ export async function addItemsToExistingOrder(
   orderId: string,
   items: OrderEditDraftItem[],
   options?: AddItemsToExistingOrderOptions
-): Promise<void> {
-  if (!items.length) return;
+): Promise<TakenReservation[]> {
+  if (!items.length) return [];
 
   const rpcItems = items.map((item) => ({
     variant_id: item.is_special_extra ? null : item.variant_id,
@@ -959,6 +1051,9 @@ export async function addItemsToExistingOrder(
     is_special_extra: Boolean(item.is_special_extra),
     qty_from_general: Number(item.qty_from_general) || 0,
     qty_from_venta: Number(item.qty_from_venta) || 0,
+    ...(item.take_from_order_item_id
+      ? { take_from_order_item_id: item.take_from_order_item_id }
+      : {}),
   }));
   const intent = JSON.stringify({
     order_id: orderId,
@@ -1017,4 +1112,5 @@ export async function addItemsToExistingOrder(
   }
 
   clearAdminOrderEditOperation(orderId, intent);
+  return parseTakenReservations(data.stock?.reservations_taken);
 }

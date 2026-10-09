@@ -84,6 +84,29 @@ Las rutas de escritura observadas pasan por RPCs como:
 
 Hay guardas contra escritura directa en capas derivadas. Antes de sumar otra escritura de stock debe comprobarse que respeta esas guardas, registra movimiento y mantiene sincronizadas las proyecciones.
 
+### Confirmación manual sobre un talle reservado por otro pedido
+
+`rpc_admin_manual_inject_and_deduct` confirma un producto que el sistema da en 0 pero está en la estantería: suma y resta la cantidad (neto 0), crea una fuente propia y sube `reserved_qty`. Si ese par era el que otro pedido abierto ya tenía reservado, quedan dos reclamos sobre una sola unidad. Cuando el primer pedido se cancela o vence, su fuente reingresa y aparece stock fantasma. **TÉCNICA VERIFICADA (2026-10-09):** fue el caso del 1632 Negro T37: A57180 reservó el último par, A57453 lo confirmó a mano y al vencer A57180 reingresó +1. En 30 días hubo 30 confirmaciones así sobre 590.
+
+**NEGOCIO CONFIRMADO (2026-10-09):** antes de confirmar a mano, el admin ve qué pedidos abiertos tienen ese talle reservado y elige una de dos opciones:
+
+- **Es el par de ese pedido:** se le pasa al pedido nuevo y el otro pedido queda "sin stock" en ese producto. No se suma stock y se le avisa a la clienta.
+- **Hay otro par:** confirmación manual como antes.
+
+Implementación en la migración 374 (`374_manual_confirm_take_reservation.sql`; registrada en Supabase como `manual_confirm_take_reservation_370` y con `COMMENT` `canonical:370`, porque se numeró antes de ver que 370–373 ya eran los fixes del Security Advisor). **TÉCNICA VERIFICADA:** aplicada en producción el 2026-10-09 después de un ensayo con rollback forzado ("370 TEST OK"). Los hashes de las funciones aplicadas coinciden con el archivo. Rollback en `374_ROLLBACK_...sql`. Contenido:
+
+- `rpc_admin_manual_confirm_candidates` lista las reservas en conflicto.
+- `take_from_order_item_id` en la confirmación manual y en `rpc_admin_add_order_items_atomic`. El ítem origen pasa por `rpc_admin_mark_item_missing` y se registra `stock_history.change_type = 'reserva_tomada'` (stock sin cambio).
+- Vista de seguimiento `vw_stock_audit_manual_confirm_reserved` (solo admin; filtro ajustado en 375, registrada como `manual_confirm_report_filter_371`, aplicada el 2026-10-09): confirmaciones manuales de 90 días sobre talles reservados por otro pedido, más las reservas tomadas. Excluye los casos en que el otro pedido también se envió (había más de un par). La columna `outcome` indica una de cuatro situaciones:
+  - el otro pedido quedó sin stock;
+  - venció o se canceló (posible stock fantasma);
+  - pasó a devolución;
+  - sigue pendiente.
+
+  Al aplicarse tenía unas 800 filas, 12 de ellas posibles fantasmas (por ejemplo, A57531 con RB-LDP-NEG T36). No muestra los pedidos que el cron anterior a la 367 borró al vencer, como A57180 del caso 1632.
+
+En el NJ el aviso aparece al guardar en editar pedido y en crear pedido. El admin vanilla (`admin/orders.js`, `admin/order-creator.js`) no muestra el aviso y confirma como antes.
+
 ### Reconciliación y auditoría
 
 - `rpc_reconcile_stock` recalcula capas derivadas. En las definiciones nuevas, pasar `false` no garantiza un dry-run puro: controla la corrección de `reserved_qty`, pero puede escribir otras capas.
@@ -103,6 +126,7 @@ Hay guardas contra escritura directa en capas derivadas. Antes de sumar otra esc
 | Toda devolución debe seguir las fuentes registradas | Verificado | RPCs de cancelación/mantenimiento | 2026-09-23 |
 | `reserved_qty` no gobierna el gate de venta actual | TÉCNICA VERIFICADA | Migraciones 330 y posteriores | 2026-09-23 |
 | `null` y `0` tienen semánticas distintas | Confirmado por negocio y código | `sellable-stock.ts` y selftest | 2026-09-23 |
+| Confirmar a mano un par reservado por otro pedido: avisar y, si es ese par, el otro pedido queda sin stock (sin stock fantasma) | NEGOCIO CONFIRMADO | Migración 374 (aplicada 2026-10-09) | 2026-10-09 |
 
 ## Tablas, vistas y RPCs clave
 

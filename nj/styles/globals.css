@@ -6909,6 +6909,65 @@ a.order-card__wa-btn:active {
   padding: 14px;
 }
 
+.reservation-conflict__list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 55vh;
+  overflow-y: auto;
+  margin-bottom: 12px;
+}
+
+.reservation-conflict__item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.reservation-conflict__product {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.reservation-conflict__option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  background: #fff;
+  text-align: left;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.reservation-conflict__option.is-selected {
+  border-color: #111827;
+  background: #f3f4f6;
+  box-shadow: inset 0 0 0 1px #111827;
+}
+
+.reservation-conflict__option:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.reservation-conflict__option-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #111827;
+}
+
+.reservation-conflict__option-sub {
+  font-size: 0.72rem;
+  color: #6b7280;
+}
+
 .order-card__missing-flag {
   display: inline-flex;
   align-items: center;

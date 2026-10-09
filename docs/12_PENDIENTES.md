@@ -1,6 +1,6 @@
 # Pendientes y preguntas para FyL Moda
 
-Última revisión: 2026-09-23
+Última revisión: 2026-10-09
 
 Estas preguntas siguen requiriendo respuesta humana o acceso productivo. Las respuestas ya confirmadas fueron trasladadas a sus documentos de dominio.
 
@@ -112,6 +112,8 @@ Estas preguntas siguen requiriendo respuesta humana o acceso productivo. Las res
 | ARQ-02 | CRÍTICA | ¿Qué migraciones, cron jobs, Edge Functions y variables están realmente desplegados? Verificar sin copiar secretos. |
 | ARQ-03 | CRÍTICA | ¿Cuáles son las definiciones y grants efectivos de las RPCs críticas, incluido `rpc_orders_daily_maintenance`? |
 | ARQ-04 | IMPORTANTE | ¿Qué ambientes, monitoreo, backups, alertas y procedimientos de despliegue/rollback son oficiales? |
+| ARQ-05 | CRÍTICA | **TÉCNICA VERIFICADA (2026-10-09, solo lectura) / CONTRADICCIÓN con `FYL-Obsidian/14-AUDITORIA-MODULO-PRODUCTS.md`.** Los campos de costo de `products` (`cost`, `price_percentage`, `logistic_amount`, `cost_is_estimated`) tienen SELECT para `anon` y `authenticated`; la RLS pública expone productos `active` y `pending_stock`. Una consulta HEAD con la clave pública confirmó acceso a 1342 filas con costo cargado (sin leer valores). `category_pricing_defaults` y `suppliers` también son legibles por `anon`. Además, la protección de campos sensibles de la migración 182 (`enforce_sensitive_product_fields`) no existe en producción: cualquier colaborador admin puede modificar costos por API aunque la interfaz lo restrinja a super_admin. Los fallbacks públicos de NJ (`nj/lib/pdp/load-product-base.ts`, `nj/lib/utils/catalog-variant-enrich.ts`) leen esos campos con `anon`, así que un REVOKE directo los rompería. Pendiente: auditoría de seguridad dedicada y corrección por fases en rama `fix/` independiente (1: fallbacks NJ sin costos; 2: privilegios por columna o tabla privada de costos solo admin; 3: restaurar protección de escritura). ¿Quién aprueba y cuándo? |
+| ARQ-06 | IMPORTANTE | **TÉCNICA VERIFICADA (2026-10-09).** El admin legacy sobrescribe `products.created_at` al editar: `saveProduct` arma el payload con `created_at: new Date().toISOString()` (`admin/products.js`, ~L6420) y lo usa también en el `update` (~L6479). Se pierde la fecha real de alta de los productos editados desde legacy. Corrección independiente: omitir `created_at` en el update. ¿Se intenta recuperar la fecha original de productos ya afectados? |
 
 ## Decisiones técnicas
 

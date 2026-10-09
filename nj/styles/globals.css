@@ -7591,6 +7591,17 @@ a.order-card__wa-btn:active {
   grid-template-columns: 72px 22px 62px 52px;
 }
 
+/* Espera: solo producto · color · talle + lupa + ✓/✕ para que entre en columnas angostas */
+.order-card__item-actions--waiting-compact {
+  grid-template-columns: auto auto;
+  column-gap: 6px;
+}
+
+.order-card__item-row--waiting-compact .order-card__item-name {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .order-card--waiting-local {
   background: #dcfce7;
   border-color: #22c55e;

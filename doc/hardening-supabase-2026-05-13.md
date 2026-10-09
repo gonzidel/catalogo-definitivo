@@ -588,6 +588,14 @@ Registro separado para no mezclar con el batch de 2026-05-13:
 - **Lección:** toda vista nueva en `public` nace con `ALL` para `anon` por default privileges. Cada migración que cree o recree vistas internas debe incluir `REVOKE ALL … FROM anon` y `WITH (security_invoker = true)`.
 - **Detalle completo:** `docs/FYL-Obsidian/73-SUPABASE-ADVISORS-SECURITY-DEFINER-RLS-2026-10-08.md`.
 
+## Seguimiento 2026-10-09: EXECUTE de funciones SECURITY DEFINER (371)
+
+- **Qué:** después del lote 212, `anon` había vuelto a poder ejecutar 63 funciones SECURITY DEFINER por default privileges y `PUBLIC`. Entre ellas `link_pending_customer_to_user`, que reasigna pedidos de un cliente temporal a cualquier usuario. Cualquier `authenticated` podía ejecutar `confirm_user_email*`, `rpc_get_user_id_by_email`, el carrito legacy por id ajeno y `maint_try_delete_order_if_eligible`.
+- **Fix aplicado (con aprobación):** `supabase/canonical/371_advisors_function_execute_grants_search_path.sql`. Los triggers quedan sin EXECUTE para clientes, los 33 helpers y funciones huérfanas solo para `service_role`, las 41 RPCs con guard sin `anon`/`PUBLIC`, y 6 funciones con `search_path` fijo.
+- **Verificación:** `anon` ejecuta solo 8 funciones públicas intencionales. `service_role` conserva `rpc_get_user_id_by_email` (passkeys) y `purchase_*` (n8n). El cron corrió bien.
+- **Pendiente (fase 2):** RPCs de caja, créditos y stock que el panel llama como `authenticated` sin guard de admin. Ver nota 73.
+- **Regla:** toda función nueva en `public` nace con EXECUTE para `PUBLIC`/`anon`/`authenticated`. Las migraciones deben incluir `REVOKE EXECUTE … FROM PUBLIC, anon` (y `authenticated` si es interna).
+
 ---
 
 ## Resultado Operativo

@@ -70,6 +70,34 @@ Causa: con invoker, las policies RLS de `authenticated` (por ejemplo `auth_selec
 
 **Condición para reabrir:** si la vista llega a incluir una tabla o columna que `anon` no puede leer directamente, deja de ser una excepción segura y hay que aplicar invoker o mover la vista.
 
+## WARN: EXECUTE de funciones SECURITY DEFINER y `search_path` (371)
+
+**TÉCNICA VERIFICADA (2026-10-09).** Los default privileges y `PUBLIC` reabrieron EXECUTE en funciones nuevas después del lote 212: `anon` podía ejecutar 63 funciones SECURITY DEFINER.
+
+Exposiciones reales encontradas (ninguna con guard interno):
+
+- `link_pending_customer_to_user(text, uuid)` — ejecutable por `anon`: reasigna pedidos y carritos de un cliente temporal a cualquier `user_id`, borra el temporal y crea el `customers`. Sin uso en código.
+- `rpc_create_pending_customer`, `rpc_create_temporary_customer` — `anon` creaba clientes. Sin uso en código.
+- `fn_retract_unsent_customer_closed_notifications`, `fn_ensure_payment_pending`, `fn_refresh_awaiting_apartado_availability`, `fn_orders_exclude_missing_from_total` — helpers internos llamables por `anon` sobre cualquier pedido. Solo los usan funciones SECURITY DEFINER.
+- Para cualquier `authenticated` (incluye revendedores): `confirm_user_email*` (confirma el email de cualquier cuenta), `rpc_get_user_id_by_email`, `maint_try_delete_order_if_eligible`, carrito legacy por `user_id`/`item_id` ajeno (`remove_cart_item`, `clear_user_cart`, `sync_cart_from_local`, …), `sync_*`, `populate_existing_customer_emails`.
+
+Fix aplicado con aprobación (`supabase/canonical/371_advisors_function_execute_grants_search_path.sql`, migración MCP `advisor_fix_function_execute_grants_search_path`):
+
+1. 6 trigger functions: sin EXECUTE para `PUBLIC`/`anon`/`authenticated` (disparar un trigger no exige EXECUTE).
+2. 33 helpers internos y funciones huérfanas: solo `service_role` (lo usan `passkeys` y n8n de proveedores) y owner. Cron corre como `postgres`.
+3. 41 RPCs con guard (`admins` o `auth.uid()`): `authenticated` + `service_role` explícitos, sin `anon`/`PUBLIC`.
+4. `search_path = public, pg_temp` en `rpc_find_similar_tags`, `normalize_transport_name`, `fn_fyl_transfer_*`, `register_local_sale_to_daily_sales`.
+
+Verificación: `anon` ejecuta solo las 8 funciones públicas intencionales (`get_product_image*`, `rpc_catalog_public_version`, `rpc_get_customer_public_data`, `rpc_get_nuevos_ingresos_products`, `rpc_get_public_curated_banner_by_slug`, `rpc_get_variant_size_reserved`). Advisor: `function_search_path_mutable` 0, `anon_security_definer_function_executable` 8, `rls_policy_always_true` ya no aparece. Cron corrió después del cambio. Rollback: `371_ROLLBACK_…sql`.
+
+Aceptado sin cambio:
+
+- `extension_in_public` (`pg_trgm`, `pg_net`): mover `pg_trgm` puede romper `similarity()`/`%` sin calificar e índices GIN; `pg_net` no soporta bien `SET SCHEMA`.
+- `search_events_insert_public`: telemetría de búsqueda intencional; la tabla limita tipo, forma y largo de cada campo con CHECKs.
+- `authenticated_security_definer_function_executable` (~180): el advisor solo mira grants. El panel admin llama esas RPC como `authenticated`; la protección real es el guard interno.
+
+**Deuda abierta (fase 2):** RPCs que el panel admin llama como `authenticated` y que no tienen guard, por lo que cualquier revendedor logueado puede invocarlas: `rpc_add_customer_credit`/`rpc_add_return_credit` (acredita saldo), `rpc_void_public_sale` (anula venta y devuelve stock), `rpc_create_public_sale`, `rpc_update_local_order`/`rpc_create_local_order` (mueven stock), `rpc_search_public_customer`, historiales y créditos de caja (PII), `rpc_move_size_stock`, `rpc_mark_order_as_devolucion`, `rpc_mark_order_items_picked`, `rpc_send_order_to_local`, `purchase_create_rule_version`, `purchase_register_receipt`, entre otras. Requieren `CREATE OR REPLACE` con guard de admin.
+
 ## Otro hallazgo pendiente (fuera del advisor)
 
 `public.admins` tiene la policy `authenticated_select_admins` (`USING true`): cualquier cliente logueado lee las 10 filas (`email`, `role`, …). Antes de restringirla hay que verificar que el admin y NJ no dependan de listar la tabla como `authenticated` no admin.

@@ -59,7 +59,7 @@ CREATE TABLE public.size_charts (
   created_by    uuid REFERENCES auth.users(id) ON DELETE SET NULL,
   updated_by    uuid REFERENCES auth.users(id) ON DELETE SET NULL,
   CONSTRAINT size_charts_name_check
-    CHECK (char_length(name) BETWEEN 1 AND 80 AND name = btrim(name) AND name !~ '\s{2,}'),
+    CHECK (char_length(name) BETWEEN 1 AND 80 AND name = btrim(name) AND name !~ '[[:space:]]{2,}'),
   CONSTRAINT size_charts_measure_type_check
     CHECK (measure_type IN ('largo_plantilla', 'largo_pie')),
   CONSTRAINT size_charts_notes_check
@@ -85,7 +85,7 @@ CREATE TABLE public.size_chart_rows (
   position       smallint NOT NULL,
   size_label     text NOT NULL,
   size_key       text GENERATED ALWAYS AS
-                   (lower(replace(regexp_replace(size_label, '\s+', '', 'g'), ',', '.'))) STORED,
+                   (lower(replace(regexp_replace(size_label, '[[:space:]]+', '', 'g'), ',', '.'))) STORED,
   measure_cm     numeric(5,2),
   CONSTRAINT size_chart_rows_position_check CHECK (position BETWEEN 1 AND 40),
   CONSTRAINT size_chart_rows_label_check
@@ -347,7 +347,7 @@ DECLARE
 BEGIN
   PERFORM public.fn_size_chart_assert_permission('edit');
 
-  v_name := btrim(regexp_replace(coalesce(p_name, ''), '\s+', ' ', 'g'));
+  v_name := btrim(regexp_replace(coalesce(p_name, ''), '[[:space:]]+', ' ', 'g'));
   IF char_length(v_name) < 1 OR char_length(v_name) > 80 THEN
     RAISE EXCEPTION 'SIZE_CHART_INVALID_NAME: el nombre es obligatorio (máximo 80 caracteres).'
       USING ERRCODE = 'P0001';
@@ -380,14 +380,14 @@ BEGIN
     END IF;
 
     v_label := btrim(regexp_replace(
-                 regexp_replace(coalesce(v_row->>'size_label', ''), '\s+', ' ', 'g'),
-                 '\s*/\s*', '/', 'g'));
+                 regexp_replace(coalesce(v_row->>'size_label', ''), '[[:space:]]+', ' ', 'g'),
+                 '[[:space:]]*/[[:space:]]*', '/', 'g'));
     IF char_length(v_label) < 1 OR char_length(v_label) > 12 OR v_label ~ '[[:cntrl:]]' THEN
       RAISE EXCEPTION 'SIZE_CHART_INVALID_SIZE: el talle de la fila % es inválido (1 a 12 caracteres).', v_idx
         USING ERRCODE = 'P0001';
     END IF;
 
-    v_key := lower(replace(regexp_replace(v_label, '\s+', '', 'g'), ',', '.'));
+    v_key := lower(replace(regexp_replace(v_label, '[[:space:]]+', '', 'g'), ',', '.'));
     IF v_key = ANY (v_keys) THEN
       RAISE EXCEPTION 'SIZE_CHART_DUPLICATE_SIZE: el talle % está repetido.', v_label
         USING ERRCODE = 'P0001';

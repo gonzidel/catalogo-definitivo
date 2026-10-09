@@ -326,3 +326,19 @@ Así el banner amarillo y el ruteo a columna Cancelados solo aparecen cuando hay
 **Caso:** A56866 Sergio Ferster. Ani cargó desde PAU; ítems insertados; `applyManualConfirmedItems` (BIL8) ok; `updateStockBatch` (1105) cortó con `TypeError: Failed to fetch`. El pedido quedó `stock_pending` y **Resolver** no servía (busca `variant=` en el motivo).
 
 **Fix:** reintento único de red; no se descuenta de nuevo lo que ya tiene `stock_history` / fuentes; si el motivo es de red, **Reintentar** (no Cancelar). PAU cache `?v=m260910s`.
+
+## 20. Promos 2x en Editar pedido, Retiro y alta manual NJ (2026-10-09)
+
+**Auditoría (TÉCNICA VERIFICADA, producción):** solo `rpc_checkout_cart` descontaba promos 2x1/2xMonto del `total_amount`. Sin promo: `rpc_admin_add_order_items_atomic` (Editar en `/admin/orders`, `/admin/retiro` y `order-creator.js`), `createManualOrder` (NJ), `rpc_customer_replace_missing_item`, `rpc_cancel_order_item(_units)`, `rpc_remove_order_item_restore_stock` y `trg_order_item_missing_adjust_total`. El cobro de Retiro en NJ (`getRetiroSaleTotals` / `buildSaleItems`) cobraba precio × cantidad: ticket y venta sin promo. `closed-orders.js` (envíos) ya recalculaba en vivo para ticket/rótulo/detalle/lista, pero Facturar y la conciliación COD usan `total_amount`.
+
+**Casos reales (promo 2x$28.000, PR1/PR2/PR3):** A57638 (Retiro, venta `#fylA11545` cobró $4.000 de más), A57569, A57610 y A57624 (SEDE contra reembolso; el rótulo cobró bien, `total_amount` quedó alto). Ninguno en remesas al 2026-10-09.
+
+**NEGOCIO CONFIRMADO (2026-10-09):** 2 unidades de la promo = 1 oferta; 3 = 1 oferta + 1 a precio normal; 4 = 2 ofertas; si después se agrega otra, se completa el par. Una unidad cuenta si se cargó al pedido mientras la promo estaba vigente; si la promo termina después, el par conserva el descuento.
+
+**Fix NJ (rama `fix/retiro-cobro-promos`):** `lib/orders/order-promo-pricing.ts` (pares por fecha de carga, reutiliza `buildPromoGroups`). Retiro cobra como la caja: unidades del par a $0 + línea `N oferta 2x$…`; el ticket oculta las líneas absorbidas; el modal muestra el descuento y no imprime hasta calcularlo. La línea de promo hace que `p_total_amount` coincida con la suma de líneas, así `rpc_create_public_sale` no lo toma como uso de crédito.
+
+**Fix SQL 377 (APLICADO en producción 2026-10-09, migración `20261009150201 order_total_promo_aware_377`, tests en la misma transacción OK):** `trg_orders_total_exclude_missing` fija el total canónico (productos sin cancelados/faltantes − promos por fecha de carga + extras de notes) en pedidos active/closing_soon/closed; sent/cancelled/expired sin cambios. Con datos del 2026-10-09: 243/243 abiertos y 231/233 cerrados ya coinciden con esa fórmula (difieren A57638 y A56703, histórico). `createManualOrder` reescribe `total_amount` al final para pasar por el trigger.
+
+**Datos existentes (decisión 2026-10-09):** no se corrigieron. A57638 sigue en 293000 hasta la próxima escritura de su total (el trigger lo deja en 289000); A57569/A57610/A57624 (sent) siguen con el total sin promo. No se cargó crédito a la clienta de A57638: el crédito a favor existe solo en Venta al Público (`public_sales_customer_credits`) y el usuario prefiere diseñarlo más adelante. Rollback: `377_ROLLBACK_order_total_promo_aware.sql`.
+
+**Deuda:** `closed-orders.js` evalúa la promo con la fecha de hoy (al reimprimir después de que termine la promo, pierde el descuento); Facturar usa `total_amount`.

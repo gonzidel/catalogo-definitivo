@@ -84,6 +84,23 @@ Las rutas de escritura observadas pasan por RPCs como:
 
 Hay guardas contra escritura directa en capas derivadas. Antes de sumar otra escritura de stock debe comprobarse que respeta esas guardas, registra movimiento y mantiene sincronizadas las proyecciones.
 
+### Confirmación manual sobre un talle reservado por otro pedido
+
+`rpc_admin_manual_inject_and_deduct` confirma un producto que el sistema da en 0 pero está en la estantería: suma y resta la cantidad (neto 0), crea una fuente propia y sube `reserved_qty`. Si ese par era el que otro pedido abierto ya tenía reservado, quedan dos reclamos sobre una sola unidad. Cuando el primer pedido se cancela o vence, su fuente reingresa y aparece stock fantasma. **TÉCNICA VERIFICADA (2026-10-07):** fue el caso del 1632 Negro T37: A57180 reservó el último par, A57453 lo confirmó a mano y al vencer A57180 reingresó +1. En 30 días hubo 30 confirmaciones así sobre 590.
+
+**NEGOCIO CONFIRMADO (2026-10-07):** antes de confirmar a mano, el admin ve qué pedidos abiertos tienen ese talle reservado y elige una de dos opciones:
+
+- **Es el par de ese pedido:** se le pasa al pedido nuevo y el otro pedido queda "sin stock" en ese producto. No se suma stock y se le avisa a la clienta.
+- **Hay otro par:** confirmación manual como antes.
+
+Implementación en la migración 370 (`370_manual_confirm_take_reservation.sql`, **pendiente de aplicar**):
+
+- `rpc_admin_manual_confirm_candidates` lista las reservas en conflicto.
+- `take_from_order_item_id` en la confirmación manual y en `rpc_admin_add_order_items_atomic`. El ítem origen pasa por `rpc_admin_mark_item_missing` y se registra `stock_history.change_type = 'reserva_tomada'` (stock sin cambio).
+- Vista de seguimiento `vw_stock_audit_manual_confirm_reserved`: confirmaciones manuales de 90 días sobre talles reservados por otro pedido, con qué pasó con ese otro pedido, más las reservas tomadas.
+
+En el NJ el aviso aparece al guardar en editar pedido y en crear pedido. El admin vanilla (`admin/orders.js`, `admin/order-creator.js`) no muestra el aviso y confirma como antes.
+
 ### Reconciliación y auditoría
 
 - `rpc_reconcile_stock` recalcula capas derivadas. En las definiciones nuevas, pasar `false` no garantiza un dry-run puro: controla la corrección de `reserved_qty`, pero puede escribir otras capas.
@@ -103,6 +120,7 @@ Hay guardas contra escritura directa en capas derivadas. Antes de sumar otra esc
 | Toda devolución debe seguir las fuentes registradas | Verificado | RPCs de cancelación/mantenimiento | 2026-09-23 |
 | `reserved_qty` no gobierna el gate de venta actual | TÉCNICA VERIFICADA | Migraciones 330 y posteriores | 2026-09-23 |
 | `null` y `0` tienen semánticas distintas | Confirmado por negocio y código | `sellable-stock.ts` y selftest | 2026-09-23 |
+| Confirmar a mano un par reservado por otro pedido: avisar y, si es ese par, el otro pedido queda sin stock (sin stock fantasma) | NEGOCIO CONFIRMADO | Migración 370 (pendiente de aplicar) | 2026-10-07 |
 
 ## Tablas, vistas y RPCs clave
 

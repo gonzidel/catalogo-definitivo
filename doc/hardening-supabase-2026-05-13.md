@@ -597,6 +597,16 @@ Registro separado para no mezclar con el batch de 2026-05-13:
 - **Regla para RPCs admin nuevas:** empezar el cuerpo con `PERFORM public.fyl_require_admin_or_internal();` (o un guard equivalente con `public.admins`). El advisor no detecta guards internos.
 - **Regla:** toda función nueva en `public` nace con EXECUTE para `PUBLIC`/`anon`/`authenticated`. Las migraciones deben incluir `REVOKE EXECUTE … FROM PUBLIC, anon` (y `authenticated` si es interna).
 
+## Seguimiento 2026-10-09: vínculo de identidad de cliente (373)
+
+- **Qué:** `rpc_link_public_sales_customer` devolvía el QR y los datos de cualquier cliente de caja con 4 dígitos de teléfono, un email o un DNI. `rpc_upsert_customer` guardaba el QR que mandara el navegador, así que una cuenta podía apropiarse de la identidad de caja de otra persona. `rpc_link_or_create_customer` además podía fusionar con fichas de otros usuarios web.
+- **Fix aplicado (con aprobación y ensayo revertido 22/22):** `supabase/canonical/373_customer_identity_link_hardening.sql`.
+  - Regla: teléfono completo (8 dígitos), más el DNI si la ficha lo tiene, o el email verificado por Google.
+  - El vínculo con caja se decide en el servidor.
+  - El trigger `a0_customers_protect_identity_link` impide que un cliente escriba `customer_number`, `qr_code` y `public_sales_customer_id`.
+- **Regla para código nuevo:** para escribir esas columnas hace falta ser admin o `service_role`, o hacerlo dentro de una RPC que fije `set_config('fyl.customer_link_write', '1', true)`.
+- **Detalle y rollback:** nota 73 § Vínculo de identidad de cliente.
+
 ---
 
 ## Resultado Operativo

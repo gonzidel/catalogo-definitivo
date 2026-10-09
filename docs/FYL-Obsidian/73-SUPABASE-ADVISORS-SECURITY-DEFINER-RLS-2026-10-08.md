@@ -113,17 +113,65 @@ Quedan sin guard a propósito:
 - `rpc_get_customer_credits`, `rpc_get_customer_sales_history`: las llama `rpc_get_customer_public_data` (página QR pública, `anon`); un guard la rompería. Riesgo residual: requiere el uuid del cliente de caja.
 - `rpc_orders_daily_maintenance`: la dispara el dashboard del cliente; es idempotente.
 - `rpc_get_public_sale_details`: la usa `customer.html` (QR). `anon` no tiene EXECUTE, así que el detalle de venta de esa página probablemente ya falla sin login (a confirmar).
-- `rpc_link_public_sales_customer`: flujo de cliente; ver hallazgo abajo.
+- `rpc_link_public_sales_customer`: flujo de cliente; corregida aparte en 373 (abajo).
 - `rpc_create_public_sale` (firma con `operation_id`) delega en la de 5 argumentos, que ya valida admin.
 
-## Hallazgo pendiente: `rpc_link_public_sales_customer` (auto-vínculo con caja)
+## Vínculo de identidad de cliente (373, aplicada 2026-10-09)
 
-**TÉCNICA VERIFICADA (2026-10-09), sin corregir; requiere decisión de negocio.** La usan `client/complete-profile.js` y `client/profile.js` para vincular la cuenta web con un cliente de caja (`public_sales_customers`) o un cliente creado por admin.
+### Problema (TÉCNICA VERIFICADA antes de 373)
 
-- Ignora `p_user_id`. Cualquier `authenticated` puede consultar con teléfono, email o DNI arbitrarios.
-- Teléfono por sufijo (`phones_match_by_suffix`, 7 dígitos; con una entrada de 4 dígitos compara solo 4): devuelve `qr_code`, `public_sales_customer_id`, `customer_number` y nombre del primer cliente de caja no vinculado; para clientes creados por admin, nombre, dirección, ciudad y provincia.
-- `rpc_upsert_customer` (INVOKER) guarda `qr_code` y `public_sales_customer_id` enviados por el cliente sin validar que le pertenezcan: una cuenta puede apropiarse de la identidad de caja de otra persona (y del acceso a su página QR). La víctima ya no podría auto-vincularse.
-- Exposición actual: 466 clientes de caja, 163 vinculados, 188 sin vincular con teléfono. Créditos vigentes de no vinculados: 0.
+Lo usan `client/complete-profile.js` y `client/profile.js` (`rpc_link_public_sales_customer` + `rpc_upsert_customer`), y `scripts/cart-persistent.js` y NJ `ProfileTab`/`ProfileOnboardingModal` (`rpc_link_or_create_customer`).
+
+- `rpc_link_public_sales_customer` ignoraba `p_user_id`. Con un teléfono por sufijo (4 a 7 dígitos), un email o un DNI arbitrarios devolvía `qr_code`, `public_sales_customer_id`, número y nombre del cliente de caja; para fichas de admin, nombre y dirección.
+- `rpc_upsert_customer` (INVOKER) guardaba `qr_code`, `public_sales_customer_id` y `customer_number` enviados por el navegador sin validarlos. Una cuenta podía apropiarse de la identidad de caja de otra persona y de su página QR.
+- `rpc_link_or_create_customer` fusionaba por sufijo de teléfono, por `p_email` del navegador o por DNI solo, incluso con fichas de otros usuarios web sin vínculo (23 al momento de la auditoría).
+- Además, copiar el número de una ficha de admin en `rpc_upsert_customer` violaba `customers_customer_number_unique` y el perfil vanilla no se guardaba.
+
+### Regla aplicada (NEGOCIO CONFIRMADO 2026-10-09)
+
+- Auto-vínculo si el teléfono coincide completo (últimos 8 dígitos normalizados, ambos lados con 8 o más) y, si la ficha tiene DNI, además el DNI (solo dígitos).
+- Alternativa: el email verificado por Google de la cuenta (`auth.identities`, `provider = 'google'`, `email_verified = true`). No cuenta el email que manda el navegador ni las cuentas email/contraseña: `handle_new_user` no confirma (es AFTER), pero los 8 usuarios email figuran confirmados y puede haber autoconfirmación.
+- DNI solo, email escrito a mano o sufijos cortos ya no vinculan.
+- Nunca se reclama la ficha de otro usuario web (`id` presente en `auth.users`); solo fichas de admin o legacy sin cuenta.
+
+### Cambios
+
+- Helpers `fyl_customer_identity_match_ok(text,text,text,text)` y `fyl_verified_auth_email(uuid)`: solo para `service_role`.
+- `rpc_link_public_sales_customer`: exige `auth.uid() = p_user_id` y devuelve solo `{found, source, customer_number}`.
+- `rpc_upsert_customer`: ahora SECURITY DEFINER sobre la fila de `auth.uid()`. Ignora número, QR e id de caja del navegador (la firma se mantiene) y vincula con caja en el servidor con la regla. Solo copia el número de caja si ninguna otra ficha lo usa. La fusión con fichas de admin queda solo en `rpc_link_or_create_customer`.
+- `rpc_link_or_create_customer`: aplica la regla (`match_type` `phone`, `phone_dni` o `email`). El resto de la fusión (pedidos, carritos, notificaciones, `cod_*`) no cambia.
+- Trigger `a0_customers_protect_identity_link` (BEFORE INSERT OR UPDATE OF `customer_number`, `qr_code`, `public_sales_customer_id`):
+  - Un cliente no puede escribir esas columnas: en INSERT quedan nulas y `assign_customer_number_trigger` genera el número; en UPDATE se conservan las anteriores.
+  - Pasan sin cambios: admins (`is_admin()`), `service_role`, sin JWT (cron, `postgres`) y las RPCs de vínculo (GUC `fyl.customer_link_write = '1'`).
+- `anon` sin EXECUTE en las tres RPCs.
+
+### Verificación
+
+- **Ensayo revertido con fichas ficticias (22/22).** Se bloquearon:
+  - consultar con otro `p_user_id`, con 4 dígitos, con DNI erróneo, sin DNI cuando la ficha lo tiene, o con email del navegador;
+  - el UPDATE e INSERT directos del QR;
+  - el número ajeno en el upsert;
+  - reclamar la ficha de otro usuario web;
+  - una identidad email/contraseña.
+
+  Funcionaron:
+  - teléfono + DNI con caja (QR vinculado en el servidor) y con admin (fusión con número y dirección);
+  - email Google con admin;
+  - admin, `service_role` y sin JWT pueden escribir.
+
+  Después del ensayo, md5 originales intactos y 0 fixtures.
+- **Post-aplicación:**
+  - `rpc_upsert_customer` es DEFINER y la respuesta de caja ya no incluye `qr_code`; el trigger dispara primero.
+  - `anon` no ejecuta las RPCs, `authenticated` sí; `authenticated` no ejecuta los helpers.
+  - Muestras de la regla: `+54 9 11 4567-8901` vs `1145678901` → true; `8901` → false; DNI con puntos → true; ficha con DNI y entrada sin DNI → false.
+  - 57 usuarios con email Google verificado.
+- **Rollback:** `supabase/canonical/373_ROLLBACK_customer_identity_link_hardening.sql` (definiciones originales exactas, borra trigger y helpers).
+
+### Efecto visible y deuda
+
+- El perfil vanilla ya no recibe nombre ni dirección de la ficha de admin para precargar.
+- En los últimos 90 días hubo 2 vínculos por DNI solo, que ahora requieren también teléfono; no hubo vínculos por email.
+- Un usuario que entra con Google sin teléfono y sin email coincidente queda con link `new` y ya no se fusiona después (comportamiento previo, sin cambios).
 
 ## Otro hallazgo pendiente (fuera del advisor)
 

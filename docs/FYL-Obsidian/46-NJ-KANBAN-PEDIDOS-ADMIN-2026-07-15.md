@@ -65,6 +65,8 @@ Complementa: [[41-MIGRACION-NEXTJS-NJ-2026-06-08]] (arquitectura `/nj`), [[43-NJ
 
 Las tarjetas en Espera se pintan según origen (`order-card--waiting-local` = verde `#22c55e`, `order-card--waiting-fabrica` = amarillo `#eab308`, ver `nj/styles/globals.css`). Se agregó una leyenda visual junto al título "Espera" (`WaitingLegend.tsx`, componente compartido) tanto en la columna desktop (`KanbanColumn.tsx`) como en el drawer mobile (`KanbanDrawer.tsx`), con dos chips: 🟩 Local / 🟨 Fábrica. Verificado en desktop y en viewport de 360px sin overflow.
 
+**Filas compactas en Espera (2026-10-08):** en monitores chicos la grilla fija de estado/lupa/precio/acciones dejaba sin lugar el nombre. En la columna Espera (Pedidos y Retiro) cada producto muestra solo `producto · color`, talle (y `×N` solo si es más de 1), lupa y ✓/✕; sin badge de estado, precio, 🔥 ni chip de origen (el color de la tarjeta ya indica Local/Depósito/Fábrica). El nombre puede pasar a dos líneas. `OrderCardItems.tsx` (`waitingCompact`) + `.order-card__item-actions--waiting-compact` en `globals.css`.
+
 ---
 
 ## 5. "Cerrados": Reabrir → "Volver a apartado"

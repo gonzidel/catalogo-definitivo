@@ -181,6 +181,13 @@ export async function createManualOrder(
     throw new Error(`${reason}. El pedido quedó en stock pendiente.`);
   }
 
+  // El descuento de promos 2x lo aplica el trigger de orders al escribir total_amount (377); el INSERT no lo dispara.
+  const { error: totalError } = await supabase
+    .from("orders")
+    .update({ total_amount: total })
+    .eq("id", orderId);
+  if (totalError) console.warn("No se pudo recalcular el total con promos:", totalError.message);
+
   return { orderId, takenReservations };
 }
 

@@ -593,7 +593,8 @@ Registro separado para no mezclar con el batch de 2026-05-13:
 - **Qué:** después del lote 212, `anon` había vuelto a poder ejecutar 63 funciones SECURITY DEFINER por default privileges y `PUBLIC`. Entre ellas `link_pending_customer_to_user`, que reasigna pedidos de un cliente temporal a cualquier usuario. Cualquier `authenticated` podía ejecutar `confirm_user_email*`, `rpc_get_user_id_by_email`, el carrito legacy por id ajeno y `maint_try_delete_order_if_eligible`.
 - **Fix aplicado (con aprobación):** `supabase/canonical/371_advisors_function_execute_grants_search_path.sql`. Los triggers quedan sin EXECUTE para clientes, los 33 helpers y funciones huérfanas solo para `service_role`, las 41 RPCs con guard sin `anon`/`PUBLIC`, y 6 funciones con `search_path` fijo.
 - **Verificación:** `anon` ejecuta solo 8 funciones públicas intencionales. `service_role` conserva `rpc_get_user_id_by_email` (passkeys) y `purchase_*` (n8n). El cron corrió bien.
-- **Pendiente (fase 2):** RPCs de caja, créditos y stock que el panel llama como `authenticated` sin guard de admin. Ver nota 73.
+- **Fase 2 aplicada (372):** 26 RPCs de caja, créditos y stock ahora llaman a `public.fyl_require_admin_or_internal()` al inicio (admins, `service_role` y cron pasan; un cliente recibe `42501`). `cleanup_missing_order_item_sources`, `log_stock_change` y `rpc_move_stock` quedan solo para `service_role`. Ver nota 73.
+- **Regla para RPCs admin nuevas:** empezar el cuerpo con `PERFORM public.fyl_require_admin_or_internal();` (o un guard equivalente con `public.admins`). El advisor no detecta guards internos.
 - **Regla:** toda función nueva en `public` nace con EXECUTE para `PUBLIC`/`anon`/`authenticated`. Las migraciones deben incluir `REVOKE EXECUTE … FROM PUBLIC, anon` (y `authenticated` si es interna).
 
 ---

@@ -96,7 +96,34 @@ Aceptado sin cambio:
 - `search_events_insert_public`: telemetría de búsqueda intencional; la tabla limita tipo, forma y largo de cada campo con CHECKs.
 - `authenticated_security_definer_function_executable` (~180): el advisor solo mira grants. El panel admin llama esas RPC como `authenticated`; la protección real es el guard interno.
 
-**Deuda abierta (fase 2):** RPCs que el panel admin llama como `authenticated` y que no tienen guard, por lo que cualquier revendedor logueado puede invocarlas: `rpc_add_customer_credit`/`rpc_add_return_credit` (acredita saldo), `rpc_void_public_sale` (anula venta y devuelve stock), `rpc_create_public_sale`, `rpc_update_local_order`/`rpc_create_local_order` (mueven stock), `rpc_search_public_customer`, historiales y créditos de caja (PII), `rpc_move_size_stock`, `rpc_mark_order_as_devolucion`, `rpc_mark_order_items_picked`, `rpc_send_order_to_local`, `purchase_create_rule_version`, `purchase_register_receipt`, entre otras. Requieren `CREATE OR REPLACE` con guard de admin.
+## Fase 2: guard de admin en RPCs de caja, créditos y stock (372)
+
+**TÉCNICA VERIFICADA (2026-10-09).** 26 funciones SECURITY DEFINER que el panel llama como `authenticated` no validaban admin: cualquier revendedor logueado podía acreditar saldo (`rpc_add_customer_credit`), anular ventas devolviendo stock (`rpc_void_public_sale`), mover stock (`rpc_move_size_stock`), editar pedidos locales, completar ventas pendientes o leer clientes de caja con teléfono y DNI (`rpc_search_public_customer`, historiales). `rpc_move_stock`, `rpc_move_size_stock` y `rpc_complete_pending_sale` solo verificaban `auth.uid() IS NOT NULL`.
+
+Fix aplicado con aprobación (`supabase/canonical/372_admin_guard_caja_creditos_stock.sql`, migración MCP `advisor_admin_guard_caja_creditos_stock`):
+
+- Helper `public.fyl_require_admin_or_internal()` (INVOKER): deja pasar sin contexto JWT (cron, `postgres`), `service_role` (n8n, Edge Functions) y `is_admin()`; si no, `42501 Solo administradores`. Mismo criterio que el panel vanilla y NJ (`public.admins`).
+- Cada una de las 26 funciones recibió una sola línea después del `BEGIN` principal: `PERFORM public.fyl_require_admin_or_internal();`. Se aplicó inyectando sobre `pg_get_functiondef` en la base, con aserción de md5 del cuerpo previo y del resultado (igual al del archivo 372). Los cuerpos tienen saltos de línea CRLF; la línea insertada usa LF.
+- `cleanup_missing_order_item_sources` (la usa un trigger), `log_stock_change` (funciones admin DEFINER) y `rpc_move_stock` (sin uso) quedan solo para `service_role`.
+
+Verificación (simulación con `request.jwt.claims` en bloque revertido): cliente no admin → `DENEGADO` en `rpc_get_pending_sales`, `rpc_add_customer_credit`, `rpc_void_public_sale`; admin → lecturas OK (historial 5, búsqueda 453); sin JWT y `service_role` → OK. Rollback: `372_ROLLBACK_…sql` (definiciones originales exactas).
+
+Quedan sin guard a propósito:
+
+- `rpc_get_customer_credits`, `rpc_get_customer_sales_history`: las llama `rpc_get_customer_public_data` (página QR pública, `anon`); un guard la rompería. Riesgo residual: requiere el uuid del cliente de caja.
+- `rpc_orders_daily_maintenance`: la dispara el dashboard del cliente; es idempotente.
+- `rpc_get_public_sale_details`: la usa `customer.html` (QR). `anon` no tiene EXECUTE, así que el detalle de venta de esa página probablemente ya falla sin login (a confirmar).
+- `rpc_link_public_sales_customer`: flujo de cliente; ver hallazgo abajo.
+- `rpc_create_public_sale` (firma con `operation_id`) delega en la de 5 argumentos, que ya valida admin.
+
+## Hallazgo pendiente: `rpc_link_public_sales_customer` (auto-vínculo con caja)
+
+**TÉCNICA VERIFICADA (2026-10-09), sin corregir; requiere decisión de negocio.** La usan `client/complete-profile.js` y `client/profile.js` para vincular la cuenta web con un cliente de caja (`public_sales_customers`) o un cliente creado por admin.
+
+- Ignora `p_user_id`. Cualquier `authenticated` puede consultar con teléfono, email o DNI arbitrarios.
+- Teléfono por sufijo (`phones_match_by_suffix`, 7 dígitos; con una entrada de 4 dígitos compara solo 4): devuelve `qr_code`, `public_sales_customer_id`, `customer_number` y nombre del primer cliente de caja no vinculado; para clientes creados por admin, nombre, dirección, ciudad y provincia.
+- `rpc_upsert_customer` (INVOKER) guarda `qr_code` y `public_sales_customer_id` enviados por el cliente sin validar que le pertenezcan: una cuenta puede apropiarse de la identidad de caja de otra persona (y del acceso a su página QR). La víctima ya no podría auto-vincularse.
+- Exposición actual: 466 clientes de caja, 163 vinculados, 188 sin vincular con teléfono. Créditos vigentes de no vinculados: 0.
 
 ## Otro hallazgo pendiente (fuera del advisor)
 

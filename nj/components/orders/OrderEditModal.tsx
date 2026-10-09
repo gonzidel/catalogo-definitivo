@@ -39,6 +39,12 @@ import OrderEditExtrasPanel from "./OrderEditExtrasPanel";
 import OrderEditProductPicker from "./OrderEditProductPicker";
 import OrderExtraQtyStepper from "./OrderExtraQtyStepper";
 import RetiroCloseModal from "./RetiroCloseModal";
+import {
+  ReservationChoiceCancelledError,
+  describeTakenReservations,
+  notifyTakenReservations,
+  useReservationConflictResolver,
+} from "./ReservationConflictModal";
 
 interface OrderEditModalProps {
   order: AdminOrder;
@@ -69,6 +75,7 @@ export default function OrderEditModal({ order, onClose }: OrderEditModalProps) 
   const [busy, setBusy] = useState(false);
   const [returnMode, setReturnMode] = useState(false);
   const [printCloseOrder, setPrintCloseOrder] = useState<AdminOrder | null>(null);
+  const { resolveReservationConflicts, conflictModal } = useReservationConflictResolver();
 
   const pendingRemoveItem = useMemo(
     () => items.find((i) => i.id === pendingRemoveId),
@@ -154,12 +161,20 @@ export default function OrderEditModal({ order, onClose }: OrderEditModalProps) 
     const supabase = getSupabaseBrowserClient();
 
     if (draft.length > 0) {
-      const enriched = await enrichDraftItemsWithStock(supabase, draft);
+      const enriched = await resolveReservationConflicts(
+        supabase,
+        await enrichDraftItemsWithStock(supabase, draft),
+        liveOrder.id
+      );
       // Ventas: descuentan stock acá. Devoluciones (precio < 0): solo se insertan;
       // el reingreso ocurre al finalizar con is_return (como public-sales).
-      await addItemsToExistingOrder(supabase, liveOrder.id, enriched, {
+      const taken = await addItemsToExistingOrder(supabase, liveOrder.id, enriched, {
         notesExtras,
       });
+      if (taken.length) {
+        await notifyTakenReservations(supabase, taken, patchOrder);
+        showToast(describeTakenReservations(taken), "success");
+      }
     } else if (notesChanged) {
       await syncOrderTotalAndNotes(
         supabase,
@@ -217,6 +232,7 @@ export default function OrderEditModal({ order, onClose }: OrderEditModalProps) 
         showToast("Pedido actualizado", "success");
       }
     } catch (err) {
+      if (err instanceof ReservationChoiceCancelledError) return;
       const refreshed = await fetchOrderById(getSupabaseBrowserClient(), liveOrder.id);
       if (refreshed) patchOrder(refreshed);
       showToast(err instanceof Error ? err.message : "Error al guardar", "error");
@@ -237,6 +253,7 @@ export default function OrderEditModal({ order, onClose }: OrderEditModalProps) 
       }
       setPrintCloseOrder(refreshed);
     } catch (err) {
+      if (err instanceof ReservationChoiceCancelledError) return;
       const refreshed = await fetchOrderById(getSupabaseBrowserClient(), liveOrder.id);
       if (refreshed) patchOrder(refreshed);
       showToast(
@@ -570,6 +587,8 @@ export default function OrderEditModal({ order, onClose }: OrderEditModalProps) 
           }}
         />
       ) : null}
+
+      {conflictModal}
 
       {pendingRemoveId && pendingRemoveItem ? (
         <div

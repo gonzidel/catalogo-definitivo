@@ -8,6 +8,7 @@ import {
 import {
   applyAdminOrderStockWithRetry,
   type OrderEditDraftItem,
+  type TakenReservation,
 } from "@/lib/supabase/order-edit";
 import { loadWarehouses } from "@/lib/supabase/order-queries";
 
@@ -83,7 +84,7 @@ export async function createManualOrder(
   items: OrderEditDraftItem[],
   notesExtras: OrderNotesExtras,
   options?: CreateManualOrderOptions
-): Promise<string> {
+): Promise<{ orderId: string; takenReservations: TakenReservation[] }> {
   if (!items.length) throw new Error("El pedido necesita al menos un producto.");
 
   const warehouseIds = await loadWarehouses(supabase);
@@ -149,16 +150,20 @@ export async function createManualOrder(
   }
 
   const stockItems = items.filter((item) => !item.is_special_extra);
-  const insertedStockItems = (insertedItems || []).filter(
-    (_, index) => !items[index]?.is_special_extra
-  );
+  const insertedStockItems = (insertedItems || [])
+    .map((row, index) => ({
+      ...row,
+      take_from_order_item_id: items[index]?.take_from_order_item_id ?? null,
+    }))
+    .filter((_, index) => !items[index]?.is_special_extra);
 
+  let takenReservations: TakenReservation[] = [];
   try {
     const itemsWithIds = stockItems.map((item, index) => ({
       ...item,
       order_item_id: insertedStockItems?.[index]?.id ?? null,
     }));
-    await applyAdminOrderStockWithRetry(
+    takenReservations = await applyAdminOrderStockWithRetry(
       supabase,
       insertedStockItems,
       itemsWithIds,
@@ -176,7 +181,7 @@ export async function createManualOrder(
     throw new Error(`${reason}. El pedido quedó en stock pendiente.`);
   }
 
-  return orderId;
+  return { orderId, takenReservations };
 }
 
 async function rollbackOrder(supabase: SupabaseClient, orderId: string, reason: string): Promise<void> {

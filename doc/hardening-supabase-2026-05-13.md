@@ -479,14 +479,15 @@ Permitidos temporalmente para `anon`:
 
 - `catalog_public_snapshot`: fuente pública preferida.
 - `catalog_public_view`: compatibilidad temporal.
-- `catalog_public_available_view`: compatibilidad temporal.
+- `catalog_public_available_view`: compatibilidad temporal. Sigue como security definer por decisión del 2026-10-09 (excepción al lint 0010; ver § Seguimiento 2026-10-08).
 - `get_meta_feed()`: Meta Commerce, mientras no haya endpoint firmado/cacheado.
 - `rpc_get_variant_size_reserved(uuid[])`: temporal vanilla residual; NJ no lo llama. 333C no revocó EXECUTE anon. Retirar post-cutover.
 - `products`, `product_variants`, `variant_warehouse_stock`, `variant_size_warehouse_stock`: SELECT anon intacto (enrich/sellable). 333C revocó I/U/D anon. Writes solo admin.
 
 Denylist cerrada:
 
-- `vw_stock_*`
+- `vw_stock_*` (incluidas `vw_stock_audit_untracked_sales*`, re-cerradas en 370)
+- `_cod_fase5_test_log`, `_cod_286_sql_chunks`, `_cod_286_b64_parts` (370)
 - `public_sales`
 - `public_sale_items`
 - `get_customer_id_for_user(uuid)` para `anon`
@@ -577,6 +578,15 @@ Registro separado para no mezclar con el batch de 2026-05-13:
 - **Obsidian:** `docs/FYL-Obsidian/33-FASE-A-GRANTS-COMPRAS-PUBLICACION-2026-05-15.md`
 
 **Qué queda fuera de esta fase:** analytics globales con `GRANT` a `authenticated`, RPC admin-only, cambios a `catalog_public_available_view`, Fase B `security_invoker` automática.
+
+## Seguimiento 2026-10-08: Security Advisor (370)
+
+- **Qué:** el Security Advisor marcó 3 vistas security definer y 3 tablas sin RLS. Las vistas `vw_stock_audit_untracked_sales` y `vw_stock_audit_untracked_sales_watchlist` (341/343) tenían `ALL` para `anon` por default privileges, una regresión respecto de 211: un visitante leía 8.538 eventos de auditoría y 170 emails de admins. Las tablas `_cod_*` (restos de pruebas COD) permitían a `anon` leer, escribir y hacer `TRUNCATE`.
+- **Fix aplicado (con aprobación):** `supabase/canonical/370_advisors_stock_audit_views_invoker_cod_tables.sql`. Revoca `anon`, deja `authenticated` solo con `SELECT` y aplica `security_invoker` en las vistas. Activa RLS y revoca `anon`/`authenticated` en las tablas `_cod_*`.
+- **Verificación:** el admin ve exactamente lo mismo (mismo md5), un cliente no admin ve 0 filas y `anon` recibe `permission denied`. El advisor quedó con una sola alerta ERROR.
+- **Excepción:** `catalog_public_available_view` sigue como definer. Expone lo mismo que `anon` ya lee por RLS, y con invoker las consultas filtradas de usuarios logueados pasan de 14 ms a ~1,15 s.
+- **Lección:** toda vista nueva en `public` nace con `ALL` para `anon` por default privileges. Cada migración que cree o recree vistas internas debe incluir `REVOKE ALL … FROM anon` y `WITH (security_invoker = true)`.
+- **Detalle completo:** `docs/FYL-Obsidian/73-SUPABASE-ADVISORS-SECURITY-DEFINER-RLS-2026-10-08.md`.
 
 ---
 

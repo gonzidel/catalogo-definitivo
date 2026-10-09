@@ -140,6 +140,8 @@ Solución recomendada:
 
 No hacer `ALTER VIEW ... security_invoker=true` sin reemplazo. Crear una tabla/proyección pública de catálogo (`catalog_public_snapshot`) mantenida por job/RPC admin que contenga solo campos publicables y stock disponible ya agregado. Dar `anon SELECT` solo a esa proyección.
 
+> **Actualización 2026-10-08 (drift):** la definición viva ya no lee `order_item_stock_sources`, `order_items`, `orders`, `cart_items` ni `carts`; solo lee tablas de catálogo y stock que `anon` ya puede leer por RLS. Pasarla a `security_invoker` devuelve los mismos datos, pero las consultas filtradas de usuarios logueados pasan de 14 ms a ~1,15 s. Se mantiene como security definer como **excepción documentada**. Ver [[73-SUPABASE-ADVISORS-SECURITY-DEFINER-RLS-2026-10-08]].
+
 ### HIGH-4 — `rpc_get_variant_size_reserved(uuid[])` expone reservas agregadas a anon
 
 Evidencia:
@@ -358,6 +360,6 @@ LIMIT 50;
 ## No tocar todavía
 
 - No revocar `anon` de `rpc_get_variant_size_reserved` sin reemplazo de catálogo.
-- No cambiar `catalog_public_available_view` a `security_invoker` sin snapshot público.
+- No cambiar `catalog_public_available_view` a `security_invoker` mientras los clientes la consulten en vivo: el motivo ya no es la exposición, sino la latencia para usuarios logueados (ver [[73-SUPABASE-ADVISORS-SECURITY-DEFINER-RLS-2026-10-08]]).
 - No eliminar firma legacy `rpc_checkout_cart()` hasta migrar todos los clientes a `rpc_checkout_cart(uuid,jsonb)`.
 - No cambiar cascadas de pedidos/productos sin plan de soft delete y auditoría.

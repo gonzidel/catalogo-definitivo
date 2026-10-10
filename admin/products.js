@@ -2,6 +2,7 @@
 import { supabase } from "../scripts/supabase-client.js?v=m260607";
 import { preloadAuthState, can, isAdminUser } from "./auth-state.js?v=m260607";
 import { isSuperAdmin } from "./permissions-helper.js?v=m260607";
+import { createProductSizeChartControl, productSaveErrorMessage } from "./product-size-chart.js?v=m260607";
 import {
   logCommercialTagsCleanup,
   splitCommercialTags,
@@ -191,6 +192,11 @@ function debounce(fn, wait = 300) {
 let currentProductId = null;
 let originalVariantIds = new Set();
 let removedVariantIds = new Set();
+
+const sizeChartControl = createProductSizeChartControl({
+  getCategory: () => document.getElementById("category")?.value || "",
+  canEdit: canEditProducts,
+});
 
 function updateDeleteHardButtonVisibility(statusValue) {
   if (!pDeleteHard) return;
@@ -1370,6 +1376,7 @@ async function ensureVariantId(row) {
       status: initialStatus,
       supplier_id: supplierValue || null,
       updated_at: new Date().toISOString(),
+      ...sizeChartControl.payloadField(),
       ...(allowSensitive
         ? {
             price_percentage: pricePercentageValue || 30,
@@ -1387,7 +1394,7 @@ async function ensureVariantId(row) {
     if (prodErr) {
       console.error("❌ Error al crear producto:", prodErr);
       if (rowStatusEl) {
-        rowStatusEl.textContent = `Error al crear producto: ${prodErr.message}`;
+        rowStatusEl.textContent = `Error al crear producto: ${productSaveErrorMessage(prodErr)}`;
         rowStatusEl.style.color = "#c00";
       }
       return null;
@@ -4117,6 +4124,7 @@ await initRoleBasedCostVisibility();
 await loadColors();
 await loadTags();
 await loadSuppliers();
+sizeChartControl.init();
 
 // Event listeners para campos globales de cálculo de precio
 const pricePercentageEl = document.getElementById("price-percentage");
@@ -5671,6 +5679,7 @@ document.getElementById("category")?.addEventListener("change", async () => {
   await renderDetailsList();
   // Actualizar prefijo del nombre según la categoría
   updateNamePrefix();
+  sizeChartControl.refreshVisibility();
   
   // Guardar el porcentaje actual antes de cambiar de categoría
   const categoryEl = document.getElementById("category");
@@ -6037,6 +6046,7 @@ async function loadProductById(id) {
   updateDeleteHardButtonVisibility(statusToShow);
   document.getElementById("supplier").value = prod.supplier_id || "";
   updateEditButtonVisibility();
+  sizeChartControl.setProduct(prod.size_chart_id ?? null);
   
   // Actualizar dropdowns de talles guardados con la categoría del producto
   variantsTable.querySelectorAll(".sizes-presets").forEach(sel => refreshSizesPresets(sel, category));
@@ -6252,6 +6262,7 @@ async function cloneCurrentProductAsDraft() {
   if (statusSelect) statusSelect.value = "draft";
   if (supplierEl) supplierEl.value = sourceSupplierId;
   updateDeleteHardButtonVisibility("draft");
+  const sizeChartCloneWarning = sizeChartControl.prepareClone();
 
   variantsTable.innerHTML = "";
   reusableVariants.forEach((variantData) => {
@@ -6293,9 +6304,10 @@ async function cloneCurrentProductAsDraft() {
   updateEditButtonVisibility();
   updateCloneProductButtonVisibility();
 
-  statusEl.textContent =
-    "Producto clonado como borrador. Revisá nombre, SKU, imágenes y stock antes de guardar.";
-  statusEl.style.color = "#0a7a3f";
+  statusEl.textContent = `Producto clonado como borrador. Revisá nombre, SKU, imágenes y stock antes de guardar.${
+    sizeChartCloneWarning ? ` ${sizeChartCloneWarning}` : ""
+  }`;
+  statusEl.style.color = sizeChartCloneWarning ? "#b45309" : "#0a7a3f";
 }
 
 cloneProductBtn?.addEventListener("click", () => {
@@ -6409,6 +6421,7 @@ async function saveProduct(shouldReset = true) {
     description: document.getElementById("description").value.trim(),
     status: finalStatus,
     supplier_id: supplierValue || null,
+    ...sizeChartControl.payloadField(),
     ...(allowSensitiveProductPricing
       ? {
           cost: costValue > 0 ? costValue : null,
@@ -6462,7 +6475,7 @@ async function saveProduct(shouldReset = true) {
           "Error de permisos: No tienes permisos para crear productos. Contacta al administrador.";
         statusEl.style.color = "#c00";
       } else {
-        statusEl.textContent = `Error al crear producto: ${prodErr.message}`;
+        statusEl.textContent = `Error al crear producto: ${productSaveErrorMessage(prodErr)}`;
         statusEl.style.color = "#c00";
       }
       if (saveBtn) saveBtn.disabled = false;
@@ -6485,7 +6498,7 @@ async function saveProduct(shouldReset = true) {
           "Error de permisos: No tienes permisos para actualizar productos. Contacta al administrador.";
         statusEl.style.color = "#c00";
       } else {
-        statusEl.textContent = `Error al actualizar producto: ${upErr.message}`;
+        statusEl.textContent = `Error al actualizar producto: ${productSaveErrorMessage(upErr)}`;
         statusEl.style.color = "#c00";
       }
       if (saveBtn) saveBtn.disabled = false;

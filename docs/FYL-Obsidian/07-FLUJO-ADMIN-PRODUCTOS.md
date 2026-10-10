@@ -44,6 +44,16 @@ Art. 8000 (producto `437dd86d-…`): lista Suela/Negro = 28500; oferta activa so
 
 **335 (2026-09-04):** `rpc_checkout_cart()` cobra `get_effective_price(variant_id)`. `cart_items.price_snapshot` ya no es autoridad monetaria. Wrapper `rpc_checkout_cart(uuid, jsonb)` intacto (replay). Ver [[60-CHECKOUT-EFFECTIVE-PRICE-335-2026-09-04]].
 
+## Tablas de talles (EN EVALUACIÓN, 2026-10-10)
+
+Guía de medidas orientativa por producto (`products.size_chart_id`). No es stock ni talle comercial. Requiere la migración 378 (ensayada, no aplicada).
+
+- Gestión: `admin/size-charts.html` (tarjeta en el panel, permiso `products`).
+- En `admin/products.html`: selector "Tabla de talles", visible en Calzado o si el producto ya tiene una. Solo se pueden elegir tablas completas y activas. Si las RPC fallan, no se envía `size_chart_id` y el producto se guarda igual.
+- Todo el acceso pasa por RPC `rpc_admin_*size_chart*`; no hay lectura directa de las tablas.
+
+Detalle, verificación, publicación y acople con ARQ-05 Fase 1: [[74-TABLAS-DE-TALLES-ADMIN-LEGACY-2026-10-10]].
+
 ## Costos y campos sensibles
 
 Campos sensibles:

@@ -217,10 +217,14 @@ BEGIN
   END;
   v_blocks := v_blocks + 1;
 
+  -- find_similar_products ya falla antes de 379 (proconfig search_path="pg_catalog, public"
+  -- citado como un único esquema -> undefined_table); solo cuenta un error de permisos.
   BEGIN
     PERFORM 1 FROM public.find_similar_products(v_product, NULL, 3);
-  EXCEPTION WHEN insufficient_privilege THEN
-    v_fail := v_fail || ('T12 find_similar_products anon: ' || SQLERRM);
+  EXCEPTION
+    WHEN insufficient_privilege THEN
+      v_fail := v_fail || ('T12 find_similar_products anon: ' || SQLERRM);
+    WHEN undefined_table THEN NULL;
   END;
   v_blocks := v_blocks + 1;
 

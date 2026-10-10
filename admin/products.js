@@ -3,6 +3,11 @@ import { supabase } from "../scripts/supabase-client.js?v=m260607";
 import { preloadAuthState, can, isAdminUser } from "./auth-state.js?v=m260607";
 import { isSuperAdmin } from "./permissions-helper.js?v=m260607";
 import {
+  PRODUCT_ADMIN_COLUMNS,
+  fetchProductPricingMap,
+  saveProductPricing,
+} from "./product-pricing.js?v=m260607";
+import {
   logCommercialTagsCleanup,
   splitCommercialTags,
   warnDetallesSimilitudFromTagNames,
@@ -189,6 +194,8 @@ function debounce(fn, wait = 300) {
 }
 
 let currentProductId = null;
+// Producto cuyos costos se leyeron por RPC; sin esa lectura no se envían costos al guardar.
+let pricingLoadedForProductId = null;
 let originalVariantIds = new Set();
 let removedVariantIds = new Set();
 
@@ -1370,12 +1377,6 @@ async function ensureVariantId(row) {
       status: initialStatus,
       supplier_id: supplierValue || null,
       updated_at: new Date().toISOString(),
-      ...(allowSensitive
-        ? {
-            price_percentage: pricePercentageValue || 30,
-            logistic_amount: logisticAmountValue || 500,
-          }
-        : {}),
     };
 
     const { data: prod, error: prodErr } = await supabase
@@ -1395,8 +1396,22 @@ async function ensureVariantId(row) {
     
     prodId = prod.id;
     currentProductId = prodId;
+    pricingLoadedForProductId = prodId;
     updateCloneProductButtonVisibility();
     console.log(`✅ Producto creado con ID: ${prodId}, estado inicial: ${initialStatus}`);
+
+    if (allowSensitive) {
+      try {
+        await saveProductPricing(prodId, {
+          cost: null,
+          costIsEstimated: false,
+          pricePercentage: pricePercentageValue || 30,
+          logisticAmount: logisticAmountValue || 500,
+        });
+      } catch (pricingErr) {
+        console.warn("⚠️ Producto creado sin guardar % y logística:", pricingErr);
+      }
+    }
   }
 
   // 5. Crear variante SOLO con COLOR (sin size)
@@ -5801,15 +5816,32 @@ pSearchBtn?.addEventListener("click", tryLoadFromInput);
 async function loadProductById(id) {
   statusEl.textContent = "Cargando producto...";
   statusEl.style.color = "inherit";
+  pricingLoadedForProductId = null;
   const { data: prod, error: perr } = await supabase
     .from("products")
-    .select("*")
+    .select(PRODUCT_ADMIN_COLUMNS)
     .eq("id", id)
     .single();
   if (perr) {
     statusEl.textContent = `No se pudo cargar: ${perr.message}`;
     statusEl.style.color = "#c00";
     return;
+  }
+  let pricingLoadError = null;
+  if (canViewCostFields) {
+    try {
+      const pricing = (await fetchProductPricingMap([id])).get(id);
+      if (pricing) {
+        prod.cost = pricing.cost;
+        prod.cost_is_estimated = pricing.cost_is_estimated;
+        prod.price_percentage = pricing.price_percentage;
+        prod.logistic_amount = pricing.logistic_amount;
+        pricingLoadedForProductId = id;
+      }
+    } catch (pricingErr) {
+      console.warn("No se pudieron leer los costos del producto:", pricingErr);
+      pricingLoadError = pricingErr;
+    }
   }
   const { data: variants, error: verr } = await supabase
     .from("product_variants")
@@ -6093,7 +6125,7 @@ async function loadProductById(id) {
   variantsTable.querySelectorAll(".sizes-presets").forEach(sel => refreshSizesPresets(sel, currentCategory));
 
   // Verificar si los precios cargados coinciden con el cálculo esperado y marcarlos como auto-calculados
-  if (canViewCostFields) {
+  if (canViewCostFields && !pricingLoadError) {
     const percentage = parseFloat(pricePercentageEl?.value || prod.price_percentage || 30);
     const logisticAmount = logisticAmountEl?.value || prod.logistic_amount || 500;
     const storedCost = Number(prod.cost) || 0;
@@ -6128,6 +6160,12 @@ async function loadProductById(id) {
   ensureDefaultVariant();
 
   currentProductId = prod.id;
+  if (pricingLoadError) {
+    statusEl.textContent = `Producto cargado: ${prod.name}. No se pudo leer el costo; al guardar no se modificará el costo.`;
+    statusEl.style.color = "#b45309";
+    updateCloneProductButtonVisibility();
+    return;
+  }
   const estimatedHint = canViewCostFields && isCostEstimatedFromPrice(variantsTable.querySelector("tr .v-cost"));
   statusEl.textContent = estimatedHint
     ? `Producto cargado: ${prod.name} (costo estimado desde precio de venta)`
@@ -6409,16 +6447,16 @@ async function saveProduct(shouldReset = true) {
     description: document.getElementById("description").value.trim(),
     status: finalStatus,
     supplier_id: supplierValue || null,
-    ...(allowSensitiveProductPricing
-      ? {
-          cost: costValue > 0 ? costValue : null,
-          cost_is_estimated: costValue > 0 ? !!costIsEstimated : false,
-          price_percentage: pricePercentageValue || 30,
-          logistic_amount: logisticAmountValue || 500,
-        }
-      : {}),
     created_at: new Date().toISOString(),
   };
+  const isNewProduct = !currentProductId;
+  const shouldSavePricing =
+    allowSensitiveProductPricing &&
+    (isNewProduct || pricingLoadedForProductId === currentProductId);
+  const pricingSkipWarning =
+    allowSensitiveProductPricing && !shouldSavePricing
+      ? " Costo no modificado: no se pudo leer el costo actual; recargá el producto."
+      : "";
 
   // Log para depuración
   console.log("🔧 Guardando producto con status:", payloadProduct.status);
@@ -6495,6 +6533,30 @@ async function saveProduct(shouldReset = true) {
     }
     prodId = currentProductId;
     console.log("✅ Producto actualizado");
+  }
+
+  if (shouldSavePricing) {
+    try {
+      await saveProductPricing(prodId, {
+        cost: costValue > 0 ? costValue : null,
+        costIsEstimated: costValue > 0 ? !!costIsEstimated : false,
+        pricePercentage: pricePercentageValue || 30,
+        logisticAmount: logisticAmountValue || 500,
+      });
+      pricingLoadedForProductId = prodId;
+    } catch (pricingErr) {
+      console.error("❌ Error al guardar costos del producto:", pricingErr);
+      // El producto ya existe: fijar el id evita duplicarlo al reintentar.
+      currentProductId = prodId;
+      pricingLoadedForProductId = prodId;
+      updateCloneProductButtonVisibility();
+      statusEl.textContent = `Producto guardado, pero no se pudo guardar el costo: ${pricingErr.message}. Las variantes no se guardaron; volvé a guardar.`;
+      statusEl.style.color = "#c00";
+      if (saveBtn) saveBtn.disabled = false;
+      if (preSaveBtn) preSaveBtn.disabled = false;
+      isSaving = false;
+      return;
+    }
   }
 
   // 2) Variantes - NUEVO MODELO: una variante = un color, talles en variant_sizes
@@ -6904,10 +6966,9 @@ async function saveProduct(shouldReset = true) {
   const baseSavedMsg = deletionNotes.length
     ? `Producto guardado. ${deletionNotes.join(". ")}.`
     : "Producto y variantes guardados";
-  statusEl.textContent = detailsSaveWarning
-    ? `${baseSavedMsg}${detailsSaveWarning}`
-    : baseSavedMsg;
-  statusEl.style.color = detailsSaveWarning ? "#b45309" : "#090";
+  const saveWarnings = `${detailsSaveWarning}${pricingSkipWarning}`;
+  statusEl.textContent = saveWarnings ? `${baseSavedMsg}${saveWarnings}` : baseSavedMsg;
+  statusEl.style.color = saveWarnings ? "#b45309" : "#090";
   
   // Solo resetear si shouldReset es true
   if (shouldReset) {
@@ -6974,6 +7035,9 @@ async function saveProduct(shouldReset = true) {
   const messageNotes = [];
   if (archivedVariantsCount > 0) {
     messageNotes.push(`${archivedVariantsCount} archivada(s) por historial`);
+  }
+  if (pricingSkipWarning) {
+    messageNotes.push("costo no modificado");
   }
   const message =
     messageNotes.length > 0 ? `${baseMessage} (${messageNotes.join(" | ")})` : baseMessage;

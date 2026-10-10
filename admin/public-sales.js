@@ -9174,7 +9174,7 @@ async function loadLocalOrderToSale(localOrderId) {
         if (item.variant_id) {
           const { data: variantData } = await supabase
             .from("product_variants")
-            .select("*, products(*)")
+            .select("*, products(name)")
             .eq("id", item.variant_id)
             .maybeSingle();
 

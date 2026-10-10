@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { getAdminContext, hasPermission } from "@/lib/auth/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { getCategoryPricingDefault, listSuppliers } from "@/lib/products/actions";
+import { getCategoryPricingDefault, getProductPricing, listSuppliers } from "@/lib/products/actions";
 import { HIDDEN_CATEGORY_PRICING_DEFAULT } from "@/lib/products/pricing";
 import { getProductDetails, getProductTags } from "@/lib/products/tags";
 import { getFirstProductImageUrl, listColors, listVariants } from "@/lib/products/variants";
@@ -40,15 +40,16 @@ export default async function AdminProductEditPage({ params }: PageProps) {
   }
 
   const canViewCost = ctx.isSuperAdmin;
-  const baseFields = "id, name, handle, category, status, description, supplier_id";
-  const selectFields = canViewCost
-    ? `${baseFields}, cost, cost_is_estimated, price_percentage, logistic_amount`
-    : baseFields;
 
   const supabase = await createSupabaseServerClient();
-  const [{ data: product }, suppliers] = await Promise.all([
-    supabase.from("products").select(selectFields).eq("id", id).maybeSingle(),
+  const [{ data: product }, suppliers, pricing] = await Promise.all([
+    supabase
+      .from("products")
+      .select("id, name, handle, category, status, description, supplier_id")
+      .eq("id", id)
+      .maybeSingle(),
     listSuppliers(),
+    canViewCost ? getProductPricing(id) : Promise.resolve(null),
   ]);
 
   if (!product) {
@@ -89,10 +90,6 @@ export default async function AdminProductEditPage({ params }: PageProps) {
     status: string;
     description: string | null;
     supplier_id: string | null;
-    cost?: number | null;
-    cost_is_estimated?: boolean | null;
-    price_percentage?: number | null;
-    logistic_amount?: number | null;
   };
 
   return (
@@ -115,10 +112,10 @@ export default async function AdminProductEditPage({ params }: PageProps) {
             status: p.status,
             description: p.description ?? "",
             supplierId: p.supplier_id,
-            cost: p.cost ?? null,
-            costIsEstimated: p.cost_is_estimated ?? false,
-            pricePercentage: p.price_percentage ?? null,
-            logisticAmount: p.logistic_amount ?? null,
+            cost: pricing?.cost ?? null,
+            costIsEstimated: pricing?.costIsEstimated ?? false,
+            pricePercentage: pricing?.pricePercentage ?? null,
+            logisticAmount: pricing?.logisticAmount ?? null,
           }}
         />
 

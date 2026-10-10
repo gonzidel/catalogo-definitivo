@@ -1,0 +1,189 @@
+# 73 — Security Advisor Supabase: vistas definer y tablas sin RLS — 2026-10-08
+
+> **Estado:** 5 de 6 alertas cerradas en producción (`fyl-core`, `dtfznewwvsadkorxwzft`) el 2026-10-08 con aprobación explícita del usuario. Registro versionado: `supabase/canonical/370_advisors_stock_audit_views_invoker_cod_tables.sql` (+ `370_ROLLBACK_…`).
+> **Excepción aceptada:** `catalog_public_available_view` sigue como security definer (decisión del usuario 2026-10-09: documentar, no aplicar). Ver § Excepción.
+
+## Alertas recibidas
+
+| Lint | Objeto | Resultado |
+|---|---|---|
+| 0010 `security_definer_view` | `vw_stock_audit_untracked_sales` | Cerrada (370) |
+| 0010 `security_definer_view` | `vw_stock_audit_untracked_sales_watchlist` | Cerrada (370) |
+| 0013 `rls_disabled_in_public` | `_cod_fase5_test_log` | Cerrada (370) |
+| 0013 `rls_disabled_in_public` | `_cod_286_sql_chunks` | Cerrada (370) |
+| 0013 `rls_disabled_in_public` | `_cod_286_b64_parts` | Cerrada (370) |
+| 0010 `security_definer_view` | `catalog_public_available_view` | **Excepción documentada** |
+
+## Vistas de auditoría de stock (341/343) — fuga real
+
+**TÉCNICA VERIFICADA (2026-10-08, producción):**
+
+- 341 y 343 solo hacen `GRANT SELECT … TO authenticated`, pero los default privileges del schema `public` le dieron también `ALL` a `anon`. Regresión respecto de `211_anon_attack_surface_hardening.sql`, que había cerrado `vw_stock_*` para `anon` antes de que existieran estas vistas.
+- Al correr como owner (`postgres`) se salteaban RLS. Simulado con `SET LOCAL ROLE anon`: **8.538 filas** de eventos y **565 filas de watchlist con 170 emails de admins** (la watchlist hace join a `public.admins`). Un cliente logueado no admin veía lo mismo.
+- Único consumidor en código: `admin/stock-audit.js` (`loadUntrackedSalesWatchlist`).
+
+**Fix (370):** `REVOKE ALL … FROM anon`, `authenticated` reducido a `SELECT`, `security_invoker = true` en ambas vistas.
+
+**Verificación post-cambio:**
+
+- `anon` → `permission denied for view vw_stock_audit_untracked_sales_watchlist`.
+- Admin (JWT simulado de un `admins.user_id`): 8.538 / 565 filas, 170 emails, **mismo md5** que antes del cambio. Funciona por las policies `public_sale_items_admin_all`, `public_sales_admin_all`, `orders_admin_manage`, `order_items_admin_manage` y `authenticated_select_admins`.
+- Cliente logueado no admin: 0 filas.
+
+**Riesgo de regresión:** si una migración futura recrea estas vistas (`CREATE OR REPLACE VIEW` / `DROP` + `CREATE`), tiene que incluir `WITH (security_invoker = true)` y no otorgar nada a `anon`. Revisar también los default privileges: toda vista nueva en `public` nace con `ALL` para `anon`.
+
+## Tablas `_cod_*` — restos de pruebas
+
+- `_cod_fase5_test_log` (32 filas, log de pruebas COD fase 5/280 del 2026-08-21), `_cod_286_sql_chunks` (vacía), `_cod_286_b64_parts` (1 fila: script de prueba en base64 con el uuid de un admin).
+- Sin RLS y con `ALL` (incluido `TRUNCATE`) para `anon` y `authenticated`.
+- Sin referencias en el repo, en vistas ni en funciones.
+
+**Fix (370):** RLS activado + `REVOKE ALL FROM anon, authenticated`. No se borraron. Pendiente opcional: exportar y `DROP TABLE`.
+
+## Excepción: `catalog_public_available_view`
+
+**Decisión (usuario, 2026-10-09):** queda como security definer. La alerta del advisor se acepta y no se aplica `security_invoker`.
+
+**Por qué no es una fuga (TÉCNICA VERIFICADA):**
+
+- La definición viva ya **no lee pedidos, carritos ni OISS** (comentario de la vista: "Numeracion = talles con fn_sellable_qty > 0 … No resta OISS/carts/reserved_qty"). Lee solo `products`, `product_variants`, `suppliers`, `product_tags`, `colors`, `variant_images`, `color_price_offers`, `promotion_items`, `promotions`, `tags`, `product_tag_details`, `variant_size_warehouse_stock` y `warehouses`.
+- `anon` ya tiene `SELECT` + policy de lectura en todas esas tablas.
+- Simulación del cuerpo de la vista con permisos de `anon` y de `authenticated`: mismas filas y **mismo md5** que la vista actual (1.027 filas el 2026-10-08, 1.022 el 2026-10-09).
+
+**Por qué no se aplica `security_invoker` (medido en producción, usuario logueado):**
+
+| Consulta | Definer (hoy) | Invoker simulado |
+|---|---|---|
+| 20 `variant_id` puntuales (carrito, recomendados, fallback de banners) | 14 ms | ~1.150 ms |
+| Nuevos ingresos: `order by FechaPublicacion limit 800` | ~590 ms | ~1.180 ms |
+| Vista completa `count(*)` | ~560 ms | ~1.150 ms |
+
+Causa: con invoker, las policies RLS de `authenticated` (por ejemplo `auth_select_variants` con `EXISTS products` y las `*_admin_manage` con `EXISTS admins`) actúan como barrera de seguridad, y el planner deja de bajar el filtro `variant_id` antes de calcular toda la vista. Forzar `NOT MATERIALIZED` en las CTE no cambia nada (probado). Para `anon` el costo de la vista completa no cambia (~555 ms).
+
+**Consumidores en vivo** (motivo por el que la latencia importa): `nj/lib/banners/nuevos-ingresos.ts`, `nj/lib/banners/curated-banner-fetch.ts`, `nj/components/cart/CartRecommendedCarousel.tsx`, `nj/components/cart/ActiveOrderTab.tsx`, `scripts/main-supabase.js` y `scripts/curated-banner.js` (fallback), `admin/curated-banner-admin.js`. Funciones: `fn_catalog_snapshot_rebuild`, `fyl_rebuild_catalog_public_snapshot_parity`, `rpc_catalog_snapshot_observability`, `fyl_catalog_snapshot_has_view_parity`, `fyl_catalog_snapshot_insert_select_star_ok`, `get_meta_feed`.
+
+**Camino para cerrarla en el futuro (EN EVALUACIÓN, no aprobado):**
+
+1. Migrar los consumidores cliente a `catalog_public_snapshot`. Es una decisión de negocio: el carrito usa la vista en vivo por frescura de stock y el snapshot puede ir atrasado.
+2. Mover la vista a un schema no expuesto por PostgREST, usada solo por las funciones de rebuild/paridad y por `get_meta_feed`.
+3. Recién ahí, si se quiere, pasarla a invoker.
+
+**Condición para reabrir:** si la vista llega a incluir una tabla o columna que `anon` no puede leer directamente, deja de ser una excepción segura y hay que aplicar invoker o mover la vista.
+
+## WARN: EXECUTE de funciones SECURITY DEFINER y `search_path` (371)
+
+**TÉCNICA VERIFICADA (2026-10-09).** Los default privileges y `PUBLIC` reabrieron EXECUTE en funciones nuevas después del lote 212: `anon` podía ejecutar 63 funciones SECURITY DEFINER.
+
+Exposiciones reales encontradas (ninguna con guard interno):
+
+- `link_pending_customer_to_user(text, uuid)` — ejecutable por `anon`: reasigna pedidos y carritos de un cliente temporal a cualquier `user_id`, borra el temporal y crea el `customers`. Sin uso en código.
+- `rpc_create_pending_customer`, `rpc_create_temporary_customer` — `anon` creaba clientes. Sin uso en código.
+- `fn_retract_unsent_customer_closed_notifications`, `fn_ensure_payment_pending`, `fn_refresh_awaiting_apartado_availability`, `fn_orders_exclude_missing_from_total` — helpers internos llamables por `anon` sobre cualquier pedido. Solo los usan funciones SECURITY DEFINER.
+- Para cualquier `authenticated` (incluye revendedores): `confirm_user_email*` (confirma el email de cualquier cuenta), `rpc_get_user_id_by_email`, `maint_try_delete_order_if_eligible`, carrito legacy por `user_id`/`item_id` ajeno (`remove_cart_item`, `clear_user_cart`, `sync_cart_from_local`, …), `sync_*`, `populate_existing_customer_emails`.
+
+Fix aplicado con aprobación (`supabase/canonical/371_advisors_function_execute_grants_search_path.sql`, migración MCP `advisor_fix_function_execute_grants_search_path`):
+
+1. 6 trigger functions: sin EXECUTE para `PUBLIC`/`anon`/`authenticated` (disparar un trigger no exige EXECUTE).
+2. 33 helpers internos y funciones huérfanas: solo `service_role` (lo usan `passkeys` y n8n de proveedores) y owner. Cron corre como `postgres`.
+3. 41 RPCs con guard (`admins` o `auth.uid()`): `authenticated` + `service_role` explícitos, sin `anon`/`PUBLIC`.
+4. `search_path = public, pg_temp` en `rpc_find_similar_tags`, `normalize_transport_name`, `fn_fyl_transfer_*`, `register_local_sale_to_daily_sales`.
+
+Verificación: `anon` ejecuta solo las 8 funciones públicas intencionales (`get_product_image*`, `rpc_catalog_public_version`, `rpc_get_customer_public_data`, `rpc_get_nuevos_ingresos_products`, `rpc_get_public_curated_banner_by_slug`, `rpc_get_variant_size_reserved`). Advisor: `function_search_path_mutable` 0, `anon_security_definer_function_executable` 8, `rls_policy_always_true` ya no aparece. Cron corrió después del cambio. Rollback: `371_ROLLBACK_…sql`.
+
+Aceptado sin cambio:
+
+- `extension_in_public` (`pg_trgm`, `pg_net`): mover `pg_trgm` puede romper `similarity()`/`%` sin calificar e índices GIN; `pg_net` no soporta bien `SET SCHEMA`.
+- `search_events_insert_public`: telemetría de búsqueda intencional; la tabla limita tipo, forma y largo de cada campo con CHECKs.
+- `authenticated_security_definer_function_executable` (~180): el advisor solo mira grants. El panel admin llama esas RPC como `authenticated`; la protección real es el guard interno.
+
+## Fase 2: guard de admin en RPCs de caja, créditos y stock (372)
+
+**TÉCNICA VERIFICADA (2026-10-09).** 26 funciones SECURITY DEFINER que el panel llama como `authenticated` no validaban admin: cualquier revendedor logueado podía acreditar saldo (`rpc_add_customer_credit`), anular ventas devolviendo stock (`rpc_void_public_sale`), mover stock (`rpc_move_size_stock`), editar pedidos locales, completar ventas pendientes o leer clientes de caja con teléfono y DNI (`rpc_search_public_customer`, historiales). `rpc_move_stock`, `rpc_move_size_stock` y `rpc_complete_pending_sale` solo verificaban `auth.uid() IS NOT NULL`.
+
+Fix aplicado con aprobación (`supabase/canonical/372_admin_guard_caja_creditos_stock.sql`, migración MCP `advisor_admin_guard_caja_creditos_stock`):
+
+- Helper `public.fyl_require_admin_or_internal()` (INVOKER): deja pasar sin contexto JWT (cron, `postgres`), `service_role` (n8n, Edge Functions) y `is_admin()`; si no, `42501 Solo administradores`. Mismo criterio que el panel vanilla y NJ (`public.admins`).
+- Cada una de las 26 funciones recibió una sola línea después del `BEGIN` principal: `PERFORM public.fyl_require_admin_or_internal();`. Se aplicó inyectando sobre `pg_get_functiondef` en la base, con aserción de md5 del cuerpo previo y del resultado (igual al del archivo 372). Los cuerpos tienen saltos de línea CRLF; la línea insertada usa LF.
+- `cleanup_missing_order_item_sources` (la usa un trigger), `log_stock_change` (funciones admin DEFINER) y `rpc_move_stock` (sin uso) quedan solo para `service_role`.
+
+Verificación (simulación con `request.jwt.claims` en bloque revertido): cliente no admin → `DENEGADO` en `rpc_get_pending_sales`, `rpc_add_customer_credit`, `rpc_void_public_sale`; admin → lecturas OK (historial 5, búsqueda 453); sin JWT y `service_role` → OK. Rollback: `372_ROLLBACK_…sql` (definiciones originales exactas).
+
+Quedan sin guard a propósito:
+
+- `rpc_get_customer_credits`, `rpc_get_customer_sales_history`: las llama `rpc_get_customer_public_data` (página QR pública, `anon`); un guard la rompería. Riesgo residual: requiere el uuid del cliente de caja.
+- `rpc_orders_daily_maintenance`: la dispara el dashboard del cliente; es idempotente.
+- `rpc_get_public_sale_details`: la usa `customer.html` (QR). `anon` no tiene EXECUTE, así que el detalle de venta de esa página probablemente ya falla sin login (a confirmar).
+- `rpc_link_public_sales_customer`: flujo de cliente; corregida aparte en 373 (abajo).
+- `rpc_create_public_sale` (firma con `operation_id`) delega en la de 5 argumentos, que ya valida admin.
+
+## Vínculo de identidad de cliente (373, aplicada 2026-10-09)
+
+### Problema (TÉCNICA VERIFICADA antes de 373)
+
+Lo usan `client/complete-profile.js` y `client/profile.js` (`rpc_link_public_sales_customer` + `rpc_upsert_customer`), y `scripts/cart-persistent.js` y NJ `ProfileTab`/`ProfileOnboardingModal` (`rpc_link_or_create_customer`).
+
+- `rpc_link_public_sales_customer` ignoraba `p_user_id`. Con un teléfono por sufijo (4 a 7 dígitos), un email o un DNI arbitrarios devolvía `qr_code`, `public_sales_customer_id`, número y nombre del cliente de caja; para fichas de admin, nombre y dirección.
+- `rpc_upsert_customer` (INVOKER) guardaba `qr_code`, `public_sales_customer_id` y `customer_number` enviados por el navegador sin validarlos. Una cuenta podía apropiarse de la identidad de caja de otra persona y de su página QR.
+- `rpc_link_or_create_customer` fusionaba por sufijo de teléfono, por `p_email` del navegador o por DNI solo, incluso con fichas de otros usuarios web sin vínculo (23 al momento de la auditoría).
+- Además, copiar el número de una ficha de admin en `rpc_upsert_customer` violaba `customers_customer_number_unique` y el perfil vanilla no se guardaba.
+
+### Regla aplicada (NEGOCIO CONFIRMADO 2026-10-09)
+
+- Auto-vínculo si el teléfono coincide completo (últimos 8 dígitos normalizados, ambos lados con 8 o más) y, si la ficha tiene DNI, además el DNI (solo dígitos).
+- Alternativa: el email verificado por Google de la cuenta (`auth.identities`, `provider = 'google'`, `email_verified = true`). No cuenta el email que manda el navegador ni las cuentas email/contraseña: `handle_new_user` no confirma (es AFTER), pero los 8 usuarios email figuran confirmados y puede haber autoconfirmación.
+- DNI solo, email escrito a mano o sufijos cortos ya no vinculan.
+- Nunca se reclama la ficha de otro usuario web (`id` presente en `auth.users`); solo fichas de admin o legacy sin cuenta.
+
+### Cambios
+
+- Helpers `fyl_customer_identity_match_ok(text,text,text,text)` y `fyl_verified_auth_email(uuid)`: solo para `service_role`.
+- `rpc_link_public_sales_customer`: exige `auth.uid() = p_user_id` y devuelve solo `{found, source, customer_number}`.
+- `rpc_upsert_customer`: ahora SECURITY DEFINER sobre la fila de `auth.uid()`. Ignora número, QR e id de caja del navegador (la firma se mantiene) y vincula con caja en el servidor con la regla. Solo copia el número de caja si ninguna otra ficha lo usa. La fusión con fichas de admin queda solo en `rpc_link_or_create_customer`.
+- `rpc_link_or_create_customer`: aplica la regla (`match_type` `phone`, `phone_dni` o `email`). El resto de la fusión (pedidos, carritos, notificaciones, `cod_*`) no cambia.
+- Trigger `a0_customers_protect_identity_link` (BEFORE INSERT OR UPDATE OF `customer_number`, `qr_code`, `public_sales_customer_id`):
+  - Un cliente no puede escribir esas columnas: en INSERT quedan nulas y `assign_customer_number_trigger` genera el número; en UPDATE se conservan las anteriores.
+  - Pasan sin cambios: admins (`is_admin()`), `service_role`, sin JWT (cron, `postgres`) y las RPCs de vínculo (GUC `fyl.customer_link_write = '1'`).
+- `anon` sin EXECUTE en las tres RPCs.
+
+### Verificación
+
+- **Ensayo revertido con fichas ficticias (22/22).** Se bloquearon:
+  - consultar con otro `p_user_id`, con 4 dígitos, con DNI erróneo, sin DNI cuando la ficha lo tiene, o con email del navegador;
+  - el UPDATE e INSERT directos del QR;
+  - el número ajeno en el upsert;
+  - reclamar la ficha de otro usuario web;
+  - una identidad email/contraseña.
+
+  Funcionaron:
+  - teléfono + DNI con caja (QR vinculado en el servidor) y con admin (fusión con número y dirección);
+  - email Google con admin;
+  - admin, `service_role` y sin JWT pueden escribir.
+
+  Después del ensayo, md5 originales intactos y 0 fixtures.
+- **Post-aplicación:**
+  - `rpc_upsert_customer` es DEFINER y la respuesta de caja ya no incluye `qr_code`; el trigger dispara primero.
+  - `anon` no ejecuta las RPCs, `authenticated` sí; `authenticated` no ejecuta los helpers.
+  - Muestras de la regla: `+54 9 11 4567-8901` vs `1145678901` → true; `8901` → false; DNI con puntos → true; ficha con DNI y entrada sin DNI → false.
+  - 57 usuarios con email Google verificado.
+- **Rollback:** `supabase/canonical/373_ROLLBACK_customer_identity_link_hardening.sql` (definiciones originales exactas, borra trigger y helpers).
+
+### Efecto visible y deuda
+
+- El perfil vanilla ya no recibe nombre ni dirección de la ficha de admin para precargar.
+- En los últimos 90 días hubo 2 vínculos por DNI solo, que ahora requieren también teléfono; no hubo vínculos por email.
+- Un usuario que entra con Google sin teléfono y sin email coincidente queda con link `new` y ya no se fusiona después (comportamiento previo, sin cambios).
+
+## Otro hallazgo pendiente (fuera del advisor)
+
+`public.admins` tiene la policy `authenticated_select_admins` (`USING true`): cualquier cliente logueado lee las 10 filas (`email`, `role`, …). Antes de restringirla hay que verificar que el admin y NJ no dependan de listar la tabla como `authenticated` no admin.
+
+## Método
+
+Todo con SQL de solo lectura en producción: `pg_class.reloptions`, `has_table_privilege`, `pg_policies`, `pg_get_viewdef`; simulación con `SET LOCAL ROLE` + `request.jwt.claims` y `query_to_xml` dentro de transacciones revertidas; tiempos con `clock_timestamp()` (3 corridas). El único cambio aplicado fue 370, con aprobación previa.
+
+## Relacionado
+
+- [[28-AUDITORIA-SUPABASE-POSTGRES-2026-05-13]] (HIGH-3, ahora con drift corregido)
+- [[64-AUDITORIA-STOCK-FANTASMA-CHECKOUT-2026-09-14]] (origen de 341/343)
+- [[36-CATALOGO-SNAPSHOT-REFRESH-2026-05-15]]
+- `doc/hardening-supabase-2026-05-13.md` § Seguimiento 2026-10-08

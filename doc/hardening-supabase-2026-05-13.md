@@ -479,14 +479,15 @@ Permitidos temporalmente para `anon`:
 
 - `catalog_public_snapshot`: fuente pública preferida.
 - `catalog_public_view`: compatibilidad temporal.
-- `catalog_public_available_view`: compatibilidad temporal.
+- `catalog_public_available_view`: compatibilidad temporal. Sigue como security definer por decisión del 2026-10-09 (excepción al lint 0010; ver § Seguimiento 2026-10-08).
 - `get_meta_feed()`: Meta Commerce, mientras no haya endpoint firmado/cacheado.
 - `rpc_get_variant_size_reserved(uuid[])`: temporal vanilla residual; NJ no lo llama. 333C no revocó EXECUTE anon. Retirar post-cutover.
 - `products`, `product_variants`, `variant_warehouse_stock`, `variant_size_warehouse_stock`: SELECT anon intacto (enrich/sellable). 333C revocó I/U/D anon. Writes solo admin.
 
 Denylist cerrada:
 
-- `vw_stock_*`
+- `vw_stock_*` (incluidas `vw_stock_audit_untracked_sales*`, re-cerradas en 370)
+- `_cod_fase5_test_log`, `_cod_286_sql_chunks`, `_cod_286_b64_parts` (370)
 - `public_sales`
 - `public_sale_items`
 - `get_customer_id_for_user(uuid)` para `anon`
@@ -577,6 +578,34 @@ Registro separado para no mezclar con el batch de 2026-05-13:
 - **Obsidian:** `docs/FYL-Obsidian/33-FASE-A-GRANTS-COMPRAS-PUBLICACION-2026-05-15.md`
 
 **Qué queda fuera de esta fase:** analytics globales con `GRANT` a `authenticated`, RPC admin-only, cambios a `catalog_public_available_view`, Fase B `security_invoker` automática.
+
+## Seguimiento 2026-10-08: Security Advisor (370)
+
+- **Qué:** el Security Advisor marcó 3 vistas security definer y 3 tablas sin RLS. Las vistas `vw_stock_audit_untracked_sales` y `vw_stock_audit_untracked_sales_watchlist` (341/343) tenían `ALL` para `anon` por default privileges, una regresión respecto de 211: un visitante leía 8.538 eventos de auditoría y 170 emails de admins. Las tablas `_cod_*` (restos de pruebas COD) permitían a `anon` leer, escribir y hacer `TRUNCATE`.
+- **Fix aplicado (con aprobación):** `supabase/canonical/370_advisors_stock_audit_views_invoker_cod_tables.sql`. Revoca `anon`, deja `authenticated` solo con `SELECT` y aplica `security_invoker` en las vistas. Activa RLS y revoca `anon`/`authenticated` en las tablas `_cod_*`.
+- **Verificación:** el admin ve exactamente lo mismo (mismo md5), un cliente no admin ve 0 filas y `anon` recibe `permission denied`. El advisor quedó con una sola alerta ERROR.
+- **Excepción:** `catalog_public_available_view` sigue como definer. Expone lo mismo que `anon` ya lee por RLS, y con invoker las consultas filtradas de usuarios logueados pasan de 14 ms a ~1,15 s.
+- **Lección:** toda vista nueva en `public` nace con `ALL` para `anon` por default privileges. Cada migración que cree o recree vistas internas debe incluir `REVOKE ALL … FROM anon` y `WITH (security_invoker = true)`.
+- **Detalle completo:** `docs/FYL-Obsidian/73-SUPABASE-ADVISORS-SECURITY-DEFINER-RLS-2026-10-08.md`.
+
+## Seguimiento 2026-10-09: EXECUTE de funciones SECURITY DEFINER (371)
+
+- **Qué:** después del lote 212, `anon` había vuelto a poder ejecutar 63 funciones SECURITY DEFINER por default privileges y `PUBLIC`. Entre ellas `link_pending_customer_to_user`, que reasigna pedidos de un cliente temporal a cualquier usuario. Cualquier `authenticated` podía ejecutar `confirm_user_email*`, `rpc_get_user_id_by_email`, el carrito legacy por id ajeno y `maint_try_delete_order_if_eligible`.
+- **Fix aplicado (con aprobación):** `supabase/canonical/371_advisors_function_execute_grants_search_path.sql`. Los triggers quedan sin EXECUTE para clientes, los 33 helpers y funciones huérfanas solo para `service_role`, las 41 RPCs con guard sin `anon`/`PUBLIC`, y 6 funciones con `search_path` fijo.
+- **Verificación:** `anon` ejecuta solo 8 funciones públicas intencionales. `service_role` conserva `rpc_get_user_id_by_email` (passkeys) y `purchase_*` (n8n). El cron corrió bien.
+- **Fase 2 aplicada (372):** 26 RPCs de caja, créditos y stock ahora llaman a `public.fyl_require_admin_or_internal()` al inicio (admins, `service_role` y cron pasan; un cliente recibe `42501`). `cleanup_missing_order_item_sources`, `log_stock_change` y `rpc_move_stock` quedan solo para `service_role`. Ver nota 73.
+- **Regla para RPCs admin nuevas:** empezar el cuerpo con `PERFORM public.fyl_require_admin_or_internal();` (o un guard equivalente con `public.admins`). El advisor no detecta guards internos.
+- **Regla:** toda función nueva en `public` nace con EXECUTE para `PUBLIC`/`anon`/`authenticated`. Las migraciones deben incluir `REVOKE EXECUTE … FROM PUBLIC, anon` (y `authenticated` si es interna).
+
+## Seguimiento 2026-10-09: vínculo de identidad de cliente (373)
+
+- **Qué:** `rpc_link_public_sales_customer` devolvía el QR y los datos de cualquier cliente de caja con 4 dígitos de teléfono, un email o un DNI. `rpc_upsert_customer` guardaba el QR que mandara el navegador, así que una cuenta podía apropiarse de la identidad de caja de otra persona. `rpc_link_or_create_customer` además podía fusionar con fichas de otros usuarios web.
+- **Fix aplicado (con aprobación y ensayo revertido 22/22):** `supabase/canonical/373_customer_identity_link_hardening.sql`.
+  - Regla: teléfono completo (8 dígitos), más el DNI si la ficha lo tiene, o el email verificado por Google.
+  - El vínculo con caja se decide en el servidor.
+  - El trigger `a0_customers_protect_identity_link` impide que un cliente escriba `customer_number`, `qr_code` y `public_sales_customer_id`.
+- **Regla para código nuevo:** para escribir esas columnas hace falta ser admin o `service_role`, o hacerlo dentro de una RPC que fije `set_config('fyl.customer_link_write', '1', true)`.
+- **Detalle y rollback:** nota 73 § Vínculo de identidad de cliente.
 
 ---
 

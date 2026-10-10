@@ -122,33 +122,67 @@ export interface ProductGeneralInput {
   logisticAmount: number | null;
 }
 
-interface SensitiveDbFields {
-  cost?: number | null;
-  cost_is_estimated?: boolean;
-  price_percentage?: number | null;
-  logistic_amount?: number | null;
+export interface ProductPricing {
+  cost: number | null;
+  costIsEstimated: boolean;
+  pricePercentage: number | null;
+  logisticAmount: number | null;
 }
 
-/** Los campos de costo se ignoran si quien llama no es super_admin, sin importar lo que mande el cliente. */
-async function sanitizeSensitiveFields(input: ProductGeneralInput): Promise<SensitiveDbFields> {
+interface ProductPricingRow {
+  product_id: string;
+  cost: number | string | null;
+  cost_is_estimated: boolean | null;
+  price_percentage: number | string | null;
+  logistic_amount: number | string | null;
+}
+
+const toNumberOrNull = (value: number | string | null) => (value === null ? null : Number(value));
+
+/** authenticated no tiene permiso de columna sobre los costos de products: se leen y escriben por RPC. */
+export async function getProductPricing(id: string): Promise<ProductPricing | null> {
+  await requireSuperAdmin();
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.rpc("rpc_admin_get_product_pricing", {
+    p_product_ids: [id],
+  });
+  if (error) throw new Error(`No se pudo leer el costo del producto: ${error.message}`);
+  const row = (data as ProductPricingRow[] | null)?.[0];
+  if (!row) return null;
+  return {
+    cost: toNumberOrNull(row.cost),
+    costIsEstimated: row.cost_is_estimated === true,
+    pricePercentage: toNumberOrNull(row.price_percentage),
+    logisticAmount: toNumberOrNull(row.logistic_amount),
+  };
+}
+
+/**
+ * Los campos de costo se ignoran si quien llama no es super_admin, sin importar lo que mande el cliente.
+ * Devuelve el mensaje de error si el producto se guardó pero el costo no.
+ */
+async function saveSensitiveFields(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  productId: string,
+  input: ProductGeneralInput
+): Promise<string | null> {
   const ctx = await getAdminContext();
-  if (ctx?.isSuperAdmin) {
-    return {
-      cost: input.cost,
-      cost_is_estimated: input.costIsEstimated,
-      price_percentage: input.pricePercentage,
-      logistic_amount: input.logisticAmount,
-    };
-  }
-  return {};
+  if (!ctx?.isSuperAdmin) return null;
+  const { error } = await supabase.rpc("rpc_admin_set_product_pricing", {
+    p_product_id: productId,
+    p_cost: input.cost,
+    p_cost_is_estimated: input.costIsEstimated,
+    p_price_percentage: input.pricePercentage,
+    p_logistic_amount: input.logisticAmount,
+  });
+  return error ? `Producto guardado, pero no se pudo guardar el costo: ${error.message}` : null;
 }
 
 export async function createProduct(
   input: ProductGeneralInput
-): Promise<{ id: string }> {
+): Promise<{ id: string; pricingError: string | null }> {
   await requireProductsEdit();
   const supabase = await createSupabaseServerClient();
-  const sensitive = await sanitizeSensitiveFields(input);
 
   const { data, error } = await supabase
     .from("products")
@@ -159,14 +193,15 @@ export async function createProduct(
       status: input.status || "pending_stock",
       description: input.description || null,
       supplier_id: input.supplierId,
-      ...sensitive,
     })
     .select("id")
     .single();
 
   if (error) throw new Error(error.message);
+  const id = data.id as string;
+  const pricingError = await saveSensitiveFields(supabase, id, input);
   revalidatePath("/admin/products");
-  return { id: data.id as string };
+  return { id, pricingError };
 }
 
 export async function updateProductGeneral(
@@ -175,7 +210,6 @@ export async function updateProductGeneral(
 ): Promise<void> {
   await requireProductsEdit();
   const supabase = await createSupabaseServerClient();
-  const sensitive = await sanitizeSensitiveFields(input);
 
   const { error } = await supabase
     .from("products")
@@ -186,11 +220,12 @@ export async function updateProductGeneral(
       status: input.status,
       description: input.description || null,
       supplier_id: input.supplierId,
-      ...sensitive,
     })
     .eq("id", id);
 
   if (error) throw new Error(error.message);
+  const pricingError = await saveSensitiveFields(supabase, id, input);
   revalidatePath("/admin/products");
   revalidatePath(`/admin/products/${id}`);
+  if (pricingError) throw new Error(pricingError);
 }

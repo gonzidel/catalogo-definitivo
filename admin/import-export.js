@@ -691,7 +691,7 @@ async function importRows(rows, options) {
         // Guardar estado anterior para rollback
         const { data: oldProduct } = await supabase
           .from("products")
-          .select("*")
+          .select("name, category, status, description")
           .eq("id", productId)
           .single();
         if (oldProduct) {

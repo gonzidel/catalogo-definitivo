@@ -70,6 +70,8 @@ Comportamiento en el formulario de producto:
 
 ## Publicación (requiere autorización)
 
+> **Actualización 2026-10-10:** integrada con ARQ-05 Fase 1 en `release/arq05-fase1-tablas-talles` (`size_chart_id` ya está en `PRODUCT_ADMIN_COLUMNS`). Ensayo combinado 378 + 380 + 381 en producción OK y revertido. Para publicar se usa `75-RELEASE-ARQ05-FASE1-TABLAS-TALLES-RUNBOOK-2026-10-10.md`. El deploy de Firebase sale de un staging (no de `npm run deploy:firebase`) y los pasos de abajo quedan como referencia.
+
 1. Aplicar `378_size_charts.sql` en producción. Ya está ensayada con rollback; se puede repetir el ensayo justo antes.
 2. Publicar el admin legacy en Firebase (`npm run deploy:firebase`). Ese deploy sube todo el árbol vanilla, así que antes hay que confirmar que fuera de `admin/` coincide con lo publicado.
 3. Smoke: crear una tabla, asignarla a un producto de calzado, archivarla y comprobar que el producto la conserva.

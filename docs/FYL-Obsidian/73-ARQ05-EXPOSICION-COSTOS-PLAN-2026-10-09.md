@@ -253,6 +253,8 @@ Rama `fix/arq-05-fase1-costos` (desde `7e4128f` = release publicada + hotfix). N
 
 ### Publicación (cada paso requiere autorización)
 
+> **Actualización 2026-10-10:** la Fase 1 se integró con las tablas de talles (378) en `release/arq05-fase1-tablas-talles`. El ensayo en producción de 378 + 380 + 381 con pruebas de integración dio OK y se revirtió. El orden definitivo, el deploy de Firebase con un staging que no pisa archivos publicados y la reversión de cada etapa están en `75-RELEASE-ARQ05-FASE1-TABLAS-TALLES-RUNBOOK-2026-10-10.md`, que reemplaza a la lista de abajo.
+
 1. Ensayo en producción de 380 + 381 + tests (transacción con `RAISE EXCEPTION`).
 2. Aplicar 380 (aditiva; el código actual no la usa).
 3. Publicar el código: NJ (Vercel, flujo controlado) y admin legacy (Firebase, `npm run deploy:firebase`). **Firebase publica todo el árbol vanilla:** antes hay que confirmar que fuera de `admin/` el árbol coincide con lo publicado hoy. Con 380 aplicada y sin 381, el código nuevo funciona igual que el viejo.

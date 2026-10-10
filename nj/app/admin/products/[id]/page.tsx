@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getAdminContext, hasPermission } from "@/lib/auth/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getCategoryPricingDefault, listSuppliers } from "@/lib/products/actions";
+import { HIDDEN_CATEGORY_PRICING_DEFAULT } from "@/lib/products/pricing";
 import { getProductDetails, getProductTags } from "@/lib/products/tags";
 import { getFirstProductImageUrl, listColors, listVariants } from "@/lib/products/variants";
 import AccessDenied from "@/components/admin-products/AccessDenied";
@@ -63,11 +64,16 @@ export default async function AdminProductEditPage({ params }: PageProps) {
     );
   }
 
+  const loadPricing = (category: string) =>
+    canViewCost
+      ? getCategoryPricingDefault(category)
+      : Promise.resolve(HIDDEN_CATEGORY_PRICING_DEFAULT);
+
   const [calzado, ropa, otros, productTags, productDetails, variants, colors, firstImageUrl] =
     await Promise.all([
-      getCategoryPricingDefault("Calzado"),
-      getCategoryPricingDefault("Ropa"),
-      getCategoryPricingDefault("Otros"),
+      loadPricing("Calzado"),
+      loadPricing("Ropa"),
+      loadPricing("Otros"),
       getProductTags(id),
       getProductDetails(id),
       listVariants(id),

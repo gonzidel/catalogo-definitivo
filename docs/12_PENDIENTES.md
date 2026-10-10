@@ -1,6 +1,6 @@
 # Pendientes y preguntas para FyL Moda
 
-Última revisión: 2026-09-23
+Última revisión: 2026-10-09
 
 Estas preguntas siguen requiriendo respuesta humana o acceso productivo. Las respuestas ya confirmadas fueron trasladadas a sus documentos de dominio.
 
@@ -112,6 +112,8 @@ Estas preguntas siguen requiriendo respuesta humana o acceso productivo. Las res
 | ARQ-02 | CRÍTICA | ¿Qué migraciones, cron jobs, Edge Functions y variables están realmente desplegados? Verificar sin copiar secretos. |
 | ARQ-03 | CRÍTICA | ¿Cuáles son las definiciones y grants efectivos de las RPCs críticas, incluido `rpc_orders_daily_maintenance`? |
 | ARQ-04 | IMPORTANTE | ¿Qué ambientes, monitoreo, backups, alertas y procedimientos de despliegue/rollback son oficiales? |
+| ARQ-05 | CRÍTICA | **TÉCNICA VERIFICADA (2026-10-09, solo lectura) / CONTRADICCIÓN con `FYL-Obsidian/14-AUDITORIA-MODULO-PRODUCTS.md`.** Costos de `products` (`cost`, `price_percentage`, `logistic_amount`, `cost_is_estimated`) legibles por visitantes sin sesión y clientes con sesión (2178 productos visibles, 1342 con costo); la búsqueda del catálogo NJ los envía al navegador en cada consulta. `category_pricing_defaults` legible por clientes con sesión; `suppliers` legible por `anon`. La protección 182 no existe en producción: colaboradores admin pueden modificar costos por API. Diagnóstico y plan por fases en `FYL-Obsidian/73-ARQ05-EXPOSICION-COSTOS-PLAN-2026-10-09.md`. Decisiones tomadas: costos solo super_admin, el público solo ve `id`/`code` de proveedores, nunca se usa el costo como precio público. Fase 0 preparada en la rama `hotfix/arq-05-exposicion-costos` (NJ sin lecturas de costo, guardas en Server Actions, SQL 379 + rollback + tests; precio visible sin diferencias). Pendiente: autorización de deploy NJ, ensayo y aplicación de 379, Fase 1 (clientes con sesión y escritura de colaboradores), revisión de los 2 productos `pending_stock` sin variantes. |
+| ARQ-06 | IMPORTANTE | **TÉCNICA VERIFICADA (2026-10-09).** El admin legacy sobrescribe `products.created_at` al editar: `saveProduct` arma el payload con `created_at: new Date().toISOString()` (`admin/products.js`, ~L6420) y lo usa también en el `update` (~L6479). Corrección independiente: omitir `created_at` en el update. ¿Se intenta recuperar la fecha original de productos ya afectados? |
 
 ## Decisiones técnicas
 

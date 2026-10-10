@@ -1,6 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { CATALOG_SOURCE, CATALOG_SELECT, agruparProductos } from "@/lib/utils/catalog";
-import { calculateRecommendedPrice } from "@/lib/products/pricing";
 import {
   enrichGroupedProductsWithVariants,
   stripColorsWithoutImages,
@@ -71,9 +70,13 @@ async function resolveSkuWithClient(
 /** Status de catálogo público por URL (fuera del snapshot). No incluye draft/archived. */
 const PDP_PUBLIC_PRODUCT_STATUSES = ["active", "pending_stock"] as const;
 
+/** Columnas públicas de `products` para fallbacks; nunca costos internos. */
+export const PUBLIC_PRODUCT_FALLBACK_SELECT = "name, description, category, status";
+
 /**
  * Fallback público: producto en `products` fuera del snapshot
  * (RMAT, pending_stock, agotados publicados). Sin stock sellable.
+ * El precio sale solo de `product_variants.price` (enrich por color).
  */
 export async function stubFromProductsTable(
   supabase: SupabaseClient,
@@ -81,23 +84,17 @@ export async function stubFromProductsTable(
 ): Promise<GroupedProduct | null> {
   const { data: row } = await supabase
     .from("products")
-    .select("name, description, category, cost, price_percentage, logistic_amount, status")
+    .select(PUBLIC_PRODUCT_FALLBACK_SELECT)
     .eq("name", articulo.trim())
     .in("status", [...PDP_PUBLIC_PRODUCT_STATUSES])
     .maybeSingle();
 
   if (!row) return null;
 
-  const precio = calculateRecommendedPrice(
-    Number(row.cost ?? 0),
-    Number(row.price_percentage ?? 0),
-    Number(row.logistic_amount ?? 0)
-  );
-
   return {
     Articulo: String(row.name ?? articulo).trim(),
     Descripcion: String(row.description ?? ""),
-    Precio: precio || "",
+    Precio: "",
     VariantePrincipal: null,
     Oferta: "",
     FechaIngreso: "",

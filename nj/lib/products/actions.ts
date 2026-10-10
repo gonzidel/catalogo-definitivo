@@ -10,9 +10,26 @@ export interface CategoryPricingDefault {
   logistic_amount: number;
 }
 
+async function requireSuperAdmin() {
+  const ctx = await getAdminContext();
+  if (!ctx?.isSuperAdmin) {
+    throw new Error("No tenés permiso para ver costos.");
+  }
+  return ctx;
+}
+
+async function requireProductsView() {
+  const ctx = await getAdminContext();
+  if (!ctx || !hasPermission(ctx, "products", "view")) {
+    throw new Error("No tenés permiso para ver productos.");
+  }
+  return ctx;
+}
+
 export async function getCategoryPricingDefault(
   category: string
 ): Promise<CategoryPricingDefault> {
+  await requireSuperAdmin();
   const supabase = await createSupabaseServerClient();
   const { data } = await supabase
     .from("category_pricing_defaults")
@@ -49,6 +66,7 @@ export interface SupplierRow {
 }
 
 export async function listSuppliers(): Promise<SupplierRow[]> {
+  await requireProductsView();
   const supabase = await createSupabaseServerClient();
   const { data } = await supabase
     .from("suppliers")

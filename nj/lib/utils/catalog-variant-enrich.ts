@@ -3,7 +3,6 @@ import type { CatalogImage, ColorDetail, GroupedProduct } from "@/types/catalog"
 import { agruparProductos, CATALOG_SELECT, colorDetailHasImage } from "@/lib/utils/catalog";
 import { colorDetailMatchesSizes } from "@/lib/utils/search";
 import type { CatalogRow } from "@/types/catalog";
-import { calculateRecommendedPrice } from "@/lib/products/pricing";
 import {
   colorIsPurchasable,
   deriveHasAnyStock,
@@ -283,7 +282,13 @@ export async function enrichGroupedProductsWithVariants(
   );
 }
 
-/** Productos activos por nombre que no están en el snapshot (p. ej. sin stock). */
+/** Columnas públicas de `products` para la búsqueda ampliada; nunca costos internos. */
+export const PUBLIC_PRODUCT_SEARCH_SELECT = "name, description, category";
+
+/**
+ * Productos activos por nombre que no están en el snapshot (p. ej. sin stock).
+ * El precio sale solo de `product_variants.price` (enrich por color).
+ */
 export async function searchProductsIncludingOutOfStock(
   supabase: SupabaseClient,
   term: string,
@@ -294,7 +299,7 @@ export async function searchProductsIncludingOutOfStock(
 
   const { data: matches, error } = await supabase
     .from("products")
-    .select("name, description, category, cost, price_percentage, logistic_amount")
+    .select(PUBLIC_PRODUCT_SEARCH_SELECT)
     .eq("status", "active")
     .or(`name.ilike.%${q}%,description.ilike.%${q}%`)
     .limit(40);
@@ -327,16 +332,10 @@ export async function searchProductsIncludingOutOfStock(
       continue;
     }
 
-    const precio = calculateRecommendedPrice(
-      Number(m.cost ?? 0),
-      Number(m.price_percentage ?? 0),
-      Number(m.logistic_amount ?? 0)
-    );
-
     built.push({
       Articulo: art,
       Descripcion: String(m.description ?? ""),
-      Precio: precio || "",
+      Precio: "",
       VariantePrincipal: null,
       Oferta: "",
       FechaIngreso: "",

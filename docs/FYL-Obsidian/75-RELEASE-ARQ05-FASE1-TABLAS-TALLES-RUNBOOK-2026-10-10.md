@@ -58,7 +58,7 @@ Con 378 y 380 aplicadas y sin 381, tanto el código viejo como el nuevo funciona
 
 0. **Chequeos previos** (solo lectura):
    - repetir la huella del ensayo;
-   - `git -C E:\PROYECTOS\fyl-release-integrada status` limpio y `HEAD` igual al commit ensayado;
+   - `git -C E:\PROYECTOS\fyl-release-integrada status` limpio. SHA-256 de los archivos ensayados: 378 `C36D194234B9…`, 380 `8D143FAF123D…`, 381 `26B0567C75E3…`;
    - repetir la verificación staging contra el sitio vivo (`verify-staging.mjs`), que debe dar solo los 12 archivos previstos;
    - registrar a qué deploy apunta `www` (hoy `dpl_4mLc…`) y a cuál `nj-gonzidel` (`dpl_BHA4AYjEo56jbz9B7xstLjrXYZpP`).
 1. **Aplicar 378** (`378_size_charts.sql` tal cual). Toma un lock breve de `products` por el `ADD COLUMN`.

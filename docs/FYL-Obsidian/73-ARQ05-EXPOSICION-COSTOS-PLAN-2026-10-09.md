@@ -204,3 +204,26 @@ Propuesta, sin tocar estado ni visibilidad: revisión manual en el admin. Se les
 - tsc OK, 213/213 tests, `next build` OK. Los avisos de autoprefixer en `conciliacion.module.css` ya existían.
 
 Orden obligatorio: el paso 5 nunca antes del 2. Con el NJ viejo, la búsqueda y el PDP piden `cost`, y con 379 aplicada recibirían error de permiso.
+
+### Publicación y aplicación de 379 (2026-10-10, autorizado, TÉCNICA VERIFICADA)
+
+**Deploy (~08:33 ART):** `b30fe1e` → **`dpl_4mLc1uDLTQ7KkMH47vZkJznYJSmk`** (`nj-kntuh97nn-gonzidel.vercel.app`). El primer `vercel deploy` devolvió "Not authorized" sin crear nada; el reintento funcionó. Smoke en la URL del deploy:
+- 21/21 rutas iguales a `www` anterior (precios idénticos, promo 2x en `PR2`, 302 a login en `/admin/*` y `/dashboard`), 25/25 assets 200, bundles públicos sin campos de costo.
+- Búsqueda `select=name,description,category`; SSR del PDP fuera del snapshot (`21`, `STAY`, `R1386`) con `name,description,category,status` (logs de API).
+- Admin como super_admin, solo lectura: edición y alta de producto con costo, proveedores y % por categoría (precio sugerido sin guardar); tablero de pedidos con Espera; Retiro/Apartados = conteo en DB.
+- No probado en vivo (requiere guardar o otra sesión): confirmación manual con aviso de talle reservado, promo 2x dentro de un pedido, admin no super_admin. Cubierto por código idéntico al publicado y tests.
+
+**Promote (~11:55 ART):** `vercel promote` (aviso "Failed to remap" esperado) + `alias set` `nj-gonzidel` → `dpl_BHA4…` + `alias set` `www`. Verificado: `www` y `nj-drab` → `dpl_4mLc…` (también en el HTML), `nj-gonzidel` → `dpl_BHA4…`, apex 308. Smoke en `www` igual al deploy anterior y admin con sesión OK. Desde las 14:55:23 UTC ninguna búsqueda pide costos.
+
+**379 aplicada (~11:57 ART):** archivo idéntico al ensayado (SHA-256 `42424DCF…`, sin cambios desde `71057af`), ejecutado tal cual. Estado previo igual al registrado antes del ensayo. Verificación:
+- `has_column_privilege` anon: `cost`, `cost_is_estimated`, `price_percentage`, `logistic_amount`, `suppliers.name` y `category_pricing_defaults` → false; `products.name`, `suppliers.code` → true. ACL: `products` anon=`xtm` + 19 columnas, `suppliers` y `category_pricing_defaults` sin anon. Política `authenticated_select_pricing_defaults` eliminada.
+- Sondas REST anon: `select=cost|price_percentage|logistic_amount|*`, `category_pricing_defaults`, `suppliers?select=name` → 401/42501. Públicas: products activos 665, suppliers `id,code` 51, snapshot / `catalog_public_view` / `catalog_public_available_view` 1046 filas con `SupplierCode`, join `product_variants→products(name)` OK.
+- `www` después de 379: 24/24 rutas iguales, incluidos PDP fuera del snapshot sin caché (`51011`, `C130`, `SEVILLA`) con precio de variante. Sin 401/403/5xx de clientes en los logs (solo las sondas).
+
+**Rollback disponible:**
+- código: `alias set nj-8lw98awgc-gonzidel.vercel.app www.fylmoda.com.ar` + `promote dpl_E9RU991aMhJ5bLFReej7X9aXFcgU` + volver a fijar `nj-gonzidel`. Con 379 aplicada, ese código viejo pierde la búsqueda fuera del snapshot (devuelve `[]`) y el PDP fuera del snapshot; para volver sin pérdidas habría que revertir también 379, lo que reabre la exposición.
+- SQL: `379_ROLLBACK_…`.
+
+**Efectos esperados:** pestañas abiertas con el JS anterior pierden los resultados extra de búsqueda hasta recargar. `nj-gonzidel` (`dpl_BHA4…`, código viejo) ya no resuelve PDP fuera del snapshot.
+
+**Pendiente:** merge de la rama release / hotfix a `nj-main` (autorización aparte), Fase 1 (clientes con sesión y escritura de colaboradores), los 2 productos sin variantes, `find_similar_products` con `search_path` mal citado.

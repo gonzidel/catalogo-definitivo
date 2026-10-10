@@ -187,4 +187,20 @@ Propuesta, sin tocar estado ni visibilidad: revisión manual en el admin. Se les
    - SQL: `379_ROLLBACK_arq05_fase0_public_cost_exposure.sql`, que restaura los ACL y la política exactos. Reabre la exposición, así que se usa solo si se rompe el catálogo.
    - Los dos rollbacks son independientes: el código nuevo funciona con o sin 379.
 
+### Ensayo 379 (2026-10-09 ~21:55 ART, autorizado, TÉCNICA VERIFICADA)
+
+- Una sola sentencia `DO` con `statement_timeout` 120 s y `lock_timeout` 5 s, generada desde los archivos del commit: parte A → 6 sentencias de 379 (sin `BEGIN`/`COMMIT`/`NOTIFY`) → bloque de compatibilidad → parte B.
+- El bloque de compatibilidad repite, como anon, cliente, admin no super_admin y super_admin, las columnas exactas que piden NJ y vanilla.
+- Resultado: `379 TEST OK (14 bloques)`, con rollback forzado.
+- Huella de ACL y políticas antes/después idéntica (`daef16f1…`). `statement_timeout` de vuelta en 2 min y sin GUC residuales.
+- Primer intento abortado (también revertido): `find_similar_products` y `compute_similarity` fallan **antes** de 379. Su `proconfig` tiene `search_path="pg_catalog, public"` citado como un único esquema, así que da `undefined_table`. El vanilla (`product-alternatives.js`) ya usa el fallback. T12 ahora solo cuenta errores de permiso. Falla previa, fuera de alcance.
+
+### Candidato de deploy
+
+- `www` corre `dpl_E9RU991aMhJ5bLFReej7X9aXFcgU` (`nj-8lw98awgc-gonzidel.vercel.app`, rama `release/nj-2026-10-09-promos`), con código que **no** está en `nj-main` (Espera, confirmación manual, promos 2x en Retiro).
+- Deployar el hotfix solo (base `f004cd2`) revertiría esas funciones.
+- Candidato: rama local `release/nj-2026-10-09-arq05` (worktree `E:\PROYECTOS\fyl-release-arq05`) = `release/nj-2026-10-09-promos` + merge del hotfix.
+- `nj/` difiere de lo publicado solo en los 7 archivos del hotfix.
+- tsc OK, 213/213 tests, `next build` OK. Los avisos de autoprefixer en `conciliacion.module.css` ya existían.
+
 Orden obligatorio: el paso 5 nunca antes del 2. Con el NJ viejo, la búsqueda y el PDP piden `cost`, y con 379 aplicada recibirían error de permiso.

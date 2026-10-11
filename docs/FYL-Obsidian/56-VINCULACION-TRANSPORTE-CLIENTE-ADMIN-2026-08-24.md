@@ -59,3 +59,15 @@ Aunque Credifin / Snaider / Via Cargo listan la ciudad en sus coberturas Excel, 
 2. `MyM`
 
 Implementado en `getTransportesDisponibles` (exclusivo) y reforzado en `resolveShippingOptions`. El copy de MyM habla de envío a domicilio (no “sede más cercana”).
+
+## SEDE + Expreso Norte (2026-10-11)
+
+**NEGOCIO CONFIRMADO (2026-10-11):** en localidades con cobertura SEDE **y** Expreso Norte el cliente puede elegir entre los dos; SEDE va primero.
+
+Antes `getTransportesDisponibles` devolvía solo `["SEDE"]` si la localidad estaba en `destinos_transporte`, y el perfil NJ mostraba el transporte como texto fijo (`soloSedeUnico`). En Corrientes, 15 de las 17 localidades de Expreso Norte también están en SEDE (Curuzú Cuatiá, Goya, Mercedes, Santa Lucía, Bella Vista, Esquina, Paso de los Libres, Lavalle, Saladas, Monte Caseros, 9 de Julio, San Roque, Chavarría, Mariano I. Loza, Felipe Yofre): ningún cliente de esas localidades podía elegir Expreso Norte (caso reportado: Laura Beatriz Sotelo, Curuzú Cuatiá).
+
+Fix: `client/transportes-data.js` devuelve `["SEDE", "Expreso Norte"]` en esas localidades. Las localidades solo SEDE siguen exclusivas. Afecta perfil NJ, modal de cierre NJ y perfil/cierre legacy (`client/profile.js`, `client/dashboard-instant.js`). Test: `node --test test/transportes-data.test.mjs`.
+
+Relacionado: el modal de cierre ya respeta el transporte asignado en BD desde `8ebb768` (`resolveCloseTransportOptions`); antes, confirmar el modal en una localidad SEDE pisaba Expreso Norte con SEDE.
+
+Deuda: `normalize` no quita puntos, así que una ficha con ciudad `Mariano I Loza` no matchea `Mariano I. Loza`.

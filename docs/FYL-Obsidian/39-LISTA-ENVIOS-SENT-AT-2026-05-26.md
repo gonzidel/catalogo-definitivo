@@ -73,7 +73,25 @@ flowchart LR
 
 Pantalla: `admin/closed-orders.html`  
 RPC lista: `rpc_get_shipping_orders(p_date, p_transport_id)`  
-Transporte: `orders.transport_id` o `customers.transport_id`
+Transporte: `COALESCE(orders.transport_id, customers.transport_id)` (desde 382)
+
+### Un pedido = una planilla (382, 2026-10-11)
+
+**CONTRADICCIÓN resuelta:** esta nota y la 56 decían `COALESCE(order, customer)`, pero producción filtraba `o.transport_id = X OR c.transport_id = X`. Si el pedido y la ficha tenían transportes distintos (cliente que pasó de SEDE a Expreso Norte), el pedido salía en **las dos** planillas. Auditoría 2026-10-11: 7 pedidos enviados en 45 días, 5 de Curuzú Cuatiá.
+
+**NEGOCIO CONFIRMADO (2026-10-11):** el pedido va en la planilla del transporte del pedido; si no tiene, en la de la ficha del cliente.
+
+Migración `supabase/canonical/382_shipping_list_order_transport_first.sql` — **aplicada 2026-10-11** en `fyl-core` (`shipping_list_order_transport_first_382`). Verificado: criterio nuevo en las dos listas, snapshot en rótulos, grants sin cambios (authenticated + service_role).
+
+| Objeto | Cambio |
+|--------|--------|
+| `rpc_get_shipping_orders` | Filtro `COALESCE(o.transport_id, c.transport_id) = p_transport_id` |
+| `rpc_get_shipping_orders_range` | Mismo filtro (Excel) |
+| `rpc_mark_labels_printed` | Guarda en `orders.transport_id` el transporte del rótulo (ficha primero, pedido como fallback, igual que `closed-orders.js`) |
+
+El snapshot en `rpc_mark_labels_printed` hace falta porque `rpc_update_customer_transport` no toca pedidos con rótulos impresos (patch 322): sin él, cambiar transporte + reimprimir dejaría el pedido con el transporte viejo y saldría en la planilla equivocada.
+
+Rollback: `382_ROLLBACK_shipping_list_order_transport_first.sql`. Verificación: `382_shipping_list_order_transport_first_tests.sql`.
 
 ---
 

@@ -237,7 +237,8 @@ function isCorrientesCapital(p, l) {
 
 /**
  * Transportes para (provincia, localidad).
- * - Si la localidad está en destinos_transporte (cobertura SEDE), solo se envía por SEDE: no se mezclan otros transportes.
+ * - Si la localidad está en destinos_transporte (cobertura SEDE), se envía por SEDE; si además tiene
+ *   Expreso Norte, el cliente puede elegir entre los dos (SEDE primero). No se mezclan otros transportes.
  * - Corrientes Capital: solo Retira local + MyM.
  * - Orden fijo en el resto: Retiro → Expreso → Credifin → Transporte Snaider → Via Cargo → Correo Argentino.
  * - Si no hay SEDE en las opciones, se agrega Correo Argentino como alternativa para que el cliente pueda elegir (p. ej. Credifin + Correo).
@@ -249,7 +250,7 @@ export function getTransportesDisponibles(provincia, localidad) {
 
   const sedeRule = matchTransporte(destinos_transporte, p, l);
   if (sedeRule) {
-    return ["SEDE"];
+    return matchTransporte(expreso_norte, p, l) ? ["SEDE", "Expreso Norte"] : ["SEDE"];
   }
 
   // Corrientes Capital: aunque Credifin/Snaider/Via Cargo listan la ciudad, no aplican acá.

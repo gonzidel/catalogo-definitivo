@@ -57,6 +57,63 @@ export function retiroActiveColumnSortKey(
   return 2;
 }
 
+/** Pedido movido Pedidos → Retiro con el botón Local / Enviar al local. */
+export function isMovedFromOrdersToRetiro(
+  order: Pick<AdminOrder, "notes">
+): boolean {
+  return parseOrderNotesObject(order.notes).retiro_origin === "moved_from_orders";
+}
+
+/**
+ * Momento del pase a Retiro: `notes.moved_to_local_at`, si no `updated_at`,
+ * si no `created_at`. Sirve para dejar arriba los recién enviados desde Pedidos.
+ */
+export function getMovedToLocalAtMs(
+  order: Pick<AdminOrder, "notes" | "updated_at" | "created_at">
+): number {
+  const stamped = parseOrderNotesObject(order.notes).moved_to_local_at;
+  if (typeof stamped === "string" && stamped.trim()) {
+    const t = new Date(stamped).getTime();
+    if (!Number.isNaN(t)) return t;
+  }
+  if (order.updated_at) {
+    const t = new Date(order.updated_at).getTime();
+    if (!Number.isNaN(t)) return t;
+  }
+  const created = new Date(order.created_at).getTime();
+  return Number.isNaN(created) ? 0 : created;
+}
+
+/**
+ * Retiro → Apartados: primero los enviados desde Pedidos (más reciente arriba),
+ * después los que esperan cobro en local, después el resto.
+ */
+export function compareRetiroPickedColumn(
+  a: AdminOrder,
+  b: AdminOrder,
+  options?: {
+    isAwaitingSale?: (order: AdminOrder) => boolean;
+    tieBreak?: (a: AdminOrder, b: AdminOrder) => number;
+  }
+): number {
+  const aMoved = isMovedFromOrdersToRetiro(a) ? 0 : 1;
+  const bMoved = isMovedFromOrdersToRetiro(b) ? 0 : 1;
+  if (aMoved !== bMoved) return aMoved - bMoved;
+  if (aMoved === 0) {
+    const byMove = getMovedToLocalAtMs(b) - getMovedToLocalAtMs(a);
+    if (byMove !== 0) return byMove;
+  }
+
+  const awaiting = options?.isAwaitingSale;
+  if (awaiting) {
+    const aSale = awaiting(a) ? 0 : 1;
+    const bSale = awaiting(b) ? 0 : 1;
+    if (aSale !== bSale) return aSale - bSale;
+  }
+
+  return options?.tieBreak?.(a, b) ?? 0;
+}
+
 /** Override manual admin (notes.kanban_scope) para mover entre Pedidos ↔ Retiro. */
 export function getKanbanScopeOverride(
   order: Pick<AdminOrder, "notes">

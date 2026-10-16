@@ -1160,14 +1160,18 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
       const supabase = getSupabaseBrowserClient();
       await updateOrderKanbanScope(supabase, orderId, order.notes, targetScope);
       get().removeOrder(orderId);
+      const movedAt = new Date().toISOString();
       const movedNotes = applyOrderNotesPatch(order.notes, {
         kanban_scope: targetScope,
         retiro_origin: targetScope === "local_pickup" ? "moved_from_orders" : null,
+        moved_to_local_at: targetScope === "local_pickup" ? movedAt : null,
       });
       const destCol = getOrderKanbanColumn({ ...order, notes: movedNotes });
       const destHint =
         destCol === "picked"
-          ? " → Apartados"
+          ? targetScope === "local_pickup"
+            ? " → Apartados (arriba)"
+            : " → Apartados"
           : destCol === "active"
             ? " → Activos"
             : destCol === "waiting"

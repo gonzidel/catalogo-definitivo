@@ -24,7 +24,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
  *  Nota: `cancelled_from_status` requiere la migración 344 antes de desplegar este frontend. */
 export const ORDER_SELECT = `
   id, order_number, status, customer_id, total_amount, notes, source, payment_method,
-  created_at, sent_at, expires_at, dismantle_at, expired_at, local_deferred_pickup, pickup_timer_started_at, transport_id,
+  created_at, updated_at, sent_at, expires_at, dismantle_at, expired_at, local_deferred_pickup, pickup_timer_started_at, transport_id,
   customers(id, full_name, phone, email, dni, transport_id, city, province, kanban_inbox_owner, kanban_inbox_assigned_at),
   order_items(
     id, order_id, variant_id, product_name, color, size, quantity,
@@ -36,7 +36,7 @@ export const ORDER_SELECT = `
 /** Fallback si 338 aún no está aplicada (columnas inbox ausentes). */
 const ORDER_SELECT_WITHOUT_INBOX = `
   id, order_number, status, customer_id, total_amount, notes, source, payment_method,
-  created_at, sent_at, expires_at, dismantle_at, expired_at, local_deferred_pickup, pickup_timer_started_at, transport_id,
+  created_at, updated_at, sent_at, expires_at, dismantle_at, expired_at, local_deferred_pickup, pickup_timer_started_at, transport_id,
   customers(id, full_name, phone, email, dni, transport_id, city, province),
   order_items(
     id, order_id, variant_id, product_name, color, size, quantity,
@@ -864,12 +864,14 @@ export async function updateOrderKanbanScope(
   targetScope: "shipping" | "local_pickup"
 ) {
   const patch: Record<string, unknown> = { kanban_scope: targetScope };
-  // Pedidos → Retiro: marca origen para color amarillo en Activos.
-  // Retiro → Pedidos: limpia esa marca.
+  // Pedidos → Retiro: marca origen (amarillo) + timestamp para subir Apartados.
+  // Retiro → Pedidos: limpia esas marcas.
   if (targetScope === "local_pickup") {
     patch.retiro_origin = "moved_from_orders";
+    patch.moved_to_local_at = new Date().toISOString();
   } else {
     patch.retiro_origin = null;
+    patch.moved_to_local_at = null;
   }
   const notes = applyOrderNotesPatch(currentNotes, patch);
   const { data, error } = await supabase

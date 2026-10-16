@@ -90,6 +90,8 @@ export interface AdminOrder {
   payment_method?: string | null;
   source: string | null;
   created_at: string;
+  /** Última escritura en `orders` (p. ej. al mover Pedidos ↔ Retiro). */
+  updated_at?: string | null;
   sent_at?: string | null;
   expires_at?: string | null;
   dismantle_at?: string | null;

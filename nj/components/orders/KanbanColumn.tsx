@@ -3,7 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { filterOrdersForColumn } from "@/lib/orders/classification";
 import { isCommonLocalPickupAwaitingAdminSale } from "@/lib/orders/domain";
-import { retiroActiveColumnSortKey } from "@/lib/orders/board-scope";
+import {
+  compareRetiroPickedColumn,
+  retiroActiveColumnSortKey,
+} from "@/lib/orders/board-scope";
 import { orderMatchesCustomerSearch } from "@/lib/orders/customer-search";
 import { useExpiryWarnSentStore } from "@/lib/orders/expiry-warning-sent";
 import { isExpiryWarnCooldownActive } from "@/lib/orders/deadline";
@@ -101,16 +104,14 @@ export default function KanbanColumn({
       });
     }
     if (columnId === "picked" && boardScope === "local_pickup") {
-      return [...filtered].sort((a, b) => {
-        const aClosed = isCommonLocalPickupAwaitingAdminSale(a, a.transportName ?? null)
-          ? 0
-          : 1;
-        const bClosed = isCommonLocalPickupAwaitingAdminSale(b, b.transportName ?? null)
-          ? 0
-          : 1;
-        if (aClosed !== bClosed) return aClosed - bClosed;
-        return sentToEnd(a, b);
-      });
+      // Enviados desde Pedidos arriba (más reciente primero); cobro local después.
+      return [...filtered].sort((a, b) =>
+        compareRetiroPickedColumn(a, b, {
+          isAwaitingSale: (order) =>
+            isCommonLocalPickupAwaitingAdminSale(order, order.transportName ?? null),
+          tieBreak: sentToEnd,
+        })
+      );
     }
     if (columnId === "active" || columnId === "picked") {
       return [...filtered].sort(sentToEnd);

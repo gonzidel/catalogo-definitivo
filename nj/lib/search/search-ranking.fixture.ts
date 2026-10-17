@@ -69,6 +69,9 @@ export function fixtureProduct(row: FixtureRow): GroupedProduct {
       ColorDisplayNumber: null,
       talles: [],
       images: [],
+      // Recorte del snapshot público: hay stock y precio, así el autocompletado puede contarlo.
+      Precio: "1500",
+      hasStock: true,
       OfertaActiva: false,
       PrecioOferta: "",
       PromoActiva: "",

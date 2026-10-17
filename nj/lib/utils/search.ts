@@ -11,7 +11,13 @@ import { getCanonicalLabel } from "@/lib/search/dictionary";
 import { normalizeText } from "@/lib/search/normalize";
 import { resolveSearchQuery } from "@/lib/search/search-resolver";
 import { tokenMatches } from "@/lib/search/match-quality";
-import { rankSearchProducts, splitTagField } from "@/lib/search/search-score";
+import {
+  normalizeProductFields,
+  rankSearchProducts,
+  scoreProductSearch,
+  splitTagField,
+} from "@/lib/search/search-score";
+import { productIsPurchasable } from "@/lib/stock/catalog-availability";
 import {
   EMPTY_SEARCH_DICTIONARY,
   type SearchDictionary,
@@ -186,8 +192,39 @@ export function buildSuggestions(
 
   candidates.sort((a, b) => b.score - a.score);
 
+  // Tags y categorías que buscan solo entran si confirmarlas encuentra
+  // al menos un producto comprable. Un tag vacío no ocupa un cupo.
+  const purchasable = products.flatMap((product) => {
+    if (!productIsPurchasable(product)) return [];
+    return [{ product, fields: normalizeProductFields(product) }];
+  });
+  const hitByQuery = new Map<string, boolean>();
+
+  function hasPurchasableHit(query: string): boolean {
+    const key = normalizeText(query);
+    const cached = hitByQuery.get(key);
+    if (cached !== undefined) return cached;
+    const resolved = resolveSearchQuery(query, dict);
+    const ok =
+      resolved.resolvedTokens.some((token) => token.length >= 2) &&
+      purchasable.some(({ product, fields }) =>
+        scoreProductSearch(product, resolved, fields, dict)
+      );
+    hitByQuery.set(key, ok);
+    return ok;
+  }
+
+  function keepSuggestion(s: SearchSuggestion): boolean {
+    if (s.type === "product") return true;
+    if (s.type === "categoria" && s.href) return true;
+    if (s.type === "tag" || s.type === "categoria") return hasPurchasableHit(s.query);
+    const _exhaustive: never = s.type;
+    return _exhaustive;
+  }
+
   for (const { s } of candidates) {
     if (suggestions.length >= limit) break;
+    if (!keepSuggestion(s)) continue;
     suggestions.push(s);
   }
 

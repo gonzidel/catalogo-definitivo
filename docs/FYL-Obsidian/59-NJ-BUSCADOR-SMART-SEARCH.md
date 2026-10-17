@@ -41,6 +41,8 @@ INPUT visible (nunca se reescribe)
 
 `commitSearch(raw)` en `nj/components/search/SearchBar.tsx` es el único commit textual → `/?q=`. El debounce (280 ms) solo arma sugerencias. Enter: highlight → `applySuggestion`; si no → `commitSearch`. Tags del autocomplete → `commitSearch`, nunca `/tags/...`. Productos → PDP `/producto/{Articulo}`. Recarga y `?q=` directo **no** cuentan como analytics.
 
+Un chip de tag, o de categoría sin ruta, solo se muestra si esa consulta encuentra al menos un producto comprable (`productIsPurchasable`) en el pool cargado. Si el resultado sería 0, el chip no ocupa un lugar de la lista. El código de artículo sigue abriendo la ficha. La fila «Buscar “lo escrito”» y Enter siguen aceptando texto libre: «Jeans elástico» puede dar 0 porque no es un tag y «elástico» no alcanza a «elastizado». No se agregan aliases solos.
+
 ## Archivos
 
 | Capa | Archivo |

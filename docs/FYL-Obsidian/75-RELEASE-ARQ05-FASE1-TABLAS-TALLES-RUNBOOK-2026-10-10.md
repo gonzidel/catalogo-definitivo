@@ -104,3 +104,11 @@ Con 378 y 380 aplicadas y sin 381, tanto el código viejo como el nuevo funciona
   - las RPC de estadísticas devuelven métricas derivadas del costo a cualquier admin;
   - `admins` es legible por clientes.
 - El push a `nj-main` del 2026-10-10 pudo generar un Preview de `catalogo-definitivo`. No afecta producción.
+
+## Publicación ejecutada (2026-10-19)
+
+- Candidato: `56ea57f` / worktree `fyl-release-integrada-prod`.
+- NJ: `dpl_22g1WNDdan85cK1Hn46aWp694iTs` (`nj-bvoi5hj3u`) en `www` y `nj-drab`. `nj-gonzidel` sigue en `dpl_BHA4…`. Rollback NJ: `alias set nj-rely8826z-gonzidel.vercel.app www.fylmoda.com.ar` + promote `dpl_76DFu…`.
+- Firebase hosting: staging de 12 archivos admin publicado en `catalogo-fyl-test`. Rollback: historial Firebase o deploy desde `fyl-firebase-rollback-2026-10-10`.
+- SQL: 378, 380 y **381 aplicadas**. Costos solo por RPC super_admin; `authenticated` sin privilegios de columna en cost/*.
+- Verificación post-381: `POST381 OK` (cliente/colaborador denegados; super por RPC; catálogo/stock/ofertas/pedidos lectura OK).

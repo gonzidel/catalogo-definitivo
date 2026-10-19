@@ -1,7 +1,6 @@
 # 74 - Tablas de talles en el admin legacy (2026-10-10)
 
-Estado: **EN EVALUACIÓN** — código listo en la rama `feat/tablas-de-talles`, sin publicar.
-La migración 378 está ensayada en producción con rollback, pero **no aplicada**.
+Estado: **CERRADA (admin legacy, 2026-10-19)** — 378 aplicada; gestión/asignación publicada en Firebase junto con ARQ-05 Fase 1. Catálogo público / PDP NJ siguen fuera de alcance (deuda de la nota). Runbook/rollbacks: nota 75.
 
 ## Qué es (y qué no es)
 

@@ -1,7 +1,7 @@
 # 75 - Publicación integrada: ARQ-05 Fase 1 + tablas de talles (runbook, 2026-10-10)
 
-**Estado (2026-10-19):** candidato vigente `427c778` sobre producción `79fd269`. **378 y 380 aplicadas en producción.** Pendiente autorización: deploy NJ, deploy Firebase y migración 381.
-Contexto: nota 73 (ARQ-05, §6 Fase 1) y nota 74 (tablas de talles).
+**Estado (2026-10-19):** **PUBLICACIÓN CERRADA.** 378 + 380 + 381 aplicadas; NJ `dpl_22g1WNDdan85cK1Hn46aWp694iTs` en `www`/`nj-drab`; admin legacy en Firebase; sincronización a `nj-main` autorizada. ARQ-05 Fases 0/1 y tablas de talles (admin) cerradas. Deuda de seguridad restante → ARQ-07…ARQ-10 en `docs/12_PENDIENTES.md`.
+Contexto: nota 73 (ARQ-05) y nota 74 (tablas de talles).
 
 ## Candidato
 
@@ -94,21 +94,25 @@ Con 378 y 380 aplicadas y sin 381, tanto el código viejo como el nuevo funciona
 
 **Orden de reversión:** 381 → código (NJ y/o Firebase) → 380 → 378. 378 solo se revierte con el admin viejo ya publicado.
 
-## Riesgos pendientes
+## Riesgos / deuda post-cierre
 
-- Las pestañas del admin abiertas antes del deploy de Firebase y no recargadas fallan al cargar o guardar productos una vez aplicada 381. Se resuelve recargando.
-- Quedan fuera de esta publicación: las 8 landings, `client/transportes-data.js` (fix `8ebb768`) y los cambios de `admin/control.html` sin commitear en el worktree principal. Siguen como están publicados.
-- Firebase sigue publicando las fuentes `nj/**`. Ya pasaba antes; no lo cambia este deploy.
-- Fuera del alcance de la Fase 1 (decisión pendiente, nota 73):
-  - los clientes con sesión leen `suppliers.name`;
-  - las RPC de estadísticas devuelven métricas derivadas del costo a cualquier admin;
-  - `admins` es legible por clientes.
-- El push a `nj-main` del 2026-10-10 pudo generar un Preview de `catalogo-definitivo`. No afecta producción.
+- Pestañas del admin sin recargar tras 381: fallan al cargar/guardar productos → recargar.
+- Fuera de alcance (siguen como estaban publicados): 8 landings, `client/transportes-data.js`, `admin/control.html` sin commitear; Firebase sigue subiendo fuentes `nj/**`.
+- Deuda de seguridad independiente: ARQ-07 (`suppliers.name` para clientes), ARQ-08 (métricas de costo en stats a cualquier admin), ARQ-09 (`admins` legible por clientes), ARQ-10 (2 productos `pending_stock` sin variantes).
 
 ## Publicación ejecutada (2026-10-19)
 
-- Candidato: `56ea57f` / worktree `fyl-release-integrada-prod`.
-- NJ: `dpl_22g1WNDdan85cK1Hn46aWp694iTs` (`nj-bvoi5hj3u`) en `www` y `nj-drab`. `nj-gonzidel` sigue en `dpl_BHA4…`. Rollback NJ: `alias set nj-rely8826z-gonzidel.vercel.app www.fylmoda.com.ar` + promote `dpl_76DFu…`.
-- Firebase hosting: staging de 12 archivos admin publicado en `catalogo-fyl-test`. Rollback: historial Firebase o deploy desde `fyl-firebase-rollback-2026-10-10`.
-- SQL: 378, 380 y **381 aplicadas**. Costos solo por RPC super_admin; `authenticated` sin privilegios de columna en cost/*.
-- Verificación post-381: `POST381 OK` (cliente/colaborador denegados; super por RPC; catálogo/stock/ofertas/pedidos lectura OK).
+- Candidato desplegado: `56ea57f` / worktree `fyl-release-integrada-prod`.
+- NJ: `dpl_22g1WNDdan85cK1Hn46aWp694iTs` (`nj-bvoi5hj3u`) en `www` y `nj-drab`. `nj-gonzidel` = `dpl_BHA4AYjEo56jbz9B7xstLjrXYZpP`.
+- Firebase: staging de 12 archivos admin en `catalogo-fyl-test`.
+- SQL: 378, 380 y **381 aplicadas**. Verificación `POST381 OK`.
+
+### Rollbacks documentados (sin ejecutar)
+
+| Capa | Acción |
+|------|--------|
+| NJ `www` | `vercel alias set nj-rely8826z-gonzidel.vercel.app www.fylmoda.com.ar` + `vercel promote dpl_76DFu3UyXZCVX9eRMByr4BFFPVYr` + fijar `nj-gonzidel` en `dpl_BHA4…`. Con 381 aplicada, el código viejo rompe costos del admin: preferir revertir 381 primero. |
+| Firebase | Historial de versiones, o `firebase deploy --only hosting` desde `E:\PROYECTOS\fyl-firebase-rollback-2026-10-10`. |
+| 381 | `381_ROLLBACK_arq05_fase1_products_column_grants.sql` (inmediato). |
+| 380 | `380_ROLLBACK_…` solo con 381 revertida y código viejo publicado. |
+| 378 | `378_ROLLBACK_size_charts.sql` solo si **no** hay tablas con datos (borra tablas/columna). Si hay datos, no usar rollback destructivo. |

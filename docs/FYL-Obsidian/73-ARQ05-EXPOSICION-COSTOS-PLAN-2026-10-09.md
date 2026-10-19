@@ -1,6 +1,6 @@
 # ARQ-05 — Exposición de costos por la API pública: diagnóstico y plan de corrección
 
-Fecha: 2026-10-09 · Rama: `hotfix/arq-05-exposicion-costos` (desde `origin/nj-main` f004cd2) · Estado: **Fase 0 preparada en la rama (código + tests + SQL 379). Nada desplegado ni aplicado.**
+Fecha: 2026-10-09 · Actualización cierre: 2026-10-19 · Estado: **CERRADA — Fases 0 y 1 publicadas en producción** (379 + 380 + 381; NJ `dpl_22g1…` en `www`; admin legacy con costos por RPC). Deuda restante en `docs/12_PENDIENTES.md` como ARQ-07…ARQ-10. Runbook/rollbacks: nota 75.
 
 Clasificación: **TÉCNICA VERIFICADA** (solo lectura sobre producción `dtfznewwvsadkorxwzft`).
 **CONTRADICCIÓN** con `14-AUDITORIA-MODULO-PRODUCTS.md`: la protección de la migración 182 (`enforce_sensitive_product_fields`) no existe en producción.

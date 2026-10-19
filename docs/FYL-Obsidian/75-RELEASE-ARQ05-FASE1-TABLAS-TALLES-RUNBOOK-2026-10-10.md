@@ -1,6 +1,6 @@
 # 75 - Publicación integrada: ARQ-05 Fase 1 + tablas de talles (runbook, 2026-10-10)
 
-**Estado:** preparado y ensayado. **Nada aplicado ni publicado.** Cada paso de publicación requiere autorización explícita.
+**Estado (2026-10-19):** candidato vigente `427c778` sobre producción `79fd269`. **378 y 380 aplicadas en producción.** Pendiente autorización: deploy NJ, deploy Firebase y migración 381.
 Contexto: nota 73 (ARQ-05, §6 Fase 1) y nota 74 (tablas de talles).
 
 ## Candidato

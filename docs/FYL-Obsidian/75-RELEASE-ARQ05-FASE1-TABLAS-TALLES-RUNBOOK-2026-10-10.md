@@ -5,10 +5,13 @@ Contexto: nota 73 (ARQ-05, §6 Fase 1) y nota 74 (tablas de talles).
 
 ## Candidato
 
-- Rama local `release/arq05-fase1-tablas-talles`, worktree `E:\PROYECTOS\fyl-release-integrada`. Base `nj-main` = `908abd6` (release publicada `b30fe1e` + advisors 370–373, ya aplicadas).
-  - `9f6b629`: merge de `fix/arq-05-fase1-costos` (380/381, costos solo por RPC de super_admin).
-  - `deccfe4`: merge de `feat/tablas-de-talles` (378 + admin legacy). Conflictos resueltos: `PRODUCT_ADMIN_COLUMNS` incluye `size_chart_id`; el alta rápida y el guardado envían `size_chart_id` (solo si el selector cargó) y **ningún** campo de costo, porque el costo va por `saveProductPricing` (RPC).
-- **NJ:** respecto de lo publicado en `www` (`b30fe1e`, `dpl_4mLc1uDLTQ7KkMH47vZkJznYJSmk`), cambian solo los 4 archivos de la Fase 1: `nj/app/admin/products/[id]/page.tsx`, `ProductGeneralForm.tsx`, `nj/lib/products/actions.ts` y su test. NJ no usa `size_chart_id`.
+- **Candidato vigente (2026-10-19):** rama local `release/arq05-fase1-tablas-talles-prod`, worktree `E:\PROYECTOS\fyl-release-integrada-prod`, commit `8231529`.
+  - Base = producción actual `79fd269` (`www` = `dpl_76DFu3UyXZCVX9eRMByr4BFFPVYr` / `nj-rely8826z`): incluye chips de tags sin productos comprables y priorización de Apartados (`c7f1b5f`).
+  - Merge sin conflictos de `e8ca781` (Fase 1 + tablas de talles). SQL 378/380/381 con los mismos SHA-256 ensayados.
+- Rama anterior `release/arq05-fase1-tablas-talles` (`e8ca781`, worktree `fyl-release-integrada`): quedó atrás de `www` y **no** debe publicarse.
+  - `9f6b629` / `2042776`: Fase 1 costos por RPC.
+  - `deccfe4`: tablas de talles; `PRODUCT_ADMIN_COLUMNS` incluye `size_chart_id`; costos solo por `saveProductPricing`.
+- **NJ:** respecto de `www` actual (`79fd269`), cambian solo los 4 archivos de la Fase 1: `nj/app/admin/products/[id]/page.tsx`, `ProductGeneralForm.tsx`, `nj/lib/products/actions.ts` y su test. NJ no usa `size_chart_id`.
 - **Firebase (admin legacy):** directorio de deploy armado aparte, `E:\PROYECTOS\fyl-firebase-staging-2026-10-10` (manifiesto `….manifest.json`).
   - 760 archivos: 744 idénticos byte a byte a lo publicado, 4 rutas que hoy redirigen (sus archivos salen de `af349fb`, el commit del deploy vivo), `config.prod.js` y `scripts/config.local.js` bajados del sitio vivo, y los 12 archivos del admin integrado, idénticos al candidato.
   - `firebase.json` sin `predeploy`: no se regenera nada.
@@ -60,7 +63,7 @@ Con 378 y 380 aplicadas y sin 381, tanto el código viejo como el nuevo funciona
    - repetir la huella del ensayo;
    - `git -C E:\PROYECTOS\fyl-release-integrada status` limpio. SHA-256 de los archivos ensayados: 378 `C36D194234B9…`, 380 `8D143FAF123D…`, 381 `26B0567C75E3…`;
    - repetir la verificación staging contra el sitio vivo (`verify-staging.mjs`), que debe dar solo los 12 archivos previstos;
-   - registrar a qué deploy apunta `www` (hoy `dpl_4mLc…`) y a cuál `nj-gonzidel` (`dpl_BHA4AYjEo56jbz9B7xstLjrXYZpP`).
+   - registrar a qué deploy apunta `www` (2026-10-19: `dpl_76DFu3UyXZCVX9eRMByr4BFFPVYr` / `nj-rely8826z`) y a cuál `nj-gonzidel` (`dpl_BHA4AYjEo56jbz9B7xstLjrXYZpP`).
 1. **Aplicar 378** (`378_size_charts.sql` tal cual). Toma un lock breve de `products` por el `ADD COLUMN`.
    - Verificar: bloque B de `378_size_charts_tests.sql` todo true. El admin publicado sigue funcionando: su `select("*")` recibe una columna más y la ignora.
    - Rollback: `378_ROLLBACK_size_charts.sql`. **Solo mientras ningún admin publicado pida `size_chart_id`.** Borra las tablas cargadas.
@@ -72,7 +75,7 @@ Con 378 y 380 aplicadas y sin 381, tanto el código viejo como el nuevo funciona
    - volver a fijar `nj-gonzidel` en `dpl_BHA4AYjEo56jbz9B7xstLjrXYZpP`, porque el deploy de producción lo mueve;
    - smoke sobre la URL del deploy: catálogo, búsqueda, PDP, ofertas; `/admin/products/[id]` como super_admin (ve y guarda costo) y como colaborador (sin costo, guarda);
    - `vercel promote <url>` → `vercel alias set <url> www.fylmoda.com.ar` → volver a fijar `nj-gonzidel`.
-   - Rollback: `vercel alias set nj-kntuh97nn-gonzidel.vercel.app www.fylmoda.com.ar` + `vercel promote dpl_4mLc1uDLTQ7KkMH47vZkJznYJSmk` + volver a fijar `nj-gonzidel`. Exige 381 revertida o todavía no aplicada.
+   - Rollback: `vercel alias set nj-rely8826z-gonzidel.vercel.app www.fylmoda.com.ar` + `vercel promote dpl_76DFu3UyXZCVX9eRMByr4BFFPVYr` + volver a fijar `nj-gonzidel`. Exige 381 revertida o todavía no aplicada.
 4. **Publicar el admin legacy:** `cd E:\PROYECTOS\fyl-firebase-staging-2026-10-10` y `firebase deploy --only hosting` (proyecto `catalogo-fyl-test`).
    - Smoke:
      - productos: abrir, editar y guardar como colaborador; editar el costo como super_admin;

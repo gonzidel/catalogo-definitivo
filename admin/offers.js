@@ -1,8 +1,22 @@
 ﻿// admin/offers.js
 import { requireAuth } from "./admin-auth.js?v=m260607";
 import { supabase } from "../scripts/supabase-client.js?v=m260607";
+import { isSuperAdmin } from "./permissions-helper.js?v=m260607";
+import { fetchProductPricingMap } from "./product-pricing.js?v=m260607";
 
 await requireAuth();
+
+/** Costo por product_id; vacío si el usuario no es super_admin. */
+async function getProductCostMap(productIds) {
+  if (!(await isSuperAdmin())) return new Map();
+  try {
+    const pricingById = await fetchProductPricingMap(productIds);
+    return new Map([...pricingById].map(([id, row]) => [id, row.cost]));
+  } catch (error) {
+    console.warn('No se pudieron leer costos de productos:', error);
+    return new Map();
+  }
+}
 
 // Estado global
 let currentProduct = null;
@@ -991,7 +1005,7 @@ async function searchPromoItems(term) {
     // filtrar/ordenar por similitud en el cliente antes de recortar la lista final)
     const { data: productsRaw, error: productsError } = await supabase
       .from('products')
-      .select('id, name, category, cost')
+      .select('id, name, category')
       .ilike('name', `%${term}%`)
       .eq('status', 'active')
       .limit(30);
@@ -1006,7 +1020,7 @@ async function searchPromoItems(term) {
     // Buscar variantes por SKU (sin size, ya que está en variant_sizes)
     const { data: variantsBySkuRaw, error: variantsSkuError } = await supabase
       .from('product_variants')
-      .select('id, sku, color, products!inner(id, name, cost)')
+      .select('id, sku, color, products!inner(id, name)')
       .ilike('sku', `%${term}%`)
       .eq('active', true)
       .limit(30);
@@ -1027,7 +1041,7 @@ async function searchPromoItems(term) {
       const productIds = matchingProducts.slice(0, 10).map(p => p.id);
       const { data: variantsData, error: variantsNameError } = await supabase
         .from('product_variants')
-        .select('id, sku, color, products!inner(id, name, cost)')
+        .select('id, sku, color, products!inner(id, name)')
         .in('product_id', productIds)
         .eq('active', true)
         .limit(30);
@@ -1057,6 +1071,11 @@ async function searchPromoItems(term) {
       throw variantsSkuError || productsMatchError;
     }
     
+    const costByProductId = await getProductCostMap([
+      ...products.map(p => p.id),
+      ...variants.map(v => v.products?.id),
+    ]);
+
     promoItemSuggestions.innerHTML = '';
     
     if (products && products.length > 0) {
@@ -1066,7 +1085,7 @@ async function searchPromoItems(term) {
         option.setAttribute('data-type', 'product');
         option.setAttribute('data-id', product.id);
         option.setAttribute('data-name', product.name);
-        option.setAttribute('data-cost', product.cost || '');
+        option.setAttribute('data-cost', costByProductId.get(product.id) || '');
         promoItemSuggestions.appendChild(option);
       });
     }
@@ -1079,7 +1098,7 @@ async function searchPromoItems(term) {
         option.setAttribute('data-id', variant.id);
         option.setAttribute('data-name', `${variant.products.name} - ${variant.color} ${variant.size}`);
         // Para variantes, obtener el costo del producto padre
-        option.setAttribute('data-cost', variant.products.cost || '');
+        option.setAttribute('data-cost', costByProductId.get(variant.products.id) || '');
         promoItemSuggestions.appendChild(option);
       });
     }
@@ -1296,8 +1315,8 @@ async function loadPromotions() {
             id,
             product_id,
             variant_id,
-            products:product_id(id, name, cost),
-            variants:variant_id(id, sku, color, size, products!inner(id, name, cost))
+            products:product_id(id, name),
+            variants:variant_id(id, sku, color, size, products!inner(id, name))
           `)
           .eq('promotion_id', promo.id);
         
@@ -1306,19 +1325,25 @@ async function loadPromotions() {
           return { ...promo, itemsCount: 0, items: [] };
         }
         
+        const costByProductId = await getProductCostMap(
+          (items || []).map(item => item.products?.id || item.variants?.products?.id)
+        );
+
         // Construir lista de nombres de items con costo
         const itemNames = [];
         if (items && items.length > 0) {
           items.forEach(item => {
             if (item.product_id && item.products) {
               // Es un producto completo
-              const costText = item.products.cost ? ` (Costo: $${parseFloat(item.products.cost).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})` : '';
+              const productCost = costByProductId.get(item.products.id);
+              const costText = productCost ? ` (Costo: $${parseFloat(productCost).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})` : '';
               itemNames.push(`${item.products.name}${costText}`);
             } else if (item.variant_id && item.variants) {
               // Es una variante
               const variant = item.variants;
               if (variant.products) {
-                const costText = variant.products.cost ? ` (Costo: $${parseFloat(variant.products.cost).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})` : '';
+                const variantCost = costByProductId.get(variant.products.id);
+                const costText = variantCost ? ` (Costo: $${parseFloat(variantCost).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})` : '';
                 itemNames.push(`${variant.products.name} - ${variant.color} ${variant.size || ''}${costText}`.trim());
               }
             }
@@ -2049,12 +2074,16 @@ window.editPromotion = async function(promoId) {
         id,
         product_id,
         variant_id,
-        products:product_id(id, name, cost),
-        variants:variant_id(id, sku, color, size, products!inner(id, name, cost))
+        products:product_id(id, name),
+        variants:variant_id(id, sku, color, size, products!inner(id, name))
       `)
       .eq('promotion_id', promoId);
     
     if (itemsError) throw itemsError;
+
+    const costByProductId = await getProductCostMap(
+      (items || []).map(item => item.products?.id || item.variants?.products?.id)
+    );
     
     // Pre-llenar formulario con datos de la promoción
     if (promoType) promoType.value = promotion.promo_type;
@@ -2082,7 +2111,7 @@ window.editPromotion = async function(promoId) {
               type: 'product',
               id: product.id,
               name: product.name,
-              cost: product.cost || null
+              cost: costByProductId.get(product.id) || null
             });
           }
         } else if (item.variant_id) {
@@ -2093,7 +2122,7 @@ window.editPromotion = async function(promoId) {
               type: 'variant',
               id: variant.id,
               name: `${variant.products.name} - ${variant.color} ${variant.size}`,
-              cost: variant.products.cost || null
+              cost: costByProductId.get(variant.products.id) || null
             });
           }
         }

@@ -180,6 +180,18 @@
               </div>
             </div>
           </label>
+          <label id="size-chart-field" style="display:none;">Tabla de talles
+            <div style="display:flex;gap:6px;align-items:flex-start;flex-wrap:wrap;">
+              <select id="size-chart" style="flex:1;min-width:160px;" disabled>
+                <option value="">Cargando…</option>
+              </select>
+              <button type="button" id="size-chart-new-btn" class="btn" disabled>+ Nueva</button>
+              <button type="button" id="size-chart-edit-btn" class="btn" disabled>Editar</button>
+              <button type="button" id="size-chart-duplicate-btn" class="btn" disabled>Duplicar</button>
+              <button type="button" id="size-chart-retry-btn" class="btn" style="display:none;">Reintentar</button>
+            </div>
+            <small id="size-chart-hint" class="hint"></small>
+          </label>
           <label id="price-percentage-label" data-cost-sensitive="global-pricing">Porcentaje de ganancia (%)
             <input id="price-percentage" type="number" step="0.1" min="0" max="100" value="30" placeholder="30" />
             <small id="price-percentage-hint" class="hint" data-cost-sensitive="global-pricing">Porcentaje que se aplica al costo para calcular el precio recomendado</small>

@@ -234,7 +234,6 @@ const SOURCE_DIRS = ["app", "components", "hooks", "lib", "store", "middleware.t
 const COST_ALLOWLIST = new Set([
   "lib/products/actions.ts",
   "lib/products/pricing.ts",
-  "app/admin/products/[id]/page.tsx",
   "components/admin-products/ProductGeneralForm.tsx",
 ]);
 
@@ -287,7 +286,85 @@ test("las Server Actions de costos y proveedores exigen permiso antes de consult
   }
 
   assertGuardBeforeQuery("getCategoryPricingDefault", "await requireSuperAdmin()");
+  assertGuardBeforeQuery("getProductPricing", "await requireSuperAdmin()");
   assertGuardBeforeQuery("listSuppliers", "await requireProductsView()");
 
   assert.match(source, /async function requireSuperAdmin\(\)[\s\S]*?if \(!ctx\?\.isSuperAdmin\)/);
+});
+
+const PRODUCTS_SELECT_LITERAL = /from\(\s*["']products["']\s*\)\s*\.select\(\s*(["'`])([\s\S]*?)\1/g;
+const PRODUCTS_EMBED = /\bproducts(?:![a-z_]+)?(?::[a-z_]+(?:![a-z_]+)?)?\s*\(([^()]*)\)/g;
+
+/** Columnas pedidas a `products` (directo o como embed) que incluyen costos. */
+function sensitiveSelects(source: string): string[] {
+  return [
+    ...[...source.matchAll(PRODUCTS_SELECT_LITERAL)].map((m) => m[2]),
+    ...[...source.matchAll(PRODUCTS_EMBED)].map((m) => m[1]),
+  ].filter((columns) => SENSITIVE_COLUMNS.test(columns));
+}
+
+/** Fragmento entre `marker` y el cierre de su primer objeto literal `({ ... })`. */
+function objectLiteralAfter(body: string, marker: string): string {
+  const start = body.indexOf(marker);
+  assert.ok(start >= 0, `${marker} no encontrado`);
+  const end = body.indexOf("})", start);
+  return body.slice(start, end);
+}
+
+test("ARQ-05 Fase 1: el admin NJ lee y escribe costos solo por RPC", () => {
+  const files: string[] = [];
+  for (const dir of SOURCE_DIRS) collectSourceFiles(join(NJ_ROOT, dir), files);
+  const offenders = files.flatMap((file) =>
+    sensitiveSelects(readFileSync(file, "utf8")).map(
+      (columns) => `${relative(NJ_ROOT, file).split(sep).join("/")}: ${columns}`
+    )
+  );
+  assert.deepEqual(offenders, []);
+
+  const source = readFileSync(join(NJ_ROOT, "lib/products/actions.ts"), "utf8");
+  for (const [fnName, writeMarker] of [
+    ["createProduct", ".insert({"],
+    ["updateProductGeneral", ".update({"],
+  ]) {
+    const body = source.slice(source.indexOf(`export async function ${fnName}`));
+    const payload = objectLiteralAfter(body, writeMarker);
+    assert.doesNotMatch(payload, /\bcost|price_percentage|logistic_amount|\.\.\./, `${fnName} no debe escribir costos en products`);
+    assert.ok(body.indexOf("saveSensitiveFields(") > body.indexOf(writeMarker), `${fnName} debe guardar costos por RPC después de escribir el producto`);
+  }
+
+  const saveFn = source.slice(source.indexOf("async function saveSensitiveFields"));
+  const guardAt = saveFn.indexOf("if (!ctx?.isSuperAdmin) return null;");
+  const rpcAt = saveFn.indexOf('rpc("rpc_admin_set_product_pricing"');
+  assert.ok(guardAt >= 0 && rpcAt > guardAt, "saveSensitiveFields debe verificar super_admin antes de la RPC");
+});
+
+const LEGACY_ADMIN_DIR = join(NJ_ROOT, "..", "admin");
+
+test("ARQ-05 Fase 1: el admin legacy no pide costos de products por PostgREST", () => {
+  const files = readdirSync(LEGACY_ADMIN_DIR)
+    .filter((name) => name.endsWith(".js"))
+    .map((name) => join(LEGACY_ADMIN_DIR, name));
+  assert.ok(files.length > 20, "el escaneo no encontró el admin legacy");
+
+  const offenders: string[] = [];
+  for (const file of files) {
+    const name = relative(LEGACY_ADMIN_DIR, file);
+    const source = readFileSync(file, "utf8");
+    for (const columns of sensitiveSelects(source)) offenders.push(`${name}: select ${columns}`);
+    for (const m of source.matchAll(/from\(\s*["']products["']\s*\)\s*\.select\(\s*["'`]\s*\*/g)) {
+      offenders.push(`${name}: ${m[0]}`);
+    }
+    for (const m of source.matchAll(/products(?:![a-z_]+)?\s*\(\s*\*\s*\)/g)) offenders.push(`${name}: ${m[0]}`);
+    if (name !== "product-pricing.js") {
+      for (const m of source.matchAll(/\b(cost_is_estimated|price_percentage|logistic_amount)\s*:/g)) {
+        offenders.push(`${name}: ${m[0]}`);
+      }
+    }
+  }
+  assert.deepEqual(offenders, []);
+
+  const pricing = readFileSync(join(LEGACY_ADMIN_DIR, "product-pricing.js"), "utf8");
+  const adminColumns = pricing.match(/PRODUCT_ADMIN_COLUMNS =([\s\S]*?);/)?.[1] ?? "";
+  assert.match(adminColumns, /\bid\b/);
+  assert.doesNotMatch(adminColumns, SENSITIVE_COLUMNS);
 });

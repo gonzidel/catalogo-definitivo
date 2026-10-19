@@ -227,3 +227,44 @@ Orden obligatorio: el paso 5 nunca antes del 2. Con el NJ viejo, la búsqueda y 
 **Efectos esperados:** pestañas abiertas con el JS anterior pierden los resultados extra de búsqueda hasta recargar. `nj-gonzidel` (`dpl_BHA4…`, código viejo) ya no resuelve PDP fuera del snapshot.
 
 **Pendiente:** merge de la rama release / hotfix a `nj-main` (autorización aparte), Fase 1 (clientes con sesión y escritura de colaboradores), los 2 productos sin variantes, `find_similar_products` con `search_path` mal citado.
+
+## 6. Fase 1 — implementación local (2026-10-10, sin aplicar ni publicar)
+
+Rama `fix/arq-05-fase1-costos` (desde `7e4128f` = release publicada + hotfix). Nada aplicado en producción.
+
+### SQL
+
+- `380_arq05_fase1_admin_pricing_rpcs.sql` (aditiva): `rpc_admin_get_product_pricing(uuid[])` y `rpc_admin_set_product_pricing(uuid, numeric, boolean, numeric, numeric)`. `SECURITY DEFINER`, `search_path = ''`, 42501 si `auth.uid()` no es super_admin, máximo 1000 ids, P0002 si el producto no existe, `cost_is_estimated` NULL → false. Sin validación de negativos (no hay regla de negocio confirmada). EXECUTE solo `authenticated`.
+- `381_arq05_fase1_products_column_grants.sql`: `REVOKE SELECT, INSERT, UPDATE ON products FROM authenticated` + `GRANT` de las mismas 19 columnas sin costo para SELECT, INSERT y UPDATE (`size_chart_id` también si la columna ya existe). **Reemplaza a la protección 182.** También super_admin pierde el acceso directo a las columnas de costo: lee y escribe solo por RPC. `DELETE`, `anon` y las RPC de estadísticas no cambian.
+- Rollbacks: `381_ROLLBACK_…` (`GRANT SELECT, INSERT, UPDATE ON products TO authenticated`, vuelve a `arwdxtm`) y `380_ROLLBACK_…` (borra las dos funciones; revertir 381 antes).
+- `381_arq05_fase1_tests.sql`: 11 bloques (permisos, lista exacta de columnas, cliente sin costo ni RPC y con los mismos conteos de `products` y `catalog_public_view`, colaborador sin leer/escribir costo pero editando y creando productos, super_admin por RPC, anon sin cambios). Termina en `RAISE EXCEPTION` (todo se revierte).
+
+**Ensayo local (PGlite, TÉCNICA VERIFICADA en local):** 380 + 381 + tests en una transacción: `381 TEST OK (11 bloques)`, con y sin `size_chart_id`. Tras rollback 381 el ACL es idéntico al original; tras rollback 380 no quedan funciones; reaplicación OK. Control negativo (sin 381): fallan T1, T2, T3, T5, T6, T7 y T9.
+
+### Código
+
+- Legacy `admin/product-pricing.js` (nuevo): `PRODUCT_ADMIN_COLUMNS`, `fetchProductPricingMap(ids)` y `saveProductPricing(id, …)`.
+- `admin/products.js`: `loadProductById` con columnas explícitas + costo por RPC (solo si `canViewCostFields`). Alta rápida y guardado sin costos en el payload; el costo va por RPC después del insert/update. Si la lectura del costo falla, el guardado **no envía costo** (no pisa el valor real) y avisa. Si la escritura del costo falla, se fija `currentProductId` (reintentar no duplica) y se pide volver a guardar.
+- `admin/offers.js`: el costo (solo visual) llega por RPC únicamente para super_admin.
+- `admin/import-export.js`: snapshot de rollback con `name, category, status, description` (antes `*`, que con 381 haría fallar el rollback para todos).
+- `admin/public-sales.js`: `products(*)` → `products(name)`.
+- NJ: `getProductPricing` (Server Action con `requireSuperAdmin`); `createProduct` / `updateProductGeneral` escriben costos por RPC solo si super_admin. Si el costo falla al crear, se devuelve `pricingError` y se navega a la edición (no se duplica el producto).
+- Tests NJ: escaneo de `select`/embeds de `products` sin costos en NJ y en el admin legacy, sin `select("*")`/`products(*)`, payloads de insert/update sin costos y guardas antes de la RPC. 215/215, `tsc` 0, `next build` OK.
+
+### Publicación (cada paso requiere autorización)
+
+> **Actualización 2026-10-10:** la Fase 1 se integró con las tablas de talles (378) en `release/arq05-fase1-tablas-talles`. El ensayo en producción de 378 + 380 + 381 con pruebas de integración dio OK y se revirtió. El orden definitivo, el deploy de Firebase con un staging que no pisa archivos publicados y la reversión de cada etapa están en `75-RELEASE-ARQ05-FASE1-TABLAS-TALLES-RUNBOOK-2026-10-10.md`, que reemplaza a la lista de abajo.
+
+1. Ensayo en producción de 380 + 381 + tests (transacción con `RAISE EXCEPTION`).
+2. Aplicar 380 (aditiva; el código actual no la usa).
+3. Publicar el código: NJ (Vercel, flujo controlado) y admin legacy (Firebase, `npm run deploy:firebase`). **Firebase publica todo el árbol vanilla:** antes hay que confirmar que fuera de `admin/` el árbol coincide con lo publicado hoy. Con 380 aplicada y sin 381, el código nuevo funciona igual que el viejo.
+4. Smoke admin: super_admin edita costo (legacy y NJ), colaborador guarda un producto, ofertas, importación.
+5. Aplicar 381. Verificar con `has_column_privilege` y sondas REST como cliente/colaborador.
+
+Orden obligatorio: 381 nunca antes del paso 3. El admin legacy actual hace `select("*")` y guarda costos directo: con 381 fallaría la carga y el guardado de productos para todos los admins.
+
+**Rollback:** 381 → `381_ROLLBACK_…` (inmediato, el código nuevo sigue funcionando con permisos de tabla). Código → deploy anterior (solo si 381 está revertida). 380 → `380_ROLLBACK_…` después de volver el código.
+
+**Acoplamiento con tablas de talles:** si 378 se aplica después de 381, 378 debe incluir `GRANT SELECT, INSERT, UPDATE (size_chart_id) ON products TO authenticated` (nunca `anon`), y `PRODUCT_ADMIN_COLUMNS` debe sumar `size_chart_id` al integrar las ramas.
+
+**Fuera del alcance de la Fase 1 (decisión pendiente):** clientes con sesión siguen leyendo `suppliers.name`; las RPC de estadísticas (`get_dashboard_kpis`, `get_top_products`, `get_top_skus`, `metrics_purchase_by_supplier`, `metrics_weekly_purchase_plan`) devuelven métricas derivadas del costo a cualquier admin (`is_admin()`), no solo a super_admin; `admins` legible por clientes (Fase 2).

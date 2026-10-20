@@ -14,6 +14,7 @@ import {
   parseSpecialBannerMeta,
 } from "@/lib/banners/curated-banner-tags";
 import type { CuratedBannerConfig, CuratedVariantCardEnriched } from "@/types/banners";
+import { GA_BANNER_SLOTS } from "@/lib/analytics/catalog-interactions";
 import { useCatalogSnapshotRevalidate } from "@/lib/catalog/snapshot-version";
 import {
   shouldFetchBanner,
@@ -140,6 +141,8 @@ export default function CuratedSpecialBanner({
         .join(" ")}
       aria-label={title}
       aria-busy={showSkeleton || undefined}
+      data-ga-banner={GA_BANNER_SLOTS.curatedSpecial}
+      data-ga-banner-label={config?.title}
     >
       <Link href={verTodoHref} className="curated-special-banner">
         <div className="curated-special-banner__photos" aria-hidden="true">

@@ -4,6 +4,7 @@ import { useRef } from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import { fetchNuevosIngresos } from "@/lib/banners/nuevos-ingresos";
+import { GA_BANNER_SLOTS } from "@/lib/analytics/catalog-interactions";
 import { useCatalogSnapshotRevalidate } from "@/lib/catalog/snapshot-version";
 import {
   shouldFetchBanner,
@@ -59,6 +60,7 @@ export default function NuevosIngresosBanner({
         .join(" ")}
       aria-label="Nuevos ingresos"
       aria-busy={showSkeleton || undefined}
+      data-ga-banner={GA_BANNER_SLOTS.nuevosIngresos}
     >
       <div className="nuevos-ingresos-head">
         <h2 className="nuevos-ingresos-title">Nuevos ingresos</h2>

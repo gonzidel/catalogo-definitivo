@@ -4,6 +4,7 @@ import { useRef } from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import { fetchFylOriginalsCurated } from "@/lib/banners/fyl-originals";
+import { GA_BANNER_SLOTS } from "@/lib/analytics/catalog-interactions";
 import { useCatalogSnapshotRevalidate } from "@/lib/catalog/snapshot-version";
 import {
   shouldFetchBanner,
@@ -58,6 +59,7 @@ export default function FylOriginalsBanner({
         .join(" ")}
       aria-label="F&L Originals"
       aria-busy={showSkeleton || undefined}
+      data-ga-banner={GA_BANNER_SLOTS.fylOriginals}
     >
       <div className="orig-head">
         <h2 className="orig-title">F&amp;L Originals</h2>

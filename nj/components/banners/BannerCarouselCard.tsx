@@ -26,6 +26,7 @@ export function BannerCarouselCard({ product }: { product: GroupedProduct }) {
     <Link
       href={href}
       className={`fyl-originals-card${hasOffer ? " fyl-originals-card--offer" : ""}`}
+      data-ga-product={product.Articulo}
       style={{
         display: "flex",
         flexDirection: "column",

@@ -8,6 +8,7 @@ import CartFloatingBar from "@/components/cart/CartFloatingBar";
 import ProfileGateProvider from "@/components/profile/ProfileGateProvider";
 import GaLoader from "@/components/analytics/GaLoader";
 import ClarityLoader from "@/components/analytics/ClarityLoader";
+import CatalogInteractionTracker from "@/components/analytics/CatalogInteractionTracker";
 import MetaPixelLoader from "@/components/analytics/MetaPixelLoader";
 import FullOnly from "@/components/rollout/FullOnly";
 import ExperienceSync from "@/components/rollout/ExperienceSync";
@@ -100,6 +101,7 @@ export default function RootLayout({
         <JsonLdScript data={[organizationJsonLd(), webSiteJsonLd()]} />
         <GaLoader />
         <ClarityLoader />
+        <CatalogInteractionTracker />
         <MetaPixelLoader />
         <ExperienceSync />
         <ProfileGateProvider>

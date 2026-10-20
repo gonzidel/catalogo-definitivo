@@ -130,6 +130,7 @@ export default function ProductCard({
       href={productHref}
       className="card producto"
       data-articulo={product.Articulo}
+      data-ga-product={product.Articulo}
       data-filtro1={product.Filtro1 ?? ""}
       data-filtro2={product.Filtro2 ?? ""}
       data-filtro3={product.Filtro3 ?? ""}

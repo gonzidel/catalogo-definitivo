@@ -17,6 +17,7 @@ import {
   toColumnPairs,
 } from "@/lib/banners/curated-banner-layout";
 import type { CuratedBannerConfig, CuratedVariantCardEnriched } from "@/types/banners";
+import { GA_BANNER_SLOTS } from "@/lib/analytics/catalog-interactions";
 import { useCatalogSnapshotRevalidate } from "@/lib/catalog/snapshot-version";
 import {
   shouldFetchBanner,
@@ -87,6 +88,7 @@ function VariantCard({ card }: { card: CuratedVariantCardEnriched }) {
       href={href}
       className={`custom-banner-card${hasOffer ? " custom-banner-card--offer" : ""}`}
       style={{ textDecoration: "none", color: "inherit" }}
+      data-ga-product={card.Articulo}
     >
       <div className="custom-banner-card-image-wrap" style={{ position: "relative" }}>
         {imageSrc ? (
@@ -240,6 +242,8 @@ export default function CuratedBanner({
         .filter(Boolean)
         .join(" ")}
       aria-busy={showSkeleton || undefined}
+      data-ga-banner={GA_BANNER_SLOTS.curated}
+      data-ga-banner-label={config?.title}
     >
       <div className="custom-banner-container" style={{ display: "block" }}>
         <div className="custom-banner-header">

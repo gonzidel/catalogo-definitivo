@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { EXP_CATALOG_ONLY, EXP_FULL_ONLY } from "@/lib/rollout/client";
+import { GA_BANNER_SLOTS } from "@/lib/analytics/catalog-interactions";
 
 export default function InfoBanner() {
   return (
-    <div id="info-banner-top-container">
+    <div id="info-banner-top-container" data-ga-banner={GA_BANNER_SLOTS.info}>
       <Link
         href="/como-comprar"
         className="info-banner-top info-banner-top--visual"

@@ -16,7 +16,8 @@ const PATTERNS = [
   },
   { name: "API key (AIza)", re: /AIza[0-9A-Za-z\-_]{35}/g },
   { name: "AWS Access Key ID (AKIA)", re: /AKIA[0-9A-Z]{16}/g },
-  { name: "Generic long key", re: /[A-Za-z0-9_-]{40,}/g },
+  // Sin _/- : evita falsos positivos en RPC snake_case y clases CSS kebab-case.
+  { name: "Generic long key", re: /[A-Za-z0-9]{40,}/g },
 ];
 
 function isBinaryFile(buffer) {
@@ -57,6 +58,13 @@ for (const rel of staged) {
     if (isBinaryFile(buff)) continue;
     const txt = buff.toString("utf8");
     for (const p of PATTERNS) {
+      // CSS/SQL canónicos: identificadores largos (clases, funciones) no son secretos.
+      if (
+        p.name === "Generic long key" &&
+        /\.(css|sql)$/i.test(rel)
+      ) {
+        continue;
+      }
       const re = p.re;
       if (re.global) {
         let m;

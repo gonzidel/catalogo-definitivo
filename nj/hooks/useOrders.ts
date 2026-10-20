@@ -52,6 +52,7 @@ import {
   rpcZeroVariantSizeStock,
   updateOrderKanbanScope,
 } from "@/lib/supabase/order-queries";
+import { rpcAdminMarkWhatsappInvalid } from "@/lib/supabase/whatsapp-invalid";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { isLocalZoneCustomerShippingOrder } from "@/lib/transport/shipping-helpers";
 import { formatItemProductLabel } from "@/lib/orders/customer-status-message";
@@ -102,6 +103,8 @@ interface OrdersState {
     customerId: string,
     owner: KanbanInboxOwner
   ) => Promise<boolean>;
+  /** Marca el teléfono de la clienta como inválido en WhatsApp (migración 382). */
+  markWhatsappInvalid: (customerId: string) => Promise<boolean>;
 
   pickAllReserved: (orderId: string) => Promise<void>;
   cancelItem: (
@@ -498,6 +501,95 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
       }));
       get().showToast(getErrorMessage(err), "error");
       return false;
+    }
+  },
+
+  markWhatsappInvalid: async (customerId) => {
+    if (!customerId) return false;
+    const actionKey = `wa-invalid:${customerId}`;
+    const markedAt = new Date().toISOString();
+    const previousByOrderId = new Map<string, string | null | undefined>();
+    for (const order of get().orders) {
+      if (order.customer_id !== customerId) continue;
+      previousByOrderId.set(
+        order.id,
+        getCustomerFromOrder(order)?.whatsapp_invalid_at
+      );
+    }
+
+    const patchFlag = (nextAt: string | null) => {
+      set((state) => ({
+        orders: state.orders.map((order) => {
+          if (order.customer_id !== customerId) return order;
+          const raw = order.customers;
+          if (!raw) {
+            return {
+              ...order,
+              customers: {
+                id: customerId,
+                full_name: null,
+                phone: null,
+                email: null,
+                dni: null,
+                city: null,
+                province: null,
+                whatsapp_invalid_at: nextAt,
+              },
+            };
+          }
+          if (Array.isArray(raw)) {
+            return {
+              ...order,
+              customers: raw.map((c) =>
+                c.id === customerId || !c.id
+                  ? { ...c, whatsapp_invalid_at: nextAt }
+                  : c
+              ),
+            };
+          }
+          return {
+            ...order,
+            customers: { ...raw, whatsapp_invalid_at: nextAt },
+          };
+        }),
+      }));
+    };
+
+    set({ loadingAction: actionKey });
+    patchFlag(markedAt);
+
+    try {
+      const supabase = getSupabaseBrowserClient();
+      await rpcAdminMarkWhatsappInvalid(supabase, customerId);
+      get().showToast("Aviso de número inválido enviado a la clienta", "success");
+      return true;
+    } catch (err) {
+      set((state) => ({
+        orders: state.orders.map((order) => {
+          if (order.customer_id !== customerId) return order;
+          const prev = previousByOrderId.get(order.id) ?? null;
+          const raw = order.customers;
+          if (!raw) return order;
+          if (Array.isArray(raw)) {
+            return {
+              ...order,
+              customers: raw.map((c) =>
+                c.id === customerId || !c.id
+                  ? { ...c, whatsapp_invalid_at: prev }
+                  : c
+              ),
+            };
+          }
+          return {
+            ...order,
+            customers: { ...raw, whatsapp_invalid_at: prev },
+          };
+        }),
+      }));
+      get().showToast(getErrorMessage(err), "error");
+      return false;
+    } finally {
+      set({ loadingAction: null });
     }
   },
 

@@ -64,6 +64,7 @@ import { useOrdersStore } from "@/hooks/useOrders";
 import type { AdminOrder } from "@/types/orders";
 import OrderActions from "./OrderActions";
 import OrderCardItems from "./OrderCardItems";
+import OrderCardMoreMenu from "./OrderCardMoreMenu";
 import OrderInboxOwnerChip from "./OrderInboxOwnerChip";
 
 interface OrderCardProps {
@@ -73,7 +74,7 @@ interface OrderCardProps {
 function isOrderCardInteractiveTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
   return !!target.closest(
-    "button, a, input, select, textarea, .order-card__actions, .order-card__body"
+    "button, a, input, select, textarea, .order-card__actions, .order-card__body, .order-card__more"
   );
 }
 
@@ -132,6 +133,7 @@ export default function OrderCard({ order }: OrderCardProps) {
   const markItemWaiting = useOrdersStore((s) => s.markItemWaiting);
   const splitReservedItem = useOrdersStore((s) => s.splitReservedItem);
   const splitReservedItemMixed = useOrdersStore((s) => s.splitReservedItemMixed);
+  const markWhatsappInvalid = useOrdersStore((s) => s.markWhatsappInvalid);
 
   const isMobile = useIsMobile();
   const [pendingChanges, setPendingChanges] = useState<DraftChangesMap>({});
@@ -352,6 +354,11 @@ export default function OrderCard({ order }: OrderCardProps) {
   const city = customer?.city?.trim() || null;
   const phone = customer?.phone?.trim() || null;
   const waUrl = buildWhatsAppUrl(phone);
+  const customerId = customer?.id || order.customer_id || null;
+  const waInvalidAlreadyMarked = Boolean(customer?.whatsapp_invalid_at);
+  const waInvalidBusy =
+    Boolean(customerId) && loadingAction === `wa-invalid:${customerId}`;
+  const showWhatsappInvalidMenu = column === "active" && Boolean(customerId);
   const fromCustomer = isCustomerSourcedOrder(order);
   /** Solo Apartados en Retiro: verde clienta / amarillo desde Pedidos / celeste admin-local. */
   const retiroActiveTone =
@@ -710,6 +717,16 @@ export default function OrderCard({ order }: OrderCardProps) {
             <span className="order-card__header-total">
               <span className="order-card__header-count">
                 {productCount} prod.
+                {showWhatsappInvalidMenu ? (
+                  <OrderCardMoreMenu
+                    alreadyMarked={waInvalidAlreadyMarked}
+                    busy={waInvalidBusy}
+                    onMarkInvalid={async () => {
+                      if (!customerId) return;
+                      await markWhatsappInvalid(customerId);
+                    }}
+                  />
+                ) : null}
               </span>
               {column !== "cancelled" && column !== "expired" ? (
                 <span className="order-card__header-price">

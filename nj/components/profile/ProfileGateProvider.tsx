@@ -14,7 +14,9 @@ import { useRouter } from "next/navigation";
 import type { Session } from "@supabase/supabase-js";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { isInitialProfileComplete } from "@/lib/auth/profile-complete";
+import { isWhatsappInvalidSnoozed } from "@/lib/phone/whatsapp-invalid-snooze";
 import ProfileOnboardingModal from "@/components/profile/ProfileOnboardingModal";
+import WhatsAppInvalidModal from "@/components/profile/WhatsAppInvalidModal";
 
 type ProfileGateContextValue = {
   /** null = aún no sabemos / sin sesión evaluada */
@@ -55,17 +57,54 @@ export default function ProfileGateProvider({ children }: { children: ReactNode 
   const [profileComplete, setProfileComplete] = useState<boolean | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [profileUpdatedAt, setProfileUpdatedAt] = useState(0);
+  const [waInvalidOpen, setWaInvalidOpen] = useState(false);
+  const [waInvalidPhone, setWaInvalidPhone] = useState<string | null>(null);
   const pendingRef = useRef<((ok: boolean) => void) | null>(null);
 
   const loadCompleteness = useCallback(async (uid: string): Promise<boolean> => {
     const supabase = getSupabaseBrowserClient();
-    const { data: customer } = await supabase
+    let customer: {
+      full_name?: string | null;
+      phone?: string | null;
+      dni?: string | null;
+      province?: string | null;
+      city?: string | null;
+      address?: string | null;
+      whatsapp_invalid_at?: string | null;
+    } | null = null;
+
+    const withFlag = await supabase
       .from("customers")
-      .select("full_name, phone, dni, province, city, address")
+      .select("full_name, phone, dni, province, city, address, whatsapp_invalid_at")
       .eq("id", uid)
       .maybeSingle();
+    if (withFlag.error) {
+      const msg = String(withFlag.error.message || "").toLowerCase();
+      if (msg.includes("whatsapp_invalid")) {
+        const fallback = await supabase
+          .from("customers")
+          .select("full_name, phone, dni, province, city, address")
+          .eq("id", uid)
+          .maybeSingle();
+        customer = fallback.data;
+      }
+    } else {
+      customer = withFlag.data;
+    }
+
     const ok = isInitialProfileComplete(customer);
     setProfileComplete(ok);
+    const flagged = Boolean(customer?.whatsapp_invalid_at);
+    const phone = customer?.phone ?? null;
+    setWaInvalidPhone(phone);
+    // Dev: ?forceWaInvalid=1 abre el modal aunque falte la migración 382.
+    const forceUi =
+      typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).get("forceWaInvalid") === "1";
+    // Solo si el perfil ya está completo: no pelear con el onboarding.
+    setWaInvalidOpen(
+      ok && (forceUi || (flagged && !isWhatsappInvalidSnoozed(uid)))
+    );
     return ok;
   }, []);
 
@@ -94,6 +133,8 @@ export default function ProfileGateProvider({ children }: { children: ReactNode 
         setEmail("");
         setProfileComplete(null);
         setModalOpen(false);
+        setWaInvalidOpen(false);
+        setWaInvalidPhone(null);
         pendingRef.current?.(false);
         pendingRef.current = null;
         return;
@@ -180,6 +221,19 @@ export default function ProfileGateProvider({ children }: { children: ReactNode 
           userId={userId}
           email={email}
           onCompleted={handleCompleted}
+        />
+      )}
+      {userId && (
+        <WhatsAppInvalidModal
+          open={waInvalidOpen && profileComplete === true}
+          customerId={userId}
+          currentPhone={waInvalidPhone}
+          onDismissed={() => setWaInvalidOpen(false)}
+          onFixed={(newPhone) => {
+            setWaInvalidPhone(newPhone);
+            setWaInvalidOpen(false);
+            setProfileUpdatedAt(Date.now());
+          }}
         />
       )}
     </ProfileGateContext.Provider>

@@ -6602,11 +6602,128 @@ body:has(.kanban-admin-shell) [data-nextjs-toast] {
 }
 
 .order-card__header-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 0.66rem;
   font-weight: 700;
   color: #6b7280;
   text-transform: uppercase;
   letter-spacing: 0.02em;
+}
+
+.order-card__more {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.order-card__more-btn {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #fff;
+  color: #374151;
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.order-card__more-btn:hover:not(:disabled) {
+  background: #f3f4f6;
+}
+
+.order-card__more-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.order-card__more-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 40;
+  min-width: 168px;
+  padding: 4px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12);
+}
+
+.order-card__more-item {
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #111827;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.order-card__more-item:hover:not(:disabled) {
+  background: #f3f4f6;
+}
+
+.order-card__more-item:disabled {
+  color: #9ca3af;
+  cursor: default;
+}
+
+.order-card__more-confirm {
+  padding: 6px 8px 8px;
+}
+
+.order-card__more-confirm-text {
+  margin: 0 0 8px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.35;
+  color: #374151;
+  text-transform: none;
+  letter-spacing: normal;
+  white-space: normal;
+}
+
+.order-card__more-confirm-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.order-card__more-confirm-yes,
+.order-card__more-confirm-no {
+  flex: 1;
+  min-height: 32px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.order-card__more-confirm-yes {
+  border: 1px solid #b91c1c;
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.order-card__more-confirm-no {
+  border: 1px solid #d1d5db;
+  background: #fff;
+  color: #374151;
+}
+
+.order-card__more-confirm-yes:disabled,
+.order-card__more-confirm-no:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .order-card__header-price {
@@ -11032,6 +11149,58 @@ a.order-card__wa-btn:active {
   font-size: 0.875rem;
   font-weight: 800;
   text-decoration: none;
+}
+
+/* Aviso número WhatsApp inválido (clienta) */
+.wi-overlay {
+  z-index: 11060;
+  align-items: center;
+  justify-content: center;
+  padding: max(12px, env(safe-area-inset-top)) 12px max(12px, env(safe-area-inset-bottom));
+}
+
+.wi-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.wi-current {
+  margin: 0 0 10px;
+  font-size: 0.8125rem;
+  color: #4b5563;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.wi-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.wi-btn-secondary {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  background: #fff;
+  color: #374151;
+  font-size: 0.875rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.wi-btn-secondary:hover:not(:disabled) {
+  background: #f9fafb;
+}
+
+.wi-btn-secondary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 body.modal-open {

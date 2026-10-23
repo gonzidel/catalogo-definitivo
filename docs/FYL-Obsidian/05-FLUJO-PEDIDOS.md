@@ -203,6 +203,8 @@ Cuando la clienta cierra desde `/nj/dashboard` con **todos los productos confirm
 
 **Campana PAU/admin:** el aviso de cierre clienta (`customer_closed_*`) se muestra aunque `orders.source` sea admin/PAU. Espera y vencimiento siguen filtrados por `isCustomerSourcedOrder`.
 
+**Total del aviso (migración 383, aplicada en fyl-core el 2026-10-22):** el texto que se guarda al cerrar usa `fn_order_canonical_total` (promo 2x + descuento/envío/extras de notes; la oferta solo si ya está en `price_snapshot`). Al copiar o enviar, la campana pide ese total de nuevo (`rpc_closed_order_products_total`) y reemplaza el monto. Si la RPC todavía no está, usa `orders.total_amount` de la tarjeta. No reescribe alias ni CBU.
+
 **Checklist manual por transporte:**
 1. Cierre con ítem reservado → sin campana; auto-cierre admin → campana según transporte.
 2. MyM/SEDE/Expreso Norte → campana verde; cerrados finalizable de inmediato.

@@ -1,0 +1,5 @@
+﻿.tmp-pglite
+**/.env.local
+**/.next
+**/node_modules
+

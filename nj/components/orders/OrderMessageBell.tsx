@@ -11,6 +11,7 @@ import {
   useExpiryWarnSentStore,
   getExpiryWarnCooldownActiveIdsFromMap,
 } from "@/lib/orders/expiry-warning-sent";
+import { resolveClosedOrderMessageText } from "@/lib/orders/closed-message-total";
 import { buildWhatsAppUrl } from "@/lib/orders/domain";
 import { orderMatchesKanbanInboxView } from "@/lib/orders/kanban-inbox";
 import {
@@ -194,8 +195,17 @@ export default function OrderMessageBell({ boardScope }: OrderMessageBellProps) 
     setSentIds(persistBellSentId(id));
   };
 
+  const textForClipboard = (notif: OrderMsgNotification) =>
+    resolveClosedOrderMessageText({
+      message: notif.message,
+      kind: notif.kind,
+      orderId: notif.orderId,
+      cardTotal: notif.orderId ? ordersById.get(notif.orderId)?.total_amount : null,
+    });
+
   const handleCopy = async (notif: OrderMsgNotification) => {
-    const ok = await copyText(notif.message);
+    const text = await textForClipboard(notif);
+    const ok = await copyText(text);
     if (!ok) return;
     if (notif.kind === "expiry_warning") return;
     if (isCustomerClosedNotificationKind(notif.kind)) return;
@@ -203,14 +213,15 @@ export default function OrderMessageBell({ boardScope }: OrderMessageBellProps) 
   };
 
   const handleSend = async (notif: OrderMsgNotification) => {
-    const ok = await copyText(notif.message);
+    const text = await textForClipboard(notif);
+    const ok = await copyText(text);
     if (!ok) return;
 
     if (notif.kind === "expiry_warning") {
       if (notif.orderId) {
         await markExpirySent(notif.orderId);
       }
-      const url = buildWhatsAppUrl(notif.phone, notif.message);
+      const url = buildWhatsAppUrl(notif.phone, text);
       if (url) window.open(url, "_blank", "noopener,noreferrer");
       markCardSent(notif.id);
       return;
@@ -218,14 +229,14 @@ export default function OrderMessageBell({ boardScope }: OrderMessageBellProps) 
 
     if (isCustomerClosedNotificationKind(notif.kind)) {
       await completeClosed(notif.id, true);
-      const url = buildWhatsAppUrl(notif.phone, notif.message);
+      const url = buildWhatsAppUrl(notif.phone, text);
       if (url) window.open(url, "_blank", "noopener,noreferrer");
       markCardSent(notif.id);
       return;
     }
 
     await markCopied(notif.id);
-    const url = buildWhatsAppUrl(notif.phone, notif.message);
+    const url = buildWhatsAppUrl(notif.phone, text);
     if (url) window.open(url, "_blank", "noopener,noreferrer");
     markCardSent(notif.id);
   };

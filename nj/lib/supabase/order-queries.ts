@@ -303,12 +303,17 @@ export async function searchOrdersGlobal(
  * se puede usar `notes->>campo` en el filtro SQL) que replican, uno a uno, las
  * señales de `isLocalPickupBoardOrder()` en board-scope.ts. Si se agrega una
  * señal nueva ahí, agregarla también aquí.
+ *
+ * El `%` entre `:` y el valor tolera el espacio que agrega Postgres al castear
+ * `jsonb::text` (`{"a": 1}`). `JSON.stringify` del NJ escribe compacto
+ * (`{"a":1}`). Sin ese `%`, pedidos como A58510 (Local desde Pedidos) quedaban
+ * fuera del pool de `/retiro` y también fuera de Pedidos → huérfanos.
  */
-const RETIRO_NOTES_ILIKE_PATTERNS = [
-  '%"kanban_scope":"local_pickup"%',
-  '%"retiro_origin":"%',
-  '%"mirrored_from_local_order":true%',
-  '%"local_pickup_fulfilled_at":"%',
+export const RETIRO_NOTES_ILIKE_PATTERNS = [
+  '%"kanban_scope":%"local_pickup"%',
+  '%"retiro_origin":%"%',
+  '%"mirrored_from_local_order":%true%',
+  '%"local_pickup_fulfilled_at":%"%',
 ];
 
 /**

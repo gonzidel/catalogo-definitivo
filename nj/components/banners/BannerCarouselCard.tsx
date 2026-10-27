@@ -40,7 +40,7 @@ export function BannerCarouselCard({ product }: { product: GroupedProduct }) {
             src={src}
             alt={product.Articulo}
             fill
-            sizes="110px"
+            sizes="(min-width: 1024px) 220px, 110px"
             style={{ objectFit: "cover" }}
           />
         ) : (

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import SearchBar from "@/components/search/SearchBar";
+import DesktopCategoryNav from "./DesktopCategoryNav";
 import HeaderActions from "./HeaderActions";
 
 export default function Header() {
@@ -17,6 +18,7 @@ export default function Header() {
           />
         </Link>
       </div>
+      <DesktopCategoryNav />
       <div className="search-bar-wrapper">
         <SearchBar />
       </div>

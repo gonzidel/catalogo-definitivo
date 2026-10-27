@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useState, useCallback } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
-import { useCartStore } from "@/store/cart";
+import { useCartStore, selectCartCount } from "@/store/cart";
 import NotificationsPanel from "@/components/notifications/NotificationsPanel";
 import WhatsAppButton from "@/components/contact/WhatsAppButton";
 import WhatsAppIcon from "@/components/contact/WhatsAppIcon";
@@ -25,8 +25,13 @@ export default function HeaderActions() {
   const [panelOpen, setPanelOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const syntheticNotifications = useCartStore((s) => s.syntheticNotifications);
+  const cartCount = useCartStore(selectCartCount);
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const isDashboard = pathname?.includes("/dashboard");
+  const dashboardTab = searchParams.get("tab");
+  const cartActive = !!isDashboard && (dashboardTab === "cart" || !dashboardTab);
+  const orderActive = !!isDashboard && dashboardTab === "active-order";
 
   useEffect(() => {
     const supabase = getSupabaseBrowserClient();
@@ -146,6 +151,41 @@ export default function HeaderActions() {
             }} />
           )}
         </button>
+
+        <div className={`desktop-commerce ${EXP_FULL_ONLY}`}>
+          <Link
+            href="/dashboard?tab=cart"
+            className={`desktop-commerce__link${cartActive ? " is-active" : ""}`}
+            aria-label={
+              cartCount > 0
+                ? `Carrito, ${cartCount} producto${cartCount === 1 ? "" : "s"}`
+                : "Carrito"
+            }
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <circle cx="9" cy="21" r="1" />
+              <circle cx="20" cy="21" r="1" />
+              <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6" />
+            </svg>
+            Carrito
+            {cartCount > 0 && (
+              <span className="desktop-commerce__badge">
+                {cartCount > 9 ? "9+" : cartCount}
+              </span>
+            )}
+          </Link>
+          <Link
+            href="/dashboard?tab=active-order"
+            className={`desktop-commerce__link${orderActive ? " is-active" : ""}`}
+            aria-label="Mi pedido"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M6 2h12v4H6z" />
+              <path d="M6 6h12l-1 16H7L6 6z" />
+            </svg>
+            Mi pedido
+          </Link>
+        </div>
 
         {/* ── Perfil — oculto en el dashboard (la foto aparece en el header propio) ──
              catalog anónimo: sin «Ingresar», como el catálogo público (/login sigue por URL). */}

@@ -84,7 +84,7 @@ function HeroPhoto({
           src={imageSrc}
           alt={card.Articulo}
           fill
-          sizes="88px"
+          sizes="(min-width: 1024px) 160px, 88px"
           className="curated-special-banner__photo-img"
           style={{ objectFit: "cover" }}
         />

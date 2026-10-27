@@ -1,8 +1,10 @@
 "use client";
 
+import { useRef } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import useSWR from "swr";
+import CarouselArrows from "@/components/banners/CarouselArrows";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { formatARS } from "@/lib/utils/catalog";
 import { getColorEffectivePrice } from "@/lib/utils/variant-price";
@@ -197,6 +199,7 @@ export default function CuratedBanner({
 }: {
   expectedVisible?: BannerPresenceState;
 }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
   const enabled = shouldFetchBanner(expectedVisible);
   const reserve = shouldReserveBannerSlot(expectedVisible);
   const { data, isLoading, mutate } = useSWR(
@@ -273,14 +276,17 @@ export default function CuratedBanner({
         </div>
 
         {showGrid && (
-          <div className="custom-banner-scroll">
-            {showSkeleton ? (
-              <SkeletonScrollPage />
-            ) : (
-              pages.map((pagePairs, index) => (
-                <ScrollPage key={`page-${index}`} pairs={pagePairs} />
-              ))
-            )}
+          <div className="desktop-carousel">
+            <div className="custom-banner-scroll" ref={scrollRef}>
+              {showSkeleton ? (
+                <SkeletonScrollPage />
+              ) : (
+                pages.map((pagePairs, index) => (
+                  <ScrollPage key={`page-${index}`} pairs={pagePairs} />
+                ))
+              )}
+            </div>
+            <CarouselArrows scrollerRef={scrollRef} />
           </div>
         )}
       </div>

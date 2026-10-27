@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Suspense } from "react";
 import Link from "next/link";
 import "@/styles/globals.css";
+import "@/styles/desktop.css";
 import Header from "@/components/layout/Header";
 import BottomNav from "@/components/layout/BottomNav";
 import CartFloatingBar from "@/components/cart/CartFloatingBar";

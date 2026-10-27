@@ -15,6 +15,7 @@ import {
   BannerCarouselCard,
   BannerCarouselSkeleton,
 } from "@/components/banners/BannerCarouselCard";
+import CarouselArrows from "@/components/banners/CarouselArrows";
 
 type Props = {
   expectedVisible?: BannerPresenceState;
@@ -72,18 +73,21 @@ export default function FylOriginalsBanner({
         </Link>
       </div>
 
-      <div
-        ref={scrollRef}
-        className="fyl-originals-scroll orig-carousel"
-        style={{ display: "flex", overflowX: "auto" }}
-      >
-        {showSkeleton
-          ? Array.from({ length: 6 }).map((_, i) => (
-              <BannerCarouselSkeleton key={i} />
-            ))
-          : visible.map((p) => (
-              <BannerCarouselCard key={p.Articulo} product={p} />
-            ))}
+      <div className="desktop-carousel">
+        <div
+          ref={scrollRef}
+          className="fyl-originals-scroll orig-carousel"
+          style={{ display: "flex", overflowX: "auto" }}
+        >
+          {showSkeleton
+            ? Array.from({ length: 6 }).map((_, i) => (
+                <BannerCarouselSkeleton key={i} />
+              ))
+            : visible.map((p) => (
+                <BannerCarouselCard key={p.Articulo} product={p} />
+              ))}
+        </div>
+        <CarouselArrows scrollerRef={scrollRef} />
       </div>
     </section>
   );

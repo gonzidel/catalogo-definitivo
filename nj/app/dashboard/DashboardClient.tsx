@@ -645,7 +645,15 @@ export default function DashboardClient({ user, customer: initialCustomer, order
 
   // Resolve transport name from province+city (same logic as ProfileShippingBlock)
   const [showTransportInfo, setShowTransportInfo] = useState(false);
+  const [isDesktopBar, setIsDesktopBar] = useState(false);
   const transportInfoRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 1024px)");
+    const apply = () => setIsDesktopBar(mq.matches);
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
   const isCorreo = effectiveTransport ? canonicalizeTransportName(effectiveTransport) === "Correo Argentino" : false;
 
   const transportExplanation = effectiveTransport
@@ -672,7 +680,7 @@ export default function DashboardClient({ user, customer: initialCustomer, order
   return (
     <div className="dashboard-shell" style={{ minHeight: "100svh", background: "#E5E1DC" }}>
       {/* Header compacto: icono perfil + nombre + accesos secundarios en una sola fila */}
-      <div style={{
+      <div className="dashboard-top" style={{
         background: "#fff", padding: "10px 14px",
         display: "flex", alignItems: "center", gap: 10,
         borderBottom: "1px solid #eee",
@@ -683,6 +691,7 @@ export default function DashboardClient({ user, customer: initialCustomer, order
           type="button"
           onClick={() => setTab("profile")}
           aria-label="Ver perfil"
+          className="dashboard-top__avatar"
           style={{
             width: 36, height: 36, borderRadius: "50%", flexShrink: 0,
             background: "#CD844D", color: "#fff",
@@ -712,22 +721,23 @@ export default function DashboardClient({ user, customer: initialCustomer, order
 
         {/* Nombre + transporte */}
         <div style={{ flex: 1, minWidth: 0, position: "relative" }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: "#222", lineHeight: 1.2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <div className="dashboard-top__name" style={{ fontSize: 14, fontWeight: 700, color: "#222", lineHeight: 1.2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {displayName}
           </div>
 
           {/* Fila transporte */}
-          <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 2 }}>
+          <div className="dashboard-top__transport" style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 2 }}>
             {effectiveTransport ? (
               <>
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#aaa" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                   <rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 5v3h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>
                 </svg>
-                <span style={{ fontSize: 11, color: "#999", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                <span className="dashboard-top__transport-label" style={{ fontSize: 11, color: "#999", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                   {effectiveTransport}
                 </span>
                 <button
                   type="button"
+                  className="dashboard-top__transport-help"
                   onClick={() => setShowTransportInfo((v) => !v)}
                   aria-label="¿Cómo funciona tu retiro o envío?"
                   style={{
@@ -757,13 +767,13 @@ export default function DashboardClient({ user, customer: initialCustomer, order
           </div>
 
           {/* Popover transporte */}
-          {showTransportInfo && effectiveTransport && (
+          {showTransportInfo && effectiveTransport && !isDesktopBar && (
             <>
               <div
                 onClick={() => setShowTransportInfo(false)}
                 style={{ position: "fixed", inset: 0, zIndex: 998 }}
               />
-              <div ref={transportInfoRef} style={{
+              <div ref={transportInfoRef} className="dashboard-top__popover" style={{
                 position: "absolute", top: "calc(100% + 8px)", left: 0,
                 zIndex: 999, width: 260,
                 background: "#fff", borderRadius: 12,
@@ -795,8 +805,91 @@ export default function DashboardClient({ user, customer: initialCustomer, order
           )}
         </div>
 
+        <div className="dashboard-top__actions">
+          <div className="dashboard-top__assigned">
+            <span className="dashboard-top__assigned-kicker">Transporte asignado</span>
+            {effectiveTransport ? (
+              <div className="dashboard-top__assigned-value">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#a8612e" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 5v3h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>
+                </svg>
+                <span>{effectiveTransport}</span>
+                <button
+                  type="button"
+                  className="dashboard-top__transport-help"
+                  onClick={() => setShowTransportInfo((v) => !v)}
+                  aria-label="¿Cómo funciona tu retiro o envío?"
+                  style={{
+                    width: 18, height: 18, borderRadius: "50%", flexShrink: 0,
+                    background: showTransportInfo ? "#CD844D" : "#e0d8d0",
+                    color: showTransportInfo ? "#fff" : "#888",
+                    border: "none", cursor: "pointer",
+                    fontSize: 11, fontWeight: 800,
+                    display: "inline-flex", alignItems: "center", justifyContent: "center",
+                    lineHeight: 1,
+                  }}
+                >
+                  ?
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setTab("profile")}
+                style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "#CD844D", fontWeight: 700, fontSize: 14 }}
+              >
+                Configurar retiro/envío
+              </button>
+            )}
+            {showTransportInfo && effectiveTransport && isDesktopBar && (
+              <>
+                <div
+                  onClick={() => setShowTransportInfo(false)}
+                  style={{ position: "fixed", inset: 0, zIndex: 998 }}
+                />
+                <div ref={transportInfoRef} className="dashboard-top__popover" style={{
+                  position: "absolute", top: "calc(100% + 8px)", left: 0,
+                  zIndex: 999, width: 260,
+                  background: "#fff", borderRadius: 12,
+                  boxShadow: "0 6px 24px rgba(0,0,0,0.13)",
+                  border: "1px solid #f0e8e0", padding: "13px 14px",
+                }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#222", marginBottom: 5, display: "flex", alignItems: "center", gap: 6 }}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#CD844D" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 5v3h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>
+                    </svg>
+                    {effectiveTransport}
+                  </div>
+                  <p style={{ margin: "0 0 10px", fontSize: 12, color: "#555", lineHeight: 1.55 }}>
+                    {transportExplanation}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => { setShowTransportInfo(false); setTab("profile"); }}
+                    style={{
+                      background: "none", border: "none", cursor: "pointer",
+                      fontSize: 11, color: "#CD844D", fontWeight: 600, padding: 0,
+                      textDecoration: "underline dotted", textUnderlineOffset: 2,
+                    }}
+                  >
+                    Cambiar retiro/envío →
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+          <button
+            type="button"
+            className={`dashboard-top__profile${tab === "profile" ? " is-active" : ""}`}
+            onClick={() => setTab("profile")}
+          >
+            <IconProfile size={18} />
+            Perfil
+          </button>
+        </div>
+
         {/* Accesos secundarios */}
-        <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+        <div className="dashboard-header-tools" style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
           <button
             onClick={() => setTab("orders")}
             aria-label="Historial"
@@ -826,7 +919,48 @@ export default function DashboardClient({ user, customer: initialCustomer, order
         </div>
       </div>
 
-      <div style={{ padding: "12px 16px", maxWidth: 640, margin: "0 auto" }}>
+      <nav className="dashboard-side-nav" aria-label="Secciones de tu cuenta">
+        <button
+          type="button"
+          className={`dashboard-side-nav__item${tab === "cart" ? " is-active" : ""}`}
+          onClick={() => setTab("cart")}
+        >
+          <IconCart size={18} />
+          Carrito
+          {cartCount > 0 && (
+            <span className="dashboard-side-nav__badge">{cartCount > 9 ? "9+" : cartCount}</span>
+          )}
+        </button>
+        <button
+          type="button"
+          className={`dashboard-side-nav__item${tab === "active-order" ? " is-active" : ""}`}
+          onClick={() => setTab("active-order")}
+        >
+          <IconOrder size={18} />
+          Mi pedido
+          {activeOrderShowsProductBadge && tab !== "active-order" && (
+            <span className="dashboard-side-nav__dot" aria-hidden="true" />
+          )}
+        </button>
+        <button
+          type="button"
+          className={`dashboard-side-nav__item${tab === "orders" ? " is-active" : ""}`}
+          onClick={() => setTab("orders")}
+        >
+          <IconHistory size={18} />
+          Historial
+        </button>
+        <button
+          type="button"
+          className={`dashboard-side-nav__item${tab === "profile" ? " is-active" : ""}`}
+          onClick={() => setTab("profile")}
+        >
+          <IconProfile size={18} />
+          Perfil
+        </button>
+      </nav>
+
+      <div className="dashboard-main">
 
         <div
           className={[

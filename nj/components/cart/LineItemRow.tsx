@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import Link from "next/link";
 import { fetchOrderItemImageUrl } from "@/lib/supabase/order-item-image";
 
 export function formatItemARS(n: number) {
@@ -37,6 +38,8 @@ interface LineItemRowProps {
   onStatusClick?: () => void;
   highlight?: "missing" | "outOfStock" | null;
   mutedPrice?: boolean;
+  onImageClick?: (src: string) => void;
+  titleHref?: string;
   line2?: ReactNode;
   trailing?: ReactNode;
   below?: ReactNode;
@@ -105,6 +108,8 @@ export default function LineItemRow({
   onStatusClick,
   highlight = null,
   mutedPrice = false,
+  onImageClick,
+  titleHref,
   line2,
   trailing,
   below,
@@ -169,12 +174,28 @@ export default function LineItemRow({
           .join(" ")}
       >
         {resolvedImage ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={resolvedImage}
-            alt={fullTitle}
-            className="line-item-row__img"
-          />
+          onImageClick ? (
+            <button
+              type="button"
+              className="line-item-row__zoom"
+              aria-label="Ver la foto más grande"
+              onClick={() => onImageClick(resolvedImage)}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={resolvedImage}
+                alt={fullTitle}
+                className="line-item-row__img"
+              />
+            </button>
+          ) : (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={resolvedImage}
+              alt={fullTitle}
+              className="line-item-row__img"
+            />
+          )
         ) : specialExtra ? (
           <div
             className={`line-item-row__img-ph line-item-row__img-ph--extra${
@@ -189,9 +210,15 @@ export default function LineItemRow({
         )}
 
         <div className="line-item-row__body">
-          <div className="line-item-row__title" title={compactTitle ? fullTitle : undefined}>
-            {displayTitle}
-          </div>
+          {titleHref ? (
+            <Link href={titleHref} className="line-item-row__title line-item-row__title-link" title={compactTitle ? fullTitle : undefined}>
+              {displayTitle}
+            </Link>
+          ) : (
+            <div className="line-item-row__title" title={compactTitle ? fullTitle : undefined}>
+              {displayTitle}
+            </div>
+          )}
           <div className="line-item-row__meta">
             {line2 ?? defaultLine2(quantity, unitPrice)}
           </div>

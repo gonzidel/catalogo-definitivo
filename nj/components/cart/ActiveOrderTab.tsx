@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
+import PdpLightbox from "@/components/pdp/PdpLightbox";
 import {
   isLocalPickupOrderFulfilled,
   localPickupFulfilledDismissKey,
@@ -662,10 +663,19 @@ export default function ActiveOrderTab({
   const activeTransportName = confirmedTransportName ?? transportName;
   const isLocalPickupOrder = isLocalPickupTransport(activeTransportName);
   const [sending, setSending]                   = useState(false);
+  const [isDesktop, setIsDesktop] = useState(false);
+  const [zoomImage, setZoomImage] = useState<{ src: string; alt: string; color: string } | null>(null);
   const sendLockRef = useRef(false);
   const cancelUnitsLockRef = useRef(false);
   const qtyChangeLockRef = useRef(false);
   const cancelOrderLockRef = useRef(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 1024px)");
+    const apply = () => setIsDesktop(mq.matches);
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
   const [error, setError]                       = useState<string | null>(null);
   const [showMissingHint, setShowMissingHint]   = useState(false);
   // Se mantiene montado un instante más que showMissingHint para poder
@@ -2034,11 +2044,15 @@ export default function ActiveOrderTab({
     const isMenuOpen = menuOpenFor === item.primaryItemId;
     const isEditingQty = editQtyFor === item.primaryItemId;
     const productSlug = encodeURIComponent(item.product_name ?? "");
+    const productHref = item.color
+      ? `/producto/${productSlug}?color=${encodeURIComponent(item.color)}`
+      : `/producto/${productSlug}`;
     const isCanceling = item.itemIds.includes(cancelingId ?? "");
     const stock = variantStock[item.primaryItemId] ?? null;
     // Stock disponible neto = stock físico - unidades ya en el pedido
     const availableToAdd = stock !== null ? Math.max(0, stock - item.quantity) : null;
     const special = isSpecialExtraItem(item);
+    const desktopActions = isDesktop && !special && !isMissing && !isReadOnly;
 
     return (
       <div key={item.primaryItemId}>
@@ -2054,9 +2068,39 @@ export default function ActiveOrderTab({
           specialExtra={special}
           highlight={isMissing ? "missing" : null}
           mutedPrice={isMissing}
+          titleHref={isDesktop && !special && item.product_name ? productHref : undefined}
+          onImageClick={
+            isDesktop && !special
+              ? (src) => setZoomImage({
+                  src,
+                  alt: [item.product_name, item.color, item.size].filter(Boolean).join(" · "),
+                  color: item.color ?? "",
+                })
+              : undefined
+          }
           line2={
             <span className="active-order-line2">
               <QuantityUnitLabel quantity={item.quantity} />
+              {desktopActions && (
+                <button
+                  type="button"
+                  className="active-order-desktop-qty"
+                  aria-expanded={isEditingQty}
+                  onClick={() => {
+                    if (isEditingQty) {
+                      setEditQtyFor(null);
+                      return;
+                    }
+                    openEditQty(item);
+                  }}
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M12 20h9" />
+                    <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                  </svg>
+                  Cantidad
+                </button>
+              )}
               {!isMissing && !special && (
                 <CustomerItemPrepStatus
                   item={item}
@@ -2102,6 +2146,20 @@ export default function ActiveOrderTab({
                   {isCanceling ? "Quitando..." : "Quitar"}
                 </button>
               ) : (
+              <>
+              {desktopActions && (
+                <button
+                  type="button"
+                  className="active-order-desktop-trash"
+                  aria-label="Quitar del pedido"
+                  onClick={() => openRemoveProductConfirm(item)}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M3 6h18" />
+                    <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6h16Z" />
+                  </svg>
+                </button>
+              )}
               <div className="active-order-item-menu">
                 <button
                   type="button"
@@ -2133,6 +2191,7 @@ export default function ActiveOrderTab({
                   </svg>
                 </button>
               </div>
+              </>
               )
             ) : undefined
           }
@@ -3197,6 +3256,13 @@ export default function ActiveOrderTab({
           document.body
         );
       })()}
+      <PdpLightbox
+        open={zoomImage !== null}
+        slides={zoomImage ? [{ src: zoomImage.src, color: zoomImage.color }] : []}
+        index={0}
+        altText={zoomImage?.alt ?? "Producto"}
+        onClose={() => setZoomImage(null)}
+      />
     </div>
   );
 }

@@ -7,6 +7,7 @@ import CatalogShell from "@/components/catalog/CatalogShell";
 import CatalogShellSkeleton from "@/components/catalog/CatalogShellSkeleton";
 import JsonLdScript from "@/lib/seo/JsonLdScript";
 import { catalogCategoryJsonLd } from "@/lib/seo/json-ld";
+import { getPublicMinCopy } from "@/lib/config/temp-order-min";
 
 export const revalidate = 300;
 
@@ -20,7 +21,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   if (!cat) return {};
   return {
     title: `${cat} — FYL Moda | Mayorista`,
-    description: `Catálogo mayorista de ${cat.toLowerCase()} femenino. Stock visible, compra mínima de 4 productos surtidos. Envíos a todo el país.`,
+    description: `Catálogo mayorista de ${cat.toLowerCase()} femenino. Stock visible, ${getPublicMinCopy().seoMinPhrase}. Envíos a todo el país.`,
     alternates: { canonical: `/${slug}` },
   };
 }
@@ -56,7 +57,7 @@ export default async function CategoriaPage({ params }: PageProps) {
       <JsonLdScript
         data={catalogCategoryJsonLd({
           name: `${cat} — FYL Moda`,
-          description: `Catálogo mayorista de ${cat.toLowerCase()} femenino. Stock visible, compra mínima de 4 productos surtidos.`,
+          description: `Catálogo mayorista de ${cat.toLowerCase()} femenino. Stock visible, ${getPublicMinCopy().seoMinPhrase}.`,
           path: `/${slug}`,
         })}
       />

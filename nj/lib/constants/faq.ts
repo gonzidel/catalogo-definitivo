@@ -1,3 +1,5 @@
+import { getPublicMinCopy } from "@/lib/config/temp-order-min";
+
 export interface FaqItem {
   q: string;
   a: string;
@@ -7,7 +9,7 @@ export interface FaqItem {
 export const FULL_FAQ_ITEMS: FaqItem[] = [
   {
     q: "¿Puedo combinar modelos, talles y colores?",
-    a: "Sí. El mínimo es 4 productos y los combinás como quieras.",
+    a: getPublicMinCopy().faqCombine,
   },
   {
     q: "¿Qué pasa si un producto no hay en stock?",

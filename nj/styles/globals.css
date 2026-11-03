@@ -650,6 +650,52 @@ html[data-exp="full"] .exp-catalog-only {
   }
 }
 
+/* Banner Cyber Monday (TEMPORAL — ver nj/lib/config/temp-order-min.ts) */
+.info-banner-top.info-banner-top--cyber {
+  border: 1px solid rgba(94, 240, 255, 0.35);
+  background: linear-gradient(135deg, #141a2a 0%, #1a1030 55%, #0d1220 100%);
+  box-shadow: 0 4px 14px rgba(8, 12, 28, 0.35);
+}
+
+.info-banner-top--cyber .info-banner-top__title {
+  color: #f5f7fb;
+}
+
+.info-banner-top--cyber .info-banner-top__title strong {
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.info-banner-top--cyber .info-banner-top__cyber-pill {
+  display: inline-block;
+  margin-bottom: 2px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #0d1220;
+  background: linear-gradient(90deg, #5ef0ff, #ff4fd8);
+}
+
+.info-banner-top--cyber .info-banner-top__line {
+  color: rgba(245, 247, 251, 0.86);
+}
+
+.info-banner-top--cyber .info-banner-top__cta {
+  background: linear-gradient(90deg, #CD844D, #d99a66);
+  color: #fff;
+  min-height: 32px;
+  height: 32px;
+  box-shadow: 0 2px 10px rgba(205, 132, 77, 0.35);
+}
+
+.info-banner-top--cyber .info-banner-top__iconWrap {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(94, 240, 255, 0.2);
+}
+
 /* ── Zona categoría (chips + head): sin solapamiento en /nj ───────────── */
 .catalog-category-zone {
   display: flex;

@@ -1,6 +1,6 @@
 const fs = require("fs");
 const path = require("path");
-const { execSync } = require("child_process");
+const { execSync, execFileSync } = require("child_process");
 
 const root = path.resolve(__dirname, "..");
 
@@ -43,6 +43,30 @@ function getStagedFiles() {
   }
 }
 
+// Solo las líneas agregadas: un cambio chico no hereda las coincidencias que el archivo ya tenía.
+// Un archivo nuevo se escanea completo porque todas sus líneas son agregadas.
+function getAddedText(rel) {
+  try {
+    const out = execFileSync("git", ["diff", "--cached", "-U0", "--", rel], {
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    return out
+      .split(/\r?\n/)
+      .filter((l) => l.startsWith("+") && !l.startsWith("+++"))
+      .map((l) => l.slice(1))
+      .join("\n");
+  } catch (err) {
+    return null;
+  }
+}
+
+// El patrón genérico solo es sospechoso si mezcla letras y dígitos:
+// un identificador de código casi nunca los tiene a ambos en 40+ caracteres seguidos.
+function looksRandom(s) {
+  return /[A-Za-z]/.test(s) && /\d/.test(s);
+}
+
 const staged = getStagedFiles();
 if (staged.length === 0) {
   console.log("No hay archivos staged. Saltando escaneo.");
@@ -56,7 +80,8 @@ for (const rel of staged) {
   try {
     const buff = fs.readFileSync(file);
     if (isBinaryFile(buff)) continue;
-    const txt = buff.toString("utf8");
+    const added = getAddedText(rel);
+    const txt = added !== null ? added : buff.toString("utf8");
     for (const p of PATTERNS) {
       // CSS/SQL canónicos: identificadores largos (clases, funciones) no son secretos.
       if (
@@ -69,6 +94,7 @@ for (const rel of staged) {
       if (re.global) {
         let m;
         while ((m = re.exec(txt)) !== null) {
+          if (p.name === "Generic long key" && !looksRandom(m[0])) continue;
           findings.push({ file: rel, name: p.name, excerpt: maskMatch(m[0]) });
         }
       } else {

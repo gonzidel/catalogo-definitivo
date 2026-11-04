@@ -5,10 +5,10 @@ import Link from "next/link";
 import { getTransporte, canonicalizeTransportName, getTransportesDisponibles } from "@/lib/transport";
 import { resolveShippingOptions, getTransportExplanationText, isLocalPickupTransport, getOrderCloseMinimumUnits, isLocalPickupShortDeadlineZone } from "@/lib/transport/shipping-helpers";
 import { useRouter, useSearchParams } from "next/navigation";
-import { getCustomerFacingItemStatus } from "@/lib/orders/waiting-source";
 import {
   isLocalPickupOrderFulfilled,
   localPickupFulfilledDismissKey,
+  isSpecialExtraItem,
 } from "@/lib/orders/domain";
 import {
   calendarDaysUntil,
@@ -22,6 +22,7 @@ import { loadWarehouses } from "@/lib/supabase/order-queries";
 import type { WarehouseIds } from "@/types/orders";
 import CartTab from "@/components/cart/CartTab";
 import ActiveOrderTab from "@/components/cart/ActiveOrderTab";
+import LineItemRow from "@/components/cart/LineItemRow";
 import ProfileTab from "@/components/profile/ProfileTab";
 import { useProfileGate } from "@/components/profile/ProfileGateProvider";
 import { useCartStore, selectCartCount } from "@/store/cart";
@@ -118,12 +119,6 @@ function buildDeadlineNotifications(
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-// Estados visibles para cliente: solo mostramos incidencias reales.
-const ITEM_STATUS_INFO: Record<string, { label: string; color: string; bg: string }> = {
-  missing:   { label: "Sin stock",       color: "#991b1b", bg: "#fee2e2" },
-  cancelled: { label: "Cancelado",       color: "#991b1b", bg: "#fee2e2" },
-};
-
 interface OrderItem {
   id: string;
   product_name: string;
@@ -149,7 +144,7 @@ interface Order {
   dismantle_at?: string | null;
   local_deferred_pickup?: boolean | null;
   expires_at?: string | null;
-  notes?: string | null;
+  notes: string | null;
   order_items: OrderItem[];
 }
 
@@ -254,8 +249,8 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-function OrderCard({ order, expanded, onToggle, warehouseIds }: {
-  order: Order; expanded: boolean; onToggle: () => void; warehouseIds: WarehouseIds;
+function OrderCard({ order, expanded, onToggle }: {
+  order: Order; expanded: boolean; onToggle: () => void;
 }) {
   // Historial = "qué se le mandó finalmente" -- un ítem cancelado (ej. se
   // marcó sin stock y la clienta lo quitó, o un reemplazo por alternativa)
@@ -296,37 +291,27 @@ function OrderCard({ order, expanded, onToggle, warehouseIds }: {
       {expanded && (
         <div style={{ borderTop: "1px solid #f0f0f0", padding: "0 16px 16px" }}>
           {visibleItems.map((item) => {
-            const displayKey = getCustomerFacingItemStatus(item, warehouseIds);
-            const ist = ITEM_STATUS_INFO[displayKey];
+            const special = isSpecialExtraItem(item);
             return (
-              <div key={item.id} style={{
-                display: "flex", gap: 10, paddingTop: 12, alignItems: "flex-start",
-              }}>
-                {item.imagen && (
-                  <img src={item.imagen} alt={item.product_name} style={{
-                    width: 48, height: 48, borderRadius: 6,
-                    objectFit: "cover", flexShrink: 0, background: "#f5f5f5",
-                  }} />
-                )}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: "#333" }}>{item.product_name}</div>
-                  <div style={{ fontSize: 12, color: "#888", marginTop: 2 }}>
-                    {[item.color, item.size && `Talle ${item.size}`].filter(Boolean).join(" · ")}
-                    {" · "}Cant. {item.quantity}
-                  </div>
-                  {ist && (
-                    <span style={{
-                      display: "inline-block", marginTop: 4,
-                      fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 20,
-                      color: ist.color, background: ist.bg,
-                    }}>
-                      {ist.label}
-                    </span>
-                  )}
-                </div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: "#555", flexShrink: 0 }}>
-                  {formatARS(item.price_snapshot * item.quantity)}
-                </div>
+              <div key={item.id} style={{ paddingTop: 12 }}>
+                <LineItemRow
+                  imagen={item.imagen}
+                  variantId={item.variant_id}
+                  productName={item.product_name}
+                  color={special ? undefined : item.color}
+                  size={special ? undefined : item.size}
+                  quantity={item.quantity}
+                  unitPrice={item.price_snapshot}
+                  specialExtra={special}
+                  line2={
+                    special ? (
+                      <span className="active-order-line2">
+                        <span className="line-item-qty-label">{item.quantity} uni</span>
+                        <span className="active-order-extra-tag">Extra</span>
+                      </span>
+                    ) : undefined
+                  }
+                />
               </div>
             );
           })}
@@ -465,6 +450,18 @@ export default function DashboardClient({ user, customer: initialCustomer, order
       return r !== 0 ? r : new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
     })[0] ?? null;
 
+  // Carrito: "en preparación" solo si hay un closed de envío pendiente.
+  // Retiro ya cobrado (A56703 / local_pickup_fulfilled_at) no debe avisar eso:
+  // Mi pedido muestra "Ya retiraste" y el checkout ya no bloquea (337).
+  const blockingCartOrderStatus =
+    activeOrder &&
+    !(
+      activeOrder.status === "closed" &&
+      isLocalPickupOrderFulfilled(activeOrder, orderTransportName)
+    )
+      ? activeOrder.status
+      : null;
+
   // History = everything NOT shown in Mi pedido
   const historyOrders = orders.filter((o) => {
     if (o.id === activeOrder?.id) return false;
@@ -572,13 +569,13 @@ export default function DashboardClient({ user, customer: initialCustomer, order
 
   // Sync active order status + synthetic notifications to Zustand
   useEffect(() => {
-    setActiveOrderStatus(activeOrder?.status ?? null);
+    setActiveOrderStatus(blockingCartOrderStatus);
     setSyntheticNotifications(buildDeadlineNotifications(
       activeOrder,
       customer?.province ?? null,
       customer?.city ?? null,
     ));
-  }, [activeOrder?.id, activeOrder?.status, activeOrder?.order_items, customer?.province, customer?.city, setActiveOrderStatus, setSyntheticNotifications]);
+  }, [activeOrder?.id, activeOrder?.status, activeOrder?.order_items, blockingCartOrderStatus, customer?.province, customer?.city, setActiveOrderStatus, setSyntheticNotifications]);
 
   useEffect(() => {
     void loadWarehouses(getSupabaseBrowserClient()).then(setWarehouseIds);
@@ -648,7 +645,15 @@ export default function DashboardClient({ user, customer: initialCustomer, order
 
   // Resolve transport name from province+city (same logic as ProfileShippingBlock)
   const [showTransportInfo, setShowTransportInfo] = useState(false);
+  const [isDesktopBar, setIsDesktopBar] = useState(false);
   const transportInfoRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 1024px)");
+    const apply = () => setIsDesktopBar(mq.matches);
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
   const isCorreo = effectiveTransport ? canonicalizeTransportName(effectiveTransport) === "Correo Argentino" : false;
 
   const transportExplanation = effectiveTransport
@@ -675,7 +680,7 @@ export default function DashboardClient({ user, customer: initialCustomer, order
   return (
     <div className="dashboard-shell" style={{ minHeight: "100svh", background: "#E5E1DC" }}>
       {/* Header compacto: icono perfil + nombre + accesos secundarios en una sola fila */}
-      <div style={{
+      <div className="dashboard-top" style={{
         background: "#fff", padding: "10px 14px",
         display: "flex", alignItems: "center", gap: 10,
         borderBottom: "1px solid #eee",
@@ -686,6 +691,7 @@ export default function DashboardClient({ user, customer: initialCustomer, order
           type="button"
           onClick={() => setTab("profile")}
           aria-label="Ver perfil"
+          className="dashboard-top__avatar"
           style={{
             width: 36, height: 36, borderRadius: "50%", flexShrink: 0,
             background: "#CD844D", color: "#fff",
@@ -715,22 +721,23 @@ export default function DashboardClient({ user, customer: initialCustomer, order
 
         {/* Nombre + transporte */}
         <div style={{ flex: 1, minWidth: 0, position: "relative" }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: "#222", lineHeight: 1.2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <div className="dashboard-top__name" style={{ fontSize: 14, fontWeight: 700, color: "#222", lineHeight: 1.2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {displayName}
           </div>
 
           {/* Fila transporte */}
-          <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 2 }}>
+          <div className="dashboard-top__transport" style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 2 }}>
             {effectiveTransport ? (
               <>
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#aaa" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                   <rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 5v3h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>
                 </svg>
-                <span style={{ fontSize: 11, color: "#999", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                <span className="dashboard-top__transport-label" style={{ fontSize: 11, color: "#999", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                   {effectiveTransport}
                 </span>
                 <button
                   type="button"
+                  className="dashboard-top__transport-help"
                   onClick={() => setShowTransportInfo((v) => !v)}
                   aria-label="¿Cómo funciona tu retiro o envío?"
                   style={{
@@ -760,13 +767,13 @@ export default function DashboardClient({ user, customer: initialCustomer, order
           </div>
 
           {/* Popover transporte */}
-          {showTransportInfo && effectiveTransport && (
+          {showTransportInfo && effectiveTransport && !isDesktopBar && (
             <>
               <div
                 onClick={() => setShowTransportInfo(false)}
                 style={{ position: "fixed", inset: 0, zIndex: 998 }}
               />
-              <div ref={transportInfoRef} style={{
+              <div ref={transportInfoRef} className="dashboard-top__popover" style={{
                 position: "absolute", top: "calc(100% + 8px)", left: 0,
                 zIndex: 999, width: 260,
                 background: "#fff", borderRadius: 12,
@@ -798,8 +805,91 @@ export default function DashboardClient({ user, customer: initialCustomer, order
           )}
         </div>
 
+        <div className="dashboard-top__actions">
+          <div className="dashboard-top__assigned">
+            <span className="dashboard-top__assigned-kicker">Transporte asignado</span>
+            {effectiveTransport ? (
+              <div className="dashboard-top__assigned-value">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#a8612e" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 5v3h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>
+                </svg>
+                <span>{effectiveTransport}</span>
+                <button
+                  type="button"
+                  className="dashboard-top__transport-help"
+                  onClick={() => setShowTransportInfo((v) => !v)}
+                  aria-label="¿Cómo funciona tu retiro o envío?"
+                  style={{
+                    width: 18, height: 18, borderRadius: "50%", flexShrink: 0,
+                    background: showTransportInfo ? "#CD844D" : "#e0d8d0",
+                    color: showTransportInfo ? "#fff" : "#888",
+                    border: "none", cursor: "pointer",
+                    fontSize: 11, fontWeight: 800,
+                    display: "inline-flex", alignItems: "center", justifyContent: "center",
+                    lineHeight: 1,
+                  }}
+                >
+                  ?
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setTab("profile")}
+                style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "#CD844D", fontWeight: 700, fontSize: 14 }}
+              >
+                Configurar retiro/envío
+              </button>
+            )}
+            {showTransportInfo && effectiveTransport && isDesktopBar && (
+              <>
+                <div
+                  onClick={() => setShowTransportInfo(false)}
+                  style={{ position: "fixed", inset: 0, zIndex: 998 }}
+                />
+                <div ref={transportInfoRef} className="dashboard-top__popover" style={{
+                  position: "absolute", top: "calc(100% + 8px)", left: 0,
+                  zIndex: 999, width: 260,
+                  background: "#fff", borderRadius: 12,
+                  boxShadow: "0 6px 24px rgba(0,0,0,0.13)",
+                  border: "1px solid #f0e8e0", padding: "13px 14px",
+                }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#222", marginBottom: 5, display: "flex", alignItems: "center", gap: 6 }}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#CD844D" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 5v3h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>
+                    </svg>
+                    {effectiveTransport}
+                  </div>
+                  <p style={{ margin: "0 0 10px", fontSize: 12, color: "#555", lineHeight: 1.55 }}>
+                    {transportExplanation}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => { setShowTransportInfo(false); setTab("profile"); }}
+                    style={{
+                      background: "none", border: "none", cursor: "pointer",
+                      fontSize: 11, color: "#CD844D", fontWeight: 600, padding: 0,
+                      textDecoration: "underline dotted", textUnderlineOffset: 2,
+                    }}
+                  >
+                    Cambiar retiro/envío →
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+          <button
+            type="button"
+            className={`dashboard-top__profile${tab === "profile" ? " is-active" : ""}`}
+            onClick={() => setTab("profile")}
+          >
+            <IconProfile size={18} />
+            Perfil
+          </button>
+        </div>
+
         {/* Accesos secundarios */}
-        <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+        <div className="dashboard-header-tools" style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
           <button
             onClick={() => setTab("orders")}
             aria-label="Historial"
@@ -829,7 +919,48 @@ export default function DashboardClient({ user, customer: initialCustomer, order
         </div>
       </div>
 
-      <div style={{ padding: "12px 16px", maxWidth: 640, margin: "0 auto" }}>
+      <nav className="dashboard-side-nav" aria-label="Secciones de tu cuenta">
+        <button
+          type="button"
+          className={`dashboard-side-nav__item${tab === "cart" ? " is-active" : ""}`}
+          onClick={() => setTab("cart")}
+        >
+          <IconCart size={18} />
+          Carrito
+          {cartCount > 0 && (
+            <span className="dashboard-side-nav__badge">{cartCount > 9 ? "9+" : cartCount}</span>
+          )}
+        </button>
+        <button
+          type="button"
+          className={`dashboard-side-nav__item${tab === "active-order" ? " is-active" : ""}`}
+          onClick={() => setTab("active-order")}
+        >
+          <IconOrder size={18} />
+          Mi pedido
+          {activeOrderShowsProductBadge && tab !== "active-order" && (
+            <span className="dashboard-side-nav__dot" aria-hidden="true" />
+          )}
+        </button>
+        <button
+          type="button"
+          className={`dashboard-side-nav__item${tab === "orders" ? " is-active" : ""}`}
+          onClick={() => setTab("orders")}
+        >
+          <IconHistory size={18} />
+          Historial
+        </button>
+        <button
+          type="button"
+          className={`dashboard-side-nav__item${tab === "profile" ? " is-active" : ""}`}
+          onClick={() => setTab("profile")}
+        >
+          <IconProfile size={18} />
+          Perfil
+        </button>
+      </nav>
+
+      <div className="dashboard-main">
 
         <div
           className={[
@@ -903,7 +1034,7 @@ export default function DashboardClient({ user, customer: initialCustomer, order
               <CartTab
                 customerId={user.id}
                 onOrderCreated={handleOrderCreated}
-                activeOrderStatus={activeOrder?.status ?? null}
+                activeOrderStatus={blockingCartOrderStatus}
                 onGoToOrder={() => setTab("active-order")}
               />
             </div>
@@ -964,7 +1095,6 @@ export default function DashboardClient({ user, customer: initialCustomer, order
                   key={order.id}
                   order={order}
                   expanded={expandedOrder === order.id}
-                  warehouseIds={warehouseIds}
                   onToggle={() =>
                     setExpandedOrder(expandedOrder === order.id ? null : order.id)
                   }

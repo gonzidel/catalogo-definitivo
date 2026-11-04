@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { EXP_CATALOG_ONLY, EXP_FULL_ONLY } from "@/lib/rollout/client";
 
 export default function HowtoTabs() {
   const pathname = usePathname();
@@ -14,7 +15,8 @@ export default function HowtoTabs() {
         role="tab"
         aria-selected={pathname?.includes("como-comprar") ? "true" : "false"}
       >
-        Cómo comprar
+        <span className={EXP_FULL_ONLY}>Cómo comprar</span>
+        <span className={EXP_CATALOG_ONLY}>Cómo usar el catálogo</span>
       </Link>
       <Link
         href="/quienes-somos"

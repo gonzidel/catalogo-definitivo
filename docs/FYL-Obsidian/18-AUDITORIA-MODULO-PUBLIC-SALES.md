@@ -218,3 +218,34 @@ export function resolveOrderItemUnitPrice(priceSnapshot, variantPrice) {
 **Hallazgo:** `admin/public-sales.html`, `admin/public-sales-caja2.html` y `admin/public-sales-caja3.html` tenian varios emojis guardados como `?`/`??`/`???` literales (titulo de pestaña, boton "Pedidos", aviso de "Modo Devoluciones activado", label "Monto ($)", modal "Producto Sin Stock", "Pedidos Locales" y "Editar pedido"). Se confirmo via `git show` de un commit previo (`adf657cc`) que el archivo tenia los emojis correctos (`🛍️`, `📦`, `⚠️`, `💵`, `✏️`) y se corrompieron en un guardado posterior (probablemente por un editor/encoding no-UTF8). Se restauraron los emojis originales en las 3 vistas.
 
 **Hallazgo relacionado, no corregido:** `admin/admin-auth.js` (cargado por `public-sales.html` para el login) tiene una corrupcion mas profunda y **preexistente desde el commit inicial del repo** — no solo emojis (`??`) sino tambien acentos (`�` en palabras como "administracion", "sesion", "pagina"). La misma corrupcion de acentos existe en `scripts/curated-banner.js` y `admin/argentina-cities-data.js`. No se toco en esta pasada porque requiere reconstruir manualmente cada palabra corrompida (no hay una version limpia en el historial de git para diffear) y es un problema mas amplio que el modulo de venta publica — se recomienda una tarea dedicada para ese cleanup.
+
+## 13. Auditoria 2026-09-11 — Cambio de talle/color (total $0) en Caja
+
+**Caso:** clienta trae p. ej. 650 negro 37 y quiere 38 u otro color. En `admin/public-sales.html` se carga el 38 como venta y el 37 como devolución (F2). El neto es $0. Reportan que **Finalizar venta no hace nada** y que en estos casos no debería haber ticket: solo movimiento de stock.
+
+**Qué hace el código hoy**
+
+1. No hay guard en el botón ni en `rpc_create_public_sale` que rechace `total_amount = 0`. El click arma `p_items` (venta + `is_return`) y manda `p_total_amount: finalTotal` aunque sea 0 (`public-sales.js` ~5851–6278).
+2. La RPC de dominio (5 args, fyl-core) descuenta el talle/color nuevo de `venta-publico` (o `general` si aplica) y **reingresa la devolución solo a `venta-publico`**. Después inserta `public_sales` + `public_sale_items`. El trigger `register_local_sale_to_daily_sales` acepta `sale_amount = 0`.
+3. Si la RPC OK, **siempre** llama `printDirectly` (GZ / fallback `window.print()`). Si la impresión tira, el `catch` muestra "Error al finalizar venta" **después** de haber grabado la venta: la lista no se limpia. En caja parece que "no se hizo nada"; un segundo click duplicaría stock.
+4. Evidencia de que $0 ya se grabó en prod: `#fylA07534` (TA-400 39 vs TA-401 36, $23.500) y `#fylA08257` (FYL-770 36 vs VT-V590 37, $20.000). Ambos 1 venta + 1 devolución, total 0.
+
+**Qué no es el bloqueo**
+
+- Ni RLS ni un `CHECK` de `total_amount > 0`.
+- El total $0 en pantalla no deshabilita el botón (solo lo pinta neutro).
+
+**Riesgos reales del flujo actual**
+
+- Impresión obligatoria en un cambio (ticket $0 / diálogo GZ).
+- Error de impresión post-venta: UX de fallo con venta ya creada.
+- Si el 38 no tiene stock, la RPC sí aborta (`No hay stock…`) — eso es otro caso, no el $0.
+- Promo 2x: `computeSalePromoGrouping` puede mezclar venta + devolución del mismo producto (usa `isReturn` del primer ítem del grupo). En un cambio 37↔38 del mismo artículo en promo, el neto puede dejar de ser 0.
+
+**Fix aplicado 2026-09-11** (`admin/public-sales.js?v=m260911x`)
+
+- `isNetZeroProductExchange`: venta + devolución, `finalTotal === 0`, sin extras con monto. Caja muestra `$0 · cambio`.
+- Finalizar graba la misma RPC (stock), notas `[EXCHANGE]`, toast "Cambio registrado (sin ticket)", **sin** `printDirectly`.
+- Si la impresión de una venta normal falla, la lista se limpia igual (la venta ya estaba grabada).
+- Promos 2x: grupos separados venta vs devolución (`salePromoUnitKey`) para que un 37↔38 no arme un 2x1 falso.
+- Mismo criterio al finalizar pedido local desde el modal de Caja.

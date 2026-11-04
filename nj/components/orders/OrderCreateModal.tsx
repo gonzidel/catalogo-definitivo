@@ -18,6 +18,7 @@ import {
   enrichDraftItemsWithStock,
   mergeDraftItem,
   type OrderEditDraftItem,
+  type TakenReservation,
 } from "@/lib/supabase/order-edit";
 import {
   createManualOrder,
@@ -49,6 +50,12 @@ import { useOrdersStore, refreshAndMaybeAutoClose } from "@/hooks/useOrders";
 import OrderEditExtrasPanel from "./OrderEditExtrasPanel";
 import OrderEditProductPicker from "./OrderEditProductPicker";
 import OrderExtraQtyStepper from "./OrderExtraQtyStepper";
+import {
+  ReservationChoiceCancelledError,
+  describeTakenReservations,
+  notifyTakenReservations,
+  useReservationConflictResolver,
+} from "./ReservationConflictModal";
 
 interface OrderCreateModalProps {
   onClose: () => void;
@@ -85,6 +92,7 @@ export default function OrderCreateModal({ onClose }: OrderCreateModalProps) {
   const patchOrder = useOrdersStore((s) => s.patchOrder);
   const showToast = useOrdersStore((s) => s.showToast);
   const boardScope = useOrdersStore((s) => s.boardScope);
+  const { resolveReservationConflicts, conflictModal } = useReservationConflictResolver();
   const isRetiroBoard = boardScope === "local_pickup";
 
   const [customer, setCustomer] = useState<CustomerDirectoryRow | null>(null);
@@ -286,13 +294,18 @@ export default function OrderCreateModal({ onClose }: OrderCreateModalProps) {
         }
       }
 
-      const enriched = await enrichDraftItemsWithStock(supabase, draft);
+      const enriched = await resolveReservationConflicts(
+        supabase,
+        await enrichDraftItemsWithStock(supabase, draft),
+        duplicateOrder?.id ?? null
+      );
+      let taken: TakenReservation[] = [];
 
       if (duplicateOrder) {
         const existingOrder = await fetchOrderById(supabase, duplicateOrder.id);
         if (!existingOrder) throw new Error("No se pudo cargar el pedido existente del cliente.");
         const existingNotesExtras = parseOrderNotesExtrasValues(existingOrder.notes);
-        await addItemsToExistingOrder(supabase, existingOrder.id, enriched, {
+        taken = await addItemsToExistingOrder(supabase, existingOrder.id, enriched, {
           notesExtras: existingNotesExtras,
         });
         // Si la clienta ya había pedido cerrar (customer_requested_close) y estos
@@ -318,7 +331,7 @@ export default function OrderCreateModal({ onClose }: OrderCreateModalProps) {
           showToast("Productos agregados al pedido activo del cliente", "success");
         }
       } else {
-        const newOrderId = await createManualOrder(
+        const { orderId: newOrderId, takenReservations } = await createManualOrder(
           supabase,
           ordersCustomerId,
           enriched,
@@ -330,13 +343,20 @@ export default function OrderCreateModal({ onClose }: OrderCreateModalProps) {
               }
             : undefined
         );
+        taken = takenReservations;
         const created = await fetchOrderById(supabase, newOrderId);
         if (created) addOrderIfMissing(created);
         showToast("Pedido creado", "success");
       }
 
+      if (taken.length) {
+        await notifyTakenReservations(supabase, taken, patchOrder);
+        showToast(describeTakenReservations(taken), "success");
+      }
+
       onClose();
     } catch (err) {
+      if (err instanceof ReservationChoiceCancelledError) return;
       setErrorMsg(err instanceof Error ? err.message : "Error al crear el pedido.");
     } finally {
       setBusy(false);
@@ -792,6 +812,7 @@ export default function OrderCreateModal({ onClose }: OrderCreateModalProps) {
           document.body
         )
       : null}
+    {conflictModal}
     </>
   );
 }

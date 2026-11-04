@@ -416,7 +416,7 @@ export default function ProfileTab({ customer, userEmail, userId, onLogout, logg
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+    <div className="profile-tab">
 
       {/* ── Retiro/envío asignado ── */}
       <div style={cardStyle}>

@@ -11,17 +11,17 @@ const SLIDES = [
   {
     title: "Ahora podés hacer tu pedido cuando quieras",
     text: "Ya no necesitás esperar una respuesta por WhatsApp. Elegí tus productos, colores y talles directamente desde nuestro catálogo, en cualquier momento.",
-    image: "/nj/history/launch-mobile-cart.webp?v=20260826",
+    image: "/history/launch-mobile-cart.webp?v=20260826",
   },
   {
     title: "Reservá y seguí agregando productos",
     text: "Al armar tu pedido, los productos disponibles se reservan para vos. Tu pedido queda abierto durante 7 días para que puedas seguir sumando productos cuando quieras.",
-    image: "/nj/history/launch-mobile-order.webp?v=20260826",
+    image: "/history/launch-mobile-order.webp?v=20260826",
   },
   {
     title: "Cuando estés lista, cerrá tu pedido",
     text: "¿Terminaste de elegir? Cerrá tu pedido y nosotros nos encargamos de prepararlo. Después te contactamos para coordinar el pago, envío o retiro.",
-    image: "/nj/history/launch-mobile-coordinate.webp?v=20260826",
+    image: "/history/launch-mobile-coordinate.webp?v=20260826",
   },
 ] as const;
 
@@ -41,11 +41,6 @@ export default function HomeLaunchOnboarding() {
 
   useEffect(() => {
     setMounted(true);
-
-    SLIDES.forEach((slide) => {
-      const image = new window.Image();
-      image.src = slide.image;
-    });
 
     try {
       const dismissed = window.localStorage.getItem(DISMISS_KEY) === "1";
@@ -68,6 +63,21 @@ export default function HomeLaunchOnboarding() {
     }, shouldForceOpen ? 0 : 1200);
     return () => window.clearTimeout(timer);
   }, [shouldForceOpen]);
+
+  // Solo al abrir: diapositiva activa; como máximo la siguiente (no las 3 al montar).
+  useEffect(() => {
+    if (!open) return;
+    const active = SLIDES[activeIndex];
+    if (active) {
+      const current = new window.Image();
+      current.src = active.image;
+    }
+    const nextSlide = SLIDES[activeIndex + 1];
+    if (nextSlide) {
+      const upcoming = new window.Image();
+      upcoming.src = nextSlide.image;
+    }
+  }, [open, activeIndex]);
 
   useEffect(() => {
     if (!open) return;

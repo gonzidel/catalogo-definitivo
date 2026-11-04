@@ -111,6 +111,21 @@ Ver detalle completo en [[41-MIGRACION-NEXTJS-NJ-2026-06-08]].
 
 ---
 
+## E) Buscador `/nj` (2026-09-03 / 2026-09-04)
+
+1. **Un solo commit textual:** `commitSearch` en `SearchBar`. Debounce solo arma sugerencias. El input visible no se reescribe.
+2. **Vocabulario ≠ tags (opción C):** `search_keywords` / `search_aliases` independientes. Los nombres de tag se resuelven por texto. **No limpiar `tags`** en las fases de search.
+3. **Analytics híbrido:** GA4 (`G-2JDYZW1KD6`) = comportamiento. `search_events` = aliases / zero-results. Recarga y `?q=` directo no cuentan.
+4. **Uso por resolutions JSON**, no por split de `query_resolved`. `zapatillas negras` = 1 a zapatilla + 1 a negro.
+5. **Admin decide, nunca el sistema:** candidatos e ignore (`search_ignored_terms`) son operativos. Sin alta automática de aliases. Sin `force`.
+6. **Desactivar > DELETE** desde la UI normal.
+7. **Agregaciones en PostgreSQL.** No bajar `search_events` al browser.
+8. **Invalidación de diccionario:** `publishSearchDictionaryChange()` + SWR. No esperar 60s.
+
+Hub: [[59-NJ-BUSCADOR-SMART-SEARCH]]. Apply Fase 5: [[41-SEARCH-ADMIN-FASE5-2026-09-03]].
+
+---
+
 ## C) Documentales (vault)
 
 - Auditorías 14–19: referencia por módulo; [[15-OBSERVACIONES-PRODUCTS-A-REVISAR]] riesgos transversales.

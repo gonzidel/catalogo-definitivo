@@ -57,8 +57,19 @@ if (!uiOk) failed += 1;
 console.log(`${uiOk ? "PASS" : "FAIL"} UI original intacto: original="${ui.originalQuery}" resolved="${ui.resolvedQuery}"`);
 
 const products = [
-  emptyProduct({ Articulo: "PANT2", Filtro1: "Pantubota", Filtro2: "Pantubotas" }),
-  emptyProduct({ Articulo: "Z01", Filtro1: "Zapatilla" }),
+  emptyProduct({
+    Articulo: "PANT2",
+    Filtro1: "Pantubota",
+    Filtro2: "Pantubotas",
+    Precio: "1500",
+    hasAnyStock: true,
+  }),
+  emptyProduct({
+    Articulo: "Z01",
+    Filtro1: "Zapatilla",
+    Precio: "1500",
+    hasAnyStock: true,
+  }),
 ];
 const suggestions = buildSuggestions(products, "pantubotas", 7, dict);
 const tagLabels = suggestions.filter((s) => s.type === "tag").map((s) => s.label);

@@ -281,6 +281,7 @@ Acción principal:
 **Modal previo de retiro/envío (primera vez al cerrar):**
 
 - Muestra solo las opciones válidas para la localidad del cliente.
+- **Transporte asignado en la ficha** (`customers.transport_id`, p. ej. asignado por admin): se ofrece y preselecciona aunque la localidad no lo liste (`resolveCloseTransportOptions`). Antes se descartaba y al confirmar el modal se pisaba con la opción geo (caso Snaider/Tacuarendí, 2026-10-02).
 - **Corrientes Capital:** únicamente `Retira local` y `MyM` (no Credifin / Snaider / Via Cargo / Correo).
 - Texto MyM: `Se enviará a tu domicilio. El pago es contra reembolso: lo abonás junto con el envío cuando te lo entreguen.`
 - Fuente: `client/transportes-data.js` + `nj/lib/transport/shipping-helpers.ts`.

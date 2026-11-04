@@ -27,6 +27,11 @@ import {
 import type { AdminOrder } from "@/types/orders";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import {
+  EMPTY_ORDER_PROMO_PRICING,
+  loadOrderPromoPricing,
+  type OrderPromoPricing,
+} from "@/lib/orders/order-promo-pricing";
 import { buildEscposTicketText } from "@/lib/print/escpos-ticket";
 import { printEscposTicketWithGz } from "@/lib/print/gz-agent";
 
@@ -42,7 +47,10 @@ export interface RetiroSaleTotals {
 
   productLines: number;
 
+  /** Productos ya con las promos 2x aplicadas. */
   subtotal: number;
+
+  promoDiscount: number;
 
   notesAdjustments: number;
 
@@ -173,24 +181,14 @@ function getMirroredLocalOrderId(order: AdminOrder): string | null {
 
 
 export function getRetiroSaleTotals(
-
   order: AdminOrder,
-
   surchargePct = 0,
-
-  creditUsed = 0
-
+  creditUsed = 0,
+  promo: OrderPromoPricing = EMPTY_ORDER_PROMO_PRICING
 ): RetiroSaleTotals {
-
   const items = billableItems(order);
-
-  const linesSubtotal = items.reduce(
-
-    (sum, item) => sum + getOrderItemLineTotal(item),
-
-    0
-
-  );
+  const linesSubtotal =
+    items.reduce((sum, item) => sum + getOrderItemLineTotal(item), 0) - promo.discount;
 
   const notes = parseOrderNotesPricing(order);
 
@@ -213,6 +211,8 @@ export function getRetiroSaleTotals(
     productLines: items.length,
 
     subtotal: linesSubtotal,
+
+    promoDiscount: promo.discount,
 
     notesAdjustments,
 
@@ -300,70 +300,46 @@ function appendOrderNotesExtraLines(
 
 
 
-function buildSaleItems(
-
+export function buildSaleItems(
   order: AdminOrder,
-
   surchargePct: number,
-
-  creditUsed = 0
-
+  creditUsed = 0,
+  promo: OrderPromoPricing = EMPTY_ORDER_PROMO_PRICING
 ): { items: SaleItemPayload[]; totals: RetiroSaleTotals } {
-
   const billable = billableItems(order);
-
-  const linesSubtotal = billable.reduce(
-
-    (sum, item) => sum + getOrderItemLineTotal(item),
-
-    0
-
-  );
-
+  const linesSubtotal =
+    billable.reduce((sum, item) => sum + getOrderItemLineTotal(item), 0) - promo.discount;
   const items: SaleItemPayload[] = [];
 
-
-
   for (const item of billable) {
-
     const qty = Number(item.quantity) || 0;
-
     const rawPrice = Number(item.price_snapshot) || 0;
-
     if (qty <= 0) continue;
 
-
-
     if (item.variant_id) {
-
       const isReturn = isReturnOrderItem(item) || rawPrice < 0;
-
       const sizeStr = item.size != null ? String(item.size).trim() : "";
-
-      const line: SaleItemPayload = {
-
-        variant_id: item.variant_id,
-
-        qty,
-
-        price: Math.abs(rawPrice),
-
-        is_return: isReturn,
-
-        from_local_order: !isReturn,
-
-      };
-
-      if (sizeStr) line.size = sizeStr;
-
-      if (!isReturn) {
-
-        line.source = { venta_publico: qty, general: 0 };
-
+      // Unidades de un par 2x van a $0: su valor está en la línea "N oferta 2x…" (como public-sales).
+      const promoQty = isReturn ? 0 : Math.min(qty, promo.coveredQtyByItemId[item.id] ?? 0);
+      const parts = [
+        { qty: promoQty, price: 0 },
+        { qty: qty - promoQty, price: Math.abs(rawPrice) },
+      ];
+      for (const part of parts) {
+        if (part.qty <= 0) continue;
+        const line: SaleItemPayload = {
+          variant_id: item.variant_id,
+          qty: part.qty,
+          price: part.price,
+          is_return: isReturn,
+          from_local_order: !isReturn,
+        };
+        if (sizeStr) line.size = sizeStr;
+        if (!isReturn) {
+          line.source = { venta_publico: part.qty, general: 0 };
+        }
+        items.push(line);
       }
-
-      items.push(line);
-
     } else {
 
       items.push({
@@ -386,11 +362,19 @@ function buildSaleItems(
 
 
 
+  for (const promoLine of promo.lines) {
+    items.push({
+      product_name: promoLine.label,
+      qty: 1,
+      price: promoLine.amount,
+      is_return: false,
+      is_special_extra: true,
+    });
+  }
+
   appendOrderNotesExtraLines(items, order, linesSubtotal);
 
-
-
-  const totals = getRetiroSaleTotals(order, surchargePct, creditUsed);
+  const totals = getRetiroSaleTotals(order, surchargePct, creditUsed, promo);
 
 
 
@@ -752,6 +736,16 @@ function buildTicketHtml(input: {
 
 
 
+/** Producto a $0 cuyo valor está en la línea "N oferta 2x…" (`isPromoAbsorbedTicketLine` de public-sales). */
+function isPromoAbsorbedTicketRow(row: Record<string, unknown>): boolean {
+  if (Number(row.price ?? row.price_snapshot ?? 0) !== 0) return false;
+  if (Boolean(row.is_return)) return false;
+  const sku = row.sku ? String(row.sku) : "";
+  const hasVariantInfo =
+    Boolean(row.color) || Boolean(row.size) || (sku !== "" && sku !== "EXTRA-ESPECIAL");
+  return hasVariantInfo && Number(row.qty) > 0;
+}
+
 function escapeHtml(value: string): string {
 
   return String(value)
@@ -835,7 +829,9 @@ export async function finalizeRetiroOrderSale(
 
   const availableCredit = await fetchAvailableCredit(supabase, publicSalesCustomerId);
 
-  const { items, totals } = buildSaleItems(order, surchargePct, availableCredit);
+  const promo = await loadOrderPromoPricing(supabase, billableItems(order));
+
+  const { items, totals } = buildSaleItems(order, surchargePct, availableCredit, promo);
 
 
 
@@ -931,29 +927,31 @@ export async function finalizeRetiroOrderSale(
 
 
 
-  let ticketItems = billableItems(order).map((item) => {
-
-    const raw = Number(item.price_snapshot) || 0;
-
-    const isReturn = isReturnOrderItem(item) || raw < 0;
-
-    return {
-
-      product_name: item.product_name || "Producto",
-
-      color: item.color,
-
-      size: item.size,
-
-      qty: Number(item.quantity) || 0,
-
-      price: isReturn ? -Math.abs(raw) : Math.abs(raw),
-
-      is_return: isReturn,
-
-    };
-
-  });
+  let ticketItems = billableItems(order)
+    .map((item) => {
+      const raw = Number(item.price_snapshot) || 0;
+      const isReturn = isReturnOrderItem(item) || raw < 0;
+      const promoQty = isReturn ? 0 : promo.coveredQtyByItemId[item.id] ?? 0;
+      return {
+        product_name: item.product_name || "Producto",
+        color: item.color,
+        size: item.size,
+        qty: (Number(item.quantity) || 0) - promoQty,
+        price: isReturn ? -Math.abs(raw) : Math.abs(raw),
+        is_return: isReturn,
+      };
+    })
+    .filter((item) => item.qty > 0)
+    .concat(
+      promo.lines.map((line) => ({
+        product_name: line.label,
+        color: null,
+        size: null,
+        qty: 1,
+        price: line.amount,
+        is_return: false,
+      }))
+    );
 
 
 
@@ -970,13 +968,10 @@ export async function finalizeRetiroOrderSale(
       ticketItems = (details.items as Array<Record<string, unknown>>)
 
         .filter(
-
           (row) =>
-
-            Number(row.price ?? row.price_snapshot ?? 0) !== 0 ||
-
-            Number(row.qty ?? 0) > 0
-
+            (Number(row.price ?? row.price_snapshot ?? 0) !== 0 ||
+              Number(row.qty ?? 0) > 0) &&
+            !(promo.lines.length > 0 && isPromoAbsorbedTicketRow(row))
         )
 
         .map((row) => {

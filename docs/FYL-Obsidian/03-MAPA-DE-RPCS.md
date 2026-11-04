@@ -60,6 +60,7 @@ Detalle: [[16-AUDITORIA-MODULO-STOCK]].
 | `rpc_create_public_customer` / `rpc_search_public_customer` | Clientes de venta publica |
 | `rpc_add_return_credit` / `rpc_add_customer_credit` | Creditos |
 | `rpc_get_local_orders`, `rpc_get_local_order_items`, `rpc_create_local_order`, `rpc_update_local_order`, `rpc_delete_local_order`, `rpc_load_local_order_to_sale` | Pedidos locales |
+| `rpc_finalize_local_order_to_public_sale` | Cierre atómico pedido→venta (canonical **334**, **no aplicada** a fyl-core al 2026-09-04). Ver [[60-LOCAL-ORDER-ATOMIC-CLOSE-FYLA10223-2026-09-04]] |
 
 Detalle: [[18-AUDITORIA-MODULO-PUBLIC-SALES]].
 
@@ -114,8 +115,24 @@ Consumidor admin:
 
 Detalle y supuestos: [[26-AUDITORIA-MODULO-ESTADISTICAS-2026-05-05]].
 
+## Buscador `/nj` (admin, 2026-09-04)
+
+No tocan stock ni pedidos. Solo `authenticated` + `is_admin()`. Anon sin EXECUTE.
+
+| RPC | Uso | Migración |
+|-----|-----|-----------|
+| `search_normalize_text(text)` | Normalización compartida (no es admin-only) | 327 |
+| `search_admin_dashboard_stats()` | Cards 7d/30d / zero / alias% / counts | 329 |
+| `search_admin_grouped_queries(int, text)` | zero / low / unresolved agrupados | 329 |
+| `search_admin_resolution_usage(int)` | Uso por `resolutions` JSON | 329 |
+| `search_admin_resolved_usage(int)` | Identity (`resolutions = []`) | 329 |
+| `search_admin_require()` | Guard interno | 329 |
+
+Vista pública: `search_dictionary_public` (SELECT anon). Hub: [[59-NJ-BUSCADOR-SMART-SEARCH]]. Apply: [[41-SEARCH-ADMIN-FASE5-2026-09-03]].
+
 ## Enlaces
 
 - [[13-RPCS-DEPLOY-STATE]]
 - [[15-OBSERVACIONES-PRODUCTS-A-REVISAR]]
 - [[99-AUDITORIA-DOCUMENTACION]]
+- [[59-NJ-BUSCADOR-SMART-SEARCH]]

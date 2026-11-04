@@ -1,4 +1,6 @@
+import { unstable_cache } from "next/cache";
 import { createSupabaseServerClient } from "./server";
+import { getPublicCatalogClient } from "./public-catalog";
 import {
   CATALOG_SOURCE,
   CATALOG_SELECT,
@@ -8,6 +10,10 @@ import {
 } from "@/lib/utils/catalog";
 import type { CatalogRow, GroupedProduct } from "@/types/catalog";
 import type { PromotionalBannerData, CuratedBannerConfig } from "@/types/banners";
+
+export type { PdpProductPayload } from "@/lib/pdp/load-product-ssr";
+export { loadPdpProductForSku } from "@/lib/pdp/load-product-ssr";
+export { neutralizePdpStockFlags } from "@/lib/pdp/neutralize-stock";
 
 const PAGE_SIZE = 14;
 const BOOT_ROWS = 120;
@@ -347,16 +353,31 @@ export async function getCuratedBannerProducts(
   }
 }
 
-/** Hay al menos un producto con oferta activa en el catálogo público. */
+/**
+ * Hay al menos un producto con oferta activa.
+ * Cliente anon público (sin cookies) + Data Cache 300s / tag catalog-products.
+ * No usa createSupabaseServerClient ni count exact.
+ */
 export async function hasActiveOfertas(): Promise<boolean> {
+  const cached = unstable_cache(
+    async () => {
+      const supabase = getPublicCatalogClient();
+      const { data, error } = await supabase
+        .from(CATALOG_SOURCE)
+        .select("Articulo")
+        .eq("OfertaActiva", true)
+        .limit(1);
+      if (error) return false;
+      return (data?.length ?? 0) > 0;
+    },
+    ["has-active-ofertas"],
+    {
+      revalidate: 300,
+      tags: ["catalog-products"],
+    }
+  );
   try {
-    const supabase = await createSupabaseServerClient();
-    const { count, error } = await supabase
-      .from(CATALOG_SOURCE)
-      .select("Articulo", { count: "exact", head: true })
-      .eq("OfertaActiva", true)
-      .limit(1);
-    return !error && (count ?? 0) > 0;
+    return await cached();
   } catch {
     return false;
   }

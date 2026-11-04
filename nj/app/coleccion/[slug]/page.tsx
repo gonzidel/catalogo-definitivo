@@ -23,6 +23,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   if (!isCollectionSlug(normalized)) return { title: "Colección — FYL Moda" };
   const meta = COLLECTION_META[normalized];
   return {
+    alternates: { canonical: `/coleccion/${normalized}` },
     title: `${meta.title} — FYL Moda`,
     description: `${meta.title}. ${meta.subtitle}. Catálogo mayorista.`,
   };

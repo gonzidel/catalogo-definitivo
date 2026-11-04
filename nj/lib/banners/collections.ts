@@ -14,7 +14,7 @@ export interface CollectionMeta {
 export const COLLECTION_META: Record<CollectionSlug, CollectionMeta> = {
   "fyl-originals": {
     title: "F&L Originals",
-    subtitle: "Fabricación propia",
+    subtitle: "Colección destacada",
   },
   "nuevos-ingresos": {
     title: "Nuevos ingresos",

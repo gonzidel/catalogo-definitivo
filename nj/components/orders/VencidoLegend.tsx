@@ -1,4 +1,4 @@
-/** Referencia visual en Vencido: amarillo / rojo / azul. */
+/** Referencia visual en Vencido: rojo / azul (amarillo “1 día” vive en Apartados). */
 export default function VencidoLegend() {
   return (
     <span
@@ -6,10 +6,6 @@ export default function VencidoLegend() {
       title="Color según plazo y aviso WhatsApp"
       aria-label="Leyenda de colores Vencido"
     >
-      <span className="kanban-column__legend-chip">
-        <span className="kanban-column__legend-swatch kanban-column__legend-swatch--vencido-yellow" />
-        1 día
-      </span>
       <span className="kanban-column__legend-chip">
         <span className="kanban-column__legend-swatch kanban-column__legend-swatch--vencido-red" />
         Vencido

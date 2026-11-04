@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getAdminContext, hasPermission } from "@/lib/auth/admin";
 import { getCategoryPricingDefault, listSuppliers } from "@/lib/products/actions";
+import { HIDDEN_CATEGORY_PRICING_DEFAULT } from "@/lib/products/pricing";
 import AccessDenied from "@/components/admin-products/AccessDenied";
 import ProductGeneralForm from "@/components/admin-products/ProductGeneralForm";
 import styles from "../products-admin.module.css";
@@ -26,11 +27,16 @@ export default async function AdminProductNewPage() {
     );
   }
 
+  const loadPricing = (category: string) =>
+    ctx.isSuperAdmin
+      ? getCategoryPricingDefault(category)
+      : Promise.resolve(HIDDEN_CATEGORY_PRICING_DEFAULT);
+
   const [suppliers, calzado, ropa, otros] = await Promise.all([
     listSuppliers(),
-    getCategoryPricingDefault("Calzado"),
-    getCategoryPricingDefault("Ropa"),
-    getCategoryPricingDefault("Otros"),
+    loadPricing("Calzado"),
+    loadPricing("Ropa"),
+    loadPricing("Otros"),
   ]);
 
   return (

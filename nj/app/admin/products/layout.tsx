@@ -1,30 +1,19 @@
-import { Fraunces, IBM_Plex_Sans, IBM_Plex_Mono } from "next/font/google";
-
-const fraunces = Fraunces({
-  subsets: ["latin"],
-  variable: "--font-display",
-  weight: ["400", "500", "600"],
-  style: ["normal", "italic"],
-  display: "swap",
-});
-
-const plexSans = IBM_Plex_Sans({
-  subsets: ["latin"],
-  variable: "--font-body",
-  weight: ["400", "500", "600", "700"],
-  display: "swap",
-});
-
-const plexMono = IBM_Plex_Mono({
-  subsets: ["latin"],
-  variable: "--font-mono",
-  weight: ["400", "500"],
-  display: "swap",
-});
-
+/**
+ * Variables de tipografía del admin de productos.
+ * No usa next/font/google: el fetch a Google Fonts rompe `next build`
+ * en Windows (certificado) y no debe ser dependencia de compile.
+ * El catálogo ya carga Poppins; acá se reutiliza como display/body.
+ */
 export default function ProductsAdminLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className={`${fraunces.variable} ${plexSans.variable} ${plexMono.variable}`}>
+    <div
+      className="admin-products-fonts"
+      style={{
+        ["--font-display" as string]: "Poppins, Georgia, serif",
+        ["--font-body" as string]: "Poppins, system-ui, sans-serif",
+        ["--font-mono" as string]: "ui-monospace, Consolas, monospace",
+      }}
+    >
       {children}
     </div>
   );

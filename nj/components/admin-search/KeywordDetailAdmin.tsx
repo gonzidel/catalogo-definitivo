@@ -22,6 +22,7 @@ import { normalizeText } from "@/lib/search/normalize";
 import { publishSearchDictionaryChange } from "@/lib/search/dictionary-store";
 import type { KeywordDetails } from "@/lib/admin/search-admin";
 import type { SearchVocabLookup } from "@/lib/admin/search-admin-validate";
+import type { SearchKeywordKind } from "@/lib/search/types";
 import shared from "@/app/admin/conciliacion-reembolso/conciliacion.module.css";
 import extra from "@/app/admin/search/search-admin.module.css";
 
@@ -137,7 +138,11 @@ export default function KeywordDetailAdmin({
             </div>
             <div className={extra.field}>
               <label htmlFor="kw-kind">Tipo</label>
-              <select id="kw-kind" value={kind} onChange={(e) => setKind(e.target.value)}>
+              <select
+                id="kw-kind"
+                value={kind}
+                onChange={(e) => setKind(e.target.value as SearchKeywordKind)}
+              >
                 {SEARCH_KEYWORD_KINDS.map((k) => (
                   <option key={k} value={k}>
                     {KEYWORD_KIND_LABELS[k]}

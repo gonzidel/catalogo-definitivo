@@ -5,6 +5,8 @@ import Link from "next/link";
 import Image from "next/image";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { CATALOG_SOURCE, CATALOG_SELECT, agruparProductos, formatARS } from "@/lib/utils/catalog";
+import { pickDisplayColorDetail } from "@/lib/utils/catalog-variant-enrich";
+import { getColorEffectivePrice } from "@/lib/utils/variant-price";
 import { resolveImageSrc } from "@/lib/cloudinary";
 import type { CatalogRow, GroupedProduct } from "@/types/catalog";
 
@@ -105,14 +107,24 @@ export default function PdpRecommended({
 
       <div className="pdp-recommended__scroller">
         {products.map((p) => {
-          const imgSrc = resolveImageSrc(p.VariantePrincipal);
-          const price = formatARS(p.Precio);
-          const offerPrice = p.OfertaActiva ? formatARS(p.PrecioOferta) : null;
+          const displayColor = pickDisplayColorDetail(p);
+          const pricing = getColorEffectivePrice(displayColor, p);
+          const imgSrc = resolveImageSrc(
+            displayColor?.images?.[0] ?? p.VariantePrincipal
+          );
+          const price = formatARS(pricing.normalPrice || p.Precio);
+          const offerPrice = pricing.isOffer
+            ? formatARS(pricing.effectivePrice)
+            : null;
+          const hrefColor = displayColor?.color ?? "";
+          const href = hrefColor
+            ? `/producto/${encodeURIComponent(p.Articulo)}?color=${encodeURIComponent(hrefColor)}`
+            : `/producto/${encodeURIComponent(p.Articulo)}`;
 
           return (
             <Link
               key={p.Articulo}
-              href={`/producto/${encodeURIComponent(p.Articulo)}`}
+              href={href}
               className="pdp-recommended__card-link"
             >
               <div className="pdp-recommended__card">

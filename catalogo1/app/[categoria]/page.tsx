@@ -4,7 +4,7 @@ import type { Metadata } from "next";
 import { getCatalogPage, hasActiveOfertas } from "@/lib/supabase/queries";
 import { slugToCategoria } from "@/lib/utils/catalog";
 import CatalogShell from "@/components/catalog/CatalogShell";
-import SkeletonCard from "@/components/catalog/SkeletonCard";
+import CatalogShellSkeleton from "@/components/catalog/CatalogShellSkeleton";
 import JsonLdScript from "@/lib/seo/JsonLdScript";
 import { catalogCategoryJsonLd } from "@/lib/seo/json-ld";
 import { CATALOG_URL } from "@/lib/constants/seo";
@@ -25,19 +25,6 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   };
 }
 
-function CatalogSkeleton() {
-  return (
-    <div id="catalogo" className="catalogo">
-      <div id="catalog-container">
-        {Array.from({ length: 8 }).map((_, i) => (
-          <SkeletonCard key={i} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// Async child: fetch happens here, inside Suspense
 async function CatalogContent({ cat }: { cat: string }) {
   const [{ products }, hasOfertas] = await Promise.all([
     getCatalogPage(cat, 1),
@@ -53,7 +40,6 @@ async function CatalogContent({ cat }: { cat: string }) {
   );
 }
 
-// NOT async — sends HTML immediately with skeleton fallback
 export default async function CategoriaPage({ params }: PageProps) {
   const { categoria: slug } = await params;
   const cat = slugToCategoria(slug);
@@ -69,7 +55,11 @@ export default async function CategoriaPage({ params }: PageProps) {
           url: `${CATALOG_URL}/${slug}`,
         })}
       />
-      <Suspense fallback={<CatalogSkeleton />}>
+      <Suspense
+        fallback={
+          <CatalogShellSkeleton categoria={cat} hasOfertas />
+        }
+      >
         <CatalogContent cat={cat} />
       </Suspense>
     </>

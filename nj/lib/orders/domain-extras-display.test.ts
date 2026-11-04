@@ -3,7 +3,9 @@ import { test } from "node:test";
 import type { AdminOrder, AdminOrderItem } from "../../types/orders";
 import {
   appendExtrasToOrderCardItems,
+  buildCustomerOrderNoteExtras,
   countRegularProductUnits,
+  filterOrderTotalItems,
   getOrderExtraDisplayName,
   isNoteExtraDisplayItem,
   isPickedOrderItem,
@@ -77,6 +79,51 @@ test("si no hay extras, la lista visible no cambia", () => {
   const visible = appendExtrasToOrderCardItems([pickedProduct], order);
   assert.equal(visible.length, 1);
   assert.equal(visible[0].id, "p1");
+});
+
+test("dashboard clienta: extra fijo de notes se lista y suma al total (A57414)", () => {
+  const { rows, net } = buildCustomerOrderNoteExtras(
+    JSON.stringify({ discount: 0, shipping: 0, extras_label: "ALHAJEROS", extras_amount: 8500 }),
+    134900
+  );
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].label, "ALHAJEROS");
+  assert.equal(rows[0].amount, 8500);
+  assert.equal(134900 + net, 143400);
+});
+
+test("dashboard clienta: descuento y porcentaje de notes ajustan el neto", () => {
+  const { rows, net } = buildCustomerOrderNoteExtras(
+    JSON.stringify({ discount: 5000, extras_percentage: 10 }),
+    20000
+  );
+  assert.deepEqual(
+    rows.map((r) => r.key),
+    ["discount", "extras_percentage"]
+  );
+  assert.equal(net, -5000 + 2000);
+});
+
+test("dashboard clienta: notes sin extras no agrega filas", () => {
+  assert.deepEqual(buildCustomerOrderNoteExtras(JSON.stringify({ pau_source: true }), 1000), {
+    rows: [],
+    net: 0,
+  });
+  assert.deepEqual(buildCustomerOrderNoteExtras(null, 1000), { rows: [], net: 0 });
+});
+
+test("filterOrderTotalItems excluye cancelados y vencidos del total", () => {
+  const items = [
+    { status: "picked", price_snapshot: 1000, quantity: 1 },
+    { status: "cancelled", price_snapshot: 5000, quantity: 1 },
+    { status: "expired", price_snapshot: 7000, quantity: 1 },
+    { status: "missing", price_snapshot: 300, quantity: 1 },
+    { status: null, price_snapshot: 200, quantity: 1 },
+  ];
+  assert.deepEqual(
+    filterOrderTotalItems(items).map((i) => i.price_snapshot),
+    [1000, 300, 200]
+  );
 });
 
 test("countRegularProductUnits incluye extras especiales positivos (A56950)", () => {

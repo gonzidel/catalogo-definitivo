@@ -404,16 +404,18 @@ Contenido idéntico al original `#/quienes-somos`:
 
 ### Configuración requerida en Supabase
 
-En **Auth → URL Configuration → Redirect URLs** agregar:
+> Actualizado 2026-09-04: el código local ya habla raíz (`/auth/callback`) y `/nj` (dual). La URL exacta **no alcanza**: hace falta `?next=**`. Site URL live sigue Firebase. Detalle y allowlist aplicada: [[59-NJ-CHECKOUT-IDEMPOTENCY-ROOT-PREP-2026-09-04]] §5.
+
+En **Auth → URL Configuration → Redirect URLs** (live, no borrar las `/nj`):
 ```
+http://localhost:3001/auth/callback
+http://localhost:3001/auth/callback?next=**
 http://localhost:3001/nj/auth/callback
 http://localhost:3001/nj/auth/callback?next=**
-```
-
-En producción (Vercel) agregar también:
-```
-https://<dominio>/nj/auth/callback
-https://<dominio>/nj/auth/callback?next=**
+https://nj-gonzidel.vercel.app/auth/callback
+https://nj-gonzidel.vercel.app/auth/callback?next=**
+https://www.fylmoda.com.ar/auth/callback
+https://www.fylmoda.com.ar/auth/callback?next=**
 ```
 
 ### Dashboard — datos que muestra
@@ -486,6 +488,7 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=...
 - Banner curado operativo (Vanilla): [[37-CURATED-BANNER-FRONTEND-OPERATIVO-2026-05-18]]
 - **Home NJ banners + feed + republicaciones (2026-06-09):** [[42-HOME-BANNERS-FEED-NJ-2026-06-09]]
 - **NJ Dashboard prórroga 24h + cancelar pedido (2026-06-09):** [[43-NJ-DASHBOARD-PRORROGA-CANCELACION-2026-06-09]]
+- **Buscador `/nj` Fases 1–5 (2026-09-04):** [[59-NJ-BUSCADOR-SMART-SEARCH]] · apply admin: [[41-SEARCH-ADMIN-FASE5-2026-09-03]]
 - Arquitectura general (Vanilla): [[01-ARQUITECTURA-GENERAL]]
 
 ---

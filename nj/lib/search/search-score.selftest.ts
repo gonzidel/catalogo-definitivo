@@ -319,6 +319,80 @@ check(
   )
 );
 
+function sellableProduct(partial: Partial<GroupedProduct>): GroupedProduct {
+  return emptyProduct({ Precio: "1500", hasAnyStock: true, ...partial });
+}
+
+const liveJean = sellableProduct({
+  Articulo: "R2826",
+  Descripcion: "Pantalon Jean wide leg elastizado",
+  Filtro1: "Pantalón",
+  Filtro2: "Jean",
+  Categoria: "Ropa",
+});
+const deadTagNames = [
+  "Alfauno",
+  "Alfados",
+  "Alfatres",
+  "Alfacuatro",
+  "Alfacinco",
+  "Alfaseis",
+  "Alfasiete",
+];
+const deadOnly = deadTagNames.map((tag, index) =>
+  emptyProduct({
+    Articulo: `DEAD${index}`,
+    Filtro2: tag,
+    hasAnyStock: false,
+    Precio: "1500",
+    Categoria: "Inexistente",
+  })
+);
+const liveAlfa = sellableProduct({
+  Articulo: "LIVEALFA",
+  Filtro2: "Alfaocho",
+  Categoria: "Ropa",
+});
+const alfaSuggestions = buildSuggestions(
+  [...deadOnly, liveAlfa],
+  "alfa",
+  7,
+  dict
+);
+const alfaLabels = alfaSuggestions.filter((s) => s.type === "tag").map((s) => s.label);
+check(
+  "AUTOCOMPLETE oculta tag sin producto comprable",
+  !alfaLabels.includes("Alfauno") && alfaLabels.includes("Alfaocho"),
+  alfaLabels.join(",")
+);
+
+const jeansSuggestions = buildSuggestions([liveJean, deadOnly[0]], "jeans", 7, dict);
+check(
+  "AUTOCOMPLETE conserva tag con producto comprable",
+  jeansSuggestions.some((s) => s.type === "tag" && s.label === "Jean"),
+  jeansSuggestions.map((s) => s.label).join(",")
+);
+
+const orphanKeyword = buildSuggestions([liveJean], "ojota", 7, dict);
+check(
+  "AUTOCOMPLETE no inyecta keyword sin productos",
+  !orphanKeyword.some((s) => s.type === "tag"),
+  orphanKeyword.map((s) => `${s.type}:${s.label}`).join(",")
+);
+
+const deadSku = buildSuggestions(
+  [emptyProduct({ Articulo: "DZ9", Filtro2: "Elastizado", hasAnyStock: false, Precio: "1500" })],
+  "dz9",
+  7,
+  dict
+);
+check(
+  "AUTOCOMPLETE el código abre ficha aunque el tag vacío no se ofrezca",
+  deadSku.some((s) => s.type === "product" && s.href === "/producto/DZ9") &&
+    !deadSku.some((s) => s.type === "tag"),
+  deadSku.map((s) => `${s.type}:${s.label}`).join(",")
+);
+
 // ── Comparación antes / después ──────────────────────────────────────────────
 
 const compareQueries = ["pantubota", "zapatilla negra", "peluche", "PANT2"];

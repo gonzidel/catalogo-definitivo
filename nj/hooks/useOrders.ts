@@ -52,6 +52,7 @@ import {
   rpcZeroVariantSizeStock,
   updateOrderKanbanScope,
 } from "@/lib/supabase/order-queries";
+import { rpcAdminMarkWhatsappInvalid } from "@/lib/supabase/whatsapp-invalid";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { isLocalZoneCustomerShippingOrder } from "@/lib/transport/shipping-helpers";
 import { formatItemProductLabel } from "@/lib/orders/customer-status-message";
@@ -102,6 +103,8 @@ interface OrdersState {
     customerId: string,
     owner: KanbanInboxOwner
   ) => Promise<boolean>;
+  /** Marca el teléfono de la clienta como inválido en WhatsApp (migración 382). */
+  markWhatsappInvalid: (customerId: string) => Promise<boolean>;
 
   pickAllReserved: (orderId: string) => Promise<void>;
   cancelItem: (
@@ -501,6 +504,95 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
     }
   },
 
+  markWhatsappInvalid: async (customerId) => {
+    if (!customerId) return false;
+    const actionKey = `wa-invalid:${customerId}`;
+    const markedAt = new Date().toISOString();
+    const previousByOrderId = new Map<string, string | null | undefined>();
+    for (const order of get().orders) {
+      if (order.customer_id !== customerId) continue;
+      previousByOrderId.set(
+        order.id,
+        getCustomerFromOrder(order)?.whatsapp_invalid_at
+      );
+    }
+
+    const patchFlag = (nextAt: string | null) => {
+      set((state) => ({
+        orders: state.orders.map((order) => {
+          if (order.customer_id !== customerId) return order;
+          const raw = order.customers;
+          if (!raw) {
+            return {
+              ...order,
+              customers: {
+                id: customerId,
+                full_name: null,
+                phone: null,
+                email: null,
+                dni: null,
+                city: null,
+                province: null,
+                whatsapp_invalid_at: nextAt,
+              },
+            };
+          }
+          if (Array.isArray(raw)) {
+            return {
+              ...order,
+              customers: raw.map((c) =>
+                c.id === customerId || !c.id
+                  ? { ...c, whatsapp_invalid_at: nextAt }
+                  : c
+              ),
+            };
+          }
+          return {
+            ...order,
+            customers: { ...raw, whatsapp_invalid_at: nextAt },
+          };
+        }),
+      }));
+    };
+
+    set({ loadingAction: actionKey });
+    patchFlag(markedAt);
+
+    try {
+      const supabase = getSupabaseBrowserClient();
+      await rpcAdminMarkWhatsappInvalid(supabase, customerId);
+      get().showToast("Aviso de número inválido enviado a la clienta", "success");
+      return true;
+    } catch (err) {
+      set((state) => ({
+        orders: state.orders.map((order) => {
+          if (order.customer_id !== customerId) return order;
+          const prev = previousByOrderId.get(order.id) ?? null;
+          const raw = order.customers;
+          if (!raw) return order;
+          if (Array.isArray(raw)) {
+            return {
+              ...order,
+              customers: raw.map((c) =>
+                c.id === customerId || !c.id
+                  ? { ...c, whatsapp_invalid_at: prev }
+                  : c
+              ),
+            };
+          }
+          return {
+            ...order,
+            customers: { ...raw, whatsapp_invalid_at: prev },
+          };
+        }),
+      }));
+      get().showToast(getErrorMessage(err), "error");
+      return false;
+    } finally {
+      set({ loadingAction: null });
+    }
+  },
+
   showToast: (message, kind = "info") => set({ toast: { message, kind } }),
 
   clearToast: () => set({ toast: null }),
@@ -839,7 +931,7 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
         orderId,
         type: "ORDER_MISSING_ITEMS",
         message: "1 producto no está disponible. Por favor revisalo en tu pedido.",
-        payload: { missingCount: 1, action_url: "/nj/dashboard?tab=active-order" },
+        payload: { missingCount: 1, action_url: "/dashboard?tab=active-order" },
         dedupeTypes: ["ORDER_MISSING_ITEMS", "ORDER_ALL_RESERVED"],
       });
 
@@ -1160,14 +1252,18 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
       const supabase = getSupabaseBrowserClient();
       await updateOrderKanbanScope(supabase, orderId, order.notes, targetScope);
       get().removeOrder(orderId);
+      const movedAt = new Date().toISOString();
       const movedNotes = applyOrderNotesPatch(order.notes, {
         kanban_scope: targetScope,
         retiro_origin: targetScope === "local_pickup" ? "moved_from_orders" : null,
+        moved_to_local_at: targetScope === "local_pickup" ? movedAt : null,
       });
       const destCol = getOrderKanbanColumn({ ...order, notes: movedNotes });
       const destHint =
         destCol === "picked"
-          ? " → Apartados"
+          ? targetScope === "local_pickup"
+            ? " → Apartados (arriba)"
+            : " → Apartados"
           : destCol === "active"
             ? " → Activos"
             : destCol === "waiting"
@@ -1330,10 +1426,8 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
     try {
       const supabase = getSupabaseBrowserClient();
       await rpcCancelOrderFull(supabase, orderId);
-      // Pedido ya vencido por rpc_orders_daily_maintenance: el stock volvió solo
-      // al vencer, este RPC solo termina de archivar/borrar el registro.
       get().showToast(
-        wasAlreadyExpired ? "Pedido archivado" : "Pedido desarmado — stock restaurado",
+        wasAlreadyExpired ? "Pedido vencido desarmado" : "Pedido desarmado — stock restaurado",
         "success"
       );
     } catch (err) {
@@ -1380,7 +1474,7 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
 
       const refreshed = await fetchOrderById(supabase, orderId);
       if (refreshed) get().patchOrder(refreshed);
-      get().showToast("Prórroga aplicada — vuelve a amarillo", "success");
+      get().showToast("Prórroga aplicada — vuelve a Apartados (amarillo)", "success");
     } catch (err) {
       set({ orders: snapshot });
       get().showToast(getErrorMessage(err), "error");

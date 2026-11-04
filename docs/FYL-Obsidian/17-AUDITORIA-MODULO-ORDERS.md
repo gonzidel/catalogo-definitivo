@@ -301,8 +301,44 @@ Así el banner amarillo y el ruteo a columna Cancelados solo aparecen cuando hay
 
 **Qué cambió:** la pantalla legacy de Pedidos (`admin/orders.html` + `admin/orders.js`) deja de mostrar pedidos que en NJ viven en `/nj/admin/retiro`.
 
-**Criterio** (`isRetiroBoardOrderForLegacyPedidos` en `admin/orders-domain.js`): `notes.kanban_scope = local_pickup`, espejo de caja (`retiro_origin` public_sales/retiro/admin_local o `mirrored_from_local_order`), `local_deferred_pickup`, o transporte Retira local / Retiro de Local. `kanban_scope = shipping` se queda en esta pantalla.
+**Criterio** (`isRetiroBoardOrderForLegacyPedidos` en `admin/orders-domain.js`, paridad con `isLocalPickupBoardOrder` en NJ): `notes.kanban_scope = local_pickup`, espejo de caja (`retiro_origin` public_sales/retiro/admin_local o `mirrored_from_local_order`), `local_deferred_pickup`, `local_pickup_fulfilled_at`. El transporte **Retira local** del perfil **no** basta: esos pedidos quedan en Pedidos / `closed-orders.html` (rótulos) hasta **Local** o **Enviar al local**. `kanban_scope = shipping` se queda en esta pantalla. También lo usa `admin/closed-orders.js` (cerrados de envío).
 
-**Qué no se tocó:** `nj/admin/orders`, `nj/admin/retiro`, `admin/orders2.html`. No se copió el fallback geo de NJ (`isDashboardRetiroLocalZone`) para no ocultar envíos de Chaco/Corrientes sin override de tablero.
+**Qué no se tocó:** `admin/orders2.html`. La geo Chaco/Corrientes ya no enruta el Kanban NJ a Retiro (2026-09-14).
 
 **Create Pedido (2026-09-02, follow-up Bernardis):** `admin/order-creator.js` `createNewOrder` ignoraba el hecho de que el índice único ya excluye `local_deferred_pickup` (313/318). Al crear un pedido de envío para un cliente con espejo Retiro activo (ej. `A56344` Bernardis, `kanban_scope=local_pickup`, `local_deferred_pickup=true`), el confirm ofrecía “agregar al pedido existente” o bloqueaba. Ahora salta candidatos Retiro / `local_deferred_pickup` al buscar pedido abierto reutilizable. **No hace falta cambiar el índice en prod** para este caso: ya permite 1 Pedidos + 1 Retiro cuando el de Retiro lleva `local_deferred_pickup=true`.
+
+## 18. Fix (2026-09-10): clienta quita un producto cargado a mano y no va a Cancelados
+
+**Casos:** A56782 Ana Chamorro (LDA6, Z3210, 12 Lila, 12 Gris) y A56807 Jaqueline Mazzeto (RCAR, 001, RMAT). La clienta quitó productos que el admin había cargado a mano (`picked` + `admin_confirmed_missing=true` + `order_item_stock_sources` inyectadas). Los ítems quedaron `cancelled` con fuentes `qty > 0`, pero el resto del pedido seguía `picked` → se quedaban en Apartados sin ✓.
+
+**Causa:** §14/§15 usaban `admin_confirmed_missing` para **ocultar** el ✓ (proteger trazas fantasma de `missing`, A55552). El mismo flag también marca altas manuales: al quitarlas, el stock sí está apartado y hay que confirmar.
+
+**Fix frontend (`nj/lib/orders/domain.ts`):** `cancelledItemNeedsStockConfirmation` = `cancelled` + alguna fuente con `qty > 0`. El flag ya no corta.
+
+**Fix SQL (`340_cancelled_pending_stock_count_sources.sql`):** el helper `order_has_cancelled_items_pending_stock_return` deja de filtrar `admin_confirmed_missing`. Sin este espejo, confirmar un ✓ podía disparar `order_eligible_for_empty_deletion` y borrar el pedido con otras fuentes vivas (mismo riesgo que §16 / A56391).
+
+**Riesgo residual:** un `missing` con traza fantasma (A55552) puede volver a pedir ✓. No confirmar si no hay pieza física. A55552 quedó con `sources_left = 0`, así que no debería reaparecer.
+
+**Verificación:** tests en `nj/lib/orders/domain-cancelled-stock.test.ts`. A56782 y A56807 deben ir a Cancelados con ✓. Confirmar uno no debe borrar el pedido si quedan otros con fuentes. El 220 Beige de A56807 (cancelled sin fuentes) no pide ✓.
+
+## 19. Stock Pend. por corte de red (2026-09-10)
+
+**Caso:** A56866 Sergio Ferster. Ani cargó desde PAU; ítems insertados; `applyManualConfirmedItems` (BIL8) ok; `updateStockBatch` (1105) cortó con `TypeError: Failed to fetch`. El pedido quedó `stock_pending` y **Resolver** no servía (busca `variant=` en el motivo).
+
+**Fix:** reintento único de red; no se descuenta de nuevo lo que ya tiene `stock_history` / fuentes; si el motivo es de red, **Reintentar** (no Cancelar). PAU cache `?v=m260910s`.
+
+## 20. Promos 2x en Editar pedido, Retiro y alta manual NJ (2026-10-09)
+
+**Auditoría (TÉCNICA VERIFICADA, producción):** solo `rpc_checkout_cart` descontaba promos 2x1/2xMonto del `total_amount`. Sin promo: `rpc_admin_add_order_items_atomic` (Editar en `/admin/orders`, `/admin/retiro` y `order-creator.js`), `createManualOrder` (NJ), `rpc_customer_replace_missing_item`, `rpc_cancel_order_item(_units)`, `rpc_remove_order_item_restore_stock` y `trg_order_item_missing_adjust_total`. El cobro de Retiro en NJ (`getRetiroSaleTotals` / `buildSaleItems`) cobraba precio × cantidad: ticket y venta sin promo. `closed-orders.js` (envíos) ya recalculaba en vivo para ticket/rótulo/detalle/lista, pero Facturar y la conciliación COD usan `total_amount`.
+
+**Casos reales (promo 2x$28.000, PR1/PR2/PR3):** A57638 (Retiro, venta `#fylA11545` cobró $4.000 de más), A57569, A57610 y A57624 (SEDE contra reembolso; el rótulo cobró bien, `total_amount` quedó alto). Ninguno en remesas al 2026-10-09.
+
+**NEGOCIO CONFIRMADO (2026-10-09):** 2 unidades de la promo = 1 oferta; 3 = 1 oferta + 1 a precio normal; 4 = 2 ofertas; si después se agrega otra, se completa el par. Una unidad cuenta si se cargó al pedido mientras la promo estaba vigente; si la promo termina después, el par conserva el descuento.
+
+**Fix NJ (rama `fix/retiro-cobro-promos`):** `lib/orders/order-promo-pricing.ts` (pares por fecha de carga, reutiliza `buildPromoGroups`). Retiro cobra como la caja: unidades del par a $0 + línea `N oferta 2x$…`; el ticket oculta las líneas absorbidas; el modal muestra el descuento y no imprime hasta calcularlo. La línea de promo hace que `p_total_amount` coincida con la suma de líneas, así `rpc_create_public_sale` no lo toma como uso de crédito.
+
+**Fix SQL 377 (APLICADO en producción 2026-10-09, migración `20261009150201 order_total_promo_aware_377`, tests en la misma transacción OK):** `trg_orders_total_exclude_missing` fija el total canónico (productos sin cancelados/faltantes − promos por fecha de carga + extras de notes) en pedidos active/closing_soon/closed; sent/cancelled/expired sin cambios. Con datos del 2026-10-09: 243/243 abiertos y 231/233 cerrados ya coinciden con esa fórmula (difieren A57638 y A56703, histórico). `createManualOrder` reescribe `total_amount` al final para pasar por el trigger.
+
+**Datos existentes (decisión 2026-10-09):** no se corrigieron. A57638 sigue en 293000 hasta la próxima escritura de su total (el trigger lo deja en 289000); A57569/A57610/A57624 (sent) siguen con el total sin promo. No se cargó crédito a la clienta de A57638: el crédito a favor existe solo en Venta al Público (`public_sales_customer_credits`) y el usuario prefiere diseñarlo más adelante. Rollback: `377_ROLLBACK_order_total_promo_aware.sql`.
+
+**Deuda:** `closed-orders.js` evalúa la promo con la fecha de hoy (al reimprimir después de que termine la promo, pierde el descuento); Facturar usa `total_amount`.

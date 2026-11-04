@@ -34,6 +34,26 @@ Comportamiento:
   - **PASS:** PAU, public-sales (QR/manual), historiales (`price_snapshot` / `sale_amount`), daily-sales (lee montos históricos).
   - **Fix 2026-08-04:** modal Nuevo/Editar pedido en `order-creator.js` también persiste oferta en `order_items.price_snapshot` (antes usaba precio de lista).
 
+## NJ `/products` y match de color (2026-09-04)
+
+`/products` **no usa RPC**. Guarda con `setColorOffer()` (`nj/lib/products/variants.ts`): insert/update directo de `color_price_offers`, `status=active`, `start_date=hoy`, `end_date=hoy+30`. Admin vanilla sigue usando fin `2099-12-31` si no hay fechas.
+
+`get_effective_price()` y la vista/snapshot hacen **match exacto** de `color`. El frontend NJ compara en lowercase. El artículo 8000 quedó coherente usando el color canónico de la variante (`suela`, no `Suela`). Normalización global de case = fase siguiente.
+
+Art. 8000 (producto `437dd86d-…`): lista Suela/Negro = 28500; oferta activa solo `suela` = 20000 (`3502948e-…`, 2026-09-04 → 2026-10-04).
+
+**335 (2026-09-04):** `rpc_checkout_cart()` cobra `get_effective_price(variant_id)`. `cart_items.price_snapshot` ya no es autoridad monetaria. Wrapper `rpc_checkout_cart(uuid, jsonb)` intacto (replay). Ver [[60-CHECKOUT-EFFECTIVE-PRICE-335-2026-09-04]].
+
+## Tablas de talles (EN EVALUACIÓN, 2026-10-10)
+
+Guía de medidas orientativa por producto (`products.size_chart_id`). No es stock ni talle comercial. Requiere la migración 378 (ensayada, no aplicada).
+
+- Gestión: `admin/size-charts.html` (tarjeta en el panel, permiso `products`).
+- En `admin/products.html`: selector "Tabla de talles", visible en Calzado o si el producto ya tiene una. Solo se pueden elegir tablas completas y activas. Si las RPC fallan, no se envía `size_chart_id` y el producto se guarda igual.
+- Todo el acceso pasa por RPC `rpc_admin_*size_chart*`; no hay lectura directa de las tablas.
+
+Detalle, verificación, publicación y acople con ARQ-05 Fase 1: [[74-TABLAS-DE-TALLES-ADMIN-LEGACY-2026-10-10]].
+
 ## Costos y campos sensibles
 
 Campos sensibles:
@@ -68,8 +88,19 @@ Si un colaborador (no `super_admin`) crea el producto, no puede cargar `cost`. E
 - Costo/precio protegido solo en UI.
 - RPCs de stock validando solo pertenencia a `admins` y no permiso granular.
 
+## Admin buscador `/nj` (2026-09-04)
+
+No es CRUD de productos ni de tags. Vocabulario de búsqueda:
+
+- `/nj/admin/search` — dashboard + oportunidades desde `search_events`
+- `/nj/admin/search/[canonical]` — detalle keyword / aliases
+- Permiso `search`. Desactivar > borrar. Sin alta automática de aliases.
+
+Hub: [[59-NJ-BUSCADOR-SMART-SEARCH]]. Apply: [[41-SEARCH-ADMIN-FASE5-2026-09-03]].
+
 ## Enlaces
 
 - [[14-AUDITORIA-MODULO-PRODUCTS]]
 - [[04-FLUJO-STOCK]]
 - [[08-PERMISOS-Y-ROLES]]
+- [[59-NJ-BUSCADOR-SMART-SEARCH]]

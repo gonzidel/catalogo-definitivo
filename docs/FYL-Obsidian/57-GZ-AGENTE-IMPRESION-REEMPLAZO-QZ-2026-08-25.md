@@ -57,6 +57,7 @@ navegador (admin/*.html)
 - `gz-agent/` completo (ver árbol arriba).
 - `admin/gz-shim.js` — shim cliente, reemplaza `qz-tray.js`.
 - Páginas migradas (las 6 que imprimían con QZ Tray): `closed-orders.html`, `labels.html`, `public-sales.html`, `sent-orders.html`, `stock.html`, `local-order-edit.html`.
+- **2026-09-05:** `/nj/admin/retiro` → Cerrar pedido (`finalizeRetiroOrderSale`) también imprime el ticket por GZ (`nj/lib/print/gz-agent.ts`), no por el diálogo del navegador.
 
 ## Fix adicional: desperdicio de etiquetas en "Imprimir Todo" (`labels.html`)
 

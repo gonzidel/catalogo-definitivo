@@ -604,7 +604,7 @@ export async function analyzeRemittance(
 // ─── Fase 5 — aprobación / asignación / confirmación ─────────────────────────
 
 export type Phase5Result =
-  | { ok: true; message?: string; data?: Record<string, unknown> }
+  | { ok: true; message?: string; data?: Record<string, unknown>; code?: string }
   | {
       ok: false;
       code: "forbidden" | "validation" | "rpc_error" | "needs_force";

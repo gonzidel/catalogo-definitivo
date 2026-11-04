@@ -89,14 +89,15 @@ Para visibilidad publica se suman filas de `variant_size_warehouse_stock` donde 
 
 (IDs resueltos desde `public.warehouses` en la vista.)
 
-## Reservas consideradas (por talle)
+## Disponibilidad pública (330)
 
-Implementacion en `193_catalog_public_available_view.sql`:
+Definición vigente: `supabase/canonical/330_sellable_stock_canonical.sql` (reemplaza la resta OISS+carrito de 193/223).
 
-- **Pedidos**: `order_item_stock_sources` unido a `order_items` y `orders`, con `orders.status not in ('sent', 'expired', 'devolución')`.
-- **Carrito**: `cart_items` con `ci.status = 'reserved'` en `carts` con `c.status = 'open'`.
+- `sellable_qty` = físico web (`general` + `venta-publico`) ya descontado por checkout/commit.
+- Un talle entra a `Numeracion` solo si `sellable_qty > 0`.
+- **No** se restan `order_item_stock_sources`, `cart_items.reserved` ni `reserved_qty`.
 
-Talle normalizado con `trim` / `nullif` para cruzar reserva con `variant_size_warehouse_stock.size`.
+Talle normalizado con `fn_norm_size` (trim; numérico → parte entera), alineado con checkout.
 
 ## Errores previos detectados
 

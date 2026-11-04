@@ -12,7 +12,7 @@ export const CATALOG_SOURCE = "catalog_public_snapshot";
 export const CATALOG_AVAILABLE_VIEW = "catalog_public_available_view";
 
 export const CATALOG_SELECT =
-  '"Categoria","Articulo","Descripcion","Color","Numeracion","FechaIngreso","FechaPublicacion","Mostrar","Oferta","Precio","Imagen Principal","Imagen 1","Imagen 2","Imagen 3","Filtro1","Filtro2","Filtro3","DetallesSimilitud","OfertaActiva","PrecioOferta","PromoActiva","OfferCampaignId","OfferImageUrl","OfferTitle","ColorHex","ColorDisplayNumber","SupplierCode"';
+  'variant_id,"Categoria","Articulo","Descripcion","Color","Numeracion","FechaIngreso","FechaPublicacion","Mostrar","Oferta","Precio","Imagen Principal","Imagen 1","Imagen 2","Imagen 3","Filtro1","Filtro2","Filtro3","DetallesSimilitud","OfertaActiva","PrecioOferta","PromoActiva","OfferCampaignId","OfferImageUrl","OfferTitle","ColorHex","ColorDisplayNumber","SupplierCode"';
 
 export const CATEGORIAS_MAP: Record<string, string> = {
   calzado: "Calzado",
@@ -81,6 +81,15 @@ function mergeColorDetail(target: ColorDetail, source: ColorDetail): void {
     target.PrecioOferta = source.PrecioOferta;
   if (!target.PromoActiva && source.PromoActiva)
     target.PromoActiva = source.PromoActiva;
+  if (
+    (target.Precio == null || target.Precio === "") &&
+    source.Precio != null &&
+    source.Precio !== ""
+  ) {
+    target.Precio = source.Precio;
+  }
+  if (!target.variant_id && source.variant_id) target.variant_id = source.variant_id;
+  if (!target.sku && source.sku) target.sku = source.sku;
 }
 
 export function agruparProductos(rows: CatalogRow[]): GroupedProduct[] {
@@ -138,9 +147,13 @@ export function agruparProductos(rows: CatalogRow[]): GroupedProduct[] {
         ? row.Numeracion.split(",").map((t) => t.trim()).filter(Boolean)
         : ["Único"],
       images,
+      Precio: row.Precio ?? "",
       OfertaActiva: row.OfertaActiva === true || row.OfertaActiva === "true",
       PrecioOferta: row.PrecioOferta ?? "",
       PromoActiva: row.PromoActiva ?? "",
+      variant_id: row.variant_id ?? null,
+      // Fila de snapshot/vista 330 = al menos un talle sellable en este color.
+      hasStock: true,
     };
 
     const colorKey = getColorKey(colorDetail.color);
@@ -167,6 +180,7 @@ export function agruparProductos(rows: CatalogRow[]): GroupedProduct[] {
   const result = Object.values(grupos);
   for (const g of result) {
     g.DetalleColor = g.DetalleColor.filter(colorDetailHasImage);
+    g.hasAnyStock = g.DetalleColor.some((c) => c.hasStock === true);
     const hero = g.DetalleColor[0]?.images?.[0];
     if (hero) g.VariantePrincipal = hero;
 

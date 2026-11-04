@@ -25,6 +25,95 @@ body {
   --cfb-bar-h: 50px;
 }
 
+/* ── Rollout full/catalog ────────────────────────────────────────────────
+   html[data-exp] lo fija un script inline antes del primer paint. Sin
+   atributo se pinta catalog: nunca se muestra carrito/pedido y luego se oculta. */
+html:not([data-exp="full"]) .exp-full-only {
+  display: none !important;
+}
+html[data-exp="full"] .exp-catalog-only {
+  display: none !important;
+}
+
+.pdp-size-chip--readonly {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  cursor: default;
+}
+
+.info-banner-top--visual .info-banner-top__wa-icon {
+  width: 46px;
+  height: 46px;
+  transform: none;
+  flex-shrink: 0;
+  filter: drop-shadow(0 2px 4px rgba(184, 114, 63, 0.25));
+}
+
+.account-notice {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+  z-index: 70;
+  max-width: 420px;
+  margin: 0 auto;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: #fff;
+  border: 1px solid #f0ebe4;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.14);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.account-notice__text {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.45;
+  color: #333;
+}
+.account-notice__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.account-notice__cta {
+  flex: 1;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: #25d366;
+  color: #fff;
+  font-weight: 700;
+  text-decoration: none;
+  touch-action: manipulation;
+}
+.account-notice__cta--secondary {
+  border: none;
+  background: #f5f1ec;
+  color: #333;
+  font-size: 15px;
+  cursor: pointer;
+}
+.account-notice__cta--secondary:disabled {
+  opacity: 0.6;
+}
+.account-notice__close {
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 10px;
+  background: #f5f1ec;
+  color: #666;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
 /* logo.png es ~544×459; sin height el header se come el viewport en desktop. */
 .header-logo {
   height: 40px;
@@ -1004,6 +1093,19 @@ body {
 
 .pdp-hint__icon {
   flex-shrink: 0;
+}
+
+.pdp-hint--error {
+  background: #fff7ed;
+  border: 1px solid #fdba74;
+  color: #9a3412;
+}
+
+.pdp-qty-row__stock-hint {
+  font-size: 11px;
+  font-weight: 600;
+  color: #92400e;
+  line-height: 1.2;
 }
 
 .pdp-hint__text {
@@ -6500,11 +6602,128 @@ body:has(.kanban-admin-shell) [data-nextjs-toast] {
 }
 
 .order-card__header-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 0.66rem;
   font-weight: 700;
   color: #6b7280;
   text-transform: uppercase;
   letter-spacing: 0.02em;
+}
+
+.order-card__more {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.order-card__more-btn {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #fff;
+  color: #374151;
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.order-card__more-btn:hover:not(:disabled) {
+  background: #f3f4f6;
+}
+
+.order-card__more-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.order-card__more-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 40;
+  min-width: 168px;
+  padding: 4px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12);
+}
+
+.order-card__more-item {
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #111827;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.order-card__more-item:hover:not(:disabled) {
+  background: #f3f4f6;
+}
+
+.order-card__more-item:disabled {
+  color: #9ca3af;
+  cursor: default;
+}
+
+.order-card__more-confirm {
+  padding: 6px 8px 8px;
+}
+
+.order-card__more-confirm-text {
+  margin: 0 0 8px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.35;
+  color: #374151;
+  text-transform: none;
+  letter-spacing: normal;
+  white-space: normal;
+}
+
+.order-card__more-confirm-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.order-card__more-confirm-yes,
+.order-card__more-confirm-no {
+  flex: 1;
+  min-height: 32px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.order-card__more-confirm-yes {
+  border: 1px solid #b91c1c;
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.order-card__more-confirm-no {
+  border: 1px solid #d1d5db;
+  background: #fff;
+  color: #374151;
+}
+
+.order-card__more-confirm-yes:disabled,
+.order-card__more-confirm-no:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .order-card__header-price {
@@ -6805,6 +7024,65 @@ a.order-card__wa-btn:active {
 
 .order-modal--compact {
   padding: 14px;
+}
+
+.reservation-conflict__list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 55vh;
+  overflow-y: auto;
+  margin-bottom: 12px;
+}
+
+.reservation-conflict__item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.reservation-conflict__product {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.reservation-conflict__option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  background: #fff;
+  text-align: left;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.reservation-conflict__option.is-selected {
+  border-color: #111827;
+  background: #f3f4f6;
+  box-shadow: inset 0 0 0 1px #111827;
+}
+
+.reservation-conflict__option:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.reservation-conflict__option-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #111827;
+}
+
+.reservation-conflict__option-sub {
+  font-size: 0.72rem;
+  color: #6b7280;
 }
 
 .order-card__missing-flag {
@@ -7487,6 +7765,17 @@ a.order-card__wa-btn:active {
 
 .order-card__item-actions--waiting-local {
   grid-template-columns: 72px 22px 62px 52px;
+}
+
+/* Espera: solo producto · color · talle + lupa + ✓/✕ para que entre en columnas angostas */
+.order-card__item-actions--waiting-compact {
+  grid-template-columns: auto auto;
+  column-gap: 6px;
+}
+
+.order-card__item-row--waiting-compact .order-card__item-name {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .order-card--waiting-local {
@@ -10860,6 +11149,58 @@ a.order-card__wa-btn:active {
   font-size: 0.875rem;
   font-weight: 800;
   text-decoration: none;
+}
+
+/* Aviso número WhatsApp inválido (clienta) */
+.wi-overlay {
+  z-index: 11060;
+  align-items: center;
+  justify-content: center;
+  padding: max(12px, env(safe-area-inset-top)) 12px max(12px, env(safe-area-inset-bottom));
+}
+
+.wi-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.wi-current {
+  margin: 0 0 10px;
+  font-size: 0.8125rem;
+  color: #4b5563;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.wi-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.wi-btn-secondary {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  background: #fff;
+  color: #374151;
+  font-size: 0.875rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.wi-btn-secondary:hover:not(:disabled) {
+  background: #f9fafb;
+}
+
+.wi-btn-secondary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 body.modal-open {

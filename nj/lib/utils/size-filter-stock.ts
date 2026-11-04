@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { normalizeSize } from "@/lib/utils/size-normalizer";
+import { getSellableStockForVariants } from "@/lib/stock/sellable-stock";
 import { expandCombinedSizes } from "@/lib/utils/size-filter-catalog";
 import {
   buildInitialSizeAvailability,
@@ -59,25 +59,21 @@ export async function fetchSizeAvailabilityForArticulos(
     if (vErr || !variants?.length) continue;
 
     const variantIds = variants.map((v) => v.id);
-    const { data: sizes, error: sErr } = await supabase
-      .from("variant_sizes")
-      .select("size, stock_qty")
-      .in("variant_id", variantIds);
+    const sellable = await getSellableStockForVariants(variantIds, supabase);
+    if (!sellable.ok) continue;
 
-    if (sErr || !sizes?.length) continue;
-
-    for (const row of sizes) {
-      const raw = String(row.size ?? "").trim();
-      if (!raw) continue;
-      const stock = Number(row.stock_qty ?? 0);
-      for (const part of expandCombinedSizes([raw])) {
-        const key = normSizeKey(part);
-        if (!queryKeys.has(key)) continue;
-        const prev = result.get(key) ?? { exists: true, hasStock: false };
-        result.set(key, {
-          exists: true,
-          hasStock: prev.hasStock || stock > 0,
-        });
+    for (const sizes of sellable.byVariant.values()) {
+      for (const [raw, qty] of sizes) {
+        if (!raw) continue;
+        for (const part of expandCombinedSizes([raw])) {
+          const key = normSizeKey(part);
+          if (!queryKeys.has(key)) continue;
+          const prev = result.get(key) ?? { exists: true, hasStock: false };
+          result.set(key, {
+            exists: true,
+            hasStock: prev.hasStock || qty > 0,
+          });
+        }
       }
     }
   }

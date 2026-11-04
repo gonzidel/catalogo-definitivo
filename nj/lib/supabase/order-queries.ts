@@ -24,7 +24,19 @@ import type { SupabaseClient } from "@supabase/supabase-js";
  *  Nota: `cancelled_from_status` requiere la migración 344 antes de desplegar este frontend. */
 export const ORDER_SELECT = `
   id, order_number, status, customer_id, total_amount, notes, source, payment_method,
-  created_at, sent_at, expires_at, dismantle_at, expired_at, local_deferred_pickup, pickup_timer_started_at, transport_id,
+  created_at, updated_at, sent_at, expires_at, dismantle_at, expired_at, local_deferred_pickup, pickup_timer_started_at, transport_id,
+  customers(id, full_name, phone, email, dni, transport_id, city, province, kanban_inbox_owner, kanban_inbox_assigned_at, whatsapp_invalid_at),
+  order_items(
+    id, order_id, variant_id, product_name, color, size, quantity,
+    price_snapshot, imagen, status, admin_confirmed_missing, cancelled_from_status, checked_by, checked_at,
+    order_item_stock_sources(warehouse_id, qty)
+  )
+`;
+
+/** Fallback si 382 aún no está aplicada (sin whatsapp_invalid_at). */
+const ORDER_SELECT_WITHOUT_WA_INVALID = `
+  id, order_number, status, customer_id, total_amount, notes, source, payment_method,
+  created_at, updated_at, sent_at, expires_at, dismantle_at, expired_at, local_deferred_pickup, pickup_timer_started_at, transport_id,
   customers(id, full_name, phone, email, dni, transport_id, city, province, kanban_inbox_owner, kanban_inbox_assigned_at),
   order_items(
     id, order_id, variant_id, product_name, color, size, quantity,
@@ -36,7 +48,7 @@ export const ORDER_SELECT = `
 /** Fallback si 338 aún no está aplicada (columnas inbox ausentes). */
 const ORDER_SELECT_WITHOUT_INBOX = `
   id, order_number, status, customer_id, total_amount, notes, source, payment_method,
-  created_at, sent_at, expires_at, dismantle_at, expired_at, local_deferred_pickup, pickup_timer_started_at, transport_id,
+  created_at, updated_at, sent_at, expires_at, dismantle_at, expired_at, local_deferred_pickup, pickup_timer_started_at, transport_id,
   customers(id, full_name, phone, email, dni, transport_id, city, province),
   order_items(
     id, order_id, variant_id, product_name, color, size, quantity,
@@ -48,6 +60,11 @@ const ORDER_SELECT_WITHOUT_INBOX = `
 function isMissingInboxColumnError(error: { message?: string; details?: string; hint?: string } | null): boolean {
   const blob = `${error?.message || ""} ${error?.details || ""} ${error?.hint || ""}`.toLowerCase();
   return blob.includes("kanban_inbox_owner") || blob.includes("kanban_inbox_assigned_at");
+}
+
+function isMissingWhatsappInvalidColumnError(error: { message?: string; details?: string; hint?: string } | null): boolean {
+  const blob = `${error?.message || ""} ${error?.details || ""} ${error?.hint || ""}`.toLowerCase();
+  return blob.includes("whatsapp_invalid");
 }
 
 // "expired" se sacó de este filtro (2026-09-15): antes un pedido vencido y
@@ -144,6 +161,21 @@ async function fetchOrdersByIds(
     all.push(...((data as unknown[]) || []));
   }
   return { data: all, error: null };
+}
+
+/** Reintenta SELECT de pedidos si faltan columnas 382 o 338. */
+async function fetchOrdersByIdsWithFallbacks(
+  supabase: SupabaseClient,
+  ids: string[]
+): Promise<{ data: unknown[]; error: QueryError }> {
+  let full = await fetchOrdersByIds(supabase, ids, ORDER_SELECT);
+  if (full.error && isMissingWhatsappInvalidColumnError(full.error)) {
+    full = await fetchOrdersByIds(supabase, ids, ORDER_SELECT_WITHOUT_WA_INVALID);
+  }
+  if (full.error && isMissingInboxColumnError(full.error)) {
+    full = await fetchOrdersByIds(supabase, ids, ORDER_SELECT_WITHOUT_INBOX);
+  }
+  return full;
 }
 
 const GLOBAL_SEARCH_ORDER_LIMIT = 25;
@@ -254,10 +286,7 @@ export async function searchOrdersGlobal(
 
   if (!idSet.size) return [];
 
-  let full = await fetchOrdersByIds(supabase, [...idSet], ORDER_SELECT);
-  if (full.error && isMissingInboxColumnError(full.error)) {
-    full = await fetchOrdersByIds(supabase, [...idSet], ORDER_SELECT_WITHOUT_INBOX);
-  }
+  let full = await fetchOrdersByIdsWithFallbacks(supabase, [...idSet]);
   if (full.error && !full.data.length) {
     console.error("searchOrdersGlobal hydrate error:", full.error);
     return [];
@@ -358,10 +387,7 @@ async function fetchRetiroOrdersDirect(
   const allIds = new Set<string>([...candidateIds, ...waitingIds]);
   if (!allIds.size) return [];
 
-  let full = await fetchOrdersByIds(supabase, [...allIds], ORDER_SELECT);
-  if (full.error && isMissingInboxColumnError(full.error)) {
-    full = await fetchOrdersByIds(supabase, [...allIds], ORDER_SELECT_WITHOUT_INBOX);
-  }
+  let full = await fetchOrdersByIdsWithFallbacks(supabase, [...allIds]);
   if (full.error && !full.data.length) {
     console.error("fetchRetiroOrdersDirect hydrate error:", full.error);
     return [];
@@ -477,6 +503,9 @@ export async function fetchOrdersInitial(
   if (keys.error && !keys.data?.length) {
     console.error("fetchOrdersInitial board-key error:", formatQueryError(keys.error) || keys.error);
     keys = await fetchOperationalOrderRows(supabase, ORDER_SELECT);
+    if (keys.error && isMissingWhatsappInvalidColumnError(keys.error)) {
+      keys = await fetchOperationalOrderRows(supabase, ORDER_SELECT_WITHOUT_WA_INVALID);
+    }
     if (keys.error && isMissingInboxColumnError(keys.error)) {
       keys = await fetchOperationalOrderRows(supabase, ORDER_SELECT_WITHOUT_INBOX);
     }
@@ -506,10 +535,7 @@ export async function fetchOrdersInitial(
 
   if (!scopedIds.length) return [];
 
-  let full = await fetchOrdersByIds(supabase, scopedIds, ORDER_SELECT);
-  if (full.error && isMissingInboxColumnError(full.error)) {
-    full = await fetchOrdersByIds(supabase, scopedIds, ORDER_SELECT_WITHOUT_INBOX);
-  }
+  let full = await fetchOrdersByIdsWithFallbacks(supabase, scopedIds);
   if (full.error && !full.data.length) {
     console.error("fetchOrdersInitial hydrate error:", full.error);
     return [];
@@ -543,7 +569,28 @@ export async function fetchOrderById(
 
   let row: unknown = data;
   if (error) {
-    if (isMissingInboxColumnError(error)) {
+    if (isMissingWhatsappInvalidColumnError(error)) {
+      const fallback = await supabase
+        .from("orders")
+        .select(ORDER_SELECT_WITHOUT_WA_INVALID)
+        .eq("id", orderId)
+        .maybeSingle();
+      if (fallback.error || !fallback.data) {
+        if (isMissingInboxColumnError(fallback.error)) {
+          const inboxFallback = await supabase
+            .from("orders")
+            .select(ORDER_SELECT_WITHOUT_INBOX)
+            .eq("id", orderId)
+            .maybeSingle();
+          if (inboxFallback.error || !inboxFallback.data) return null;
+          row = inboxFallback.data;
+        } else {
+          return null;
+        }
+      } else {
+        row = fallback.data;
+      }
+    } else if (isMissingInboxColumnError(error)) {
       const fallback = await supabase
         .from("orders")
         .select(ORDER_SELECT_WITHOUT_INBOX)
@@ -619,11 +666,10 @@ export async function rpcMarkExpiredOrderSent(supabase: SupabaseClient, orderId:
 }
 
 /**
- * Suma cuánto stock real (order_item_stock_sources) devolvería archivar/desarmar
- * estos ítems -- se usa para mostrarle al admin, antes de confirmar "Archivar"
- * en un pedido 'expired', si esa acción va a tocar el depósito o no (la
- * mayoría de los pedidos vencidos por el cron ya no tienen fuentes reales
- * porque el cron las liberó al expirar). Ver auditoría 2026-09-15.
+ * Suma cuánto stock real (order_item_stock_sources) devolvería desarmar estos
+ * ítems -- se le muestra al admin antes de confirmar "Desarmar" en un pedido
+ * 'expired'. Desde 367 el vencimiento conserva las fuentes hasta el desarme;
+ * los vencidos anteriores ya no tienen fuentes. Ver auditoría 2026-09-15.
  */
 export async function fetchPendingStockReturnQty(
   supabase: SupabaseClient,
@@ -865,12 +911,14 @@ export async function updateOrderKanbanScope(
   targetScope: "shipping" | "local_pickup"
 ) {
   const patch: Record<string, unknown> = { kanban_scope: targetScope };
-  // Pedidos → Retiro: marca origen para color amarillo en Activos.
-  // Retiro → Pedidos: limpia esa marca.
+  // Pedidos → Retiro: marca origen (amarillo) + timestamp para subir Apartados.
+  // Retiro → Pedidos: limpia esas marcas.
   if (targetScope === "local_pickup") {
     patch.retiro_origin = "moved_from_orders";
+    patch.moved_to_local_at = new Date().toISOString();
   } else {
     patch.retiro_origin = null;
+    patch.moved_to_local_at = null;
   }
   const notes = applyOrderNotesPatch(currentNotes, patch);
   const { data, error } = await supabase

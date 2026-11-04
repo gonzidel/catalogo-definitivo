@@ -29,7 +29,7 @@ Nota importante: el usuario confirmo que los SQL analizados ya estan cargados y 
 | 8 | [[08-PERMISOS-Y-ROLES]] | `admins`, `admin_permissions`, `super_admin` |
 | 9 | [[09-TABLAS-COLUMNAS-DUDOSAS-O-LEGACY]] | Candidatos legacy/dudosos |
 | 10 | [[10-BUGS-RESUELTOS]] | Bugs documentados |
-| 11 | [[11-DECISIONES-TECNICAS]] | Decisiones tecnicas registradas |
+| 11 | [[11-DECISIONES-TECNICAS]] | Decisiones tecnicas registradas (incl. buscador `/nj` §E) |
 | 12 | [[12-CHECKLIST-CAMBIOS-FUTUROS]] | Checklist para cambios |
 | 13 | [[13-RPCS-DEPLOY-STATE]] | Registro de version/firma activa de RPCs |
 | 22 | [[22-BANNER-FYL-ORIGINALS]] | Funcionamiento tecnico del banner FYL Originals en home (curaduria, slot diario, fallbacks) |
@@ -50,6 +50,7 @@ Nota importante: el usuario confirmo que los SQL analizados ya estan cargados y 
 | 42 | [[42-HOME-BANNERS-FEED-NJ-2026-06-09]] | Home NJ: banners (Nuevos ingresos, especial, curado), reingreso admin, orden feed |
 | 44 | [[44-CATALOGO1-LANZAMIENTO-2026-06-13]] | Fork `/catalogo1`: mismo Supabase, sin auth/carrito, WhatsApp; dev `:3002` |
 | 57 | [[57-GZ-AGENTE-IMPRESION-REEMPLAZO-QZ-2026-08-25]] | GZ — agente de impresión local propio, reemplaza QZ Tray en las 6 páginas del admin que imprimen (sin certificados, sin popups) |
+| 59 | [[59-NJ-BUSCADOR-SMART-SEARCH]] | Buscador `/nj`: resolver, ranking, analytics, admin de vocabulario (Fases 1–5). Apply Fase 5: [[41-SEARCH-ADMIN-FASE5-2026-09-03]] |
 
 ## Auditorias modulares
 

@@ -161,6 +161,7 @@ const ALL_PERMISSIONS = {
   import: { can_view: true, can_edit: true, can_delete: true },
   export: { can_view: true, can_edit: true, can_delete: true },
   publications: { can_view: true, can_edit: true, can_delete: true },
+  control: { can_view: true, can_edit: false, can_delete: false },
   'move-stock': { can_view: true, can_edit: true, can_delete: true },
   'public-sales': { can_view: true, can_edit: true, can_delete: true },
   proveedores: { can_view: true, can_edit: true, can_delete: true },

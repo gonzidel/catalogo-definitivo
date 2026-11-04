@@ -222,6 +222,9 @@ export default function OrderCardItems({
     setPendingNoStockConfirmId(null);
   };
 
+  /** Columna Espera: solo producto · color · talle, lupa y ✓/✕ (columnas angostas). */
+  const waitingCompact = enableWaitingPick;
+
   return (
     <>
       <ul className="order-card__items">
@@ -243,7 +246,7 @@ export default function OrderCardItems({
           return (
             <li
               key={item.id}
-              className={`order-card__item-row order-card__item-row--split${special ? " order-card__item-row--special" : ""}${extraKind === "discount" ? " order-card__item-row--discount" : ""}${pickedLayout ? " order-card__item-row--picked" : ""}${cancelledPending ? " order-card__item-row--cancelled-pending" : ""}${missing ? " order-card__item-row--missing" : ""}`}
+              className={`order-card__item-row order-card__item-row--split${special ? " order-card__item-row--special" : ""}${extraKind === "discount" ? " order-card__item-row--discount" : ""}${pickedLayout ? " order-card__item-row--picked" : ""}${cancelledPending ? " order-card__item-row--cancelled-pending" : ""}${missing ? " order-card__item-row--missing" : ""}${waitingCompact ? " order-card__item-row--waiting-compact" : ""}`}
             >
               <div className="order-card__item-label">
                 {special ? (
@@ -251,8 +254,22 @@ export default function OrderCardItems({
                     <span className="order-card__item-name">
                       {extraKind === "discount" ? "➖" : "➕"} {extraName}
                     </span>
+                    {waitingCompact ? null : (
+                      <span className="order-card__item-meta">
+                        {extraMeta} ×{item.quantity || 1}
+                      </span>
+                    )}
+                  </>
+                ) : waitingCompact ? (
+                  <>
+                    <span className="order-card__item-name">
+                      {item.product_name || "Producto"} · {item.color || "-"}
+                    </span>
                     <span className="order-card__item-meta">
-                      {extraMeta} ×{item.quantity || 1}
+                      <span className="order-card__item-size-qty">
+                        {item.size || "-"}
+                        {item.quantity > 1 ? ` ×${item.quantity}` : ""}
+                      </span>
                     </span>
                   </>
                 ) : (
@@ -289,25 +306,27 @@ export default function OrderCardItems({
                 )}
               </div>
               <div
-                className={`order-card__item-actions${pickedLayout ? " order-card__item-actions--picked" : ""}`}
+                className={`order-card__item-actions${pickedLayout ? " order-card__item-actions--picked" : ""}${waitingCompact ? " order-card__item-actions--waiting-compact" : ""}`}
               >
-                <span className="order-card__item-cell order-card__item-cell--badge">
-                  {special ? (
-                    extraKind === "discount" ? (
-                      <span className="order-edit-modal__chip order-edit-modal__chip--discount order-edit-modal__chip--inline">
-                        Descuento
-                      </span>
+                {waitingCompact ? null : (
+                  <span className="order-card__item-cell order-card__item-cell--badge">
+                    {special ? (
+                      extraKind === "discount" ? (
+                        <span className="order-edit-modal__chip order-edit-modal__chip--discount order-edit-modal__chip--inline">
+                          Descuento
+                        </span>
+                      ) : (
+                        <span className="order-edit-modal__special-badge">Extra</span>
+                      )
                     ) : (
-                      <span className="order-edit-modal__special-badge">Extra</span>
-                    )
-                  ) : (
-                    <ItemStatusBadge status={item.status} compact muted={mutedBadges} />
-                  )}
-                </span>
+                      <ItemStatusBadge status={item.status} compact muted={mutedBadges} />
+                    )}
+                  </span>
+                )}
                 <span className="order-card__item-cell order-card__item-cell--lupa">
                   {special ? null : (
                     <>
-                      {item.isOffer ? (
+                      {item.isOffer && !waitingCompact ? (
                         <span className="order-card__item-offer-fire" title="Producto en oferta" aria-label="Producto en oferta">
                           🔥
                         </span>
@@ -316,9 +335,11 @@ export default function OrderCardItems({
                     </>
                   )}
                 </span>
-                <span className="order-card__item-cell order-card__item-cell--price">
-                  {special ? formatSignedPriceAr(lineTotal) : formatPriceAr(lineTotal)}
-                </span>
+                {waitingCompact ? null : (
+                  <span className="order-card__item-cell order-card__item-cell--price">
+                    {special ? formatSignedPriceAr(lineTotal) : formatPriceAr(lineTotal)}
+                  </span>
+                )}
                 {showStockActions &&
                 orderId &&
                 onMarkMissing &&

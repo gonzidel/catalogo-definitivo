@@ -302,7 +302,7 @@ export default function CartTab({ customerId, onOrderCreated, activeOrderStatus,
   const submitBusy = isCheckingOut;
 
   return (
-    <div>
+    <div className="cart-tab">
       {queryFailed && (
         <div className="cart-tab-banner cart-tab-banner--info">
           <span className="cart-tab-banner__icon">⚠️</span>
@@ -566,6 +566,7 @@ export default function CartTab({ customerId, onOrderCreated, activeOrderStatus,
           ))}
       </div>
 
+      <div className="cart-tab-aside">
       <div className="cart-tab-summary">
         <div className="cart-tab-summary__row">
           <div className="cart-tab-summary__units">
@@ -696,6 +697,7 @@ export default function CartTab({ customerId, onOrderCreated, activeOrderStatus,
           Estos productos siguen solo en el carrito. Para hacer el pedido,
           tocá <strong>Hacer pedido</strong>.
         </div>
+      </div>
       </div>
 
       {showConfirm && (

@@ -1,131 +1,243 @@
 "use client";
 
 import {
-  useCallback, useRef, useState, useEffect, useTransition,
+  useCallback, useRef, useState, useEffect, useId, useTransition,
 } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { buildSuggestions, type SearchSuggestion } from "@/lib/utils/search";
+import { useSearchDictionary } from "@/hooks/useSearchDictionary";
+import type { GroupedProduct } from "@/types/catalog";
+
+const SUGGEST_DEBOUNCE_MS = 280;
 
 const ICON_SEARCH = (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+  <svg className="search-bar__icon" width="16" height="16" viewBox="0 0 24 24" fill="none"
     stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
-    style={{ flexShrink: 0, color: "#aaa" }}>
+    aria-hidden="true">
     <circle cx="11" cy="11" r="8" />
     <line x1="21" y1="21" x2="16.65" y2="16.65" />
   </svg>
 );
 
 const ICON_CLEAR = (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-    stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+  <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+    stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+    aria-hidden="true">
     <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
   </svg>
 );
 
-const TYPE_ICONS: Record<string, string> = {
-  product:   "🏷️",
-  tag:       "🔖",
-  categoria: "📂",
-};
+function getCatalogProducts(): GroupedProduct[] {
+  if (typeof window === "undefined") return [];
+  const bag = window as Window & { __fylProducts?: GroupedProduct[] };
+  return bag.__fylProducts ?? [];
+}
 
+/** Con basePath /catalogo, usePathname devuelve "/" en home. */
+function isHomeCatalogPath(pathname: string): boolean {
+  return pathname === "/" || pathname === "";
+}
+
+function SuggestionIcon({ type }: { type: SearchSuggestion["type"] }) {
+  if (type === "product") {
+    return (
+      <svg className="search-suggest__icon search-suggest__icon--product" width="16" height="16" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+        aria-hidden="true">
+        <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
+        <line x1="7" y1="7" x2="7.01" y2="7" />
+      </svg>
+    );
+  }
+  if (type === "tag") {
+    return (
+      <svg className="search-suggest__icon search-suggest__icon--tag" width="16" height="16" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+        aria-hidden="true">
+        <line x1="4" y1="9" x2="20" y2="9" />
+        <line x1="4" y1="15" x2="20" y2="15" />
+        <line x1="10" y1="3" x2="8" y2="21" />
+        <line x1="16" y1="3" x2="14" y2="21" />
+      </svg>
+    );
+  }
+  return (
+    <svg className="search-suggest__icon" width="16" height="16" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+      aria-hidden="true">
+      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+    </svg>
+  );
+}
+
+function typeLabel(s: SearchSuggestion): string {
+  switch (s.type) {
+    case "product":
+      return "Abrir producto";
+    case "tag":
+      return "Buscar";
+    case "categoria":
+      return s.href ? "Categoría" : "Buscar";
+    default: {
+      const _exhaustive: never = s.type;
+      return _exhaustive;
+    }
+  }
+}
 
 export default function SearchBar() {
   const router        = useRouter();
   const pathname      = usePathname();
   const searchParams  = useSearchParams();
   const [, startTransition] = useTransition();
+  const dictionary = useSearchDictionary();
+  const listboxId = useId();
 
-  const inputRef    = useRef<HTMLInputElement>(null);
+  const inputRef     = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const debounceRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pathnameRef  = useRef(pathname);
+  const searchParamsRef = useRef(searchParams);
+  pathnameRef.current = pathname;
+  searchParamsRef.current = searchParams;
 
   const current = searchParams.get("q") ?? "";
 
-  const [inputValue, setInputValue]       = useState(current);
-  const [suggestions, setSuggestions]     = useState<SearchSuggestion[]>([]);
-  const [showDropdown, setShowDropdown]   = useState(false);
-  const [highlighted, setHighlighted]     = useState(-1);
+  const [inputValue, setInputValue]     = useState(current);
+  const [suggestions, setSuggestions]   = useState<SearchSuggestion[]>([]);
+  const [showDropdown, setShowDropdown] = useState(false);
+  const [highlighted, setHighlighted]   = useState(-1);
 
-  // Keep input in sync when URL changes externally
-  useEffect(() => { setInputValue(current); }, [current]);
-
-  // Close dropdown on outside click
   useEffect(() => {
-    function handleClick(e: MouseEvent) {
+    if (current) {
+      setInputValue(current);
+      return;
+    }
+    if (isHomeCatalogPath(pathname)) {
+      setInputValue("");
+    }
+  }, [current, pathname]);
+
+  useEffect(() => {
+    function handlePointerDown(e: MouseEvent) {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setShowDropdown(false);
+        setHighlighted(-1);
       }
     }
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
   }, []);
 
-  function navigate(q: string) {
-    // If searching from a PDP, go back to catalog home instead of staying in the product page
-    const isPdp = pathname.includes("/producto/");
-    const targetPath = isPdp ? "/catalogo" : pathname;
-    const params = new URLSearchParams(isPdp ? "" : searchParams.toString());
-    if (q.trim().length >= 2) {
-      params.set("q", q.trim());
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, []);
+
+  const cancelSuggestTimer = useCallback(() => {
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+      debounceRef.current = null;
+    }
+  }, []);
+
+  const closeSuggestions = useCallback(() => {
+    setSuggestions([]);
+    setShowDropdown(false);
+    setHighlighted(-1);
+  }, []);
+
+  const commitSearch = useCallback((raw: string) => {
+    cancelSuggestTimer();
+    const q = raw.trim();
+    setInputValue(q);
+    closeSuggestions();
+
+    const onHome = isHomeCatalogPath(pathnameRef.current);
+    const params = new URLSearchParams(onHome ? searchParamsRef.current.toString() : "");
+    if (q.length >= 2) {
+      params.set("q", q);
     } else {
       params.delete("q");
     }
-    const search = params.toString();
-    startTransition(() => {
-      router.push(search ? `${targetPath}?${search}` : targetPath, { scroll: false });
-    });
-  }
-
-  const onInput = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const val = e.target.value;
-      setInputValue(val);
-      setHighlighted(-1);
-
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      debounceRef.current = setTimeout(() => {
-        // Build suggestions from loaded products
-        const products = (typeof window !== "undefined" && (window as any).__fylProducts) ?? [];
-        if (val.trim().length >= 2 && products.length > 0) {
-          setSuggestions(buildSuggestions(products, val, 7));
-          setShowDropdown(true);
-        } else {
-          setSuggestions([]);
-          setShowDropdown(false);
-        }
-        // Navigate
-        navigate(val);
-      }, 280);
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [pathname, searchParams]
-  );
-
-  function applySuggestion(s: SearchSuggestion) {
-    setInputValue(s.query);
-    setSuggestions([]);
-    setShowDropdown(false);
-    navigate(s.query);
+    const qs = params.toString();
+    const href = qs ? `/?${qs}` : "/";
     inputRef.current?.blur();
-  }
+    startTransition(() => {
+      router.push(href, { scroll: false });
+    });
+  }, [cancelSuggestTimer, closeSuggestions, router, startTransition]);
 
-  function clearSearch() {
-    setInputValue("");
-    setSuggestions([]);
-    setShowDropdown(false);
-    navigate("");
+  const goToHref = useCallback((href: string) => {
+    cancelSuggestTimer();
+    closeSuggestions();
+    inputRef.current?.blur();
+    startTransition(() => {
+      router.push(href);
+    });
+  }, [cancelSuggestTimer, closeSuggestions, router, startTransition]);
+
+  const onInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setInputValue(val);
+    setHighlighted(-1);
+
+    cancelSuggestTimer();
+    debounceRef.current = setTimeout(() => {
+      debounceRef.current = null;
+      const products = getCatalogProducts();
+      if (val.trim().length >= 2 && products.length > 0) {
+        setSuggestions(buildSuggestions(products, val, 7, dictionary));
+        setShowDropdown(true);
+      } else {
+        setSuggestions([]);
+        setShowDropdown(false);
+      }
+    }, SUGGEST_DEBOUNCE_MS);
+  }, [cancelSuggestTimer, dictionary]);
+
+  const applySuggestion = useCallback((s: SearchSuggestion, index: number) => {
+    void index;
+    setInputValue(s.query);
+    if (s.type === "product" && s.href) {
+      goToHref(s.href);
+      return;
+    }
+    if (s.type === "categoria" && s.href) {
+      goToHref(s.href);
+      return;
+    }
+    commitSearch(s.query);
+  }, [commitSearch, goToHref]);
+
+  const clearSearch = useCallback(() => {
+    commitSearch("");
     inputRef.current?.focus();
-  }
+  }, [commitSearch]);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Escape") {
+      e.preventDefault();
       if (showDropdown) {
         setShowDropdown(false);
+        setHighlighted(-1);
       } else {
         clearSearch();
       }
       return;
     }
+
+    if (e.key === "Enter") {
+      e.preventDefault();
+      if (showDropdown && highlighted >= 0 && suggestions[highlighted]) {
+        applySuggestion(suggestions[highlighted], highlighted);
+      } else {
+        commitSearch(inputValue);
+      }
+      return;
+    }
+
     if (!showDropdown || suggestions.length === 0) return;
 
     if (e.key === "ArrowDown") {
@@ -134,116 +246,89 @@ export default function SearchBar() {
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       setHighlighted((h) => Math.max(h - 1, -1));
-    } else if (e.key === "Enter" && highlighted >= 0) {
-      e.preventDefault();
-      applySuggestion(suggestions[highlighted]);
     }
   };
 
   const hasSuggestions = showDropdown && suggestions.length > 0;
+  const activeOptionId =
+    hasSuggestions && highlighted >= 0
+      ? `${listboxId}-opt-${highlighted}`
+      : undefined;
 
   return (
-    <div
-      ref={containerRef}
-      className="search-bar-inner"
-      style={{ position: "relative", flex: 1, minWidth: 0, width: "100%", maxWidth: "100%" }}
-    >
-      {/* Input wrapper */}
-      <div style={{
-        display: "flex", alignItems: "center", gap: 6,
-        background: "#f5f5f5", borderRadius: 20,
-        padding: "0 10px",
-        border: hasSuggestions ? "1.5px solid #CD844D" : "1.5px solid #e8e8e8",
-        transition: "border-color 0.15s",
-        minWidth: 0,
-        width: "100%",
-        boxSizing: "border-box",
-      }}>
+    <div ref={containerRef} className="search-bar-inner">
+      <div className={`search-bar__field${hasSuggestions ? " is-open" : ""}`}>
         {ICON_SEARCH}
         <input
           ref={inputRef}
-          type="search"
-          className="search-bar-mobile"
+          type="text"
+          className="search-bar-mobile search-bar__input"
           id="search-bar-mobile"
           placeholder="¿Qué buscás?"
           autoComplete="off"
           spellCheck={false}
           enterKeyHint="search"
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={hasSuggestions}
+          aria-controls={listboxId}
+          aria-activedescendant={activeOptionId}
           value={inputValue}
           onChange={onInput}
           onKeyDown={onKeyDown}
           onFocus={() => {
             if (suggestions.length > 0) setShowDropdown(true);
           }}
-          style={{
-            flex: 1, minWidth: 0, width: "100%",
-            background: "none", border: "none", outline: "none",
-            fontSize: 13, padding: "8px 0", color: "#222",
-          }}
         />
         {inputValue && (
           <button
+            type="button"
+            className="search-bar__clear"
             onClick={clearSearch}
             aria-label="Limpiar búsqueda"
-            style={{
-              background: "#ddd", border: "none", borderRadius: "50%",
-              width: 18, height: 18, cursor: "pointer", flexShrink: 0,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              color: "#666",
-            }}
           >
             {ICON_CLEAR}
           </button>
         )}
       </div>
 
-      {/* Autocomplete dropdown */}
       {hasSuggestions && (
-        <div style={{
-          position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0,
-          background: "#fff", borderRadius: 14, zIndex: 999,
-          boxShadow: "0 8px 32px rgba(0,0,0,0.14)",
-          border: "1px solid #f0e8df",
-          overflow: "hidden",
-        }}>
-          {suggestions.map((s, idx) => (
-            <button
-              key={`${s.type}-${s.label}`}
-              onMouseDown={(e) => { e.preventDefault(); applySuggestion(s); }}
-              style={{
-                display: "flex", alignItems: "center", gap: 10,
-                width: "100%", padding: "11px 14px",
-                background: highlighted === idx ? "#FFF5EE" : "transparent",
-                border: "none", borderBottom: idx < suggestions.length - 1 ? "1px solid #f5f5f5" : "none",
-                cursor: "pointer", textAlign: "left",
-              }}
-            >
-              <span style={{ fontSize: 15, flexShrink: 0 }}>{TYPE_ICONS[s.type]}</span>
-              <span style={{ flex: 1, fontSize: 14, color: "#222", fontWeight: 500 }}>
-                {highlightMatch(s.label, inputValue)}
-              </span>
-              <span style={{
-                fontSize: 10, color: "#bbb", flexShrink: 0,
-                textTransform: "uppercase", letterSpacing: "0.04em",
-              }}>
-                {s.type === "product" ? "Art." : s.type === "tag" ? "Tag" : "Categoría"}
-              </span>
-            </button>
-          ))}
+        <div className="search-suggest">
+          <div id={listboxId} className="search-suggest__list" role="listbox">
+            {suggestions.map((s, idx) => (
+              <button
+                key={`${s.type}-${s.label}`}
+                id={`${listboxId}-opt-${idx}`}
+                type="button"
+                role="option"
+                aria-selected={highlighted === idx}
+                className={[
+                  "search-suggest__row",
+                  highlighted === idx ? "is-active" : "",
+                  s.type === "product" ? "search-suggest__row--product" : "search-suggest__row--search",
+                ].filter(Boolean).join(" ")}
+                onMouseDown={(e) => { e.preventDefault(); applySuggestion(s, idx); }}
+              >
+                <SuggestionIcon type={s.type} />
+                <span className="search-suggest__label">
+                  {highlightMatch(s.label, inputValue)}
+                </span>
+                <span className="search-suggest__type">{typeLabel(s)}</span>
+              </button>
+            ))}
+          </div>
 
-          {/* "Search all" row */}
           <button
-            onMouseDown={(e) => { e.preventDefault(); setShowDropdown(false); navigate(inputValue); }}
-            style={{
-              display: "flex", alignItems: "center", gap: 10,
-              width: "100%", padding: "10px 14px",
-              background: "#fafafa", border: "none", cursor: "pointer",
-              textAlign: "left",
+            type="button"
+            className="search-suggest__all"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              commitSearch(inputValue);
             }}
           >
             {ICON_SEARCH}
-            <span style={{ fontSize: 13, color: "#888" }}>
-              Buscar <strong style={{ color: "#CD844D" }}>&ldquo;{inputValue}&rdquo;</strong> en todo el catálogo
+            <span>
+              Buscar <strong>&ldquo;{inputValue}&rdquo;</strong> en todo el catálogo
             </span>
           </button>
         </div>
@@ -252,7 +337,6 @@ export default function SearchBar() {
   );
 }
 
-// Highlight matching characters in the suggestion label
 function highlightMatch(label: string, term: string): React.ReactNode {
   if (!term || term.length < 2) return label;
   const idx = label.toLowerCase().indexOf(term.toLowerCase());
@@ -260,7 +344,7 @@ function highlightMatch(label: string, term: string): React.ReactNode {
   return (
     <>
       {label.slice(0, idx)}
-      <mark style={{ background: "#fde68a", borderRadius: 2, padding: "0 1px" }}>
+      <mark className="search-suggest__mark">
         {label.slice(idx, idx + term.length)}
       </mark>
       {label.slice(idx + term.length)}

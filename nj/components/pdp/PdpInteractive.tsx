@@ -8,10 +8,16 @@ import PdpGallery from "./PdpGallery";
 import PdpRecommended from "./PdpRecommended";
 import { useCartStore } from "@/store/cart";
 import { useProfileGate } from "@/components/profile/ProfileGateProvider";
+import WhatsAppButton from "@/components/contact/WhatsAppButton";
+import { useExperience } from "@/hooks/useExperience";
+import { EXP_CATALOG_ONLY, EXP_FULL_ONLY } from "@/lib/rollout/client";
+import { endExclusive, tryBeginExclusive } from "@/lib/cart/intra-tab-lock";
 import { formatARS, colorDetailHasImage } from "@/lib/utils/catalog";
 import {
   cartPriceForColor,
+  catalogPriceMissingMessage,
   getColorEffectivePrice,
+  hasValidCatalogPrice,
 } from "@/lib/utils/variant-price";
 import {
   clampQtyToSellable,
@@ -128,12 +134,15 @@ export default function PdpInteractive({
   const [selections, setSelections] = useState<MultiSelection>({});
   const [addedFlash, setAddedFlash] = useState(false);
   const [addInFlight, setAddInFlight] = useState(false);
+  const addInFlightRef = useRef(false);
   const [addStockError, setAddStockError] = useState(false);
+  const [addPriceError, setAddPriceError] = useState(false);
   const qtyListRef = useRef<HTMLDivElement | null>(null);
 
   const addItem = useCartStore((s) => s.addItem);
   const setPdpOwnBarActive = useCartStore((s) => s.setPdpOwnBarActive);
   const { requireProfileComplete } = useProfileGate();
+  const experience = useExperience();
 
   // Always resolve to a valid color — fallback to first if not found
   const colorDetail: ColorDetail | null =
@@ -278,14 +287,19 @@ export default function PdpInteractive({
   }, [sellableFor, sellableStatus]);
 
   async function handleAddAllToCart() {
+    if (experience !== "full") return;
     if (totalSelectedQty === 0) return;
     if (sellableStatus !== "ready") return;
-    if (addInFlight) return;
+    if (!tryBeginExclusive(addInFlightRef)) return;
     const pendingItems = allSelectedItems;
-    if (pendingItems.length === 0) return;
+    if (pendingItems.length === 0) {
+      endExclusive(addInFlightRef);
+      return;
+    }
 
     setAddInFlight(true);
     setAddStockError(false);
+    setAddPriceError(false);
     try {
       // Cuenta Google/nueva sin datos: exigir perfil antes de armar carrito.
       const profileOk = await requireProfileComplete();
@@ -300,8 +314,13 @@ export default function PdpInteractive({
       }
 
       let added = 0;
+      let rejectedForPrice = false;
       for (const item of resolved.lines) {
         const linePrice = cartPriceForColor(visibleColors, item.color, product);
+        if (!hasValidCatalogPrice(linePrice.effectivePrice)) {
+          rejectedForPrice = true;
+          continue;
+        }
         addItem({
           variant_id: item.variantId,
           product_name: product.Articulo,
@@ -314,11 +333,16 @@ export default function PdpInteractive({
         });
         added += 1;
       }
-      if (added === 0) return;
+      if (added === 0) {
+        if (rejectedForPrice) setAddPriceError(true);
+        return;
+      }
+      if (rejectedForPrice) setAddPriceError(true);
       setSelections({});
       setAddedFlash(true);
       setTimeout(() => setAddedFlash(false), 1400);
     } finally {
+      endExclusive(addInFlightRef);
       setAddInFlight(false);
     }
   }
@@ -484,6 +508,20 @@ export default function PdpInteractive({
               </span>
             </div>
           )}
+          {addPriceError && (
+            <div className="pdp-hint pdp-hint--error" role="status">
+              <span className="pdp-hint__text">
+                {catalogPriceMissingMessage(product.Articulo)}
+              </span>
+            </div>
+          )}
+          {!hasValidCatalogPrice(pricing.effectivePrice) && !addPriceError && (
+            <div className="pdp-hint pdp-hint--error" role="status">
+              <span className="pdp-hint__text">
+                {catalogPriceMissingMessage(product.Articulo)}
+              </span>
+            </div>
+          )}
 
           <PdpSizePicker
             colorDetail={colorDetail}
@@ -497,11 +535,12 @@ export default function PdpInteractive({
             allSelections={allSelectedRows}
             onSelectionChange={handleSizeChange}
             qtyListRef={qtyListRef}
+            readOnly={experience !== "full"}
           />
 
           {/* Hint solo antes del primer talle tocado; al seleccionar, desaparece. */}
           {!hasAnySelectionRows && !addedFlash && (
-            <div className="pdp-hint">
+            <div className={`pdp-hint ${EXP_FULL_ONLY}`}>
               <svg
                 className="pdp-hint__icon"
                 width="16"
@@ -553,6 +592,7 @@ export default function PdpInteractive({
               .filter(Boolean)
               .join(" ")}
           />
+          <div className={EXP_CATALOG_ONLY} style={{ height: 80 }} aria-hidden="true" />
 
           <PdpRecommended
             articulo={product.Articulo}
@@ -565,8 +605,32 @@ export default function PdpInteractive({
       </div>
 
       <div
+        id="product-modal-footer"
+        className={EXP_CATALOG_ONLY}
+        style={{
+          position: "fixed",
+          bottom: 60,
+          left: 0,
+          right: 0,
+          zIndex: 60,
+          background: "#fff",
+          borderTop: "1px solid #f0ebe4",
+          padding: "10px 16px 12px",
+          boxShadow: "0 -4px 20px rgba(0,0,0,0.1)",
+        }}
+      >
+        <WhatsAppButton
+          articulo={product.Articulo}
+          sku={variantInfo?.sku ?? product.Articulo}
+          color={activeColor}
+          variant="pdp"
+        />
+      </div>
+
+      <div
         className={[
           "pdp-sticky-bar",
+          EXP_FULL_ONLY,
           stickyVisible ? "is-visible" : "",
         ]
           .filter(Boolean)
@@ -587,7 +651,11 @@ export default function PdpInteractive({
             <button
               type="button"
               onClick={handleAddAllToCart}
-              disabled={sellableStatus !== "ready" || addInFlight}
+              disabled={
+                sellableStatus !== "ready" ||
+                addInFlight ||
+                (totalSelectedQty > 0 && totalSelectedAmount <= 0)
+              }
               className="pdp-sticky-cta"
             >
               <span className="pdp-sticky-cta__label">

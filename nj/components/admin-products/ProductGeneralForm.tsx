@@ -226,7 +226,8 @@ export default function ProductGeneralForm({
       };
 
       if (mode === "new") {
-        const { id } = await createProduct(payload);
+        const { id, pricingError } = await createProduct(payload);
+        if (pricingError) window.alert(`${pricingError}. Cargalo de nuevo desde la edición.`);
         router.push(`/admin/products/${id}`);
       } else if (productId) {
         await updateProductGeneral(productId, payload);

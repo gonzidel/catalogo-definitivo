@@ -1,0 +1,23 @@
+# Staging local FYL-334. No es producción.
+# Postgres 17, DB fyl334, sin datos reales.
+services:
+  fyl334-pg:
+    image: postgres:17.6
+    container_name: fyl334-pg
+    environment:
+      POSTGRES_USER: fyl334
+      POSTGRES_PASSWORD: fyl334
+      POSTGRES_DB: fyl334
+    ports:
+      - "55434:5432"
+    volumes:
+      - fyl334-data:/var/lib/postgresql/data
+      - ./:/staging:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fyl334 -d fyl334"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  fyl334-data:

@@ -78,6 +78,7 @@ const PERMISSIONS = [
   { key: 'import', label: 'Importar', description: 'Importar datos CSV' },
   { key: 'export', label: 'Exportar', description: 'Exportar datos CSV' },
   { key: 'publications', label: 'Publicaciones', description: 'Gestionar productos para publicar en redes sociales' },
+  { key: 'control', label: 'Control publicaciones', description: 'Ver stock de productos publicados en los últimos 7 días' },
   { key: 'move-stock', label: 'Mover Stock', description: 'Mover productos entre almacenes' },
   { key: 'public-sales', label: 'Venta al público', description: 'Gestionar stock de venta al público' },
   { key: 'proveedores', label: 'Proveedores', description: 'Pedidos a proveedores (Telegram/n8n) y compras a proveedores (temporadas, recepciones, arqueo)' },

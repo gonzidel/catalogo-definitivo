@@ -37,6 +37,7 @@
 
 - Estado de **pedido** `stock_pending` cuando, tras un fallo al aplicar stock, el sistema no puede garantizar coherencia y se marca en `orders` para intervención (ver comentarios en `admin/order-creator.js` ~3433+).
 - No es un estado de *producto* `pending_stock` (aunque `products.status` puede usar `pending_stock` para carga — ver gobernanza).
+- **Corte de red (`Failed to fetch`):** no es falta de stock. El alta de ítems y el descuento son dos llamadas; si se corta la segunda, el pedido queda acá. El front reintenta una vez y solo descuenta lo que todavía no tiene `stock_history` / fuentes (evita doble descuento). En el Kanban, **Reintentar** vuelve a descontar; no usar **Cancelar**. Caso real A56866 (PAU, 2026-09-10).
 
 ## 6. Cancelaciones y devoluciones
 

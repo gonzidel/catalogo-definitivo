@@ -36,7 +36,7 @@ export default function CategoryTabs({
   useEffect(() => {
     if (initialHasOfertas !== undefined) return;
     let cancelled = false;
-    fetch("/nj/api/catalog/has-ofertas")
+    fetch("/api/catalog/has-ofertas")
       .then((r) => r.json())
       .then((d: { has?: boolean }) => {
         if (!cancelled) setHasOfertas(!!d.has);

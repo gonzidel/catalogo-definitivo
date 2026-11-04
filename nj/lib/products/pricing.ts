@@ -1,3 +1,9 @@
+/** Para quien no puede ver costos: el formulario no muestra ni envía estos valores. */
+export const HIDDEN_CATEGORY_PRICING_DEFAULT: { percentage: number; logistic_amount: number } = {
+  percentage: 0,
+  logistic_amount: 0,
+};
+
 export function roundToNearest100(value: number): number {
   if (!Number.isFinite(value) || value <= 0) return 0;
   return Math.ceil(value / 100) * 100;

@@ -32,6 +32,25 @@ export function categoriaToSlug(cat: string): string {
   return cat.toLowerCase();
 }
 
+/** Slug de ruta real (`/calzado`, `/ofertas`, …) o null si no hay página (p. ej. Otros). */
+export function categoriaToNavigableSlug(cat: string): string | null {
+  const key = String(cat ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  if (!key) return null;
+  if (Object.prototype.hasOwnProperty.call(CATEGORIAS_MAP, key)) return key;
+  for (const [slug, name] of Object.entries(CATEGORIAS_MAP)) {
+    const folded = name
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
+    if (folded === key) return slug;
+  }
+  return null;
+}
+
 // ─── Group raw rows by Articulo ───────────────────────────────────────────────
 
 function getColorKey(color: string): string {
@@ -50,6 +69,7 @@ function mergeColorDetail(target: ColorDetail, source: ColorDetail): void {
     target.PrecioOferta = source.PrecioOferta;
   if (!target.PromoActiva && source.PromoActiva)
     target.PromoActiva = source.PromoActiva;
+  if (target.Precio == null && source.Precio != null) target.Precio = source.Precio;
 }
 
 export function agruparProductos(rows: CatalogRow[]): GroupedProduct[] {
@@ -106,6 +126,7 @@ export function agruparProductos(rows: CatalogRow[]): GroupedProduct[] {
         ? row.Numeracion.split(",").map((t) => t.trim()).filter(Boolean)
         : ["Único"],
       images,
+      Precio: row.Precio ?? "",
       OfertaActiva: row.OfertaActiva === true || row.OfertaActiva === "true",
       PrecioOferta: row.PrecioOferta ?? "",
       PromoActiva: row.PromoActiva ?? "",

@@ -42,7 +42,6 @@ import {
   orderHasWaitingSource,
 } from "@/lib/orders/waiting-source";
 import {
-  draftDefersCustomerMessage,
   splitWaitingCounts,
   type DraftChangesMap,
 } from "@/lib/orders/draft-changes";
@@ -52,6 +51,7 @@ import {
   collectWaitingFabricaItemIdsFromDraft,
   collectWaitingLocalItemIdsFromDraft,
   resolveMessageProfile,
+  shouldDeferDraftCustomerMessage,
 } from "@/lib/orders/customer-status-message";
 import {
   saveLocalWaitSnapshotFromConfirm,
@@ -64,6 +64,7 @@ import { useOrdersStore } from "@/hooks/useOrders";
 import type { AdminOrder } from "@/types/orders";
 import OrderActions from "./OrderActions";
 import OrderCardItems from "./OrderCardItems";
+import OrderCardMoreMenu from "./OrderCardMoreMenu";
 import OrderInboxOwnerChip from "./OrderInboxOwnerChip";
 
 interface OrderCardProps {
@@ -73,7 +74,7 @@ interface OrderCardProps {
 function isOrderCardInteractiveTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
   return !!target.closest(
-    "button, a, input, select, textarea, .order-card__actions, .order-card__body"
+    "button, a, input, select, textarea, .order-card__actions, .order-card__body, .order-card__more"
   );
 }
 
@@ -132,6 +133,7 @@ export default function OrderCard({ order }: OrderCardProps) {
   const markItemWaiting = useOrdersStore((s) => s.markItemWaiting);
   const splitReservedItem = useOrdersStore((s) => s.splitReservedItem);
   const splitReservedItemMixed = useOrdersStore((s) => s.splitReservedItemMixed);
+  const markWhatsappInvalid = useOrdersStore((s) => s.markWhatsappInvalid);
 
   const isMobile = useIsMobile();
   const [pendingChanges, setPendingChanges] = useState<DraftChangesMap>({});
@@ -171,23 +173,32 @@ export default function OrderCard({ order }: OrderCardProps) {
     showInboxOwnerChip &&
     Boolean(order.customer_id) &&
     firstOrderCustomerIds.includes(order.customer_id);
-  /** ≤2 días para vencer → alerta rosa (solo fuera de Vencido; ahí usa semáforo amarillo/rojo/azul).
-   *  En Retiro no pintar “por vencer”: solo el rojo de ya vencido. */
+  /** ≤2 días para vencer → alerta rosa (fuera de Vencido; ≤1 día en Apartados usa amarillo).
+   *  En Retiro no pintar “por vencer” rosa: solo el rojo de ya vencido. */
+  const softExpiringYellow =
+    column === "picked" &&
+    hasDeadline &&
+    !deadlineExpired &&
+    String(order.status || "").toLowerCase() !== "expired" &&
+    calendarDaysLeft !== null &&
+    calendarDaysLeft <= 1;
   const expiringSoon =
     column !== "expired" &&
+    !softExpiringYellow &&
     boardScope !== "local_pickup" &&
     calendarDaysLeft !== null &&
     !deadlineExpired &&
     calendarDaysLeft <= 2;
-  /** Semáforo columna Vencido */
-  const vencidoTone: "yellow" | "red" | "blue" | null =
-    column !== "expired"
+  /** Semáforo: amarillo en Apartados (≤1 día); rojo/azul solo en Vencido hard. */
+  const vencidoTone: "yellow" | "red" | "blue" | null = softExpiringYellow
+    ? "yellow"
+    : column !== "expired"
       ? null
       : expiryWarnCooldown
         ? "blue"
         : deadlineExpired || String(order.status || "").toLowerCase() === "expired"
           ? "red"
-          : "yellow";
+          : null;
   const countdownLabel =
     calendarDaysLeft === null
       ? null
@@ -225,11 +236,8 @@ export default function OrderCard({ order }: OrderCardProps) {
       ),
     [column, items, order]
   );
-  const showExpiryWarningBtn =
-    column === "expired" &&
-    hasDeadline &&
-    !deadlineExpired &&
-    String(order.status || "").toLowerCase() !== "expired";
+  // Aviso WhatsApp “falta 1 día”: ahora en Apartados (marco amarillo), no en Vencido.
+  const showExpiryWarningBtn = softExpiringYellow;
   // Mensaje rojo (ya venció): columna Vencido. Desktop + mobile.
   const showExpiredOrderMessageBtn =
     column === "expired" &&
@@ -257,10 +265,9 @@ export default function OrderCard({ order }: OrderCardProps) {
   // ni se ofrece, ver OrderActions). Acá SÍ se ofrece, y todo lo que sigue "activo"
   // (Apartado/Reservado/Espera) vuelve al stock apenas se aprieta ese botón — por
   // eso se muestra distinto (ver renderizado más abajo).
-  // Ya vencido y desarmado por el cron (rpc_orders_daily_maintenance): status='expired',
-  // stock ya devuelto solo. Se trata igual que isExpiredPendingAdminDisassembly (mismo
-  // resumen fusionado / badge "Vencido"), salvo que acá ya no hace falta devolver stock,
-  // solo archivar. Ver auditoría 2026-09-15.
+  // Ya vencido por el cron (rpc_orders_daily_maintenance): status='expired'. Desde 367
+  // el stock sigue reservado hasta "Desarmar", igual que isExpiredPendingAdminDisassembly
+  // (mismo resumen fusionado / badge "Vencido"). Ver auditoría 2026-09-15.
   const isFullyExpiredStatus = String(order.status || "").trim().toLowerCase() === "expired";
   const isExpiredPending =
     column === "expired" &&
@@ -347,6 +354,11 @@ export default function OrderCard({ order }: OrderCardProps) {
   const city = customer?.city?.trim() || null;
   const phone = customer?.phone?.trim() || null;
   const waUrl = buildWhatsAppUrl(phone);
+  const customerId = customer?.id || order.customer_id || null;
+  const waInvalidAlreadyMarked = Boolean(customer?.whatsapp_invalid_at);
+  const waInvalidBusy =
+    Boolean(customerId) && loadingAction === `wa-invalid:${customerId}`;
+  const showWhatsappInvalidMenu = column === "active" && Boolean(customerId);
   const fromCustomer = isCustomerSourcedOrder(order);
   /** Solo Apartados en Retiro: verde clienta / amarillo desde Pedidos / celeste admin-local. */
   const retiroActiveTone =
@@ -494,7 +506,12 @@ export default function OrderCard({ order }: OrderCardProps) {
     setDraftMessageSent(false);
   };
 
-  const defersCustomerMessage = draftDefersCustomerMessage(pendingChanges, order);
+  const defersCustomerMessage = shouldDeferDraftCustomerMessage(
+    items,
+    pendingChanges,
+    warehouseIds,
+    order
+  );
   const showDraftMessageActions =
     draftMode && Object.keys(pendingChanges).length > 0 && !defersCustomerMessage;
   const draftFingerprint = JSON.stringify(pendingChanges);
@@ -535,7 +552,12 @@ export default function OrderCard({ order }: OrderCardProps) {
   const confirmChanges = async () => {
     setConfirmBusy(true);
     const draftSnapshot = { ...pendingChanges };
-    const defersMessage = draftDefersCustomerMessage(draftSnapshot, order);
+    const defersMessage = shouldDeferDraftCustomerMessage(
+      items,
+      draftSnapshot,
+      warehouseIds,
+      order
+    );
     try {
       for (const [itemId, change] of Object.entries(draftSnapshot)) {
         if (change.kind === "picked") await markItemPicked(order.id, itemId);
@@ -695,6 +717,16 @@ export default function OrderCard({ order }: OrderCardProps) {
             <span className="order-card__header-total">
               <span className="order-card__header-count">
                 {productCount} prod.
+                {showWhatsappInvalidMenu ? (
+                  <OrderCardMoreMenu
+                    alreadyMarked={waInvalidAlreadyMarked}
+                    busy={waInvalidBusy}
+                    onMarkInvalid={async () => {
+                      if (!customerId) return;
+                      await markWhatsappInvalid(customerId);
+                    }}
+                  />
+                ) : null}
               </span>
               {column !== "cancelled" && column !== "expired" ? (
                 <span className="order-card__header-price">
@@ -1010,14 +1042,10 @@ export default function OrderCard({ order }: OrderCardProps) {
             {dismantleAllPending ? (
               <div className="order-card__cancelled-rest">
                 <p className="order-card__cancelled-rest-title">
-                  {isFullyExpiredStatus
-                    ? "El stock ya volvió solo al vencer el plazo"
-                    : "Se devuelve todo el stock al desarmar"}
+                  Se devuelve todo el stock al desarmar
                 </p>
                 <p className="order-card__cancelled-rest-hint">
-                  {isFullyExpiredStatus
-                    ? "Tocá Archivar para sacar este pedido de Vencido."
-                    : "Lo marcado en amarillo nunca se separó físicamente del depósito (reservado/espera) — el resto sí estaba apartado."}
+                  Lo marcado en amarillo nunca se separó físicamente del depósito (reservado/espera) — el resto sí estaba apartado.
                 </p>
                 <OrderCardItems
                   items={cancelledSummaryItems}

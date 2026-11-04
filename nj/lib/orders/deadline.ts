@@ -165,7 +165,7 @@ export function isOrderExpiringToday(
 }
 
 /**
- * Columna Vencido (amarillo): falta ≤1 día calendario y todavía no venció.
+ * Soft ≤1 día (antes columna Vencido amarillo): ahora Apartados con marco amarillo.
  * Incluye "Hoy" y "Mañana".
  */
 export function isOrderExpiringWithinOneDay(

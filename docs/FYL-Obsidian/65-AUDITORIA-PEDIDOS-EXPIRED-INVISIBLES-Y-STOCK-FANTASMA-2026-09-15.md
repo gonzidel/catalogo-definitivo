@@ -189,3 +189,11 @@ Los pedidos por tiempo ya **no viven en Cancelados**. Nueva columna `expired` / 
 - `354_exclude_missing_from_order_total.sql` — `rpc_admin_mark_item_missing` resta la línea del total; `rpc_close_order` + trigger `trg_orders_total_exclude_missing` evitan facturar missing (cubre también recalc de checkout). **Aplicada.**
 - `355_stock_history_readable_labels.sql` — `change_type` legibles: `cancelacion_confirmada_reingreso`, `sin_stock_baja`, `quitado_sin_reingreso` + backfill; UI `admin/stock.js`. **Aplicada.**
 - `356_order_item_missing_total_trigger.sql` — trigger en `order_items` al pasar a `missing` (cubre split / refresh / update status); mark ya no resta a mano; quitar missing no vuelve a restar. **Aplicada fyl-core 2026-09-22.**
+
+### Seguimiento 2026-09-24 — ticket closed-orders aún sumaba missing (Chamorro Ana / A57356)
+
+**Evidencia prod:** `total_amount=717000` (= billable sin missing). Missing TOP ×2 = $26.600. El ticket viejo recalculaba con `getActiveOrderItems` que **solo excluía cancelled**, no missing → imprimía **$743.600** e incluía las líneas sin stock.
+
+**Conclusión:** el fix 354/356 **sí está en producción** (total en BD correcto). El bug del ticket era **otro**: front `admin/orders-domain.js` `getActiveOrderItems`.
+
+**Fix:** `getActiveOrderItems` excluye también `missing`. Cache-bust `?v=m260924`. Pendiente deploy de `admin/` a app.fylmoda.com.ar.

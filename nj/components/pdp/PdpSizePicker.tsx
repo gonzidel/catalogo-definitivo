@@ -7,6 +7,7 @@ import {
   type PdpVariantInfo,
   type PdpVariantSize,
 } from "@/lib/stock/sellable-stock";
+import { EXP_CATALOG_ONLY, EXP_FULL_ONLY } from "@/lib/rollout/client";
 import type { ColorDetail } from "@/types/catalog";
 
 interface SelectedItem {
@@ -32,6 +33,8 @@ interface PdpSizePickerProps {
   allSelections: SelectedItem[];
   onSelectionChange: (variantId: string, size: string, qty: number) => void;
   qtyListRef?: RefObject<HTMLDivElement | null>;
+  /** Modo catalog: muestra talles y disponibilidad sin permitir selección. */
+  readOnly?: boolean;
 }
 
 export default function PdpSizePicker({
@@ -46,6 +49,7 @@ export default function PdpSizePicker({
   allSelections,
   onSelectionChange,
   qtyListRef,
+  readOnly = false,
 }: PdpSizePickerProps) {
   const stockMap = new Map((sizesWithStock ?? []).map((s) => [s.size, s.sellable_qty]));
   const capitalizedSelectionLabel =
@@ -81,7 +85,7 @@ export default function PdpSizePicker({
 
   return (
     <div className="pdp-sizes">
-      <div className="pdp-sizes__label">
+      <div className={`pdp-sizes__label ${EXP_FULL_ONLY}`}>
         Elegí {selectionLabel} en {activeColor}
         {totalSelectedAllColors > 0 && (
           <span className="pdp-sizes__count">
@@ -89,7 +93,10 @@ export default function PdpSizePicker({
           </span>
         )}
       </div>
-      <div className="pdp-sizes__help">
+      <div className={`pdp-sizes__label ${EXP_CATALOG_ONLY}`}>
+        {selectionLabel === "medida" ? "Medidas" : "Talles"} en {activeColor}
+      </div>
+      <div className={`pdp-sizes__help ${EXP_FULL_ONLY}`}>
         Tocá {selectionArticle} {selectionLabel} para abrir el selector de cantidad.
       </div>
 
@@ -102,6 +109,25 @@ export default function PdpSizePicker({
             const canSelect = confirmed && stock > 0 && Boolean(activeVariantId);
             const qty = activeSelections[talle] ?? 0;
             const isSelected = talle in activeSelections;
+
+            if (readOnly) {
+              return (
+                <span
+                  key={talle}
+                  className={[
+                    "pdp-size-chip",
+                    "pdp-size-chip--readonly",
+                    outOfStock ? "is-oos" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                  aria-label={`${capitalizedSelectionLabel} ${talle}${outOfStock ? " (sin stock)" : ""}`}
+                >
+                  {outOfStock && <span aria-hidden="true" className="pdp-size-chip__strike" />}
+                  {talle}
+                </span>
+              );
+            }
 
             return (
               <button
@@ -136,7 +162,7 @@ export default function PdpSizePicker({
           cliente eligió 38 en beige y después pasa a negro, el 38 beige siga
           visible acá (antes desaparecía y parecía que el carrito se había
           "roto" al cambiar de color). */}
-      {allSelections.length > 0 && (
+      {!readOnly && allSelections.length > 0 && (
         <div className="pdp-qty-list" ref={qtyListRef}>
           <div className="pdp-qty-list__title">Ahora elegí cantidad</div>
           {allSelections.map((item) => {

@@ -5,7 +5,9 @@ import { createPortal } from "react-dom";
 import { useSearchParams, usePathname } from "next/navigation";
 import { useCatalog } from "@/hooks/useCatalog";
 import { useEnrichedCatalog } from "@/hooks/useEnrichedCatalog";
+import { productHasAnyStock } from "@/lib/utils/catalog-variant-enrich";
 import { searchProducts, filterBySizes } from "@/lib/utils/search";
+import { useSearchDictionary } from "@/hooks/useSearchDictionary";
 import {
   inferCategoryFromProducts,
   filterProductsByTags,
@@ -16,10 +18,23 @@ import CategoryTabs from "@/components/filters/CategoryTabs";
 import CategoryContextBar from "@/components/filters/CategoryContextBar";
 import SizeFilterSheet from "@/components/filters/SizeFilterSheet";
 import TagFilterBar from "@/components/filters/TagFilterBar";
+import {
+  reconcileDisplayProducts,
+  resolvePreviousForFilter,
+  type PaintedGridState,
+} from "@/lib/catalog/reconcile-display-products";
 import type { GroupedProduct } from "@/types/catalog";
 
 const INITIAL_DISPLAY = 14;
 const DISPLAY_INCREMENT = 14;
+
+type CatalogScrollState = {
+  displayCount: number;
+  scrollY: number;
+  anchorArticulo?: string;
+  anchorTop?: number;
+  savedAt?: number;
+};
 
 interface CatalogShellProps {
   initialProducts: GroupedProduct[];
@@ -47,12 +62,12 @@ export default function CatalogShell({
   const searchParams = useSearchParams();
   const pathname = usePathname();
   const searchTerm = searchParams.get("q") ?? "";
+  const searchDictionary = useSearchDictionary();
   const activeSizes = searchParams
     .get("talle")
     ?.split(",")
     .filter(Boolean) ?? [];
 
-  // Build the current URL to pass as `from` param to PDP
   const currentUrl = searchParams.toString()
     ? `${pathname}?${searchParams}`
     : pathname;
@@ -61,7 +76,9 @@ export default function CatalogShell({
   const [highlightCats, setHighlightCats] = useState(false);
   const [highlightTalles, setHighlightTalles] = useState(false);
   const [mounted, setMounted] = useState(false);
-  useEffect(() => { setMounted(true); }, []);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const prevCategoriaRef = useRef(categoria);
   useEffect(() => {
@@ -90,18 +107,24 @@ export default function CatalogShell({
       ? allProducts
       : initialProducts;
 
-  const { products: enrichedProducts } = useEnrichedCatalog(
+  const { products: enrichedProducts, isEnriching } = useEnrichedCatalog(
     baseProducts,
     searchTerm
   );
 
   const canLoadMore = !fixedProductSet && hasMore;
 
-  const catalogPool = React.useMemo(
-    () =>
-      enrichedProducts.filter((p) => (p.DetalleColor?.length ?? 0) > 0),
-    [enrichedProducts]
-  );
+  const browsing = searchTerm.length < 2;
+  const useStableGrid = browsing && !fixedProductSet;
+
+  const catalogPool = React.useMemo(() => {
+    const withImages = enrichedProducts.filter(
+      (p) => (p.DetalleColor?.length ?? 0) > 0
+    );
+    if (fixedProductSet || !browsing) return withImages;
+    if (isEnriching) return withImages;
+    return withImages.filter(productHasAnyStock);
+  }, [enrichedProducts, browsing, fixedProductSet, isEnriching]);
 
   const tagFiltered = React.useMemo(
     () => filterProductsByTags(catalogPool, tags),
@@ -111,9 +134,9 @@ export default function CatalogShell({
   const searched = React.useMemo(
     () =>
       searchTerm.length >= 2
-        ? searchProducts(tagFiltered, searchTerm)
+        ? searchProducts(tagFiltered, searchTerm, searchDictionary)
         : tagFiltered,
-    [tagFiltered, searchTerm]
+    [tagFiltered, searchTerm, searchDictionary]
   );
 
   const effectiveCategoria = React.useMemo(() => {
@@ -130,21 +153,49 @@ export default function CatalogShell({
   const contextCategoria =
     categoria !== "all" ? categoria : effectiveCategoria;
 
-  // Expose loaded products globally so SearchBar autocomplete can use them
   useEffect(() => {
     if (catalogPool.length > 0) {
-      (window as any).__fylProducts = catalogPool;
+      (window as Window & { __fylProducts?: GroupedProduct[] }).__fylProducts =
+        catalogPool;
     }
   }, [catalogPool]);
 
-  // Reset display count when filters change
+  const filterKey = `${categoria}|${tags.join(",")}|${searchTerm}|${activeSizes.join(",")}`;
+  const paintedStateRef = useRef<PaintedGridState>({
+    filterKey: "",
+    products: [],
+  });
+
   useEffect(() => {
     setDisplayCount(INITIAL_DISPLAY);
-  }, [searchTerm, activeSizes.join(","), categoria, tags.join(",")]);
+  }, [filterKey]);
 
-  const displayProducts = filtered.slice(0, displayCount);
+  const previousForReconcile = resolvePreviousForFilter(
+    paintedStateRef.current,
+    filterKey
+  );
 
-  // Always-up-to-date refs for the observer callback (avoids stale closures)
+  const displayProducts = React.useMemo(() => {
+    if (!useStableGrid) {
+      return filtered.slice(0, displayCount);
+    }
+    return reconcileDisplayProducts({
+      previous: previousForReconcile,
+      nextPool: filtered,
+      slotCount: displayCount,
+      isEnriching,
+    });
+  }, [
+    filtered,
+    displayCount,
+    isEnriching,
+    useStableGrid,
+    filterKey,
+    previousForReconcile,
+  ]);
+
+  paintedStateRef.current = { filterKey, products: displayProducts };
+
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const loadMoreRef = useRef(loadMore);
   loadMoreRef.current = loadMore;
@@ -155,9 +206,108 @@ export default function CatalogShell({
   const displayCountRef = useRef(displayCount);
   displayCountRef.current = displayCount;
 
-  // Sentinel is always in the DOM — never conditionally removed.
-  // The observer callback decides whether to act, so the element stays mounted
-  // and the observer never loses its target.
+  const scrollStorageKey = `fyl-catalogo-scroll:${currentUrl}`;
+  const scrollSaveTimeoutRef = useRef<number | null>(null);
+  const restoreStateRef = useRef<CatalogScrollState | null>(null);
+  const restoredKeyRef = useRef<string | null>(null);
+
+  const saveCatalogState = React.useCallback(
+    (anchorArticulo?: string, anchorTop?: number) => {
+      try {
+        sessionStorage.setItem(
+          scrollStorageKey,
+          JSON.stringify({
+            displayCount: displayCountRef.current,
+            scrollY: window.scrollY,
+            anchorArticulo,
+            anchorTop,
+            savedAt: Date.now(),
+          } satisfies CatalogScrollState)
+        );
+      } catch {
+        /* ignore */
+      }
+    },
+    [scrollStorageKey]
+  );
+
+  useEffect(() => {
+    try {
+      restoreStateRef.current = null;
+      restoredKeyRef.current = null;
+      const raw = sessionStorage.getItem(scrollStorageKey);
+      if (!raw) return;
+      const saved = JSON.parse(raw) as CatalogScrollState;
+      restoreStateRef.current = saved;
+      if (saved.displayCount > INITIAL_DISPLAY) {
+        setDisplayCount(saved.displayCount);
+      }
+    } catch {
+      /* ignore */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrollStorageKey]);
+
+  useEffect(() => {
+    const saved = restoreStateRef.current;
+    if (!saved || restoredKeyRef.current === scrollStorageKey) return;
+
+    let cancelled = false;
+    const restore = () => {
+      if (cancelled) return;
+
+      if (saved.anchorArticulo) {
+        const anchor = Array.from(
+          document.querySelectorAll<HTMLElement>("[data-articulo]")
+        ).find((el) => el.dataset.articulo === saved.anchorArticulo);
+
+        if (anchor) {
+          const targetY =
+            window.scrollY +
+            anchor.getBoundingClientRect().top -
+            (saved.anchorTop ?? 0);
+          window.scrollTo(0, Math.max(0, targetY));
+          restoredKeyRef.current = scrollStorageKey;
+          return;
+        }
+      }
+
+      const expectedCount = Math.min(
+        saved.displayCount,
+        filtered.length || saved.displayCount
+      );
+      if (displayProducts.length >= expectedCount || !isEnriching) {
+        window.scrollTo(0, saved.scrollY);
+        restoredKeyRef.current = scrollStorageKey;
+      }
+    };
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(restore);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [displayProducts.length, filtered.length, isEnriching, scrollStorageKey]);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      if (scrollSaveTimeoutRef.current)
+        window.clearTimeout(scrollSaveTimeoutRef.current);
+      scrollSaveTimeoutRef.current = window.setTimeout(
+        () => saveCatalogState(),
+        200
+      );
+    };
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", handleScroll);
+      if (scrollSaveTimeoutRef.current)
+        window.clearTimeout(scrollSaveTimeoutRef.current);
+    };
+  }, [scrollStorageKey, saveCatalogState]);
+
   useEffect(() => {
     const sentinel = sentinelRef.current;
     if (!sentinel) return;
@@ -169,12 +319,11 @@ export default function CatalogShell({
         const currentDisplayCount = displayCountRef.current;
         const currentHasMore = hasMoreRef.current;
 
-        // Nothing to do if we're already showing everything and no more to load
-        if (currentDisplayCount >= currentFiltered.length && !currentHasMore) return;
+        if (currentDisplayCount >= currentFiltered.length && !currentHasMore)
+          return;
 
         setDisplayCount((c) => c + DISPLAY_INCREMENT);
 
-        // Fetch next SWR page when display has caught up with loaded products
         if (currentDisplayCount + DISPLAY_INCREMENT >= currentFiltered.length) {
           loadMoreRef.current();
         }
@@ -188,27 +337,35 @@ export default function CatalogShell({
   const showTagBar =
     searchTerm.length > 0 || activeSizes.length > 0 || tags.length > 0;
 
+  const showHomeBanners =
+    searchTerm.trim().length < 2 &&
+    activeSizes.length === 0 &&
+    tags.length === 0;
+
   return (
     <>
-      {/* Zona categoría: chips (gris) + head (blanco), sin solapamiento */}
       <div className="catalog-category-zone">
         <div className="quick-actions-container">
           <div
             className="category-bar"
             id="category-bar"
             aria-label="Categorías del catálogo"
-            style={highlightCats ? {
-              animation: "fyl-blink 0.4s ease 3",
-              outline: "2px solid #CD844D",
-              outlineOffset: 2,
-              borderRadius: 8,
-            } : undefined}
+            style={
+              highlightCats
+                ? {
+                    animation: "fyl-blink 0.4s ease 3",
+                    outline: "2px solid #CD844D",
+                    outlineOffset: 2,
+                    borderRadius: 8,
+                  }
+                : undefined
+            }
           >
             <div className="quick-actions" id="quick-actions">
               <CategoryTabs
-              activeCategoria={categoria}
-              initialHasOfertas={hasOfertas}
-            />
+                activeCategoria={categoria}
+                initialHasOfertas={hasOfertas}
+              />
             </div>
           </div>
           <SizeFilterSheet
@@ -229,31 +386,33 @@ export default function CatalogShell({
         )}
       </div>
 
-      {/* Tooltip: renderizado debajo del contenedor sticky, fuera de él */}
-      {highlightCats && mounted && createPortal(
-        <div style={{
-          position: "fixed",
-          top: 108,   /* header (~56px) + sticky bar (~44px) + gap */
-          left: "50%",
-          transform: "translateX(-50%)",
-          background: "#222",
-          color: "#fff",
-          fontSize: 12,
-          fontWeight: 500,
-          padding: "7px 14px",
-          borderRadius: 20,
-          whiteSpace: "nowrap",
-          pointerEvents: "none",
-          zIndex: 999,
-          boxShadow: "0 4px 12px rgba(0,0,0,0.25)",
-          animation: "fyl-tooltip-in 0.15s ease",
-        }}>
-          Seleccioná una categoría primero
-        </div>,
-        document.body
-      )}
+      {highlightCats &&
+        mounted &&
+        createPortal(
+          <div
+            style={{
+              position: "fixed",
+              top: 108,
+              left: "50%",
+              transform: "translateX(-50%)",
+              background: "#222",
+              color: "#fff",
+              fontSize: 12,
+              fontWeight: 500,
+              padding: "7px 14px",
+              borderRadius: 20,
+              whiteSpace: "nowrap",
+              pointerEvents: "none",
+              zIndex: 999,
+              boxShadow: "0 4px 12px rgba(0,0,0,0.25)",
+              animation: "fyl-tooltip-in 0.15s ease",
+            }}
+          >
+            Seleccioná una categoría primero
+          </div>,
+          document.body
+        )}
 
-      {/* Keyframes para el blink, tooltip y pulse */}
       <style>{`
         @keyframes fyl-blink {
           0%, 100% { opacity: 1; }
@@ -269,10 +428,8 @@ export default function CatalogShell({
         }
       `}</style>
 
-      {/* Banners above grid: hidden when there's an active search */}
-      {!searchTerm && aboveGridSlot}
+      {showHomeBanners && aboveGridSlot}
 
-      {/* Active filter bar */}
       {showTagBar && (
         <TagFilterBar
           searchTerm={searchTerm}
@@ -282,7 +439,6 @@ export default function CatalogShell({
         />
       )}
 
-      {/* Catalog grid */}
       <div id="catalogo" className="catalogo">
         <div id="catalog-container">
           {displayProducts.map((product, i) => {
@@ -294,10 +450,15 @@ export default function CatalogShell({
                 priority={i < 4}
                 activeSizes={activeSizes}
                 categoria={effectiveCategoria}
+                onNavigate={(element) => {
+                  saveCatalogState(
+                    product.Articulo,
+                    element.getBoundingClientRect().top
+                  );
+                }}
               />
             );
-            // Insert curated banner slot after the 4th product (index 3)
-            if (i === 3 && curatedSlot) {
+            if (i === 3 && showHomeBanners && curatedSlot) {
               return (
                 <React.Fragment key={product.Articulo}>
                   {card}
@@ -307,7 +468,6 @@ export default function CatalogShell({
             }
             return card;
           })}
-          {/* Loading skeletons */}
           {isLoadingMore &&
             allProducts.length === 0 &&
             Array.from({ length: 4 }).map((_, i) => (
@@ -316,14 +476,12 @@ export default function CatalogShell({
         </div>
       </div>
 
-      {/* Sentinel — always in DOM so the observer never loses its target */}
       <div
         ref={sentinelRef}
         style={{ height: 1, visibility: "hidden" }}
         aria-hidden="true"
       />
 
-      {/* Loading indicator */}
       {isLoadingMore && !fixedProductSet && allProducts.length > 0 && (
         <div
           style={{
@@ -337,7 +495,6 @@ export default function CatalogShell({
         </div>
       )}
 
-      {/* End of results */}
       {!canLoadMore && !isLoadingMore && filtered.length === 0 && searchTerm && (
         <div
           style={{ textAlign: "center", padding: "32px 16px", color: "#666" }}

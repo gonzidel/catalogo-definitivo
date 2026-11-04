@@ -48,6 +48,8 @@ export interface AdminOrderCustomer {
   /** Dueña WhatsApp/inbox Pedidos (Ani/Fati). Solo shipping. */
   kanban_inbox_owner?: KanbanInboxOwner | string | null;
   kanban_inbox_assigned_at?: string | null;
+  /** Admin marcó el teléfono como inválido en WhatsApp (migración 382). */
+  whatsapp_invalid_at?: string | null;
 }
 
 export interface AdminOrderItem {
@@ -90,6 +92,8 @@ export interface AdminOrder {
   payment_method?: string | null;
   source: string | null;
   created_at: string;
+  /** Última escritura en `orders` (p. ej. al mover Pedidos ↔ Retiro). */
+  updated_at?: string | null;
   sent_at?: string | null;
   expires_at?: string | null;
   dismantle_at?: string | null;

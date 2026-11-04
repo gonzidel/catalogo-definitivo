@@ -23,6 +23,10 @@ Nota: el usuario confirmo que los SQL analizados ya estan cargados y activos en 
 | `customers` | ACTIVA | Clientes web/admin/public sales | Alto | [[17-AUDITORIA-MODULO-ORDERS]], [[18-AUDITORIA-MODULO-PUBLIC-SALES]], [[19-AUDITORIA-MODULO-CLIENTE-CARRITO]] |
 | `admins` | ACTIVA | Usuarios admin/colaboradores | Alto | [[08-PERMISOS-Y-ROLES]] |
 | `admin_permissions` | ACTIVA | Permisos por modulo | Alto | [[08-PERMISOS-Y-ROLES]] |
+| `search_keywords` | ACTIVA | Conceptos canónicos del buscador `/nj` (independiente de `tags`) | Medio | [[59-NJ-BUSCADOR-SMART-SEARCH]] |
+| `search_aliases` | ACTIVA | Equivalencias (`alias_normalized` UNIQUE global) | Medio | [[59-NJ-BUSCADOR-SMART-SEARCH]] |
+| `search_events` | ACTIVA | Analytics operativo (committed / suggestion / click). Sin PII | Medio | [[59-NJ-BUSCADOR-SMART-SEARCH]] |
+| `search_ignored_terms` | ACTIVA | Candidatos descartados a mano (no son aliases) | Bajo | [[41-SEARCH-ADMIN-FASE5-2026-09-03]] |
 | `public_sales` | ACTIVA | Venta mostrador/caja | Critico | [[18-AUDITORIA-MODULO-PUBLIC-SALES]] |
 | `public_sale_items` | ACTIVA | Lineas de venta mostrador | Critico | [[18-AUDITORIA-MODULO-PUBLIC-SALES]] |
 | `pending_sales` | ACTIVA | Ventas pendientes Caja 2/3 | Alto | [[18-AUDITORIA-MODULO-PUBLIC-SALES]] |
@@ -35,6 +39,7 @@ Nota: el usuario confirmo que los SQL analizados ya estan cargados y activos en 
 - Carrito: `cart_items.price_snapshot` es sensible porque viene desde frontend; revisar [[19-AUDITORIA-MODULO-CLIENTE-CARRITO]].
 - Public Sales y Orders comparten stock, customers y algunos flujos de local orders.
 - Cualquier cambio sensible debe revisar [[15-OBSERVACIONES-PRODUCTS-A-REVISAR]].
+- Vocabulario de búsqueda (`search_*`) **no** es taxonomía `tags`. No limpiar tags desde el admin de search. Ver [[59-NJ-BUSCADOR-SMART-SEARCH]].
 
 ## Enlaces
 

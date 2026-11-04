@@ -1,5 +1,6 @@
 import Link from "next/link";
 import SearchBar from "@/components/search/SearchBar";
+import DesktopCategoryNav from "./DesktopCategoryNav";
 import HeaderActions from "./HeaderActions";
 
 export default function Header() {
@@ -8,9 +9,16 @@ export default function Header() {
       <div className="header-left">
         <Link href="/" className="header-logo-btn" aria-label="Volver al inicio">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/nj/logo.png" alt="Logo F&L" className="header-logo" />
+          <img
+            src="/logo.webp"
+            alt="Logo F&L"
+            className="header-logo"
+            width={47}
+            height={40}
+          />
         </Link>
       </div>
+      <DesktopCategoryNav />
       <div className="search-bar-wrapper">
         <SearchBar />
       </div>

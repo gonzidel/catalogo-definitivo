@@ -2,17 +2,32 @@ import type { Metadata, Viewport } from "next";
 import { Suspense } from "react";
 import Link from "next/link";
 import "@/styles/globals.css";
+import "@/styles/desktop.css";
 import Header from "@/components/layout/Header";
 import BottomNav from "@/components/layout/BottomNav";
 import CartFloatingBar from "@/components/cart/CartFloatingBar";
 import ProfileGateProvider from "@/components/profile/ProfileGateProvider";
 import GaLoader from "@/components/analytics/GaLoader";
 import ClarityLoader from "@/components/analytics/ClarityLoader";
+import CatalogInteractionTracker from "@/components/analytics/CatalogInteractionTracker";
+import MetaPixelLoader from "@/components/analytics/MetaPixelLoader";
+import FullOnly from "@/components/rollout/FullOnly";
+import ExperienceSync from "@/components/rollout/ExperienceSync";
+import CatalogAccountNotice from "@/components/rollout/CatalogAccountNotice";
+import JsonLdScript from "@/lib/seo/JsonLdScript";
+import { organizationJsonLd, webSiteJsonLd } from "@/lib/seo/json-ld";
+import { ROLLOUT_UI_ENABLED, experienceBootScript } from "@/lib/rollout/client";
+import { NJ_INDEXING_ENABLED } from "@/lib/seo/indexing";
+import { getSiteUrl } from "@/lib/site-url";
 
 export const metadata: Metadata = {
+  metadataBase: new URL(getSiteUrl()),
   title: "FYL Moda | Calzado e Indumentaria Femenina por Mayor",
   description:
-    "Mayorista de calzado e indumentaria femenina con fábrica propia. Stock visible, surtido libre de talles desde 4 pares. Envíos a todo el país.",
+    "Mayorista de calzado e indumentaria femenina para revendedoras. Stock visible y surtido libre de modelos y talles. Envíos a todo el país.",
+  robots: NJ_INDEXING_ENABLED
+    ? { index: true, follow: true }
+    : { index: false, follow: false },
   openGraph: {
     type: "website",
     siteName: "FYL Moda",
@@ -36,7 +51,13 @@ function HeaderFallback() {
       <div className="header-left">
         <Link href="/" className="header-logo-btn" aria-label="Inicio">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/nj/logo.png" alt="Logo F&L" className="header-logo" />
+          <img
+            src="/logo.webp"
+            alt="Logo F&L"
+            className="header-logo"
+            width={47}
+            height={40}
+          />
         </Link>
       </div>
       <div className="search-bar-wrapper" />
@@ -51,12 +72,14 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="es">
+    // data-exp lo fija el boot script antes de hidratar.
+    <html lang="es" data-exp={ROLLOUT_UI_ENABLED ? undefined : "full"} suppressHydrationWarning>
       <head>
+        <script dangerouslySetInnerHTML={{ __html: experienceBootScript() }} />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link rel="preconnect" href="https://res.cloudinary.com" crossOrigin="anonymous" />
-        <link rel="icon" href="/nj/favicon.ico" sizes="any" />
+        <link rel="icon" href="/favicon.ico" sizes="any" />
         <link
           rel="stylesheet"
           href="https://fonts.googleapis.com/css2?family=Poppins:ital,wght@0,400;0,600&display=swap"
@@ -64,8 +87,24 @@ export default function RootLayout({
         <meta name="theme-color" content="#CD844D" />
       </head>
       <body>
-        {process.env.VERCEL_ENV === "preview" ? <ClarityLoader /> : null}
+        {/* Unregister SW vanilla/Firebase (scope /) so it cannot intercept NJ. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+          if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistrations().then(function(regs) {
+              regs.forEach(function(r) { r.unregister(); });
+            });
+          }
+        `,
+          }}
+        />
+        <JsonLdScript data={[organizationJsonLd(), webSiteJsonLd()]} />
         <GaLoader />
+        <ClarityLoader />
+        <CatalogInteractionTracker />
+        <MetaPixelLoader />
+        <ExperienceSync />
         <ProfileGateProvider>
           {/* Header needs Suspense because SearchBar uses useSearchParams */}
           <Suspense fallback={<HeaderFallback />}>
@@ -74,7 +113,10 @@ export default function RootLayout({
           <div id="catalog-view">
             {children}
           </div>
-          <CartFloatingBar />
+          <FullOnly>
+            <CartFloatingBar />
+          </FullOnly>
+          <CatalogAccountNotice />
           <Suspense fallback={null}>
             <BottomNav />
           </Suspense>

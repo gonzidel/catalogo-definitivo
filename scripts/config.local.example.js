@@ -30,7 +30,7 @@ export const USE_OPEN_SHEET_FALLBACK = false;
 export const WHATSAPP_NUMBERS = {
   ani: "5493625172874",
   fati: "5493624866768",
-  local: "5493624118637",
+  local: "5493624866768",
 };
 
 // Configuración del PWA

@@ -1,10 +1,16 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   formatPriceAr,
   getOrderDisplayNumber,
+  isCancelledOrderItem,
+  isMissingOrderItem,
 } from "@/lib/orders/domain";
+import {
+  loadOrderPromoPricing,
+  type OrderPromoPricing,
+} from "@/lib/orders/order-promo-pricing";
 import {
   finalizeRetiroOrderSale,
   getRetiroSaleTotals,
@@ -34,15 +40,57 @@ export default function RetiroCloseModal({
   const [surchargePct, setSurchargePct] = useState("0");
   const [submitting, setSubmitting] = useState(false);
 
+  const [promo, setPromo] = useState<OrderPromoPricing | null>(null);
+  const [promoError, setPromoError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setPromo(null);
+    setPromoError(null);
+    const billable = (order.order_items || []).filter(
+      (item) => !isCancelledOrderItem(item) && !isMissingOrderItem(item)
+    );
+    loadOrderPromoPricing(getSupabaseBrowserClient(), billable)
+      .then((pricing) => {
+        if (!cancelled) setPromo(pricing);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setPromoError(err instanceof Error ? err.message : "No se pudieron cargar las promociones");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [order]);
+
   const pctNum = Math.max(0, Number(String(surchargePct).replace(",", ".")) || 0);
-  const cashTotals = useMemo(() => getRetiroSaleTotals(order, 0), [order]);
+  const cashTotals = useMemo(
+    () => getRetiroSaleTotals(order, 0, 0, promo ?? undefined),
+    [order, promo]
+  );
   const cardTotals = useMemo(
-    () => getRetiroSaleTotals(order, pctNum),
-    [order, pctNum]
+    () => getRetiroSaleTotals(order, pctNum, 0, promo ?? undefined),
+    [order, pctNum, promo]
   );
 
   const orderLabel = getOrderDisplayNumber(order);
   const locked = busy || submitting;
+  const pricingReady = promo !== null;
+
+  const promoRow =
+    promo && promo.discount > 0 ? (
+      <div className="retiro-close-summary__row">
+        <span>{promo.lines.map((line) => line.label).join(" · ")}</span>
+        <strong>-{formatPriceAr(promo.discount)}</strong>
+      </div>
+    ) : null;
+
+  const pricingStatus = promoError ? (
+    <p className="order-modal__text">{promoError}. Cerrá y volvé a intentar.</p>
+  ) : !pricingReady ? (
+    <p className="order-modal__text">Calculando promociones…</p>
+  ) : null;
 
   async function handlePrint(method: RetiroPayMethod) {
     if (locked) return;
@@ -140,11 +188,13 @@ export default function RetiroCloseModal({
                   {cashTotals.productUnits !== 1 ? "es" : ""}
                 </strong>
               </div>
+              {promoRow}
               <div className="retiro-close-summary__row retiro-close-summary__row--total">
                 <span>Total a cobrar</span>
                 <strong>{formatPriceAr(cashTotals.total)}</strong>
               </div>
             </div>
+            {pricingStatus}
             <div className="order-modal__actions order-modal__actions--retiro">
               <button
                 type="button"
@@ -165,7 +215,7 @@ export default function RetiroCloseModal({
               <button
                 type="button"
                 className="order-card__btn order-card__btn--primary"
-                disabled={locked || cashTotals.total <= 0}
+                disabled={locked || !pricingReady || cashTotals.total <= 0}
                 onClick={() => void handlePrint("Efectivo")}
               >
                 {submitting ? "Procesando…" : "Imprimir"}
@@ -190,6 +240,7 @@ export default function RetiroCloseModal({
               />
             </label>
             <div className="retiro-close-summary">
+              {promoRow}
               <div className="retiro-close-summary__row">
                 <span>Subtotal</span>
                 <strong>{formatPriceAr(cardTotals.subtotal)}</strong>
@@ -208,6 +259,7 @@ export default function RetiroCloseModal({
                 <strong>{formatPriceAr(cardTotals.total)}</strong>
               </div>
             </div>
+            {pricingStatus}
             <div className="order-modal__actions order-modal__actions--retiro">
               <button
                 type="button"
@@ -228,7 +280,7 @@ export default function RetiroCloseModal({
               <button
                 type="button"
                 className="order-card__btn order-card__btn--primary"
-                disabled={locked || cardTotals.total <= 0}
+                disabled={locked || !pricingReady || cardTotals.total <= 0}
                 onClick={() => void handlePrint("Tarjeta")}
               >
                 {submitting ? "Procesando…" : "Imprimir"}

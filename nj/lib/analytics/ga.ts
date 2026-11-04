@@ -1,5 +1,5 @@
 /**
- * Wrapper GA4 para /nj. Reutiliza el measurement ID de scripts/analytics.js.
+ * Wrapper GA4 para NJ. Reutiliza el measurement ID de scripts/analytics.js.
  * No envía page_view automático (el legado ya tiene su propio pageview).
  * Admin / dashboard no deben llamar estas funciones.
  */

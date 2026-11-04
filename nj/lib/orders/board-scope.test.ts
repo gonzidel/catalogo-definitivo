@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { isLocalPickupBoardOrder } from "./board-scope";
+import {
+  compareRetiroPickedColumn,
+  isLocalPickupBoardOrder,
+  isMovedFromOrdersToRetiro,
+} from "./board-scope";
 import { filterOrdersForColumn } from "./classification";
 import type { AdminOrder } from "@/types/orders";
 
@@ -97,6 +101,51 @@ test("botón Depósito saca de Retiro aunque el perfil sea Retira local", () => 
 test("checkout deferred 36 h queda en Retiro", () => {
   const o = order({ local_deferred_pickup: true, transportName: "MyM" });
   assert.equal(isLocalPickupBoardOrder(o), true);
+});
+
+test("Apartados Retiro: enviados desde Pedidos quedan arriba y el más reciente primero", () => {
+  const olderMoved = order({
+    id: "older",
+    created_at: "2026-10-01T00:00:00Z",
+    notes: JSON.stringify({
+      kanban_scope: "local_pickup",
+      retiro_origin: "moved_from_orders",
+      moved_to_local_at: "2026-10-16T10:00:00.000Z",
+    }),
+  });
+  const newerMoved = order({
+    id: "newer",
+    created_at: "2026-09-01T00:00:00Z",
+    notes: JSON.stringify({
+      kanban_scope: "local_pickup",
+      retiro_origin: "moved_from_orders",
+      moved_to_local_at: "2026-10-16T12:00:00.000Z",
+    }),
+  });
+  const localSale = order({
+    id: "sale",
+    status: "closed",
+    payment_method: "Pendiente",
+    transportName: "Retira local",
+    notes: JSON.stringify({ kanban_scope: "local_pickup" }),
+  });
+  const plain = order({
+    id: "plain",
+    notes: JSON.stringify({ kanban_scope: "local_pickup" }),
+  });
+
+  assert.equal(isMovedFromOrdersToRetiro(newerMoved), true);
+  assert.equal(isMovedFromOrdersToRetiro(plain), false);
+
+  const sorted = [plain, olderMoved, localSale, newerMoved].sort((a, b) =>
+    compareRetiroPickedColumn(a, b, {
+      isAwaitingSale: (o) => o.id === "sale",
+    })
+  );
+  assert.deepEqual(
+    sorted.map((o) => o.id),
+    ["newer", "older", "sale", "plain"]
+  );
 });
 
 test("espejo caja queda en Retiro", () => {

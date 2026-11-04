@@ -10,6 +10,6 @@
 
 **Nota:** En SQL Editor sin JWT, `auth.uid()` es NULL → la RPC devuelve error de admin; usar el botón con sesión admin o el bloque `SET LOCAL request.jwt.claim.sub` documentado en hardening.
 
-**Pendiente decisión equipo:** cron / automatización (Fase B del plan).
+**Pendiente decisión equipo:** cron / automatización (Fase B del plan). **Hecho en Fase 5 (332):** dirty + `*/5` `rpc_refresh_catalog_snapshot_if_dirty`. Ver [[54-SELLABLE-STOCK-FASE5-2026-09-04]].
 
 **Enlaces:** [[21-CONTEXTO-AGENTE-HARDENING-2026-04]], hardening `doc/hardening-supabase-2026-05-13.md` § snapshot.

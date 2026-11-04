@@ -3,24 +3,18 @@ import type { CatalogImage, ColorDetail, GroupedProduct } from "@/types/catalog"
 import { agruparProductos, CATALOG_SELECT, colorDetailHasImage } from "@/lib/utils/catalog";
 import { colorDetailMatchesSizes } from "@/lib/utils/search";
 import type { CatalogRow } from "@/types/catalog";
-import { calculateRecommendedPrice } from "@/lib/products/pricing";
+import {
+  colorIsPurchasable,
+  deriveHasAnyStock,
+  productIsPurchasable,
+} from "@/lib/stock/catalog-availability";
 
 function normColor(c: string): string {
   return String(c ?? "").trim().toLowerCase();
 }
 
-function variantHasStock(sizes: Array<{ stock_qty: number }>): boolean {
-  return sizes.some((s) => Number(s.stock_qty ?? 0) > 0);
-}
-
 export function productHasAnyStock(product: GroupedProduct): boolean {
-  if (product.hasAnyStock === true) return true;
-  if (product.hasAnyStock === false) return false;
-  const colors = product.DetalleColor ?? [];
-  if (colors.length === 0) return true;
-  const hasEnriched = colors.some((c) => c.hasStock !== undefined);
-  if (!hasEnriched) return true;
-  return colors.some((c) => c.hasStock !== false);
+  return productIsPurchasable(product);
 }
 
 export interface PickDisplayColorOptions {
@@ -49,21 +43,18 @@ export function pickDisplayColorDetail(
         : colors.filter((c) => colorDetailMatchesSizes(c, sizes, categoria));
 
     if (matching.length > 0) {
-      return matching.find((c) => c.hasStock !== false) ?? matching[0];
+      return matching.find((c) => colorIsPurchasable(c)) ?? matching[0];
     }
   }
 
-  return colors.find((c) => c.hasStock !== false) ?? colors[0];
+  return colors.find((c) => colorIsPurchasable(c)) ?? colors[0];
 }
 
 /** Quita variantes sin imagen propia; actualiza hero y flags de stock. */
 export function stripColorsWithoutImages(product: GroupedProduct): GroupedProduct {
   const detalleColor = (product.DetalleColor ?? []).filter(colorDetailHasImage);
   const display = pickDisplayColorDetail({ ...product, DetalleColor: detalleColor });
-  const hasAnyStock =
-    detalleColor.length === 0
-      ? product.hasAnyStock
-      : detalleColor.some((c) => c.hasStock !== false);
+  const hasAnyStock = deriveHasAnyStock(detalleColor, product.hasAnyStock);
 
   return {
     ...product,
@@ -76,13 +67,9 @@ export function stripColorsWithoutImages(product: GroupedProduct): GroupedProduc
 interface RawVariantRow {
   id: string;
   color: string | null;
+  sku?: string | null;
+  price?: number | string | null;
   products: { name: string } | { name: string }[] | null;
-}
-
-interface RawSizeRow {
-  variant_id: string;
-  size: string;
-  stock_qty: number | null;
 }
 
 interface RawImageRow {
@@ -100,11 +87,11 @@ interface RawColorRow {
 export interface VariantEnrichMeta {
   variantId: string;
   color: string;
-  sizes: Array<{ size: string; stock_qty: number }>;
   images: CatalogImage[];
   hex_color: string | null;
   ColorDisplayNumber: number | null;
-  hasStock: boolean;
+  price?: number | null;
+  sku?: string | null;
 }
 
 async function fetchVariantEnrichMap(
@@ -121,7 +108,7 @@ async function fetchVariantEnrichMap(
 
     const { data: variants, error: vErr } = await supabase
       .from("product_variants")
-      .select("id, color, products!inner(name)")
+      .select("id, color, sku, price, products!inner(name)")
       .eq("active", true)
       .in("products.name", chunk);
 
@@ -132,11 +119,7 @@ async function fetchVariantEnrichMap(
       ...new Set(variants.map((v) => String(v.color ?? "").trim()).filter(Boolean)),
     ];
 
-    const [sizesRes, imagesRes, colorsRes] = await Promise.all([
-      supabase
-        .from("variant_sizes")
-        .select("variant_id, size, stock_qty")
-        .in("variant_id", variantIds),
+    const [imagesRes, colorsRes] = await Promise.all([
       supabase
         .from("variant_images")
         .select("variant_id, url, position")
@@ -149,13 +132,6 @@ async function fetchVariantEnrichMap(
             .in("name", colorNames)
         : Promise.resolve({ data: [] as RawColorRow[] }),
     ]);
-
-    const sizesByVariant = new Map<string, RawSizeRow[]>();
-    for (const row of (sizesRes.data ?? []) as RawSizeRow[]) {
-      const list = sizesByVariant.get(row.variant_id) ?? [];
-      list.push(row);
-      sizesByVariant.set(row.variant_id, list);
-    }
 
     const imagesByVariant = new Map<string, RawImageRow[]>();
     for (const row of (imagesRes.data ?? []) as RawImageRow[]) {
@@ -175,10 +151,6 @@ async function fetchVariantEnrichMap(
       if (!articulo) continue;
 
       const color = String(v.color ?? "Sin color").trim();
-      const sizes = (sizesByVariant.get(v.id) ?? []).map((s) => ({
-        size: String(s.size ?? "").trim(),
-        stock_qty: Number(s.stock_qty ?? 0),
-      }));
       const images = (imagesByVariant.get(v.id) ?? [])
         .map((img) => img.url)
         .filter(Boolean) as CatalogImage[];
@@ -187,11 +159,11 @@ async function fetchVariantEnrichMap(
       const meta: VariantEnrichMeta = {
         variantId: v.id,
         color,
-        sizes,
         images,
         hex_color: cm?.hex_color ?? null,
         ColorDisplayNumber: cm?.display_number ?? null,
-        hasStock: variantHasStock(sizes),
+        price: v.price != null ? Number(v.price) : null,
+        sku: v.sku ?? null,
       };
 
       const list = result.get(articulo) ?? [];
@@ -204,8 +176,6 @@ async function fetchVariantEnrichMap(
 }
 
 function mergeColorFromMeta(existing: ColorDetail, meta: VariantEnrichMeta): ColorDetail {
-  const tallesFromSizes = meta.sizes.map((s) => s.size).filter(Boolean);
-  const tallesSet = new Set([...(existing.talles ?? []), ...tallesFromSizes]);
   const images =
     meta.images.length > 0
       ? meta.images
@@ -217,9 +187,15 @@ function mergeColorFromMeta(existing: ColorDetail, meta: VariantEnrichMeta): Col
     ...existing,
     hex_color: existing.hex_color ?? meta.hex_color,
     ColorDisplayNumber: existing.ColorDisplayNumber ?? meta.ColorDisplayNumber,
-    talles: [...tallesSet],
     images,
-    hasStock: meta.hasStock,
+    variant_id: existing.variant_id ?? meta.variantId,
+    sku: existing.sku ?? meta.sku ?? null,
+    Precio:
+      existing.Precio != null && existing.Precio !== ""
+        ? existing.Precio
+        : (meta.price ?? existing.Precio),
+    // No pisar la señal sellable del snapshot con variant_sizes.
+    hasStock: existing.hasStock,
   };
 }
 
@@ -228,12 +204,16 @@ function colorDetailFromMeta(meta: VariantEnrichMeta): ColorDetail {
     color: meta.color,
     hex_color: meta.hex_color,
     ColorDisplayNumber: meta.ColorDisplayNumber,
-    talles: meta.sizes.map((s) => s.size).filter(Boolean),
+    talles: [],
     images: meta.images,
+    Precio: meta.price ?? "",
     OfertaActiva: false,
     PrecioOferta: "",
     PromoActiva: "",
-    hasStock: meta.hasStock,
+    variant_id: meta.variantId,
+    sku: meta.sku ?? null,
+    // Color que no está en snapshot/vista = no hay talle sellable publicado.
+    hasStock: false,
   };
 }
 
@@ -274,7 +254,10 @@ export function applyVariantEnrichToProduct(
     return a.color.localeCompare(b.color);
   });
 
-  const hasAnyStock = detalleColor.some((c) => c.hasStock !== false);
+  const hasAnyStock =
+    product.hasAnyStock === false
+      ? false
+      : deriveHasAnyStock(detalleColor, product.hasAnyStock);
   const display = pickDisplayColorDetail({ ...product, DetalleColor: detalleColor });
 
   return stripColorsWithoutImages({
@@ -299,7 +282,13 @@ export async function enrichGroupedProductsWithVariants(
   );
 }
 
-/** Productos activos por nombre que no están en el snapshot (p. ej. sin stock). */
+/** Columnas públicas de `products` para la búsqueda ampliada; nunca costos internos. */
+export const PUBLIC_PRODUCT_SEARCH_SELECT = "name, description, category";
+
+/**
+ * Productos activos por nombre que no están en el snapshot (p. ej. sin stock).
+ * El precio sale solo de `product_variants.price` (enrich por color).
+ */
 export async function searchProductsIncludingOutOfStock(
   supabase: SupabaseClient,
   term: string,
@@ -310,7 +299,7 @@ export async function searchProductsIncludingOutOfStock(
 
   const { data: matches, error } = await supabase
     .from("products")
-    .select("name, description, category, cost, price_percentage, logistic_amount")
+    .select(PUBLIC_PRODUCT_SEARCH_SELECT)
     .eq("status", "active")
     .or(`name.ilike.%${q}%,description.ilike.%${q}%`)
     .limit(40);
@@ -343,16 +332,10 @@ export async function searchProductsIncludingOutOfStock(
       continue;
     }
 
-    const precio = calculateRecommendedPrice(
-      Number(m.cost ?? 0),
-      Number(m.price_percentage ?? 0),
-      Number(m.logistic_amount ?? 0)
-    );
-
     built.push({
       Articulo: art,
       Descripcion: String(m.description ?? ""),
-      Precio: precio || "",
+      Precio: "",
       VariantePrincipal: null,
       Oferta: "",
       FechaIngreso: "",
@@ -380,6 +363,5 @@ export function colorHasStock(
   const dc = product.DetalleColor?.find(
     (d) => normColor(d.color) === normColor(color)
   );
-  if (!dc) return true;
-  return dc.hasStock !== false;
+  return colorIsPurchasable(dc);
 }

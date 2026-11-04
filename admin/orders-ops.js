@@ -3,7 +3,10 @@
 import { supabase as supabaseClient } from "../scripts/supabase-client.js?v=m260607";
 import { normalizeSize } from "../scripts/utils/size-normalizer.js?v=m260607";
 import { hasCatalogPrice, catalogPriceGuardMessage } from "../scripts/utils/price.js?v=m260607";
-import { computeWarehouseQtySplitForOrderItem } from "./orders-domain.js?v=m260607";
+import {
+  computeWarehouseQtySplitForOrderItem,
+  countsAsOpenOrderForCustomer,
+} from "./orders-domain.js?v=m260607";
 import {
   createNewOrder,
   addItemsToExistingOrder,
@@ -92,10 +95,10 @@ export async function findActiveOrderForCustomer(customerId) {
     .eq("customer_id", customerId)
     .in("status", OPEN_ORDER_STATUSES)
     .order("created_at", { ascending: false })
-    .limit(5);
+    .limit(20);
 
   if (error) throw error;
-  const rows = Array.isArray(data) ? data : [];
+  const rows = (Array.isArray(data) ? data : []).filter(countsAsOpenOrderForCustomer);
   const withItems = rows.find((o) => orderHasOperationalItems(o) || normStatus(o.status) === "active");
   if (withItems) return withItems;
   return rows[0] || null;

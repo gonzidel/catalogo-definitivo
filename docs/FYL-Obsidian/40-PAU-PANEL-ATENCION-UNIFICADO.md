@@ -138,7 +138,7 @@ Guarda `pau_lastPhoneShared` con dígitos normalizados.
 
 ## Flujo 3 — Seleccionar clienta (`selectCustomer`)
 
-1. `findActiveOrderForCustomer(customerId)` — estados abiertos: `active`, `closing_soon`, `stock_pending`.
+1. `findActiveOrderForCustomer(customerId)` — estados abiertos: `active`, `closing_soon`, `closed` (pendiente de envío), `stock_pending`. Excluye el retiro ya cobrado (`closed` + `notes.local_pickup_fulfilled_at`) vía `countsAsOpenOrderForCustomer` (`orders-domain.js`), igual que `orders_one_open_per_customer_idx`.
 2. **Regla UI:** si el pedido no tiene ítems “operativos” cargados, `state.order = null` → cabecera muestra **“Sin pedido”** hasta que el usuario pulse **Agregar al pedido** (aunque exista pedido vacío en DB).
 3. `state.draft = []` (borrador nuevo por sesión de clienta).
 4. `pushRecentCustomer`, `showComposeMode`, `refreshOrderUi`.
@@ -322,6 +322,7 @@ node --check admin/customer-create-shared.js
 | “Sin pedido” con pedido en DB | Pedido vacío o sin ítems operativos — esperado hasta primer guardado |
 | Historial vacío | Nunca se abrió una clienta (solo buscar no alimenta historial) |
 | Teléfono no encuentra | Menos de 8 dígitos normalizados o sin match en últimos 4 |
+| Retiro ya cobrado aparece como pedido vigente | Anterior a 2026-09-29: PAU contaba `closed` + `local_pickup_fulfilled_at` como abierto (ver changelog) |
 
 ---
 
@@ -337,6 +338,7 @@ node --check admin/customer-create-shared.js
 
 | Fecha | Cambio |
 |-------|--------|
+| 2026-09-29 | **Bug fix retiro cobrado en PAU:** desde `abbcbc6` (agosto) `OPEN_ORDER_STATUSES` incluye `closed`; un retiro finalizado en `/retiro` queda `closed` para siempre (nunca `sent`), así que PAU lo mostraba como pedido en curso (caso A57130, Gómez Karina Rosana, venta #fylA11169). Afectaba a 53 clientas sin otro pedido abierto y podía tapar el pedido real de otras 35. `findActiveOrderForCustomer` ahora filtra con `countsAsOpenOrderForCustomer` (paridad con el índice) y trae 20 filas (antes 5). Test: `test/orders-domain-open-order.test.mjs`. No cambia datos ni RPCs. |
 | 2026-07-21 (2) | **Bug fix crítico 2xMonto:** con cantidad total impar en la promo, el ítem sin pareja quedaba **sin cobrarse** (discount = totalPrice − groups×fixed_amount, ignoraba el resto). Corregido en `orders-ops.js` (PAU), `orders.js`, `closed-orders.js` (resumen) y **`public-sales.js` (caja — dinero real cobrado)**. Fórmula correcta: cobrar `groups × fixed_amount + remainderQty × precio_promedio`. |
 | 2026-07-21 | PAU aplica ofertas por color (`get_effective_price`) y promos 2x1/2xMonto al total, UI y WhatsApp |
 | 2026-05-26 | Nota inicial: módulo completo PAU, flujos, permisos, storage, orders-ops |

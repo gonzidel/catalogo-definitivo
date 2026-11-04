@@ -4,7 +4,9 @@ import type { Metadata } from "next";
 import { getCatalogPage, hasActiveOfertas } from "@/lib/supabase/queries";
 import { slugToCategoria } from "@/lib/utils/catalog";
 import CatalogShell from "@/components/catalog/CatalogShell";
-import SkeletonCard from "@/components/catalog/SkeletonCard";
+import CatalogShellSkeleton from "@/components/catalog/CatalogShellSkeleton";
+import JsonLdScript from "@/lib/seo/JsonLdScript";
+import { catalogCategoryJsonLd } from "@/lib/seo/json-ld";
 
 export const revalidate = 300;
 
@@ -18,28 +20,19 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   if (!cat) return {};
   return {
     title: `${cat} — FYL Moda | Mayorista`,
-    description: `Catálogo mayorista de ${cat.toLowerCase()} femenino. Stock visible, desde 4 pares. Envíos a todo el país.`,
+    description: `Catálogo mayorista de ${cat.toLowerCase()} femenino. Stock visible, compra mínima de 4 productos surtidos. Envíos a todo el país.`,
+    alternates: { canonical: `/${slug}` },
   };
 }
 
-function CatalogSkeleton() {
-  return (
-    <div id="catalogo" className="catalogo">
-      <div id="catalog-container">
-        {Array.from({ length: 8 }).map((_, i) => (
-          <SkeletonCard key={i} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// Async child: fetch happens here, inside Suspense
-async function CatalogContent({ cat }: { cat: string }) {
-  const [{ products }, hasOfertas] = await Promise.all([
-    getCatalogPage(cat, 1),
-    hasActiveOfertas(),
-  ]);
+async function CatalogContent({
+  cat,
+  hasOfertas,
+}: {
+  cat: string;
+  hasOfertas: boolean;
+}) {
+  const { products } = await getCatalogPage(cat, 1);
   return (
     <CatalogShell
       initialProducts={products}
@@ -50,16 +43,30 @@ async function CatalogContent({ cat }: { cat: string }) {
   );
 }
 
-// NOT async — sends HTML immediately with skeleton fallback
 export default async function CategoriaPage({ params }: PageProps) {
   const { categoria: slug } = await params;
   const cat = slugToCategoria(slug);
 
   if (!cat) notFound();
 
+  const hasOfertas = await hasActiveOfertas();
+
   return (
-    <Suspense fallback={<CatalogSkeleton />}>
-      <CatalogContent cat={cat} />
-    </Suspense>
+    <>
+      <JsonLdScript
+        data={catalogCategoryJsonLd({
+          name: `${cat} — FYL Moda`,
+          description: `Catálogo mayorista de ${cat.toLowerCase()} femenino. Stock visible, compra mínima de 4 productos surtidos.`,
+          path: `/${slug}`,
+        })}
+      />
+      <Suspense
+        fallback={
+          <CatalogShellSkeleton categoria={cat} hasOfertas={hasOfertas} />
+        }
+      >
+        <CatalogContent cat={cat} hasOfertas={hasOfertas} />
+      </Suspense>
+    </>
   );
 }

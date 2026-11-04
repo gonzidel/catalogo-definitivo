@@ -1,0 +1,461 @@
+-- 335_rpc_checkout_cart_effective_price.sql
+-- Autoridad de precio en checkout: get_effective_price(variant_id).
+-- No usa cart_items.price_snapshot para el monto cobrado.
+--
+-- Wrapper rpc_checkout_cart(uuid, jsonb) NO se modifica (replay/idempotencia intactos).
+-- Stock, OISS, 309 awaiting_apartado, reserved_qty write, locks: intactos.
+-- Promos 2x1/2xMonto siguen recálculo sobre order_items ya persistidos.
+--
+-- Base: canonical 331 live md5 9901c2cf5a32fc2ecad95c30c247b77e
+-- Rollback: 335_ROLLBACK_rpc_checkout_cart_effective_price.sql
+
+CREATE OR REPLACE FUNCTION public.rpc_checkout_cart()
+ RETURNS json
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_catalog'
+AS $function$
+DECLARE
+  v_cart_id uuid;
+  v_order_id uuid;
+  v_order_number text;
+  v_total numeric := 0;
+  r record;
+  v_reserved int;
+  v_available int;
+  v_qty int;
+  v_total_stock int;
+  v_general_id uuid;
+  v_venta_id uuid;
+  v_general_stock int;
+  v_remaining_qty int;
+  v_qty_from_general int;
+  v_qty_from_venta int;
+  v_order_item_id uuid;
+  v_expires_at timestamptz;
+  v_dismantle_at timestamptz;
+  v_order_created_at timestamptz;
+  v_size_stock_general int;
+  v_size_stock_venta int;
+  v_size_normalized text;
+  v_use_size_table boolean;
+  v_item_price numeric;
+  v_size_row record;
+  -- Recalculo de total con descuento de promos 2x1/2xMonto (fix 2026-07-23)
+  v_all_variant_ids uuid[];
+  v_gross_subtotal numeric;
+  v_promo_discount numeric;
+  v_promo record;
+  v_promo_total_qty int;
+  v_promo_total_price numeric;
+  v_groups int;
+  v_avg_price numeric;
+  v_remainder_qty int;
+  v_this_discount numeric;
+  v_deferred boolean;
+BEGIN
+  v_deferred := public.fn_customer_uses_local_deferred_pickup(auth.uid());
+
+  SELECT id INTO v_cart_id
+  FROM public.carts
+  WHERE customer_id = auth.uid() AND status = 'open'
+  ORDER BY created_at DESC LIMIT 1;
+
+  IF v_cart_id IS NULL THEN
+    RAISE EXCEPTION 'No se encontró un carrito activo.';
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM public.cart_items WHERE cart_id = v_cart_id) THEN
+    RAISE EXCEPTION 'El carrito está vacío.';
+  END IF;
+
+  SELECT id, expires_at, dismantle_at, created_at
+  INTO v_order_id, v_expires_at, v_dismantle_at, v_order_created_at
+  FROM public.orders
+  WHERE customer_id = auth.uid() AND status IN ('active', 'closing_soon')
+  ORDER BY
+    CASE WHEN status = 'active' THEN 0 WHEN status = 'closing_soon' THEN 1 ELSE 2 END,
+    created_at DESC
+  LIMIT 1;
+
+  IF v_order_id IS NULL THEN
+    -- Un pedido a la vez: si el único pedido existente está cerrado (ya
+    -- pagado / en preparación para envío), no se abre uno nuevo silenciosamente.
+    IF EXISTS (
+      SELECT 1 FROM public.orders
+      WHERE customer_id = auth.uid()
+        AND status = 'closed'
+        AND coalesce(local_deferred_pickup, false) = false
+        AND position('"local_pickup_fulfilled_at"' in coalesce(notes, '')) = 0
+    ) THEN
+      RAISE EXCEPTION
+        'Ya tenés un pedido cerrado en preparación para el envío. Esperá a que se despache antes de armar uno nuevo.';
+    END IF;
+
+    -- cancelled no bloquea (336): el viejo pedido puede quedar en Cancelados
+    -- con stock pendiente de Desarmar mientras la clienta arma uno nuevo.
+
+    IF v_deferred THEN
+      v_expires_at := NULL;
+      v_dismantle_at := NULL;
+    ELSE
+      SELECT d.expires_at, d.dismantle_at
+      INTO v_expires_at, v_dismantle_at
+      FROM public.fn_order_deadlines_for_customer(auth.uid(), now()) d;
+    END IF;
+
+    BEGIN
+      INSERT INTO public.orders (customer_id, status, expires_at, dismantle_at, local_deferred_pickup)
+      VALUES (
+        auth.uid(),
+        'active',
+        v_expires_at,
+        v_dismantle_at,
+        coalesce(v_deferred, false)
+      )
+      RETURNING id INTO v_order_id;
+    EXCEPTION
+      WHEN unique_violation THEN
+        SELECT id, expires_at, dismantle_at
+        INTO v_order_id, v_expires_at, v_dismantle_at
+        FROM public.orders
+        WHERE customer_id = auth.uid() AND status IN ('active', 'closing_soon')
+        ORDER BY
+          CASE WHEN status = 'active' THEN 0 WHEN status = 'closing_soon' THEN 1 ELSE 2 END,
+          created_at DESC
+        LIMIT 1;
+        IF v_order_id IS NULL THEN
+          -- El índice ahora también cubre `closed`: si la carrera fue contra un
+          -- pedido `closed` (no active/closing_soon), no hay pedido para reusar.
+          RAISE EXCEPTION
+            'Ya tenés un pedido cerrado en preparación para el envío. Esperá a que se despache antes de armar uno nuevo.';
+        END IF;
+    END;
+  ELSE
+    IF coalesce(v_deferred, false) THEN
+      UPDATE public.orders
+      SET local_deferred_pickup = true
+      WHERE id = v_order_id AND local_deferred_pickup IS DISTINCT FROM true;
+    END IF;
+
+    IF NOT coalesce(v_deferred, false)
+       AND (v_expires_at IS NULL OR v_dismantle_at IS NULL) THEN
+      SELECT
+        coalesce(v_expires_at, d.expires_at),
+        coalesce(v_dismantle_at, d.dismantle_at)
+      INTO v_expires_at, v_dismantle_at
+      FROM public.fn_order_deadlines_for_customer(auth.uid(), coalesce(v_order_created_at, now())) d;
+      UPDATE public.orders
+      SET
+        expires_at = v_expires_at,
+        dismantle_at = v_dismantle_at
+      WHERE id = v_order_id;
+    END IF;
+  END IF;
+
+  SELECT id INTO v_general_id FROM public.warehouses WHERE code = 'general' LIMIT 1;
+  SELECT id INTO v_venta_id FROM public.warehouses WHERE code = 'venta-publico' LIMIT 1;
+
+  FOR r IN
+    SELECT id, variant_id, coalesce(quantity, qty, 0) AS qty, price_snapshot, product_name, color, size, imagen
+    FROM public.cart_items
+    WHERE cart_id = v_cart_id
+  LOOP
+    v_qty := coalesce(r.qty, 0);
+    IF v_qty <= 0 THEN CONTINUE; END IF;
+
+    IF r.variant_id IS NULL THEN
+      RAISE EXCEPTION 'El item % no tiene variante asociada.', r.id;
+    END IF;
+
+    IF coalesce(v_deferred, false) THEN
+      IF NOT public.fn_order_item_physical_stock_available(r.variant_id, r.size, v_qty) THEN
+        RAISE EXCEPTION
+          USING MESSAGE = format(
+            'Stock insuficiente para %s (color %s talle %s).',
+            coalesce(r.product_name,'producto'), coalesce(r.color,'-'), coalesce(r.size,'-')
+          );
+      END IF;
+
+      -- 335: autoridad de precio = get_effective_price(variant_id). No usar cart snapshot.
+      v_item_price := public.get_effective_price(r.variant_id);
+      IF v_item_price IS NULL OR v_item_price <= 0 THEN
+        RAISE EXCEPTION
+          USING MESSAGE = format(
+            'Precio inválido para %s (color %s).',
+            coalesce(r.product_name,'producto'), coalesce(r.color,'-')
+          );
+      END IF;
+      IF r.price_snapshot IS DISTINCT FROM v_item_price THEN
+        RAISE NOTICE 'checkout price authority: variant % snapshot % effective %',
+          r.variant_id, r.price_snapshot, v_item_price;
+      END IF;
+
+      INSERT INTO public.order_items (order_id, variant_id, product_name, color, size, quantity, price_snapshot, imagen, status)
+      VALUES (v_order_id, r.variant_id, r.product_name, r.color, r.size, v_qty, v_item_price, r.imagen, 'awaiting_apartado');
+
+      v_total := v_total + (coalesce(v_item_price, 0) * v_qty);
+      CONTINUE;
+    END IF;
+
+
+    -- Fase 3: reserved_qty ya no gobierna disponibilidad.
+    -- Serializamos la variante (write legacy de reserved_qty + orden de locks vigente).
+    -- El gate autoritativo es el físico web del talle, DESPUÉS del FOR UPDATE
+    -- de variant_size_warehouse_stock (misma semántica que fn_sellable_qty).
+    PERFORM 1
+    FROM public.product_variants
+    WHERE id = r.variant_id
+    FOR UPDATE;
+
+    v_qty_from_general := 0;
+    v_qty_from_venta := 0;
+    v_remaining_qty := 0;
+    v_size_normalized := trim(coalesce(r.size::text, ''));
+    IF v_size_normalized ~ '^\d+(\.\d+)?$' THEN
+      v_size_normalized := split_part(v_size_normalized, '.', 1);
+    END IF;
+
+    -- Descontar por talle (variant_size_warehouse_stock) si hay size
+    v_use_size_table := false;
+    IF v_size_normalized != '' AND v_general_id IS NOT NULL AND v_venta_id IS NOT NULL THEN
+      INSERT INTO public.variant_size_warehouse_stock (variant_id, warehouse_id, size, stock_qty)
+      VALUES (r.variant_id, v_general_id, v_size_normalized, 0)
+      ON CONFLICT (variant_id, warehouse_id, size) DO NOTHING;
+      INSERT INTO public.variant_size_warehouse_stock (variant_id, warehouse_id, size, stock_qty)
+      VALUES (r.variant_id, v_venta_id, v_size_normalized, 0)
+      ON CONFLICT (variant_id, warehouse_id, size) DO NOTHING;
+
+      v_size_stock_general := 0;
+      v_size_stock_venta := 0;
+      FOR v_size_row IN
+        SELECT warehouse_id, stock_qty
+        FROM public.variant_size_warehouse_stock
+        WHERE variant_id = r.variant_id
+          AND trim(coalesce(size,'')) = v_size_normalized
+          AND warehouse_id IN (v_general_id, v_venta_id)
+        ORDER BY warehouse_id
+        FOR UPDATE
+      LOOP
+        IF v_size_row.warehouse_id = v_general_id THEN
+          v_size_stock_general := coalesce(v_size_row.stock_qty, 0);
+        ELSIF v_size_row.warehouse_id = v_venta_id THEN
+          v_size_stock_venta := coalesce(v_size_row.stock_qty, 0);
+        END IF;
+      END LOOP;
+
+      -- Gate canónico post-lock: sellable_qty = general + venta-publico de este talle.
+      IF (coalesce(v_size_stock_general, 0) + coalesce(v_size_stock_venta, 0)) < v_qty THEN
+        RAISE EXCEPTION
+          USING MESSAGE = format(
+            'Stock por talle insuficiente para %s (color %s talle %s). Disponible por talle: %s, solicitado: %s.',
+            coalesce(r.product_name,'producto'),
+            coalesce(r.color,'-'),
+            v_size_normalized,
+            coalesce(v_size_stock_general, 0) + coalesce(v_size_stock_venta, 0),
+            v_qty
+          );
+      END IF;
+
+      v_use_size_table := true;
+      v_general_stock := coalesce(v_size_stock_general, 0);
+      IF v_general_stock >= v_qty THEN
+        v_qty_from_general := v_qty;
+        v_remaining_qty := 0;
+      ELSIF v_general_stock > 0 THEN
+        v_qty_from_general := v_general_stock;
+        v_remaining_qty := v_qty - v_general_stock;
+      ELSE
+        v_remaining_qty := v_qty;
+      END IF;
+      IF v_remaining_qty > 0 THEN
+        v_qty_from_venta := v_remaining_qty;
+      END IF;
+
+      IF v_qty_from_general > 0 THEN
+        UPDATE public.variant_size_warehouse_stock
+        SET stock_qty = stock_qty - v_qty_from_general, updated_at = now()
+        WHERE variant_id = r.variant_id AND trim(coalesce(size,'')) = v_size_normalized AND warehouse_id = v_general_id;
+      END IF;
+      IF v_qty_from_venta > 0 THEN
+        UPDATE public.variant_size_warehouse_stock
+        SET stock_qty = stock_qty - v_qty_from_venta, updated_at = now()
+        WHERE variant_id = r.variant_id AND trim(coalesce(size,'')) = v_size_normalized AND warehouse_id = v_venta_id;
+      END IF;
+    END IF;
+
+    -- Solo sin talle: descontar de variant_warehouse_stock (legacy compatible)
+    IF NOT v_use_size_table AND v_size_normalized = '' THEN
+      v_remaining_qty := v_qty;
+      v_qty_from_general := 0;
+      v_qty_from_venta := 0;
+
+      -- Mismo orden de lock que el path por talle: ORDER BY warehouse_id.
+      v_size_stock_general := 0;
+      v_size_stock_venta := 0;
+      FOR v_size_row IN
+        SELECT warehouse_id, stock_qty
+        FROM public.variant_warehouse_stock
+        WHERE variant_id = r.variant_id
+          AND warehouse_id IN (v_general_id, v_venta_id)
+        ORDER BY warehouse_id
+        FOR UPDATE
+      LOOP
+        IF v_size_row.warehouse_id = v_general_id THEN
+          v_size_stock_general := coalesce(v_size_row.stock_qty, 0);
+        ELSIF v_size_row.warehouse_id = v_venta_id THEN
+          v_size_stock_venta := coalesce(v_size_row.stock_qty, 0);
+        END IF;
+      END LOOP;
+
+      IF (coalesce(v_size_stock_general, 0) + coalesce(v_size_stock_venta, 0)) < v_qty THEN
+        RAISE EXCEPTION
+          USING MESSAGE = format(
+            'Stock insuficiente para %s (color %s). Disponible: %s, solicitado: %s.',
+            coalesce(r.product_name,'producto'), coalesce(r.color,'-'),
+            coalesce(v_size_stock_general, 0) + coalesce(v_size_stock_venta, 0),
+            v_qty
+          );
+      END IF;
+
+      SELECT coalesce(stock_qty, 0) INTO v_general_stock
+      FROM public.variant_warehouse_stock
+      WHERE variant_id = r.variant_id AND warehouse_id = v_general_id;
+
+      IF v_general_stock > 0 THEN
+        IF v_general_stock >= v_qty THEN
+          UPDATE public.variant_warehouse_stock
+          SET stock_qty = stock_qty - v_qty, updated_at = now()
+          WHERE variant_id = r.variant_id AND warehouse_id = v_general_id;
+          v_qty_from_general := v_qty;
+          v_remaining_qty := 0;
+        ELSE
+          UPDATE public.variant_warehouse_stock
+          SET stock_qty = 0, updated_at = now()
+          WHERE variant_id = r.variant_id AND warehouse_id = v_general_id;
+          v_remaining_qty := v_qty - v_general_stock;
+          v_qty_from_general := v_general_stock;
+          v_qty_from_venta := v_remaining_qty;
+        END IF;
+      ELSE
+        v_remaining_qty := v_qty;
+        v_qty_from_venta := v_qty;
+      END IF;
+
+      IF v_remaining_qty > 0 THEN
+        UPDATE public.variant_warehouse_stock
+        SET stock_qty = stock_qty - v_remaining_qty, updated_at = now()
+        WHERE variant_id = r.variant_id AND warehouse_id = v_venta_id;
+      END IF;
+    END IF;
+
+    UPDATE public.product_variants
+    SET reserved_qty = greatest(reserved_qty - v_qty, 0)
+    WHERE id = r.variant_id;
+
+    -- 335: autoridad de precio = get_effective_price(variant_id). No usar cart snapshot.
+    v_item_price := public.get_effective_price(r.variant_id);
+    IF v_item_price IS NULL OR v_item_price <= 0 THEN
+      RAISE EXCEPTION
+        USING MESSAGE = format(
+          'Precio inválido para %s (color %s).',
+          coalesce(r.product_name,'producto'), coalesce(r.color,'-')
+        );
+    END IF;
+    IF r.price_snapshot IS DISTINCT FROM v_item_price THEN
+      RAISE NOTICE 'checkout price authority: variant % snapshot % effective %',
+        r.variant_id, r.price_snapshot, v_item_price;
+    END IF;
+
+    -- Una línea por almacén: general = reserved; venta-público = waiting (cola en local / campana).
+    IF v_qty_from_general > 0 AND v_general_id IS NOT NULL THEN
+      INSERT INTO public.order_items (order_id, variant_id, product_name, color, size, quantity, price_snapshot, imagen, status)
+      VALUES (v_order_id, r.variant_id, r.product_name, r.color, r.size, v_qty_from_general, v_item_price, r.imagen, 'reserved')
+      RETURNING id INTO v_order_item_id;
+      INSERT INTO public.order_item_stock_sources (order_item_id, warehouse_id, qty)
+      VALUES (v_order_item_id, v_general_id, v_qty_from_general);
+    END IF;
+
+    IF v_qty_from_venta > 0 AND v_venta_id IS NOT NULL THEN
+      INSERT INTO public.order_items (order_id, variant_id, product_name, color, size, quantity, price_snapshot, imagen, status)
+      VALUES (v_order_id, r.variant_id, r.product_name, r.color, r.size, v_qty_from_venta, v_item_price, r.imagen, 'waiting')
+      RETURNING id INTO v_order_item_id;
+      INSERT INTO public.order_item_stock_sources (order_item_id, warehouse_id, qty)
+      VALUES (v_order_item_id, v_venta_id, v_qty_from_venta);
+    END IF;
+
+    v_total := v_total + (coalesce(v_item_price, 0) * v_qty);
+  END LOOP;
+
+  DELETE FROM public.cart_items WHERE cart_id = v_cart_id;
+
+  -- Recalcular total_amount desde cero con TODOS los order_items vivos del pedido
+  -- (no solo los de este checkout) menos el descuento de promos 2x1/2xMonto activas.
+  -- Fix 2026-07-23: antes era `total_amount = coalesce(total_amount,0) + coalesce(v_total,0)`,
+  -- que nunca restaba el descuento de promociones.
+  v_gross_subtotal := 0;
+  v_promo_discount := 0;
+
+  SELECT array_agg(DISTINCT oi.variant_id)
+  INTO v_all_variant_ids
+  FROM public.order_items oi
+  WHERE oi.order_id = v_order_id
+    AND oi.status != 'cancelled'
+    AND oi.variant_id IS NOT NULL;
+
+  SELECT coalesce(sum(oi.quantity * coalesce(oi.price_snapshot, 0)), 0)
+  INTO v_gross_subtotal
+  FROM public.order_items oi
+  WHERE oi.order_id = v_order_id
+    AND oi.status != 'cancelled';
+
+  IF v_all_variant_ids IS NOT NULL AND array_length(v_all_variant_ids, 1) > 0 THEN
+    FOR v_promo IN
+      SELECT * FROM public.get_active_promotions_for_variants(v_all_variant_ids)
+    LOOP
+      SELECT coalesce(sum(oi.quantity), 0), coalesce(sum(oi.quantity * coalesce(oi.price_snapshot, 0)), 0)
+      INTO v_promo_total_qty, v_promo_total_price
+      FROM public.order_items oi
+      WHERE oi.order_id = v_order_id
+        AND oi.status != 'cancelled'
+        AND oi.variant_id = ANY(v_promo.variant_ids);
+
+      IF coalesce(v_promo_total_qty, 0) >= 2 THEN
+        v_groups := v_promo_total_qty / 2; -- división entera = floor para enteros positivos
+        v_avg_price := v_promo_total_price / v_promo_total_qty;
+        v_this_discount := 0;
+
+        IF v_promo.promo_type = '2x1' THEN
+          v_this_discount := v_groups * v_avg_price;
+        ELSIF v_promo.promo_type = '2xMonto' AND v_promo.fixed_amount IS NOT NULL THEN
+          -- Unidades que no completan un par de 2 pagan precio normal (no se descuentan).
+          v_remainder_qty := v_promo_total_qty - (v_groups * 2);
+          v_this_discount := v_promo_total_price
+            - (v_groups * v_promo.fixed_amount + v_remainder_qty * v_avg_price);
+        END IF;
+
+        -- Si una promo mal configurada (ej. fixed_amount > 2 * precio normal) diera un
+        -- "descuento" negativo, se ignora esa promo puntual (no se le suma monto al total).
+        IF v_this_discount > 0 THEN
+          v_promo_discount := v_promo_discount + v_this_discount;
+        END IF;
+      END IF;
+    END LOOP;
+  END IF;
+
+  UPDATE public.orders
+  SET total_amount = greatest(0, v_gross_subtotal - v_promo_discount)
+  WHERE id = v_order_id;
+
+  SELECT order_number INTO v_order_number FROM public.orders WHERE id = v_order_id;
+
+  RETURN json_build_object('order_id', v_order_id, 'order_number', coalesce(v_order_number, ''));
+END;
+$function$;
+
+COMMENT ON FUNCTION public.rpc_checkout_cart() IS
+  'canonical:335 | line price = get_effective_price(variant_id); snapshot no es autoridad. stock/309/wrapper intactos. anterior canonical:331 md5 9901c2cf5a32fc2ecad95c30c247b77e';
+
+REVOKE ALL ON FUNCTION public.rpc_checkout_cart() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.rpc_checkout_cart() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.rpc_checkout_cart() TO service_role;

@@ -203,6 +203,7 @@ export default function PdpGallery({
                 sizes="(max-width: 480px) 100vw, (max-width: 1024px) 60vw, 50vw"
                 className={`pdp-hero-image pdp-main-image product-modal-main-image${heroReady ? " is-ready" : ""}`}
                 priority={activeIdx === defaultIdx}
+                fetchPriority={activeIdx === defaultIdx ? "high" : "auto"}
                 onLoad={() => setHeroReady(true)}
                 onError={() => setHeroReady(true)}
               />

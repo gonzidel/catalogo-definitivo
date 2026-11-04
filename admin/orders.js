@@ -2654,7 +2654,7 @@ async function fetchOrderById(orderId) {
   if (order.customer_id) {
     const { data: cust, error: err2 } = await supabase
       .from("customers")
-      .select("id, customer_number, full_name, name, email, phone, dni, city, province, transport_id, additional_names")
+      .select("id, customer_number, full_name, email, phone, dni, city, province, transport_id, additional_names")
       .eq("id", order.customer_id)
       .single();
     if (!err2 && cust) {

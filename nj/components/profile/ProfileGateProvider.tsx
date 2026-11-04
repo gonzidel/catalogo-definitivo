@@ -15,6 +15,7 @@ import type { Session } from "@supabase/supabase-js";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { isInitialProfileComplete } from "@/lib/auth/profile-complete";
 import { isWhatsappInvalidSnoozed } from "@/lib/phone/whatsapp-invalid-snooze";
+import { sendAttribution } from "@/lib/analytics/attribution";
 import ProfileOnboardingModal from "@/components/profile/ProfileOnboardingModal";
 import WhatsAppInvalidModal from "@/components/profile/WhatsAppInvalidModal";
 
@@ -105,6 +106,8 @@ export default function ProfileGateProvider({ children }: { children: ReactNode 
     setWaInvalidOpen(
       ok && (forceUi || (flagged && !isWhatsappInvalidSnoozed(uid)))
     );
+    // La ficha ya existe: registrar el origen (first-touch, idempotente).
+    if (customer) void sendAttribution();
     return ok;
   }, []);
 
@@ -180,6 +183,7 @@ export default function ProfileGateProvider({ children }: { children: ReactNode 
   const handleCompleted = useCallback(() => {
     setProfileComplete(true);
     setModalOpen(false);
+    void sendAttribution();
     setProfileUpdatedAt(Date.now());
     pendingRef.current?.(true);
     pendingRef.current = null;

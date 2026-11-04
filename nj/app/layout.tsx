@@ -19,6 +19,7 @@ import { organizationJsonLd, webSiteJsonLd } from "@/lib/seo/json-ld";
 import { ROLLOUT_UI_ENABLED, experienceBootScript } from "@/lib/rollout/client";
 import { NJ_INDEXING_ENABLED } from "@/lib/seo/indexing";
 import { getSiteUrl } from "@/lib/site-url";
+import AttributionCapture from "@/components/analytics/AttributionCapture";
 
 export const metadata: Metadata = {
   metadataBase: new URL(getSiteUrl()),
@@ -104,6 +105,7 @@ export default function RootLayout({
         <ClarityLoader />
         <CatalogInteractionTracker />
         <MetaPixelLoader />
+        <AttributionCapture />
         <ExperienceSync />
         <ProfileGateProvider>
           {/* Header needs Suspense because SearchBar uses useSearchParams */}

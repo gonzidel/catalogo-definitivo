@@ -1,5 +1,12 @@
 # 75 - Publicación integrada: ARQ-05 Fase 1 + tablas de talles (runbook, 2026-10-10)
 
+> **Actualización 2026-11-04 — TÉCNICA VERIFICADA (dominio `www`).** `www.fylmoda.com.ar`, `fylmoda.com.ar`, `fylcalzados.com.ar` y `www.fylcalzados.com.ar` (estos tres con 308 a `www`) pasaron del proyecto Vercel `catalogo-definitivo` al proyecto `nj` (Production), desde el panel de Vercel y con autorización expresa. Motivo: dos PR mergeados a `main` (arrastraron 121 commits de `nj-main`) auto-desplegaron `catalogo-definitivo` y devolvieron `www` a una versión previa durante aproximadamente una hora. Desde el cambio, `www` sirve el deploy de producción vigente de `nj` (`9ed65a5` al momento del arreglo).
+>
+> - **Sigue vigente:** `main` de `catalogo-definitivo` congelada (un push a `main` sigue desplegando `catalogo-definitivo-delta.vercel.app`); `nj` no está conectado a GitHub y se publica a mano (`vercel deploy --prod --skip-domain` → smoke → `vercel promote`).
+> - **Cambia (no verificado todavía):** con el dominio dentro de `nj`, `vercel promote` debería asignar `www` solo, y el paso manual `vercel alias set <deploy> www.fylmoda.com.ar` de los runbooks de esta nota ya no sería necesario. Confirmarlo en la próxima publicación (ver ARQ-11 en `docs/12_PENDIENTES.md`); `alias set` sigue siendo un recurso válido. Los pasos históricos de más abajo no se modificaron.
+> - **Rollback de este cambio:** Vercel → `catalogo-definitivo` → Settings → Domains → Add Existing → `www.fylmoda.com.ar` (mueve también las tres redirecciones).
+> - **Admin legacy:** `/admin/*.html` no existe en `nj` (404 en `www`); vive en Firebase (`catalogo-fyl-test.web.app`) y en `catalogo-definitivo-delta.vercel.app`.
+
 **Estado (2026-10-19):** **PUBLICACIÓN CERRADA.** 378 + 380 + 381 aplicadas; NJ `dpl_22g1WNDdan85cK1Hn46aWp694iTs` en `www`/`nj-drab`; admin legacy en Firebase; sincronización a `nj-main` autorizada. ARQ-05 Fases 0/1 y tablas de talles (admin) cerradas. Deuda de seguridad restante → ARQ-07…ARQ-10 en `docs/12_PENDIENTES.md`.
 Contexto: nota 73 (ARQ-05) y nota 74 (tablas de talles).
 

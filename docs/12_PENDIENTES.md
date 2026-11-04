@@ -118,6 +118,7 @@ Estas preguntas siguen requiriendo respuesta humana o acceso productivo. Las res
 | ARQ-08 | IMPORTANTE | **EN EVALUACIÓN (post ARQ-05).** Las RPC de estadísticas (`get_dashboard_kpis`, `get_top_products`, `get_top_skus`, `metrics_purchase_by_supplier`, `metrics_weekly_purchase_plan`) devuelven métricas derivadas del costo a cualquier admin (`is_admin()`). ¿Deben quedar solo para `super_admin`? Nota 73 §6. |
 | ARQ-09 | IMPORTANTE | **EN EVALUACIÓN (post ARQ-05 / Fase 2).** Tabla `admins` legible por clientes con sesión. ¿Restringir lectura? Nota 73 §6. |
 | ARQ-10 | COMPLEMENTARIA | Revisar los 2 productos `pending_stock` sin variantes (contexto ARQ-05 §4). Independiente del cierre de Fases 0/1. |
+| ARQ-11 | IMPORTANTE | **EN EVALUACIÓN (2026-11-04).** El dominio `www` y sus redirecciones se movieron al proyecto Vercel `nj` tras un auto-deploy de `main` que lo devolvió a una versión previa. En la próxima publicación de NJ verificar que `vercel promote` asigna `www` sin `vercel alias set`, y actualizar `.cursor/rules/FYL-NJ-Git-Workflow.mdc`, `FYL-Obsidian/72` y `75` según el resultado. Decidir además si `main` de `catalogo-definitivo` sigue congelada o se desconecta de Vercel. Nota fechada en 72 y 75. |
 
 ## Decisiones técnicas
 

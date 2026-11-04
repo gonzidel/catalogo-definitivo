@@ -15,6 +15,7 @@ import type { Session } from "@supabase/supabase-js";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { isInitialProfileComplete } from "@/lib/auth/profile-complete";
 import { isWhatsappInvalidSnoozed } from "@/lib/phone/whatsapp-invalid-snooze";
+import { trackLoginSuccessOnce } from "@/lib/analytics/funnel";
 import ProfileOnboardingModal from "@/components/profile/ProfileOnboardingModal";
 import WhatsAppInvalidModal from "@/components/profile/WhatsAppInvalidModal";
 
@@ -151,7 +152,10 @@ export default function ProfileGateProvider({ children }: { children: ReactNode 
       void applySession(data.session);
     });
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event: string, session: Session | null) => {
+    const { data: listener } = supabase.auth.onAuthStateChange((event: string, session: Session | null) => {
+      if (event === "SIGNED_IN" && session?.user) {
+        trackLoginSuccessOnce(session.user.id, session.user.app_metadata?.provider ?? "unknown");
+      }
       void applySession(session);
     });
 

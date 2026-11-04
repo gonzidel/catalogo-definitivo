@@ -19,6 +19,7 @@ import {
   getColorEffectivePrice,
   hasValidCatalogPrice,
 } from "@/lib/utils/variant-price";
+import { trackAddToCart, trackViewItem } from "@/lib/analytics/funnel";
 import {
   clampQtyToSellable,
   getSellableStockForVariants,
@@ -247,6 +248,18 @@ export default function PdpInteractive({
   const pricing = getColorEffectivePrice(colorDetail, product);
   const hasOffer = pricing.isOffer;
 
+  // GA4 view_item: una vez por artículo. Antes lo mandaba el catálogo vanilla.
+  const viewItemSentRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (viewItemSentRef.current === product.Articulo) return;
+    viewItemSentRef.current = product.Articulo;
+    trackViewItem({
+      articulo: product.Articulo,
+      price: pricing.effectivePrice,
+      category: product.Categoria,
+    });
+  }, [product.Articulo, product.Categoria, pricing.effectivePrice]);
+
   const totalSelectedQty = allSelectedItems.reduce((a, i) => a + i.qty, 0);
   const totalSelectedAmount = allSelectedItems.reduce((a, i) => {
     const line = cartPriceForColor(visibleColors, i.color, product);
@@ -337,6 +350,15 @@ export default function PdpInteractive({
         if (rejectedForPrice) setAddPriceError(true);
         return;
       }
+      // Un solo add_to_cart por acción (varias tallas = un evento), como el catálogo vanilla.
+      trackAddToCart(
+        resolved.lines.flatMap((item) => {
+          const p = cartPriceForColor(visibleColors, item.color, product);
+          return hasValidCatalogPrice(p.effectivePrice)
+            ? [{ articulo: product.Articulo, color: item.color, size: item.size, qty: item.qty, price: p.effectivePrice }]
+            : [];
+        })
+      );
       if (rejectedForPrice) setAddPriceError(true);
       setSelections({});
       setAddedFlash(true);

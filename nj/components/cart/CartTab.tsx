@@ -23,6 +23,7 @@ import {
   type PromoGroupableItem,
 } from "@/lib/cart/promo-groups";
 import { CHECKOUT_SYNC_FAILED } from "@/lib/cart/checkout-flow";
+import { trackBeginCheckout } from "@/lib/analytics/funnel";
 import { hasValidCatalogPrice } from "@/lib/utils/variant-price";
 
 function formatARS(n: number) {
@@ -251,6 +252,15 @@ export default function CartTab({ customerId, onOrderCreated, activeOrderStatus,
       const sellableOk = await assertSellableBeforeCheckout();
       if (!sellableOk) return;
       const currentItems = useCartStore.getState().items;
+      trackBeginCheckout(
+        currentItems.map((i) => ({
+          articulo: i.product_name,
+          color: i.color,
+          size: i.size,
+          qty: i.qty,
+          price: i.price_snapshot,
+        }))
+      );
       const result = await checkoutCart(currentItems, customerId, { syncNow });
       if (result.success) {
         clearCart();

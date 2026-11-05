@@ -4,8 +4,10 @@ import { supabase as supabaseClient } from "../scripts/supabase-client.js?v=m260
 import { normalizeSize } from "../scripts/utils/size-normalizer.js?v=m260607";
 import { hasCatalogPrice, catalogPriceGuardMessage } from "../scripts/utils/price.js?v=m260607";
 import {
+  buildMoveToRetiroNotes,
   computeWarehouseQtySplitForOrderItem,
   countsAsOpenOrderForCustomer,
+  MOVE_TO_RETIRO_ALLOWED_STATUSES,
 } from "./orders-domain.js?v=m260607";
 import {
   createNewOrder,
@@ -530,17 +532,45 @@ export async function closeOrder(orderId, paymentMethod) {
   return fetchOrderById(orderId);
 }
 
-/** Copia clienta y pedido a venta al público — mismo RPC que orders.js `sendOrderToLocal`. */
+/**
+ * Envía el pedido al local = lo mueve al tablero Retiro (notes.kanban_scope), igual que
+ * orders.js `sendOrderToLocal` y el botón "Local" de NJ. NO usa `rpc_send_order_to_local`:
+ * esa RPC lo marca `sent` y el trigger de daily_sales lo registra como envío además de la
+ * venta que se crea al cobrar en Retiro (dinero duplicado).
+ */
 export async function sendOrderToLocal(orderId) {
   if (!isValidUUID(orderId)) {
     throw new Error("Pedido inválido");
   }
   const sb = await getSb();
-  const { data, error } = await sb.rpc("rpc_send_order_to_local", {
-    p_order_id: orderId,
-  });
+  if (!sb) throw new Error("Supabase no disponible");
+
+  const { data: current, error: fetchError } = await sb
+    .from("orders")
+    .select("id, status, notes")
+    .eq("id", orderId)
+    .maybeSingle();
+  if (fetchError) throw fetchError;
+  if (!current) throw new Error("Pedido no encontrado");
+  if (!MOVE_TO_RETIRO_ALLOWED_STATUSES.includes(normStatus(current.status))) {
+    throw new Error("Este pedido ya no está activo, no se puede enviar al local.");
+  }
+
+  const { data: moved, error } = await sb
+    .from("orders")
+    .update({
+      notes: buildMoveToRetiroNotes(current.notes),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", orderId)
+    .in("status", MOVE_TO_RETIRO_ALLOWED_STATUSES)
+    .select("id")
+    .maybeSingle();
   if (error) throw error;
-  return data;
+  if (!moved?.id) {
+    throw new Error("No se pudo enviar el pedido al local. Recargá e intentá de nuevo.");
+  }
+  return { moved: true, order_id: moved.id };
 }
 
 /** Quitar ítem del pedido; opcionalmente devolver stock (default true). */

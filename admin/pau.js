@@ -1562,17 +1562,12 @@ async function handleSendOrderToLocal() {
   els.sendLocalYes.disabled = true;
   els.sendLocalNo.disabled = true;
   try {
-    const data = await sendOrderToLocal(state.order.id);
+    await sendOrderToLocal(state.order.id);
     els.sendLocalDialog.close();
     els.closeActionDialog.close();
-    const already = data?.already_exists === true;
-    const num = data?.order_number || "N/A";
-    showToast(
-      already
-        ? `Este pedido ya estaba en el local (n.º ${num}).`
-        : `Pedido enviado al local (n.º ${num}).`
-    );
-    await refreshOrderUi();
+    showToast("Pedido enviado al local (Retiro → Apartados).");
+    // El pedido sigue `active` pero ahora vive en Retiro: volver al buscador (igual que al cerrar).
+    goToCustomerSearchLanding();
   } catch (err) {
     console.error(err);
     alert(err.message || "No se pudo enviar el pedido al local.");

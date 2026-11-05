@@ -34,6 +34,16 @@ Para retiro común, la solicitud de cierre del cliente puede dejar el pedido abi
 
 La RPC tiene protección contra duplicación y pruebas SQL dedicadas en la migración 334.
 
+### "Enviar al local" no debe marcar el pedido como `sent`
+
+Estado: **TÉCNICA VERIFICADA** (código y producción, 2026-11-05)  
+Fuente: auditoría de doble conteo en `daily_sales`
+
+- Botón "Local" de NJ, y desde 2026-11-05 también "Enviar al Local" de `admin/orders.js` y PAU: solo mueven el pedido a Retiro con `notes.kanban_scope = 'local_pickup'` y `retiro_origin = 'moved_from_orders'`. El pedido sigue `active`; la venta se registra solo cuando Retiro lo cobra (`finalizeRetiroOrderSale`).
+- `rpc_send_order_to_local` (copia a `local_orders` y marca `orders.status = 'sent'`) **ya no tiene callers en el frontend**. Si se vuelve a usar, el trigger `trigger_register_envio_sale` inserta una fila `envios` en `daily_sales` por el total del pedido y, al cobrar en el local, `trigger_register_local_sale` inserta otra `local`: el mismo dinero cuenta dos veces. Evidencia: A58602 (151.000) y A58458 (647.000) el 2026-11-05; 22 pedidos en 30 días.
+- **Deuda:** las filas `envios` históricas de esos pedidos siguen en `daily_sales` (corrección de datos pendiente de aprobación). El trigger y la RPC no se tocaron.
+- **CONTRADICCIÓN:** esta nota decía que `finalizeRetiroOrderSale` llama a `rpc_finalize_local_order_to_public_sale`. El código llama a `rpc_create_public_sale`, y la columna `public_sales.local_order_id` (migración 334) no existe en producción: la 334 no está desplegada.
+
 ### Stock diferido
 
 Las líneas `awaiting_apartado` no deben interpretarse como unidades ya descontadas por el checkout normal. Las operaciones posteriores de apartado, espera, faltante o cancelación tienen reglas propias y deben mantener el vínculo con las fuentes cuando exista consumo físico.

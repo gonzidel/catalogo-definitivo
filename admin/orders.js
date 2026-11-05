@@ -12,6 +12,8 @@ import {
   isPickedManualConfirmed,
   parseOrderNotesObject,
   isRetiroBoardOrderForLegacyPedidos,
+  buildMoveToRetiroNotes,
+  MOVE_TO_RETIRO_ALLOWED_STATUSES,
   parseStockPendingReasonConflict,
   describeStockPendingConflict,
   isNetworkStockPendingReason,
@@ -6412,7 +6414,10 @@ async function markOrderAsSent(orderId) {
   showToastNotification("Pedido marcado como terminado. Se ha movido a Pedidos Enviados.", "success");
 }
 
-// Función para enviar pedido al local
+// Enviar pedido al local = moverlo al tablero Retiro (notes.kanban_scope), igual que el
+// botón "Local" de NJ. NO usa rpc_send_order_to_local: esa RPC lo marca `sent` y el
+// trigger de daily_sales lo cuenta como envío además de la venta que se registra al
+// cobrar en Retiro (el dinero quedaba duplicado). El cobro lo registra solo Retiro.
 async function sendOrderToLocal(orderId) {
   if (!canEditOrders) {
     alert("No tienes permiso para editar pedidos.");
@@ -6422,7 +6427,7 @@ async function sendOrderToLocal(orderId) {
   if (!orderId) return;
   
   const confirmSend = confirm(
-    "¿Está seguro que desea enviar este pedido al local? El cliente será copiado a los clientes del local y el pedido estará disponible en Venta al Público."
+    "¿Está seguro que desea enviar este pedido al local (Retiro)? El pedido saldrá de Pedidos y aparecerá en Apartados de Retiro. La venta se registra recién cuando el local lo finalice."
   );
   if (!confirmSend) return;
 
@@ -6435,28 +6440,46 @@ async function sendOrderToLocal(orderId) {
     return;
   }
 
-  console.log("🔄 Enviando pedido al local:", orderId);
+  console.log("🔄 Moviendo pedido a Retiro:", orderId);
 
-  // Llamar a la función RPC que copia cliente y crea pedido local
-  const { data, error } = await supabase.rpc("rpc_send_order_to_local", {
-    p_order_id: orderId,
-  });
+  // Notes y estado frescos: evita pisar cambios hechos por otro admin en paralelo.
+  const { data: current, error: fetchError } = await supabase
+    .from("orders")
+    .select("id, status, notes")
+    .eq("id", orderId)
+    .maybeSingle();
 
-  if (error) {
-    console.error("❌ Error enviando pedido al local:", error);
-    alert(error.message || "No se pudo enviar el pedido al local.");
+  if (fetchError || !current) {
+    console.error("❌ No se pudo leer el pedido para enviarlo al local:", fetchError);
+    alert(fetchError?.message || "No se encontró el pedido. Recargá la página e intentá de nuevo.");
     return;
   }
 
-  console.log("✅ Pedido enviado al local correctamente:", data);
+  if (!MOVE_TO_RETIRO_ALLOWED_STATUSES.includes(String(current.status || "").trim().toLowerCase())) {
+    alert("Este pedido ya no está activo, no se puede enviar al local. Recargá la página.");
+    return;
+  }
 
-  const already = data && data.already_exists === true;
-  showToastNotification(
-    already
-      ? `Este pedido ya estaba en el local (n.º ${data.order_number || "N/A"}).`
-      : `Pedido enviado al local correctamente. Número de pedido local: ${data.order_number || "N/A"}`,
-    "success"
-  );
+  const { data: moved, error } = await supabase
+    .from("orders")
+    .update({
+      notes: buildMoveToRetiroNotes(current.notes),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", orderId)
+    .in("status", MOVE_TO_RETIRO_ALLOWED_STATUSES)
+    .select("id")
+    .maybeSingle();
+
+  if (error || !moved?.id) {
+    console.error("❌ Error enviando pedido al local:", error);
+    alert(error?.message || "No se pudo enviar el pedido al local. Recargá la página e intentá de nuevo.");
+    return;
+  }
+
+  console.log("✅ Pedido movido a Retiro:", orderId);
+
+  showToastNotification("Pedido enviado al local (Retiro → Apartados).", "success");
 
   // Recargar pedidos para actualizar la vista
   await loadOrders();

@@ -167,6 +167,29 @@ export function isRetiroBoardOrderForLegacyPedidos(order, transportLabel = "") {
 }
 
 /**
+ * Estados desde los que "Enviar al local" puede mover un pedido a Retiro.
+ * Es solo un cambio de tablero (notes.kanban_scope): el pedido NO pasa a `sent`.
+ */
+export const MOVE_TO_RETIRO_ALLOWED_STATUSES = ["active", "closing_soon"];
+
+/**
+ * Notes que mueven el pedido al tablero Retiro. Misma señal que usa NJ
+ * (`updateOrderKanbanScope` → botón "Local") y que reconoce
+ * `isRetiroBoardOrderForLegacyPedidos`. Conserva el resto de las notes.
+ *
+ * Nunca usar `rpc_send_order_to_local` para esto: esa RPC marca el pedido `sent`,
+ * y el trigger de `daily_sales` lo registra como "envío" además de la venta local
+ * que se crea al cobrar en Retiro (dinero contado dos veces).
+ */
+export function buildMoveToRetiroNotes(rawNotes) {
+  return JSON.stringify({
+    ...parseOrderNotesObject(rawNotes),
+    kanban_scope: "local_pickup",
+    retiro_origin: "moved_from_orders",
+  });
+}
+
+/**
  * Paridad con `orders_one_open_per_customer_idx`: un retiro ya cobrado queda
  * `closed` para siempre (nunca pasa a `sent`) y no bloquea un pedido nuevo.
  */

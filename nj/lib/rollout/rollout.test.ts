@@ -15,6 +15,7 @@ import {
   isLegacyCatalogoPath,
   isNjDoorPath,
   mapLegacyCatalogoPath,
+  resolveLegacyCatalogoRedirect,
 } from "./request";
 import { isLegacyLandingPath } from "./legacy-hosting";
 
@@ -302,6 +303,68 @@ test("puerta /nj y rutas /catalogo", () => {
   assert.equal(mapLegacyCatalogoPath("/catalogo/"), "/");
   assert.equal(mapLegacyCatalogoPath("/catalogo/calzado"), "/calzado");
   assert.equal(mapLegacyCatalogoPath("/catalogo/producto/AB-12"), "/producto/AB-12");
+});
+
+test("/catalogo?sku=<SKU> (feed de Meta y anuncios) va a la ficha del producto", () => {
+  assert.deepEqual(resolveLegacyCatalogoRedirect("/catalogo", "?sku=RA-001-CH-36"), {
+    pathname: "/producto/RA-001-CH-36",
+    search: "",
+  });
+  assert.deepEqual(resolveLegacyCatalogoRedirect("/catalogo/", "?sku=RA-001-CH-36"), {
+    pathname: "/producto/RA-001-CH-36",
+    search: "",
+  });
+  // Conserva fbclid/utm/color y saca solo sku.
+  assert.deepEqual(
+    resolveLegacyCatalogoRedirect("/catalogo", "?sku=TA-04-NEG-35&fbclid=abc&utm_source=facebook&color=negro"),
+    { pathname: "/producto/TA-04-NEG-35", search: "?fbclid=abc&utm_source=facebook&color=negro" }
+  );
+  // El SKU se codifica: no puede inyectar rutas ni parámetros.
+  assert.deepEqual(resolveLegacyCatalogoRedirect("/catalogo", "?sku=" + encodeURIComponent("../admin?x=1")), {
+    pathname: "/producto/" + encodeURIComponent("../admin?x=1"),
+    search: "",
+  });
+  assert.equal(
+    resolveLegacyCatalogoRedirect("/catalogo", "?sku=" + encodeURIComponent("a b/c")).pathname,
+    "/producto/a%20b%2Fc"
+  );
+});
+
+test("/catalogo?sku=<SKU con barra> (62 SKUs de talle doble, ej. 43/44) codifica la barra", () => {
+  // Meta lo emite sin codificar: ?sku=AD-J25-AZ-43/44. La ficha solo resuelve con %2F.
+  const target = resolveLegacyCatalogoRedirect("/catalogo", "?sku=AD-J25-AZ-43/44&fbclid=x");
+  assert.deepEqual(target, { pathname: "/producto/AD-J25-AZ-43%2F44", search: "?fbclid=x" });
+
+  const url = new URL("https://www.fylmoda.com.ar/catalogo?sku=AD-J25-AZ-43/44&fbclid=x");
+  url.pathname = target.pathname;
+  url.search = target.search;
+  assert.equal(url.href, "https://www.fylmoda.com.ar/producto/AD-J25-AZ-43%2F44?fbclid=x");
+});
+
+test("/catalogo sin sku válido conserva el mapeo 1:1 y los parámetros", () => {
+  assert.deepEqual(resolveLegacyCatalogoRedirect("/catalogo", ""), { pathname: "/", search: "" });
+  assert.deepEqual(resolveLegacyCatalogoRedirect("/catalogo", "?sku="), { pathname: "/", search: "?sku=" });
+  assert.deepEqual(resolveLegacyCatalogoRedirect("/catalogo", "?sku=%20%20"), {
+    pathname: "/",
+    search: "?sku=%20%20",
+  });
+  assert.deepEqual(resolveLegacyCatalogoRedirect("/catalogo", "?utm_source=facebook"), {
+    pathname: "/",
+    search: "?utm_source=facebook",
+  });
+  assert.deepEqual(resolveLegacyCatalogoRedirect("/catalogo", "?sku=" + "X".repeat(101)), {
+    pathname: "/",
+    search: "?sku=" + "X".repeat(101),
+  });
+  // Subrutas no cambian: /catalogo/calzado?sku=1 sigue siendo /calzado.
+  assert.deepEqual(resolveLegacyCatalogoRedirect("/catalogo/calzado", "?sku=1"), {
+    pathname: "/calzado",
+    search: "?sku=1",
+  });
+  assert.deepEqual(resolveLegacyCatalogoRedirect("/catalogo/producto/AB-12", ""), {
+    pathname: "/producto/AB-12",
+    search: "",
+  });
 });
 
 test("landings de Firebase no pasan por la decisión de experiencia", () => {

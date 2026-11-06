@@ -89,7 +89,6 @@ SELECT
   'in stock'::text AS availability,
   'new'::text AS condition,
   'FYL'::text AS brand,
-  -- CAMBIO 383: ficha NJ con SKU codificado ('%' primero para no doble-codificar).
   ('https://www.fylmoda.com.ar/producto/' || replace(replace(replace(replace(replace(replace(
       nullif(trim(vs.sku), ''),
       '%', '%25'), '/', '%2F'), ' ', '%20'), '?', '%3F'), '#', '%23'), '&', '%26'))::text AS link,

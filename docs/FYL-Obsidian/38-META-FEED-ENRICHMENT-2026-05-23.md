@@ -79,9 +79,19 @@ Tras **cada** fase: deploy Edge → curl feed → **reimport Commerce Manager** 
 
 | Cambio | Archivo | Estado |
 |---|---|---|
-| Redirect `/catalogo?sku=X` → `/producto/X` (conserva `fbclid`, `utm_*`, `color`; codifica el SKU) | `nj/lib/rollout/request.ts` (`resolveLegacyCatalogoRedirect`), `nj/middleware.ts` | En rama `fix/meta-links-producto`; **no desplegado** |
-| Link del feed directo a `https://www.fylmoda.com.ar/producto/<SKU codificado>` | `supabase/canonical/383_meta_feed_link_producto.sql` (+ `383_ROLLBACK_…`) | **No aplicado en producción** (requiere aprobación) |
-| Fallback de la Edge Function al mismo formato (inalcanzable hoy: la RPC devuelve link absoluto) | `supabase/functions/meta-feed/index.ts` | En rama; sin deploy |
+| Redirect `/catalogo?sku=X` → `/producto/X` (conserva `fbclid`, `utm_*`, `color`; codifica el SKU) | `nj/lib/rollout/request.ts` (`resolveLegacyCatalogoRedirect`), `nj/middleware.ts` | **Publicado 2026-11-06** en `www`: `dpl_BfpRXaMPwW8vNHSJE3Dftosiza3R` (`nj-iexnq05gv`), desde `release/nj-2026-11-06-meta-links` = `feat/minimo-temporal-1` + fix. PR a `nj-main` (rama `fix/meta-links-producto`) pendiente de merge |
+| Link del feed directo a `https://www.fylmoda.com.ar/producto/<SKU codificado>` | `supabase/canonical/383_meta_feed_link_producto.sql` (+ `383_ROLLBACK_…`) | **Aplicado en producción (fyl-core) 2026-11-06**, md5 de la función `8e6897f3c1f046942564c496079a445c` (antes `1e9c9cf2…`). ACL y firma intactas |
+| Fallback de la Edge Function al mismo formato (inalcanzable hoy: la RPC devuelve link absoluto) | `supabase/functions/meta-feed/index.ts` | En rama; sin deploy (no hace falta) |
+
+**Verificación post-publicación (2026-11-06, TÉCNICA VERIFICADA):**
+
+- En vivo: `fylmoda.com.ar/catalogo?sku=RA-001-CH-36` → 308 → 302 → `/producto/RA-001-CH-36` (200); con `fbclid` conserva el parámetro; SKU con barra → `%2F` (200); UA `facebookexternalhit` y `facebookcatalog` llegan a la ficha. Sin regresiones en `/`, `/calzado`, `/catalogo`, `/revendedoras`; el banner Cyber Monday sigue.
+- RPC tras la 383: 3.025/3.025 links `https://www.fylmoda.com.ar/producto/…` válidos y únicos, 0 links `/catalogo`, 0 títulos alterados, 0 filas sin stock.
+- **Rollback:** (a) redirect → `vercel promote dpl_2AoHurmDqKi9E71zLUDyFP5Vc68g` (`nj-pz0jsc5m2`, el deploy previo, ya incluía mínimo temporal 1; ver sección ARQ-11 abajo); (b) feed → ejecutar `383_ROLLBACK_meta_feed_link_producto.sql` (vuelve a `/catalogo?sku=`, que depende del redirect). Revertir el redirect antes que la 383 rompería el aterrizaje del feed viejo.
+- **Pendiente de Meta:** reimportar el feed en Commerce Manager y esperar 24–48 h de reindex; los links ya cargados siguen funcionando por el redirect.
+- **Dato para ARQ-11:** tras `vercel promote`, `www.fylmoda.com.ar` pasó solo al deploy nuevo; también se movieron `nj-gonzidel.vercel.app` y `nj-drab.vercel.app`. No hizo falta `vercel alias set`. `fylmoda.com.ar` y las redirecciones de `fylcalzados` siguen redirigiendo a www (308).
+- **Hallazgo operativo:** el proyecto Vercel `nj` tiene Root Directory `nj`: `vercel deploy` se ejecuta desde la **raíz del repo** (con `.vercel` en la raíz), no desde `nj/`. En Windows el CLI necesita `NODE_OPTIONS=--dns-result-order=ipv4first --use-system-ca` (sin eso falla con `fetch failed`).
+- **Hallazgo de proceso:** producción (`9ed65a5`, mínimo temporal 1 + banner Cyber Monday) está **por delante de `nj-main`**; publicar desde `nj-main` o desde una rama basada en él habría quitado ese banner. Mientras `feat/minimo-temporal-1` no esté mergeada, los releases deben basarse en ella.
 
 Detalles que importan:
 

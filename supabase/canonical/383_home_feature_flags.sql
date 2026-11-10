@@ -35,7 +35,7 @@ set search_path = ''
 as $$
 begin
   new.updated_at := now();
-  new.updated_by := auth.uid();
+  new.updated_by := "auth".uid();
   return new;
 end;
 $$;
@@ -77,6 +77,9 @@ revoke all on table public.home_feature_flags from anon, authenticated;
 grant select on table public.home_feature_flags to anon, authenticated;
 grant insert, update on table public.home_feature_flags to authenticated;
 grant all on table public.home_feature_flags to service_role;
+
+revoke all on function public.home_feature_flags_touch() from public, anon;
+grant execute on function public.home_feature_flags_touch() to authenticated, service_role;
 
 -- Semilla: banner de Ofertas del inicio, apagado.
 insert into public.home_feature_flags (key, enabled)

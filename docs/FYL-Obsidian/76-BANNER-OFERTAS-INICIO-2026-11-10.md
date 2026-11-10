@@ -1,6 +1,6 @@
 # 76 — Banner de Ofertas en el inicio (NJ) — 2026-11-10
 
-**Estado:** publicado en NJ el 2026-11-10. `www.fylmoda.com.ar` = `dpl_BtjBDTx7HYPYTKFScAg5t9TZjdML` (commit `9f1e50e`, rama `feat/banner-ofertas-inicio`). La tabla `home_feature_flags` está aplicada y el flag `home_offers_banner` nació **apagado**: el banner no se ve hasta encender el check. El admin de Firebase **no** se publicó: `firebase login` estaba vencido. Rollback de NJ: promover `dpl_BfpRXaMPwW8vNHSJE3Dftosiza3R`. Rollback SQL: `383_ROLLBACK_home_feature_flags.sql`.
+**Estado:** visible en producción NJ el 2026-11-10. `www.fylmoda.com.ar` = `dpl_FpAget3noduG2WFDgtQtufGCMHTg`. El flag `home_offers_banner` está **encendido** (el deploy anterior lo tenía apagado y el banner no se dibujaba). Cyber Monday sigue debajo. El admin de Firebase **no** se publicó: `firebase login` estaba vencido. Rollback de NJ: promover `dpl_BfpRXaMPwW8vNHSJE3Dftosiza3R`. Apagar el banner: `update home_feature_flags set enabled = false where key = 'home_offers_banner'`. Rollback SQL: `383_ROLLBACK_home_feature_flags.sql`.
 **Clasificación:** TÉCNICA VERIFICADA (código y tests locales); la regla comercial ("qué cuenta como oferta destacada") es **NEGOCIO CONFIRMADO** por el responsable en esta sesión.
 **Relacionado:** [[42-HOME-BANNERS-FEED-NJ-2026-06-09]], [[64-TEMP-MINIMO-1-CYBER-MONDAY-2026-11-03]]. El banner de Ofertas queda arriba del Cyber Monday. En un checkout de `nj-main` pelado ese lugar muestra "compra mínima", porque el Cyber Monday no está en `nj-main`.
 

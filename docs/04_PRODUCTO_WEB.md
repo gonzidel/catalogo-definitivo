@@ -50,6 +50,7 @@ API interna:
 
 ### Catálogo
 
+- **TÉCNICA VERIFICADA en trabajo local (2026-11-10, rama `feat/banner-ofertas-inicio`, no publicada):** el home de NJ puede mostrar arriba de todo un banner de Ofertas (`OfertasBanner`), controlado por el check de `admin/offers.html` (`home_feature_flags.home_offers_banner`, migración 383 **no aplicada** en producción). Falla cerrado si el flag no se puede leer. Detalle y rollback: `docs/FYL-Obsidian/76-BANNER-OFERTAS-INICIO-2026-11-10.md`.
 - Fuente de lectura principal en Next.js: `catalog_public_snapshot` (`CATALOG_SOURCE`).
 - Vista viva/fallback: `catalog_public_available_view`.
 - El snapshot se revalida con `rpc_catalog_public_version`; no hay polling continuo.

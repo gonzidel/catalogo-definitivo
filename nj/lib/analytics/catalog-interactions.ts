@@ -17,6 +17,7 @@ export const GA_PRODUCT_ATTR = "data-ga-product";
 /** Slots de banner del inicio; se usan como valor de `data-ga-banner`. */
 export const GA_BANNER_SLOTS = {
   info: "info_compra_minima",
+  ofertas: "ofertas_destacadas",
   nuevosIngresos: "nuevos_ingresos",
   fylOriginals: "fyl_originals",
   curatedSpecial: "curated_special",

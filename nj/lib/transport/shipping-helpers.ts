@@ -1,3 +1,4 @@
+import { TEMP_MIN_ONE_ENABLED } from "@/lib/config/temp-order-min";
 import { canonicalizeTransportName } from "./index";
 
 function normalizeForMatch(s: string) {
@@ -85,6 +86,8 @@ export function getOrderCloseMinimumUnits(
   province?: string | null,
   city?: string | null
 ): number {
+  // TEMPORAL Cyber Monday: ver nj/lib/config/temp-order-min.ts
+  if (TEMP_MIN_ONE_ENABLED) return 1;
   return isLocalPickupShortDeadlineZone(province, city) ? 1 : ORDER_CLOSE_MIN_UNITS_DEFAULT;
 }
 

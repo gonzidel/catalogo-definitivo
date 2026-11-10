@@ -24,6 +24,7 @@ import ItemStatusBadge from "./ItemStatusBadge";
 import OrderCardItemActions from "./OrderCardItemActions";
 import OrderItemImageButton from "./OrderItemImageButton";
 import PartialAcceptModal from "./PartialAcceptModal";
+import ZeroStockPrompt from "./ZeroStockPrompt";
 
 interface OrderCardItemsProps {
   items: AdminOrderItem[];
@@ -71,7 +72,7 @@ interface OrderCardItemsProps {
   draftChanges?: DraftChangesMap;
   onStagePicked?: (itemId: string) => void;
   onStageWaiting?: (itemId: string, source: "fabrica" | "local") => void;
-  onStageMissing?: (itemId: string) => void;
+  onStageMissing?: (itemId: string, zeroStock?: boolean) => void;
   onStageSplit?: (
     itemId: string,
     nPicked: number,
@@ -79,7 +80,8 @@ interface OrderCardItemsProps {
     nMissing: number,
     waitingSource?: "fabrica" | "local",
     nFabrica?: number,
-    nLocal?: number
+    nLocal?: number,
+    zeroStock?: boolean
   ) => void;
 }
 
@@ -119,6 +121,12 @@ export default function OrderCardItems({
   const [openWaitingItemId, setOpenWaitingItemId] = useState<string | null>(null);
   const [partialAcceptItemId, setPartialAcceptItemId] = useState<string | null>(null);
   const partialAcceptItem = items.find((i) => i.id === partialAcceptItemId);
+  /** Borrador + reparto con unidades sin stock: pregunta por el stock de la web antes de dejarlo marcado. */
+  const [splitZeroPrompt, setSplitZeroPrompt] = useState<{
+    stock: number;
+    size: string | null;
+    stage: (zeroStock: boolean) => void;
+  } | null>(null);
   const warehouseIds = useOrdersStore((s) => s.warehouseIds);
   const boardScope = useOrdersStore((s) => s.boardScope);
   const orderForVisual = useOrdersStore((s) =>
@@ -183,7 +191,26 @@ export default function OrderCardItems({
     if (draftMode) {
       const waitingSource: "fabrica" | "local" | undefined =
         nLocal > 0 && nFabrica === 0 ? "local" : nFabrica > 0 && nLocal === 0 ? "fabrica" : undefined;
-      onStageSplit?.(targetId, nPicked, nWaiting, nMissing, waitingSource, nFabrica, nLocal);
+      const stage = (zeroStock: boolean) =>
+        onStageSplit?.(
+          targetId,
+          nPicked,
+          nWaiting,
+          nMissing,
+          waitingSource,
+          nFabrica,
+          nLocal,
+          zeroStock
+        );
+      const target = items.find((i) => i.id === targetId);
+      if (nMissing > 0 && target?.variant_id && target.size) {
+        const stock = await getVariantSizeStockQty(target.variant_id, target.size);
+        if (stock > 0) {
+          setSplitZeroPrompt({ stock, size: target.size, stage });
+          return;
+        }
+      }
+      stage(false);
       return;
     }
     if (!orderId) return;
@@ -395,7 +422,7 @@ export default function OrderCardItems({
                       draftKind={draftChanges?.[item.id]?.kind ?? null}
                       onStagePicked={() => onStagePicked?.(item.id)}
                       onStageWaiting={(source) => onStageWaiting?.(item.id, source)}
-                      onStageMissing={() => onStageMissing?.(item.id)}
+                      onStageMissing={(zeroStock) => onStageMissing?.(item.id, zeroStock)}
                       onRequestMissing={() => {
                         if (!isMultiUnitReserved(item)) return false;
                         setPartialAcceptItemId(item.id);
@@ -738,6 +765,23 @@ export default function OrderCardItems({
           onApply={(nPicked, nMissing, nFabrica, nLocal) =>
             void handleApplyUnits(nPicked, nMissing, nFabrica, nLocal)
           }
+        />
+      ) : null}
+
+      {splitZeroPrompt ? (
+        <ZeroStockPrompt
+          stock={splitZeroPrompt.stock}
+          size={splitZeroPrompt.size}
+          deferred
+          onNo={() => {
+            splitZeroPrompt.stage(false);
+            setSplitZeroPrompt(null);
+          }}
+          onYes={() => {
+            splitZeroPrompt.stage(true);
+            setSplitZeroPrompt(null);
+          }}
+          onClose={() => setSplitZeroPrompt(null)}
         />
       ) : null}
     </>

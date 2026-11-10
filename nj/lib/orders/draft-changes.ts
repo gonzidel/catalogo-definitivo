@@ -17,6 +17,11 @@ export interface DraftChange {
   /** Conteo explícito cuando el split mezcla fábrica + local */
   nFabrica?: number;
   nLocal?: number;
+  /**
+   * Solo para "missing" y "split" con unidades sin stock: el admin respondió que NO queda
+   * stock real de ese talle, así que al confirmar se lleva a 0 (rpc_admin_zero_variant_size_stock).
+   */
+  zeroStock?: boolean;
 }
 
 /** Resuelve unidades en espera fábrica/local de un cambio de borrador. */
@@ -38,6 +43,51 @@ export function splitWaitingCounts(change: DraftChange): {
 
 export type DraftChangesMap = Record<string, DraftChange>;
 
+/** Datos mínimos de un ítem para resolver su variante + talle. */
+export interface DraftStockItem {
+  id: string;
+  variant_id?: string | null;
+  size?: string | null;
+}
+
+/** Variante + talle que el admin eligió dejar en 0 al confirmar el borrador. */
+export interface DraftZeroStockTarget {
+  itemId: string;
+  variantId: string;
+  size: string;
+}
+
+/** True si el cambio deja al menos una unidad como "sin stock". */
+export function draftChangeMarksMissing(change: DraftChange): boolean {
+  if (change.kind === "missing") return true;
+  return change.kind === "split" && (change.nMissing ?? 0) > 0;
+}
+
+/**
+ * Variantes + talle que hay que llevar a 0 al confirmar (las que el admin marcó con
+ * "Sí, borrar todo el stock" al tocar ✕). Una sola entrada por variante+talle; `itemId`
+ * es el primero, para dejar trazabilidad en el ajuste.
+ */
+export function collectDraftZeroStockTargets(
+  pending: DraftChangesMap,
+  items: DraftStockItem[]
+): DraftZeroStockTarget[] {
+  const seen = new Set<string>();
+  const targets: DraftZeroStockTarget[] = [];
+  for (const [itemId, change] of Object.entries(pending)) {
+    if (!change.zeroStock || !draftChangeMarksMissing(change)) continue;
+    const item = items.find((candidate) => candidate.id === itemId);
+    const variantId = item?.variant_id ?? null;
+    const size = (item?.size ?? "").trim();
+    if (!variantId || !size) continue;
+    const key = `${variantId}|${size}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    targets.push({ itemId, variantId, size });
+  }
+  return targets;
+}
+
 export function draftChangeLabel(
   change: DraftChange,
   localLabel: string = "Local"
@@ -50,14 +100,16 @@ export function draftChangeLabel(
     case "waiting-local":
       return `Espera (${localLabel})`;
     case "missing":
-      return "Sin stock";
+      return change.zeroStock ? "Sin stock · stock a 0" : "Sin stock";
     case "split": {
       const parts: string[] = [];
       const { nFabrica, nLocal } = splitWaitingCounts(change);
       if (change.nPicked) parts.push(`${change.nPicked} apart.`);
       if (nFabrica) parts.push(`${nFabrica} espera (Fábrica)`);
       if (nLocal) parts.push(`${nLocal} espera (${localLabel})`);
-      if (change.nMissing) parts.push(`${change.nMissing} sin stock`);
+      if (change.nMissing) {
+        parts.push(`${change.nMissing} sin stock${change.zeroStock ? " (stock a 0)" : ""}`);
+      }
       return parts.join(" · ") || "Reparto manual";
     }
     default:

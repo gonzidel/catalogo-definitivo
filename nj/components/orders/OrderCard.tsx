@@ -42,6 +42,7 @@ import {
   orderHasWaitingSource,
 } from "@/lib/orders/waiting-source";
 import {
+  collectDraftZeroStockTargets,
   splitWaitingCounts,
   type DraftChangesMap,
 } from "@/lib/orders/draft-changes";
@@ -129,6 +130,7 @@ export default function OrderCard({ order }: OrderCardProps) {
   const confirmCancelledItemNoStock = useOrdersStore((s) => s.confirmCancelledItemNoStock);
   const confirmAllCancelledItems = useOrdersStore((s) => s.confirmAllCancelledItems);
   const markItemMissing = useOrdersStore((s) => s.markItemMissing);
+  const zeroVariantSizeStock = useOrdersStore((s) => s.zeroVariantSizeStock);
   const markItemPicked = useOrdersStore((s) => s.markItemPicked);
   const markItemWaiting = useOrdersStore((s) => s.markItemWaiting);
   const splitReservedItem = useOrdersStore((s) => s.splitReservedItem);
@@ -464,11 +466,11 @@ export default function OrderCard({ order }: OrderCardProps) {
     });
   };
 
-  const stageMissing = (itemId: string) => {
+  const stageMissing = (itemId: string, zeroStock = false) => {
     setPendingChanges((prev) => {
       const next = { ...prev };
       if (next[itemId]?.kind === "missing") delete next[itemId];
-      else next[itemId] = { kind: "missing" };
+      else next[itemId] = { kind: "missing", zeroStock };
       return next;
     });
   };
@@ -480,7 +482,8 @@ export default function OrderCard({ order }: OrderCardProps) {
     nMissing: number,
     waitingSource?: "fabrica" | "local",
     nFabrica?: number,
-    nLocal?: number
+    nLocal?: number,
+    zeroStock = false
   ) => {
     setPendingChanges((prev) => {
       const next = { ...prev };
@@ -496,6 +499,7 @@ export default function OrderCard({ order }: OrderCardProps) {
         waitingSource,
         nFabrica,
         nLocal,
+        zeroStock: nMissing > 0 ? zeroStock : undefined,
       };
       return next;
     });
@@ -586,6 +590,11 @@ export default function OrderCard({ order }: OrderCardProps) {
             );
           }
         }
+      }
+      // Talles en los que el admin respondió "Sí, quitar el stock" al tocar ✕: recién ahora, ya
+      // marcados sin stock, se llevan a 0 (mismo orden que el flujo de un ítem suelto).
+      for (const target of collectDraftZeroStockTargets(draftSnapshot, items)) {
+        await zeroVariantSizeStock(target.variantId, target.size, target.itemId);
       }
       setPendingChanges({});
 

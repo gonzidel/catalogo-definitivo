@@ -8,6 +8,7 @@ import {
 } from "@/lib/orders/board-scope";
 import type { DraftChangeKind } from "@/lib/orders/draft-changes";
 import { useOrdersStore } from "@/hooks/useOrders";
+import ZeroStockPrompt from "./ZeroStockPrompt";
 
 interface OrderCardItemActionsProps {
   orderId: string;
@@ -42,7 +43,8 @@ interface OrderCardItemActionsProps {
   draftKind?: DraftChangeKind | null;
   onStagePicked?: () => void;
   onStageWaiting?: (source: "fabrica" | "local") => void;
-  onStageMissing?: () => void;
+  /** `zeroStock`: el admin respondió que no queda stock real y hay que llevarlo a 0 al confirmar. */
+  onStageMissing?: (zeroStock?: boolean) => void;
   /**
    * Si devuelve true, el padre ya abrió otro flujo (p. ej. «Repartir unidades»
    * para ítems multi-unidad) y no hay que stagear ni abrir el confirm de missing.
@@ -110,6 +112,12 @@ export default function OrderCardItemActions({
 
   /** No: marca sin stock y deja las existencias de la web como están. */
   const handleZeroStockNo = async () => {
+    if (draftMode) {
+      // Borrador: solo queda marcado "sin stock"; no se toca el stock.
+      setZeroStockPrompt(null);
+      onStageMissing?.(false);
+      return;
+    }
     setZeroStockBusy(true);
     try {
       await onMarkMissing(orderId, itemId);
@@ -121,6 +129,12 @@ export default function OrderCardItemActions({
 
   /** Sí: marca sin stock y pone a 0 las existencias de esa variante+talle. */
   const handleZeroStockYes = async () => {
+    if (draftMode) {
+      // Borrador: queda marcado y el stock se pone en 0 recién al confirmar el pedido.
+      setZeroStockPrompt(null);
+      onStageMissing?.(true);
+      return;
+    }
     setZeroStockBusy(true);
     try {
       await onMarkMissing(orderId, itemId);
@@ -145,11 +159,32 @@ export default function OrderCardItemActions({
     void onMarkPicked(orderId, itemId);
   };
 
+  /**
+   * Borrador: al tocar ✕ pregunta por el stock de la web antes de dejar el ítem
+   * marcado. Un segundo toque (ya marcado) lo desmarca sin preguntar.
+   */
+  const stageMissingAskingStock = async () => {
+    if (stagedMissing || !variantId || !size || !getVariantSizeStockQty) {
+      onStageMissing?.();
+      return;
+    }
+    try {
+      const stock = await getVariantSizeStockQty(variantId, size);
+      if (stock > 0) {
+        setZeroStockPrompt(stock);
+        return;
+      }
+    } catch {
+      // Si falla la consulta, queda marcado igual (sin tocar stock).
+    }
+    onStageMissing?.(false);
+  };
+
   const handleMissingClick = (event: React.MouseEvent) => {
     event.stopPropagation();
     if (onRequestMissing?.()) return;
     if (draftMode) {
-      onStageMissing?.();
+      void stageMissingAskingStock();
       return;
     }
     setMissingOpen(true);
@@ -297,53 +332,17 @@ export default function OrderCardItemActions({
           )
         : null}
 
-      {zeroStockPrompt !== null && typeof document !== "undefined"
-        ? createPortal(
-            <div
-              className="order-modal-backdrop order-modal-backdrop--item"
-              role="presentation"
-              onClick={() => {
-                if (!zeroStockBusy) setZeroStockPrompt(null);
-              }}
-            >
-              <div
-                className="order-modal order-modal--compact"
-                role="dialog"
-                aria-labelledby="zero-stock-title"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <h3 className="order-modal__title" id="zero-stock-title">
-                  ¿Quitar el stock de la web?
-                </h3>
-                <p className="order-modal__text">
-                  En la web todavía figuran <strong>{zeroStockPrompt}</strong> en existencia de
-                  este producto (talle {size}).
-                  <br />
-                  Como no hay stock real, ¿querés poner esas existencias en 0?
-                </p>
-                <div className="order-modal__actions order-modal__actions--big">
-                  <button
-                    type="button"
-                    className="order-card__btn"
-                    disabled={zeroStockBusy}
-                    onClick={() => void handleZeroStockNo()}
-                  >
-                    No
-                  </button>
-                  <button
-                    type="button"
-                    className="order-card__btn order-card__btn--danger"
-                    disabled={zeroStockBusy}
-                    onClick={() => void handleZeroStockYes()}
-                  >
-                    {zeroStockBusy ? "Aplicando…" : "Sí, quitar el stock"}
-                  </button>
-                </div>
-              </div>
-            </div>,
-            document.body
-          )
-        : null}
+      {zeroStockPrompt !== null ? (
+        <ZeroStockPrompt
+          stock={zeroStockPrompt}
+          size={size}
+          busy={zeroStockBusy}
+          deferred={draftMode}
+          onNo={() => void handleZeroStockNo()}
+          onYes={() => void handleZeroStockYes()}
+          onClose={() => setZeroStockPrompt(null)}
+        />
+      ) : null}
     </>
   );
 }

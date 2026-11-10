@@ -1,7 +1,7 @@
 -- 383_home_feature_flags.sql
 -- Flags públicos de funcionalidades del inicio (hoy: banner de Ofertas).
 --
--- Estado: PROPUESTA LOCAL. No aplicada en producción (requiere aprobación explícita).
+-- Estado: APLICADA en producción el 2026-11-10 (migración home_feature_flags). Flag home_offers_banner nace apagado.
 -- Rollback: 383_ROLLBACK_home_feature_flags.sql
 -- Verificación: 383_home_feature_flags_verify.sql
 --

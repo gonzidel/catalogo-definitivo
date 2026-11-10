@@ -1,6 +1,6 @@
 # 76 — Banner de Ofertas en el inicio (NJ) — 2026-11-10
 
-**Estado:** implementado en rama `feat/banner-ofertas-inicio`. Esa rama incluye el commit de producción de Cyber Monday (`feat/minimo-temporal-1`, `9ed65a5`) para que publicar este banner no lo saque. **Migración 383 NO aplicada en producción** (requiere aprobación). Nada publicado.
+**Estado:** publicado en NJ el 2026-11-10. `www.fylmoda.com.ar` = `dpl_BtjBDTx7HYPYTKFScAg5t9TZjdML` (commit `9f1e50e`, rama `feat/banner-ofertas-inicio`). La tabla `home_feature_flags` está aplicada y el flag `home_offers_banner` nació **apagado**: el banner no se ve hasta encender el check. El admin de Firebase **no** se publicó: `firebase login` estaba vencido. Rollback de NJ: promover `dpl_BfpRXaMPwW8vNHSJE3Dftosiza3R`. Rollback SQL: `383_ROLLBACK_home_feature_flags.sql`.
 **Clasificación:** TÉCNICA VERIFICADA (código y tests locales); la regla comercial ("qué cuenta como oferta destacada") es **NEGOCIO CONFIRMADO** por el responsable en esta sesión.
 **Relacionado:** [[42-HOME-BANNERS-FEED-NJ-2026-06-09]], [[64-TEMP-MINIMO-1-CYBER-MONDAY-2026-11-03]]. El banner de Ofertas queda arriba del Cyber Monday. En un checkout de `nj-main` pelado ese lugar muestra "compra mínima", porque el Cyber Monday no está en `nj-main`.
 
@@ -59,7 +59,7 @@ Como el flag nace apagado y el frontend falla cerrado, el orden entre 2 y 3 no r
 
 - `tsc --noEmit` limpio; `next build` OK (con env de prueba); 22/22 tests (`tsx --test`).
 - Vista previa local con datos reales de producción (lectura anónima, flag simulado): 24 tarjetas, primeras 5 = las 5 publicaciones más recientes (B6180, B6184, B6185, BA4, J25), sin círculos de color ni leyenda, altura real = altura reservada (178 px en móvil, sin CLS), "Ver todo" de 26 px y la llama a 13 px para que la franja de arriba no tape el carrusel. Con el check ausente el banner no aparece.
-- Sin probar aún: Preview de Vercel, escritura del toggle con sesión de admin real (depende de aplicar 383), medición GA en vivo.
+- Producción 2026-11-10: `www` sirve `dpl_BtjBDTx7HYPYTKFScAg5t9TZjdML`. El HTML trae Cyber Monday y no trae el banner de Ofertas (flag apagado). `/catalogo?sku=B6180` sigue redirigiendo a `/producto/B6180`. `nj-gonzidel` quedó en el mismo deploy. Falta publicar `admin/offers.html` + `offers.js` (Firebase pidió reauth).
 
 ## Deuda / observaciones
 

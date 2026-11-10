@@ -11493,7 +11493,7 @@ body.modal-open nextjs-portal {
   box-sizing: border-box;
   /* Mobile: mismo margen lateral que #info-banner-top-container (8px). */
   margin: 10px 8px 12px;
-  padding: 10px 0 12px 10px;
+  padding: 7px 0 10px 10px;
   border-radius: 16px;
   background: linear-gradient(135deg, #a31515 0%, #d62828 46%, #f26a2e 100%);
   box-shadow:
@@ -11523,32 +11523,32 @@ body.modal-open nextjs-portal {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
   margin-bottom: 8px;
-  padding: 0 10px 0 2px;
+  padding: 0 8px 0 2px;
 }
 
 .ofertas-banner__title {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   flex: 1;
   min-width: 0;
   margin: 0;
-  font-size: 21px;
-  line-height: 1.05;
+  font-size: 17px;
+  line-height: 1.1;
   font-weight: 900;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: #fff;
-  text-shadow: 0 2px 4px rgba(80, 0, 0, 0.35);
+  text-shadow: 0 1px 2px rgba(80, 0, 0, 0.3);
 }
 
 .ofertas-banner__fire {
   display: inline-block;
-  font-size: 24px;
+  font-size: 13px;
   line-height: 1;
-  transform-origin: 50% 90%;
+  transform-origin: 50% 80%;
   animation: ofertas-fire-flicker 1.6s ease-in-out infinite;
 }
 
@@ -11558,22 +11558,23 @@ body.modal-open nextjs-portal {
     transform: scale(1) rotate(-3deg);
   }
   50% {
-    transform: scale(1.14) rotate(3deg);
+    transform: scale(1.08) rotate(3deg);
   }
 }
 
 .ofertas-banner__ver-todo {
+  box-sizing: border-box;
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
-  min-height: 36px;
-  padding: 0 12px;
+  min-height: 26px;
+  padding: 0 8px;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.55);
   background: rgba(255, 255, 255, 0.18);
   color: #fff;
-  font-size: 13px;
-  font-weight: 800;
+  font-size: 11.5px;
+  font-weight: 700;
   line-height: 1;
   text-decoration: none;
   white-space: nowrap;
@@ -11618,12 +11619,12 @@ body.modal-open nextjs-portal {
 }
 
 .home-banner-slot.home-banner-slot--ofertas {
-  min-height: 196px;
+  min-height: 178px;
 }
 
 @media (max-width: 480px) {
   .ofertas-banner__title {
-    font-size: 19px;
+    font-size: 16px;
   }
 
   .ofertas-card__price {
@@ -11639,7 +11640,7 @@ body.modal-open nextjs-portal {
 
 @media (min-width: 769px) {
   .home-banner-slot.home-banner-slot--ofertas {
-    min-height: 212px;
+    min-height: 194px;
   }
 }
 

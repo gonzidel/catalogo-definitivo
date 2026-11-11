@@ -1,6 +1,6 @@
 // supabase/functions/search_profile_ai/index.ts
 // Genera perfiles de búsqueda (borrador) con OpenAI o Claude Vision.
-// Solo admins. No escribe products.description. Lote máx. 20.
+// Default OpenAI: gpt-6-luna (visión). Solo admins. No escribe products.description. Lote máx. 20.
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -128,9 +128,13 @@ function validateProfile(raw: unknown): ProfileOut {
 
 async function callOpenAI(prompt: string, imageUrls: string[]): Promise<{ profile: ProfileOut; model: string; costUsd: number }> {
   if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY no configurado");
+  const model = "gpt-6-luna";
   const content: Array<Record<string, unknown>> = [{ type: "text", text: prompt }];
   for (const url of imageUrls.slice(0, 4)) {
-    content.push({ type: "image_url", image_url: { url } });
+    content.push({
+      type: "image_url",
+      image_url: { url, detail: "high" },
+    });
   }
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -139,7 +143,9 @@ async function callOpenAI(prompt: string, imageUrls: string[]): Promise<{ profil
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "gpt-4o-mini",
+      model,
+      // Chat Completions + JSON estable: sin reasoning extendido.
+      reasoning_effort: "none",
       messages: [{ role: "user", content }],
       response_format: { type: "json_object" },
       max_tokens: 600,
@@ -149,10 +155,10 @@ async function callOpenAI(prompt: string, imageUrls: string[]): Promise<{ profil
   const data = await res.json();
   const text = data.choices?.[0]?.message?.content ?? "{}";
   const usage = data.usage ?? {};
-  // Estimación barata gpt-4o-mini
+  // gpt-6-luna standard: $0.10 / $0.50 por 1M tokens
   const costUsd =
-    ((usage.prompt_tokens ?? 0) * 0.15 + (usage.completion_tokens ?? 0) * 0.6) / 1_000_000;
-  return { profile: validateProfile(JSON.parse(text)), model: "gpt-4o-mini", costUsd };
+    ((usage.prompt_tokens ?? 0) * 0.1 + (usage.completion_tokens ?? 0) * 0.5) / 1_000_000;
+  return { profile: validateProfile(JSON.parse(text)), model, costUsd };
 }
 
 async function callClaude(prompt: string, imageUrls: string[]): Promise<{ profile: ProfileOut; model: string; costUsd: number }> {

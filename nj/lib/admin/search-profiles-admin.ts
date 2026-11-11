@@ -73,3 +73,133 @@ export async function bulkApproveSearchProfiles(productIds: string[]): Promise<n
   if (error) throw new Error(error.message);
   return data?.length ?? 0;
 }
+
+const BACKFILL_BATCH = 20;
+
+export interface GenerateMissingResult {
+  generated: number;
+  candidates: number;
+  errors: string[];
+  totalCostUsd: number;
+}
+
+/**
+ * Backfill controlado: productos con tag1+tag2, talles y foto, sin perfil.
+ * Lote máx. 20 (límite de la Edge).
+ */
+export async function generateMissingSearchProfiles(
+  limit = BACKFILL_BATCH
+): Promise<GenerateMissingResult> {
+  await requireSearchEdit();
+  const supabase = await createSupabaseServerClient();
+  const batchLimit = Math.min(Math.max(1, limit), BACKFILL_BATCH);
+
+  const { data: existingRows, error: existingErr } = await supabase
+    .from("product_search_profiles")
+    .select("product_id");
+  if (existingErr) throw new Error(existingErr.message);
+  const existing = new Set((existingRows ?? []).map((r) => r.product_id));
+
+  const { data: tagged, error: taggedErr } = await supabase
+    .from("product_tags")
+    .select("product_id, tag1_id, tag2_id, tag3_ids")
+    .not("tag1_id", "is", null)
+    .not("tag2_id", "is", null)
+    .limit(400);
+  if (taggedErr) throw new Error(taggedErr.message);
+
+  const candidates = (tagged ?? []).filter((t) => !existing.has(t.product_id));
+  const productsPayload: Array<{
+    product_id: string;
+    articulo: string;
+    category: string;
+    description: string | null;
+    tags: string[];
+    image_urls: string[];
+  }> = [];
+  const errors: string[] = [];
+
+  for (const row of candidates) {
+    if (productsPayload.length >= batchLimit) break;
+
+    const { data: product } = await supabase
+      .from("products")
+      .select("id, name, handle, category, description")
+      .eq("id", row.product_id)
+      .maybeSingle();
+    if (!product) continue;
+
+    const { data: variants } = await supabase
+      .from("product_variants")
+      .select("id")
+      .eq("product_id", row.product_id);
+    const variantIds = (variants ?? []).map((v) => v.id);
+    if (!variantIds.length) continue;
+
+    const [{ count: sizeCount }, { data: images }] = await Promise.all([
+      supabase
+        .from("variant_sizes")
+        .select("id", { count: "exact", head: true })
+        .in("variant_id", variantIds),
+      supabase
+        .from("variant_images")
+        .select("secure_url, url")
+        .in("variant_id", variantIds)
+        .order("is_main", { ascending: false })
+        .order("position", { ascending: true, nullsFirst: false })
+        .limit(4),
+    ]);
+    if (!sizeCount || sizeCount < 1) continue;
+
+    const image_urls = (images ?? [])
+      .map((img) => String(img.secure_url || img.url || "").trim())
+      .filter((u) => /^https:\/\//i.test(u))
+      .slice(0, 4);
+    if (!image_urls.length) continue;
+
+    const tagIds = [
+      row.tag1_id,
+      row.tag2_id,
+      ...((row.tag3_ids as string[] | null) ?? []),
+    ].filter(Boolean) as string[];
+    const { data: tagNames } = await supabase.from("tags").select("name").in("id", tagIds);
+    const articulo = String(product.name || product.handle || "").trim();
+    if (!articulo) continue;
+
+    productsPayload.push({
+      product_id: product.id,
+      articulo,
+      category: String(product.category || "Otros"),
+      description: product.description ?? null,
+      tags: (tagNames ?? []).map((t) => String(t.name)).filter(Boolean),
+      image_urls,
+    });
+  }
+
+  if (productsPayload.length === 0) {
+    return { generated: 0, candidates: candidates.length, errors: [], totalCostUsd: 0 };
+  }
+
+  const { data, error } = await supabase.functions.invoke("search_profile_ai", {
+    body: {
+      provider: "openai",
+      persist: true,
+      products: productsPayload,
+    },
+  });
+  if (error) throw new Error(error.message || "Error invocando search_profile_ai");
+
+  const results = Array.isArray(data?.results) ? data.results : [];
+  let generated = 0;
+  for (const r of results) {
+    if (r?.error) errors.push(`${r.articulo || "?"}: ${r.error}`);
+    else generated += 1;
+  }
+
+  return {
+    generated,
+    candidates: candidates.length,
+    errors,
+    totalCostUsd: Number(data?.total_cost_usd ?? 0),
+  };
+}

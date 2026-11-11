@@ -42,13 +42,21 @@
 - Piloto: `pilot-40.ts` + `pilot-run.ts` (dry-run; live tras approve).
 - Baseline `search_events`: SQL en `search-events-baseline.ts` (MCP caído; requiere JWT admin).
 
+## Auto-perfil IA (2026-11-11 noche)
+
+- Disparo al completar tags + talles + foto (primera vez, sin fila previa).
+- Default OpenAI: **`gpt-6-luna`** (visión). Claude Haiku queda como provider opcional.
+- Drafts → revisión en `/nj/admin/search/profiles` → solo `approved` al buscador.
+- Backfill: «Generar faltantes (20)».
+- **Prod:** Edge **search_profile_ai v2** con `gpt-6-luna` (redeploy 2026-11-11). Falta merge/deploy frontend de auto-perfil + backfill UI.
+
 ## Pendiente de aprobación producción
 
-1. Aplicar migración **409** (tabla perfiles).
-2. Deploy Edge Function **search_profile_ai**.
-3. (Opcional) migración **410** `result_mode` + `NEXT_PUBLIC_SEARCH_EVENTS_MODE=1`.
-4. Piloto 40 artículos OpenAI vs Claude → elegir proveedor → backfill drafts → revisión humana.
-5. Preview Vercel NJ → QA mobile → PR a `nj-main` → promote con autorización.
+1. ~~Aplicar migración **409**~~ (hecha).
+2. ~~Redeploy Edge **search_profile_ai** con `gpt-6-luna`~~ (v2 ACTIVE).
+3. ~~Migración **410**~~ (hecha); env Preview `SEARCH_EVENTS_MODE` según FE release.
+4. Commit/push frontend auto-perfil → Preview → backfill drafts vía admin «Generar faltantes» → revisión humana.
+5. QA mobile Preview → merge/promote con OK explícito.
 
 ## Riesgo / rollback
 

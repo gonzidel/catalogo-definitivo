@@ -35,8 +35,10 @@ export default async function SearchProfilesPage({
     <div className={styles.page}>
       <h1>Perfiles de búsqueda (IA)</h1>
       <p className={styles.muted}>
-        Borradores generados por IA. La descripción pública del producto no se modifica.
-        Solo <strong>approved</strong> entra al buscador.
+        Borradores generados por IA (modelo default <code>gpt-6-luna</code>) la primera vez que el
+        producto tiene tags + talles + foto. La descripción pública no se modifica. Solo{" "}
+        <strong>approved</strong> entra al buscador. Usá &quot;Generar faltantes&quot; para el
+        catálogo ya cargado.
       </p>
       <SearchProfilesQueue initialRows={rows} status={status} canEdit={canEdit} />
     </div>

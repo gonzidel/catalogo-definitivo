@@ -182,10 +182,11 @@ Motor adicional (cliente):
 
 Perfiles IA (no tocan `products.description`):
 
-- SQL: `supabase/canonical/409_product_search_profiles.sql` (**pendiente de aprobación**)
-- Edge: `search_profile_ai` (**pendiente de deploy**)
-- Admin: `/nj/admin/search/profiles`
-- Hook: `useSearchProfiles`
+- SQL: `supabase/canonical/409_product_search_profiles.sql` (**aplicada en prod**)
+- Edge: `search_profile_ai` (admin-only; default modelo **`gpt-6-luna`**)
+- Auto: al completar tags + talles + foto (`search-profile-auto`) → `draft`
+- Backfill: `/nj/admin/search/profiles` → «Generar faltantes (20)»
+- Hook: `useSearchProfiles` (solo `approved`)
 
 Ver: `docs/FYL-Obsidian/73-NJ-BUSCADOR-PREMIUM-AUDITORIA-PLAN-2026-11-11.md` y `docs/APROBACIONES_BUSCADOR_PREMIUM_2026-11-11.md`.
 

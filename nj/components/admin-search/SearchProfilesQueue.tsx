@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   bulkApproveSearchProfiles,
+  generateMissingSearchProfiles,
   setSearchProfileStatus,
 } from "@/lib/admin/search-profiles-admin";
 import type { SearchProfileRow } from "@/lib/search/search-profiles-types";
@@ -21,6 +22,7 @@ export default function SearchProfilesQueue({ initialRows, status, canEdit }: Pr
   const [selected, setSelected] = useState<string[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const [generating, setGenerating] = useState(false);
 
   function toggle(id: string) {
     setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
@@ -55,6 +57,25 @@ export default function SearchProfilesQueue({ initialRows, status, canEdit }: Pr
     refresh();
   }
 
+  async function generateMissing() {
+    if (!canEdit || generating) return;
+    setGenerating(true);
+    setMsg("Generando faltantes (máx. 20)…");
+    try {
+      const result = await generateMissingSearchProfiles(20);
+      const errTail =
+        result.errors.length > 0 ? ` Errores: ${result.errors.slice(0, 3).join(" | ")}` : "";
+      setMsg(
+        `Generados: ${result.generated} / candidatos listos en lote. Candidatos sin perfil revisados: ${result.candidates}. Costo ~$${result.totalCostUsd.toFixed(4)}.${errTail}`
+      );
+      refresh();
+    } catch (e) {
+      setMsg((e as Error).message || "Error generando faltantes");
+    } finally {
+      setGenerating(false);
+    }
+  }
+
   return (
     <div>
       <div className={styles.toolbar} style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
@@ -71,6 +92,16 @@ export default function SearchProfilesQueue({ initialRows, status, canEdit }: Pr
         {canEdit && (
           <button type="button" className={styles.btnAccent} disabled={pending || !selected.length} onClick={approveSelected}>
             Aprobar seleccionados ({selected.length})
+          </button>
+        )}
+        {canEdit && (
+          <button
+            type="button"
+            className={styles.ghostBtn}
+            disabled={pending || generating}
+            onClick={generateMissing}
+          >
+            {generating ? "Generando…" : "Generar faltantes (20)"}
           </button>
         )}
       </div>

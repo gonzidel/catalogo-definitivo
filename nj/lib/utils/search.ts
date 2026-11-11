@@ -17,11 +17,17 @@ import {
   scoreProductSearch,
   splitTagField,
 } from "@/lib/search/search-score";
-import { productIsPurchasable } from "@/lib/stock/catalog-availability";
+import { cascadeSearch, type CascadeResult } from "@/lib/search/cascade";
+import {
+  extractSizeIntent,
+  productHasAnySize,
+} from "@/lib/search/size-intent";
+import { buildSearchIndex } from "@/lib/search/search-index";
 import {
   EMPTY_SEARCH_DICTIONARY,
   type SearchDictionary,
 } from "@/lib/search/types";
+import { productIsPurchasable } from "@/lib/stock/catalog-availability";
 
 export { normalizeText } from "@/lib/search/normalize";
 export { classifyTokenMatch, tokenMatches } from "@/lib/search/match-quality";
@@ -34,28 +40,102 @@ export type {
   TokenMatchExplain,
   SearchBonusExplain,
 } from "@/lib/search/search-score";
+export type { CascadeResult, CascadeMode } from "@/lib/search/cascade";
+
+function rankForCascade(
+  products: GroupedProduct[],
+  query: string,
+  dict: SearchDictionary,
+  profileTermsByArticulo?: Map<string, string[]>
+) {
+  const resolved = resolveSearchQuery(query, dict);
+  if (resolved.resolvedTokens.filter((t) => t.length >= 2).length === 0) {
+    return [];
+  }
+  return rankSearchProducts(products, resolved, dict, profileTermsByArticulo);
+}
 
 // ─── Main search function ─────────────────────────────────────────────────────
+
+export function searchProductsDetailed(
+  products: GroupedProduct[],
+  term: string,
+  dict: SearchDictionary = EMPTY_SEARCH_DICTIONARY,
+  profileTermsByArticulo?: Map<string, string[]>
+): CascadeResult {
+  if (!term || term.trim().length < 2) {
+    return {
+      hits: [],
+      mode: "empty",
+      dropped: [],
+      suggestions: [],
+      effectiveQuery: term,
+    };
+  }
+
+  const sizeIntent = extractSizeIntent(term);
+  let pool = products;
+  if (sizeIntent.sizes.length > 0) {
+    pool = products.filter((p) => productHasAnySize(p, sizeIntent.sizes));
+  }
+
+  // Solo talle: devolver pool filtrado por talle (orden por recencia via rank vacío → slice)
+  if (sizeIntent.sizeOnly) {
+    const hits = pool.map((product) => ({
+      product,
+      breakdown: {
+        score: 0,
+        matches: [],
+        bonuses: [],
+        tieStock: product.hasAnyStock === true ? 1 : 0,
+        tieRecency: 0,
+      },
+    }));
+    hits.sort((a, b) => b.breakdown.tieStock - a.breakdown.tieStock);
+    return {
+      hits,
+      mode: hits.length ? "exact" : "empty",
+      dropped: [],
+      suggestions: [],
+      effectiveQuery: term,
+    };
+  }
+
+  const queryForText =
+    sizeIntent.contentTokens.length > 0
+      ? sizeIntent.contentTokens.join(" ")
+      : term;
+
+  // Warm index (autocomplete / futuras fases)
+  buildSearchIndex(pool);
+
+  return cascadeSearch(pool, queryForText, dict, (prods, q, d) =>
+    rankForCascade(prods, q, d, profileTermsByArticulo)
+  );
+}
 
 export function searchProducts(
   products: GroupedProduct[],
   term: string,
-  dict: SearchDictionary = EMPTY_SEARCH_DICTIONARY
+  dict: SearchDictionary = EMPTY_SEARCH_DICTIONARY,
+  profileTermsByArticulo?: Map<string, string[]>
 ): GroupedProduct[] {
   if (!term || term.trim().length < 2) return products;
-
-  const resolved = resolveSearchQuery(term, dict);
-  if (resolved.resolvedTokens.filter((t) => t.length >= 2).length === 0) {
-    return products;
+  const detailed = searchProductsDetailed(products, term, dict, profileTermsByArticulo);
+  if (detailed.hits.length === 0 && detailed.mode === "empty") {
+    // Compat: queries que no resuelven tokens (muy cortas post-stopword) → catálogo
+    const resolved = resolveSearchQuery(term, dict);
+    if (resolved.resolvedTokens.filter((t) => t.length >= 2).length === 0) {
+      return products;
+    }
   }
-
-  return rankSearchProducts(products, resolved, dict).map((hit) => hit.product);
+  return detailed.hits.map((h) => h.product);
 }
 
 // ─── Autocomplete suggestions ─────────────────────────────────────────────────
 
 export interface SearchSuggestion {
-  type: "product" | "tag" | "categoria";
+  type: "product" | "tag" | "categoria" | "combo";
   label: string;
   query: string;
   /**
@@ -65,6 +145,11 @@ export interface SearchSuggestion {
    * Tags y categorías sin ruta NUNCA llevan href: el SearchBar hace `?q=`.
    */
   href?: string;
+  /** Miniatura / precio para autocomplete premium (opcionales). */
+  thumb?: string | null;
+  price?: string | number | null;
+  count?: number;
+  subtitle?: string;
 }
 
 export function buildSuggestions(
@@ -115,17 +200,35 @@ export function buildSuggestions(
 
   const candidates: Array<{ s: SearchSuggestion; score: number }> = [];
 
+  const index = buildSearchIndex(products);
+
   for (const p of products) {
     const art = (p.Articulo ?? "").trim();
-    const artScore = Math.max(scoreLabel(art), scoreNormalized(normalizeText(art)));
+    const desc = (p.Descripcion ?? "").trim();
+    const displayLabel = desc || art;
+    const artScore = Math.max(
+      scoreLabel(art),
+      scoreLabel(displayLabel),
+      scoreNormalized(normalizeText(art)),
+      scoreNormalized(normalizeText(desc))
+    );
     if (art && artScore > 0 && !seen.has(`art:${art.toLowerCase()}`)) {
       seen.add(`art:${art.toLowerCase()}`);
+      const thumb =
+        typeof p.VariantePrincipal === "string"
+          ? p.VariantePrincipal
+          : p.VariantePrincipal && typeof p.VariantePrincipal === "object"
+            ? p.VariantePrincipal.secure_url || p.VariantePrincipal.url || null
+            : null;
       candidates.push({
         s: {
           type: "product",
-          label: art,
+          label: displayLabel,
           query: art,
           href: `/producto/${encodeURIComponent(art)}`,
+          thumb,
+          price: p.Precio,
+          subtitle: desc && art !== desc ? art : undefined,
         },
         score: artScore + 50,
       });
@@ -185,8 +288,28 @@ export function buildSuggestions(
         type: "tag",
         label: kw.displayLabel,
         query: kw.displayLabel,
+        count: index.typeCounts.get(kw.displayLabel),
       },
       score: 75,
+    });
+  }
+
+  // Combinaciones frecuentes tipo+color (sandalia negra)
+  for (const [combo, count] of index.comboCounts) {
+    if (count < 2) continue;
+    const cs = scoreNormalized(combo);
+    if (cs <= 0) continue;
+    const key = `combo:${combo}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    candidates.push({
+      s: {
+        type: "combo",
+        label: combo,
+        query: combo,
+        count,
+      },
+      score: cs + Math.min(count, 20),
     });
   }
 

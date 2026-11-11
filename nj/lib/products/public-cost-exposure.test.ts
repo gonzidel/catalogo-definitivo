@@ -164,7 +164,7 @@ test("PDP fuera del snapshot muestra el precio de variante, no el derivado del c
   }
 });
 
-test("búsqueda ampliada usa precio de variante y no pide costos", async () => {
+test("búsqueda ampliada OOS desactivada: stub vacío y allowlist sin costos", async () => {
   const { client, calls } = mockSupabase({
     products: [PRODUCT_ROW_WITH_COST],
     catalog_public_snapshot: [],
@@ -174,28 +174,14 @@ test("búsqueda ampliada usa precio de variante y no pide costos", async () => {
   });
 
   const results = await searchProductsIncludingOutOfStock(client, "ART", new Set());
-  assert.equal(results.length, 1);
-  const [product] = results;
-  assert.equal(product.Precio, "");
-  assert.equal(product.DetalleColor[0].Precio, 45_000);
-  assert.equal(cardDisplayPrice(product, product.DetalleColor[0]), formatARS(45_000));
-
-  for (const call of calls.filter((c) => c.table === "products")) {
-    assert.doesNotMatch(call.select ?? "", SENSITIVE_COLUMNS);
-  }
+  assert.equal(results.length, 0);
+  assert.doesNotMatch(PUBLIC_PRODUCT_SEARCH_SELECT, SENSITIVE_COLUMNS);
+  assert.equal(calls.filter((c) => c.table === "products").length, 0);
 });
 
-test("variante sin precio en búsqueda ampliada no expone el precio derivado del costo", async () => {
-  const { client } = mockSupabase({
-    products: [PRODUCT_ROW_WITH_COST],
-    catalog_public_snapshot: [],
-    product_variants: [variantRow(null)],
-    variant_images: [VARIANT_IMAGE],
-    colors: [],
-  });
-
-  const [product] = await searchProductsIncludingOutOfStock(client, "ART", new Set());
-  const color = product.DetalleColor[0];
+test("variante sin precio en card no expone el precio derivado del costo", () => {
+  const color = colorWithPrice("");
+  const product = productWithFallback("", color);
   assert.equal(color.Precio, "");
   assert.notEqual(cardDisplayPrice(product, color), formatARS(COST_DERIVED_PRICE));
   assert.equal(pdpDisplayPrice(product, color), "");

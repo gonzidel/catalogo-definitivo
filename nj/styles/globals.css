@@ -433,9 +433,14 @@ html[data-exp="full"] .exp-catalog-only {
   background: none;
   border: none;
   outline: none;
-  font-size: 13px;
-  padding: 8px 0;
+  /* 16px evita zoom automático en iOS */
+  font-size: 16px;
+  padding: 10px 0;
   color: #222;
+}
+
+.search-bar__input::-webkit-search-cancel-button {
+  display: none;
 }
 
 /* /nj tiene un solo input (id search-bar-mobile para BottomNav).
@@ -481,12 +486,64 @@ html[data-exp="full"] .exp-catalog-only {
   align-items: center;
   gap: 10px;
   width: 100%;
+  min-height: 44px;
   padding: 11px 14px;
   background: transparent;
   border: none;
   border-bottom: 1px solid #f5f5f5;
   cursor: pointer;
   text-align: left;
+}
+
+.search-suggest__thumb {
+  width: 40px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: 8px;
+  flex-shrink: 0;
+  background: #f3f3f3;
+}
+
+.search-suggest__subtitle {
+  display: block;
+  font-size: 11px;
+  color: #999;
+  font-weight: 400;
+  margin-top: 1px;
+}
+
+.search-suggest__meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.search-suggest__price {
+  font-size: 12px;
+  font-weight: 600;
+  color: #8a5a32;
+}
+
+.search-suggest__section-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #aaa;
+}
+
+.search-suggest__clear-recents {
+  border: none;
+  background: transparent;
+  color: #CD844D;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 4px 0;
 }
 
 .search-suggest__row.is-active,

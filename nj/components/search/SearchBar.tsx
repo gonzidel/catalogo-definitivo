@@ -6,14 +6,22 @@ import {
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { buildSuggestions, type SearchSuggestion } from "@/lib/utils/search";
 import { useSearchDictionary } from "@/hooks/useSearchDictionary";
+import { getCatalogProductsFromWindow } from "@/lib/search/search-index";
 import {
   noteUiSearchCommit,
   trackAutocompleteProductSelected,
   trackSuggestionSelected,
 } from "@/lib/search/search-analytics";
-import type { GroupedProduct } from "@/types/catalog";
+import {
+  loadRecentSearches,
+  pushRecentSearch,
+  clearRecentSearches,
+  type RecentSearch,
+} from "@/lib/search/recent-searches";
+import { formatARS } from "@/lib/utils/catalog";
 
 const SUGGEST_DEBOUNCE_MS = 280;
+const RECENT_KEY_HINT = "recent";
 
 const ICON_SEARCH = (
   <svg className="search-bar__icon" width="16" height="16" viewBox="0 0 24 24" fill="none"
@@ -32,17 +40,11 @@ const ICON_CLEAR = (
   </svg>
 );
 
-function getCatalogProducts(): GroupedProduct[] {
-  if (typeof window === "undefined") return [];
-  const bag = window as Window & { __fylProducts?: GroupedProduct[] };
-  return bag.__fylProducts ?? [];
-}
-
 function isHomeCatalogPath(pathname: string): boolean {
   return pathname === "/" || pathname === "/nj" || pathname === "/nj/";
 }
 
-function SuggestionIcon({ type }: { type: SearchSuggestion["type"] }) {
+function SuggestionIcon({ type }: { type: SearchSuggestion["type"] | "tag" }) {
   if (type === "product") {
     return (
       <svg className="search-suggest__icon search-suggest__icon--product" width="16" height="16" viewBox="0 0 24 24" fill="none"
@@ -79,9 +81,11 @@ function typeLabel(s: SearchSuggestion): string {
     case "product":
       return "Abrir producto";
     case "tag":
-      return "Buscar";
+      return s.count != null ? `${s.count}` : "Buscar";
     case "categoria":
       return s.href ? "Categoría" : "Buscar";
+    case "combo":
+      return s.count != null ? `${s.count}` : "Buscar";
     default: {
       const _exhaustive: never = s.type;
       return _exhaustive;
@@ -109,6 +113,7 @@ export default function SearchBar() {
 
   const [inputValue, setInputValue]     = useState(current);
   const [suggestions, setSuggestions]   = useState<SearchSuggestion[]>([]);
+  const [recents, setRecents]           = useState<RecentSearch[]>([]);
   const [showDropdown, setShowDropdown] = useState(false);
   const [highlighted, setHighlighted]   = useState(-1);
 
@@ -162,6 +167,8 @@ export default function SearchBar() {
     const params = new URLSearchParams(onHome ? searchParamsRef.current.toString() : "");
     if (q.length >= 2) {
       noteUiSearchCommit(q, dictionary);
+      pushRecentSearch(q);
+      setRecents(loadRecentSearches());
       params.set("q", q);
     } else {
       params.delete("q");
@@ -191,13 +198,14 @@ export default function SearchBar() {
     cancelSuggestTimer();
     debounceRef.current = setTimeout(() => {
       debounceRef.current = null;
-      const products = getCatalogProducts();
+      const products = getCatalogProductsFromWindow();
       if (val.trim().length >= 2 && products.length > 0) {
         setSuggestions(buildSuggestions(products, val, 7, dictionary));
         setShowDropdown(true);
       } else {
         setSuggestions([]);
-        setShowDropdown(false);
+        setShowDropdown(val.trim().length === 0 && loadRecentSearches().length > 0);
+        if (val.trim().length === 0) setRecents(loadRecentSearches());
       }
     }, SUGGEST_DEBOUNCE_MS);
   }, [cancelSuggestTimer, dictionary]);
@@ -255,6 +263,7 @@ export default function SearchBar() {
     }
   };
 
+  const showRecents = showDropdown && !inputValue.trim() && recents.length > 0;
   const hasSuggestions = showDropdown && suggestions.length > 0;
   const activeOptionId =
     hasSuggestions && highlighted >= 0
@@ -267,7 +276,8 @@ export default function SearchBar() {
         {ICON_SEARCH}
         <input
           ref={inputRef}
-          type="text"
+          type="search"
+          inputMode="search"
           className="search-bar-mobile search-bar__input"
           id="search-bar-mobile"
           placeholder="¿Qué buscás?"
@@ -276,14 +286,20 @@ export default function SearchBar() {
           enterKeyHint="search"
           role="combobox"
           aria-autocomplete="list"
-          aria-expanded={hasSuggestions}
+          aria-expanded={hasSuggestions || (showDropdown && recents.length > 0 && !inputValue)}
           aria-controls={listboxId}
           aria-activedescendant={activeOptionId}
           value={inputValue}
           onChange={onInput}
           onKeyDown={onKeyDown}
           onFocus={() => {
-            if (suggestions.length > 0) setShowDropdown(true);
+            if (suggestions.length > 0) {
+              setShowDropdown(true);
+              return;
+            }
+            const r = loadRecentSearches();
+            setRecents(r);
+            if (r.length > 0 && !inputValue.trim()) setShowDropdown(true);
           }}
         />
         {inputValue && (
@@ -298,45 +314,104 @@ export default function SearchBar() {
         )}
       </div>
 
-      {hasSuggestions && (
+      {(hasSuggestions || showRecents) && (
         <div className="search-suggest">
-          <div id={listboxId} className="search-suggest__list" role="listbox">
-            {suggestions.map((s, idx) => (
-              <button
-                key={`${s.type}-${s.label}`}
-                id={`${listboxId}-opt-${idx}`}
-                type="button"
-                role="option"
-                aria-selected={highlighted === idx}
-                className={[
-                  "search-suggest__row",
-                  highlighted === idx ? "is-active" : "",
-                  s.type === "product" ? "search-suggest__row--product" : "search-suggest__row--search",
-                ].filter(Boolean).join(" ")}
-                onMouseDown={(e) => { e.preventDefault(); applySuggestion(s, idx); }}
-              >
-                <SuggestionIcon type={s.type} />
-                <span className="search-suggest__label">
-                  {highlightMatch(s.label, inputValue)}
-                </span>
-                <span className="search-suggest__type">{typeLabel(s)}</span>
-              </button>
-            ))}
-          </div>
+          {showRecents && (
+            <div className="search-suggest__list" role="listbox" aria-label="Búsquedas recientes">
+              <div className="search-suggest__section-label">
+                Recientes
+                <button
+                  type="button"
+                  className="search-suggest__clear-recents"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    clearRecentSearches();
+                    setRecents([]);
+                    setShowDropdown(false);
+                  }}
+                >
+                  Borrar
+                </button>
+              </div>
+              {recents.map((r) => (
+                <button
+                  key={`${RECENT_KEY_HINT}-${r.q}`}
+                  type="button"
+                  role="option"
+                  className="search-suggest__row search-suggest__row--search"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    commitSearch(r.q);
+                  }}
+                >
+                  {ICON_SEARCH}
+                  <span className="search-suggest__label">{r.q}</span>
+                  <span className="search-suggest__type">Reciente</span>
+                </button>
+              ))}
+            </div>
+          )}
 
-          <button
-            type="button"
-            className="search-suggest__all"
-            onMouseDown={(e) => {
-              e.preventDefault();
-              commitSearch(inputValue);
-            }}
-          >
-            {ICON_SEARCH}
-            <span>
-              Buscar <strong>&ldquo;{inputValue}&rdquo;</strong> en todo el catálogo
-            </span>
-          </button>
+          {hasSuggestions && (
+            <>
+              <div id={listboxId} className="search-suggest__list" role="listbox">
+                {suggestions.map((s, idx) => (
+                  <button
+                    key={`${s.type}-${s.label}-${s.query}`}
+                    id={`${listboxId}-opt-${idx}`}
+                    type="button"
+                    role="option"
+                    aria-selected={highlighted === idx}
+                    className={[
+                      "search-suggest__row",
+                      highlighted === idx ? "is-active" : "",
+                      s.type === "product" ? "search-suggest__row--product" : "search-suggest__row--search",
+                    ].filter(Boolean).join(" ")}
+                    onMouseDown={(e) => { e.preventDefault(); applySuggestion(s, idx); }}
+                  >
+                    {s.type === "product" && s.thumb ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={s.thumb}
+                        alt=""
+                        className="search-suggest__thumb"
+                        width={40}
+                        height={40}
+                      />
+                    ) : (
+                      <SuggestionIcon type={s.type === "combo" ? "tag" : s.type} />
+                    )}
+                    <span className="search-suggest__label">
+                      {highlightMatch(s.label, inputValue)}
+                      {s.subtitle && (
+                        <span className="search-suggest__subtitle">{s.subtitle}</span>
+                      )}
+                    </span>
+                    <span className="search-suggest__meta">
+                      {s.type === "product" && s.price != null && s.price !== "" && (
+                        <span className="search-suggest__price">{formatARS(s.price)}</span>
+                      )}
+                      <span className="search-suggest__type">{typeLabel(s)}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                className="search-suggest__all"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  commitSearch(inputValue);
+                }}
+              >
+                {ICON_SEARCH}
+                <span>
+                  Buscar <strong>&ldquo;{inputValue}&rdquo;</strong> en todo el catálogo
+                </span>
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>

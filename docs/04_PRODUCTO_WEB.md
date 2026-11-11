@@ -62,6 +62,7 @@ API interna:
 - Tablas: `search_keywords`, `search_aliases`, `search_ignored_terms`, `search_events`.
 - Vista pública: `search_dictionary_public`.
 - El panel admin agrega analítica y mantenimiento; tags de catálogo y vocabulario de búsqueda son dominios separados.
+- **2026-11-11 (rama `feat/nj-buscador-premium`):** motor v2 con stem ES, cascade, talles, familias de color, índice cliente y bandera `NEXT_PUBLIC_SEARCH_V2`. Perfiles IA previstos en `product_search_profiles` (migración 409, pendiente de apply). Hub: `docs/FYL-Obsidian/73-NJ-BUSCADOR-PREMIUM-AUDITORIA-PLAN-2026-11-11.md`.
 
 ### Autenticación y autorización
 

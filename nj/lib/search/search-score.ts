@@ -6,6 +6,9 @@ import {
   type MatchQuality,
 } from "@/lib/search/match-quality";
 import { aliasesForCanonical } from "@/lib/search/dictionary";
+import { stemEsToken, tokensEqualStem } from "@/lib/search/stem-es";
+import { colorToFamilies } from "@/lib/search/color-families";
+import { allowSkuPrefix } from "@/lib/search/size-intent";
 import {
   EMPTY_SEARCH_DICTIONARY,
   type ResolvedSearchQuery,
@@ -21,6 +24,7 @@ export type SearchField =
   | "color"
   | "categoria"
   | "details"
+  | "profile"
   | "descripcion";
 
 export interface TokenMatchExplain {
@@ -62,6 +66,8 @@ export const FIELD_EXACT_SCORE: Record<SearchField, number> = {
   color: 560,
   categoria: 420,
   details: 360,
+  /** Perfil IA aprobado: menor que tags, mayor que descripción larga. */
+  profile: 300,
   descripcion: 200,
 };
 
@@ -74,8 +80,12 @@ const FIELD_PRIORITY: SearchField[] = [
   "color",
   "categoria",
   "details",
+  "profile",
   "descripcion",
 ];
+
+/** Bonus moderado de stock vendible (no solo tie-break). */
+const STOCK_SCORE_BONUS = 40;
 
 const PHRASE_IN_NOMBRE = 280;
 const PHRASE_IN_ARTICULO = 180;
@@ -137,11 +147,27 @@ export interface NormalizedSearchFields {
   color: string[];
   categoria: string[];
   details: string[];
+  profile: string[];
   recency: number;
 }
 
 function tokensOf(raw: string): string[] {
-  return tokenizeNormalized(normalizeText(raw)).filter((t) => t.length >= 2);
+  return expandWithStems(
+    tokenizeNormalized(normalizeText(raw)).filter((t) => t.length >= 2)
+  );
+}
+
+function expandWithStems(tokens: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const t of tokens) {
+    for (const v of [t, stemEsToken(t)]) {
+      if (!v || seen.has(v)) continue;
+      seen.add(v);
+      out.push(v);
+    }
+  }
+  return out;
 }
 
 function tokensFromTags(raw: string): string[] {
@@ -153,10 +179,13 @@ function tokensFromTags(raw: string): string[] {
       if (t.length >= 2) out.push(t);
     }
   }
-  return out;
+  return expandWithStems(out);
 }
 
-export function normalizeProductFields(product: GroupedProduct): NormalizedSearchFields {
+export function normalizeProductFields(
+  product: GroupedProduct,
+  profileTerms: string[] = []
+): NormalizedSearchFields {
   const articuloNorm = normalizeText(product.Articulo ?? "");
   const articuloCompact = compactSku(product.Articulo ?? "");
   const articulo = [articuloNorm, articuloCompact].filter(Boolean);
@@ -164,8 +193,20 @@ export function normalizeProductFields(product: GroupedProduct): NormalizedSearc
   const descNorm = normalizeText(product.Descripcion ?? "");
   const descTokens = tokenizeNormalized(descNorm).filter((t) => t.length >= 2);
   const treatAsTitle = descTokens.length <= NOMBRE_WORD_LIMIT;
-  const nombre = treatAsTitle ? descTokens : descTokens.slice(0, NOMBRE_HEAD_TOKENS);
-  const descripcion = treatAsTitle ? [] : descTokens.slice(NOMBRE_HEAD_TOKENS);
+  const nombre = expandWithStems(
+    treatAsTitle ? descTokens : descTokens.slice(0, NOMBRE_HEAD_TOKENS)
+  );
+  const descripcion = expandWithStems(
+    treatAsTitle ? [] : descTokens.slice(NOMBRE_HEAD_TOKENS)
+  );
+
+  const colorFamilies = Array.from(
+    new Set(
+      (product.DetalleColor ?? [])
+        .flatMap((d) => colorToFamilies(d.color ?? ""))
+        .filter((c) => c.length >= 2)
+    )
+  );
 
   return {
     articulo,
@@ -176,11 +217,12 @@ export function normalizeProductFields(product: GroupedProduct): NormalizedSearc
     filtro1: tokensFromTags(product.Filtro1 ?? ""),
     filtro2: tokensFromTags(product.Filtro2 ?? ""),
     filtro3: tokensFromTags(product.Filtro3 ?? ""),
-    color: (product.DetalleColor ?? [])
-      .map((d) => normalizeText(d.color ?? ""))
-      .filter((c) => c.length >= 2),
+    color: colorFamilies,
     categoria: tokensOf(product.Categoria ?? ""),
     details: tokensFromTags(product.DetallesSimilitud ?? ""),
+    profile: expandWithStems(
+      profileTerms.map((t) => normalizeText(t)).filter((t) => t.length >= 2)
+    ),
     recency: parseRecency(product.FechaPublicacion, product.FechaIngreso),
   };
 }
@@ -235,7 +277,15 @@ function bestMatchForToken(
 
     for (const ht of haystack) {
       for (const variant of variants) {
-        const quality = classifyTokenMatch(ht, variant, mode);
+        let quality: MatchQuality;
+        if (tokensEqualStem(ht, variant)) {
+          quality = "exact";
+        } else if (mode === "sku" && !allowSkuPrefix(variant) && ht !== variant) {
+          // Números cortos (38) no hacen prefix de SKU (380).
+          quality = ht === variant ? "exact" : "none";
+        } else {
+          quality = classifyTokenMatch(ht, variant, mode);
+        }
         if (quality === "none") continue;
         const score = fieldMatchScore(field, quality);
         if (!best || score > best.score) {
@@ -343,14 +393,19 @@ export function scoreProductSearch(
   }
 
   const bonuses = phraseBonuses(norm, resolved, tokens);
+  const stockBonus =
+    stockTie(product) > 0
+      ? [{ reason: "stock_sellable", score: STOCK_SCORE_BONUS }]
+      : [];
+  const allBonuses = [...bonuses, ...stockBonus];
   const score =
     matches.reduce((sum, m) => sum + m.score, 0) +
-    bonuses.reduce((sum, b) => sum + b.score, 0);
+    allBonuses.reduce((sum, b) => sum + b.score, 0);
 
   return {
     score,
     matches,
-    bonuses,
+    bonuses: allBonuses,
     tieStock: stockTie(product),
     tieRecency: norm.recency,
   };
@@ -380,11 +435,13 @@ export function compareSearchHits(a: ScoredSearchHit, b: ScoredSearchHit): numbe
 export function rankSearchProducts(
   products: GroupedProduct[],
   resolved: ResolvedSearchQuery,
-  dict: SearchDictionary = EMPTY_SEARCH_DICTIONARY
+  dict: SearchDictionary = EMPTY_SEARCH_DICTIONARY,
+  profileTermsByArticulo?: Map<string, string[]>
 ): ScoredSearchHit[] {
   const hits: ScoredSearchHit[] = [];
   for (const product of products) {
-    const fields = normalizeProductFields(product);
+    const profileTerms = profileTermsByArticulo?.get(product.Articulo) ?? [];
+    const fields = normalizeProductFields(product, profileTerms);
     const breakdown = scoreProductSearch(product, resolved, fields, dict);
     if (!breakdown) continue;
     hits.push({ product, breakdown });

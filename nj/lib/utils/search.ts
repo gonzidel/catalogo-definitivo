@@ -340,7 +340,9 @@ export function buildSuggestions(
   function keepSuggestion(s: SearchSuggestion): boolean {
     if (s.type === "product") return true;
     if (s.type === "categoria" && s.href) return true;
-    if (s.type === "tag" || s.type === "categoria") return hasPurchasableHit(s.query);
+    if (s.type === "tag" || s.type === "categoria" || s.type === "combo") {
+      return hasPurchasableHit(s.query);
+    }
     const _exhaustive: never = s.type;
     return _exhaustive;
   }

@@ -148,7 +148,7 @@ async function callOpenAI(prompt: string, imageUrls: string[]): Promise<{ profil
       reasoning_effort: "none",
       messages: [{ role: "user", content }],
       response_format: { type: "json_object" },
-      max_tokens: 600,
+      max_completion_tokens: 600,
     }),
   });
   if (!res.ok) throw new Error(`openai_${res.status}:${(await res.text()).slice(0, 200)}`);

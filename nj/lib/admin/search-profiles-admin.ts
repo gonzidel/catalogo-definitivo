@@ -74,6 +74,27 @@ export async function bulkApproveSearchProfiles(productIds: string[]): Promise<n
   return data?.length ?? 0;
 }
 
+/**
+ * Aprueba TODOS los perfiles en draft de una sola vez (sin tener que
+ * seleccionarlos uno por uno). Pensado para cuando hay muchos pendientes.
+ */
+export async function approveAllDraftSearchProfiles(): Promise<number> {
+  const ctx = await requireSearchEdit();
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("product_search_profiles")
+    .update({
+      status: "approved",
+      reviewed_by: ctx.userId,
+      reviewed_at: new Date().toISOString(),
+      review_note: "aprobación masiva manual",
+    })
+    .eq("status", "draft")
+    .select("product_id");
+  if (error) throw new Error(error.message);
+  return data?.length ?? 0;
+}
+
 const BACKFILL_BATCH = 20;
 // Perfil generado con esta confianza o más se aprueba solo (entra al buscador sin revisión manual).
 // Por debajo de esto queda en "draft" para que un admin lo revise a mano.

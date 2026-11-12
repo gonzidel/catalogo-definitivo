@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
+  approveAllDraftSearchProfiles,
   bulkApproveSearchProfiles,
   generateMissingSearchProfiles,
   setSearchProfileStatus,
@@ -57,6 +58,26 @@ export default function SearchProfilesQueue({ initialRows, status, canEdit }: Pr
     refresh();
   }
 
+  async function approveAll() {
+    if (!canEdit) return;
+    if (!window.confirm("¿Aprobar TODOS los borradores pendientes? Van a entrar al buscador público.")) {
+      return;
+    }
+    setGenerating(true);
+    setMsg("Aprobando todos los borradores…");
+    try {
+      const n = await approveAllDraftSearchProfiles();
+      setMsg(`Aprobados en lote: ${n}.`);
+      setSelected([]);
+      if (status === "draft") setRows([]);
+      refresh();
+    } catch (e) {
+      setMsg((e as Error).message || "Error aprobando todos");
+    } finally {
+      setGenerating(false);
+    }
+  }
+
   const ROUNDS_PER_CLICK = 10; // 10 rondas x 20 = hasta 200 productos por clic
 
   async function generateMissing() {
@@ -106,6 +127,11 @@ export default function SearchProfilesQueue({ initialRows, status, canEdit }: Pr
         {canEdit && (
           <button type="button" className={styles.btnAccent} disabled={pending || !selected.length} onClick={approveSelected}>
             Aprobar seleccionados ({selected.length})
+          </button>
+        )}
+        {canEdit && (
+          <button type="button" className={styles.btnAccent} disabled={pending || generating} onClick={approveAll}>
+            Aprobar TODOS los borradores
           </button>
         )}
         {canEdit && (

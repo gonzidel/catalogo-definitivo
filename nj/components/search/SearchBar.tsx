@@ -19,7 +19,7 @@ import {
   clearRecentSearches,
   type RecentSearch,
 } from "@/lib/search/recent-searches";
-import { isSearchHintDismissed, dismissSearchHint } from "@/lib/search/search-hint";
+import { isSearchHintDismissed, dismissSearchHint, launchStoriesMayOpen } from "@/lib/search/search-hint";
 import { formatARS } from "@/lib/utils/catalog";
 
 const SUGGEST_DEBOUNCE_MS = 280;
@@ -149,7 +149,52 @@ export default function SearchBar() {
   }, [current, pathname]);
 
   useEffect(() => {
-    if (!isSearchHintDismissed()) setShowHint(true);
+    if (isSearchHintDismissed()) return;
+
+    let cancelled = false;
+    let sawStories = false;
+    let revealTimer = 0;
+
+    function storiesOpen(): boolean {
+      return document.querySelector(".home-launch-onboarding") != null;
+    }
+
+    function reveal() {
+      if (cancelled || isSearchHintDismissed() || storiesOpen()) return;
+      cancelled = true;
+      window.clearInterval(interval);
+      window.clearTimeout(fallback);
+      setShowHint(true);
+    }
+
+    function tick() {
+      if (cancelled) return;
+      if (storiesOpen()) {
+        sawStories = true;
+        return;
+      }
+      if (sawStories) {
+        window.clearInterval(interval);
+        revealTimer = window.setTimeout(reveal, 450);
+        return;
+      }
+      if (!launchStoriesMayOpen()) {
+        window.clearInterval(interval);
+        revealTimer = window.setTimeout(reveal, 700);
+      }
+    }
+
+    const interval = window.setInterval(tick, 200);
+    const fallback = window.setTimeout(() => {
+      if (!storiesOpen()) reveal();
+    }, 4500);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      window.clearTimeout(revealTimer);
+      window.clearTimeout(fallback);
+    };
   }, []);
 
   const closeHint = useCallback(() => {
@@ -324,6 +369,16 @@ export default function SearchBar() {
       window.removeEventListener("resize", measure);
       window.removeEventListener("scroll", measure, true);
     };
+  }, [hintActive]);
+
+  useEffect(() => {
+    if (!hintActive) return;
+    function onPointerDown() {
+      dismissSearchHint();
+      setShowHint(false);
+    }
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => document.removeEventListener("pointerdown", onPointerDown, true);
   }, [hintActive]);
 
   const activeOptionId =

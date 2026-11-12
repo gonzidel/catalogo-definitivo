@@ -476,7 +476,7 @@ html[data-exp="full"] .exp-catalog-only {
    pointer-events:none para no bloquear taps sobre lo que hay debajo. */
 .search-hint-spotlight {
   position: fixed;
-  z-index: 12070;
+  z-index: 11940;
   border-radius: 22px;
   box-shadow: 0 0 0 9999px rgba(12, 9, 7, 0.66);
   pointer-events: none;
@@ -502,7 +502,7 @@ html[data-exp="full"] .exp-catalog-only {
   top: calc(100% + 16px);
   left: 50%;
   transform: translateX(-50%);
-  z-index: 12080;
+  z-index: 11950;
   width: max-content;
   max-width: 220px;
   background: #fff;

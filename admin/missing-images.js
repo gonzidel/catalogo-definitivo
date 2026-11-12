@@ -1,5 +1,6 @@
 ﻿// admin/missing-images.js
 import { supabase, supabaseReady } from "../scripts/supabase-client.js?v=m260607";
+import { maybeGenerateSearchProfileForVariant } from "./search-profile-auto.js?v=m260607";
 
 console.log("🔧 missing-images.js cargado");
 
@@ -538,6 +539,7 @@ async function uploadImagesToCloudinary(variantId, files, category, skuBase, col
     } else {
       console.log(`✅ ${imagesPayload.length} imagen(es) guardada(s) en variant_images`);
       showStatus(`✅ ${successCount} imagen(es) subida(s) y guardada(s) correctamente`, "ok");
+      void maybeGenerateSearchProfileForVariant(variantId);
       
       // Solo refrescar si se solicita (no refrescar cuando se llama desde saveProductImages)
       if (refreshAfter) {

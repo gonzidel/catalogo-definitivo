@@ -1,6 +1,7 @@
 ﻿// admin/variant-image-upload.js — subida de imágenes de variante (misma lógica que products.js)
 import { supabase } from "../scripts/supabase-client.js?v=m260607";
 import { preloadAuthState, can, isAdminUser } from "./auth-state.js?v=m260607";
+import { maybeGenerateSearchProfile } from "./search-profile-auto.js?v=m260607";
 
 const MAX_IMAGES = 10;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -244,6 +245,7 @@ export async function uploadVariantImages({
   }
 
   if (productId) {
+    void maybeGenerateSearchProfile(productId);
     await tryActivateProductIfStockAndImages(productId, variantId);
   }
 

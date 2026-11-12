@@ -44,6 +44,25 @@ function jsonResponse(status: number, body: Record<string, unknown>): Response {
   });
 }
 
+async function isValidBackfillToken(req: Request): Promise<boolean> {
+  const token = req.headers.get("x-backfill-token");
+  if (!token) return false;
+  const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+  if (!supabaseUrl || !serviceKey) return false;
+  const admin = createClient(supabaseUrl, serviceKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  const { data } = await admin
+    .from("internal_service_tokens")
+    .select("token")
+    .eq("token", token)
+    .eq("purpose", "search_profile_backfill")
+    .gt("expires_at", new Date().toISOString())
+    .maybeSingle();
+  return !!data;
+}
+
 async function rejectIfNotAdmin(req: Request): Promise<Response | null> {
   const authHeader = req.headers.get("authorization") ?? "";
   if (!authHeader.toLowerCase().startsWith("bearer ")) {
@@ -219,7 +238,7 @@ serve(async (req) => {
   }
 
   try {
-    const denied = await rejectIfNotAdmin(req);
+    const denied = (await isValidBackfillToken(req)) ? null : await rejectIfNotAdmin(req);
     if (denied) return denied;
 
     const body = await req.json();

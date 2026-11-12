@@ -1,8 +1,17 @@
-const STORAGE_KEY = "fyl_search_hint_v1";
+const STORAGE_KEY = "fyl_search_hint_v2";
+
+/** Una vez cada 3 días, y solo dentro de los 9 días desde la primera vez. */
+const GAP_MS = 3 * 24 * 60 * 60 * 1000;
+const WINDOW_MS = 9 * 24 * 60 * 60 * 1000;
 
 const LAUNCH_DISMISS_KEY = "fyl-nj-launch-onboarding-dismissed-v1";
 const LAUNCH_VIEW_COUNT_KEY = "fyl-nj-launch-onboarding-view-count-v1";
 const LAUNCH_MAX_AUTO_VIEWS = 3;
+
+type HintSchedule = {
+  firstAt: number;
+  lastShownAt: number;
+};
 
 /**
  * Las historias de novedades (HomeLaunchOnboarding) se abren solas ~1.2s
@@ -21,24 +30,44 @@ export function launchStoriesMayOpen(): boolean {
   }
 }
 
-/**
- * Aviso chico de "buscador mejorado" debajo de la barra de busqueda.
- * Se oculta para siempre apenas el cliente lo cierra o hace una
- * busqueda real (ya descubrio que funciona).
- */
-export function isSearchHintDismissed(): boolean {
-  if (typeof window === "undefined") return true;
+function readSchedule(): HintSchedule | null {
+  if (typeof window === "undefined") return null;
   try {
-    return window.localStorage.getItem(STORAGE_KEY) === "1";
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw) as Partial<HintSchedule>;
+    if (typeof data.firstAt !== "number" || typeof data.lastShownAt !== "number") return null;
+    if (!Number.isFinite(data.firstAt) || !Number.isFinite(data.lastShownAt)) return null;
+    return { firstAt: data.firstAt, lastShownAt: data.lastShownAt };
   } catch {
-    return true;
+    return null;
   }
 }
 
-export function dismissSearchHint(): void {
+/**
+ * El aviso sale la primera vez, otra vez recién a los 3 días, y deja de
+ * existir 9 días después de esa primera vez.
+ */
+export function canShowSearchHint(): boolean {
+  if (typeof window === "undefined") return false;
+  const schedule = readSchedule();
+  if (!schedule) return true;
+  const now = Date.now();
+  if (now - schedule.firstAt >= WINDOW_MS) return false;
+  if (now - schedule.lastShownAt < GAP_MS) return false;
+  return true;
+}
+
+/** Anota que el aviso se mostró. La primera vez arranca la ventana de 9 días. */
+export function markSearchHintShown(): void {
   if (typeof window === "undefined") return;
+  const now = Date.now();
+  const schedule = readSchedule();
+  const next: HintSchedule = schedule
+    ? { firstAt: schedule.firstAt, lastShownAt: now }
+    : { firstAt: now, lastShownAt: now };
   try {
-    window.localStorage.setItem(STORAGE_KEY, "1");
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
   } catch {
     /* private mode */
   }

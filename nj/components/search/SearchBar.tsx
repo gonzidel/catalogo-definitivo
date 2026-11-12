@@ -19,7 +19,7 @@ import {
   clearRecentSearches,
   type RecentSearch,
 } from "@/lib/search/recent-searches";
-import { isSearchHintDismissed, dismissSearchHint, launchStoriesMayOpen } from "@/lib/search/search-hint";
+import { canShowSearchHint, markSearchHintShown, launchStoriesMayOpen } from "@/lib/search/search-hint";
 import { formatARS } from "@/lib/utils/catalog";
 
 const SUGGEST_DEBOUNCE_MS = 280;
@@ -149,7 +149,7 @@ export default function SearchBar() {
   }, [current, pathname]);
 
   useEffect(() => {
-    if (isSearchHintDismissed()) return;
+    if (!canShowSearchHint()) return;
 
     let cancelled = false;
     let sawStories = false;
@@ -160,10 +160,11 @@ export default function SearchBar() {
     }
 
     function reveal() {
-      if (cancelled || isSearchHintDismissed() || storiesOpen()) return;
+      if (cancelled || !canShowSearchHint() || storiesOpen()) return;
       cancelled = true;
       window.clearInterval(interval);
       window.clearTimeout(fallback);
+      markSearchHintShown();
       setShowHint(true);
     }
 
@@ -198,7 +199,27 @@ export default function SearchBar() {
   }, []);
 
   const closeHint = useCallback(() => {
-    dismissSearchHint();
+    setShowHint(false);
+  }, []);
+
+  // El toque que cierra el aviso no puede seguir de largo y abrir lo que
+  // queda debajo (por ejemplo una categoría). Se traga el click que el
+  // navegador dispara después de sacar la capa.
+  const closeHintOnPress = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const block = (ev: Event) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+    };
+    document.addEventListener("pointerup", block, true);
+    document.addEventListener("click", block, true);
+    document.addEventListener("touchend", block, true);
+    window.setTimeout(() => {
+      document.removeEventListener("pointerup", block, true);
+      document.removeEventListener("click", block, true);
+      document.removeEventListener("touchend", block, true);
+    }, 800);
     setShowHint(false);
   }, []);
 
@@ -245,7 +266,6 @@ export default function SearchBar() {
       pushRecentSearch(q);
       setRecents(loadRecentSearches());
       params.set("q", q);
-      dismissSearchHint();
       setShowHint(false);
     } else {
       params.delete("q");
@@ -289,7 +309,6 @@ export default function SearchBar() {
 
   const applySuggestion = useCallback((s: SearchSuggestion, index: number) => {
     setInputValue(s.query);
-    dismissSearchHint();
     setShowHint(false);
     if (s.type === "product" && s.href) {
       trackAutocompleteProductSelected(inputValue, s.query, index + 1);
@@ -373,8 +392,21 @@ export default function SearchBar() {
 
   useEffect(() => {
     if (!hintActive) return;
-    function onPointerDown() {
-      dismissSearchHint();
+    function onPointerDown(e: PointerEvent) {
+      e.preventDefault();
+      e.stopPropagation();
+      const block = (ev: Event) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+      };
+      document.addEventListener("pointerup", block, true);
+      document.addEventListener("click", block, true);
+      document.addEventListener("touchend", block, true);
+      window.setTimeout(() => {
+        document.removeEventListener("pointerup", block, true);
+        document.removeEventListener("click", block, true);
+        document.removeEventListener("touchend", block, true);
+      }, 800);
       setShowHint(false);
     }
     document.addEventListener("pointerdown", onPointerDown, true);
@@ -388,7 +420,11 @@ export default function SearchBar() {
 
   return (
     <>
-    <div ref={containerRef} className="search-bar-inner">
+    <div
+      ref={containerRef}
+      className={`search-bar-inner${hintActive ? " search-bar-inner--hint" : ""}`}
+      onPointerDown={hintActive ? closeHintOnPress : undefined}
+    >
       <div className={`search-bar__field${hasSuggestions ? " is-open" : ""}${hintActive ? " search-bar__field--hint" : ""}`}>
         {ICON_SEARCH}
         <input
@@ -437,7 +473,11 @@ export default function SearchBar() {
           <button
             type="button"
             className="search-hint-float__close"
-            onClick={closeHint}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              closeHint();
+            }}
             aria-label="Cerrar aviso"
           >
             {ICON_CLEAR}
@@ -553,6 +593,13 @@ export default function SearchBar() {
       )}
     </div>
 
+    {hintActive && typeof document !== "undefined" && createPortal(
+      <div
+        className="search-hint-shield"
+        onPointerDown={closeHintOnPress}
+      />,
+      document.body
+    )}
     {hintActive && spotlightRect && typeof document !== "undefined" && createPortal(
       <div
         className="search-hint-spotlight"

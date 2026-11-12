@@ -470,16 +470,30 @@ html[data-exp="full"] .exp-catalog-only {
 
 /* ── Buscador: pulso + globito de aviso "nuevo buscador" ─────────────────── */
 
+/* Capa transparente que se queda con el toque. Si no, al cerrar el aviso
+   el click sigue y abre la categoría que queda debajo (por ejemplo lencería). */
+.search-hint-shield {
+  position: fixed;
+  inset: 0;
+  z-index: 11930;
+  background: transparent;
+  touch-action: manipulation;
+}
+
 /* Capa oscura de toda la pantalla con un "agujero" recortado (box-shadow
    gigante) exactamente sobre la barra de busqueda + el aviso, para que
    el resto del inicio quede atenuado y resalten solo esos dos elementos.
-   pointer-events:none para no bloquear taps sobre lo que hay debajo. */
+   No recibe toques: los agarra el shield, o la barra si está encima. */
 .search-hint-spotlight {
   position: fixed;
   z-index: 11940;
   border-radius: 22px;
   box-shadow: 0 0 0 9999px rgba(12, 9, 7, 0.66);
   pointer-events: none;
+}
+
+.search-bar-inner--hint {
+  z-index: 11950;
 }
 
 @keyframes fyl-hint-ring {

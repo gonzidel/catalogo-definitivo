@@ -510,6 +510,9 @@ html[data-exp="full"] .exp-catalog-only {
   color: #999;
   font-weight: 400;
   margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .search-suggest__meta {
@@ -575,6 +578,13 @@ html[data-exp="full"] .exp-catalog-only {
   color: #222;
   font-weight: 500;
   min-width: 0;
+}
+
+.search-suggest__label-text {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .search-suggest__type {

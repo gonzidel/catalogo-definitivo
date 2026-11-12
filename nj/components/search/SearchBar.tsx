@@ -382,7 +382,9 @@ export default function SearchBar() {
                       <SuggestionIcon type={s.type === "combo" ? "tag" : s.type} />
                     )}
                     <span className="search-suggest__label">
-                      {highlightMatch(s.label, inputValue)}
+                      <span className="search-suggest__label-text">
+                        {highlightMatch(s.label, inputValue)}
+                      </span>
                       {s.subtitle && (
                         <span className="search-suggest__subtitle">{s.subtitle}</span>
                       )}

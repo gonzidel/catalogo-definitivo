@@ -45,6 +45,20 @@ function isHomeCatalogPath(pathname: string): boolean {
   return pathname === "/" || pathname === "/nj" || pathname === "/nj/";
 }
 
+const ICON_CURLY_ARROW = (
+  <svg className="search-hint-float__arrow" viewBox="0 0 40 36" fill="none"
+    xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <path
+      d="M5 26c-2-10 4-19 13-19 5 0 8 3 7 7-1 3-5 4-6 1-1-2 1-4 3-3"
+      stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" fill="none"
+    />
+    <path
+      d="M21 7l1 7-7-1"
+      stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" fill="none"
+    />
+  </svg>
+);
+
 function SuggestionIcon({ type }: { type: SearchSuggestion["type"] | "tag" }) {
   if (type === "product") {
     return (
@@ -280,6 +294,7 @@ export default function SearchBar() {
 
   const showRecents = showDropdown && !inputValue.trim() && recents.length > 0;
   const hasSuggestions = showDropdown && suggestions.length > 0;
+  const hintActive = showHint && !inputValue.trim() && !hasSuggestions && !showRecents;
   const activeOptionId =
     hasSuggestions && highlighted >= 0
       ? `${listboxId}-opt-${highlighted}`
@@ -287,7 +302,7 @@ export default function SearchBar() {
 
   return (
     <div ref={containerRef} className="search-bar-inner">
-      <div className={`search-bar__field${hasSuggestions ? " is-open" : ""}`}>
+      <div className={`search-bar__field${hasSuggestions ? " is-open" : ""}${hintActive ? " search-bar__field--hint" : ""}`}>
         {ICON_SEARCH}
         <input
           ref={inputRef}
@@ -329,19 +344,21 @@ export default function SearchBar() {
         )}
       </div>
 
-      {showHint && !inputValue.trim() && !hasSuggestions && !showRecents && (
-        <div className="search-hint">
-          <span className="search-hint__text">
-            🔍 Nuevo: buscá por color, tela u ocasión, no hace falta el nombre exacto
-          </span>
+      {hintActive && (
+        <div className="search-hint-float">
+          {ICON_CURLY_ARROW}
           <button
             type="button"
-            className="search-hint__close"
+            className="search-hint-float__close"
             onClick={closeHint}
             aria-label="Cerrar aviso"
           >
             {ICON_CLEAR}
           </button>
+          <p className="search-hint-float__title">Mejoramos el buscador, probalo</p>
+          <p className="search-hint-float__example">
+            Ej: <strong>zapatilla deportiva</strong>
+          </p>
         </div>
       )}
 

@@ -140,6 +140,29 @@ export default function SearchAdminDashboard({
 
       <section className={extra.section}>
         <div className={shared.sectionHead}>
+          <h2 className={shared.sectionTitle}>Lo más buscado</h2>
+          <DayTabs days={data.days} />
+        </div>
+        <p className={shared.subtitle}>
+          Lo que las clientas escribieron y buscaron, de lo más repetido a lo menos, en los últimos {data.days} días.
+        </p>
+        {data.topSearches.length === 0 ? (
+          <p className={shared.empty}>
+            Todavía no hay búsquedas en los últimos {data.days} días.
+          </p>
+        ) : (
+          <QueryTable
+            rows={data.topSearches}
+            canEdit={false}
+            pending={pending}
+            onAddAlias={() => {}}
+            onIgnore={() => {}}
+          />
+        )}
+      </section>
+
+      <section className={extra.section}>
+        <div className={shared.sectionHead}>
           <h2 className={shared.sectionTitle}>Oportunidades · sin resultados</h2>
           <DayTabs days={data.days} />
         </div>

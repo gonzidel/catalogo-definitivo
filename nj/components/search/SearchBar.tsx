@@ -484,7 +484,7 @@ export default function SearchBar() {
           </button>
           <p className="search-hint-float__title">Mejoramos el buscador, probalo</p>
           <p className="search-hint-float__example">
-            Ej: <strong>zapatilla deportiva</strong>
+            Ej: <strong>sandalias de fiesta</strong>
           </p>
         </div>
       )}

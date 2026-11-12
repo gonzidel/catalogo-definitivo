@@ -86,6 +86,7 @@ export type SearchAdminDashboard = {
   keywords: SearchKeywordListItem[];
   zeroResults: GroupedSearchQuery[];
   lowResults: GroupedSearchQuery[];
+  topSearches: GroupedSearchQuery[];
   candidates: GroupedSearchQuery[];
   ignored: IgnoredSearchTerm[];
   lookup: SearchVocabLookup;
@@ -211,7 +212,7 @@ async function loadIdentityUsage(
 async function loadGroupedQueries(
   supabase: SupabaseClient,
   days: number,
-  mode: "zero" | "low" | "unresolved"
+  mode: "zero" | "low" | "unresolved" | "top"
 ): Promise<GroupedSearchQuery[]> {
   const { data, error } = await supabase.rpc("search_admin_grouped_queries", {
     p_days: days,
@@ -281,6 +282,7 @@ export async function loadSearchAdminDashboard(
     identity,
     zeroRaw,
     lowRaw,
+    topRaw,
     unresolvedRaw,
     ignoredRes,
   ] = await Promise.all([
@@ -292,6 +294,7 @@ export async function loadSearchAdminDashboard(
     loadIdentityUsage(supabase, 30),
     loadGroupedQueries(supabase, days, "zero"),
     loadGroupedQueries(supabase, days, "low"),
+    loadGroupedQueries(supabase, days, "top"),
     loadGroupedQueries(supabase, days, "unresolved"),
     supabase
       .from("search_ignored_terms")
@@ -351,6 +354,7 @@ export async function loadSearchAdminDashboard(
   const dictTerms = knownTerms(lookup);
   const zeroResults = attachRelated(zeroRaw, lookup);
   const lowResults = attachRelated(lowRaw, lookup);
+  const topSearches = attachRelated(topRaw, lookup);
   const candidates = attachRelated(
     unresolvedRaw.filter(
       (row) => !ignoredSet.has(row.queryNormalized) && !dictTerms.has(row.queryNormalized)
@@ -363,6 +367,7 @@ export async function loadSearchAdminDashboard(
     keywords,
     zeroResults,
     lowResults,
+    topSearches,
     candidates,
     ignored,
     lookup,

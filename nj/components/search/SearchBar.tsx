@@ -354,6 +354,20 @@ export default function SearchBar() {
 
           {hasSuggestions && (
             <>
+              <button
+                type="button"
+                className="search-suggest__all search-suggest__all--top"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  commitSearch(inputValue);
+                }}
+              >
+                {ICON_SEARCH}
+                <span>
+                  Ver todos los resultados de <strong>&ldquo;{inputValue}&rdquo;</strong>
+                </span>
+              </button>
+
               <div id={listboxId} className="search-suggest__list" role="listbox">
                 {suggestions.map((s, idx) => (
                   <button
@@ -398,20 +412,6 @@ export default function SearchBar() {
                   </button>
                 ))}
               </div>
-
-              <button
-                type="button"
-                className="search-suggest__all"
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  commitSearch(inputValue);
-                }}
-              >
-                {ICON_SEARCH}
-                <span>
-                  Buscar <strong>&ldquo;{inputValue}&rdquo;</strong> en todo el catálogo
-                </span>
-              </button>
             </>
           )}
         </div>

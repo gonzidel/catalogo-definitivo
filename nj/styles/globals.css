@@ -616,6 +616,18 @@ html[data-exp="full"] .exp-catalog-only {
   color: #888;
 }
 
+.search-suggest__all--top {
+  background: #FFF5EE;
+  border-bottom: 1px solid #f0e8df;
+  font-size: 13px;
+  font-weight: 600;
+  color: #8a5a32;
+}
+
+.search-suggest__all--top .search-bar__icon {
+  color: #CD844D;
+}
+
 .search-suggest__all strong {
   color: #CD844D;
   font-weight: 600;

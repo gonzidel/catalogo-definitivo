@@ -75,9 +75,13 @@ export async function bulkApproveSearchProfiles(productIds: string[]): Promise<n
 }
 
 const BACKFILL_BATCH = 20;
+// Perfil generado con esta confianza o más se aprueba solo (entra al buscador sin revisión manual).
+// Por debajo de esto queda en "draft" para que un admin lo revise a mano.
+const AUTO_APPROVE_CONFIDENCE = 0.75;
 
 export interface GenerateMissingResult {
   generated: number;
+  autoApproved: number;
   candidates: number;
   errors: string[];
   totalCostUsd: number;
@@ -85,12 +89,12 @@ export interface GenerateMissingResult {
 
 /**
  * Backfill controlado: productos con tag1+tag2, talles y foto, sin perfil.
- * Lote máx. 20 (límite de la Edge).
+ * Lote máx. 20 (límite de la Edge). Los de alta confianza se auto-aprueban.
  */
 export async function generateMissingSearchProfiles(
   limit = BACKFILL_BATCH
 ): Promise<GenerateMissingResult> {
-  await requireSearchEdit();
+  const ctx = await requireSearchEdit();
   const supabase = await createSupabaseServerClient();
   const batchLimit = Math.min(Math.max(1, limit), BACKFILL_BATCH);
 
@@ -177,7 +181,7 @@ export async function generateMissingSearchProfiles(
   }
 
   if (productsPayload.length === 0) {
-    return { generated: 0, candidates: candidates.length, errors: [], totalCostUsd: 0 };
+    return { generated: 0, autoApproved: 0, candidates: candidates.length, errors: [], totalCostUsd: 0 };
   }
 
   const { data, error } = await supabase.functions.invoke("search_profile_ai", {
@@ -191,13 +195,37 @@ export async function generateMissingSearchProfiles(
 
   const results = Array.isArray(data?.results) ? data.results : [];
   let generated = 0;
+  const highConfidenceIds: string[] = [];
   for (const r of results) {
-    if (r?.error) errors.push(`${r.articulo || "?"}: ${r.error}`);
-    else generated += 1;
+    if (r?.error) {
+      errors.push(`${r.articulo || "?"}: ${r.error}`);
+      continue;
+    }
+    generated += 1;
+    if (r?.product_id && typeof r.confidence === "number" && r.confidence >= AUTO_APPROVE_CONFIDENCE) {
+      highConfidenceIds.push(r.product_id as string);
+    }
+  }
+
+  let autoApproved = 0;
+  if (highConfidenceIds.length > 0) {
+    const { data: approvedRows, error: approveErr } = await supabase
+      .from("product_search_profiles")
+      .update({
+        status: "approved",
+        reviewed_by: ctx.userId,
+        reviewed_at: new Date().toISOString(),
+        review_note: `auto: confianza IA >= ${AUTO_APPROVE_CONFIDENCE}`,
+      })
+      .in("product_id", highConfidenceIds)
+      .eq("status", "draft")
+      .select("product_id");
+    if (!approveErr) autoApproved = approvedRows?.length ?? 0;
   }
 
   return {
     generated,
+    autoApproved,
     candidates: candidates.length,
     errors,
     totalCostUsd: Number(data?.total_cost_usd ?? 0),

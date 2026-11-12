@@ -57,16 +57,30 @@ export default function SearchProfilesQueue({ initialRows, status, canEdit }: Pr
     refresh();
   }
 
+  const ROUNDS_PER_CLICK = 10; // 10 rondas x 20 = hasta 200 productos por clic
+
   async function generateMissing() {
     if (!canEdit || generating) return;
     setGenerating(true);
-    setMsg("Generando faltantes (máx. 20)…");
+    let totalGenerated = 0;
+    let totalAutoApproved = 0;
+    let totalCost = 0;
+    const allErrors: string[] = [];
     try {
-      const result = await generateMissingSearchProfiles(20);
-      const errTail =
-        result.errors.length > 0 ? ` Errores: ${result.errors.slice(0, 3).join(" | ")}` : "";
+      for (let round = 1; round <= ROUNDS_PER_CLICK; round++) {
+        setMsg(`Generando… ronda ${round}/${ROUNDS_PER_CLICK} (hasta ${ROUNDS_PER_CLICK * 20} productos por clic)`);
+        const result = await generateMissingSearchProfiles(20);
+        totalGenerated += result.generated;
+        totalAutoApproved += result.autoApproved;
+        totalCost += result.totalCostUsd;
+        allErrors.push(...result.errors);
+        // Nada más para procesar en este lote: cortar el loop antes de las rondas restantes.
+        if (result.generated === 0 && result.errors.length === 0) break;
+      }
+      const errTail = allErrors.length > 0 ? ` Errores: ${allErrors.slice(0, 3).join(" | ")}` : "";
+      const necesitaRevision = totalGenerated - totalAutoApproved;
       setMsg(
-        `Generados: ${result.generated} / candidatos listos en lote. Candidatos sin perfil revisados: ${result.candidates}. Costo ~$${result.totalCostUsd.toFixed(4)}.${errTail}`
+        `Listo: ${totalGenerated} generados. De esos, ${totalAutoApproved} se aprobaron solos (alta confianza) y ${necesitaRevision} quedaron en "draft" para que revises a mano. Costo ~$${totalCost.toFixed(4)}.${errTail}`
       );
       refresh();
     } catch (e) {
@@ -101,7 +115,7 @@ export default function SearchProfilesQueue({ initialRows, status, canEdit }: Pr
             disabled={pending || generating}
             onClick={generateMissing}
           >
-            {generating ? "Generando…" : "Generar faltantes (20)"}
+            {generating ? "Generando…" : `Generar faltantes (hasta ${ROUNDS_PER_CLICK * 20})`}
           </button>
         )}
       </div>

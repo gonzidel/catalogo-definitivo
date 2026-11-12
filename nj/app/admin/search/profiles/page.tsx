@@ -37,8 +37,9 @@ export default async function SearchProfilesPage({
       <p className={styles.muted}>
         Borradores generados por IA (modelo default <code>gpt-6-luna</code>) la primera vez que el
         producto tiene tags + talles + foto. La descripción pública no se modifica. Solo{" "}
-        <strong>approved</strong> entra al buscador. Usá &quot;Generar faltantes&quot; para el
-        catálogo ya cargado.
+        <strong>approved</strong> entra al buscador. Los de alta confianza se aprueban solos; los
+        dudosos quedan en &quot;draft&quot; para revisar a mano. Usá &quot;Generar faltantes&quot;
+        para el catálogo ya cargado (cada clic procesa varios lotes).
       </p>
       <SearchProfilesQueue initialRows={rows} status={status} canEdit={canEdit} />
     </div>

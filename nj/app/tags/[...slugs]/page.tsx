@@ -5,6 +5,7 @@ import { getCatalogPage, hasActiveOfertas } from "@/lib/supabase/queries";
 import { isCollectionSlug } from "@/lib/banners/collections";
 import CatalogShell from "@/components/catalog/CatalogShell";
 import CatalogShellSkeleton from "@/components/catalog/CatalogShellSkeleton";
+import { getPublicMinCopy } from "@/lib/config/temp-order-min";
 
 export const revalidate = 300;
 
@@ -17,7 +18,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   const tags = slugs.map((s) => decodeURIComponent(s));
   return {
     title: `${tags.join(" · ")} — FYL Moda`,
-    description: `Catálogo mayorista filtrado por: ${tags.join(", ")}. Stock visible, compra mínima de 4 productos surtidos.`,
+    description: `Catálogo mayorista filtrado por: ${tags.join(", ")}. Stock visible, ${getPublicMinCopy().seoMinPhrase}.`,
     alternates: { canonical: `/tags/${slugs.join("/")}` },
   };
 }

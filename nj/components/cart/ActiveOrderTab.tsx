@@ -37,6 +37,10 @@ import {
   isLocalPickupTransport,
   isLocalPickupShortDeadlineZone,
 } from "@/lib/transport/shipping-helpers";
+import {
+  TEMP_MIN_ONE_ENABLED,
+  TEMP_RECOMMENDED_ALWAYS_ON,
+} from "@/lib/config/temp-order-min";
 import { CATALOG_SOURCE } from "@/lib/utils/catalog";
 import { endExclusive, tryBeginExclusive } from "@/lib/cart/intra-tab-lock";
 import { clearCheckoutOperation } from "@/lib/cart/checkout-operation";
@@ -1926,7 +1930,7 @@ export default function ActiveOrderTab({
       return;
     }
 
-    if (remaining > 0 || totalItems < closeMinUnits) {
+    if (!TEMP_MIN_ONE_ENABLED && (remaining > 0 || totalItems < closeMinUnits)) {
       setShowMinInfo(true);
     }
   }
@@ -2903,12 +2907,9 @@ export default function ActiveOrderTab({
         </Link>
       )}
 
-      {/* Minimum progress — antes se mostraba con "!canSend", pero canSend
-          también es false cuando hay un producto sin stock aunque el mínimo
-          de 4 unidades ya esté cumplido: mostraba "9/4" con "0 unidades más"
-          y la barra de progreso se pasaba de 100% de ancho. El mínimo es
-          harina de otro costal — solo importa cuánto falta para las 4. */}
-      {!isLocalPickupZone && remaining > 0 && totalItems > 0 && (
+      {/* Minimum progress — oculto con TEMP_MIN_ONE_ENABLED (Cyber Monday).
+          Al revertir el flag vuelve a mostrarse. Los "4" fijos usan closeMinUnits. */}
+      {!TEMP_MIN_ONE_ENABLED && !isLocalPickupZone && remaining > 0 && totalItems > 0 && (
         <div className="active-order-min">
           <div className="active-order-min__header">
             <div className="active-order-min__label-row">
@@ -2923,7 +2924,7 @@ export default function ActiveOrderTab({
               </button>
             </div>
             <span className="active-order-min__count">
-              {totalItems} / 4 unidades
+              {totalItems} / {closeMinUnits} unidades
             </span>
           </div>
           {showMinInfo && (
@@ -2931,21 +2932,22 @@ export default function ActiveOrderTab({
               <strong>
                 ¿Qué es el mínimo del pedido?
               </strong>
-              Para poder preparar tu pedido necesitás un mínimo de <strong>4 unidades</strong>. Pueden ser productos completamente distintos — combiná tallas, colores y artículos como quieras. Lo importante es llegar a 4 en total.
+              Para poder preparar tu pedido necesitás un mínimo de <strong>{closeMinUnits} unidades</strong>. Pueden ser productos completamente distintos — combiná tallas, colores y artículos como quieras. Lo importante es llegar a {closeMinUnits} en total.
             </div>
           )}
           <div className="active-order-min__progress-wrap">
             <div className="active-order-min__track active-order-min__track--inline" />
-            {totalItems >= 2 && (
+            {totalItems >= 2 && closeMinUnits > 1 && (
               <div
                 className="active-order-min__fill"
-                style={{ width: `${((totalItems - 1) / 3) * 100}%` }}
+                style={{ width: `${((totalItems - 1) / (closeMinUnits - 1)) * 100}%` }}
               />
             )}
-            {([0, 1, 2, 3] as const).map((i) => {
+            {Array.from({ length: closeMinUnits }, (_, i) => {
               const filled = totalItems >= i + 1;
+              const denom = Math.max(1, closeMinUnits - 1);
               const posStyle: CSSProperties = {
-                left: `calc(7px + ${(i / 3) * 100}% - ${(i / 3) * 14}px)`,
+                left: `calc(7px + ${(i / denom) * 100}% - ${(i / denom) * 14}px)`,
               };
               return (
                 <div
@@ -2984,8 +2986,12 @@ export default function ActiveOrderTab({
           Zona local diferida (preparando o listo para retirar): recomendados
           para seguir sumando productos al pedido. */}
       {!isExpired && !hasMissing && (
-        (!isLocalPickupZone && !canSend && remaining > 0) ||
-        ((hideDeadlineUntilApartado || isLocalDeferredReady) && totalItems > 0)
+        TEMP_RECOMMENDED_ALWAYS_ON
+          ? totalItems > 0
+          : (
+            (!isLocalPickupZone && !canSend && remaining > 0) ||
+            ((hideDeadlineUntilApartado || isLocalDeferredReady) && totalItems > 0)
+          )
       ) && (
         <div className="active-order-carousel-wrap">
           <CartRecommendedCarousel

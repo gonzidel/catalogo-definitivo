@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 176 176" width="176" height="176" role="img" aria-hidden="true">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#141a2a"/>
+      <stop offset="55%" stop-color="#0d1220"/>
+      <stop offset="100%" stop-color="#1a1030"/>
+    </linearGradient>
+    <linearGradient id="neon" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#5ef0ff"/>
+      <stop offset="100%" stop-color="#ff4fd8"/>
+    </linearGradient>
+    <linearGradient id="bag" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f3e6d4"/>
+      <stop offset="100%" stop-color="#d9c2a4"/>
+    </linearGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="3.2" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <rect width="176" height="176" rx="36" fill="url(#bg)"/>
+  <circle cx="38" cy="42" r="3" fill="#5ef0ff" opacity="0.85"/>
+  <circle cx="142" cy="36" r="2.4" fill="#ff4fd8" opacity="0.9"/>
+  <circle cx="150" cy="128" r="2.2" fill="#CD844D" opacity="0.9"/>
+  <circle cx="28" cy="132" r="1.8" fill="#fff" opacity="0.55"/>
+  <!-- lightning -->
+  <path filter="url(#glow)" fill="url(#neon)" d="M98 22 L78 82 H96 L86 150 L124 68 H104 Z"/>
+  <!-- shopping bag -->
+  <path fill="url(#bag)" stroke="#CD844D" stroke-width="3" stroke-linejoin="round"
+        d="M52 78 h56 l6 62 H46 Z"/>
+  <path fill="none" stroke="#8a6a4a" stroke-width="4" stroke-linecap="round"
+        d="M66 78 c0-14 10-24 20-24 s20 10 20 24"/>
+  <!-- tiny cart wheel accents -->
+  <circle cx="58" cy="148" r="5" fill="#CD844D"/>
+  <circle cx="102" cy="148" r="5" fill="#CD844D"/>
+</svg>

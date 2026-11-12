@@ -45,6 +45,35 @@ export function mapLegacyCatalogoPath(pathname: string): string {
   return pathname.slice("/catalogo".length) || "/";
 }
 
+const MAX_LEGACY_SKU_LENGTH = 100;
+
+/**
+ * Destino de un link viejo `/catalogo...`.
+ * El feed de Meta y los anuncios ya emitidos apuntan a `/catalogo?sku=<SKU>` (SKU de
+ * variante+talle, ej. RA-001-CH-36): ese caso va a la ficha `/producto/<SKU>`.
+ * El resto de los parámetros (fbclid, utm_*, color, from) se conservan.
+ * Sin `sku` válido se aplica el mapeo 1:1 de `mapLegacyCatalogoPath`.
+ */
+export function resolveLegacyCatalogoRedirect(
+  pathname: string,
+  search: string
+): { pathname: string; search: string } {
+  const params = new URLSearchParams(search);
+  const sku = (params.get("sku") ?? "").trim();
+  const isCatalogoRoot = pathname === "/catalogo" || pathname === "/catalogo/";
+
+  if (isCatalogoRoot && sku && sku.length <= MAX_LEGACY_SKU_LENGTH) {
+    params.delete("sku");
+    const rest = params.toString();
+    return {
+      pathname: `/producto/${encodeURIComponent(sku)}`,
+      search: rest ? `?${rest}` : "",
+    };
+  }
+
+  return { pathname: mapLegacyCatalogoPath(pathname), search };
+}
+
 const CANONICAL_HOST = new URL(CANONICAL_SITE_URL).host;
 
 export function isCanonicalHost(host: string | null | undefined): boolean {

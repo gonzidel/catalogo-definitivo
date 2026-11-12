@@ -118,6 +118,7 @@ function init() {
   refreshCampaignsBtn = document.getElementById('refresh-campaigns-btn');
 
   // Inicializar funcionalidades
+  initHomeOffersBannerToggle();
   initTabs();
   initProductSearch();
   initPromoForm();
@@ -151,6 +152,89 @@ if (document.readyState === 'loading') {
 } else {
   // DOM ya está listo
   init();
+}
+
+// --- Check del banner de Ofertas en el inicio ---
+// Tabla: public.home_feature_flags (migración 383). Lectura pública; escritura solo admins (RLS).
+// El frontend NJ falla cerrado: sin tabla/fila o con enabled=false, el banner no se muestra.
+const HOME_OFFERS_BANNER_FLAG = 'home_offers_banner';
+
+function setHomeOffersBannerStatus(toggle, statusEl, enabled) {
+  if (toggle) toggle.checked = enabled;
+  if (statusEl) {
+    statusEl.textContent = enabled ? 'Activo (visible en el inicio)' : 'Apagado (no se muestra)';
+    statusEl.style.color = enabled ? '#155724' : '#721c24';
+  }
+}
+
+async function loadHomeOffersBannerCount() {
+  const countEl = document.getElementById('home-offers-banner-count');
+  if (!countEl) return;
+  try {
+    // Misma ventana que el catálogo (current_date del servidor, UTC).
+    const today = new Date().toISOString().slice(0, 10);
+    const { count, error } = await supabase
+      .from('color_price_offers')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'active')
+      .lte('start_date', today)
+      .gte('end_date', today);
+    if (error) throw error;
+    countEl.textContent = `Hoy hay ${count ?? 0} color(es) con oferta vigente (aprox.; el banner solo muestra los que tienen stock e imagen).`;
+  } catch (error) {
+    console.warn('No se pudo contar las ofertas vigentes:', error);
+    countEl.textContent = '';
+  }
+}
+
+async function initHomeOffersBannerToggle() {
+  const toggle = document.getElementById('home-offers-banner-toggle');
+  const statusEl = document.getElementById('home-offers-banner-status');
+  if (!toggle || !statusEl) return;
+
+  try {
+    const { data, error } = await supabase
+      .from('home_feature_flags')
+      .select('enabled')
+      .eq('key', HOME_OFFERS_BANNER_FLAG)
+      .maybeSingle();
+    if (error) throw error;
+
+    setHomeOffersBannerStatus(toggle, statusEl, data?.enabled === true);
+    toggle.disabled = false;
+  } catch (error) {
+    console.error('Error cargando el check del banner de Ofertas:', error);
+    statusEl.textContent = 'No disponible: falta aplicar la migración 383 (home_feature_flags) en Supabase.';
+    statusEl.style.color = '#721c24';
+    return;
+  }
+
+  toggle.addEventListener('change', async () => {
+    const desired = toggle.checked;
+    toggle.disabled = true;
+    try {
+      const { error } = await supabase
+        .from('home_feature_flags')
+        .upsert({ key: HOME_OFFERS_BANNER_FLAG, enabled: desired }, { onConflict: 'key' });
+      if (error) throw error;
+
+      setHomeOffersBannerStatus(toggle, statusEl, desired);
+      showMessage(
+        desired
+          ? 'Banner de Ofertas activado. Puede tardar hasta 5 minutos en verse en el inicio.'
+          : 'Banner de Ofertas apagado. Puede tardar hasta 5 minutos en desaparecer del inicio.',
+        'success'
+      );
+    } catch (error) {
+      console.error('Error guardando el check del banner de Ofertas:', error);
+      setHomeOffersBannerStatus(toggle, statusEl, !desired);
+      showMessage('No se pudo guardar el check del banner. Verificá tu sesión de admin y volvé a intentar.', 'error');
+    } finally {
+      toggle.disabled = false;
+    }
+  });
+
+  loadHomeOffersBannerCount();
 }
 
 // Tabs

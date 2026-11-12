@@ -18,6 +18,7 @@ import {
   clearRecentSearches,
   type RecentSearch,
 } from "@/lib/search/recent-searches";
+import { isSearchHintDismissed, dismissSearchHint } from "@/lib/search/search-hint";
 import { formatARS } from "@/lib/utils/catalog";
 
 const SUGGEST_DEBOUNCE_MS = 280;
@@ -116,6 +117,7 @@ export default function SearchBar() {
   const [recents, setRecents]           = useState<RecentSearch[]>([]);
   const [showDropdown, setShowDropdown] = useState(false);
   const [highlighted, setHighlighted]   = useState(-1);
+  const [showHint, setShowHint]         = useState(false);
 
   useEffect(() => {
     if (current) {
@@ -126,6 +128,15 @@ export default function SearchBar() {
       setInputValue("");
     }
   }, [current, pathname]);
+
+  useEffect(() => {
+    if (!isSearchHintDismissed()) setShowHint(true);
+  }, []);
+
+  const closeHint = useCallback(() => {
+    dismissSearchHint();
+    setShowHint(false);
+  }, []);
 
   useEffect(() => {
     function handlePointerDown(e: MouseEvent) {
@@ -170,6 +181,8 @@ export default function SearchBar() {
       pushRecentSearch(q);
       setRecents(loadRecentSearches());
       params.set("q", q);
+      dismissSearchHint();
+      setShowHint(false);
     } else {
       params.delete("q");
     }
@@ -212,6 +225,8 @@ export default function SearchBar() {
 
   const applySuggestion = useCallback((s: SearchSuggestion, index: number) => {
     setInputValue(s.query);
+    dismissSearchHint();
+    setShowHint(false);
     if (s.type === "product" && s.href) {
       trackAutocompleteProductSelected(inputValue, s.query, index + 1);
       goToHref(s.href);
@@ -313,6 +328,22 @@ export default function SearchBar() {
           </button>
         )}
       </div>
+
+      {showHint && !inputValue.trim() && !hasSuggestions && !showRecents && (
+        <div className="search-hint">
+          <span className="search-hint__text">
+            🔍 Nuevo: buscá por color, tela u ocasión, no hace falta el nombre exacto
+          </span>
+          <button
+            type="button"
+            className="search-hint__close"
+            onClick={closeHint}
+            aria-label="Cerrar aviso"
+          >
+            {ICON_CLEAR}
+          </button>
+        </div>
+      )}
 
       {(hasSuggestions || showRecents) && (
         <div className="search-suggest">

@@ -3,6 +3,7 @@
 import {
   useCallback, useRef, useState, useEffect, useId, useTransition,
 } from "react";
+import { createPortal } from "react-dom";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { buildSuggestions, type SearchSuggestion } from "@/lib/utils/search";
 import { useSearchDictionary } from "@/hooks/useSearchDictionary";
@@ -118,6 +119,7 @@ export default function SearchBar() {
 
   const inputRef     = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const hintCardRef  = useRef<HTMLDivElement>(null);
   const debounceRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pathnameRef  = useRef(pathname);
   const searchParamsRef = useRef(searchParams);
@@ -132,6 +134,9 @@ export default function SearchBar() {
   const [showDropdown, setShowDropdown] = useState(false);
   const [highlighted, setHighlighted]   = useState(-1);
   const [showHint, setShowHint]         = useState(false);
+  const [spotlightRect, setSpotlightRect] = useState<{
+    top: number; left: number; width: number; height: number;
+  } | null>(null);
 
   useEffect(() => {
     if (current) {
@@ -295,12 +300,39 @@ export default function SearchBar() {
   const showRecents = showDropdown && !inputValue.trim() && recents.length > 0;
   const hasSuggestions = showDropdown && suggestions.length > 0;
   const hintActive = showHint && !inputValue.trim() && !hasSuggestions && !showRecents;
+
+  useEffect(() => {
+    if (!hintActive) {
+      setSpotlightRect(null);
+      return;
+    }
+    function measure() {
+      const fieldEl = containerRef.current;
+      if (!fieldEl) return;
+      const fieldRect = fieldEl.getBoundingClientRect();
+      const cardRect = hintCardRef.current?.getBoundingClientRect();
+      const top = cardRect ? Math.min(fieldRect.top, cardRect.top) : fieldRect.top;
+      const left = cardRect ? Math.min(fieldRect.left, cardRect.left) : fieldRect.left;
+      const right = cardRect ? Math.max(fieldRect.right, cardRect.right) : fieldRect.right;
+      const bottom = cardRect ? Math.max(fieldRect.bottom, cardRect.bottom) : fieldRect.bottom;
+      setSpotlightRect({ top, left, width: right - left, height: bottom - top });
+    }
+    measure();
+    window.addEventListener("resize", measure);
+    window.addEventListener("scroll", measure, true);
+    return () => {
+      window.removeEventListener("resize", measure);
+      window.removeEventListener("scroll", measure, true);
+    };
+  }, [hintActive]);
+
   const activeOptionId =
     hasSuggestions && highlighted >= 0
       ? `${listboxId}-opt-${highlighted}`
       : undefined;
 
   return (
+    <>
     <div ref={containerRef} className="search-bar-inner">
       <div className={`search-bar__field${hasSuggestions ? " is-open" : ""}${hintActive ? " search-bar__field--hint" : ""}`}>
         {ICON_SEARCH}
@@ -345,7 +377,7 @@ export default function SearchBar() {
       </div>
 
       {hintActive && (
-        <div className="search-hint-float">
+        <div ref={hintCardRef} className="search-hint-float">
           {ICON_CURLY_ARROW}
           <button
             type="button"
@@ -465,6 +497,20 @@ export default function SearchBar() {
         </div>
       )}
     </div>
+
+    {hintActive && spotlightRect && typeof document !== "undefined" && createPortal(
+      <div
+        className="search-hint-spotlight"
+        style={{
+          top: spotlightRect.top - 10,
+          left: spotlightRect.left - 10,
+          width: spotlightRect.width + 20,
+          height: spotlightRect.height + 20,
+        }}
+      />,
+      document.body
+    )}
+    </>
   );
 }
 

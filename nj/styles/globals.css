@@ -470,6 +470,18 @@ html[data-exp="full"] .exp-catalog-only {
 
 /* ── Buscador: pulso + globito de aviso "nuevo buscador" ─────────────────── */
 
+/* Capa oscura de toda la pantalla con un "agujero" recortado (box-shadow
+   gigante) exactamente sobre la barra de busqueda + el aviso, para que
+   el resto del inicio quede atenuado y resalten solo esos dos elementos.
+   pointer-events:none para no bloquear taps sobre lo que hay debajo. */
+.search-hint-spotlight {
+  position: fixed;
+  z-index: 12070;
+  border-radius: 22px;
+  box-shadow: 0 0 0 9999px rgba(12, 9, 7, 0.66);
+  pointer-events: none;
+}
+
 @keyframes fyl-hint-ring {
   0%, 100% { box-shadow: 0 0 0 0 rgba(205, 132, 77, 0.5); }
   50% { box-shadow: 0 0 0 6px rgba(205, 132, 77, 0); }
@@ -490,13 +502,16 @@ html[data-exp="full"] .exp-catalog-only {
   top: calc(100% + 16px);
   left: 50%;
   transform: translateX(-50%);
-  z-index: 1000;
+  z-index: 12080;
   width: max-content;
   max-width: 220px;
   background: #fff;
   border-radius: 16px;
   padding: 10px 26px 11px 14px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+  box-shadow:
+    0 0 0 2px rgba(205, 132, 77, 0.95),
+    0 0 26px 7px rgba(205, 132, 77, 0.55),
+    0 14px 32px rgba(0, 0, 0, 0.3);
   text-align: left;
   animation: fyl-hint-float-pulse 1.8s ease-in-out infinite;
 }

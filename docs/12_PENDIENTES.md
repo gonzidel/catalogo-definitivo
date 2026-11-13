@@ -53,7 +53,8 @@ Estas preguntas siguen requiriendo respuesta humana o acceso productivo. Las res
 |---|---|---|
 | CAT-01 | CRÍTICA | ¿Cuál es hoy el catálogo canónico productivo y NJ continúa siendo una experiencia de testers o ya es general? |
 | CAT-02 | IMPORTANTE | ¿Cuál es la fuente y quién aprueba contenido, publicación, precios y promociones? |
-| CAT-03 | IMPORTANTE | ¿Qué política decide publicar, ocultar o mostrar productos/variantes/talles sin disponibilidad? |
+| CAT-03 | IMPORTANTE | ¿Qué política decide publicar, ocultar o mostrar productos/variantes/talles sin disponibilidad? | **Parcial 2026-11-11:** búsqueda pública ya no amplía a OOS (`searchProductsIncludingOutOfStock` stub); vista vendible manda. Confirmar política comercial residual. |
+| SRC-01 | IMPORTANTE | ~~409 + deploy search_profile_ai~~ hechas. Falta redeploy Edge con `gpt-6-luna`, backfill drafts vía admin y merge frontend auto-perfil |
 
 ## Pedidos
 

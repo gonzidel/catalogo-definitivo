@@ -13,6 +13,7 @@ import {
   splitCommercialTags,
   warnDetallesSimilitudFromTagNames,
 } from "../scripts/tag-normalize.js";
+import { maybeGenerateSearchProfile } from "./search-profile-auto.js?v=m260607";
 
 console.log("🔧 products.js cargado");
 
@@ -2410,6 +2411,10 @@ async function uploadImagesToCloudinary(row, files) {
       console.log(`✅ ${imagesPayload.length} imagen(es) guardada(s) en variant_images`);
       // Refrescar la UI de imágenes
       await loadVariantImages(row, variantId);
+
+      if (currentProductId) {
+        void maybeGenerateSearchProfile(currentProductId);
+      }
       
       // Verificar si el producto tiene stock y ahora tiene imágenes → activar automáticamente
       if (currentProductId) {
@@ -6970,6 +6975,10 @@ async function saveProduct(shouldReset = true) {
     }
   } catch (e) {
     console.warn("⚠️ Error calculando estado del producto:", e);
+  }
+
+  if (prodId) {
+    void maybeGenerateSearchProfile(prodId);
   }
 
   const deletionNotes = [];

@@ -282,78 +282,23 @@ export async function enrichGroupedProductsWithVariants(
   );
 }
 
-/** Columnas públicas de `products` para la búsqueda ampliada; nunca costos internos. */
+/**
+ * Columnas públicas de `products` (ARQ-05). Conservado como constante de
+ * allowlist aunque la búsqueda ampliada OOS ya no corre en el catálogo.
+ */
 export const PUBLIC_PRODUCT_SEARCH_SELECT = "name, description, category";
 
 /**
- * Productos activos por nombre que no están en el snapshot (p. ej. sin stock).
- * El precio sale solo de `product_variants.price` (enrich por color).
+ * @deprecated 2026-11-11 — El catálogo público no lista sin stock
+ * (`catalog_public_available_view`). useEnrichedCatalog ya no llama esto.
+ * Stub vacío para no romper tests ARQ-05 que validan el allowlist.
  */
 export async function searchProductsIncludingOutOfStock(
-  supabase: SupabaseClient,
-  term: string,
-  excludeArticulos: Set<string>
+  _supabase: SupabaseClient,
+  _term: string,
+  _excludeArticulos: Set<string>
 ): Promise<GroupedProduct[]> {
-  const q = term.trim();
-  if (q.length < 2) return [];
-
-  const { data: matches, error } = await supabase
-    .from("products")
-    .select(PUBLIC_PRODUCT_SEARCH_SELECT)
-    .eq("status", "active")
-    .or(`name.ilike.%${q}%,description.ilike.%${q}%`)
-    .limit(40);
-
-  if (error || !matches?.length) return [];
-
-  const articulos = matches
-    .map((m) => String(m.name ?? "").trim())
-    .filter((a) => a && !excludeArticulos.has(a));
-
-  if (articulos.length === 0) return [];
-
-  const { data: snapRows } = await supabase
-    .from("catalog_public_snapshot")
-    .select(CATALOG_SELECT)
-    .in("Articulo", articulos)
-    .limit(500);
-
-  const groupedFromSnap = agruparProductos((snapRows ?? []) as unknown as CatalogRow[]);
-  const snapByArt = new Map(groupedFromSnap.map((p) => [p.Articulo, p]));
-
-  const built: GroupedProduct[] = [];
-  for (const m of matches) {
-    const art = String(m.name ?? "").trim();
-    if (!art || excludeArticulos.has(art)) continue;
-
-    const fromSnap = snapByArt.get(art);
-    if (fromSnap) {
-      built.push(fromSnap);
-      continue;
-    }
-
-    built.push({
-      Articulo: art,
-      Descripcion: String(m.description ?? ""),
-      Precio: "",
-      VariantePrincipal: null,
-      Oferta: "",
-      FechaIngreso: "",
-      FechaPublicacion: "",
-      Categoria: String(m.category ?? ""),
-      Filtro1: "",
-      Filtro2: "",
-      Filtro3: "",
-      DetallesSimilitud: "",
-      OfertaActiva: false,
-      PrecioOferta: "",
-      PromoActiva: "",
-      DetalleColor: [],
-      hasAnyStock: false,
-    });
-  }
-
-  return enrichGroupedProductsWithVariants(supabase, built);
+  return [];
 }
 
 export function colorHasStock(

@@ -2,6 +2,7 @@
 
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getAdminContext, hasPermission } from "@/lib/auth/admin";
+import { maybeGenerateSearchProfile } from "@/lib/products/search-profile-auto";
 
 export interface TagRow {
   id: string;
@@ -199,6 +200,8 @@ export async function saveProductTags(
     : await supabase.from("product_tags").insert({ product_id: productId, ...payload });
 
   if (error) throw new Error(error.message);
+
+  void maybeGenerateSearchProfile(productId);
 }
 
 export async function getProductDetails(productId: string): Promise<string[]> {

@@ -3,7 +3,13 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { invokeAutoTags, applyAutoTagsPlainFields, type AutoTagsResult } from "@/lib/products/auto-tags";
-import { createTagChecked, listTags1, listTags2, saveProductTags } from "@/lib/products/tags";
+import {
+  createTagChecked,
+  getProductTags,
+  listTags1,
+  listTags2,
+  saveProductTags,
+} from "@/lib/products/tags";
 import styles from "@/app/admin/products/products-admin.module.css";
 
 interface AutoTagsButtonProps {
@@ -79,11 +85,14 @@ export default function AutoTagsButton({
     try {
       const tag1Id = await resolveTagId(result.tag1, 1, null);
       const tag2Id = tag1Id ? await resolveTagId(result.tag2, 2, tag1Id) : null;
+      // Conservar tag3 existentes: auto_tags no propone IDs de nivel 3
+      // y pasar [] los borraría al guardar (tag3_ids → null).
+      const existing = await getProductTags(productId);
 
       await saveProductTags(productId, {
         tag1Id,
         tag2Id,
-        tag3Ids: [],
+        tag3Ids: existing.tag3Ids,
       });
 
       await applyAutoTagsPlainFields(productId, {

@@ -3,17 +3,27 @@
 import {
   useCallback, useRef, useState, useEffect, useId, useTransition,
 } from "react";
+import { createPortal } from "react-dom";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { buildSuggestions, type SearchSuggestion } from "@/lib/utils/search";
 import { useSearchDictionary } from "@/hooks/useSearchDictionary";
+import { getCatalogProductsFromWindow } from "@/lib/search/search-index";
 import {
   noteUiSearchCommit,
   trackAutocompleteProductSelected,
   trackSuggestionSelected,
 } from "@/lib/search/search-analytics";
-import type { GroupedProduct } from "@/types/catalog";
+import {
+  loadRecentSearches,
+  pushRecentSearch,
+  clearRecentSearches,
+  type RecentSearch,
+} from "@/lib/search/recent-searches";
+import { canShowSearchHint, markSearchHintShown, launchStoriesMayOpen } from "@/lib/search/search-hint";
+import { formatARS } from "@/lib/utils/catalog";
 
 const SUGGEST_DEBOUNCE_MS = 280;
+const RECENT_KEY_HINT = "recent";
 
 const ICON_SEARCH = (
   <svg className="search-bar__icon" width="16" height="16" viewBox="0 0 24 24" fill="none"
@@ -32,17 +42,25 @@ const ICON_CLEAR = (
   </svg>
 );
 
-function getCatalogProducts(): GroupedProduct[] {
-  if (typeof window === "undefined") return [];
-  const bag = window as Window & { __fylProducts?: GroupedProduct[] };
-  return bag.__fylProducts ?? [];
-}
-
 function isHomeCatalogPath(pathname: string): boolean {
   return pathname === "/" || pathname === "/nj" || pathname === "/nj/";
 }
 
-function SuggestionIcon({ type }: { type: SearchSuggestion["type"] }) {
+const ICON_CURLY_ARROW = (
+  <svg className="search-hint-float__arrow" viewBox="0 0 40 36" fill="none"
+    xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <path
+      d="M5 26c-2-10 4-19 13-19 5 0 8 3 7 7-1 3-5 4-6 1-1-2 1-4 3-3"
+      stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" fill="none"
+    />
+    <path
+      d="M21 7l1 7-7-1"
+      stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" fill="none"
+    />
+  </svg>
+);
+
+function SuggestionIcon({ type }: { type: SearchSuggestion["type"] | "tag" }) {
   if (type === "product") {
     return (
       <svg className="search-suggest__icon search-suggest__icon--product" width="16" height="16" viewBox="0 0 24 24" fill="none"
@@ -79,9 +97,11 @@ function typeLabel(s: SearchSuggestion): string {
     case "product":
       return "Abrir producto";
     case "tag":
-      return "Buscar";
+      return s.count != null ? `${s.count}` : "Buscar";
     case "categoria":
       return s.href ? "Categoría" : "Buscar";
+    case "combo":
+      return s.count != null ? `${s.count}` : "Buscar";
     default: {
       const _exhaustive: never = s.type;
       return _exhaustive;
@@ -99,6 +119,7 @@ export default function SearchBar() {
 
   const inputRef     = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const hintCardRef  = useRef<HTMLDivElement>(null);
   const debounceRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pathnameRef  = useRef(pathname);
   const searchParamsRef = useRef(searchParams);
@@ -109,8 +130,13 @@ export default function SearchBar() {
 
   const [inputValue, setInputValue]     = useState(current);
   const [suggestions, setSuggestions]   = useState<SearchSuggestion[]>([]);
+  const [recents, setRecents]           = useState<RecentSearch[]>([]);
   const [showDropdown, setShowDropdown] = useState(false);
   const [highlighted, setHighlighted]   = useState(-1);
+  const [showHint, setShowHint]         = useState(false);
+  const [spotlightRect, setSpotlightRect] = useState<{
+    top: number; left: number; width: number; height: number;
+  } | null>(null);
 
   useEffect(() => {
     if (current) {
@@ -121,6 +147,81 @@ export default function SearchBar() {
       setInputValue("");
     }
   }, [current, pathname]);
+
+  useEffect(() => {
+    if (!canShowSearchHint()) return;
+
+    let cancelled = false;
+    let sawStories = false;
+    let revealTimer = 0;
+
+    function storiesOpen(): boolean {
+      return document.querySelector(".home-launch-onboarding") != null;
+    }
+
+    function reveal() {
+      if (cancelled || !canShowSearchHint() || storiesOpen()) return;
+      cancelled = true;
+      window.clearInterval(interval);
+      window.clearTimeout(fallback);
+      markSearchHintShown();
+      setShowHint(true);
+    }
+
+    function tick() {
+      if (cancelled) return;
+      if (storiesOpen()) {
+        sawStories = true;
+        return;
+      }
+      if (sawStories) {
+        window.clearInterval(interval);
+        revealTimer = window.setTimeout(reveal, 450);
+        return;
+      }
+      if (!launchStoriesMayOpen()) {
+        window.clearInterval(interval);
+        revealTimer = window.setTimeout(reveal, 700);
+      }
+    }
+
+    const interval = window.setInterval(tick, 200);
+    const fallback = window.setTimeout(() => {
+      if (!storiesOpen()) reveal();
+    }, 4500);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      window.clearTimeout(revealTimer);
+      window.clearTimeout(fallback);
+    };
+  }, []);
+
+  const closeHint = useCallback(() => {
+    setShowHint(false);
+  }, []);
+
+  // El toque que cierra el aviso no puede seguir de largo y abrir lo que
+  // queda debajo (por ejemplo una categoría). Se traga el click que el
+  // navegador dispara después de sacar la capa.
+  const closeHintOnPress = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const block = (ev: Event) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+    };
+    document.addEventListener("pointerup", block, true);
+    document.addEventListener("click", block, true);
+    document.addEventListener("touchend", block, true);
+    window.setTimeout(() => {
+      document.removeEventListener("pointerup", block, true);
+      document.removeEventListener("click", block, true);
+      document.removeEventListener("touchend", block, true);
+    }, 800);
+    setShowHint(false);
+  }, []);
 
   useEffect(() => {
     function handlePointerDown(e: MouseEvent) {
@@ -162,7 +263,10 @@ export default function SearchBar() {
     const params = new URLSearchParams(onHome ? searchParamsRef.current.toString() : "");
     if (q.length >= 2) {
       noteUiSearchCommit(q, dictionary);
+      pushRecentSearch(q);
+      setRecents(loadRecentSearches());
       params.set("q", q);
+      setShowHint(false);
     } else {
       params.delete("q");
     }
@@ -191,19 +295,21 @@ export default function SearchBar() {
     cancelSuggestTimer();
     debounceRef.current = setTimeout(() => {
       debounceRef.current = null;
-      const products = getCatalogProducts();
+      const products = getCatalogProductsFromWindow();
       if (val.trim().length >= 2 && products.length > 0) {
         setSuggestions(buildSuggestions(products, val, 7, dictionary));
         setShowDropdown(true);
       } else {
         setSuggestions([]);
-        setShowDropdown(false);
+        setShowDropdown(val.trim().length === 0 && loadRecentSearches().length > 0);
+        if (val.trim().length === 0) setRecents(loadRecentSearches());
       }
     }, SUGGEST_DEBOUNCE_MS);
   }, [cancelSuggestTimer, dictionary]);
 
   const applySuggestion = useCallback((s: SearchSuggestion, index: number) => {
     setInputValue(s.query);
+    setShowHint(false);
     if (s.type === "product" && s.href) {
       trackAutocompleteProductSelected(inputValue, s.query, index + 1);
       goToHref(s.href);
@@ -255,19 +361,76 @@ export default function SearchBar() {
     }
   };
 
+  const showRecents = showDropdown && !inputValue.trim() && recents.length > 0;
   const hasSuggestions = showDropdown && suggestions.length > 0;
+  const hintActive = showHint && !inputValue.trim() && !hasSuggestions && !showRecents;
+
+  useEffect(() => {
+    if (!hintActive) {
+      setSpotlightRect(null);
+      return;
+    }
+    function measure() {
+      const fieldEl = containerRef.current;
+      if (!fieldEl) return;
+      const fieldRect = fieldEl.getBoundingClientRect();
+      const cardRect = hintCardRef.current?.getBoundingClientRect();
+      const top = cardRect ? Math.min(fieldRect.top, cardRect.top) : fieldRect.top;
+      const left = cardRect ? Math.min(fieldRect.left, cardRect.left) : fieldRect.left;
+      const right = cardRect ? Math.max(fieldRect.right, cardRect.right) : fieldRect.right;
+      const bottom = cardRect ? Math.max(fieldRect.bottom, cardRect.bottom) : fieldRect.bottom;
+      setSpotlightRect({ top, left, width: right - left, height: bottom - top });
+    }
+    measure();
+    window.addEventListener("resize", measure);
+    window.addEventListener("scroll", measure, true);
+    return () => {
+      window.removeEventListener("resize", measure);
+      window.removeEventListener("scroll", measure, true);
+    };
+  }, [hintActive]);
+
+  useEffect(() => {
+    if (!hintActive) return;
+    function onPointerDown(e: PointerEvent) {
+      e.preventDefault();
+      e.stopPropagation();
+      const block = (ev: Event) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+      };
+      document.addEventListener("pointerup", block, true);
+      document.addEventListener("click", block, true);
+      document.addEventListener("touchend", block, true);
+      window.setTimeout(() => {
+        document.removeEventListener("pointerup", block, true);
+        document.removeEventListener("click", block, true);
+        document.removeEventListener("touchend", block, true);
+      }, 800);
+      setShowHint(false);
+    }
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => document.removeEventListener("pointerdown", onPointerDown, true);
+  }, [hintActive]);
+
   const activeOptionId =
     hasSuggestions && highlighted >= 0
       ? `${listboxId}-opt-${highlighted}`
       : undefined;
 
   return (
-    <div ref={containerRef} className="search-bar-inner">
-      <div className={`search-bar__field${hasSuggestions ? " is-open" : ""}`}>
+    <>
+    <div
+      ref={containerRef}
+      className={`search-bar-inner${hintActive ? " search-bar-inner--hint" : ""}`}
+      onPointerDown={hintActive ? closeHintOnPress : undefined}
+    >
+      <div className={`search-bar__field${hasSuggestions ? " is-open" : ""}${hintActive ? " search-bar__field--hint" : ""}`}>
         {ICON_SEARCH}
         <input
           ref={inputRef}
-          type="text"
+          type="search"
+          inputMode="search"
           className="search-bar-mobile search-bar__input"
           id="search-bar-mobile"
           placeholder="¿Qué buscás?"
@@ -276,14 +439,20 @@ export default function SearchBar() {
           enterKeyHint="search"
           role="combobox"
           aria-autocomplete="list"
-          aria-expanded={hasSuggestions}
+          aria-expanded={hasSuggestions || (showDropdown && recents.length > 0 && !inputValue)}
           aria-controls={listboxId}
           aria-activedescendant={activeOptionId}
           value={inputValue}
           onChange={onInput}
           onKeyDown={onKeyDown}
           onFocus={() => {
-            if (suggestions.length > 0) setShowDropdown(true);
+            if (suggestions.length > 0) {
+              setShowDropdown(true);
+              return;
+            }
+            const r = loadRecentSearches();
+            setRecents(r);
+            if (r.length > 0 && !inputValue.trim()) setShowDropdown(true);
           }}
         />
         {inputValue && (
@@ -298,48 +467,152 @@ export default function SearchBar() {
         )}
       </div>
 
-      {hasSuggestions && (
-        <div className="search-suggest">
-          <div id={listboxId} className="search-suggest__list" role="listbox">
-            {suggestions.map((s, idx) => (
-              <button
-                key={`${s.type}-${s.label}`}
-                id={`${listboxId}-opt-${idx}`}
-                type="button"
-                role="option"
-                aria-selected={highlighted === idx}
-                className={[
-                  "search-suggest__row",
-                  highlighted === idx ? "is-active" : "",
-                  s.type === "product" ? "search-suggest__row--product" : "search-suggest__row--search",
-                ].filter(Boolean).join(" ")}
-                onMouseDown={(e) => { e.preventDefault(); applySuggestion(s, idx); }}
-              >
-                <SuggestionIcon type={s.type} />
-                <span className="search-suggest__label">
-                  {highlightMatch(s.label, inputValue)}
-                </span>
-                <span className="search-suggest__type">{typeLabel(s)}</span>
-              </button>
-            ))}
-          </div>
-
+      {hintActive && (
+        <div ref={hintCardRef} className="search-hint-float">
+          {ICON_CURLY_ARROW}
           <button
             type="button"
-            className="search-suggest__all"
-            onMouseDown={(e) => {
+            className="search-hint-float__close"
+            onClick={(e) => {
               e.preventDefault();
-              commitSearch(inputValue);
+              e.stopPropagation();
+              closeHint();
             }}
+            aria-label="Cerrar aviso"
           >
-            {ICON_SEARCH}
-            <span>
-              Buscar <strong>&ldquo;{inputValue}&rdquo;</strong> en todo el catálogo
-            </span>
+            {ICON_CLEAR}
           </button>
+          <p className="search-hint-float__title">Mejoramos el buscador, probalo</p>
+          <p className="search-hint-float__example">
+            Ej: <strong>sandalias de fiesta</strong>
+          </p>
+        </div>
+      )}
+
+      {(hasSuggestions || showRecents) && (
+        <div className="search-suggest">
+          {showRecents && (
+            <div className="search-suggest__list" role="listbox" aria-label="Búsquedas recientes">
+              <div className="search-suggest__section-label">
+                Recientes
+                <button
+                  type="button"
+                  className="search-suggest__clear-recents"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    clearRecentSearches();
+                    setRecents([]);
+                    setShowDropdown(false);
+                  }}
+                >
+                  Borrar
+                </button>
+              </div>
+              {recents.map((r) => (
+                <button
+                  key={`${RECENT_KEY_HINT}-${r.q}`}
+                  type="button"
+                  role="option"
+                  className="search-suggest__row search-suggest__row--search"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    commitSearch(r.q);
+                  }}
+                >
+                  {ICON_SEARCH}
+                  <span className="search-suggest__label">{r.q}</span>
+                  <span className="search-suggest__type">Reciente</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {hasSuggestions && (
+            <>
+              <button
+                type="button"
+                className="search-suggest__all search-suggest__all--top"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  commitSearch(inputValue);
+                }}
+              >
+                {ICON_SEARCH}
+                <span>
+                  Ver todos los resultados de <strong>&ldquo;{inputValue}&rdquo;</strong>
+                </span>
+              </button>
+
+              <div id={listboxId} className="search-suggest__list" role="listbox">
+                {suggestions.map((s, idx) => (
+                  <button
+                    key={`${s.type}-${s.label}-${s.query}`}
+                    id={`${listboxId}-opt-${idx}`}
+                    type="button"
+                    role="option"
+                    aria-selected={highlighted === idx}
+                    className={[
+                      "search-suggest__row",
+                      highlighted === idx ? "is-active" : "",
+                      s.type === "product" ? "search-suggest__row--product" : "search-suggest__row--search",
+                    ].filter(Boolean).join(" ")}
+                    onMouseDown={(e) => { e.preventDefault(); applySuggestion(s, idx); }}
+                  >
+                    {s.type === "product" && s.thumb ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={s.thumb}
+                        alt=""
+                        className="search-suggest__thumb"
+                        width={40}
+                        height={40}
+                      />
+                    ) : (
+                      <SuggestionIcon type={s.type === "combo" ? "tag" : s.type} />
+                    )}
+                    <span className="search-suggest__label">
+                      <span className="search-suggest__label-text">
+                        {highlightMatch(s.label, inputValue)}
+                      </span>
+                      {s.subtitle && (
+                        <span className="search-suggest__subtitle">{s.subtitle}</span>
+                      )}
+                    </span>
+                    <span className="search-suggest__meta">
+                      {s.type === "product" && s.price != null && s.price !== "" && (
+                        <span className="search-suggest__price">{formatARS(s.price)}</span>
+                      )}
+                      <span className="search-suggest__type">{typeLabel(s)}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>
+
+    {hintActive && typeof document !== "undefined" && createPortal(
+      <div
+        className="search-hint-shield"
+        onPointerDown={closeHintOnPress}
+      />,
+      document.body
+    )}
+    {hintActive && spotlightRect && typeof document !== "undefined" && createPortal(
+      <div
+        className="search-hint-spotlight"
+        style={{
+          top: spotlightRect.top - 10,
+          left: spotlightRect.left - 10,
+          width: spotlightRect.width + 20,
+          height: spotlightRect.height + 20,
+        }}
+      />,
+      document.body
+    )}
+    </>
   );
 }
 

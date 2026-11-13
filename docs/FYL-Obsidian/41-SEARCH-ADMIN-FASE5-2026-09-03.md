@@ -75,7 +75,7 @@ Aplicado:
 | `search_ignored_terms` | tabla | Términos revisados que no se proponen como alias. UNIQUE `normalized_term`. Trigger usa `search_normalize_text()`. |
 | `search_admin_require()` | fn | `RAISE` 42501 si no `is_admin()` |
 | `search_admin_dashboard_stats()` | RPC jsonb | 7d, 30d, zero 30d, alias_used 30d, keywords/aliases activos (sin identidad) |
-| `search_admin_grouped_queries(days, mode)` | RPC table | `zero` / `low` / `unresolved`, GROUP BY, límite 80, max 90 días |
+| `search_admin_grouped_queries(days, mode)` | RPC table | `top` (lo más buscado, 2026-11-12) / `zero` / `low` / `unresolved`, GROUP BY, límite 80, max 90 días |
 | `search_admin_resolution_usage(days)` | RPC table | `jsonb_array_elements(resolutions)` |
 | `search_admin_resolved_usage(days)` | RPC table | identity: `resolutions = []` |
 

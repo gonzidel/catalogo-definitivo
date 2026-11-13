@@ -43,6 +43,8 @@ export interface SearchEventRow {
   suggestion_label: string | null;
   product_article: string | null;
   result_position: number | null;
+  /** exact | relaxed | suggest | empty — Fase D (columna opcional hasta migración 410). */
+  result_mode?: string | null;
 }
 
 const QUERY_MAX = 200;
@@ -89,6 +91,7 @@ export function rowFromResolved(
     suggestion_label: extra.suggestion_label ?? null,
     product_article: extra.product_article ?? null,
     result_position: extra.result_position ?? null,
+    result_mode: extra.result_mode ?? null,
   };
 }
 
@@ -116,9 +119,15 @@ async function insertSearchEvent(row: SearchEventRow): Promise<void> {
     return;
   }
   try {
+    // result_mode es opcional hasta migración 410; no romper inserts actuales.
+    const { result_mode: _mode, ...base } = row;
+    const payload =
+      process.env.NEXT_PUBLIC_SEARCH_EVENTS_MODE === "1"
+        ? row
+        : base;
     const { error } = await getSupabaseBrowserClient()
       .from("search_events")
-      .insert(row);
+      .insert(payload);
     if (error) warnDev("insert falló", error.message);
   } catch (err) {
     warnDev("insert exception", err);
@@ -151,7 +160,8 @@ export function noteUiSearchCommit(
 export function flushPendingSearchCommitted(
   rawQuery: string,
   resultCount: number,
-  dict: SearchDictionary = EMPTY_SEARCH_DICTIONARY
+  dict: SearchDictionary = EMPTY_SEARCH_DICTIONARY,
+  resultMode?: string | null
 ): void {
   const pending = consumeUiSearchCommit(rawQuery);
   if (!pending) return;
@@ -159,6 +169,7 @@ export function flushPendingSearchCommitted(
   enqueueInsert(
     rowFromResolved("search_committed", resolved, {
       result_count: Math.max(0, Math.floor(resultCount)),
+      result_mode: resultMode ?? null,
     })
   );
 }

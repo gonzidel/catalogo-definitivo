@@ -39,6 +39,9 @@ export default async function SearchAdminPage({
 
   return (
     <div className={extra.root}>
+      <p className={extra.muted} style={{ marginBottom: 12 }}>
+        <a href="/admin/search/profiles">Perfiles de búsqueda (IA) →</a>
+      </p>
       <SearchAdminDashboard data={data} canEdit={canEdit} initialAlias={params.alias ?? ""} />
     </div>
   );

@@ -1,6 +1,6 @@
 # FYL /nj — Buscador
 
-> Última actualización: 2026-09-03 (Fase 5 — admin de vocabulario)
+> Última actualización: 2026-11-11 (buscador premium v2 — motor + perfiles IA pendientes de apply)
 
 ## Flujo
 
@@ -55,7 +55,7 @@ Los **tags no se tocan**. Opción C: los nombres de tag se resuelven como alias 
 
 - lowercase, NFD, sin tildes, trim, espacios colapsados
 - `-` `_` `/` → espacio → `pantu-bota` = `pantu bota` → alias de frase `pantubota`
-- sin stemming general
+- normalizador liviano ES (plural/género) desde 2026-11-11 — ver `nj/lib/search/stem-es.ts`
 
 ---
 
@@ -164,10 +164,41 @@ Eventos de prueba ya en live (no borrar sin avisar): `xyzabc`, commits de `pantu
 
 Alias de prueba de Fase 5: `fyltestalias` → pantubota, **inactivo**. No entra en `search_dictionary_public`. No toca tags.
 
+## Buscador premium v2 (2026-11-11)
+
+Bandera: `NEXT_PUBLIC_SEARCH_V2` (default ON; `0` apaga).
+
+Motor adicional (cliente):
+
+| Archivo | Rol |
+|---------|-----|
+| `lib/search/stem-es.ts` | Plural/género liviano |
+| `lib/search/color-families.ts` | Colores crudos → familias |
+| `lib/search/size-intent.ts` | `38` / `talle 38` como filtro |
+| `lib/search/cascade.ts` | Exact → relaxed → suggest |
+| `lib/search/search-index.ts` | Índice precalculado + autocomplete |
+| `lib/search/search-intent-chips.ts` | Chips editables de intención |
+| `lib/search/golden-queries.ts` | Regresión (~72 consultas) |
+
+Perfiles IA (no tocan `products.description`):
+
+- SQL: `supabase/canonical/409_product_search_profiles.sql` (**aplicada en prod**)
+- Edge: `search_profile_ai` (admin-only; default modelo **`gpt-6-luna`**)
+- Auto: al completar tags + talles + foto (`search-profile-auto`) → `draft`
+- Backfill: `/nj/admin/search/profiles` → «Generar faltantes (20)»
+- Hook: `useSearchProfiles` (solo `approved`)
+
+Ver: `docs/FYL-Obsidian/73-NJ-BUSCADOR-PREMIUM-AUDITORIA-PLAN-2026-11-11.md` y `docs/APROBACIONES_BUSCADOR_PREMIUM_2026-11-11.md`.
+
+```
+npx tsx lib/search/search-golden.selftest.ts
+```
+
 ## Deuda
 
 - Limpieza de tags duplicados (Pantubota/Pantubotas, etc.): fase aparte
-- Ranking por clicks reales
+- Ranking por clicks reales (cuando haya volumen)
+- Lectura live de `search_events` (SQL en `search-events-baseline.ts`)
 - Dashboard tipo GA: no. Esta herramienta es de vocabulario
 - Duplicados Baja/Bajas, lisa/liso, Corta/Corto, Alta/Altas: no sembrar hasta revisión
 - `hasAnyStock` solo existe tras el enriquecimiento; si falta, no se inventa stock

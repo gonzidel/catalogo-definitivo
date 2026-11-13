@@ -433,9 +433,14 @@ html[data-exp="full"] .exp-catalog-only {
   background: none;
   border: none;
   outline: none;
-  font-size: 13px;
-  padding: 8px 0;
+  /* 16px evita zoom automático en iOS */
+  font-size: 16px;
+  padding: 10px 0;
   color: #222;
+}
+
+.search-bar__input::-webkit-search-cancel-button {
+  display: none;
 }
 
 /* /nj tiene un solo input (id search-bar-mobile para BottomNav).
@@ -463,6 +468,113 @@ html[data-exp="full"] .exp-catalog-only {
   background: #ccc;
 }
 
+/* ── Buscador: pulso + globito de aviso "nuevo buscador" ─────────────────── */
+
+/* Capa transparente que se queda con el toque. Si no, al cerrar el aviso
+   el click sigue y abre la categoría que queda debajo (por ejemplo lencería). */
+.search-hint-shield {
+  position: fixed;
+  inset: 0;
+  z-index: 11930;
+  background: transparent;
+  touch-action: manipulation;
+}
+
+/* Capa oscura de toda la pantalla con un "agujero" recortado (box-shadow
+   gigante) exactamente sobre la barra de busqueda + el aviso, para que
+   el resto del inicio quede atenuado y resalten solo esos dos elementos.
+   No recibe toques: los agarra el shield, o la barra si está encima. */
+.search-hint-spotlight {
+  position: fixed;
+  z-index: 11940;
+  border-radius: 22px;
+  box-shadow: 0 0 0 9999px rgba(12, 9, 7, 0.66);
+  pointer-events: none;
+}
+
+.search-bar-inner--hint {
+  z-index: 11950;
+}
+
+@keyframes fyl-hint-ring {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(205, 132, 77, 0.5); }
+  50% { box-shadow: 0 0 0 6px rgba(205, 132, 77, 0); }
+}
+
+.search-bar__field--hint {
+  border-color: #CD844D;
+  animation: fyl-hint-ring 1.8s ease-in-out infinite;
+}
+
+@keyframes fyl-hint-float-pulse {
+  0%, 100% { transform: translateX(-50%) scale(1); }
+  50% { transform: translateX(-50%) scale(1.04); }
+}
+
+.search-hint-float {
+  position: absolute;
+  top: calc(100% + 16px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 11950;
+  width: max-content;
+  max-width: 220px;
+  background: #fff;
+  border-radius: 16px;
+  padding: 10px 26px 11px 14px;
+  box-shadow:
+    0 0 0 2px rgba(205, 132, 77, 0.95),
+    0 0 26px 7px rgba(205, 132, 77, 0.55),
+    0 14px 32px rgba(0, 0, 0, 0.3);
+  text-align: left;
+  animation: fyl-hint-float-pulse 1.8s ease-in-out infinite;
+}
+
+.search-hint-float__arrow {
+  position: absolute;
+  top: -24px;
+  left: 20px;
+  width: 26px;
+  height: 24px;
+  color: #CD844D;
+}
+
+.search-hint-float__close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: #f0f0f0;
+  color: #999;
+  cursor: pointer;
+}
+
+.search-hint-float__title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.25;
+  color: #222;
+}
+
+.search-hint-float__example {
+  margin: 3px 0 0;
+  font-size: 12px;
+  color: #999;
+}
+
+.search-hint-float__example strong {
+  color: #CD844D;
+  font-weight: 700;
+}
+
 .search-suggest {
   position: absolute;
   top: calc(100% + 6px);
@@ -481,12 +593,67 @@ html[data-exp="full"] .exp-catalog-only {
   align-items: center;
   gap: 10px;
   width: 100%;
+  min-height: 44px;
   padding: 11px 14px;
   background: transparent;
   border: none;
   border-bottom: 1px solid #f5f5f5;
   cursor: pointer;
   text-align: left;
+}
+
+.search-suggest__thumb {
+  width: 40px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: 8px;
+  flex-shrink: 0;
+  background: #f3f3f3;
+}
+
+.search-suggest__subtitle {
+  display: block;
+  font-size: 11px;
+  color: #999;
+  font-weight: 400;
+  margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.search-suggest__meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.search-suggest__price {
+  font-size: 12px;
+  font-weight: 600;
+  color: #8a5a32;
+}
+
+.search-suggest__section-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #aaa;
+}
+
+.search-suggest__clear-recents {
+  border: none;
+  background: transparent;
+  color: #CD844D;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 4px 0;
 }
 
 .search-suggest__row.is-active,
@@ -520,6 +687,13 @@ html[data-exp="full"] .exp-catalog-only {
   min-width: 0;
 }
 
+.search-suggest__label-text {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .search-suggest__type {
   font-size: 10px;
   color: #bbb;
@@ -547,6 +721,18 @@ html[data-exp="full"] .exp-catalog-only {
   text-align: left;
   font-size: 13px;
   color: #888;
+}
+
+.search-suggest__all--top {
+  background: #FFF5EE;
+  border-bottom: 1px solid #f0e8df;
+  font-size: 13px;
+  font-weight: 600;
+  color: #8a5a32;
+}
+
+.search-suggest__all--top .search-bar__icon {
+  color: #CD844D;
 }
 
 .search-suggest__all strong {
@@ -648,6 +834,52 @@ html[data-exp="full"] .exp-catalog-only {
   .info-banner-top.info-banner-top--visual .info-banner-top__inner {
     padding: 0;
   }
+}
+
+/* Banner Cyber Monday (TEMPORAL — ver nj/lib/config/temp-order-min.ts) */
+.info-banner-top.info-banner-top--cyber {
+  border: 1px solid rgba(94, 240, 255, 0.35);
+  background: linear-gradient(135deg, #141a2a 0%, #1a1030 55%, #0d1220 100%);
+  box-shadow: 0 4px 14px rgba(8, 12, 28, 0.35);
+}
+
+.info-banner-top--cyber .info-banner-top__title {
+  color: #f5f7fb;
+}
+
+.info-banner-top--cyber .info-banner-top__title strong {
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.info-banner-top--cyber .info-banner-top__cyber-pill {
+  display: inline-block;
+  margin-bottom: 2px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #0d1220;
+  background: linear-gradient(90deg, #5ef0ff, #ff4fd8);
+}
+
+.info-banner-top--cyber .info-banner-top__line {
+  color: rgba(245, 247, 251, 0.86);
+}
+
+.info-banner-top--cyber .info-banner-top__cta {
+  background: linear-gradient(90deg, #CD844D, #d99a66);
+  color: #fff;
+  min-height: 32px;
+  height: 32px;
+  box-shadow: 0 2px 10px rgba(205, 132, 77, 0.35);
+}
+
+.info-banner-top--cyber .info-banner-top__iconWrap {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(94, 240, 255, 0.2);
 }
 
 /* ── Zona categoría (chips + head): sin solapamiento en /nj ───────────── */
@@ -11480,5 +11712,172 @@ body.modal-open nextjs-portal {
   }
   .home-banner-slot.home-banner-slot--curated {
     min-height: 300px;
+  }
+}
+
+/* ── Banner de Ofertas del inicio ─────────────────────────────────────────
+   Solo NJ (no existe en vanilla). Va ARRIBA de todo, así que se distingue del resto:
+   rojo intenso + llama animada, frente al azul de Cyber, el crema de Nuevos ingresos y el
+   marrón del banner especial. Reutiliza el carrusel/tarjeta .fyl-originals-*.
+   Check: admin/offers.html → home_feature_flags.home_offers_banner. */
+.ofertas-banner {
+  position: relative;
+  box-sizing: border-box;
+  /* Mobile: mismo margen lateral que #info-banner-top-container (8px). */
+  margin: 10px 8px 12px;
+  padding: 7px 0 10px 10px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #a31515 0%, #d62828 46%, #f26a2e 100%);
+  box-shadow:
+    0 8px 22px rgba(163, 21, 21, 0.38),
+    inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  overflow: hidden;
+  isolation: isolate;
+}
+
+/* Rayado diagonal sutil + brillo: textura "liquidación" sin imágenes extra. */
+.ofertas-banner::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(120% 70% at 100% 0%, rgba(255, 214, 102, 0.28), transparent 60%),
+    repeating-linear-gradient(
+      115deg,
+      rgba(255, 255, 255, 0.06) 0 10px,
+      transparent 10px 22px
+    );
+  pointer-events: none;
+}
+
+.ofertas-banner__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 0 8px 0 2px;
+}
+
+.ofertas-banner__title {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.1;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(80, 0, 0, 0.3);
+}
+
+.ofertas-banner__fire {
+  display: inline-block;
+  font-size: 13px;
+  line-height: 1;
+  transform-origin: 50% 80%;
+  animation: ofertas-fire-flicker 1.6s ease-in-out infinite;
+}
+
+@keyframes ofertas-fire-flicker {
+  0%,
+  100% {
+    transform: scale(1) rotate(-3deg);
+  }
+  50% {
+    transform: scale(1.08) rotate(3deg);
+  }
+}
+
+.ofertas-banner__ver-todo {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-height: 26px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 700;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.ofertas-banner__ver-todo:active {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.ofertas-banner .fyl-originals-scroll.orig-carousel {
+  gap: 8px;
+  margin-top: 0;
+  padding: 2px 10px 4px 0;
+}
+
+.ofertas-card {
+  border: 2px solid #fff;
+  box-shadow: 0 4px 10px rgba(60, 0, 0, 0.32);
+  text-decoration: none;
+  color: inherit;
+}
+
+.ofertas-card .fyl-originals-card-image {
+  position: relative;
+}
+
+/* Código del artículo legible sobre la foto, sin competir con el rojo del banner. */
+.ofertas-card .fyl-originals-badge {
+  background: rgba(26, 21, 16, 0.86);
+}
+
+.ofertas-card__content {
+  padding: 4px 6px 6px;
+  text-align: center;
+}
+
+.ofertas-card__price {
+  font-size: 17px;
+  font-weight: 900;
+  line-height: 1.15;
+  color: #c62828;
+}
+
+.home-banner-slot.home-banner-slot--ofertas {
+  min-height: 178px;
+}
+
+@media (max-width: 480px) {
+  .ofertas-banner__title {
+    font-size: 16px;
+  }
+
+  .ofertas-card__price {
+    font-size: 15.5px;
+  }
+}
+
+@media (min-width: 768px) {
+  .ofertas-banner {
+    margin-inline: 0.75rem;
+  }
+}
+
+@media (min-width: 769px) {
+  .home-banner-slot.home-banner-slot--ofertas {
+    min-height: 194px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ofertas-banner__fire {
+    animation: none;
   }
 }

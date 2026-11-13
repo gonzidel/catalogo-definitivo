@@ -21,7 +21,7 @@ import {
   isDocumentNavigation,
   isLegacyCatalogoPath,
   isNjDoorPath,
-  mapLegacyCatalogoPath,
+  resolveLegacyCatalogoRedirect,
 } from "@/lib/rollout/request";
 import { markNoindex, writeExperienceCookies } from "@/lib/rollout/response";
 import { isLegacyLandingPath } from "@/lib/rollout/legacy-hosting";
@@ -130,7 +130,11 @@ async function rolloutMiddleware(request: NextRequest, env: RolloutEnv) {
   const finish = <T extends NextResponse>(res: T): T => (noindex ? markNoindex(res) : res);
 
   if (isLegacyCatalogoPath(rawPath)) {
-    return finish(redirectTo(request, mapLegacyCatalogoPath(rawPath)));
+    const target = resolveLegacyCatalogoRedirect(rawPath, request.nextUrl.search);
+    const url = request.nextUrl.clone();
+    url.pathname = target.pathname;
+    url.search = target.search;
+    return finish(NextResponse.redirect(url, 302));
   }
   if (rawPath.startsWith("/auth/") || rawPath.startsWith("/nj/auth/") || isLegacyLandingPath(rawPath)) {
     return finish(NextResponse.next());

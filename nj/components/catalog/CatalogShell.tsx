@@ -1,12 +1,25 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { useSearchParams, usePathname } from "next/navigation";
+import { useSearchParams, usePathname, useRouter } from "next/navigation";
 import { useCatalog } from "@/hooks/useCatalog";
 import { useEnrichedCatalog } from "@/hooks/useEnrichedCatalog";
 import { productHasAnyStock } from "@/lib/utils/catalog-variant-enrich";
-import { searchProducts, filterBySizes } from "@/lib/utils/search";
+import {
+  searchProducts,
+  searchProductsDetailed,
+  filterBySizes,
+  type CascadeResult,
+} from "@/lib/utils/search";
+import { publishCatalogForSearch } from "@/lib/search/search-index";
 import { useSearchDictionary } from "@/hooks/useSearchDictionary";
+import { useSearchProfiles } from "@/hooks/useSearchProfiles";
+import { isSearchV2Enabled } from "@/lib/search/feature-flag";
+import {
+  buildIntentChips,
+  removeIntentChip,
+  type IntentChip,
+} from "@/lib/search/search-intent-chips";
 import {
   flushPendingSearchCommitted,
   trackSearchResultClick,
@@ -27,6 +40,8 @@ import {
   type PaintedGridState,
 } from "@/lib/catalog/reconcile-display-products";
 import type { GroupedProduct } from "@/types/catalog";
+
+type SearchSortMode = "relevancia" | "novedades";
 
 const INITIAL_DISPLAY = 14;
 const DISPLAY_INCREMENT = 14;
@@ -64,8 +79,39 @@ export default function CatalogShell({
 }: CatalogShellProps) {
   const searchParams = useSearchParams();
   const pathname = usePathname();
+  const router = useRouter();
   const searchTerm = searchParams.get("q") ?? "";
+  const [searchSort, setSearchSort] = useState<SearchSortMode>("relevancia");
   const searchDictionary = useSearchDictionary();
+  const searchProfiles = useSearchProfiles();
+  const intentChips = React.useMemo(
+    () => (isSearchV2Enabled() && searchTerm.length >= 2 ? buildIntentChips(searchTerm) : []),
+    [searchTerm]
+  );
+
+  function replaceSearchQuery(nextQ: string) {
+    const params = new URLSearchParams(searchParams.toString());
+    if (nextQ.trim()) params.set("q", nextQ.trim());
+    else params.delete("q");
+    const qs = params.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname);
+  }
+
+  function onRemoveIntentChip(chip: IntentChip) {
+    replaceSearchQuery(removeIntentChip(searchTerm, chip));
+  }
+  const profileTermsByArticulo = React.useMemo(() => {
+    const m = new Map<string, string[]>();
+    for (const [art, profile] of searchProfiles) {
+      m.set(art, [
+        ...(profile.search_terms ?? []),
+        ...(profile.style_terms ?? []),
+        ...(profile.occasion_terms ?? []),
+        ...(profile.color_families ?? []),
+      ]);
+    }
+    return m;
+  }, [searchProfiles]);
   const activeSizes = searchParams
     .get("talle")
     ?.split(",")
@@ -136,12 +182,29 @@ export default function CatalogShell({
     [catalogPool, tags]
   );
 
+  const searchDetailed: CascadeResult | null = React.useMemo(() => {
+    if (searchTerm.length < 2) return null;
+    if (!isSearchV2Enabled()) return null;
+    return searchProductsDetailed(
+      tagFiltered,
+      searchTerm,
+      searchDictionary,
+      profileTermsByArticulo
+    );
+  }, [tagFiltered, searchTerm, searchDictionary, profileTermsByArticulo]);
+
   const searched = React.useMemo(
-    () =>
-      searchTerm.length >= 2
-        ? searchProducts(tagFiltered, searchTerm, searchDictionary)
-        : tagFiltered,
-    [tagFiltered, searchTerm, searchDictionary]
+    () => {
+      if (searchTerm.length < 2) return tagFiltered;
+      if (searchDetailed) return searchDetailed.hits.map((h) => h.product);
+      return searchProducts(
+        tagFiltered,
+        searchTerm,
+        searchDictionary,
+        profileTermsByArticulo
+      );
+    },
+    [tagFiltered, searchTerm, searchDictionary, searchDetailed, profileTermsByArticulo]
   );
 
   const effectiveCategoria = React.useMemo(() => {
@@ -150,30 +213,48 @@ export default function CatalogShell({
     return inferCategoryFromProducts(searched) ?? "all";
   }, [categoria, searchTerm, tags.length, searched]);
 
+  const sortedSearched = React.useMemo(() => {
+    if (searchTerm.length < 2 || searchSort !== "novedades") return searched;
+    return [...searched].sort((a, b) => {
+      const ta = Date.parse(a.FechaPublicacion || a.FechaIngreso || "") || 0;
+      const tb = Date.parse(b.FechaPublicacion || b.FechaIngreso || "") || 0;
+      return tb - ta;
+    });
+  }, [searched, searchSort, searchTerm]);
+
   const filtered =
     activeSizes.length > 0
-      ? filterBySizes(searched, activeSizes, effectiveCategoria)
-      : searched;
+      ? filterBySizes(sortedSearched, activeSizes, effectiveCategoria)
+      : sortedSearched;
+
+  const searchCatalogReady =
+    searchTerm.trim().length < 2 ||
+    (!isEnriching && !isSearchExtrasPending && !isLoadingMore && !canLoadMore);
 
   useEffect(() => {
     if (searchTerm.trim().length < 2) return;
-    if (isEnriching || isSearchExtrasPending) return;
-    flushPendingSearchCommitted(searchTerm, searched.length, searchDictionary);
+    if (!searchCatalogReady) return;
+    flushPendingSearchCommitted(
+      searchTerm,
+      searched.length,
+      searchDictionary,
+      searchDetailed?.mode ?? null
+    );
   }, [
     searchTerm,
-    isEnriching,
-    isSearchExtrasPending,
+    searchCatalogReady,
     searched.length,
     searchDictionary,
+    searchDetailed?.mode,
   ]);
 
   const contextCategoria =
     categoria !== "all" ? categoria : effectiveCategoria;
 
-  // Expose loaded products globally so SearchBar autocomplete can use them
+  // Índice + lista global para autocomplete (SearchBar)
   useEffect(() => {
     if (catalogPool.length > 0) {
-      (window as any).__fylProducts = catalogPool;
+      publishCatalogForSearch(catalogPool);
     }
   }, [catalogPool]);
 
@@ -220,6 +301,15 @@ export default function CatalogShell({
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const loadMoreRef = useRef(loadMore);
   loadMoreRef.current = loadMore;
+
+  // Con una búsqueda activa hay que traer el resto del catálogo. Si no,
+  // se busca solo sobre los primeros productos ya pintados y términos
+  // obvios (zapatillas, ojotas) quedan en cero.
+  useEffect(() => {
+    if (searchTerm.trim().length < 2) return;
+    if (!canLoadMore || isLoadingMore) return;
+    loadMoreRef.current();
+  }, [searchTerm, canLoadMore, isLoadingMore]);
   const filteredRef = useRef(filtered);
   filteredRef.current = filtered;
   const hasMoreRef = useRef(canLoadMore);
@@ -485,12 +575,134 @@ export default function CatalogShell({
         </div>
       )}
 
-      {/* End of results */}
-      {!canLoadMore && !isLoadingMore && filtered.length === 0 && searchTerm && (
+      {/* Intención detectada + orden (Fase C) */}
+      {searchTerm.length >= 2 && isSearchV2Enabled() && (
+        <div
+          className="search-intent-bar"
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 8,
+            alignItems: "center",
+            padding: "8px 12px",
+          }}
+        >
+          {intentChips.map((chip) => (
+            <button
+              key={chip.id}
+              type="button"
+              className="tag-filter-chip"
+              onClick={() => onRemoveIntentChip(chip)}
+              aria-label={`Quitar ${chip.label}`}
+            >
+              {chip.label} ×
+            </button>
+          ))}
+          <label
+            style={{
+              marginLeft: "auto",
+              fontSize: 13,
+              color: "#555",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            Orden
+            <select
+              value={searchSort}
+              onChange={(e) =>
+                setSearchSort(e.target.value === "novedades" ? "novedades" : "relevancia")
+              }
+              style={{ fontSize: 13, minHeight: 44 }}
+            >
+              <option value="relevancia">Relevancia</option>
+              <option value="novedades">Novedades</option>
+            </select>
+          </label>
+        </div>
+      )}
+
+      {/* Aviso de búsqueda ampliada (cascade relaxed) */}
+      {searchDetailed?.mode === "relaxed" && searchDetailed.dropped.length > 0 && (
+        <div
+          className="search-cascade-notice"
+          style={{
+            textAlign: "center",
+            padding: "10px 16px",
+            color: "#666",
+            fontSize: 13,
+          }}
+        >
+          Resultados parciales para &ldquo;{searchDetailed.effectiveQuery}&rdquo;
+          {searchDetailed.dropped.length > 0 && (
+            <> (sin &ldquo;{searchDetailed.dropped.join(", ")}&rdquo;)</>
+          )}
+        </div>
+      )}
+
+      {searchTerm.trim().length >= 2 && !searchCatalogReady && filtered.length === 0 && (
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "center",
+            padding: "28px 16px",
+          }}
+          aria-live="polite"
+        >
+          <div className="spinner" aria-label="Buscando productos" />
+        </div>
+      )}
+
+      {/* End of results + rescate. No mostrarlo mientras el catálogo sigue llegando. */}
+      {searchCatalogReady && filtered.length === 0 && searchTerm.trim().length >= 2 && (
         <div
           style={{ textAlign: "center", padding: "32px 16px", color: "#666" }}
         >
-          No se encontraron productos para &ldquo;{searchTerm}&rdquo;
+          <p style={{ margin: "0 0 12px" }}>
+            No se encontraron productos para &ldquo;{searchTerm}&rdquo;
+          </p>
+          {searchDetailed && searchDetailed.suggestions.length > 0 && (
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 8,
+                justifyContent: "center",
+              }}
+            >
+              {searchDetailed.suggestions.map((s) => (
+                <a
+                  key={s}
+                  href={`/?q=${encodeURIComponent(s)}`}
+                  className="tag-filter-chip"
+                  style={{ textDecoration: "none" }}
+                >
+                  Buscar {s}
+                </a>
+              ))}
+            </div>
+          )}
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 8,
+              justifyContent: "center",
+              marginTop: 12,
+            }}
+          >
+            {["Sandalia", "Zapatilla", "Jean", "Remera"].map((alt) => (
+              <a
+                key={alt}
+                href={`/?q=${encodeURIComponent(alt)}`}
+                className="tag-filter-chip"
+                style={{ textDecoration: "none" }}
+              >
+                {alt}
+              </a>
+            ))}
+          </div>
         </div>
       )}
     </>

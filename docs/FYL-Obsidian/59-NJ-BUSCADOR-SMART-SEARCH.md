@@ -4,6 +4,8 @@
 >
 > **Estado (2026-09-04):** Fases 1–5 hechas en `fyl-core` (`dtfznewwvsadkorxwzft`). Tags **no** se tocan.
 >
+> **Actualización 2026-11-11:** plan buscador premium en [[73-NJ-BUSCADOR-PREMIUM-AUDITORIA-PLAN-2026-11-11]]. Motor v2 (stem ES, cascade, talles, colores) en rama `feat/nj-buscador-premium`. La regla «sin stemming general» queda **reemplazada** por normalizador liviano (ver `docs/10_DECISIONES.md`).
+>
 > Regla de producto: **analytics sugiere · administrador decide · buscador ejecuta.** Nada se agrega solo al vocabulario.
 
 ## Dónde vive

@@ -24,6 +24,7 @@ Orden en `aboveGridSlot` (de arriba hacia abajo):
 
 | # | Componente | Fuente |
 |---|------------|--------|
+| 0 | `OfertasBanner` | **Nuevo 2026-11-10** (rama `feat/banner-ofertas-inicio`, sin publicar): ofertas vigentes; solo con el check de `admin/offers.html`. Ver [[76-BANNER-OFERTAS-INICIO-2026-11-10]] |
 | 1 | `InfoBanner` | Estático — compra mínima |
 | 2 | `NuevosIngresosBanner` | RPC / fallback — primera publicación 7 días |
 | 3 | `FylOriginalsBanner` | `SupplierCode = FYL` + **curaduría slots 1–4** (paridad vanilla) |

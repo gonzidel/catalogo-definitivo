@@ -227,9 +227,13 @@ export default function CatalogShell({
       ? filterBySizes(sortedSearched, activeSizes, effectiveCategoria)
       : sortedSearched;
 
+  const searchCatalogReady =
+    searchTerm.trim().length < 2 ||
+    (!isEnriching && !isSearchExtrasPending && !isLoadingMore && !canLoadMore);
+
   useEffect(() => {
     if (searchTerm.trim().length < 2) return;
-    if (isEnriching || isSearchExtrasPending) return;
+    if (!searchCatalogReady) return;
     flushPendingSearchCommitted(
       searchTerm,
       searched.length,
@@ -238,8 +242,7 @@ export default function CatalogShell({
     );
   }, [
     searchTerm,
-    isEnriching,
-    isSearchExtrasPending,
+    searchCatalogReady,
     searched.length,
     searchDictionary,
     searchDetailed?.mode,
@@ -298,6 +301,15 @@ export default function CatalogShell({
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const loadMoreRef = useRef(loadMore);
   loadMoreRef.current = loadMore;
+
+  // Con una búsqueda activa hay que traer el resto del catálogo. Si no,
+  // se busca solo sobre los primeros productos ya pintados y términos
+  // obvios (zapatillas, ojotas) quedan en cero.
+  useEffect(() => {
+    if (searchTerm.trim().length < 2) return;
+    if (!canLoadMore || isLoadingMore) return;
+    loadMoreRef.current();
+  }, [searchTerm, canLoadMore, isLoadingMore]);
   const filteredRef = useRef(filtered);
   filteredRef.current = filtered;
   const hasMoreRef = useRef(canLoadMore);
@@ -629,8 +641,21 @@ export default function CatalogShell({
         </div>
       )}
 
-      {/* End of results + rescate */}
-      {!canLoadMore && !isLoadingMore && filtered.length === 0 && searchTerm && (
+      {searchTerm.trim().length >= 2 && !searchCatalogReady && filtered.length === 0 && (
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "center",
+            padding: "28px 16px",
+          }}
+          aria-live="polite"
+        >
+          <div className="spinner" aria-label="Buscando productos" />
+        </div>
+      )}
+
+      {/* End of results + rescate. No mostrarlo mientras el catálogo sigue llegando. */}
+      {searchCatalogReady && filtered.length === 0 && searchTerm.trim().length >= 2 && (
         <div
           style={{ textAlign: "center", padding: "32px 16px", color: "#666" }}
         >

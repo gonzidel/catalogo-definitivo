@@ -6,6 +6,12 @@ import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { PROVINCE_CITIES_DATA } from "@/lib/data/argentina-cities-data";
 import DropdownSelect from "@/components/ui/DropdownSelect";
 import { linkOrCreateCustomerIdentity } from "@/lib/supabase/link-customer-identity";
+import {
+  formatPhoneLocalDisplay,
+  formatPhoneStored,
+  sanitizePhoneInput,
+  validateArgentinaPhone,
+} from "@/lib/utils/phone-ar";
 
 const CUSTOM_CITY = "__otra__";
 
@@ -21,38 +27,6 @@ function sanitize(text: string, max = 255) {
     .replace(/[\x00-\x1F\x7F]/g, "")
     .trim()
     .slice(0, max);
-}
-
-function formatPhoneInput(value: string) {
-  let digits = String(value || "").replace(/\D/g, "");
-  if (digits.length > 10) digits = digits.slice(0, 10);
-  if (digits.length === 0) return "";
-  if (digits.length <= 3) return digits;
-  if (digits.length <= 6) return `${digits.slice(0, 3)} ${digits.slice(3)}`;
-  return `${digits.slice(0, 3)} ${digits.slice(3, 6)}-${digits.slice(6)}`;
-}
-
-function formatPhoneE164(phoneRaw: string) {
-  let cleaned = phoneRaw.replace(/[\s\-()]/g, "");
-  if (cleaned.length >= 8) cleaned = `9${cleaned}`;
-  if (cleaned.length >= 10) {
-    const match = cleaned.match(/^9(\d{2,4})(\d{6,8})$/);
-    if (match) {
-      const area = match[1];
-      const number = match[2];
-      const formatted =
-        number.length > 4
-          ? `${number.slice(0, -4)}-${number.slice(-4)}`
-          : number;
-      return `+54 9 ${area} ${formatted}`;
-    }
-  }
-  return `+54 9 ${cleaned}`;
-}
-
-function validatePhone(phoneRaw: string) {
-  const cleaned = phoneRaw.replace(/[\s\-()]/g, "");
-  return /^\d{8,10}$/.test(cleaned);
 }
 
 export default function ProfileOnboardingModal({
@@ -72,6 +46,7 @@ export default function ProfileOnboardingModal({
   const [lastName, setLastName] = useState("");
   const [dni, setDni] = useState("");
   const [phone, setPhone] = useState("");
+  const [phoneError, setPhoneError] = useState<string | null>(null);
   const [address, setAddress] = useState("");
   const [province, setProvince] = useState("");
   const [city, setCity] = useState("");
@@ -109,7 +84,7 @@ export default function ProfileOnboardingModal({
 
     const fn = sanitize(firstName, 100);
     const ln = sanitize(lastName, 100);
-    const phoneRaw = phone.replace(/\s|-/g, "").trim();
+    const phoneCheck = validateArgentinaPhone(phone);
     const dniDigits = dni.replace(/\D/g, "");
     const prov = sanitize(province, 100);
     const cityVal = sanitize(isCustomCity ? customCity : city, 100);
@@ -127,8 +102,9 @@ export default function ProfileOnboardingModal({
       setError("DNI: 7 u 8 dígitos");
       return;
     }
-    if (!validatePhone(phoneRaw)) {
-      setError("Teléfono: código de área + número (8 a 10 dígitos)");
+    if (!phoneCheck.ok) {
+      setPhoneError(phoneCheck.error ?? "Teléfono no válido");
+      setError(phoneCheck.error ?? "Teléfono no válido");
       return;
     }
     if (!prov || !provinces.includes(prov)) {
@@ -147,7 +123,8 @@ export default function ProfileOnboardingModal({
     setSaving(true);
     try {
       const supabase = getSupabaseBrowserClient();
-      const formattedPhone = formatPhoneE164(phoneRaw);
+      // El prefijo interno "+54 9" se agrega solo acá; el cliente nunca lo ve.
+      const formattedPhone = formatPhoneStored(phoneCheck.digits);
       const fullName = `${fn} ${ln}`.trim();
 
       let customerNumber: string | null = null;
@@ -306,18 +283,40 @@ export default function ProfileOnboardingModal({
           <label className="pom-label" htmlFor="nj-pom-phone">
             Teléfono <span className="pom-req">*</span>
           </label>
-          <div className="pom-phone-row">
-            <span className="pom-phone-prefix">+54 9</span>
-            <input
-              id="nj-pom-phone"
-              className="pom-input pom-phone-input"
-              value={phone}
-              onChange={(e) => setPhone(formatPhoneInput(e.target.value))}
-              autoComplete="tel"
-              required
-            />
-          </div>
-          <p className="pom-hint">Código de área + número (sin el 9 inicial).</p>
+          <input
+            id="nj-pom-phone"
+            className="pom-input"
+            type="tel"
+            inputMode="tel"
+            value={phone}
+            onChange={(e) => {
+              setPhone(sanitizePhoneInput(e.target.value));
+              if (phoneError) setPhoneError(null);
+            }}
+            onBlur={() => {
+              if (!phone.trim()) return;
+              const check = validateArgentinaPhone(phone);
+              if (check.ok) {
+                setPhone(formatPhoneLocalDisplay(check.digits));
+                setPhoneError(null);
+              } else {
+                setPhoneError(check.error ?? "Teléfono no válido");
+              }
+            }}
+            placeholder="Ej: 362 472-0762"
+            autoComplete="tel-national"
+            aria-invalid={phoneError ? true : undefined}
+            aria-describedby="nj-pom-phone-hint"
+            required
+          />
+          <p
+            id="nj-pom-phone-hint"
+            className="pom-hint"
+            role={phoneError ? "alert" : undefined}
+            style={phoneError ? { color: "#b91c1c" } : undefined}
+          >
+            {phoneError ?? "Característica + número, sin 0 ni 15."}
+          </p>
 
           <label className="pom-label" htmlFor="nj-pom-address">
             Dirección (calle y número) <span className="pom-req">*</span>

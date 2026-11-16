@@ -6,6 +6,13 @@ import DropdownSelect from "@/components/ui/DropdownSelect";
 import ProfileShippingBlock from "./ProfileShippingBlock";
 import { linkOrCreateCustomerIdentity } from "@/lib/supabase/link-customer-identity";
 import { PROVINCE_CITIES_DATA } from "@/lib/data/argentina-cities-data";
+import {
+  formatPhoneLocalDisplay,
+  formatPhoneStored,
+  phoneForDisplay,
+  sanitizePhoneInput,
+  validateArgentinaPhone,
+} from "@/lib/utils/phone-ar";
 
 // Mismo dataset que onboarding/admin (incluye Barrancas, etc.)
 const PROVINCE_CITIES = PROVINCE_CITIES_DATA as Record<string, string[]>;
@@ -248,7 +255,8 @@ export default function ProfileTab({ customer, userEmail, userId, onLogout, logg
   ]);
 
   function startEditPersonal() {
-    setPersonalDraft(personal);
+    // En pantalla el teléfono va sin "+54 9" (prefijo interno).
+    setPersonalDraft({ ...personal, phone: phoneForDisplay(personal.phone) });
     setPersonalError(null);
     setEditingPersonal(true);
   }
@@ -308,7 +316,18 @@ export default function ProfileTab({ customer, userEmail, userId, onLogout, logg
     const { current, email } = await getRpcBase(supabase);
 
     const fullName = personalDraft.full_name.trim();
-    const phone = personalDraft.phone.trim();
+    // Teléfono: se valida solo si el cliente lo cambió, para no bloquear la edición de otros
+    // datos por un teléfono viejo. Se guarda siempre con el prefijo interno "+54 9".
+    let phone = personal.phone.trim();
+    if (personalDraft.phone.trim() !== phoneForDisplay(personal.phone)) {
+      const phoneCheck = validateArgentinaPhone(personalDraft.phone);
+      if (!phoneCheck.ok) {
+        setSavingPersonal(false);
+        setPersonalError(phoneCheck.error ?? "Teléfono no válido");
+        return;
+      }
+      phone = formatPhoneStored(phoneCheck.digits);
+    }
     const dni = personalDraft.dni.trim();
     const province = location.province.trim();
     const city = effectiveCity.trim();
@@ -363,8 +382,8 @@ export default function ProfileTab({ customer, userEmail, userId, onLogout, logg
       setPersonalError((data as { error?: string }).error || "No se pudo guardar.");
       return;
     }
-    setPersonal(personalDraft);
-    onCustomerUpdate?.({ full_name: personalDraft.full_name, phone: personalDraft.phone, dni: personalDraft.dni });
+    setPersonal({ ...personalDraft, phone });
+    onCustomerUpdate?.({ full_name: personalDraft.full_name, phone, dni: personalDraft.dni });
     setPersonalOk(true);
     setEditingPersonal(false);
     setTimeout(() => setPersonalOk(false), 3000);
@@ -448,9 +467,18 @@ export default function ProfileTab({ customer, userEmail, userId, onLogout, logg
             </div>
             <div>
               <label style={labelStyle}>Teléfono / WhatsApp</label>
-              <input type="tel" value={personalDraft.phone}
-                onChange={(e) => setPersonalDraft((f) => ({ ...f, phone: e.target.value }))}
-                placeholder="+54 9 XXXX XXXXXX" style={inputStyle} />
+              <input type="tel" inputMode="tel" autoComplete="tel-national" value={personalDraft.phone}
+                onChange={(e) => setPersonalDraft((f) => ({ ...f, phone: sanitizePhoneInput(e.target.value) }))}
+                onBlur={() => {
+                  const check = validateArgentinaPhone(personalDraft.phone);
+                  if (check.ok) {
+                    setPersonalDraft((f) => ({ ...f, phone: formatPhoneLocalDisplay(check.digits) }));
+                  }
+                }}
+                placeholder="Ej: 362 472-0762" style={inputStyle} />
+              <span style={{ display: "block", marginTop: 4, fontSize: 11, color: "#888" }}>
+                Característica + número, sin 0 ni 15.
+              </span>
             </div>
             <div>
               <label style={labelStyle}>DNI</label>
@@ -468,7 +496,7 @@ export default function ProfileTab({ customer, userEmail, userId, onLogout, logg
         ) : (
           <>
             <ReadRow label="Nombre" value={personal.full_name} />
-            <ReadRow label="Teléfono" value={personal.phone} />
+            <ReadRow label="Teléfono" value={phoneForDisplay(personal.phone)} />
             <ReadRow label="DNI" value={personal.dni} />
             {personalOk && (
               <div style={{ marginTop: 8, padding: "8px 12px", borderRadius: 8, background: "#f0fdf4", border: "1px solid #86efac", fontSize: 12, color: "#166534", display: "flex", alignItems: "center", gap: 6 }}>

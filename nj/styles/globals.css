@@ -185,6 +185,13 @@ html[data-exp="full"] .exp-catalog-only {
   color: #7a6a5e;
 }
 
+.search-pending-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 16px;
+}
+
 .tag-filter-bar[data-filter-type="search"] .tag-filter-clear {
   width: 32px;
   height: 32px;

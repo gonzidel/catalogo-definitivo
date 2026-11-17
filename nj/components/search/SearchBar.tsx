@@ -7,7 +7,7 @@ import { createPortal } from "react-dom";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { buildSuggestions, type SearchSuggestion } from "@/lib/utils/search";
 import { useSearchDictionary } from "@/hooks/useSearchDictionary";
-import { getCatalogProductsFromWindow } from "@/lib/search/search-index";
+import { CATALOG_SEARCH_READY_EVENT, getCatalogProductsFromWindow } from "@/lib/search/search-index";
 import {
   noteUiSearchCommit,
   trackAutocompleteProductSelected,
@@ -121,6 +121,7 @@ export default function SearchBar() {
   const containerRef = useRef<HTMLDivElement>(null);
   const hintCardRef  = useRef<HTMLDivElement>(null);
   const debounceRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const suggestionsClosedRef = useRef(false);
   const pathnameRef  = useRef(pathname);
   const searchParamsRef = useRef(searchParams);
   pathnameRef.current = pathname;
@@ -226,6 +227,7 @@ export default function SearchBar() {
   useEffect(() => {
     function handlePointerDown(e: MouseEvent) {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        suggestionsClosedRef.current = true;
         setShowDropdown(false);
         setHighlighted(-1);
       }
@@ -248,6 +250,7 @@ export default function SearchBar() {
   }, []);
 
   const closeSuggestions = useCallback(() => {
+    suggestionsClosedRef.current = true;
     setSuggestions([]);
     setShowDropdown(false);
     setHighlighted(-1);
@@ -289,6 +292,7 @@ export default function SearchBar() {
 
   const onInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
+    suggestionsClosedRef.current = false;
     setInputValue(val);
     setHighlighted(-1);
 
@@ -306,6 +310,22 @@ export default function SearchBar() {
       }
     }, SUGGEST_DEBOUNCE_MS);
   }, [cancelSuggestTimer, dictionary]);
+
+  // Si escribieron apenas abrió la web, el catálogo llega unos segundos después.
+  // Recalcula las sugerencias cuando ese catálogo ya está listo.
+  useEffect(() => {
+    function refreshSuggestions() {
+      if (suggestionsClosedRef.current) return;
+      const val = inputRef.current?.value ?? "";
+      if (val.trim().length < 2) return;
+      const products = getCatalogProductsFromWindow();
+      if (products.length === 0) return;
+      setSuggestions(buildSuggestions(products, val, 7, dictionary));
+      setShowDropdown(true);
+    }
+    window.addEventListener(CATALOG_SEARCH_READY_EVENT, refreshSuggestions);
+    return () => window.removeEventListener(CATALOG_SEARCH_READY_EVENT, refreshSuggestions);
+  }, [dictionary]);
 
   const applySuggestion = useCallback((s: SearchSuggestion, index: number) => {
     setInputValue(s.query);

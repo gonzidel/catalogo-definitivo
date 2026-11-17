@@ -83,7 +83,7 @@ export default function CatalogShell({
   const searchTerm = searchParams.get("q") ?? "";
   const [searchSort, setSearchSort] = useState<SearchSortMode>("relevancia");
   const searchDictionary = useSearchDictionary();
-  const searchProfiles = useSearchProfiles();
+  const { profiles: searchProfiles, isReady: searchProfilesReady } = useSearchProfiles();
   const intentChips = React.useMemo(
     () => (isSearchV2Enabled() && searchTerm.length >= 2 ? buildIntentChips(searchTerm) : []),
     [searchTerm]
@@ -167,7 +167,13 @@ export default function CatalogShell({
   const useStableGrid = browsing && !fixedProductSet;
 
   const catalogPool = React.useMemo(() => {
-    const withImages = enrichedProducts.filter(
+    // En búsqueda, si el catálogo nuevo ya llegó y el enriquecido todavía
+    // es el lote chico de la portada, buscar sobre lo que ya está en memoria.
+    const source =
+      !browsing && baseProducts.length > enrichedProducts.length
+        ? baseProducts
+        : enrichedProducts;
+    const withImages = source.filter(
       (p) => (p.DetalleColor?.length ?? 0) > 0
     );
     // Búsqueda / set fijo: no filtrar OOS acá.
@@ -175,7 +181,7 @@ export default function CatalogShell({
     if (fixedProductSet || !browsing) return withImages;
     if (isEnriching) return withImages;
     return withImages.filter(productHasAnyStock);
-  }, [enrichedProducts, browsing, fixedProductSet, isEnriching]);
+  }, [enrichedProducts, baseProducts, browsing, fixedProductSet, isEnriching]);
 
   const tagFiltered = React.useMemo(
     () => filterProductsByTags(catalogPool, tags),
@@ -229,7 +235,7 @@ export default function CatalogShell({
 
   const searchCatalogReady =
     searchTerm.trim().length < 2 ||
-    (!isEnriching && !isSearchExtrasPending && !isLoadingMore && !canLoadMore);
+    (searchProfilesReady && !isSearchExtrasPending && !isLoadingMore && !canLoadMore);
 
   useEffect(() => {
     if (searchTerm.trim().length < 2) return;
@@ -506,13 +512,31 @@ export default function CatalogShell({
           activeSizes={activeSizes}
           activeTags={tags}
           totalResults={filtered.length}
+          pending={searchTerm.trim().length >= 2 && !searchCatalogReady}
         />
       )}
 
       {/* Catalog grid */}
       <div id="catalogo" className="catalogo">
         <div id="catalog-container">
-          {displayProducts.map((product, i) => {
+          {searchTerm.trim().length >= 2 && !searchCatalogReady ? (
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "center",
+                padding: "28px 16px",
+                gridColumn: "1 / -1",
+                width: "100%",
+              }}
+              aria-live="polite"
+            >
+              <span className="search-pending-dots" role="status" aria-label="Buscando productos">
+                <span className="spinner-circle" />
+                <span className="spinner-circle" />
+                <span className="spinner-circle" />
+              </span>
+            </div>
+          ) : displayProducts.map((product, i) => {
             const card = (
               <ProductCard
                 key={product.Articulo}
@@ -548,6 +572,7 @@ export default function CatalogShell({
           {/* Loading skeletons */}
           {isLoadingMore &&
             allProducts.length === 0 &&
+            searchTerm.trim().length < 2 &&
             Array.from({ length: 4 }).map((_, i) => (
               <SkeletonCard key={`sk-${i}`} />
             ))}
@@ -638,19 +663,6 @@ export default function CatalogShell({
           {searchDetailed.dropped.length > 0 && (
             <> (sin &ldquo;{searchDetailed.dropped.join(", ")}&rdquo;)</>
           )}
-        </div>
-      )}
-
-      {searchTerm.trim().length >= 2 && !searchCatalogReady && filtered.length === 0 && (
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "center",
-            padding: "28px 16px",
-          }}
-          aria-live="polite"
-        >
-          <div className="spinner" aria-label="Buscando productos" />
         </div>
       )}
 

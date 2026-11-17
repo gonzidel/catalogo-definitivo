@@ -206,6 +206,9 @@ export function getCachedSearchIndex(key: string): SearchIndex | undefined {
   return cache.get(key);
 }
 
+/** El buscador vuelve a armar sugerencias cuando el catálogo termina de llegar. */
+export const CATALOG_SEARCH_READY_EVENT = "fyl-catalog-search-ready";
+
 /** Expose products globally for SearchBar (compat + índice). */
 export function publishCatalogForSearch(products: GroupedProduct[]): void {
   if (typeof window === "undefined") return;
@@ -216,6 +219,7 @@ export function publishCatalogForSearch(products: GroupedProduct[]): void {
   bag.__fylProducts = products;
   bag.__fylSearchIndexKey = articulosKey(products);
   buildSearchIndex(products);
+  window.dispatchEvent(new Event(CATALOG_SEARCH_READY_EVENT));
 }
 
 export function getCatalogProductsFromWindow(): GroupedProduct[] {

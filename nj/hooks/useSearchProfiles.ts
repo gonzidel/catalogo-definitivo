@@ -21,11 +21,17 @@ async function fetchSearchProfiles(): Promise<Map<string, SearchProfilePublic>> 
   return map;
 }
 
-export function useSearchProfiles(): Map<string, SearchProfilePublic> {
-  const { data } = useSWR(SEARCH_PROFILES_SWR_KEY, fetchSearchProfiles, {
-    fallbackData: new Map(),
+export function useSearchProfiles(): {
+  profiles: Map<string, SearchProfilePublic>;
+  isReady: boolean;
+} {
+  const { data, error, isLoading } = useSWR(SEARCH_PROFILES_SWR_KEY, fetchSearchProfiles, {
     revalidateOnFocus: false,
     dedupingInterval: 60_000,
   });
-  return data ?? new Map();
+  return {
+    profiles: data ?? new Map(),
+    // Si falla la carga no dejamos el buscador girando para siempre.
+    isReady: Boolean(error) || (!isLoading && data != null),
+  };
 }

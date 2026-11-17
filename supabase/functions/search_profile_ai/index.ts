@@ -7,13 +7,13 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
-const PROMPT_VERSION = "search-profile-v1-2026-11-11";
+const PROMPT_VERSION = "search-profile-v2-2026-11-13-ninos";
 const MAX_BATCH = 20;
 const DAILY_CAP = Number(Deno.env.get("SEARCH_PROFILE_AI_DAILY_CAP") || "200");
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-backfill-token",
 };
 
 type Provider = "openai" | "claude";
@@ -109,6 +109,7 @@ REGLAS:
 4) color_families: solo familias (negro, blanco, beige, …). Sin códigos internos (var01).
 5) Sin relleno ("ideal", "hermoso", "no te lo pierdas").
 6) Máximo 12 search_terms, 8 style_terms, 6 occasion_terms.
+7) Si es calzado o ropa de nenes y la foto muestra un dibujo reconocible (hombre araña, unicornio, princesa, dinosaurio, frozen, minnie, o el personaje que se vea), poné ESE nombre en search_terms, como lo escribiría la revendedora. No lo reemplaces por "con dibujos" o "con personajes". Si la foto no tiene dibujo, no inventes un personaje.
 
 Respondé SOLO JSON:
 {

@@ -65,6 +65,19 @@
 - 409: `409_ROLLBACK_product_search_profiles.sql`.
 - 410: `410_ROLLBACK_search_events_result_mode.sql`.
 
+## Motivos infantiles (2026-11-13)
+
+- Prompt `search-profile-v2-2026-11-13-ninos` en Edge `search_profile_ai` v5. Si la foto de un nene muestra un personaje, el nombre va en `search_terms`.
+- Regenerados solo los 70 perfiles `audience = ninos` y `status = approved`. Siguen aprobados. Adultos: 0 filas con este prompt.
+- Artículo 332: variantes Stitch y Hombre Araña. Términos incluyen `hombre araña`, `spiderman` y `Stitch`.
+- No se escribió `products.description`. Costo del lote: ~USD 0.04.
+
+## Espera al entrar (2026-11-17)
+
+- Si buscan apenas abre la web, la grilla no muestra cero: espera a que terminen las páginas del catálogo y los perfiles de búsqueda, y recién ahí pinta resultados.
+- Las sugerencias se recalculan cuando el catálogo llega (`fyl-catalog-search-ready`).
+- Durante esa espera no hay cartel fijo: tres puntos animados (el mismo pulso del catálogo) en la barra y en la grilla.
+
 ## Deuda
 
 - Leer `search_events` live (admin) para priorizar aliases.

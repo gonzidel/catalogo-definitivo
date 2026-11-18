@@ -5135,6 +5135,42 @@ html[data-exp="full"] .exp-catalog-only {
   border-radius: 7px;
 }
 
+.active-order-help {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin: 10px 0 16px;
+}
+
+.active-order-help__text {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.35;
+  color: #6b645e;
+}
+
+.active-order-btn--whatsapp-word {
+  width: auto;
+  flex: 0 0 auto;
+  min-height: 0;
+  padding: 3px 8px;
+  font-size: 12px;
+  line-height: 1.2;
+  border-radius: 999px;
+  gap: 4px;
+  background: #fff;
+  color: #128c7e;
+  border: 1px solid #b7e4c7;
+  box-shadow: none;
+}
+
+.active-order-btn--whatsapp-word:focus-visible {
+  outline: 2px solid #128c7e;
+  outline-offset: 2px;
+}
+
 .active-order-btn--quitar {
   width: auto;
   min-height: auto;

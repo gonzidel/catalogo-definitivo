@@ -98,7 +98,7 @@ function VariantCard({ card }: { card: CuratedVariantCardEnriched }) {
             src={imageSrc}
             alt={card.Articulo}
             fill
-            sizes="(max-width: 480px) 42vw, 180px"
+            sizes="(max-width: 1023px) 42vw, 232px"
             className="custom-banner-card-image"
             style={{ objectFit: "cover" }}
           />

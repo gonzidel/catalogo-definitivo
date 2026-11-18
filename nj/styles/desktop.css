@@ -1169,20 +1169,35 @@
   }
 
   .custom-banner-wrapper.curated-dynamic-banner .custom-banner-scroll {
+    gap: 16px;
     padding-right: 8px;
   }
 
-  .custom-banner-grid-page,
-  .custom-banner-grid-page:only-child[data-pairs="2"] {
-    flex: 0 0 100%;
-    width: 100%;
-    min-width: 100%;
+  /* El 2x2 es el patron de celular. En escritorio las mismas tarjetas
+     quedan en una sola fila, con ancho fijo, para no estirar las fotos. */
+  .custom-banner-wrapper.curated-dynamic-banner .custom-banner-grid-page,
+  .custom-banner-wrapper.curated-dynamic-banner .custom-banner-grid-page:only-child[data-pairs="2"],
+  .custom-banner-wrapper.curated-dynamic-banner .custom-banner-grid-page[data-pairs="1"],
+  .custom-banner-wrapper.curated-dynamic-banner .custom-banner-column-pair {
+    display: contents;
   }
 
-  .custom-banner-grid-page[data-pairs="1"] {
-    flex: 0 0 50%;
-    width: 50%;
-    min-width: 50%;
+  .custom-banner-wrapper.curated-dynamic-banner .custom-banner-card {
+    flex: 0 0 232px;
+    width: 232px;
+    scroll-snap-align: start;
+  }
+
+  .custom-banner-wrapper.curated-dynamic-banner .custom-banner-card-price {
+    font-size: 18px;
+  }
+
+  .custom-banner-wrapper.curated-dynamic-banner .custom-banner-card-wholesale {
+    font-size: 11px;
+  }
+
+  .home-banner-slot.home-banner-slot--curated {
+    min-height: 340px;
   }
 }
 

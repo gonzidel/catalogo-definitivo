@@ -133,7 +133,12 @@ export function useCatalog({
   useCatalogSnapshotRevalidate(mutate);
 
   const pages = data ?? [];
-  const hasMore = pages.length > 0 ? pages[pages.length - 1].hasMore : true;
+  // Si un pedido falló no hay "más para cargar": evita esperar para siempre.
+  const hasMore = error
+    ? false
+    : pages.length > 0
+      ? pages[pages.length - 1].hasMore
+      : true;
 
   // Merge all pages: products at batch boundaries can be split across pages.
   // Re-group by Articulo to merge DetalleColor from different batches.
@@ -148,7 +153,11 @@ export function useCatalog({
     allProducts,
     hasMore,
     isLoading,
-    isLoadingMore: isLoading || (size > 0 && data != null && data[size - 1] == null),
+    // Solo "cargando más" si de verdad falta una página que existe. Con
+    // persistSize el tamaño puede quedar en 2 aunque la categoría (ej. Ropa)
+    // tenga una sola página: no hay página 2 y esperarla trababa el buscador.
+    isLoadingMore:
+      isLoading || (size > 0 && data != null && hasMore && data[size - 1] == null),
     error,
     loadMore: () => {
       if (!isLoading && hasMore) setSize((s) => s + 1);

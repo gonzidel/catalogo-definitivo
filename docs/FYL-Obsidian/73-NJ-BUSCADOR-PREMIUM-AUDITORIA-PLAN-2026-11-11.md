@@ -78,6 +78,14 @@
 - Las sugerencias se recalculan cuando el catálogo llega (`fyl-catalog-search-ready`).
 - Durante esa espera no hay cartel fijo: tres puntos animados (el mismo pulso del catálogo) en la barra y en la grilla.
 
+### Bug: puntos que no terminaban (2026-11-19)
+
+- **Síntoma (producción):** entrar al inicio, ir a Ropa, buscar "body" → puntos y circulito para siempre, sin resultados.
+- **Causa:** `useCatalog.isLoadingMore` seguía en true esperando una "página 2" que no existe en categorías con una sola página (el tamaño de SWR quedaba en 2). La espera del buscador dependía de eso.
+- **Arreglo:** `isLoadingMore` solo cuenta si `hasMore`; si un pedido falla, `hasMore` pasa a false. Además tope de 8 s en `CatalogShell`: si la espera se alarga se muestran los resultados igual.
+- **Verificación:** reproducido en www y comprobado en copia local (misma secuencia: aparece R2946, sin puntos).
+- **Lección:** toda espera que bloquee resultados necesita un tope de tiempo.
+
 ## Deuda
 
 - Leer `search_events` live (admin) para priorizar aliases.

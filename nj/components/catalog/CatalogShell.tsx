@@ -233,8 +233,19 @@ export default function CatalogShell({
       ? filterBySizes(sortedSearched, activeSizes, effectiveCategoria)
       : sortedSearched;
 
+  // Tope de seguridad: si la espera se alarga, mostramos lo que hay en vez
+  // de dejar los puntitos girando para siempre.
+  const [searchWaitExpiredFor, setSearchWaitExpiredFor] = useState("");
+  const searchWaitKey = searchTerm.trim();
+  useEffect(() => {
+    if (searchWaitKey.length < 2) return;
+    const t = window.setTimeout(() => setSearchWaitExpiredFor(searchWaitKey), 8000);
+    return () => window.clearTimeout(t);
+  }, [searchWaitKey]);
+
   const searchCatalogReady =
-    searchTerm.trim().length < 2 ||
+    searchWaitKey.length < 2 ||
+    searchWaitExpiredFor === searchWaitKey ||
     (searchProfilesReady && !isSearchExtrasPending && !isLoadingMore && !canLoadMore);
 
   useEffect(() => {

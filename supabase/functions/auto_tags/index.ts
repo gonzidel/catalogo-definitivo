@@ -2,6 +2,7 @@
 // Edge Function para analizar imagen de producto con OpenAI Vision API
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
 const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
@@ -30,12 +31,65 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+const MAX_TEXT_LEN = 500;
+
+function jsonResponse(status: number, body: Record<string, unknown>): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
+/**
+ * Solo admins logueados. La clave anónima pública (anon key) es un JWT válido
+ * para la plataforma, así que verify_jwt por sí solo NO alcanza: sin esto
+ * cualquiera podía gastar crédito de OpenAI. Mismo patrón que qz-sign / n8n-publish.
+ * Equivale a is_admin(): admins.user_id = auth.uid().
+ * Devuelve una Response de error si no corresponde, o null si el usuario es admin.
+ */
+async function rejectIfNotAdmin(req: Request): Promise<Response | null> {
+  const authHeader = req.headers.get("authorization") ?? "";
+  if (!authHeader.toLowerCase().startsWith("bearer ")) {
+    return jsonResponse(401, { error: "No autenticado" });
+  }
+
+  const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+  if (!supabaseUrl || !anonKey) {
+    return jsonResponse(500, { error: "Configuración de Supabase incompleta" });
+  }
+
+  const supabaseAuth = createClient(supabaseUrl, anonKey, {
+    global: { headers: { Authorization: authHeader } },
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+
+  const { data: userData, error: userError } = await supabaseAuth.auth.getUser();
+  if (userError || !userData?.user) {
+    return jsonResponse(401, { error: "Sesión inválida" });
+  }
+
+  const { data: adminRow, error: adminError } = await supabaseAuth
+    .from("admins")
+    .select("id")
+    .eq("user_id", userData.user.id)
+    .maybeSingle();
+  if (adminError || !adminRow) {
+    return jsonResponse(403, { error: "Solo administradores" });
+  }
+
+  return null;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
   try {
+    const denied = await rejectIfNotAdmin(req);
+    if (denied) return denied;
+
     if (!OPENAI_API_KEY) {
       throw new Error("OPENAI_API_KEY no está configurado");
     }
@@ -44,10 +98,17 @@ serve(async (req) => {
       await req.json();
 
     if (!image_url || !product_name || !category_hint) {
-      return new Response(
-        JSON.stringify({ error: "image_url, product_name y category_hint son requeridos" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      return jsonResponse(400, { error: "image_url, product_name y category_hint son requeridos" });
+    }
+
+    if (
+      typeof image_url !== "string" ||
+      !/^https:\/\//i.test(image_url) ||
+      image_url.length > 2000 ||
+      String(product_name).length > MAX_TEXT_LEN ||
+      String(description ?? "").length > 2000
+    ) {
+      return jsonResponse(400, { error: "Parámetros inválidos (image_url debe ser https y de largo razonable)" });
     }
 
     const prompt = `Analizá la imagen del producto y su nombre para inferir tags, facetas y un borrador de descripción.

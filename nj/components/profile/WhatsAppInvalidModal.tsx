@@ -3,17 +3,25 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import {
-  formatPhoneE164,
-  formatPhoneInput,
-  phoneToLocalInput,
-  validatePhone,
-} from "@/lib/phone/ar-mobile";
+  formatPhoneLocalDisplay,
+  formatPhoneStored,
+  isSameArgentinaPhone,
+  phoneForDisplay,
+  sanitizePhoneInput,
+  validateArgentinaPhone,
+} from "@/lib/utils/phone-ar";
 import {
   clearWhatsappInvalidSnooze,
   snoozeWhatsappInvalid,
 } from "@/lib/phone/whatsapp-invalid-snooze";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { rpcCustomerFixPhoneClearWhatsappInvalid } from "@/lib/supabase/whatsapp-invalid";
+
+/** Precarga el número actual solo si es un celular completo; si está mal armado, se empieza vacío. */
+function initialPhoneInput(currentPhone: string | null): string {
+  const shown = phoneForDisplay(currentPhone);
+  return validateArgentinaPhone(shown).ok ? shown : "";
+}
 
 interface WhatsAppInvalidModalProps {
   open: boolean;
@@ -45,7 +53,7 @@ export default function WhatsAppInvalidModal({
       setSaving(false);
       return;
     }
-    setPhone(phoneToLocalInput(currentPhone));
+    setPhone(initialPhoneInput(currentPhone));
   }, [open, currentPhone]);
 
   useEffect(() => {
@@ -58,12 +66,18 @@ export default function WhatsAppInvalidModal({
 
   async function handleSave() {
     setError(null);
-    const raw = phone.replace(/\s|-/g, "").trim();
-    if (!validatePhone(raw)) {
-      setError("Ingresá un celular válido (código de área + número).");
+    const check = validateArgentinaPhone(phone);
+    if (!check.ok) {
+      setError(check.error ?? "Ingresá un celular válido.");
       return;
     }
-    const formatted = formatPhoneE164(raw);
+    // Si el número no cambió, el aviso no se limpia (el trigger solo reacciona a un phone distinto).
+    if (isSameArgentinaPhone(currentPhone, phone)) {
+      setError("Es el mismo número que tenés cargado. Corregilo para que podamos avisarte.");
+      return;
+    }
+    // El prefijo interno "+54 9" se agrega solo acá; el cliente nunca lo ve.
+    const formatted = formatPhoneStored(check.digits);
     setSaving(true);
     try {
       const supabase = getSupabaseBrowserClient();
@@ -101,7 +115,7 @@ export default function WhatsAppInvalidModal({
             </p>
             {currentPhone ? (
               <p className="wi-current">
-                Número cargado: <strong>{currentPhone}</strong>
+                Número cargado: <strong>{phoneForDisplay(currentPhone)}</strong>
               </p>
             ) : null}
             <div className="wi-actions">
@@ -128,24 +142,32 @@ export default function WhatsAppInvalidModal({
             </h2>
             <p className="pom-sub">
               El número que usó es:{" "}
-              <strong>{currentPhone || "—"}</strong>
+              <strong>{phoneForDisplay(currentPhone) || "—"}</strong>
             </p>
             <label className="pom-label" htmlFor="wi-phone">
               Teléfono nuevo <span className="pom-req">*</span>
             </label>
-            <div className="pom-phone-row">
-              <span className="pom-phone-prefix">+54 9</span>
-              <input
-                id="wi-phone"
-                className="pom-input pom-phone-input"
-                value={phone}
-                onChange={(e) => setPhone(formatPhoneInput(e.target.value))}
-                autoComplete="tel"
-                inputMode="tel"
-                disabled={saving}
-              />
-            </div>
-            <p className="pom-hint">Código de área + número (sin el 9 inicial).</p>
+            <input
+              id="wi-phone"
+              className="pom-input"
+              type="tel"
+              value={phone}
+              onChange={(e) => {
+                setPhone(sanitizePhoneInput(e.target.value));
+                if (error) setError(null);
+              }}
+              onBlur={() => {
+                if (!phone.trim()) return;
+                const check = validateArgentinaPhone(phone);
+                if (check.ok) setPhone(formatPhoneLocalDisplay(check.digits));
+                else setError(check.error ?? "Teléfono no válido");
+              }}
+              placeholder="Ej: 362 472-0762"
+              autoComplete="tel-national"
+              inputMode="tel"
+              disabled={saving}
+            />
+            <p className="pom-hint">Característica + número, sin 0 ni 15.</p>
             {error ? <p className="pom-error">{error}</p> : null}
             <div className="wi-actions">
               <button
@@ -163,7 +185,7 @@ export default function WhatsAppInvalidModal({
                 onClick={() => {
                   setEditing(false);
                   setError(null);
-                  setPhone(phoneToLocalInput(currentPhone));
+                  setPhone(initialPhoneInput(currentPhone));
                 }}
               >
                 Cancelar

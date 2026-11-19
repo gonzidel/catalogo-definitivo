@@ -1,3 +1,5 @@
+import { getPublicMinCopy } from "@/lib/config/temp-order-min";
+
 export type FlowStepId = "cart" | "open" | "close" | "coordinate";
 
 export const FLOW_STEPS: Array<{
@@ -22,7 +24,7 @@ export const FLOW_STEPS: Array<{
     id: "close",
     label: "Cerrar",
     title: "Cerrás cuando esté listo",
-    text: "Cuando llegues al mínimo y ya no quieras sumar productos, cerrás el pedido.",
+    text: getPublicMinCopy().guideCloseStep,
   },
   {
     id: "coordinate",

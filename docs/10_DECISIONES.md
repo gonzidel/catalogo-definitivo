@@ -35,6 +35,10 @@ Este registro reconstruye decisiones a partir de código y documentación. Cuand
 | No usar “reservado” antes de la confirmación física en `local_deferred_pickup` | CANÓNICA | Contexto + flujo diferido | La creación no compromete stock | 2026-09-23 |
 | Comunicar con voz cercana, clara, humana y rioplatense | NEGOCIO CONFIRMADO | Contexto del responsable | Evitar tono corporativo o de bot | 2026-09-23 |
 | Evaluar journeys CRM de primer contacto e inactividad | EN EVALUACIÓN | Contexto del responsable | Seguimiento y reactivación sin insistencia excesiva | 2026-09-23 |
+| Normalizador liviano ES (plural/género) en buscador `/nj` | TÉCNICA VERIFICADA | `nj/lib/search/stem-es.ts`, auditoría 2026-11-11 | Reemplaza «sin stemming general» de nota 59; reduce ceros por plural | 2026-11-11 |
+| Perfiles de búsqueda IA en tabla aparte; no reescribir `products.description` | CANÓNICA | Plan buscador premium + `product_search_profiles` | Evitar mezclar copy comercial con texto de retrieval | 2026-11-11 |
+| No ampliar búsqueda a productos sin stock vendible | TÉCNICA VERIFICADA | Vista `catalog_public_available_view`, stub OOS | Alineado a `doc/catalogo/catalogo-visibilidad.md` | 2026-11-11 |
+| `auto_tags` solo admins (sesión + fila `admins`) | TÉCNICA VERIFICADA | Edge Function deploy 2026-11-11 | Anon key es JWT válido; verify_jwt no alcanza | 2026-11-11 |
 
 ## Decisiones todavía no registradas
 

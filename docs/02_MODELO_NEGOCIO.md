@@ -62,6 +62,8 @@ Fuente: Contexto confirmado por responsable del negocio
 
 **TÉCNICA VERIFICADA:** Next.js usa `4` como mínimo normal y `1` para determinadas localidades de retiro corto. La ubicación puede decidir si la modalidad está disponible, pero no define la excepción comercial. El acoplamiento geográfico de `getOrderCloseMinimumUnits` está registrado en `11_PROBLEMAS_Y_FIXES.md`.
 
+**EN EVALUACIÓN / temporal (2026-11-03):** promo Cyber Monday en NJ baja el mínimo web a 1 producto vía flags en `nj/lib/config/temp-order-min.ts`. La regla CANÓNICA sigue siendo 4. Detalle y rollback: `docs/FYL-Obsidian/64-TEMP-MINIMO-1-CYBER-MONDAY-2026-11-03.md`.
+
 ### Envíos y pagos conocidos
 
 - SEDE y MyM: contra reembolso en efectivo, incluyendo pedido y envío.

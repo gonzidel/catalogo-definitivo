@@ -156,6 +156,7 @@ BEGIN
     AND (
       (p_mode = 'zero' AND e.result_count = 0)
       OR (p_mode = 'low' AND e.result_count > 0 AND e.result_count <= 2)
+      OR (p_mode = 'top')
       OR (
         p_mode = 'unresolved'
         AND e.query_normalized = e.query_resolved

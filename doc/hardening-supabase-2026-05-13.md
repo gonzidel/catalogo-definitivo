@@ -6,6 +6,14 @@ Proyecto auditado: FYL, catálogo mayorista B2B mobile-first.
 
 Backend: Supabase/PostgreSQL, Auth, Edge Functions, Storage.
 
+## Addendum 2026-11-11 — `auto_tags`
+
+- **Problema:** la Edge Function `auto_tags` aceptaba la anon key pública (JWT válido de plataforma); `verify_jwt` no bastaba.
+- **Fix desplegado:** `rejectIfNotAdmin` (sesión + fila en `admins`), validación `https` de `image_url`.
+- **Verificación:** POST con anon + body `{}` → **401** «Sesión inválida».
+- **Rollback:** redeploy del `index.ts` previo (idéntico a `origin/nj-main` pre-fix).
+- Detalle: `docs/FYL-Obsidian/73-NJ-BUSCADOR-PREMIUM-AUDITORIA-PLAN-2026-11-11.md`.
+
 Frontend: HTML/CSS/JavaScript vanilla.
 
 Proyecto Supabase aplicado: `dtfznewwvsadkorxwzft`.

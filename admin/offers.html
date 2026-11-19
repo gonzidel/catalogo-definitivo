@@ -327,6 +327,24 @@
 
     <div id="message-container"></div>
 
+    <!-- Check del banner de Ofertas en el inicio (home_feature_flags.home_offers_banner) -->
+    <div class="section" id="home-offers-banner-section">
+      <h2>Banner de Ofertas en el inicio</h2>
+      <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+        <label class="toggle-switch" title="Mostrar el banner de Ofertas en el inicio">
+          <input type="checkbox" id="home-offers-banner-toggle" disabled />
+          <span class="toggle-slider"></span>
+        </label>
+        <strong id="home-offers-banner-status">Cargando...</strong>
+      </div>
+      <p style="margin: 12px 0 0; font-size: 13px; color: #666; line-height: 1.4;">
+        Activo: el inicio muestra un banner arriba de todo con los productos que tienen una oferta vigente
+        (los 5 primeros son los publicados o actualizados más recientemente). Si no hay ofertas vigentes, el
+        banner no se muestra. Puede tardar hasta 5 minutos en verse o desaparecer en la tienda.
+      </p>
+      <p id="home-offers-banner-count" style="margin: 6px 0 0; font-size: 12px; color: #888;"></p>
+    </div>
+
     <div class="tabs">
       <button class="tab active" data-tab="offers">Ofertas de Precio por Color</button>
       <button class="tab" data-tab="promotions">Promociones 2x1 / 2xMonto</button>
@@ -461,7 +479,7 @@
   <script defer src="../scripts/vendor/supabase-js.bundle.min.js?v=m260607"></script>
   <script type="module" src="../scripts/supabase-client.js?v=m260607"></script>
   <script type="module" src="./admin-auth.js?v=m260607"></script>
-  <script type="module" src="./offers.js?v=m260607"></script>
+  <script type="module" src="./offers.js?v=m261110"></script>
 </body>
 </html>
 

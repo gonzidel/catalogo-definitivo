@@ -23,6 +23,7 @@ import { validateAliasDraft } from "@/lib/admin/search-admin-validate";
 import { normalizeText } from "@/lib/search/normalize";
 import { publishSearchDictionaryChange } from "@/lib/search/dictionary-store";
 import type { SearchAdminDashboard } from "@/lib/admin/search-admin";
+import { INITIAL_SYNONYM_CANDIDATES } from "@/lib/search/synonym-candidates";
 import shared from "@/app/admin/conciliacion-reembolso/conciliacion.module.css";
 import extra from "@/app/admin/search/search-admin.module.css";
 
@@ -139,6 +140,29 @@ export default function SearchAdminDashboard({
 
       <section className={extra.section}>
         <div className={shared.sectionHead}>
+          <h2 className={shared.sectionTitle}>Lo más buscado</h2>
+          <DayTabs days={data.days} />
+        </div>
+        <p className={shared.subtitle}>
+          Lo que las clientas escribieron y buscaron, de lo más repetido a lo menos, en los últimos {data.days} días.
+        </p>
+        {data.topSearches.length === 0 ? (
+          <p className={shared.empty}>
+            Todavía no hay búsquedas en los últimos {data.days} días.
+          </p>
+        ) : (
+          <QueryTable
+            rows={data.topSearches}
+            canEdit={false}
+            pending={pending}
+            onAddAlias={() => {}}
+            onIgnore={() => {}}
+          />
+        )}
+      </section>
+
+      <section className={extra.section}>
+        <div className={shared.sectionHead}>
           <h2 className={shared.sectionTitle}>Oportunidades · sin resultados</h2>
           <DayTabs days={data.days} />
         </div>
@@ -180,6 +204,37 @@ export default function SearchAdminDashboard({
             onIgnore={(term) => run(() => ignoreSearchCandidate({ term }))}
           />
         )}
+      </section>
+
+      <section className={extra.section}>
+        <h2 className={shared.sectionTitle}>Candidatos iniciales (auditoría / IA)</h2>
+        <p className={shared.subtitle}>
+          Sugerencias de la auditoría 2026-11-11. Analytics e IA proponen; el admin decide con el
+          formulario de alias (validación de conflictos intacta).
+        </p>
+        <ul className={extra.list}>
+          {INITIAL_SYNONYM_CANDIDATES.map((c) => (
+            <li key={`${c.alias}->${c.destinationCanonical}`}>
+              <button
+                type="button"
+                className={extra.linkBtn}
+                disabled={!canEdit || pending}
+                onClick={() => {
+                  setAliasValue(c.alias);
+                  setAliasDest(c.destinationCanonical);
+                  setAliasKind(c.kind);
+                }}
+              >
+                {c.alias} → {c.destinationCanonical}
+              </button>
+              <span className={extra.muted}>
+                {" "}
+                ({c.source}
+                {c.note ? ` · ${c.note}` : ""})
+              </span>
+            </li>
+          ))}
+        </ul>
       </section>
 
       <section className={extra.section}>

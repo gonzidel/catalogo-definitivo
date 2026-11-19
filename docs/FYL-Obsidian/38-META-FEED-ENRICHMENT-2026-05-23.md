@@ -73,6 +73,26 @@ Tras **cada** fase: deploy Edge → curl feed → **reimport Commerce Manager** 
 
 ---
 
+## 2026-11-06 — Links del feed tras el cutover a NJ
+
+**TÉCNICA VERIFICADA (2026-11-06, www en proyecto Vercel `nj`):** los 3.005 items del feed traían `https://fylmoda.com.ar/catalogo?sku=<SKU>` y el middleware de rollout de NJ convertía `/catalogo` en `/`, perdiendo el `sku`: todos los clics de Meta aterrizaban en la home (probado con UA `facebookexternalhit`, `facebookcatalog` y navegador móvil).
+
+| Cambio | Archivo | Estado |
+|---|---|---|
+| Redirect `/catalogo?sku=X` → `/producto/X` (conserva `fbclid`, `utm_*`, `color`; codifica el SKU) | `nj/lib/rollout/request.ts` (`resolveLegacyCatalogoRedirect`), `nj/middleware.ts` | En rama `fix/meta-links-producto`; **no desplegado** |
+| Link del feed directo a `https://www.fylmoda.com.ar/producto/<SKU codificado>` | `supabase/canonical/383_meta_feed_link_producto.sql` (+ `383_ROLLBACK_…`) | **No aplicado en producción** (requiere aprobación) |
+| Fallback de la Edge Function al mismo formato (inalcanzable hoy: la RPC devuelve link absoluto) | `supabase/functions/meta-feed/index.ts` | En rama; sin deploy |
+
+Detalles que importan:
+
+- **62 SKUs llevan `/`** (talle doble, ej. `AD-J25-AZ-43/44`) y 6 llevan espacio. En `/producto/<sku>` la `/` cruda da 404; con `%2F` y `%20` la ficha resuelve (verificado en www). Por eso el link y el redirect codifican el SKU.
+- **CONTRADICCIÓN código/producción:** la migración 228 local no coincide con la función viva. En vivo el filtro de órdenes es `('sent','devolución')` (228 agrega `'expired'`) y la función tiene `SET search_path = public`. La 383 parte del texto vivo (md5 `1e9c9cf2a981c7d7f883a688e0f79f5b`), no de la 228.
+- El redirect cubre los links ya emitidos (feed cargado en Meta, anuncios, links compartidos); la 383 elimina los saltos. Aplicar el redirect primero; la 383 es independiente.
+- Tras aplicar la 383: reimportar en Commerce Manager y esperar reindex (ver runbook).
+- **Deuda abierta:** NJ no carga el Pixel de Meta (`988002930324230` solo está en `catalogo1` y en el vanilla); `admin/publications.js` genera links `/catalogo#/pdp/<SKU>` que NJ no resuelve.
+
+---
+
 ## Ver también
 
 - Spec detallado: `doc/meta-feed/2026-05-23-meta-feed-enriquecimiento-spec.md` (mapa Google completo, diffs, ejemplo CSV, riesgos)

@@ -8,6 +8,7 @@ import { PurchaseGuideButton } from "@/components/guide/PurchaseGuideClient";
 import JsonLdScript from "@/lib/seo/JsonLdScript";
 import { faqJsonLd } from "@/lib/seo/json-ld";
 import { CATALOG_FAQ_ITEMS, FULL_FAQ_ITEMS } from "@/lib/constants/faq";
+import { getPublicMinCopy } from "@/lib/config/temp-order-min";
 import { EXP_CATALOG_ONLY, EXP_FULL_ONLY } from "@/lib/rollout/client";
 
 // Metadata y FAQ JSON-LD de catalog: es la variante que ven los crawlers (sin cookie full).
@@ -115,8 +116,7 @@ function FullHowto() {
         </Suspense>
         <h2 id="howto-title">Cómo comprar por mayor</h2>
         <p className="howto-hero__lead">
-          Mínimo 4 productos combinables. Armás tu pedido, lo cerrás
-          cuando esté listo y coordinamos pago, envío o retiro por fuera de la web.
+          {getPublicMinCopy().howtoLead}
         </p>
         <div className="howto-quick-guide">
           <PurchaseFlowInline current="cart" />
@@ -158,9 +158,7 @@ function FullHowto() {
             <div className="step__body">
               <h3>Sumá productos hasta 7 días</h3>
               <p>
-                Podés seguir agregando productos a tu pedido durante 7 días sin
-                costo. Cuando llegues al mínimo de 4 unidades, cerralo para que
-                lo preparemos.
+                {getPublicMinCopy().howtoStep3}
               </p>
             </div>
           </li>
@@ -220,8 +218,7 @@ function FullHowto() {
       <section className="howto-final" aria-label="Acción final">
         <h2>¿Lista para armar tu pedido?</h2>
         <p className="muted">
-          Entrá al catálogo, elegí tus productos y cerrá el pedido cuando
-          llegues al mínimo.
+          {getPublicMinCopy().howtoFinalCta}
         </p>
         <Link href="/" className="btn btn-primary btn-wide">
           Ir al catálogo

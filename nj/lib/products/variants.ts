@@ -2,6 +2,7 @@
 
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getAdminContext, hasPermission } from "@/lib/auth/admin";
+import { maybeGenerateSearchProfileForVariant } from "@/lib/products/search-profile-auto";
 
 async function requireProductsEdit() {
   const ctx = await getAdminContext();
@@ -182,6 +183,8 @@ export async function saveVariantSizes(
   });
 
   if (error) throw new Error(error.message);
+
+  void maybeGenerateSearchProfileForVariant(variantId);
 }
 
 export interface VariantImageRow {
@@ -236,6 +239,8 @@ export async function uploadVariantImage(
     .single();
 
   if (insertErr) throw new Error(insertErr.message);
+
+  void maybeGenerateSearchProfileForVariant(variantId);
   return inserted as VariantImageRow;
 }
 
@@ -276,6 +281,8 @@ export async function loadImagesFromUrls(
 
   const { data, error } = await supabase.from("variant_images").insert(rows).select("id, url, secure_url, public_id, position, is_main");
   if (error) throw new Error(error.message);
+
+  void maybeGenerateSearchProfileForVariant(variantId);
   return (data as VariantImageRow[]) ?? [];
 }
 

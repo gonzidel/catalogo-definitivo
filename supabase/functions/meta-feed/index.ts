@@ -254,14 +254,14 @@ serve(async (req) => {
     // Log de cantidad de filas devueltas por RPC
     console.log(`[meta-feed] RPC returned ${data.length} rows`);
 
-    const fallbackBaseUrl = "https://fylmoda.com.ar";
-    const catalogLinkBase = `${fallbackBaseUrl}/catalogo`;
+    // Fallback (solo si la RPC devuelve un link no absoluto): ficha NJ en el host canónico.
+    const productLinkBase = "https://www.fylmoda.com.ar/producto";
 
     // Normalización defensiva de campos críticos para Meta
     const normalizedData = data.map((row) => {
       const safeId = row.id ? String(row.id).trim() : "";
       const rawLink = row.link ? String(row.link).trim() : "";
-      const fallbackLink = `${catalogLinkBase}?sku=${encodeURIComponent(safeId)}`;
+      const fallbackLink = `${productLinkBase}/${encodeURIComponent(safeId)}`;
       const safeLink = isAbsoluteUrl(rawLink) ? rawLink : fallbackLink;
 
       const base = {

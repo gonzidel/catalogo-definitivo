@@ -16,6 +16,7 @@ import NuevosIngresosBanner from "@/components/banners/NuevosIngresosBanner";
 import CuratedSpecialBanner from "@/components/banners/CuratedSpecialBanner";
 import CuratedBanner from "@/components/banners/CuratedBanner";
 import InfoBanner from "@/components/banners/InfoBanner";
+import OfertasBanner from "@/components/banners/OfertasBanner";
 import HomeLaunchOnboarding from "@/components/guide/HomeLaunchOnboarding";
 import FullOnly from "@/components/rollout/FullOnly";
 
@@ -32,6 +33,8 @@ function HomeBannersSlot({
 }) {
   return (
     <>
+      {/* Primero de todo (sobre InfoBanner/Cyber Monday); solo con el check de admin/offers.html. */}
+      <OfertasBanner key="ofertas" expectedVisible={presence.ofertas} />
       <InfoBanner key="info-banner" />
       <NuevosIngresosBanner
         key="nuevos-ingresos"
@@ -61,6 +64,12 @@ function HomeBannersSkeleton({
 }) {
   return (
     <>
+      {shouldReserveBannerSlot(presence.ofertas) && (
+        <section
+          className="ofertas-banner home-banner-slot home-banner-slot--ofertas is-loading"
+          aria-hidden
+        />
+      )}
       <InfoBanner key="info-banner" />
       {shouldReserveBannerSlot(presence.nuevosIngresos) && (
         <section

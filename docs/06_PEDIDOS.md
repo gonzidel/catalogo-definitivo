@@ -155,6 +155,7 @@ Fuente: Contexto confirmado por responsable del negocio; coincidencia parcial co
 
 - Flujo conceptual: carrito → revisión → Hacer pedido → reserva/preparación → cierre → envío o retiro.
 - Pedido normal: mínimo de 4 productos surtidos.
+- **EN EVALUACIÓN / temporal (2026-11-03):** en NJ el cierre puede aceptar 1 producto mientras estén activos los flags de `nj/lib/config/temp-order-min.ts` (Cyber Monday). No cambia la regla canónica de 4. Rollback y riesgos WA: `docs/FYL-Obsidian/64-TEMP-MINIMO-1-CYBER-MONDAY-2026-11-03.md`.
 - Reserva estándar: 7 días desde la creación, normalizada en la sección anterior.
 - Los recordatorios a 3, 2 y 1 día y al vencimiento son antecedentes de diseño, no política definitiva.
 

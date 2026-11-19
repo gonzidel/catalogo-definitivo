@@ -3,11 +3,23 @@
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useCallback } from "react";
 
+function PendingDots() {
+  return (
+    <span className="search-pending-dots" role="status" aria-label="Buscando productos">
+      <span className="spinner-circle" />
+      <span className="spinner-circle" />
+      <span className="spinner-circle" />
+    </span>
+  );
+}
+
 interface TagFilterBarProps {
   searchTerm: string;
   activeSizes: string[];
   activeTags: string[];
   totalResults: number;
+  /** El catálogo todavía está llegando: no mostrar "0 productos". */
+  pending?: boolean;
 }
 
 export default function TagFilterBar({
@@ -15,6 +27,7 @@ export default function TagFilterBar({
   activeSizes,
   activeTags,
   totalResults,
+  pending = false,
 }: TagFilterBarProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -77,10 +90,10 @@ export default function TagFilterBar({
       <div className="tag-filter-bar" data-filter-type="search">
         <div className="tag-filter-search-summary">
           <span className="tag-filter-text">
-            Buscando{" "}
+            {pending ? null : "Buscando "}
             <strong className="tag-filter-value">&ldquo;{searchTerm}&rdquo;</strong>
           </span>
-          <span className="tag-filter-count">{countLabel}</span>
+          {pending ? <PendingDots /> : <span className="tag-filter-count">{countLabel}</span>}
         </div>
 
         <button
@@ -105,7 +118,7 @@ export default function TagFilterBar({
       <div className="tag-filter-chips-row">
         {hasSearch && (
           <span className="tag-filter-text">
-            Buscando:{" "}
+            {pending ? null : "Buscando: "}
             <strong className="tag-filter-value">&ldquo;{searchTerm}&rdquo;</strong>
           </span>
         )}
@@ -138,7 +151,7 @@ export default function TagFilterBar({
       </div>
 
       <div className="tag-filter-footer">
-        <span className="tag-filter-count">{countLabel}</span>
+        {pending ? <PendingDots /> : <span className="tag-filter-count">{countLabel}</span>}
 
         {(hasSearch || hasSizes || hasTags) && (
           <button

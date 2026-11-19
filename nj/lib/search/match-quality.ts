@@ -37,14 +37,12 @@ export function levenshtein(a: string, b: string): number {
 }
 
 /**
- * Reglas (justificadas con el catálogo ~640 artículos):
- * - 1–3 letras: solo exact/prefix. "eco" no debe matchear "escolar",
- *   "bot" no debe matchear "pantubota".
- * - 4 letras: exact/prefix + fuzzy1 si las longitudes son casi iguales.
- *   Substring bloqueado: "bota" ⊂ "pantubota" es un falso amigo real.
+ * Reglas (justificadas con el catálogo ~640 artículos + auditoría 2026-11-11):
+ * - 1–3 letras: solo exact/prefix. "eco" no debe matchear "escolar".
+ * - 4 letras: exact/prefix. Sin fuzzy (`nude` ⊄ `nudo`). Sin substring (`bota` ⊄ `pantubota`).
  * - 5–6: substring solo si el token es apenas más largo (≤3 extra) y
- *   el query no está enterrado (offset ≤ 1).
- * - 7+: fuzzy1; fuzzy2 si max(len) ≥ 8 (pantubota / pantubotaa).
+ *   el query no está enterrado (offset ≤ 1). Fuzzy1 solo con misma letra inicial.
+ * - 7+: fuzzy1; fuzzy2 si max(len) ≥ 8. Misma letra inicial.
  * - SKU: exact o prefix. Nunca fuzzy ni substring.
  */
 export function classifyTokenMatch(
@@ -59,7 +57,7 @@ export function classifyTokenMatch(
   if (mode === "sku") return "none";
 
   const qLen = queryToken.length;
-  if (qLen <= 3) return "none";
+  if (qLen <= 4) return "none";
 
   if (qLen >= 5 && haystackToken.includes(queryToken)) {
     const extra = haystackToken.length - qLen;
@@ -70,9 +68,11 @@ export function classifyTokenMatch(
   const hLen = haystackToken.length;
   const maxLen = Math.max(qLen, hLen);
   const lenDiff = Math.abs(qLen - hLen);
+  const sameInitial = haystackToken[0] === queryToken[0];
+  if (!sameInitial) return "none";
 
   if (qLen <= 6) {
-    if (lenDiff <= 1 && maxLen >= 4) {
+    if (lenDiff <= 1 && maxLen >= 5) {
       const dist = levenshtein(haystackToken, queryToken);
       if (dist === 1) return "fuzzy1";
     }

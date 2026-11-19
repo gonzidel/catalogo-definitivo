@@ -170,7 +170,7 @@ Día D:
 | Assets / fetch / `<a>` | `/nj/logo.png`, `/nj/api/...` | sí |
 | `customer-status-message`, `useOrders`, SQL 305+ | `/nj/dashboard?tab=active-order` | sí (defaults + mensajes **nuevos**; no reescribir WA históricos). **2026-09-05:** `getDashboardActiveOrderUrl()` ya no usa `window.location` (evitaba localhost). Por ahora apunta a `https://nj-fyl-testing.vercel.app/nj/dashboard?tab=cart` (`NEXT_PUBLIC_CUSTOMER_DASHBOARD_URL` para cambiarlo). |
 | `admin/publications.js` | `/catalogo#/pdp/{sku}` | sí |
-| Meta feed SQL | `/catalogo?sku=` | sí |
+| Meta feed SQL | `/catalogo?sku=` | sí. **2026-11-06:** nunca se cambió y el redirect `/catalogo` → `/` descartaba el `sku` (clics de Meta a la home). Fix preparado: redirect en middleware + migración `383_meta_feed_link_producto.sql`; ver nota 38. |
 | `catalogo1/vercel.json` | rewrite `nj-gonzidel` | sí |
 | Kanban `localhost:5500` | admin vanilla | fix dev, no cutover |
 | `wa.me` números | no son paths | no |

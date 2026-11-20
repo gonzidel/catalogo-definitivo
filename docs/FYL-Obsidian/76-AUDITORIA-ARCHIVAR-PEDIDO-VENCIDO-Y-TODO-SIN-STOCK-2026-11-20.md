@@ -2,7 +2,7 @@
 
 Clasificación: **TÉCNICA VERIFICADA** (código y producción, solo lectura) para el bug; **NEGOCIO CONFIRMADO** (pedido del dueño el 2026-11-20) para la regla de 5 días.
 
-Estado: migraciones **410** y **411/411b** escritas en ramas; **no aplicadas en producción** al momento de esta nota.
+Estado (2026-11-20, ~19:30 UTC-3): **PUBLICADO.** SQL 410, 411 y 411b aplicados en producción (proyecto `fyl-core`) y NJ promovido a `www`. Ver "Publicación ejecutada" al final.
 
 ## Caso disparador
 
@@ -67,3 +67,41 @@ Activación en dos pasos: 411 (función, con `p_dry_run`) y 411b (cron horario `
 
 1. Tras 410: archivar `A58953` desde Orders → desaparece; fila en `order_empty_deletion_audit`; `stock_history` con `writeoff_missing`, `quantity_changed = 0`; `variant_size_warehouse_stock` de J25 Verde 37/38 sin cambios.
 2. Tras 411: `SELECT public.rpc_orders_auto_delete_all_missing(20, true);` devuelve la cantidad esperada (0 hoy) antes de aplicar 411b.
+
+## Publicación ejecutada (2026-11-20, autorizada por el dueño)
+
+**Producción NO corre 
+j-main:** www corría dpl_8BqH5ppdVVKqcoAjaDjn1LzgfFkA, construido desde 101d74e (rama eat/nj-buscador-premium), que está 30 commits por delante de 
+j-main (837cc44). Por eso el frontend se publicó desde un candidato **sobre 101d74e**, no desde 
+j-main.
+
+### SQL (proyecto yl-core)
+1. **Ensayos con rollback** (sentencia DO que termina en RAISE EXCEPTION, suplantando un admin solo dentro de la transacción) con datos reales de A58953:
+   - 410: ok=true, order_deleted=true, 1 fila de auditoría, 1 writeoff_missing, stock J25 Verde 34 → 34. Verificado después: pedido intacto y hash de la función sin cambios.
+   - 411: dry-run con A58953 expired = 0 candidatos; con A58953 forzado a ctive solo dentro de la transacción: 1 candidato, 1 borrado, 1 auditoría, 1 writeoff_missing, stock 34 → 34.
+2. **410 aplicada** (CREATE OR REPLACE rpc_cancel_order_full): bloque -- 410 presente, grants sin cambios (uthenticated, service_role, postgres), SECURITY DEFINER.
+3. **411 aplicada** (pc_orders_auto_delete_all_missing): non y uthenticated sin EXECUTE; dry-run en vivo = **0** candidatos.
+4. **411b aplicada:** cron orders-auto-delete-all-missing (jobid 17), 7 * * * *, activo.
+
+### Frontend (NJ)
+- Candidato: rama elease/nj-sin-stock-2026-11-20, commit 16e44f8 (= 101d74e + cherry-pick de 55a3dae; +5 líneas en ActiveOrderTab.tsx + helper y test).
+- Verificación: 	sc --noEmit 0 errores; 	sx --test 291/295. Los 4 fallos son lib/reconciliation/*.selftest.ts, **preexistentes** (fallan igual en 101d74e; no son tests de 
+ode:test).
+- ercel deploy --prod --skip-domain → dpl_D5ysbksXF9AY5xtW49c9fG9U3W4e (
+j-reizhqcm9-gonzidel.vercel.app). Smoke: mismos códigos que www en /, /dashboard, /catalogo, /como-comprar, /api/health.
+- ercel promote → www.fylmoda.com.ar pasó **solo** al deploy nuevo (sin lias set manual): confirma que, con el dominio en el proyecto 
+j, promote alcanza. 
+j-gonzidel no se movió (dpl_FpAget3noduG2WFDgtQtufGCMHTg).
+- **Rollback frontend:** ercel promote nj-gfaayem5v-gonzidel.vercel.app (= dpl_8BqH5ppdVVKqcoAjaDjn1LzgfFkA, el deploy anterior).
+- **Rollback SQL:** 410_ROLLBACK_... y 411_ROLLBACK_... (desprograma el cron y borra la función).
+
+### Entorno
+- La CLI de Vercel falló con etch failed por UNABLE_TO_VERIFY_LEAF_SIGNATURE (algo intercepta TLS). Se resolvió con NODE_OPTIONS=--use-system-ca, sin desactivar la verificación.
+- husky no está instalado en los worktrees nuevos: el escaneo de secretos del pre-commit se corrió a mano (
+ode test/scan-staged-secrets.cjs) y se commiteó con --no-verify.
+
+### Pendiente tras publicar
+- Archivar A58953 desde Orders (necesita sesión de admin; no se hizo con suplantación).
+- 
+j-main sigue 30 commits atrás de producción; mergear estas ramas a 
+j-main requiere autorización aparte.

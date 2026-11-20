@@ -63,6 +63,8 @@ Estas preguntas siguen requiriendo respuesta humana o acceso productivo. Las res
 | PED-02 | CRÍTICA | ¿Quién puede forzar cierre, reabrir, cancelar, editar o vender sin stock y qué auditoría requiere cada excepción? |
 | PED-03 | CRÍTICA | Ya está confirmado que los faltantes se resuelven con el cliente, sin sustitución silenciosa, y que en envíos los reintegros/devoluciones corresponden principalmente a problemas atribuibles a FyL. ¿Cuál es el procedimiento legal y operativo completo: responsables, evidencia, plazos, medio de reintegro, notas de crédito, costos y tratamiento de casos no contemplados? |
 | PED-04 | IMPORTANTE | ¿Qué cadencia de avisos debe ser la política oficial: 3/2/1 días, 2/1 día, plazo cumplido, desarme final u otra combinación? |
+| PED-05 | IMPORTANTE | Pedidos de Retira Local diferido con todos los ítems `missing` (hoy A58763, A58863, A58941) no tienen `dismantle_at` ni `expires_at` y nunca vencen. La regla de 5 días (411) los excluye por decisión del dueño (2026-11-20). ¿Qué regla de vencimiento/eliminación les corresponde? |
+| PED-06 | IMPORTANTE | El modal "Archivar pedido vencido" afirma que el stock ya volvió al vencer y cuenta fuentes de ítems `missing` como unidades a sumar; ninguna de las dos cosas coincide con producción (ver nota Obsidian 76). Pendiente corregir texto y cálculo. |
 
 ## Stock
 

@@ -140,6 +140,17 @@ El equipo puede hablar de un pedido “apartado” o “en espera” según su c
 - **TÉCNICA VERIFICADA en trabajo local (2026-09-29), días restantes en el dashboard cliente:** título del header, chip, banner, panel explicativo y campanita usan un único valor, `customerDaysLeft()` en `nj/lib/orders/deadline.ts`. Vencimiento el mismo día calendario: "Hoy". Día calendario siguiente: "Mañana". Desde 2 días calendario: bloques de 24 h redondeados hacia arriba (2 días y 10 horas se muestran como "3 días"). Antes, el título redondeaba hacia arriba y el chip contaba días calendario; como `dismantle_at` cae a las 17:00, antes de esa hora mostraban "3 días" y "2 días" a la vez. La campanita muestra "Faltan N días" durante todo el día calendario ubicado 2 días antes del vencimiento, "mañana" el día anterior y "hoy" el día del vencimiento.
 - **EN EVALUACIÓN, recordatorios:** la UI contiene avisos de 2 y 1 día; documentación histórica contempla 3/2/1 y día de vencimiento; el trabajo YCloud reciente usa plazo cumplido/desarme final. Ninguna cadencia se considera política comercial canónica todavía.
 
+### Pedido con todos los ítems sin stock: eliminación a los 5 días
+
+**Clasificación: NEGOCIO CONFIRMADO** (dueño, 2026-11-20). **TÉCNICA VERIFICADA en trabajo local:** migraciones 411/411b y aviso en "Mi pedido" escritos en la rama `feat/auto-eliminar-pedido-sin-stock-5d`; **sin aplicar en producción**.
+
+- Aplica solo a pedidos `active`/`closing_soon` que no son Retira Local diferido, con al menos un ítem y **todos** en `missing`. Cualquier ítem `reserved`, `waiting`, `picked`, `awaiting_apartado` o `cancelled` hace que no aplique; esos pedidos siguen el flujo normal de 7 días.
+- Se elimina a los 5 días desde `orders.created_at`.
+- Baja las fuentes de stock sin devolver stock (el ítem `missing` no tenía producto físico; queda `writeoff_missing` en `stock_history`) y usa el borrado oficial con `order_empty_deletion_audit`.
+- Aviso a la clienta: solo en "Mi pedido", dentro del banner de productos sin stock ("Si no hacés cambios, el pedido se elimina solo el [fecha]"). No hay WhatsApp.
+- Retira Local diferido queda fuera (pendiente PED-05 en `12_PENDIENTES.md`).
+- SQL: `rpc_orders_auto_delete_all_missing(p_batch, p_dry_run)` + cron horario; helper espejo en `nj/lib/orders/all-missing-auto-delete.ts`. Detalle y verificación: nota Obsidian 76.
+
 ### Concurrencia e idempotencia
 
 - Frontend: Web Locks o lease localStorage + BroadcastChannel; TTL 45 s.

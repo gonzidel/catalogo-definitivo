@@ -14,6 +14,7 @@ import {
   type OrderNoteExtraRow,
 } from "@/lib/orders/domain";
 import { getCustomerFacingItemStatus } from "@/lib/orders/waiting-source";
+import { getAllMissingAutoDeleteDate } from "@/lib/orders/all-missing-auto-delete";
 import { groupCustomerOrderItems, type GroupedCustomerOrderItem } from "@/lib/orders/customer-order-display";
 import {
   getCustomerOrderDeadlineDate,
@@ -1579,6 +1580,8 @@ export default function ActiveOrderTab({
     noteExtras.net;
   // Block send if there are unresolved missing items
   const hasMissing      = missingItems.length > 0;
+  /** Todo el pedido sin stock: se elimina solo a los 5 días (SQL 411). */
+  const allMissingAutoDeleteDate = getAllMissingAutoDeleteDate(order);
   const isLocalPickupZone = isLocalPickupShortDeadlineZone(customerProvince, customerCity);
   /** Plazo 36 h: solo retiro especial (local_deferred_pickup) en zona marcada. */
   const isDeferredLocalZone = Boolean(
@@ -2833,6 +2836,8 @@ export default function ActiveOrderTab({
             </div>
             <div className="active-order-banner__text">
               Podés quitarlos o elegir una alternativa disponible.
+              {allMissingAutoDeleteDate &&
+                ` Si no hacés cambios, el pedido se elimina solo el ${formatWeekdayDate(allMissingAutoDeleteDate)}.`}
             </div>
           </div>
         </div>

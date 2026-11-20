@@ -205,6 +205,7 @@ La nota contenía un valor literal identificado como secreto de webhook. Fue ree
 | Alta admin parcial o duplicada | RPCs atómicas + idempotencia | Migración 347 y dominio admin |
 | Pago queda Pendiente al cerrar | Resolución según transporte | Migración local 351 |
 | Cierre vuelve a descontar stock | RPC de cierre sin descuento | Migración 83 y redefiniciones |
+| "Archivar/Desarmar" falla en pedidos sin ítems `picked`: el trigger 319 ya borró el pedido y `rpc_cancel_order_full` lo toma como "no elegible" | **TÉCNICA VERIFICADA (2026-11-20).** No quitar el trigger 319 ni la verificación final de borrado; el arreglo es tratar "pedido ya borrado" como éxito (migración local 410, sin aplicar) | `docs/FYL-Obsidian/76-AUDITORIA-ARCHIVAR-PEDIDO-VENCIDO-Y-TODO-SIN-STOCK-2026-11-20.md`, logs Postgres, A58953 |
 
 ## Deuda de reproducibilidad
 

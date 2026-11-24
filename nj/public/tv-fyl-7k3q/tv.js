@@ -1062,23 +1062,52 @@
       });
   }
 
+  function applyAudiblePlayback(player) {
+    if (!player) return;
+    try {
+      player.unMute();
+      player.setVolume(70);
+      player.playVideo();
+    } catch (e) {}
+  }
+
   function unlockAudioFromGesture() {
     if (!state.playlistId) return;
     state.musicStarted = true;
     state.musicAudible = true;
     showMusicPrompt(false);
     syncMusicButtonLabel();
-    if (!state.ytPlayer) {
-      createYtPlayer({ muted: false });
-      return;
+
+    // Tras un gesto: recrear el player CON sonido (más fiable en Smart TV
+    // que unMute sobre un iframe que nació muteado/casi invisible).
+    if (state.ytPlayer) {
+      try {
+        state.ytPlayer.destroy();
+      } catch (e0) {}
+      state.ytPlayer = null;
+      state.ytReady = false;
+      if (els.ytWrap) {
+        els.ytWrap.innerHTML = '<div id="yt-player"></div>';
+      }
     }
-    if (!state.ytReady) return;
-    try {
-      state.ytPlayer.unMute();
-      state.ytPlayer.setVolume(60);
-      state.ytPlayer.playVideo();
-    } catch (e) {}
-    startMusicWatchdog();
+    createYtPlayer({ muted: false });
+
+    // Reintentos cortos por si el WebView tarda en aceptar play
+    var tries = 0;
+    var retry = setInterval(function () {
+      tries += 1;
+      if (!state.musicAudible) {
+        clearInterval(retry);
+        return;
+      }
+      if (state.ytPlayer && state.ytReady) {
+        applyAudiblePlayback(state.ytPlayer);
+        startMusicWatchdog();
+        if (tries >= 4) clearInterval(retry);
+      } else if (tries >= 12) {
+        clearInterval(retry);
+      }
+    }, 500);
   }
 
   function eventFromMusicControls(e) {
@@ -1163,7 +1192,6 @@
 
   function createYtPlayer(opts) {
     var options = opts || {};
-    var startMuted = options.muted !== false && !state.musicAudible;
     if (!state.playlistId) return;
     if (typeof window.YT === "undefined" || !window.YT.Player) {
       window.onYouTubeIframeAPIReady = function () {
@@ -1175,48 +1203,48 @@
     if (!qs("yt-player") && els.ytWrap) {
       els.ytWrap.innerHTML = '<div id="yt-player"></div>';
     }
-    if (els.ytWrap) els.ytWrap.classList.add("yt-wrap--boot");
+    if (els.ytWrap) {
+      els.ytWrap.classList.remove("is-hidden");
+      els.ytWrap.classList.remove("yt-wrap--boot");
+    }
 
     state.musicStarted = true;
     state.ytPlayer = new window.YT.Player("yt-player", {
-      height: "101",
-      width: "180",
+      height: "135",
+      width: "240",
       playerVars: {
         listType: "playlist",
         list: state.playlistId,
         autoplay: 1,
-        mute: startMuted ? 1 : 0,
-        controls: 0,
+        mute: state.musicAudible ? 0 : 1,
+        controls: 1,
         loop: 1,
         modestbranding: 1,
         rel: 0,
         playsinline: 1,
         fs: 0,
-        disablekb: 1,
         iv_load_policy: 3,
+        origin: window.location.origin,
       },
       events: {
         onReady: function (ev) {
           state.ytReady = true;
           try {
-            if (startMuted || !state.musicAudible) ev.target.mute();
-            else {
-              ev.target.unMute();
-              ev.target.setVolume(60);
+            // Decidir mute/unmute con el estado ACTUAL (no el de cuando se creó)
+            if (state.musicAudible) {
+              applyAudiblePlayback(ev.target);
+              showMusicPrompt(false);
+              startMusicWatchdog();
+            } else {
+              ev.target.mute();
+              ev.target.setVolume(0);
+              ev.target.playVideo();
+              showMusicPrompt(true);
             }
-            ev.target.setVolume(startMuted ? 0 : 60);
-            ev.target.playVideo();
           } catch (e) {}
-          if (state.musicAudible) {
-            showMusicPrompt(false);
-            startMusicWatchdog();
-          } else {
-            showMusicPrompt(true);
-          }
           syncMusicButtonLabel();
         },
         onStateChange: function (ev) {
-          // ENDED → reinicia la playlist (loop fiable)
           if (ev.data === 0) {
             try {
               ev.target.playVideoAt(0);
@@ -1226,7 +1254,6 @@
               } catch (e3) {}
             }
           }
-          // Si el navegador pausó el mute-autoplay, reintentar
           if ((ev.data === 2 || ev.data === 5) && state.musicStarted) {
             setTimeout(function () {
               keepMusicPlaying();
@@ -1244,7 +1271,9 @@
             var sub = els.musicPrompt.querySelector(".music-prompt-sub");
             if (sub) {
               sub.textContent =
-                "La playlist no se pudo reproducir. En Admin → TV Local usá una playlist pública de youtube.com (list=PL…), no un mix de YouTube Music.";
+                "Error YouTube (" +
+                (ev && ev.data) +
+                "). Probá el play del mini-reproductor abajo a la derecha, o cambiá la playlist en Admin.";
             }
           }
         },

@@ -637,42 +637,28 @@ html, body {
 
 .yt-wrap {
   position: absolute;
-  right: 12px;
-  bottom: 18px;
-  width: 180px;
-  height: 101px;
-  z-index: 8;
-  opacity: 0.22;
-  border-radius: 8px;
+  right: 16px;
+  bottom: 28px;
+  width: 240px;
+  height: 135px;
+  z-index: 12;
+  opacity: 0.92;
+  border-radius: 10px;
   overflow: hidden;
-  pointer-events: none;
+  pointer-events: auto;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: #000;
 }
 
-/* Off-screen pero montado: display:none bloquea autoplay en muchas Smart TV */
-.yt-wrap.yt-wrap--boot {
-  left: -4px;
-  top: -4px;
-  right: auto;
-  bottom: auto;
-  width: 2px;
-  height: 2px;
-  opacity: 0.01;
-  overflow: hidden;
-}
-
+/* Nunca ocultar el iframe: muchas Smart TV cortan el audio si no hay video visible */
+.yt-wrap.yt-wrap--boot,
 .yt-wrap.is-hidden {
-  /* no usar display:none si el player debe seguir vivo */
-  left: -4px;
-  top: -4px;
-  right: auto;
-  bottom: auto;
-  width: 2px;
-  height: 2px;
-  opacity: 0.01;
+  opacity: 0.85;
 }
 
 #yt-player,
 #yt-player iframe {
-  width: 180px;
-  height: 101px;
+  width: 240px;
+  height: 135px;
 }

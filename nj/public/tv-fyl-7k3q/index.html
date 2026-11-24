@@ -49,14 +49,15 @@
       <div id="progress-bar" class="progress-bar"></div>
     </div>
 
-    <div id="music-prompt" class="music-prompt is-hidden">
+    <div id="music-prompt" class="music-prompt is-hidden" role="status">
       <div class="music-prompt-card">
-        <p>Presioná <strong>OK</strong> para iniciar la música</p>
-        <p class="music-prompt-sub">La playlist se configura en Admin → TV Local (con login)</p>
+        <p>Presioná <strong>OK</strong> (o tocá la pantalla) para el sonido</p>
+        <p class="music-prompt-sub">La música queda en loop. Config playlist: Admin → TV Local</p>
       </div>
     </div>
 
-    <div id="yt-wrap" class="yt-wrap is-hidden">
+    <!-- El iframe debe existir (no display:none) para que el audio pueda arrancar -->
+    <div id="yt-wrap" class="yt-wrap yt-wrap--boot">
       <div id="yt-player"></div>
     </div>
   </div>

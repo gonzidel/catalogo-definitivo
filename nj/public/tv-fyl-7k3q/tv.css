@@ -599,12 +599,14 @@ html, body {
 
 .music-prompt {
   position: absolute;
-  inset: 0;
+  left: 24px;
+  bottom: 36px;
   z-index: 20;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.45);
+  align-items: flex-end;
+  justify-content: flex-start;
+  pointer-events: auto;
+  background: transparent;
 }
 
 .music-prompt.is-hidden {
@@ -612,24 +614,25 @@ html, body {
 }
 
 .music-prompt-card {
-  background: var(--surface);
-  color: var(--text);
+  background: rgba(28, 22, 18, 0.88);
+  color: #fff7ef;
   border: 2px solid var(--accent);
-  border-radius: 18px;
-  padding: 32px 44px;
-  text-align: center;
+  border-radius: 14px;
+  padding: 16px 22px;
+  text-align: left;
   box-shadow: var(--shadow);
+  max-width: 520px;
 }
 
 .music-prompt-card p {
   margin: 0;
-  font-size: 32px;
+  font-size: 22px;
 }
 
 .music-prompt-sub {
-  margin-top: 10px !important;
-  font-size: 18px !important;
-  color: var(--text-muted);
+  margin-top: 6px !important;
+  font-size: 15px !important;
+  color: rgba(255, 247, 239, 0.72);
 }
 
 .yt-wrap {
@@ -639,13 +642,33 @@ html, body {
   width: 180px;
   height: 101px;
   z-index: 8;
-  opacity: 0.3;
+  opacity: 0.22;
   border-radius: 8px;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* Off-screen pero montado: display:none bloquea autoplay en muchas Smart TV */
+.yt-wrap.yt-wrap--boot {
+  left: -4px;
+  top: -4px;
+  right: auto;
+  bottom: auto;
+  width: 2px;
+  height: 2px;
+  opacity: 0.01;
   overflow: hidden;
 }
 
 .yt-wrap.is-hidden {
-  display: none;
+  /* no usar display:none si el player debe seguir vivo */
+  left: -4px;
+  top: -4px;
+  right: auto;
+  bottom: auto;
+  width: 2px;
+  height: 2px;
+  opacity: 0.01;
 }
 
 #yt-player,

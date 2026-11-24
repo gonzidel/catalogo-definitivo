@@ -40,7 +40,10 @@
     ytPlayer: null,
     ytReady: false,
     musicStarted: false,
+    musicAudible: false,
     playlistId: "",
+    musicWatchdog: null,
+    unlockBound: false,
     batchLabel: "",
     theme: "warm",
     transitioning: false,
@@ -940,13 +943,64 @@
     }, msUntilNight());
   }
 
-  /* ——— YouTube (playlist desde Supabase tv_local_settings; se cambia en Admin con login) ——— */
+  /* ——— YouTube (playlist desde Admin; autoplay mute + gesto para sonido) ——— */
   function syncMusicButtonLabel() {
     if (!els.musicBtn) return;
-    els.musicBtn.textContent = state.playlistId ? "Música ✓" : "Música";
+    if (!state.playlistId) {
+      els.musicBtn.textContent = "Música";
+      return;
+    }
+    if (!state.musicAudible) {
+      els.musicBtn.textContent = "Sonido";
+      return;
+    }
+    els.musicBtn.textContent = "Música ✓";
+  }
+
+  function showMusicPrompt(show) {
+    if (!els.musicPrompt) return;
+    if (show) els.musicPrompt.classList.remove("is-hidden");
+    else els.musicPrompt.classList.add("is-hidden");
+  }
+
+  function stopMusicWatchdog() {
+    if (state.musicWatchdog) {
+      clearInterval(state.musicWatchdog);
+      state.musicWatchdog = null;
+    }
+  }
+
+  function startMusicWatchdog() {
+    stopMusicWatchdog();
+    state.musicWatchdog = setInterval(function () {
+      keepMusicPlaying();
+    }, 8000);
+  }
+
+  function keepMusicPlaying() {
+    if (!state.ytPlayer || !state.ytReady || !state.musicStarted) return;
+    try {
+      var st = state.ytPlayer.getPlayerState();
+      // -1 unstarted, 0 ended, 2 paused, 5 cued
+      if (st === 0) {
+        try {
+          state.ytPlayer.playVideoAt(0);
+        } catch (e0) {
+          state.ytPlayer.playVideo();
+        }
+      } else if (st === -1 || st === 2 || st === 5) {
+        state.ytPlayer.playVideo();
+      }
+      if (state.musicAudible) {
+        try {
+          state.ytPlayer.unMute();
+        } catch (e1) {}
+      }
+    } catch (e) {}
   }
 
   function destroyYtPlayer() {
+    stopMusicWatchdog();
     if (state.ytPlayer) {
       try {
         state.ytPlayer.destroy();
@@ -954,41 +1008,41 @@
     }
     state.ytPlayer = null;
     state.ytReady = false;
+    state.musicStarted = false;
+    state.musicAudible = false;
     if (els.ytWrap) {
-      els.ytWrap.classList.add("is-hidden");
+      els.ytWrap.classList.add("yt-wrap--boot");
       els.ytWrap.innerHTML = '<div id="yt-player"></div>';
     }
   }
 
-  function setPlaylistFromServer(id, opts) {
-    var options = opts || {};
+  function setPlaylistFromServer(id) {
     var next = String(id || "").trim();
     var prev = state.playlistId || "";
     if (next === prev) {
       syncMusicButtonLabel();
+      if (state.playlistId && !state.ytPlayer) createYtPlayer({ muted: true });
       return;
     }
 
-    var wasPlaying = state.musicStarted;
     state.playlistId = next;
     syncMusicButtonLabel();
     destroyYtPlayer();
-    state.musicStarted = false;
 
     if (!state.playlistId) {
-      if (els.musicPrompt) els.musicPrompt.classList.add("is-hidden");
+      showMusicPrompt(false);
       return;
     }
 
-    if (wasPlaying || options.promptIfNew) {
-      if (els.musicPrompt) els.musicPrompt.classList.remove("is-hidden");
-    }
+    // Arranca muteado apenas hay playlist (política de autoplay de navegadores/TV)
+    createYtPlayer({ muted: true });
+    if (!state.musicAudible) showMusicPrompt(true);
   }
 
   function fetchPlaylistSettings() {
     var fromQuery = getQueryParam("pl");
     if (fromQuery) {
-      setPlaylistFromServer(fromQuery, { promptIfNew: !state.musicStarted });
+      setPlaylistFromServer(fromQuery);
       return Promise.resolve(fromQuery);
     }
 
@@ -996,32 +1050,80 @@
       .then(function (data) {
         var id =
           data && data.youtube_playlist_id ? data.youtube_playlist_id : "";
-        setPlaylistFromServer(id, {
-          promptIfNew: !state.musicStarted && !!id,
-        });
+        setPlaylistFromServer(id);
         return id;
       })
       .catch(function (err) {
         console.warn("[tv] no se pudo leer settings:", err);
         if (!state.playlistId && DEFAULT_PLAYLIST_ID) {
-          setPlaylistFromServer(DEFAULT_PLAYLIST_ID, { promptIfNew: true });
+          setPlaylistFromServer(DEFAULT_PLAYLIST_ID);
         }
         return "";
       });
   }
 
+  function unlockAudioFromGesture() {
+    if (!state.playlistId) return;
+    state.musicStarted = true;
+    state.musicAudible = true;
+    showMusicPrompt(false);
+    syncMusicButtonLabel();
+    if (!state.ytPlayer) {
+      createYtPlayer({ muted: false });
+      return;
+    }
+    if (!state.ytReady) return;
+    try {
+      state.ytPlayer.unMute();
+      state.ytPlayer.setVolume(60);
+      state.ytPlayer.playVideo();
+    } catch (e) {}
+    startMusicWatchdog();
+  }
+
+  function eventFromMusicControls(e) {
+    var t = e && e.target;
+    while (t && t !== document) {
+      if (t.id === "music-btn" || t.id === "theme-btn") return true;
+      t = t.parentNode;
+    }
+    return false;
+  }
+
+  function bindMusicUnlockOnce() {
+    if (state.unlockBound) return;
+    state.unlockBound = true;
+    function onGesture(e) {
+      if (state.musicAudible) return;
+      if (eventFromMusicControls(e)) return;
+      unlockAudioFromGesture();
+    }
+    document.addEventListener("keydown", onGesture, true);
+    document.addEventListener("pointerdown", onGesture, true);
+    document.addEventListener("touchstart", onGesture, true);
+    document.addEventListener("click", onGesture, true);
+    if (els.musicPrompt) {
+      els.musicPrompt.addEventListener("click", function (e) {
+        e.stopPropagation();
+        unlockAudioFromGesture();
+      });
+    }
+  }
+
   function initMusicUi() {
     syncMusicButtonLabel();
-    if (els.musicPrompt) {
-      els.musicPrompt.addEventListener("click", startMusic);
-      els.musicPrompt.classList.add("is-hidden");
-    }
+    showMusicPrompt(false);
+    bindMusicUnlockOnce();
     if (els.musicBtn) {
       els.musicBtn.addEventListener("click", function (e) {
         e.stopPropagation();
         if (!state.playlistId) return;
-        if (!state.musicStarted) startMusic();
-        else toggleMusic();
+        if (!state.musicAudible) {
+          unlockAudioFromGesture();
+          return;
+        }
+        // Solo el botón Música pausa/reanuda; OK del control no corta el loop
+        toggleMusic();
       });
     }
     fetchPlaylistSettings();
@@ -1030,13 +1132,9 @@
   function onKeyDown(e) {
     var key = e.keyCode || e.which;
     if (key === 13 || key === 32) {
-      if (state.playlistId && !state.musicStarted) {
-        startMusic();
-        e.preventDefault();
-        return;
-      }
-      if (state.playlistId) {
-        toggleMusic();
+      // OK / espacio: solo desbloquea sonido; no pausa
+      if (state.playlistId && !state.musicAudible) {
+        unlockAudioFromGesture();
         e.preventDefault();
       }
     } else if (key === 37) {
@@ -1051,37 +1149,35 @@
     }
   }
 
-  function startMusic() {
-    if (!state.playlistId) return;
-    state.musicStarted = true;
-    if (els.musicPrompt) els.musicPrompt.classList.add("is-hidden");
-    if (els.ytWrap) els.ytWrap.classList.remove("is-hidden");
-    if (state.ytPlayer && state.ytReady) {
-      try {
-        state.ytPlayer.playVideo();
-      } catch (err) {}
-      return;
-    }
-    createYtPlayer();
-  }
-
   function toggleMusic() {
     if (!state.ytPlayer || !state.ytReady) return;
     try {
       var st = state.ytPlayer.getPlayerState();
       if (st === 1) state.ytPlayer.pauseVideo();
-      else state.ytPlayer.playVideo();
+      else {
+        state.ytPlayer.unMute();
+        state.ytPlayer.playVideo();
+      }
     } catch (e) {}
   }
 
-  function createYtPlayer() {
+  function createYtPlayer(opts) {
+    var options = opts || {};
+    var startMuted = options.muted !== false && !state.musicAudible;
+    if (!state.playlistId) return;
     if (typeof window.YT === "undefined" || !window.YT.Player) {
-      window.onYouTubeIframeAPIReady = createYtPlayer;
+      window.onYouTubeIframeAPIReady = function () {
+        createYtPlayer(options);
+      };
       return;
     }
+    if (state.ytPlayer) return;
     if (!qs("yt-player") && els.ytWrap) {
       els.ytWrap.innerHTML = '<div id="yt-player"></div>';
     }
+    if (els.ytWrap) els.ytWrap.classList.add("yt-wrap--boot");
+
+    state.musicStarted = true;
     state.ytPlayer = new window.YT.Player("yt-player", {
       height: "101",
       width: "180",
@@ -1089,30 +1185,76 @@
         listType: "playlist",
         list: state.playlistId,
         autoplay: 1,
+        mute: startMuted ? 1 : 0,
         controls: 0,
         loop: 1,
         modestbranding: 1,
         rel: 0,
         playsinline: 1,
+        fs: 0,
+        disablekb: 1,
+        iv_load_policy: 3,
       },
       events: {
         onReady: function (ev) {
           state.ytReady = true;
           try {
-            ev.target.setVolume(55);
+            if (startMuted || !state.musicAudible) ev.target.mute();
+            else {
+              ev.target.unMute();
+              ev.target.setVolume(60);
+            }
+            ev.target.setVolume(startMuted ? 0 : 60);
             ev.target.playVideo();
           } catch (e) {}
+          if (state.musicAudible) {
+            showMusicPrompt(false);
+            startMusicWatchdog();
+          } else {
+            showMusicPrompt(true);
+          }
+          syncMusicButtonLabel();
         },
-        onError: function () {
-          console.warn("[tv] YouTube player error — revisá Admin → TV Local");
+        onStateChange: function (ev) {
+          // ENDED → reinicia la playlist (loop fiable)
+          if (ev.data === 0) {
+            try {
+              ev.target.playVideoAt(0);
+            } catch (e2) {
+              try {
+                ev.target.playVideo();
+              } catch (e3) {}
+            }
+          }
+          // Si el navegador pausó el mute-autoplay, reintentar
+          if ((ev.data === 2 || ev.data === 5) && state.musicStarted) {
+            setTimeout(function () {
+              keepMusicPlaying();
+            }, 400);
+          }
+        },
+        onError: function (ev) {
+          console.warn(
+            "[tv] YouTube error",
+            ev && ev.data,
+            "— usá una playlist pública PL… (no mixes PLRD/RD de YouTube Music)"
+          );
+          showMusicPrompt(true);
+          if (els.musicPrompt) {
+            var sub = els.musicPrompt.querySelector(".music-prompt-sub");
+            if (sub) {
+              sub.textContent =
+                "La playlist no se pudo reproducir. En Admin → TV Local usá una playlist pública de youtube.com (list=PL…), no un mix de YouTube Music.";
+            }
+          }
         },
       },
     });
   }
 
   window.onYouTubeIframeAPIReady = function () {
-    if (state.musicStarted && state.playlistId && !state.ytPlayer) {
-      createYtPlayer();
+    if (state.playlistId && !state.ytPlayer) {
+      createYtPlayer({ muted: !state.musicAudible });
     }
   };
 

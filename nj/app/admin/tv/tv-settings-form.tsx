@@ -10,7 +10,8 @@ type Props = {
 };
 
 function isRadioMixId(id: string) {
-  return /^RD/i.test(id);
+  // RD… = radio/mix; PLRD… = mixes de YouTube Music (suelen fallar en IFrame API / Smart TV)
+  return /^(RD|PLRD)/i.test(id);
 }
 
 function parsePlaylistFromInput(raw: string): {

@@ -22,6 +22,34 @@ async function getProductCostMap(productIds) {
 let currentProduct = null;
 let currentProductVariants = [];
 let selectedPromoItems = []; // Array de {type: 'product'|'variant', id: uuid, name: string}
+/** true cuando el usuario quitó la imagen de oferta ya guardada (hay que persistir null). */
+let offerImageMarkedForRemoval = false;
+/** true cuando el usuario quitó la imagen de promoción ya guardada. */
+let promoImageMarkedForRemoval = false;
+
+const OFFER_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+const OFFER_IMAGE_ALLOWED_TYPES = [
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/webp",
+];
+
+function validateOfferImageFile(file) {
+  if (!file) return null;
+  const type = String(file.type || "").toLowerCase();
+  if (type && !OFFER_IMAGE_ALLOWED_TYPES.includes(type)) {
+    return "Formato no permitido. Usá JPG, PNG o WebP.";
+  }
+  const name = String(file.name || "").toLowerCase();
+  if (!type && !/\.(jpe?g|png|webp)$/.test(name)) {
+    return "Formato no permitido. Usá JPG, PNG o WebP.";
+  }
+  if (file.size > OFFER_IMAGE_MAX_BYTES) {
+    return "La imagen supera 10 MB. Reducila e intentá de nuevo.";
+  }
+  return null;
+}
 
 // --- Utilidades de búsqueda por similitud ---
 // El buscador de Supabase (ilike %term%) matchea cualquier substring, por lo que
@@ -553,15 +581,17 @@ async function saveOffer(color) {
     existingCampaignId = data?.offer_campaign_id || null;
     existingImageUrl = data?.offer_image_url || null;
   } else {
-    // Modo creación: verificar si ya existe una oferta para este producto y color
-    const { data: existing, error: checkError } = await supabase
+    // Modo creación: tomar la más reciente si hay duplicados (evitar maybeSingle).
+    const { data: existingRows, error: checkError } = await supabase
       .from('color_price_offers')
       .select('id, offer_campaign_id, offer_image_url')
       .eq('product_id', currentProduct.id)
       .eq('color', color)
-      .maybeSingle();
+      .order('created_at', { ascending: false })
+      .limit(1);
     
-    if (checkError && checkError.code !== 'PGRST116') throw checkError;
+    if (checkError) throw checkError;
+    const existing = Array.isArray(existingRows) ? existingRows[0] : null;
     existingOffer = existing;
     existingCampaignId = existing?.offer_campaign_id || null;
     existingImageUrl = existing?.offer_image_url || null;
@@ -569,27 +599,36 @@ async function saveOffer(color) {
   
   let offerImageUrl = existingImageUrl;
   let finalCampaignId = campaignId || existingCampaignId || null;
+  let imageFieldChanged = false;
   
-  // Si hay una nueva imagen, subirla
+  // Si hay una nueva imagen, validar y subirla
   if (imageInput?.files && imageInput.files.length > 0) {
+    const validationError = validateOfferImageFile(imageInput.files[0]);
+    if (validationError) {
+      showMessage(validationError, 'error');
+      return;
+    }
     try {
       offerImageUrl = await uploadOfferImage(imageInput.files[0]);
       if (!offerImageUrl) {
         showMessage('Error al subir la imagen', 'error');
         return;
       }
+      offerImageMarkedForRemoval = false;
+      imageFieldChanged = true;
     } catch (error) {
       showMessage('Error al subir la imagen: ' + error.message, 'error');
       return;
     }
+  } else if (offerImageMarkedForRemoval) {
+    offerImageUrl = null;
+    imageFieldChanged = true;
   }
   
   // Si no hay campaign_id, generar uno nuevo
   if (!finalCampaignId) {
     finalCampaignId = crypto.randomUUID();
   }
-  
-  // La imagen es opcional, no se requiere validación
   
   try {
     // Preparar datos de actualización/inserción
@@ -602,8 +641,8 @@ async function saveOffer(color) {
       offer_title: offerTitle
     };
     
-    // Solo actualizar imagen si se subió una nueva
-    if (offerImageUrl) {
+    // Persistir imagen nueva o remoción explícita
+    if (imageFieldChanged) {
       offerData.offer_image_url = offerImageUrl;
     }
     
@@ -616,14 +655,12 @@ async function saveOffer(color) {
       
       if (updateError) throw updateError;
       
-      // Si se subió una nueva imagen y hay un campaign_id, actualizar todas las ofertas de la campaña
-      if (finalCampaignId && imageInput?.files && imageInput.files.length > 0 && offerImageUrl) {
+      // Propagar título e imagen a toda la campaña (aunque no se suba imagen nueva)
+      if (finalCampaignId) {
         const updateData = {
           offer_title: offerTitle || null
         };
-        
-        // Solo actualizar la imagen si se subió una nueva
-        if (offerImageUrl) {
+        if (imageFieldChanged) {
           updateData.offer_image_url = offerImageUrl;
         }
         
@@ -635,7 +672,6 @@ async function saveOffer(color) {
         
         if (campaignUpdateError) {
           console.warn('Error actualizando otras ofertas de la campaña:', campaignUpdateError);
-          // No fallar si esto falla, solo mostrar advertencia
         }
       }
       
@@ -677,12 +713,15 @@ async function saveOffer(color) {
       showMessage('Oferta creada correctamente', 'success');
     }
     
-    // Limpiar formulario de imagen solo si se subió una nueva
-    if (imageInput && imageInput.files && imageInput.files.length > 0) {
+    // Limpiar formulario de imagen tras guardar cambios de imagen
+    if (imageFieldChanged && imageInput) {
       imageInput.value = '';
       const preview = document.getElementById('offer-image-preview');
       if (preview) preview.style.display = 'none';
+      const previewImg = document.getElementById('offer-image-preview-img');
+      if (previewImg) previewImg.src = '';
     }
+    offerImageMarkedForRemoval = false;
     
     await loadOffers();
     // Recargar campañas para actualizar la lista
@@ -877,14 +916,20 @@ function initOfferImagePreview() {
   if (imageInput && preview && previewImg) {
     imageInput.addEventListener('change', (e) => {
       const file = e.target.files[0];
-      if (file) {
-        const reader = new FileReader();
-        reader.onload = (event) => {
-          previewImg.src = event.target.result;
-          preview.style.display = 'block';
-        };
-        reader.readAsDataURL(file);
+      if (!file) return;
+      const validationError = validateOfferImageFile(file);
+      if (validationError) {
+        showMessage(validationError, 'error');
+        imageInput.value = '';
+        return;
       }
+      offerImageMarkedForRemoval = false;
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        previewImg.src = event.target.result;
+        preview.style.display = 'block';
+      };
+      reader.readAsDataURL(file);
     });
   }
   
@@ -893,6 +938,7 @@ function initOfferImagePreview() {
       if (imageInput) imageInput.value = '';
       if (preview) preview.style.display = 'none';
       if (previewImg) previewImg.src = '';
+      offerImageMarkedForRemoval = true;
     });
   }
 }
@@ -907,14 +953,20 @@ function initPromoImagePreview() {
   if (imageInput && preview && previewImg) {
     imageInput.addEventListener('change', (e) => {
       const file = e.target.files[0];
-      if (file) {
-        const reader = new FileReader();
-        reader.onload = (event) => {
-          previewImg.src = event.target.result;
-          preview.style.display = 'block';
-        };
-        reader.readAsDataURL(file);
+      if (!file) return;
+      const validationError = validateOfferImageFile(file);
+      if (validationError) {
+        showMessage(validationError, 'error');
+        imageInput.value = '';
+        return;
       }
+      promoImageMarkedForRemoval = false;
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        previewImg.src = event.target.result;
+        preview.style.display = 'block';
+      };
+      reader.readAsDataURL(file);
     });
   }
   
@@ -923,6 +975,7 @@ function initPromoImagePreview() {
       if (imageInput) imageInput.value = '';
       if (preview) preview.style.display = 'none';
       if (previewImg) previewImg.src = '';
+      promoImageMarkedForRemoval = true;
     });
   }
 }
@@ -1206,16 +1259,24 @@ async function createPromotion() {
     let promoImageUrl = null;
     const imageInput = document.getElementById('promo-image-input');
     if (imageInput?.files && imageInput.files.length > 0) {
+      const validationError = validateOfferImageFile(imageInput.files[0]);
+      if (validationError) {
+        showMessage(validationError, 'error');
+        return;
+      }
       try {
         promoImageUrl = await uploadPromoImage(imageInput.files[0]);
         if (!promoImageUrl) {
           showMessage('Error al subir la imagen', 'error');
           return;
         }
+        promoImageMarkedForRemoval = false;
       } catch (error) {
         showMessage('Error al subir la imagen: ' + error.message, 'error');
         return;
       }
+    } else if (promoImageMarkedForRemoval) {
+      promoImageUrl = null;
     }
     
     // Crear promoción
@@ -1560,9 +1621,13 @@ window.editOffer = async function(offerId) {
       await loadOfferCampaigns();
       offerCampaignId.value = offer.offer_campaign_id;
     }
+    offerImageMarkedForRemoval = false;
     if (imagePreview && imagePreviewImg && offer.offer_image_url) {
       imagePreviewImg.src = offer.offer_image_url;
       imagePreview.style.display = 'block';
+    } else if (imagePreview && imagePreviewImg) {
+      imagePreviewImg.src = '';
+      imagePreview.style.display = 'none';
     }
     
     // Guardar el ID de la oferta para actualización
@@ -1829,9 +1894,13 @@ async function loadProductForCampaign(productId, campaignId) {
     if (titleInput && campaignData?.offer_title) {
       titleInput.value = campaignData.offer_title;
     }
+    offerImageMarkedForRemoval = false;
     if (imagePreview && imagePreviewImg && campaignData?.offer_image_url) {
       imagePreviewImg.src = campaignData.offer_image_url;
       imagePreview.style.display = 'block';
+    } else if (imagePreview && imagePreviewImg) {
+      imagePreviewImg.src = '';
+      imagePreview.style.display = 'none';
     }
     
     // Cambiar a la pestaña de ofertas

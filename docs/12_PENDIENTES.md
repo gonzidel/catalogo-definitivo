@@ -136,6 +136,9 @@ Estas preguntas siguen requiriendo respuesta humana o acceso productivo. Las res
 | OTR-02 | IMPORTANTE | ¿Qué dominios y formatos de enlace son oficiales y se permiten acortadores? |
 | OTR-03 | IMPORTANTE | ¿Quién aprueba un mensaje como vigente, en prueba o histórico? |
 | OTR-04 | COMPLEMENTARIA | ¿Qué conversaciones o campañas pueden incorporarse como ejemplos autorizados y anonimizados? |
+| TV-01 | IMPORTANTE | ¿Se autoriza aplicar en producción `supabase/canonical/252_offer_promo_images_storage.sql` (buckets `offer-images` / `promo-images`) para habilitar banners de ofertas en admin y en la TV del local? Pendiente desde 2026-11-20. |
+| TV-02 | IMPORTANTE | ¿Se autoriza el deploy de `feat/tv-local` al proyecto Vercel `nj` (`deploy --prod --skip-domain` → smoke → `promote`) para publicar `/tv-fyl-7k3q`? |
+| TV-03 | IMPORTANTE | ~~¿Se autoriza aplicar 383_tv_local_settings?~~ **Aplicada 2026-11-24** en fyl-core (`tv_local_settings`). |
 
 ## Fuentes necesarias para responder
 

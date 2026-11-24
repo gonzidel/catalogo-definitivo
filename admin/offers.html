@@ -351,8 +351,11 @@
             <h4 style="margin: 0 0 12px; color: #856404;">Configuración de Campaña de Oferta</h4>
             <div class="form-row">
               <div class="form-group" style="grid-column: 1 / -1;">
-                <label>Imagen de la Oferta (opcional)</label>
-                <input type="file" id="offer-image-input" accept="image/*" style="padding: 8px;" />
+                <label>Imagen de la Oferta / Banner (opcional)</label>
+                <input type="file" id="offer-image-input" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" style="padding: 8px;" />
+                <small style="color: #666; font-size: 11px; display: block; margin-top: 4px;">
+                  JPG, PNG o WebP. Máx. 10 MB. Medidas recomendadas para TV: 1920×1080 (horizontal) o 1080×1350 (vertical).
+                </small>
                 <div id="offer-image-preview" style="margin-top: 8px; display: none;">
                   <img id="offer-image-preview-img" src="" alt="Vista previa" style="max-width: 200px; max-height: 200px; border-radius: 8px; border: 2px solid #ddd;" />
                   <button type="button" id="remove-offer-image" class="btn btn-danger" style="margin-top: 8px; padding: 6px 12px;">Eliminar imagen</button>
@@ -428,7 +431,10 @@
           </div>
           <div class="form-group" style="grid-column: 1 / -1; margin-top: 12px;">
             <label>Imagen Principal de la Promoción (opcional)</label>
-            <input type="file" id="promo-image-input" accept="image/*" style="padding: 8px;" />
+            <input type="file" id="promo-image-input" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" style="padding: 8px;" />
+            <small style="color: #666; font-size: 11px; display: block; margin-top: 4px;">
+              JPG, PNG o WebP. Máx. 10 MB.
+            </small>
             <div id="promo-image-preview" style="margin-top: 8px; display: none;">
               <img id="promo-image-preview-img" src="" alt="Vista previa" style="max-width: 200px; max-height: 200px; border-radius: 8px; border: 2px solid #ddd;" />
               <button type="button" id="remove-promo-image" class="btn btn-danger" style="margin-top: 8px; padding: 6px 12px;">Eliminar imagen</button>

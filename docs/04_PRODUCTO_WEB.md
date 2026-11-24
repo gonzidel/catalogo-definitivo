@@ -21,6 +21,7 @@ Rutas públicas:
 - `/producto/[sku]` y compatibilidad `/produto/[sku]`: PDP.
 - `/como-comprar`, `/quienes-somos`.
 - `/login`, `/auth/callback`.
+- `/tv-fyl-7k3q`: pantalla Full HD del local (HTML estático en `nj/public/tv-fyl-7k3q/`). Sin login. Muestra el último lote publicado desde admin/publicaciones, ofertas activas y banners de campaña (`OfferImageUrl`). Música vía playlist de YouTube (`?pl=`). `noindex`; no está en el sitemap. Ver `docs/FYL-Obsidian/76-TV-LOCAL-PANTALLA-2026-11-20.md`.
 
 Rutas autenticadas:
 

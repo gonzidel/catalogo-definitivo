@@ -51,12 +51,18 @@ El mismo patrón ya ocurrió el 2026-11-18/19: `996a46a` (aviso WhatsApp) y `cea
 3. `test/smoke-prod-nj-markers.mjs` (`npm run smoke:prod-nj`): contra `www` actual detecta exactamente las 3 pérdidas (Cyber, mínimo 1, redirect Meta) y confirma que ofertas está.
 4. Documentación: `docs/15_PRODUCCION_NJ_ACTUAL.md` (registro vivo), regla `FYL-NJ-Deploy-No-Pisar.mdc`, puntero en `AGENTS.md`.
 
-## Qué falta (requiere autorización explícita)
+## Resultado (2026-11-26, con autorización del usuario)
 
-1. Publicar la rama integrada: `vercel deploy --prod --skip-domain` → `npm run smoke:prod-nj -- <url>` → smoke manual → `vercel promote` → smoke contra `www`.
-2. Mergear la integrada a `nj-main` (PR con base `nj-main`, nunca `main`). Sin esto, el próximo agente que parta de `nj-main` repite el problema.
-3. Decidir con el negocio si el Cyber Monday y el mínimo 1 siguen (flags `TEMP_*` en `true`).
-4. Coordinar con el agente de `fyl-banners-especiales`: tiene cambios sin commitear que ya llegaron a producción por deploy desde worktree sucio. Hay que commitearlos y rebasear sobre la integrada antes de su próximo deploy.
+1. Etiqueta del banner: `CYBER MONDAY` → `PROMO` (la promo sigue, ya no es Cyber Monday). Mínimo 1 se mantiene. Commit `3a71e8c`.
+2. Publicado `dpl_2mNmEWzqcfuBaYGBeDSkUCVYzNtu` con `vercel deploy --prod --skip-domain`; smoke de marcadores 4/4 y rutas clave 200 sobre la URL del deploy; `vercel promote`; `www` cambió solo (sin `alias set`); smoke 4/4 contra `www`.
+3. Merge fast-forward de la rama integrada a `nj-main`.
+
+### Pendiente
+
+- `nj-gonzidel.vercel.app` sigue en `dpl_FpAget…` (2026-11-10). Moverlo requiere `vercel alias set` con autorización.
+- Agente de `fyl-banners-especiales` (rama `fix/home-banners-especiales`): tiene cambios sin commitear ya publicados antes por deploy desde worktree sucio. Debe commitear y mergear `nj-main` antes de publicar; si publica sin hacerlo, pisa la promo y el resto. Se le dejó la regla y un aviso en su worktree.
+- Cuando termine la promo: flags `TEMP_*` en `false` y actualizar el smoke.
+- No verificado: `fylcalzados.com.ar` y `www.fylcalzados.com.ar` (el DNS no resolvió desde esta PC).
 
 ## Rollback
 

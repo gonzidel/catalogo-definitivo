@@ -15,7 +15,7 @@ import { BannerCarouselSkeleton } from "@/components/banners/BannerCarouselCard"
 import { OfertaCampaignCard } from "@/components/banners/OfertaCampaignCard";
 import { OfertaCarouselCard } from "@/components/banners/OfertaCarouselCard";
 import CarouselArrows from "@/components/banners/CarouselArrows";
-import { msUntilNextPromoRotation, rotatePromoBanner } from "@/lib/banners/promo-rotation";
+import { msUntilNextPromoRotation, stackPromosBeforeOffers } from "@/lib/banners/promo-rotation";
 
 type Props = {
   /** Tri-state SSR: present reserva; absent omite; unknown consulta (el fetch re-verifica el check). */
@@ -25,8 +25,9 @@ type Props = {
 /**
  * Banner de Ofertas del inicio. Se muestra solo con el check activo de
  * admin/offers.html (`home_feature_flags.home_offers_banner`) y al menos una oferta vigente.
- * Los afiches y las ofertas rotan juntos cada 6 horas para que no queden siempre
- * escondidos los mismos. El afiche se distingue por el marco dorado.
+ * Los afiches van siempre delante de las ofertas. Dentro de cada grupo rotan
+ * cada 6 horas para que no queden siempre escondidos los mismos. El afiche se
+ * distingue por el marco negro y el precio en amarillo.
  */
 export default function OfertasBanner({ expectedVisible = "unknown" }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -53,11 +54,9 @@ export default function OfertasBanner({ expectedVisible = "unknown" }: Props) {
 
   const slots = useMemo(
     () =>
-      rotatePromoBanner(
-        [
-          ...(data?.campaigns ?? []).map((campaign) => ({ kind: "campaign" as const, campaign })),
-          ...(data?.items ?? []).map((item) => ({ kind: "item" as const, item })),
-        ],
+      stackPromosBeforeOffers(
+        (data?.campaigns ?? []).map((campaign) => ({ kind: "campaign" as const, campaign })),
+        (data?.items ?? []).map((item) => ({ kind: "item" as const, item })),
         nowMs
       ),
     [data, nowMs]

@@ -5,6 +5,7 @@ import {
   msUntilNextRotation,
   rotatePromoBanner,
   rotateByTimeWindow,
+  stackPromosBeforeOffers,
 } from "./promo-rotation";
 
 const cards = ["a", "b", "c", "d"];
@@ -37,4 +38,20 @@ test("avisa cuánto falta para la próxima ventana", () => {
 test("en el banner el corte es a las 6 de Argentina", () => {
   const sixArt = Date.parse("2026-11-26T09:00:00.000Z");
   assert.notDeepEqual(rotatePromoBanner(cards, sixArt - 1), rotatePromoBanner(cards, sixArt));
+});
+
+test("las promos quedan delante de las ofertas", () => {
+  const promos = ["p1", "p2", "p3", "p4"];
+  const offers = ["o1", "o2", "o3"];
+  const sixArt = Date.parse("2026-11-26T09:00:00.000Z");
+  const before = stackPromosBeforeOffers(promos, offers, sixArt - 1);
+  const after = stackPromosBeforeOffers(promos, offers, sixArt);
+
+  assert.notDeepEqual(before.slice(0, promos.length), after.slice(0, promos.length));
+  for (const ordered of [before, after]) {
+    const firstOffer = ordered.findIndex((card) => card.startsWith("o"));
+    assert.ok(ordered.slice(0, firstOffer).every((card) => card.startsWith("p")));
+    assert.equal(firstOffer, promos.length);
+    assert.ok(ordered.slice(firstOffer).every((card) => card.startsWith("o")));
+  }
 });

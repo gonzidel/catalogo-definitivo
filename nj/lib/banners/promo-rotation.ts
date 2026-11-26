@@ -35,6 +35,18 @@ export function rotatePromoBanner<T>(items: readonly T[], nowMs: number): T[] {
   return rotateByTimeWindow(items, nowMs - ART_OFFSET_MS);
 }
 
+/**
+ * Las promos quedan siempre delante de las ofertas.
+ * Cada grupo rota solo, así un afiche no pasa al fondo del carrusel.
+ */
+export function stackPromosBeforeOffers<P, O>(
+  promos: readonly P[],
+  offers: readonly O[],
+  nowMs: number
+): Array<P | O> {
+  return [...rotatePromoBanner(promos, nowMs), ...rotatePromoBanner(offers, nowMs)];
+}
+
 export function msUntilNextPromoRotation(nowMs: number): number {
   return msUntilNextRotation(nowMs - ART_OFFSET_MS);
 }

@@ -1,0 +1,50 @@
+---
+description: Antes de publicar NJ/admin a producción, no pisar lo que otras ramas ya publicaron
+alwaysApply: true
+---
+
+# FYL: un deploy nunca debe borrar lo ya publicado
+
+Contexto (incidente 2026-11-24/26, nota `docs/FYL-Obsidian/77-AUDITORIA-DEPLOYS-QUE-SE-PISAN-2026-11-26.md`):
+varios agentes publican NJ desde ramas distintas. Un deploy construido sobre una base vieja
+(`nj-main` pelado) **reemplaza el build completo** y borra banner de ofertas, mínimo 1, links de Meta, buscador,
+etc. `vercel deploy` y `firebase deploy` suben el árbol de la rama tal cual: no hacen merge con lo publicado.
+
+## Regla de oro
+
+**Una rama solo se publica si contiene TODO lo que hoy está en producción.** Si no lo contiene, no se publica:
+primero se integra.
+
+## Antes de cualquier `vercel deploy --prod`, `vercel promote`, `vercel alias set` o `firebase deploy`
+
+1. Leer `docs/15_PRODUCCION_NJ_ACTUAL.md`: commit/rama publicados, deploy en `www` y funcionalidades que viven solo en producción.
+2. `git fetch origin` y verificar que la rama a publicar contiene el commit publicado:
+   `git merge-base --is-ancestor <commit_en_produccion> HEAD` (exit code 0 = ok). Si falla: **parar**, integrar
+   (merge de la rama publicada en la rama nueva) y volver a probar. No resolver conflictos "eligiendo mi lado" sin leer qué se pierde.
+3. Mostrar al usuario `git log --oneline <commit_en_produccion>..HEAD` (lo que se agrega) y
+   `git log --oneline HEAD..<commit_en_produccion>` (debe estar vacío: lo que se perdería).
+4. Si el árbol de trabajo tiene cambios sin commitear, **no publicar**: un deploy desde un worktree sucio sube código que no está en ningún commit.
+5. Publicar solo con autorización explícita del usuario (ver `FYL-NJ-Git-Workflow.mdc`).
+
+## Flujo obligatorio de publicación
+
+1. `vercel deploy --prod --skip-domain` (no toca `www`).
+2. Correr `npm run smoke:prod-nj -- <url del deploy>` (`test/smoke-prod-nj-markers.mjs`) contra esa URL. Si falta algún marcador: **no promover**.
+3. Smoke manual de lo que cambió la tarea.
+4. `vercel promote` (y `alias set` solo si `www` no cambia solo).
+5. Correr el smoke otra vez contra `https://www.fylmoda.com.ar`.
+6. **En el mismo turno** actualizar `docs/15_PRODUCCION_NJ_ACTUAL.md` (commit publicado, `dpl_...` en `www`, rollback) y agregar el marcador de la funcionalidad nueva al smoke.
+
+## Lo publicado tiene que volver a `nj-main`
+
+- Una funcionalidad publicada desde una rama lateral y no mergeada a `nj-main` es una **bomba**: el próximo agente que parta de `nj-main` la borra.
+- Al terminar una publicación, pedir al usuario autorización para mergear a `nj-main` (PR con base `nj-main`; contar commits con `git rev-list --count nj-main..<rama>`). Mientras no esté mergeado, dejarlo escrito en `docs/15_PRODUCCION_NJ_ACTUAL.md` como "vive solo en <rama>".
+- Si `nj-main` no contiene lo publicado, el trabajo nuevo **parte de la rama integrada publicada**, no de `nj-main`, y el PR/merge se hace contra la integrada.
+
+## Otras trampas conocidas
+
+- `admin/` se publica por Firebase Hosting (`firebase deploy --only hosting`): se aplica la misma regla; un deploy desde una rama vieja pisa `admin/*.js`.
+- Un flag temporal (`nj/lib/config/temp-order-min.ts`: `TEMP_MIN_ONE_ENABLED`, `TEMP_CYBER_BANNER`, etc.) solo se cambia si el usuario lo pide. No apagarlo "de pasada" ni dejarlo atrás por usar una base sin ese archivo.
+- No tapar un deploy que perdió algo con un "fix" que vuelve a copiar el código (ya pasó con el banner de ofertas): integrar la rama que lo tenía.
+- Si dos agentes tienen trabajo publicable a la vez, **uno publica primero y el otro rebasea/mergea sobre lo publicado** antes de su deploy. No publicar en paralelo.
+- Verificar el estado real en vivo (`www`), no solo los documentos: la documentación puede estar atrasada respecto de lo publicado.

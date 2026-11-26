@@ -1,0 +1,34 @@
+---
+description: Flujo de desarrollo FyL NJ (ramas, worktrees y publicación controlada)
+alwaysApply: true
+---
+
+# Flujo de desarrollo FyL NJ
+
+`nj-main` es la rama estable/base del NJ.
+
+- Nunca desarrollar nuevas funcionalidades directamente sobre `nj-main`.
+- Cada tarea nueva comienza desde `origin/nj-main` en una rama propia:
+  - `feat/...` para funcionalidades
+  - `fix/...` para correcciones
+  - `hotfix/...` para problemas urgentes de producción
+- Preferir un worktree separado por tarea, por ejemplo:
+  `git fetch origin` y `git worktree add ..\fyl-<tarea> -b feat/<tarea> origin/nj-main`
+- No mezclar cambios de otra rama ni trabajo en curso.
+- Antes de modificar código, informar al usuario qué rama y qué worktree se van a usar.
+- Si aparece un problema urgente mientras hay otra funcionalidad incompleta, crear el fix desde `origin/nj-main`, nunca desde la rama de la funcionalidad incompleta.
+
+## Requiere autorización explícita
+
+- Deploy a producción, `vercel promote`, `vercel alias set`, cambios de dominio.
+- SQL de producción.
+- Merge a `nj-main`.
+
+## Restricciones vigentes
+
+- `main` de `catalogo-definitivo` permanece congelada: no recibe push ni merge. Un push a `main` despliega catalogo1 en producción y devuelve `www` a catalogo1.
+- Producción NJ requiere publicación controlada (`vercel deploy --prod --skip-domain` → smoke → `vercel promote`), además de volver a fijar `nj-gonzidel`.
+- Desde 2026-11-04 `www.fylmoda.com.ar` y sus 3 redirecciones (`fylmoda.com.ar`, `fylcalzados.com.ar`, `www.fylcalzados.com.ar`) están en el proyecto Vercel `nj` (antes en `catalogo-definitivo`, asignadas a mano por alias). Con eso, `vercel promote` debería asignar `www` solo; el paso manual `vercel alias set <deploy> www.fylmoda.com.ar` ya no se hace por defecto. **No verificado todavía:** confirmarlo en la próxima publicación (pendiente ARQ-11 en `docs/12_PENDIENTES.md`) y, si `www` no cambia solo, usar `alias set` como antes. Rollback del dominio: Vercel → `catalogo-definitivo` → Settings → Domains → Add Existing → `www.fylmoda.com.ar`.
+- Pull requests: la base es `nj-main`, nunca `main` (el enlace `pull/new/<rama>` de GitHub propone `main` por defecto: cambiarla). Antes de pedir un merge, contar lo que trae con `git rev-list --count <base>..<rama>`; si trae commits ajenos al cambio, no mergear.
+- Antes de pushear, mergear, desplegar o tocar dominios: `git fetch origin`, revisar ramas y últimos commits (otros agentes y Cursor también cambian el repo) y leer `docs/12_PENDIENTES.md` y las notas `FYL-Obsidian/72` y `75`.
+- El proyecto Vercel `nj` no está conectado a GitHub: un push no despliega NJ. Un push a una rama distinta de `main` solo genera un Preview de `catalogo-definitivo`.

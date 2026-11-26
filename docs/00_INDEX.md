@@ -81,6 +81,10 @@ Leer `13_COMUNICACION_Y_TONO.md` antes de redactar textos visibles al cliente, W
 
 Consultar `14_EJEMPLOS_DE_MENSAJES.md` para reutilizar solamente mensajes aprobados, en prueba o históricos con estado explícito. No convertir una plantilla vacía en una regla de tono.
 
+## Producción NJ: qué está publicado
+
+Leer `15_PRODUCCION_NJ_ACTUAL.md` antes de publicar NJ/admin. Lista lo que no se puede pisar, el estado en vivo verificado y el flujo `--skip-domain` → smoke → `promote`. Auditoría del incidente: `FYL-Obsidian/77-AUDITORIA-DEPLOYS-QUE-SE-PISAN-2026-11-26.md`.
+
 ## Documentación especializada existente
 
 - `docs/FYL-Obsidian/00-INDICE.md`: índice de auditorías técnicas históricas.

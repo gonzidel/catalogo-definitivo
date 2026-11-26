@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex, nofollow" />
+  <meta name="googlebot" content="noindex, nofollow" />
+  <title>FyL Local TV</title>
+  <link rel="icon" href="/favicon.ico" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@600;700;800&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+  <!-- Rutas absolutas: Vercel sirve la página en /tv-fyl-7k3q (sin /) y ./tv.css rompe. -->
+  <link rel="stylesheet" href="/tv-fyl-7k3q/tv.css" />
+</head>
+<body data-theme="warm">
+  <div id="tv-root" class="tv-root">
+    <header class="tv-top">
+      <div class="top-left">
+        <img class="top-logo" src="/logo.webp" alt="FyL" />
+        <div class="top-copy">
+          <span id="page-title" class="page-title">Nuevos ingresos</span>
+          <span id="page-sub" class="page-sub">Cargando…</span>
+        </div>
+      </div>
+      <div class="top-right">
+        <button type="button" id="music-btn" class="theme-btn" title="Reproducir / pausar música">Música</button>
+        <button type="button" id="theme-btn" class="theme-btn" title="Cambiar fondo">Fondo</button>
+        <span id="clock" class="clock"></span>
+      </div>
+    </header>
+
+    <div id="tv-stage" class="tv-stage" aria-live="polite">
+      <div id="slide-grid" class="slide slide-grid is-hidden">
+        <div id="product-grid" class="product-grid cols-4"></div>
+      </div>
+
+      <div id="slide-banners" class="slide slide-banners is-hidden">
+        <div id="banners-grid" class="banners-grid"></div>
+      </div>
+
+      <div id="slide-idle" class="slide slide-idle">
+        <img class="idle-logo" src="/logo.webp" alt="FyL Moda" />
+        <p class="idle-text">Nuevos ingresos y ofertas del día</p>
+      </div>
+    </div>
+
+    <div class="progress-track" aria-hidden="true">
+      <div id="progress-bar" class="progress-bar"></div>
+    </div>
+
+    <div id="music-prompt" class="music-prompt is-hidden" role="status">
+      <div class="music-prompt-card">
+        <p>Presioná <strong>OK</strong> o el ▶ del video abajo a la derecha</p>
+        <p class="music-prompt-sub">La música queda en loop. Si no suena, usá el play del mini YouTube.</p>
+      </div>
+    </div>
+
+    <!-- El iframe debe existir (no display:none) para que el audio pueda arrancar -->
+    <div id="yt-wrap" class="yt-wrap yt-wrap--boot">
+      <div id="yt-player"></div>
+    </div>
+  </div>
+
+  <script src="https://www.youtube.com/iframe_api"></script>
+  <script src="/tv-fyl-7k3q/tv.js"></script>
+</body>
+</html>

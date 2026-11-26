@@ -38,6 +38,9 @@ const nextConfig: NextConfig = {
       afterFiles: [
         { source: "/nj", destination: "/" },
         { source: "/nj/:path*", destination: "/:path*" },
+        // Pantalla TV del local (HTML estático en public/)
+        { source: "/tv-fyl-7k3q", destination: "/tv-fyl-7k3q/index.html" },
+        { source: "/tv-fyl-7k3q/", destination: "/tv-fyl-7k3q/index.html" },
       ],
     };
   },

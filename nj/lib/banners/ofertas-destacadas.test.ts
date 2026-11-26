@@ -4,6 +4,7 @@ import { offersBannerPreviewOverride } from "./home-feature-flags";
 import {
   OFERTAS_BANNER_LIMIT,
   OFERTAS_BANNER_TOP_RECENT,
+  buildOfertaCampaignBanners,
   buildOfertasBannerItems,
   fetchHomeOffersBannerEnabled,
 } from "./ofertas-destacadas";
@@ -154,6 +155,76 @@ test("respeta el tope de productos", () => {
 
 test("sin filas devuelve vacío", () => {
   assert.deepEqual(buildOfertasBannerItems([]), []);
+});
+
+test("una campaña con imagen es un solo afiche aunque tenga varios colores", () => {
+  const banners = buildOfertaCampaignBanners([
+    row({
+      Articulo: "H1",
+      Color: "Negro",
+      OfferCampaignId: "11111111-1111-4111-8111-111111111111",
+      OfferImageUrl: "https://img.test/oferta.jpg",
+      OfferTitle: "Todo cuero",
+      FechaPublicacion: "2026-11-01T10:00:00.000Z",
+    }),
+    row({
+      Articulo: "H2",
+      Color: "Rojo",
+      OfferCampaignId: "11111111-1111-4111-8111-111111111111",
+      OfferImageUrl: "https://img.test/oferta.jpg",
+      OfferTitle: "Todo cuero",
+      FechaPublicacion: "2026-11-02T10:00:00.000Z",
+    }),
+  ]);
+  assert.equal(banners.length, 1);
+  assert.equal(banners[0].title, "Todo cuero");
+  assert.equal(banners[0].imageUrl, "https://img.test/oferta.jpg");
+});
+
+test("la campaña con imagen va al afiche y no se repite como tarjeta de producto", () => {
+  const rows = [
+    row({
+      Articulo: "H1",
+      Color: "Negro",
+      OfferCampaignId: "11111111-1111-4111-8111-111111111111",
+      OfferImageUrl: "https://img.test/oferta.jpg",
+      OfferTitle: "Todo cuero",
+    }),
+    row({ Articulo: "H3", Color: "Azul" }),
+  ];
+  assert.equal(buildOfertaCampaignBanners(rows).length, 1);
+  const items = buildOfertasBannerItems(rows);
+  assert.deepEqual(
+    items.map((item) => item.product.Articulo),
+    ["H3"]
+  );
+});
+
+test("un color de la campaña con imagen no tapa otro color en oferta del mismo artículo", () => {
+  const items = buildOfertasBannerItems([
+    row({
+      Articulo: "H1",
+      Color: "Negro",
+      OfferCampaignId: "11111111-1111-4111-8111-111111111111",
+      OfferImageUrl: "https://img.test/oferta.jpg",
+    }),
+    row({ Articulo: "H1", Color: "Rojo", FechaPublicacion: "2026-10-01T10:00:00.000Z" }),
+  ]);
+  assert.equal(items.length, 1);
+  assert.equal(items[0].color.color, "Rojo");
+});
+
+test("sin imagen la oferta sigue como tarjeta de producto", () => {
+  const rows = [
+    row({
+      Articulo: "H4",
+      Color: "Negro",
+      OfferCampaignId: "22222222-2222-4222-8222-222222222222",
+      OfferImageUrl: "  ",
+    }),
+  ];
+  assert.equal(buildOfertaCampaignBanners(rows).length, 0);
+  assert.equal(buildOfertasBannerItems(rows).length, 1);
 });
 
 // ─── Flag: falla cerrado ─────────────────────────────────────────────────────

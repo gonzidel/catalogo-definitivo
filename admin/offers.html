@@ -32,6 +32,7 @@
     }
     .tabs {
       display: flex;
+      flex-wrap: wrap;
       gap: 8px;
       margin-bottom: 24px;
       border-bottom: 2px solid #e9ecef;
@@ -348,6 +349,7 @@
     <div class="tabs">
       <button class="tab active" data-tab="offers">Ofertas de Precio por Color</button>
       <button class="tab" data-tab="promotions">Promociones 2x1 / 2xMonto</button>
+      <button class="tab" data-tab="banner-promos">Promociones</button>
     </div>
 
     <!-- Sección: Ofertas por Color -->
@@ -479,6 +481,74 @@
         </div>
       </div>
     </div>
+
+    <!-- Promociones visuales: no cambian el precio. Con imagen entran al banner de Ofertas. -->
+    <div id="banner-promos-tab" class="tab-content">
+      <div class="section">
+        <h2 id="bp-form-title">Crear promoción</h2>
+        <p style="margin: 0 0 16px; font-size: 13px; color: #666; line-height: 1.4;">
+          Elegí los productos como en 2x, asignales una imagen y activá la promo.
+          Si tiene imagen y está activa, aparece en el banner de Ofertas. No cambia el precio.
+        </p>
+        <div class="promo-form">
+          <div class="form-row">
+            <div class="form-group">
+              <label>Nombre *</label>
+              <input type="text" id="bp-title" maxlength="80" placeholder="Ej. Todo cuero" />
+            </div>
+            <div class="form-group">
+              <label>Permanente</label>
+              <label class="toggle-switch">
+                <input type="checkbox" id="bp-permanent" checked />
+                <span class="toggle-slider"></span>
+              </label>
+              <span id="bp-permanent-text">Sin fecha límite</span>
+            </div>
+            <div class="form-group" id="bp-end-date-group" style="display: none;">
+              <label>Fecha límite *</label>
+              <input type="date" id="bp-end-date" />
+            </div>
+            <div class="form-group">
+              <label>Estado</label>
+              <label class="toggle-switch">
+                <input type="checkbox" id="bp-status" checked />
+                <span class="toggle-slider"></span>
+              </label>
+              <span id="bp-status-text">Activa</span>
+            </div>
+          </div>
+          <div class="form-group" style="margin-top: 12px;">
+            <label>Imagen</label>
+            <input type="file" id="bp-image-input" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" style="padding: 8px;" />
+            <small style="color: #666; font-size: 11px; display: block; margin-top: 4px;">
+              JPG, PNG o WebP. Máx. 10 MB. Sin imagen no entra al banner.
+            </small>
+            <div id="bp-image-preview" style="margin-top: 8px; display: none;">
+              <img id="bp-image-preview-img" src="" alt="Vista previa" style="max-width: 200px; max-height: 200px; border-radius: 8px; border: 2px solid #ddd;" />
+              <button type="button" id="bp-remove-image" class="btn btn-danger" style="margin-top: 8px; padding: 6px 12px;">Eliminar imagen</button>
+            </div>
+          </div>
+          <div class="search-group">
+            <label>Agregar productos o variantes</label>
+            <input type="text" id="bp-item-search" placeholder="Buscar producto o variante..." list="bp-item-suggestions" />
+            <datalist id="bp-item-suggestions"></datalist>
+            <button class="btn btn-secondary" id="bp-add-item" type="button" style="margin-top: 8px;">Agregar</button>
+          </div>
+          <div class="selected-items" id="bp-selected-items">
+            <p style="color: #999; margin: 0;">No hay items seleccionados</p>
+          </div>
+          <button class="btn btn-primary" id="bp-save" type="button" style="margin-top: 16px;">Crear promoción</button>
+          <button class="btn btn-secondary" id="bp-cancel" type="button" style="margin-top: 16px; display: none;">Cancelar</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>Promociones existentes</h2>
+        <div class="promotions-list" id="bp-list">
+          <p>Cargando promociones...</p>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script type="module" src="../scripts/config.js"></script>
@@ -486,6 +556,7 @@
   <script type="module" src="../scripts/supabase-client.js?v=m260607"></script>
   <script type="module" src="./admin-auth.js?v=m260607"></script>
   <script type="module" src="./offers.js?v=m261110"></script>
+  <script type="module" src="./banner-promotions.js?v=m261126"></script>
 </body>
 </html>
 

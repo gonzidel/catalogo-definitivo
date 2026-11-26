@@ -11893,11 +11893,22 @@ body.modal-open nextjs-portal {
   color: #c62828;
 }
 
+/* Afiche de promo: marco y texto distintos del precio rojo de la oferta común. */
+.ofertas-campaign-card {
+  border-color: #e2b15a;
+  background: #fff6df;
+  box-shadow: 0 4px 12px rgba(90, 48, 8, 0.35);
+}
+
+.ofertas-campaign-card .ofertas-card__content {
+  background: #fff6df;
+}
+
 .ofertas-campaign-card__title {
   font-size: 17px;
   font-weight: 900;
   line-height: 1.15;
-  color: #1a1510;
+  color: #8a4b08;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

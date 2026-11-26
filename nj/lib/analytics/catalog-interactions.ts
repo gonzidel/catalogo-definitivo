@@ -61,12 +61,16 @@ export function buildBannerSwipeEvent(banner: BannerContext): GaEventPayload {
 /** Clic en el banner que no es un producto (banner completo, «Ver todo», guía). */
 export function buildBannerClickEvent(
   banner: BannerContext,
-  targetPath: string
+  targetPath: string,
+  promoName?: string
 ): GaEventPayload {
-  return {
-    name: "banner_click",
-    params: { ...bannerParams(banner), banner_target: clipGaParam(targetPath, 100) },
+  const params: Record<string, unknown> = {
+    ...bannerParams(banner),
+    banner_target: clipGaParam(targetPath, 100),
   };
+  const promo = clipGaParam(promoName ?? "", 80);
+  if (promo) params.promo_name = promo;
+  return { name: "banner_click", params };
 }
 
 /**

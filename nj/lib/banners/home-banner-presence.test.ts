@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  interpretOfertasPresence,
   interpretPresenceProbe,
   shouldFetchBanner,
   shouldReserveBannerSlot,
@@ -53,3 +54,50 @@ test("helpers tri-state exhaustivos", () => {
     [true, false, true]
   );
 });
+
+test("ofertas: check apagado → absent, sin importar las ofertas", () => {
+  assert.equal(
+    interpretOfertasPresence({
+      flagError: null,
+      flagEnabled: false,
+      offersRowCount: 10,
+    }),
+    "absent"
+  );
+});
+
+test("ofertas: sin fila del flag → absent", () => {
+  assert.equal(
+    interpretOfertasPresence({ flagError: null, flagEnabled: undefined }),
+    "absent"
+  );
+});
+
+test("ofertas: error leyendo el flag (p. ej. migración pendiente) → unknown, el cliente falla cerrado", () => {
+  const state = interpretOfertasPresence({
+    flagError: { message: "relation does not exist" },
+    flagEnabled: undefined,
+  });
+  assert.equal(state, "unknown");
+  assert.equal(shouldReserveBannerSlot(state), false);
+});
+
+test("ofertas: check activo con ofertas → present; sin ofertas → absent; error → unknown", () => {
+  assert.equal(
+    interpretOfertasPresence({ flagError: null, flagEnabled: true, offersRowCount: 1 }),
+    "present"
+  );
+  assert.equal(
+    interpretOfertasPresence({ flagError: null, flagEnabled: true, offersRowCount: 0 }),
+    "absent"
+  );
+  assert.equal(
+    interpretOfertasPresence({
+      flagError: null,
+      flagEnabled: true,
+      offersError: { message: "timeout" },
+    }),
+    "unknown"
+  );
+});
+

@@ -5,11 +5,18 @@ import {
   CURATED_TAG,
 } from "@/lib/banners/curated-banner-tags";
 import { CATALOG_SOURCE } from "@/lib/utils/catalog";
+import {
+  HOME_FEATURE_FLAGS_TABLE,
+  HOME_OFFERS_BANNER_FLAG,
+  offersBannerPreviewOverride,
+} from "@/lib/banners/home-feature-flags";
 
 /** Tri-state: no mapear errores de red/Supabase a "ausente". */
 export type BannerPresenceState = "present" | "absent" | "unknown";
 
 export type HomeBannerPresence = {
+  /** Banner de Ofertas: check activo en admin/offers.html Y al menos una oferta vigente. */
+  ofertas: BannerPresenceState;
   nuevosIngresos: BannerPresenceState;
   fylOriginals: BannerPresenceState;
   curatedSpecial: BannerPresenceState;
@@ -28,6 +35,7 @@ export function shouldFetchBanner(state: BannerPresenceState): boolean {
 
 export function allUnknownPresence(): HomeBannerPresence {
   return {
+    ofertas: "unknown",
     nuevosIngresos: "unknown",
     fylOriginals: "unknown",
     curatedSpecial: "unknown",
@@ -53,6 +61,77 @@ export function interpretPresenceProbe(options: {
   return options.rowCount > 0 ? "present" : "absent";
 }
 
+/**
+ * Banner de Ofertas: flag + ofertas vigentes.
+ * - flag apagado o sin fila → absent (no consulta ofertas).
+ * - error leyendo el flag → unknown: el cliente re-verifica el flag y falla cerrado.
+ * - flag activo: presente si hay al menos una oferta; error de ofertas → unknown.
+ */
+export function interpretOfertasPresence(options: {
+  flagError: { message?: string } | null | undefined;
+  /** `undefined` = no hay fila del flag. */
+  flagEnabled: boolean | undefined;
+  offersError?: { message?: string } | null | undefined;
+  offersRowCount?: number;
+}): BannerPresenceState {
+  if (options.flagError) return "unknown";
+  if (options.flagEnabled !== true) return "absent";
+  return interpretPresenceProbe({
+    error: options.offersError,
+    rowCount: options.offersRowCount ?? 0,
+  });
+}
+
+async function probeOfertasBanner(
+  supabase: ReturnType<typeof getPublicCatalogClient>
+): Promise<BannerPresenceState> {
+  try {
+    if (offersBannerPreviewOverride()) {
+      const offers = await supabase
+        .from(CATALOG_SOURCE)
+        .select("Articulo")
+        .eq("OfertaActiva", true)
+        .limit(1);
+      return interpretOfertasPresence({
+        flagError: null,
+        flagEnabled: true,
+        offersError: offers.error,
+        offersRowCount: offers.data?.length ?? 0,
+      });
+    }
+
+    const flag = await supabase
+      .from(HOME_FEATURE_FLAGS_TABLE)
+      .select("enabled")
+      .eq("key", HOME_OFFERS_BANNER_FLAG)
+      .maybeSingle();
+
+    const flagEnabled =
+      flag.data == null ? undefined : (flag.data as { enabled?: boolean }).enabled === true;
+    if (flag.error || flagEnabled !== true) {
+      return interpretOfertasPresence({
+        flagError: flag.error,
+        flagEnabled,
+      });
+    }
+
+    const offers = await supabase
+      .from(CATALOG_SOURCE)
+      .select("Articulo")
+      .eq("OfertaActiva", true)
+      .limit(1);
+
+    return interpretOfertasPresence({
+      flagError: null,
+      flagEnabled,
+      offersError: offers.error,
+      offersRowCount: offers.data?.length ?? 0,
+    });
+  } catch {
+    return "unknown";
+  }
+}
+
 async function probeLimitOne(
   run: () => Promise<{
     data: unknown[] | null;
@@ -73,8 +152,9 @@ async function probeLimitOne(
 async function loadHomeBannerPresenceUncached(): Promise<HomeBannerPresence> {
   const supabase = getPublicCatalogClient();
 
-  const [nuevosIngresos, fylOriginals, curatedSpecial, curated] =
+  const [ofertas, nuevosIngresos, fylOriginals, curatedSpecial, curated] =
     await Promise.all([
+      probeOfertasBanner(supabase),
       probeLimitOne(async () => {
         const { data, error } = await supabase
           .from("products")
@@ -112,7 +192,7 @@ async function loadHomeBannerPresenceUncached(): Promise<HomeBannerPresence> {
       }),
     ]);
 
-  return { nuevosIngresos, fylOriginals, curatedSpecial, curated };
+  return { ofertas, nuevosIngresos, fylOriginals, curatedSpecial, curated };
 }
 
 /**

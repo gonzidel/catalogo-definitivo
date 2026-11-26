@@ -1,4 +1,4 @@
-import { supabase } from "../scripts/supabase-client.js?v=m260607";
+import { supabase, supabaseReady } from "../scripts/supabase-client.js?v=m260607";
 
 const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 const IMAGE_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
@@ -486,8 +486,13 @@ function init() {
   loadList();
 }
 
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", init);
-} else {
-  init();
+async function start() {
+  await supabaseReady;
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
 }
+
+start();

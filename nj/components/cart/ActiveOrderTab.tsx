@@ -2904,6 +2904,23 @@ export default function ActiveOrderTab({
           aviso de vencimiento (ver más arriba). */}
       {!isExpired && totalAndSendCard}
 
+      {!isExpired && (
+        <div className="active-order-help">
+          <span className="active-order-help__text">
+            Si tenés alguna duda, podés consultarnos por
+          </span>
+          <a
+            href={WHATSAPP_HREF}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="active-order-btn active-order-btn--whatsapp active-order-btn--whatsapp-word"
+          >
+            <WhatsAppIcon size={12} />
+            WhatsApp
+          </a>
+        </div>
+      )}
+
       {/* Retiro local diferido: sin "Cerrar pedido", pero sí pueden seguir
           sumando unidades (catálogo). Misma CTA que en pedido cerrado/prep. */}
       {!isExpired && (hideDeadlineUntilApartado || isLocalDeferredReady) && (

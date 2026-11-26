@@ -15,7 +15,7 @@
 | Banner de promo | Presente, etiqueta `PROMO` (ya no dice Cyber Monday) |
 | Mínimo 1 producto | Vigente |
 | `/catalogo?sku=X` → `/producto/X` | Vigente |
-| `nj-gonzidel.vercel.app` | **No se movió**: sigue en `dpl_FpAget3noduG2WFDgtQtufGCMHTg` (2026-11-10). Fijarlo en el deploy actual requiere `vercel alias set` con autorización. |
+| `nj-gonzidel.vercel.app` | Fijado el 2026-11-26 en `dpl_2mNmEWzqcfuBaYGBeDSkUCVYzNtu` (mismo deploy que `www`). Cada deploy nuevo debe volver a fijarlo con `vercel alias set` (con autorización). |
 
 ## Funcionalidades que cualquier deploy debe conservar
 

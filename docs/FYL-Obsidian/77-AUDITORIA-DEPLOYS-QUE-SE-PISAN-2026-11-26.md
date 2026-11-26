@@ -59,7 +59,7 @@ El mismo patrón ya ocurrió el 2026-11-18/19: `996a46a` (aviso WhatsApp) y `cea
 
 ### Pendiente
 
-- `nj-gonzidel.vercel.app` sigue en `dpl_FpAget…` (2026-11-10). Moverlo requiere `vercel alias set` con autorización.
+- `nj-gonzidel.vercel.app` quedó fijado en `dpl_2mNmEWzq…` (2026-11-26, con autorización).
 - Agente de `fyl-banners-especiales` (rama `fix/home-banners-especiales`): tiene cambios sin commitear ya publicados antes por deploy desde worktree sucio. Debe commitear y mergear `nj-main` antes de publicar; si publica sin hacerlo, pisa la promo y el resto. Se le dejó la regla y un aviso en su worktree.
 - Cuando termine la promo: flags `TEMP_*` en `false` y actualizar el smoke.
 - No verificado: `fylcalzados.com.ar` y `www.fylcalzados.com.ar` (el DNS no resolvió desde esta PC).

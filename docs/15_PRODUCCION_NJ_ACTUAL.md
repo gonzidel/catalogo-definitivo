@@ -8,19 +8,19 @@
 
 | Dato | Valor |
 |---|---|
-| Deploy en `www` | `dpl_B12bwAScMQ7eGrHcXni6KicC55js` (`nj-4s6pgczzj-gonzidel.vercel.app`), publicado el 2026-11-26 con `--skip-domain` → smoke → `vercel promote`. Rama `feat/promociones-banner`, commit `d84a2f1`. |
+| Deploy en `www` | `dpl_FCrqXaVX5qk54bPXSv6UT5qgLpqf` (`nj-j2510uc1p-gonzidel.vercel.app`), publicado el 2026-11-26 con `--skip-domain` → smoke → `vercel promote`. Rama `feat/promociones-banner`, commit `c22f272`. |
 | `www` tras `promote` | Cambió solo, sin `alias set` (cierra la duda de ARQ-11: con el dominio en el proyecto `nj` alcanza `promote`). |
-| Rollback | Promover `dpl_2mNmEWzqcfuBaYGBeDSkUCVYzNtu` (el integrado que estaba en `www` antes de este deploy; tiene mínimo 1, Meta y buscador, y no tiene los afiches). No volver a `dpl_2vRDc7pmuKsw2rbyyLB3BMLUP7VF`: le faltan mínimo 1, Meta y buscador. |
+| Rollback | Promover `dpl_B12bwAScMQ7eGrHcXni6KicC55js` (el deploy anterior de los afiches; tiene mínimo 1, Meta y buscador, sin la rotación de 6 horas). No volver a `dpl_2vRDc7pmuKsw2rbyyLB3BMLUP7VF`: le faltan mínimo 1, Meta y buscador. |
 | Banner de ofertas | Presente, con afiches (`data-ofertas-promos="1"`) |
 | Banner de promo | Presente, etiqueta `PROMO` (ya no dice Cyber Monday) |
 | Mínimo 1 producto | Vigente |
 | `/catalogo?sku=X` → `/producto/X` | Vigente |
-| `nj-gonzidel.vercel.app` | Fijado el 2026-11-26 en `dpl_B12bwAScMQ7eGrHcXni6KicC55js` (mismo deploy que `www`). Cada deploy nuevo debe volver a fijarlo con `vercel alias set` (con autorización). |
-| Dónde vive el código | Solo en `feat/promociones-banner` (`d84a2f1`) hasta que se autorice el merge a `nj-main`. `origin/nj-main` sigue en `5e2b30d`. |
+| `nj-gonzidel.vercel.app` | Fijado el 2026-11-26 en `dpl_FCrqXaVX5qk54bPXSv6UT5qgLpqf` (mismo deploy que `www`). Cada deploy nuevo debe volver a fijarlo con `vercel alias set` (con autorización). |
+| Dónde vive el código | Solo en `feat/promociones-banner` (`c22f272`) hasta que se autorice el merge a `nj-main`. `origin/nj-main` sigue en `5e2b30d`. |
 
 ## Funcionalidades que cualquier deploy debe conservar
 
-Desde el merge del 2026-11-26, `origin/nj-main` contiene las filas 1–10. La fila 11 está publicada en `www` pero **todavía no está en `nj-main`**: vive solo en `feat/promociones-banner`. Publicar una rama que no contenga `d84a2f1` borra los afiches.
+Desde el merge del 2026-11-26, `origin/nj-main` contiene las filas 1–10. La fila 11 está publicada en `www` pero **todavía no está en `nj-main`**: vive solo en `feat/promociones-banner`. Publicar una rama que no contenga `c22f272` borra los afiches, la rotación de 6 horas y la medición del clic.
 
 | # | Funcionalidad | Commits clave | Rama de origen | Marcador en el smoke |
 |---|---|---|---|---|
@@ -34,13 +34,13 @@ Desde el merge del 2026-11-26, `origin/nj-main` contiene las filas 1–10. La fi
 | 8 | Banner curado en una fila en escritorio | `cea31ed` | `feat/banner-curado-sobre-prod` | No |
 | 9 | TV local (pantalla + admin; SQL `383_tv_local_settings`) | `803d079` … `89ce501` | `feat/tv-local` | No |
 | 10 | Admin de ofertas: imagen de campaña validada (`admin/offers.*`, Firebase) | en `fix/home-banners-especiales` | `fix/home-banners-especiales` | No |
-| 11 | Afiches de ofertas y 2x, más pestaña Promociones (sin cambiar el precio; SQL `384_banner_promotions`) | `d84a2f1` | `feat/promociones-banner` | Sí (`data-ofertas-promos="1"`) |
+| 11 | Afiches de ofertas y 2x, más pestaña Promociones (sin cambiar el precio; SQL `384_banner_promotions`). Desde `c22f272` rotan cada 6 horas (0, 6, 12 y 18 ART) y el clic del afiche se mide en GA (`banner_click` + `promo_name`) y Meta (`BannerClick`) | `d84a2f1`, `c22f272` | `feat/promociones-banner` | Sí (`data-ofertas-promos="1"`) |
 
 Cada vez que una funcionalidad llega a producción: agregar fila acá **y** su marcador en `test/smoke-prod-nj-markers.mjs`.
 
 ## Rama que reúne todo
 
-`release/nj-integrada-2026-11-26` reúne las filas 1–10 y está mergeada a `nj-main`. Lo que está en `www` ahora es `feat/promociones-banner` (`d84a2f1`): esas filas más la 11. Hasta el merge, esa rama es la base segura para el próximo deploy.
+`release/nj-integrada-2026-11-26` reúne las filas 1–10 y está mergeada a `nj-main`. Lo que está en `www` ahora es `feat/promociones-banner` (`c22f272`): esas filas más la 11. Hasta el merge, esa rama es la base segura para el próximo deploy.
 
 ## Antes de publicar (resumen; el detalle está en la regla)
 

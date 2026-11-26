@@ -10,7 +10,7 @@
 |---|---|
 | Deploy en `www` | `dpl_2vRDc7pmuKsw2rbyyLB3BMLUP7VF` (2026-11-26 09:17). Construido por CLI (`meta` vacío en Vercel): el commit exacto **no se puede probar**. Por topología sale de `fix/home-banners-especiales` (base `nj-main` + TV local + banner de ofertas) y, según el worktree `E:\PROYECTOS\fyl-banners-especiales`, con cambios sin commitear. |
 | Banner de ofertas | Presente |
-| Banner Cyber Monday | **Falta** |
+| Banner de promo (antes Cyber Monday) | **Falta** (en la rama integrada la etiqueta ya dice `PROMO`) |
 | Mínimo 1 producto | **Falta** (textos y reglas vuelven a "mínimo 4") |
 | `/catalogo?sku=X` → `/producto/X` | **Falta** (redirige a `/?sku=X`) |
 

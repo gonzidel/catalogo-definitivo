@@ -1,5 +1,7 @@
 # Temporal: mínimo 1 + Cyber Monday (NJ)
 
+**Actualización 2026-11-26:** la promo (mínimo 1) sigue vigente pero ya no es Cyber Monday. La etiqueta del banner pasó de `CYBER MONDAY` a `PROMO` (`TEMP_CYBER_BANNER_COPY.label`); el resto del copy y el ícono no cambiaron. Los nombres internos (`TEMP_CYBER_BANNER`, clases `--cyber`) se conservan para no tocar CSS ni flags.
+
 **Clasificación: EN EVALUACIÓN / temporal**  
 Fecha: 2026-11-03  
 Rama: `feat/minimo-temporal-1`  

@@ -54,11 +54,11 @@ export function getPublicMinCopy() {
 }
 
 export const TEMP_CYBER_BANNER_COPY = {
-  label: "CYBER MONDAY",
+  label: "PROMO",
   title: "Comprá por mayor desde 1 producto",
   lineFull: "Bajamos el mínimo de compra. Tenés 7 días para sumar más.",
   lineCatalog: "Consultá por WhatsApp y coordinamos tu pedido",
   cta: "Cómo comprar",
-  ariaLabel: "Cyber Monday: comprá por mayor desde 1 producto",
+  ariaLabel: "Promo: comprá por mayor desde 1 producto",
   iconSrc: "/assets/icono-cybermonday.webp",
 } as const;

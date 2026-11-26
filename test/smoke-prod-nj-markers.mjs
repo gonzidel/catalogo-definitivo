@@ -31,10 +31,10 @@ const MARKERS = [
     expect: "ofertas-banner",
   },
   {
-    name: "Banner Cyber Monday / mínimo 1 (64-TEMP-MINIMO-1)",
+    name: "Banner promo mínimo 1 (64-TEMP-MINIMO-1; ya no dice Cyber Monday)",
     path: "/",
     kind: "html",
-    expect: "CYBER MONDAY",
+    expect: "Comprá por mayor desde 1 producto",
   },
   {
     name: "Mínimo 1 en textos públicos (TEMP_PUBLIC_COPY_MIN_ONE)",

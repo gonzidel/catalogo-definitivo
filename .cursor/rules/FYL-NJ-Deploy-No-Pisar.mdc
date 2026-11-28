@@ -50,3 +50,13 @@ primero se integra.
 - Verificar el estado real en vivo (`www`), no solo los documentos: la documentación puede estar atrasada respecto de lo publicado.
 - **Prohibido publicar el admin desde una carpeta que no sea un worktree de git** (p. ej. `fyl-firebase-*`, copias para `firebase deploy`). Ahí se desarrollaron `product-features.js`, `product-meli.js`, peso/medidas y mejoras de `products.js` que nunca se commitearon y se perdieron al publicar otro admin. Todo cambio de `admin/` se commitea ANTES de copiarlo o desplegarlo, y el deploy sale de un worktree limpio que contenga `origin/nj-main`.
 - El smoke también cubre el admin (`https://app.fylmoda.com.ar`): correr `npm run smoke:prod-nj` después de un `firebase deploy` y agregar un marcador por cada funcionalidad nueva de `admin/`.
+
+## Cierre obligatorio de toda tarea (commit, push y merge)
+
+Un cambio que no está en git no existe: se pierde cuando otro agente publica desde otra base. Al terminar CUALQUIER tarea que toque código (NJ, `admin/`, `client/`, `supabase/`):
+
+1. **Commit** de todo lo que se tocó, incluidos archivos nuevos (`git status` limpio, sin `??` de trabajo propio). Nunca dejar trabajo útil solo en el disco ni en una carpeta de staging.
+2. **Push** de la rama (`git push -u origin <rama>`).
+3. **Si se publicó (Vercel o Firebase):** registrar en `docs/15_PRODUCCION_NJ_ACTUAL.md` qué se publicó y pedir al usuario autorización para **mergear a `nj-main`** en el mismo turno. No cerrar la tarea diciendo "listo" mientras lo publicado no esté en `nj-main`.
+4. Si la sesión termina o cambia de agente antes del merge, dejar en la respuesta final: rama, último commit, qué está publicado y qué falta mergear. El siguiente agente no debe asumir que el trabajo está en `nj-main`.
+5. Antes de empezar una tarea, mirar si hay trabajo publicado o commiteado ajeno que `nj-main` no tenga (`git log origin/nj-main..<rama>` de las ramas recientes) y avisar al usuario en vez de pisarlo.

@@ -14,6 +14,8 @@ import {
   HOME_OFFERS_BANNER_FLAG,
   offersBannerPreviewOverride,
 } from "@/lib/banners/home-feature-flags";
+import { fetchBannerPromotionPosters } from "@/lib/banners/banner-promotions";
+import { fetchActivePromoPosters } from "@/lib/banners/promo-posters";
 import { colorIsPurchasable } from "@/lib/stock/catalog-availability";
 import { getColorEffectivePrice } from "@/lib/utils/variant-price";
 import type { CatalogRow, ColorDetail, GroupedProduct } from "@/types/catalog";
@@ -24,6 +26,21 @@ export const OFERTAS_BANNER_TOP_RECENT = 5;
 export const OFERTAS_BANNER_LIMIT = 24;
 /** Filas de color a leer (hoy ~55 con oferta; margen amplio). */
 const OFERTAS_BANNER_FETCH_ROWS = 500;
+
+/** Un afiche de campaña: una imagen por oferta, aunque tenga varios colores. */
+export type OfertaCampaignBanner = {
+  campaignId: string;
+  imageUrl: string;
+  title: string;
+  recencyMs: number;
+  href: string;
+};
+
+/** Carrusel del inicio: afiches de campaña primero, después las tarjetas de producto. */
+export type OfertasBannerFeed = {
+  campaigns: OfertaCampaignBanner[];
+  items: OfertaBannerItem[];
+};
 
 /** Un producto del banner: el artículo, el color EN OFERTA que se muestra y su recencia. */
 export type OfertaBannerItem = {
@@ -41,6 +58,62 @@ function articuloKey(articulo: string): string {
 
 function colorKey(color: string): string {
   return String(color ?? "").trim().toLowerCase();
+}
+
+function offerRowActive(row: CatalogRow): boolean {
+  return row.OfertaActiva === true || row.OfertaActiva === "true";
+}
+
+/**
+ * Una tarjeta por campaña que tenga imagen. Varios colores de la misma oferta
+ * no duplican el afiche. Orden: la campaña tocada más reciente primero.
+ */
+export function buildOfertaCampaignBanners(rows: CatalogRow[]): OfertaCampaignBanner[] {
+  const map = new Map<string, OfertaCampaignBanner>();
+  for (const row of rows) {
+    if (!offerRowActive(row)) continue;
+    const campaignId = String(row.OfferCampaignId ?? "").trim();
+    const imageUrl = String(row.OfferImageUrl ?? "").trim();
+    if (!campaignId || !imageUrl) continue;
+    const key = campaignId.toLowerCase();
+    const recencyMs = catalogRecencyMs(row);
+    const title = String(row.OfferTitle ?? "").trim();
+    const existing = map.get(key);
+    if (!existing) {
+      map.set(key, {
+        campaignId,
+        imageUrl,
+        title: title || "Oferta",
+        recencyMs,
+        href: `/ofertas/campana/${encodeURIComponent(campaignId)}`,
+      });
+      continue;
+    }
+    if (recencyMs >= existing.recencyMs) {
+      existing.recencyMs = recencyMs;
+      existing.imageUrl = imageUrl;
+      existing.campaignId = campaignId;
+      existing.href = `/ofertas/campana/${encodeURIComponent(campaignId)}`;
+      if (title) existing.title = title;
+    } else if (title && existing.title === "Oferta") {
+      existing.title = title;
+    }
+  }
+  return [...map.values()].sort((a, b) => {
+    const diff = b.recencyMs - a.recencyMs;
+    return diff !== 0 ? diff : a.campaignId.localeCompare(b.campaignId);
+  });
+}
+
+function campaignIdByColor(rows: CatalogRow[]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const row of rows) {
+    const id = String(row.OfferCampaignId ?? "").trim().toLowerCase();
+    const art = row.Articulo?.trim();
+    if (!id || !art) continue;
+    map.set(`${articuloKey(art)}|${colorKey(row.Color)}`, id);
+  }
+  return map;
 }
 
 /**
@@ -145,10 +218,20 @@ export function buildOfertasBannerItems(
 ): OfertaBannerItem[] {
   if (rows.length === 0) return [];
   const recencyByColor = buildOfferRecencyByColor(rows);
+  const imagedCampaigns = new Set(
+    buildOfertaCampaignBanners(rows).map((campaign) => campaign.campaignId.toLowerCase())
+  );
+  const campaignOfColor = campaignIdByColor(rows);
   const eligible: OfertaBannerItem[] = [];
 
   for (const product of agruparProductos(rows)) {
-    const picked = pickOfferColor(product, recencyByColor);
+    const colors = (product.DetalleColor ?? []).filter((color) => {
+      const campaignId = campaignOfColor.get(
+        `${articuloKey(product.Articulo)}|${colorKey(color.color)}`
+      );
+      return !campaignId || !imagedCampaigns.has(campaignId);
+    });
+    const picked = pickOfferColor({ ...product, DetalleColor: colors }, recencyByColor);
     if (picked) eligible.push({ product, ...picked });
   }
 
@@ -186,12 +269,44 @@ async function loadOfferRows(
   return data as unknown as CatalogRow[];
 }
 
+/** Afiches + tarjetas a partir de las mismas filas del catálogo. */
+export function buildOfertasBannerFeed(rows: CatalogRow[]): OfertasBannerFeed {
+  return {
+    campaigns: buildOfertaCampaignBanners(rows),
+    items: buildOfertasBannerItems(rows),
+  };
+}
+
 /** Carrusel del inicio: flag activo + ofertas vigentes. Snapshot primero; vista viva si el snapshot no trae ofertas. */
-export async function fetchOfertasDestacadas(): Promise<OfertaBannerItem[]> {
+export async function fetchOfertasDestacadas(): Promise<OfertasBannerFeed> {
   const supabase = getSupabaseBrowserClient();
-  if (!(await fetchHomeOffersBannerEnabled(supabase))) return [];
+  if (!(await fetchHomeOffersBannerEnabled(supabase))) return { campaigns: [], items: [] };
 
   let rows = await loadOfferRows(supabase, CATALOG_SOURCE);
   if (rows.length === 0) rows = await loadOfferRows(supabase, CATALOG_AVAILABLE_VIEW);
-  return buildOfertasBannerItems(rows);
+  const feed = buildOfertasBannerFeed(rows);
+  const [promos, bannerPromos] = await Promise.all([
+    fetchActivePromoPosters(supabase),
+    fetchBannerPromotionPosters(supabase),
+  ]);
+  return {
+    campaigns: [
+      ...bannerPromos.map((promo) => ({
+        campaignId: promo.id,
+        imageUrl: promo.imageUrl,
+        title: promo.title,
+        recencyMs: promo.recencyMs,
+        href: `/ofertas/promocion/${encodeURIComponent(promo.id)}`,
+      })),
+      ...promos.map((promo) => ({
+        campaignId: promo.id,
+        imageUrl: promo.imageUrl,
+        title: promo.title,
+        recencyMs: promo.recencyMs,
+        href: `/ofertas/promo/${encodeURIComponent(promo.id)}`,
+      })),
+      ...feed.campaigns,
+    ],
+    items: feed.items,
+  };
 }

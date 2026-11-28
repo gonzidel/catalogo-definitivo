@@ -27,6 +27,7 @@ let offerImageMarkedForRemoval = false;
 /** true cuando el usuario quitó la imagen de promoción ya guardada. */
 let promoImageMarkedForRemoval = false;
 
+const HOME_OFFERS_BANNER_FLAG = "home_offers_banner";
 const OFFER_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 const OFFER_IMAGE_ALLOWED_TYPES = [
   "image/jpeg",
@@ -185,7 +186,6 @@ if (document.readyState === 'loading') {
 // --- Check del banner de Ofertas en el inicio ---
 // Tabla: public.home_feature_flags (migración 383). Lectura pública; escritura solo admins (RLS).
 // El frontend NJ falla cerrado: sin tabla/fila o con enabled=false, el banner no se muestra.
-const HOME_OFFERS_BANNER_FLAG = 'home_offers_banner';
 
 function setHomeOffersBannerStatus(toggle, statusEl, enabled) {
   if (toggle) toggle.checked = enabled;

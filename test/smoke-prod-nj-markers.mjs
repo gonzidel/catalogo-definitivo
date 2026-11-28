@@ -45,6 +45,12 @@ const MARKERS = [
     expect: "Podés comprar desde 1 producto",
   },
   {
+    name: "Afiches de promociones en el banner de Ofertas",
+    path: "/",
+    kind: "html",
+    expect: "data-ofertas-promos=\"1\"",
+  },
+  {
     name: "Links de Meta /catalogo?sku=X van a la ficha",
     path: "/catalogo?sku=B6180",
     kind: "redirect",

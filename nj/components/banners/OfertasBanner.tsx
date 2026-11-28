@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import { fetchOfertasDestacadas } from "@/lib/banners/ofertas-destacadas";
@@ -15,6 +15,7 @@ import { BannerCarouselSkeleton } from "@/components/banners/BannerCarouselCard"
 import { OfertaCampaignCard } from "@/components/banners/OfertaCampaignCard";
 import { OfertaCarouselCard } from "@/components/banners/OfertaCarouselCard";
 import CarouselArrows from "@/components/banners/CarouselArrows";
+import { msUntilNextPromoRotation, stackPromosBeforeOffers } from "@/lib/banners/promo-rotation";
 
 type Props = {
   /** Tri-state SSR: present reserva; absent omite; unknown consulta (el fetch re-verifica el check). */
@@ -24,12 +25,21 @@ type Props = {
 /**
  * Banner de Ofertas del inicio. Se muestra solo con el check activo de
  * admin/offers.html (`home_feature_flags.home_offers_banner`) y al menos una oferta vigente.
- * Las campañas con imagen van primero; el resto sigue como foto + precio.
+ * Los afiches van siempre delante de las ofertas. Dentro de cada grupo rotan
+ * cada 6 horas para que no queden siempre escondidos los mismos. El afiche se
+ * distingue por el marco negro y el precio en amarillo.
  */
 export default function OfertasBanner({ expectedVisible = "unknown" }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const enabled = shouldFetchBanner(expectedVisible);
   const reserve = shouldReserveBannerSlot(expectedVisible);
+
+  useEffect(() => {
+    const delay = msUntilNextPromoRotation(Date.now());
+    const timer = window.setTimeout(() => setNowMs(Date.now()), delay);
+    return () => window.clearTimeout(timer);
+  }, [nowMs]);
 
   const { data, isLoading, mutate } = useSWR(
     enabled ? "ofertas-destacadas-banner" : null,
@@ -42,13 +52,20 @@ export default function OfertasBanner({ expectedVisible = "unknown" }: Props) {
   );
   useCatalogSnapshotRevalidate(mutate);
 
+  const slots = useMemo(
+    () =>
+      stackPromosBeforeOffers(
+        (data?.campaigns ?? []).map((campaign) => ({ kind: "campaign" as const, campaign })),
+        (data?.items ?? []).map((item) => ({ kind: "item" as const, item })),
+        nowMs
+      ),
+    [data, nowMs]
+  );
+
   if (!enabled) return null;
+  if (!isLoading && slots.length === 0) return null;
 
-  const campaigns = data?.campaigns ?? [];
-  const items = data?.items ?? [];
-  if (!isLoading && campaigns.length + items.length === 0) return null;
-
-  const showSkeleton = isLoading && campaigns.length + items.length === 0;
+  const showSkeleton = isLoading && slots.length === 0;
   // unknown + loading: no reservar hueco (aparece al resolver SWR si el check está activo).
   if (showSkeleton && !reserve) return null;
 
@@ -93,16 +110,28 @@ export default function OfertasBanner({ expectedVisible = "unknown" }: Props) {
             ? Array.from({ length: 6 }).map((_, i) => (
                 <BannerCarouselSkeleton key={i} />
               ))
-            : (
-              <>
-                {campaigns.map((campaign) => (
-                  <OfertaCampaignCard key={campaign.campaignId} campaign={campaign} />
-                ))}
-                {items.map((item) => (
-                  <OfertaCarouselCard key={item.product.Articulo} item={item} />
-                ))}
-              </>
-            )}
+            : slots.map((slot) => {
+                switch (slot.kind) {
+                  case "campaign":
+                    return (
+                      <OfertaCampaignCard
+                        key={`promo-${slot.campaign.campaignId}`}
+                        campaign={slot.campaign}
+                      />
+                    );
+                  case "item":
+                    return (
+                      <OfertaCarouselCard
+                        key={`oferta-${slot.item.product.Articulo}`}
+                        item={slot.item}
+                      />
+                    );
+                  default: {
+                    const unexpected: never = slot;
+                    return unexpected;
+                  }
+                }
+              })}
         </div>
         <CarouselArrows scrollerRef={scrollRef} />
       </div>

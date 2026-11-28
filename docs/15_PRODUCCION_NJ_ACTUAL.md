@@ -8,20 +8,20 @@
 
 | Dato | Valor |
 |---|---|
-| Deploy en `www` | `dpl_B12bwAScMQ7eGrHcXni6KicC55js` (`nj-4s6pgczzj-gonzidel.vercel.app`), publicado el 2026-11-26 con `--skip-domain` → smoke → `vercel promote`. Rama `feat/promociones-banner`, commit `d84a2f1`. |
+| Deploy en `www` | `dpl_8zNa4bzbiynjKKhNLykCJgMzLVP8` (`nj-9sfs9kfqg-gonzidel.vercel.app`), publicado el 2026-11-26 con `--skip-domain` → smoke → `vercel promote`. Rama `feat/promociones-banner`, commit `2041b8c`. |
 | `www` tras `promote` | Cambió solo, sin `alias set` (cierra la duda de ARQ-11: con el dominio en el proyecto `nj` alcanza `promote`). |
-| Rollback | Promover `dpl_2mNmEWzqcfuBaYGBeDSkUCVYzNtu` (el integrado que estaba en `www` antes de este deploy; tiene mínimo 1, Meta y buscador, y no tiene los afiches). No volver a `dpl_2vRDc7pmuKsw2rbyyLB3BMLUP7VF`: le faltan mínimo 1, Meta y buscador. |
+| Rollback | Promover `dpl_FCrqXaVX5qk54bPXSv6UT5qgLpqf` (el deploy anterior: afiches dorados y rotación mezclada; tiene mínimo 1, Meta y buscador). No volver a `dpl_2vRDc7pmuKsw2rbyyLB3BMLUP7VF`: le faltan mínimo 1, Meta y buscador. |
 | Banner de ofertas | Presente, con afiches (`data-ofertas-promos="1"`) |
 | Banner de promo | Presente, etiqueta `PROMO` (ya no dice Cyber Monday) |
 | Mínimo 1 producto | Vigente |
 | `/catalogo?sku=X` → `/producto/X` | Vigente |
-| `nj-gonzidel.vercel.app` | Fijado el 2026-11-26 en `dpl_B12bwAScMQ7eGrHcXni6KicC55js` (mismo deploy que `www`). Cada deploy nuevo debe volver a fijarlo con `vercel alias set` (con autorización). |
-| Dónde vive el código | `nj-main` (merge del 2026-11-28 de `fix/admin-restaurar-products-staging`, que incluye `feat/promociones-banner` y las filas 1–12). |
+| `nj-gonzidel.vercel.app` | Fijado el 2026-11-26 en `dpl_8zNa4bzbiynjKKhNLykCJgMzLVP8` (mismo deploy que `www`). Cada deploy nuevo debe volver a fijarlo con `vercel alias set` (con autorización). |
+| Dónde vive el código | En `nj-main` después del merge de `feat/promociones-banner` (`2041b8c`, afiches negros y promo primero) más la fila 12 del admin. |
 | Admin legacy (Firebase `catalogo-fyl-test`, sirve `app.fylmoda.com.ar`) | Publicado el 2026-11-28 con `firebase deploy --only hosting --project catalogo-fyl-test` desde un worktree limpio de `fix/admin-restaurar-products-staging`. Smoke de admin 3/3. Rollback: Firebase Console → Hosting → Historial de versiones del sitio, volver a la versión anterior al 2026-11-28. |
 
 ## Funcionalidades que cualquier deploy debe conservar
 
-Desde el merge del 2026-11-28, `origin/nj-main` contiene las filas 1–12 (NJ en `www` y admin en `app.fylmoda.com.ar`). Ya no hay funcionalidades publicadas que vivan solo en una rama lateral. Cualquier rama nueva debe partir de `origin/nj-main`; el admin se publica solo desde un worktree limpio que contenga `origin/nj-main`.
+`origin/nj-main` contiene las filas 1–12 y, con este merge, también el ajuste de afiches de `2041b8c`. Publicar una rama que no contenga `2041b8c` borra los afiches negros, el orden promo-primero y la medición del clic. El admin se publica solo desde un worktree limpio que contenga `origin/nj-main`.
 
 | # | Funcionalidad | Commits clave | Rama de origen | Marcador en el smoke |
 |---|---|---|---|---|
@@ -35,14 +35,14 @@ Desde el merge del 2026-11-28, `origin/nj-main` contiene las filas 1–12 (NJ en
 | 8 | Banner curado en una fila en escritorio | `cea31ed` | `feat/banner-curado-sobre-prod` | No |
 | 9 | TV local (pantalla + admin; SQL `383_tv_local_settings`) | `803d079` … `89ce501` | `feat/tv-local` | No |
 | 10 | Admin de ofertas: imagen de campaña validada (`admin/offers.*`, Firebase) | en `fix/home-banners-especiales` | `fix/home-banners-especiales` | No |
-| 11 | Afiches de ofertas y 2x, más pestaña Promociones (sin cambiar el precio; SQL `384_banner_promotions`) | `d84a2f1` | `feat/promociones-banner` | Sí (`data-ofertas-promos="1"`) |
+| 11 | Afiches de ofertas y 2x, más pestaña Promociones (sin cambiar el precio; SQL `384_banner_promotions`). Desde `2041b8c` las promos quedan siempre delante, en negro con el monto en amarillo, y el texto del 2x entra en la tarjeta. Siguen rotando cada 6 horas dentro de su grupo (0, 6, 12 y 18 ART). El clic se mide en GA (`banner_click` + `promo_name`) y Meta (`BannerClick`) | `d84a2f1`, `c22f272`, `2041b8c` | `feat/promociones-banner` | Sí (`data-ofertas-promos="1"`) |
 | 12 | Admin legacy `/admin/products.html`: peso y medidas (alto/ancho/largo/peso), características de calzado (`product-features.js`), datos Mercado Libre (`product-meli.js`), tablas de talles ampliadas | recuperado de carpetas de staging Firebase que no eran repos git (Oct 27–28); commit `1a03086` | `fix/admin-restaurar-products-staging` | Sí (3 marcadores de admin) |
 
 Cada vez que una funcionalidad llega a producción: agregar fila acá **y** su marcador en `test/smoke-prod-nj-markers.mjs`.
 
 ## Rama que reúne todo
 
-`origin/nj-main` es la base segura: reúne las filas 1–12 (`release/nj-integrada-2026-11-26`, `feat/promociones-banner` y `fix/admin-restaurar-products-staging`).
+`origin/nj-main`, con el merge de `feat/promociones-banner`, reúne las filas 1–12 y el ajuste de afiches de `2041b8c`. Esa es la base segura para el próximo deploy. `www` sigue en `dpl_8zNa4bzbiynjKKhNLykCJgMzLVP8`.
 
 ## Antes de publicar (resumen; el detalle está en la regla)
 

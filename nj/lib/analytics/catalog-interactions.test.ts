@@ -28,6 +28,17 @@ test("banner_click incluye el destino sin dominio", () => {
   const ev = buildBannerClickEvent(NUEVOS, "/coleccion/nuevos-ingresos");
   assert.equal(ev.name, "banner_click");
   assert.equal(ev.params.banner_target, "/coleccion/nuevos-ingresos");
+  assert.equal("promo_name" in ev.params, false);
+});
+
+test("el clic de un afiche de promo guarda el nombre", () => {
+  const ev = buildBannerClickEvent(
+    { slot: "ofertas_destacadas", position: 1 },
+    "/ofertas/promo/b305b58e-a977-4eb8-b40d-36673898a749",
+    "2x $10.000"
+  );
+  assert.equal(ev.params.banner, "ofertas_destacadas");
+  assert.equal(ev.params.promo_name, "2x $10.000");
 });
 
 test("clic en producto dentro de un banner usa la lista del banner", () => {

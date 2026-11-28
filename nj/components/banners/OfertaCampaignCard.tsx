@@ -11,8 +11,9 @@ export function OfertaCampaignCard({ campaign }: { campaign: OfertaCampaignBanne
   return (
     <Link
       href={campaign.href}
-      className="fyl-originals-card ofertas-card"
+      className="fyl-originals-card ofertas-card ofertas-campaign-card"
       aria-label={campaign.title}
+      data-ga-promo={campaign.title}
     >
       <div className="fyl-originals-card-image">
         <Image

@@ -11893,11 +11893,28 @@ body.modal-open nextjs-portal {
   color: #c62828;
 }
 
+/* Afiche de promo: negro y amarillo, para que pese más que la oferta común. */
+.ofertas-campaign-card {
+  border-color: #ffe14a;
+  background: #111;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+}
+
+.ofertas-campaign-card .ofertas-card__content {
+  background: #111;
+  min-width: 0;
+  overflow: hidden;
+  padding-left: 3px;
+  padding-right: 3px;
+}
+
 .ofertas-campaign-card__title {
-  font-size: 17px;
-  font-weight: 900;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
   line-height: 1.15;
-  color: #1a1510;
+  color: #ffe14a;
+  max-width: 100%;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -11912,9 +11929,12 @@ body.modal-open nextjs-portal {
     font-size: 16px;
   }
 
-  .ofertas-card__price,
-  .ofertas-campaign-card__title {
+  .ofertas-card__price {
     font-size: 15.5px;
+  }
+
+  .ofertas-campaign-card__title {
+    font-size: 13px;
   }
 }
 

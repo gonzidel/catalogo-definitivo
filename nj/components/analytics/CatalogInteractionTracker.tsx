@@ -3,6 +3,9 @@
 import { useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { gaEvent } from "@/lib/analytics/ga";
+import { shouldUseProductionAnalytics } from "@/lib/analytics/hosts";
+import { trackMetaCustom, trackMetaPageView } from "@/lib/analytics/meta";
+import { ROLLOUT_UI_ENABLED } from "@/lib/rollout/client";
 import {
   GA_BANNER_ATTR,
   GA_BANNER_LABEL_ATTR,
@@ -16,6 +19,7 @@ import {
   type GaEventPayload,
 } from "@/lib/analytics/catalog-interactions";
 
+const GA_PROMO_ATTR = "data-ga-promo";
 const BANNER_SELECTOR = `[${GA_BANNER_ATTR}]`;
 const PRODUCT_SELECTOR = `[${GA_PRODUCT_ATTR}]`;
 /** Controles dentro de una tarjeta que no abren el producto (puntos de color). */
@@ -59,12 +63,33 @@ function pathOf(href: string | null): string {
  * los componentes solo exponen data-attributes (ver catalog-interactions.ts).
  * No cambia ninguna navegación ni estilo.
  */
+let lastMeasuredPath = "";
+
+function markRoute(pathname: string): void {
+  if (!lastMeasuredPath || lastMeasuredPath === pathname) {
+    lastMeasuredPath = pathname;
+    return;
+  }
+  lastMeasuredPath = pathname;
+  const pageKey = `${window.location.pathname}${window.location.search}`;
+  const clarity = (window as Window & { clarity?: (...args: unknown[]) => void }).clarity;
+  if (typeof clarity === "function") clarity("set", "page", pageKey);
+  if (!shouldUseProductionAnalytics(window.location.hostname, ROLLOUT_UI_ENABLED)) return;
+  trackMetaPageView(pageKey);
+  gaEvent("page_view", {
+    page_path: pageKey,
+    page_location: window.location.href,
+    page_title: document.title,
+  });
+}
+
 export default function CatalogInteractionTracker() {
   const pathname = usePathname() ?? "/";
   const measured = isMeasuredPath(pathname);
 
   useEffect(() => {
     if (!measured) return;
+    markRoute(pathname);
 
     const viewed = new Set<string>();
     const swiped = new Set<string>();
@@ -150,19 +175,35 @@ export default function CatalogInteractionTracker() {
         const cards = Array.from(scope.querySelectorAll(PRODUCT_SELECTOR)).filter(
           (el) => bannerEl || !el.closest(BANNER_SELECTOR)
         );
+        const articulo = productEl.getAttribute(GA_PRODUCT_ATTR) ?? "";
         send(
           buildProductClickEvent({
-            articulo: productEl.getAttribute(GA_PRODUCT_ATTR) ?? "",
+            articulo,
             index: cards.indexOf(productEl) + 1,
             banner,
           })
         );
+        if (banner && articulo.trim()) {
+          trackMetaCustom("BannerProductClick", {
+            banner: banner.slot,
+            articulo: articulo.trim(),
+          });
+        }
         return;
       }
 
       if (banner) {
         const link = target.closest("a");
-        send(buildBannerClickEvent(banner, pathOf(link?.getAttribute("href") ?? null)));
+        const targetPath = pathOf(link?.getAttribute("href") ?? null);
+        const promoName = link?.getAttribute(GA_PROMO_ATTR) ?? "";
+        send(buildBannerClickEvent(banner, targetPath, promoName));
+        if (targetPath) {
+          trackMetaCustom("BannerClick", {
+            banner: banner.slot,
+            banner_target: targetPath,
+            ...(promoName.trim() ? { promo_name: promoName.trim() } : {}),
+          });
+        }
       }
     };
 

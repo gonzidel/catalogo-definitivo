@@ -16,11 +16,12 @@
 | Mínimo 1 producto | Vigente |
 | `/catalogo?sku=X` → `/producto/X` | Vigente |
 | `nj-gonzidel.vercel.app` | Fijado el 2026-11-26 en `dpl_B12bwAScMQ7eGrHcXni6KicC55js` (mismo deploy que `www`). Cada deploy nuevo debe volver a fijarlo con `vercel alias set` (con autorización). |
-| Dónde vive el código | Solo en `feat/promociones-banner` (`d84a2f1`) hasta que se autorice el merge a `nj-main`. `origin/nj-main` sigue en `5e2b30d`. |
+| Dónde vive el código | `nj-main` (merge del 2026-11-28 de `fix/admin-restaurar-products-staging`, que incluye `feat/promociones-banner` y las filas 1–12). |
+| Admin legacy (Firebase `catalogo-fyl-test`, sirve `app.fylmoda.com.ar`) | Publicado el 2026-11-28 con `firebase deploy --only hosting --project catalogo-fyl-test` desde un worktree limpio de `fix/admin-restaurar-products-staging`. Smoke de admin 3/3. Rollback: Firebase Console → Hosting → Historial de versiones del sitio, volver a la versión anterior al 2026-11-28. |
 
 ## Funcionalidades que cualquier deploy debe conservar
 
-Desde el merge del 2026-11-26, `origin/nj-main` contiene las filas 1–10. La fila 11 está publicada en `www` pero **todavía no está en `nj-main`**: vive solo en `feat/promociones-banner`. Publicar una rama que no contenga `d84a2f1` borra los afiches.
+Desde el merge del 2026-11-28, `origin/nj-main` contiene las filas 1–12 (NJ en `www` y admin en `app.fylmoda.com.ar`). Ya no hay funcionalidades publicadas que vivan solo en una rama lateral. Cualquier rama nueva debe partir de `origin/nj-main`; el admin se publica solo desde un worktree limpio que contenga `origin/nj-main`.
 
 | # | Funcionalidad | Commits clave | Rama de origen | Marcador en el smoke |
 |---|---|---|---|---|
@@ -35,14 +36,13 @@ Desde el merge del 2026-11-26, `origin/nj-main` contiene las filas 1–10. La fi
 | 9 | TV local (pantalla + admin; SQL `383_tv_local_settings`) | `803d079` … `89ce501` | `feat/tv-local` | No |
 | 10 | Admin de ofertas: imagen de campaña validada (`admin/offers.*`, Firebase) | en `fix/home-banners-especiales` | `fix/home-banners-especiales` | No |
 | 11 | Afiches de ofertas y 2x, más pestaña Promociones (sin cambiar el precio; SQL `384_banner_promotions`) | `d84a2f1` | `feat/promociones-banner` | Sí (`data-ofertas-promos="1"`) |
-
-| 11 | Admin legacy `/admin/products.html`: peso y medidas (alto/ancho/largo/peso), características de calzado (`product-features.js`), datos Mercado Libre (`product-meli.js`), tablas de talles ampliadas | **sin commit en ningún lado**: solo en la carpeta no-git `E:\PROYECTOS\fyl-firebase-enviar-local-2026-11-05` (Oct 27–28) | restaurado en `fix/admin-restaurar-products-staging` | Sí (3 marcadores de admin) |
+| 12 | Admin legacy `/admin/products.html`: peso y medidas (alto/ancho/largo/peso), características de calzado (`product-features.js`), datos Mercado Libre (`product-meli.js`), tablas de talles ampliadas | recuperado de carpetas de staging Firebase que no eran repos git (Oct 27–28); commit `1a03086` | `fix/admin-restaurar-products-staging` | Sí (3 marcadores de admin) |
 
 Cada vez que una funcionalidad llega a producción: agregar fila acá **y** su marcador en `test/smoke-prod-nj-markers.mjs`.
 
 ## Rama que reúne todo
 
-`release/nj-integrada-2026-11-26` reúne las filas 1–10 y está mergeada a `nj-main`. Lo que está en `www` ahora es `feat/promociones-banner` (`d84a2f1`): esas filas más la 11. Hasta el merge, esa rama es la base segura para el próximo deploy.
+`origin/nj-main` es la base segura: reúne las filas 1–12 (`release/nj-integrada-2026-11-26`, `feat/promociones-banner` y `fix/admin-restaurar-products-staging`).
 
 ## Antes de publicar (resumen; el detalle está en la regla)
 

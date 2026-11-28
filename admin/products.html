@@ -192,6 +192,121 @@
             </div>
             <small id="size-chart-hint" class="hint"></small>
           </label>
+          <label>Temporada
+            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+              <select id="season" style="flex:1;min-width:120px;">
+                <option value="">Ninguno</option>
+                <option value="verano">Verano</option>
+                <option value="invierno">Invierno</option>
+              </select>
+              <button type="button" id="season-restore-btn" class="btn" style="white-space:nowrap;">Restaurar auto</button>
+            </div>
+            <small id="season-source-hint" class="hint">Asignación automática según Tag 1</small>
+          </label>
+          <div id="copy-specs-field" style="grid-column: 1 / -1;padding:8px;border:1px dashed #bbb;border-radius:6px;">
+            <label style="font-size:12px;display:block;margin-bottom:4px;">Copiar características de otro producto</label>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+              <input type="text" id="copy-specs-source" list="copy-specs-options" placeholder="Código o nombre del producto (ej. 363)" autocomplete="off" style="flex:1;min-width:200px;padding:5px;font-size:12px;" />
+              <datalist id="copy-specs-options"></datalist>
+              <button type="button" id="copy-specs-btn" class="btn" style="white-space:nowrap;">Copiar</button>
+            </div>
+            <small id="copy-specs-status" class="hint">Copia medidas, peso, materiales, altura de la base, género, marca y tabla de talles. No toca nombre, tags, colores ni precios.</small>
+          </div>
+          <label style="grid-column: 1 / -1;">Peso y medidas
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-top:6px;">
+              <div>
+                <label style="font-size:11px;color:#666;margin-bottom:2px;display:block;">Alto (cm)</label>
+                <input id="dim-height" type="number" step="0.01" min="0.01" inputmode="decimal" placeholder="ej. 12" autocomplete="off" style="width:100%;" />
+              </div>
+              <div>
+                <label style="font-size:11px;color:#666;margin-bottom:2px;display:block;">Ancho (cm)</label>
+                <input id="dim-width" type="number" step="0.01" min="0.01" inputmode="decimal" placeholder="ej. 20" autocomplete="off" style="width:100%;" />
+              </div>
+              <div>
+                <label style="font-size:11px;color:#666;margin-bottom:2px;display:block;">Largo (cm)</label>
+                <input id="dim-length" type="number" step="0.01" min="0.01" inputmode="decimal" placeholder="ej. 30" autocomplete="off" style="width:100%;" />
+              </div>
+              <div>
+                <label style="font-size:11px;color:#666;margin-bottom:2px;display:block;">Peso (kg)</label>
+                <input id="dim-weight" type="number" step="0.001" min="0.001" inputmode="decimal" placeholder="ej. 0.450" autocomplete="off" style="width:100%;" />
+                <div style="display:flex;gap:4px;margin-top:4px;">
+                  <button type="button" class="btn weight-preset" data-weight="1" style="padding:2px 8px;font-size:11px;">1 kg</button>
+                  <button type="button" class="btn weight-preset" data-weight="1.2" style="padding:2px 8px;font-size:11px;">1,2 kg</button>
+                </div>
+              </div>
+            </div>
+            <small class="hint">Opcional. Medidas del producto/empaque. Vacío = sin dato.</small>
+          </label>
+          <div id="product-features-field" style="grid-column: 1 / -1; display:none;">
+            <label style="display:block;margin-bottom:4px;">Características (Calzado)</label>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;">
+              <div>
+                <label style="font-size:11px;color:#666;margin-bottom:2px;display:block;">Material de la capellada</label>
+                <select id="feat-capellada" style="width:100%;padding:5px;font-size:11px">
+                  <option value="">-- Material de la capellada --</option>
+                </select>
+                <div style="display:flex;gap:4px;margin-top:4px;">
+                  <input type="text" id="feat-capellada-new" placeholder="Nuevo material…" style="flex:1;padding:4px;font-size:11px" autocomplete="off" />
+                  <button type="button" id="feat-capellada-create" class="btn" style="padding:4px 8px;font-size:11px;white-space:nowrap;">+ Crear</button>
+                </div>
+                <small class="hint">Por defecto: Cuero Sintético</small>
+              </div>
+              <div>
+                <label style="font-size:11px;color:#666;margin-bottom:2px;display:block;">Material de la base</label>
+                <div style="display:flex;gap:4px;align-items:center;">
+                  <select id="feat-base-material" style="flex:1;padding:5px;font-size:11px">
+                    <option value="">-- Material de la base --</option>
+                  </select>
+                  <button type="button" id="feat-base-material-default" class="btn" style="padding:4px 8px;font-size:11px;white-space:nowrap;" title="Marcar como predeterminado">☆ Default</button>
+                </div>
+                <div style="display:flex;gap:4px;margin-top:4px;">
+                  <input type="text" id="feat-base-material-new" placeholder="Nuevo material…" style="flex:1;padding:4px;font-size:11px" autocomplete="off" />
+                  <button type="button" id="feat-base-material-create" class="btn" style="padding:4px 8px;font-size:11px;white-space:nowrap;">+ Crear</button>
+                </div>
+                <small class="hint">La estrella marca el material de base predeterminado para productos nuevos</small>
+              </div>
+              <div>
+                <label style="font-size:11px;color:#666;margin-bottom:2px;display:block;">Altura de la base</label>
+                <select id="feat-base-altura" style="width:100%;padding:5px;font-size:11px">
+                  <option value="">-- Altura de la base --</option>
+                </select>
+                <div style="display:flex;gap:4px;margin-top:4px;">
+                  <input type="text" id="feat-base-altura-new" placeholder="Nueva altura… ej. 3 cm" style="flex:1;padding:4px;font-size:11px" autocomplete="off" />
+                  <button type="button" id="feat-base-altura-create" class="btn" style="padding:4px 8px;font-size:11px;white-space:nowrap;">+ Crear</button>
+                </div>
+                <small class="hint">Opciones guardadas para reutilizar</small>
+              </div>
+            </div>
+          </div>
+          <div id="meli-enable-field" style="grid-column: 1 / -1;">
+            <div id="meli-fields" style="display:none;margin-bottom:8px;">
+              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;">
+                <div>
+                  <label style="font-size:11px;color:#666;margin-bottom:2px;display:block;">Género (Mercado Libre)</label>
+                  <select id="meli-gender" style="width:100%;padding:5px;font-size:11px">
+                    <option value="">-- Género --</option>
+                    <option value="mujer">Mujer</option>
+                    <option value="hombre">Hombre</option>
+                    <option value="ninas">Niñas</option>
+                    <option value="ninos">Niños</option>
+                  </select>
+                </div>
+                <div>
+                  <label style="font-size:11px;color:#666;margin-bottom:2px;display:block;">Marca (Mercado Libre)</label>
+                  <div style="display:flex;gap:4px;">
+                    <input type="text" id="meli-brand" maxlength="255" placeholder="Vacío = FYL" style="flex:1;padding:5px;font-size:11px" autocomplete="off" />
+                    <button type="button" id="meli-brand-supplier" class="btn" style="padding:4px 8px;font-size:11px;white-space:nowrap;" title="Usar el nombre del proveedor como marca">Usar proveedor</button>
+                  </div>
+                  <small class="hint">Vacío = se publica como «FYL». Cargala solo si el zapato lleva otra marca.</small>
+                </div>
+              </div>
+            </div>
+            <label style="display:flex;flex-direction:row;gap:8px;align-items:center;justify-content:flex-start;cursor:pointer;">
+              <input type="checkbox" id="meli-enabled" style="padding:0;" />
+              <span>Habilitar en Mercado Libre</span>
+            </label>
+            <small id="meli-enabled-hint" class="hint"></small>
+          </div>
           <label id="price-percentage-label" data-cost-sensitive="global-pricing">Porcentaje de ganancia (%)
             <input id="price-percentage" type="number" step="0.1" min="0" max="100" value="30" placeholder="30" />
             <small id="price-percentage-hint" class="hint" data-cost-sensitive="global-pricing">Porcentaje que se aplica al costo para calcular el precio recomendado</small>

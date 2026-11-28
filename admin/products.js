@@ -1,8 +1,10 @@
 ﻿// admin/products.js
 import { supabase } from "../scripts/supabase-client.js?v=m260607";
-import { preloadAuthState, can, isAdminUser } from "./auth-state.js?v=m260607";
+import { preloadAuthState, can, isAdminUser, isAuthStateReady } from "./auth-state.js?v=m260607";
 import { isSuperAdmin } from "./permissions-helper.js?v=m260607";
 import { createProductSizeChartControl, productSaveErrorMessage } from "./product-size-chart.js?v=m260607";
+import { createProductFeaturesControl } from "./product-features.js?v=m260607";
+import { createProductMeliControl, meliSaveErrorMessage } from "./product-meli.js?v=m260607";
 import {
   PRODUCT_ADMIN_COLUMNS,
   fetchProductPricingMap,
@@ -49,9 +51,12 @@ async function checkAuth() {
   return false;
 }
 
+/** Último resultado conocido: si la caché de permisos se invalida (refresco de sesión) o aún no cargó, no se apagan los campos. */
+let lastKnownCanEditProducts = false;
 function canEditProducts() {
-  if (!isAdminUser()) return false;
-  return can("products", "edit") || can("products", "delete");
+  if (!isAuthStateReady()) return lastKnownCanEditProducts;
+  lastKnownCanEditProducts = isAdminUser() && (can("products", "edit") || can("products", "delete"));
+  return lastKnownCanEditProducts;
 }
 
 /** Solo super_admin ve/edita costo, % ganancia y monto logístico (no basta con products:edit). */
@@ -204,6 +209,290 @@ let removedVariantIds = new Set();
 const sizeChartControl = createProductSizeChartControl({
   getCategory: () => document.getElementById("category")?.value || "",
   canEdit: canEditProducts,
+});
+
+const productFeaturesControl = createProductFeaturesControl({
+  getCategory: () => document.getElementById("category")?.value || "",
+  canEdit: canEditProducts,
+  isNewProduct: () => !currentProductId,
+});
+
+const productMeliControl = createProductMeliControl({
+  getCategory: () => document.getElementById("category")?.value || "",
+  canEdit: canEditProducts,
+  getProductId: () => currentProductId,
+  fetchServerMissing: async (productId) => {
+    const { data, error } = await supabase.rpc("rpc_admin_product_meli_readiness", {
+      p_product_id: productId,
+    });
+    if (error) throw error;
+    return data?.missing ?? [];
+  },
+});
+
+/** Temporada: valor efectivo en DB + origen auto|manual. Reglas de cálculo viven en tag1_season_map/triggers. */
+let seasonSource = "auto"; // 'auto' | 'manual'
+let seasonMapByTagId = new Map(); // tag_id -> 'verano'|'invierno'
+let seasonMapLoaded = false;
+
+const seasonSelectEl = () => document.getElementById("season");
+const seasonHintEl = () => document.getElementById("season-source-hint");
+const seasonRestoreBtn = () => document.getElementById("season-restore-btn");
+
+function normalizeSeasonValue(raw) {
+  if (raw === "verano" || raw === "invierno") return raw;
+  return ""; // Ninguno (null / todo_anio)
+}
+
+function seasonLabel(value) {
+  if (value === "verano") return "Verano";
+  if (value === "invierno") return "Invierno";
+  return "Ninguno";
+}
+
+function updateSeasonSourceHint() {
+  const hint = seasonHintEl();
+  const sel = seasonSelectEl();
+  const category = document.getElementById("category")?.value || "";
+  if (!hint) return;
+  if (category === "Otros") {
+    hint.textContent = "Otros: siempre Ninguno (automático)";
+    if (sel) sel.disabled = true;
+    const btn = seasonRestoreBtn();
+    if (btn) btn.disabled = true;
+    return;
+  }
+  if (sel) sel.disabled = false;
+  const btn = seasonRestoreBtn();
+  if (btn) btn.disabled = seasonSource === "auto";
+  hint.textContent =
+    seasonSource === "manual"
+      ? "Asignación manual (no cambia al modificar Tag 1)"
+      : "Asignación automática según Tag 1";
+}
+
+function setSeasonUi(season, source) {
+  seasonSource = source === "manual" ? "manual" : "auto";
+  const sel = seasonSelectEl();
+  if (sel) sel.value = normalizeSeasonValue(season);
+  updateSeasonSourceHint();
+}
+
+async function ensureSeasonMapLoaded() {
+  if (seasonMapLoaded) return;
+  try {
+    const { data, error } = await supabase.from("tag1_season_map").select("tag_id, season");
+    if (error) {
+      console.warn("No se pudo cargar tag1_season_map:", error.message);
+      seasonMapByTagId = new Map();
+    } else {
+      seasonMapByTagId = new Map((data || []).map((r) => [r.tag_id, r.season]));
+    }
+  } catch (e) {
+    console.warn("tag1_season_map:", e);
+    seasonMapByTagId = new Map();
+  }
+  seasonMapLoaded = true;
+}
+
+/** Preview local alineado a f_compute_product_season (DB es la fuente al guardar). */
+async function computeSeasonPreview(category, tag1Id) {
+  if (category === "Otros") return "";
+  if (!tag1Id) return "";
+  await ensureSeasonMapLoaded();
+  return normalizeSeasonValue(seasonMapByTagId.get(tag1Id) || "");
+}
+
+async function refreshSeasonFromAuto() {
+  const category = document.getElementById("category")?.value || "";
+  if (category === "Otros") {
+    setSeasonUi("", "auto");
+    return;
+  }
+  if (seasonSource !== "auto") {
+    updateSeasonSourceHint();
+    return;
+  }
+  const season = await computeSeasonPreview(category, selectedTag1Id);
+  setSeasonUi(season, "auto");
+}
+
+function seasonPayloadFields() {
+  const category = document.getElementById("category")?.value || "";
+  if (category === "Otros") {
+    return { season: null, season_source: "auto" };
+  }
+  const raw = normalizeSeasonValue(seasonSelectEl()?.value);
+  if (seasonSource === "manual") {
+    return { season: raw || null, season_source: "manual" };
+  }
+  return { season_source: "auto" };
+}
+
+/** Peso y medidas del producto (columnas width_cm/height_cm/length_cm/weight_kg). Vacío → null. */
+function parsePositiveDimension(raw) {
+  const text = String(raw ?? "").trim().replace(",", ".");
+  if (!text) return null;
+  const n = Number(text);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n;
+}
+
+function setDimensionsUi(prod = {}) {
+  const h = document.getElementById("dim-height");
+  const w = document.getElementById("dim-width");
+  const l = document.getElementById("dim-length");
+  const kg = document.getElementById("dim-weight");
+  if (h) h.value = prod.height_cm != null && prod.height_cm !== "" ? String(prod.height_cm) : "";
+  if (w) w.value = prod.width_cm != null && prod.width_cm !== "" ? String(prod.width_cm) : "";
+  if (l) l.value = prod.length_cm != null && prod.length_cm !== "" ? String(prod.length_cm) : "";
+  if (kg) kg.value = prod.weight_kg != null && prod.weight_kg !== "" ? String(prod.weight_kg) : "";
+}
+
+/** Atajos de peso estándar (1 kg, 1,2 kg) para cargar más rápido. */
+document.addEventListener("click", (ev) => {
+  const btn = ev.target instanceof Element ? ev.target.closest(".weight-preset") : null;
+  if (!btn || !canEditProducts()) return;
+  const kg = document.getElementById("dim-weight");
+  if (kg) {
+    kg.value = btn.getAttribute("data-weight") || "";
+    kg.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+});
+
+let copySpecsOptionsLoaded = false;
+async function loadCopySpecsOptions() {
+  if (copySpecsOptionsLoaded) return;
+  copySpecsOptionsLoaded = true;
+  const list = document.getElementById("copy-specs-options");
+  if (!list) return;
+  const { data, error } = await supabase
+    .from("products")
+    .select("name")
+    .eq("category", "Calzado")
+    .not("weight_kg", "is", null)
+    .order("name")
+    .limit(1000);
+  if (error) {
+    copySpecsOptionsLoaded = false;
+    return;
+  }
+  const seen = new Set();
+  list.innerHTML = "";
+  for (const row of data || []) {
+    const name = String(row.name || "").trim();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    const opt = document.createElement("option");
+    opt.value = name;
+    list.appendChild(opt);
+  }
+}
+
+/** Copia medidas, peso, materiales, altura, género, marca y tabla de talles de otro producto al formulario. No guarda. */
+async function copySpecsFromProduct(rawName) {
+  const statusEl2 = document.getElementById("copy-specs-status");
+  const say = (msg) => { if (statusEl2) statusEl2.textContent = msg; };
+  const name = String(rawName || "").trim();
+  if (!canEditProducts()) return say("No tenés permiso para editar productos.");
+  if (!name) return say("Escribí el código o nombre del producto que querés copiar.");
+  if ((document.getElementById("category")?.value || "") !== "Calzado") {
+    return say("Primero elegí la categoría Calzado en este producto.");
+  }
+  const { data, error } = await supabase
+    .from("products")
+    .select("id, name, category, height_cm, width_cm, length_cm, weight_kg, capellada_material_id, base_material_id, base_altura_id, meli_gender, meli_brand, size_chart_id")
+    .eq("name", name)
+    .limit(3);
+  if (error) return say(`No se pudo leer el producto: ${error.message || error}`);
+  const rows = data || [];
+  if (!rows.length) return say(`No encontré un producto llamado «${name}».`);
+  if (rows.length > 1) return say(`Hay más de un producto llamado «${name}»: usá un nombre único.`);
+  const src = rows[0];
+  if (src.category !== "Calzado") return say("Solo se pueden copiar características de otro producto de Calzado.");
+  if (currentProductId && src.id === currentProductId) return say("Ese es el mismo producto que estás editando.");
+
+  setDimensionsUi(src);
+  await productFeaturesControl.setProduct(src);
+  productMeliControl.copyFrom(src);
+  const chartWarning = sizeChartControl.copyFrom(src.size_chart_id);
+  say(`Copiado de «${src.name}»: medidas, peso, materiales, altura, género y marca${chartWarning ? `. ${chartWarning}` : " y tabla de talles"}. Revisá y guardá.`);
+}
+
+document.getElementById("copy-specs-source")?.addEventListener("focus", () => { loadCopySpecsOptions(); });
+document.getElementById("copy-specs-btn")?.addEventListener("click", () => {
+  copySpecsFromProduct(document.getElementById("copy-specs-source")?.value);
+});
+
+function clearDimensionsUi() {
+  setDimensionsUi({});
+}
+
+function dimensionsPayloadFields() {
+  return {
+    height_cm: parsePositiveDimension(document.getElementById("dim-height")?.value),
+    width_cm: parsePositiveDimension(document.getElementById("dim-width")?.value),
+    length_cm: parsePositiveDimension(document.getElementById("dim-length")?.value),
+    weight_kg: parsePositiveDimension(document.getElementById("dim-weight")?.value),
+  };
+}
+
+function validateDimensionsBeforeSave() {
+  const fields = [
+    ["dim-height", "Alto"],
+    ["dim-width", "Ancho"],
+    ["dim-length", "Largo"],
+    ["dim-weight", "Peso"],
+  ];
+  for (const [id, label] of fields) {
+    const raw = String(document.getElementById(id)?.value ?? "").trim();
+    if (!raw) continue;
+    const n = Number(raw.replace(",", "."));
+    if (!Number.isFinite(n) || n <= 0) {
+      return `${label}: usá un número mayor a 0, o dejalo vacío.`;
+    }
+  }
+  return null;
+}
+
+seasonSelectEl()?.addEventListener("change", () => {
+  const category = document.getElementById("category")?.value || "";
+  if (category === "Otros") {
+    setSeasonUi("", "auto");
+    return;
+  }
+  seasonSource = "manual";
+  updateSeasonSourceHint();
+});
+
+seasonRestoreBtn()?.addEventListener("click", async () => {
+  const category = document.getElementById("category")?.value || "";
+  if (category === "Otros") {
+    setSeasonUi("", "auto");
+    return;
+  }
+  if (currentProductId) {
+    try {
+      const { data, error } = await supabase.rpc("rpc_admin_restore_product_season", {
+        p_product_id: currentProductId,
+      });
+      if (error) throw error;
+      setSeasonUi(data, "auto");
+      if (statusEl) {
+        statusEl.textContent = `Temporada restaurada: ${seasonLabel(normalizeSeasonValue(data))}`;
+        statusEl.style.color = "#0a7a3f";
+      }
+      return;
+    } catch (e) {
+      console.warn("RPC restore season falló; preview local:", e);
+    }
+  }
+  seasonSource = "auto";
+  await refreshSeasonFromAuto();
+  if (statusEl) {
+    statusEl.textContent = `Temporada automática: ${seasonLabel(normalizeSeasonValue(seasonSelectEl()?.value))}`;
+    statusEl.style.color = "#0a7a3f";
+  }
 });
 
 function updateDeleteHardButtonVisibility(statusValue) {
@@ -1385,6 +1674,10 @@ async function ensureVariantId(row) {
       supplier_id: supplierValue || null,
       updated_at: new Date().toISOString(),
       ...sizeChartControl.payloadField(),
+      ...seasonPayloadFields(),
+      ...dimensionsPayloadFields(),
+      ...productFeaturesControl.payloadField(),
+      ...productMeliControl.payloadField(),
     };
 
     const { data: prod, error: prodErr } = await supabase
@@ -1396,7 +1689,7 @@ async function ensureVariantId(row) {
     if (prodErr) {
       console.error("❌ Error al crear producto:", prodErr);
       if (rowStatusEl) {
-        rowStatusEl.textContent = `Error al crear producto: ${productSaveErrorMessage(prodErr)}`;
+        rowStatusEl.textContent = `Error al crear producto: ${meliSaveErrorMessage(prodErr) ?? productSaveErrorMessage(prodErr)}`;
         rowStatusEl.style.color = "#c00";
       }
       return null;
@@ -4145,6 +4438,39 @@ await loadColors();
 await loadTags();
 await loadSuppliers();
 sizeChartControl.init();
+productFeaturesControl.init();
+productMeliControl.init();
+
+/**
+ * Los campos de tabla de talles, materiales y género se habilitan según el permiso de edición. Ese permiso puede llegar
+ * después de pintar el formulario o recargarse en segundo plano (refresco de sesión): se vuelve a sincronizar al cargar,
+ * al volver a la pestaña y ante cambios de sesión, para que nunca queden apagados por una lectura vieja.
+ */
+let editableSyncTimer = null;
+async function syncEditableControls() {
+  try {
+    await preloadAuthState();
+  } catch (e) {
+    console.warn("No se pudo recargar permisos para los campos del producto:", e);
+  }
+  sizeChartControl.refreshEditable();
+  productFeaturesControl.refreshEditable();
+  productMeliControl.refresh();
+}
+function scheduleEditableSync() {
+  clearTimeout(editableSyncTimer);
+  editableSyncTimer = setTimeout(syncEditableControls, 200);
+}
+window.addEventListener("focus", scheduleEditableSync);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) scheduleEditableSync();
+});
+try {
+  supabase?.auth?.onAuthStateChange?.(() => scheduleEditableSync());
+} catch (e) {
+  console.warn("No se pudo escuchar cambios de sesión:", e);
+}
+scheduleEditableSync();
 
 // Event listeners para campos globales de cálculo de precio
 const pricePercentageEl = document.getElementById("price-percentage");
@@ -5443,6 +5769,7 @@ tag1Select?.addEventListener("change", async (e) => {
   
   // Actualizar UI de details (NO limpiar selectedDetailsIds - son globales)
   await renderDetailsList();
+  await refreshSeasonFromAuto();
 });
 
 tag1Create?.addEventListener("click", async () => {
@@ -5460,6 +5787,7 @@ tag1Create?.addEventListener("click", async () => {
     // hasta que el usuario deseleccionara y volviera a elegir Tag1 manualmente.
     await renderTags2();
     await renderTags3();
+    await refreshSeasonFromAuto();
   }
 });
 
@@ -5700,6 +6028,19 @@ document.getElementById("category")?.addEventListener("change", async () => {
   // Actualizar prefijo del nombre según la categoría
   updateNamePrefix();
   sizeChartControl.refreshVisibility();
+  await productFeaturesControl.refreshVisibility();
+  if ((document.getElementById("category")?.value || "") === "Calzado") {
+    productFeaturesControl.applyDefaultsForNewProduct();
+  } else {
+    productFeaturesControl.clearSelection();
+  }
+  productMeliControl.refresh({ autoUncheck: true });
+  // Otros fuerza Ninguno; si sigue en auto, recalcular preview
+  if ((document.getElementById("category")?.value || "") === "Otros") {
+    setSeasonUi("", "auto");
+  } else {
+    await refreshSeasonFromAuto();
+  }
   
   // Guardar el porcentaje actual antes de cambiar de categoría
   const categoryEl = document.getElementById("category");
@@ -6084,6 +6425,10 @@ async function loadProductById(id) {
   document.getElementById("supplier").value = prod.supplier_id || "";
   updateEditButtonVisibility();
   sizeChartControl.setProduct(prod.size_chart_id ?? null);
+  await productFeaturesControl.setProduct(prod);
+  setSeasonUi(prod.season, prod.season_source === "manual" ? "manual" : "auto");
+  setDimensionsUi(prod);
+  productMeliControl.setProduct(prod);
   
   // Actualizar dropdowns de talles guardados con la categoría del producto
   variantsTable.querySelectorAll(".sizes-presets").forEach(sel => refreshSizesPresets(sel, category));
@@ -6249,6 +6594,11 @@ pNew.addEventListener("click", async () => {
   // Limpiar proveedor
   document.getElementById("supplier").value = "";
   updateEditButtonVisibility();
+  setSeasonUi("", "auto");
+  clearDimensionsUi();
+  await productFeaturesControl.refreshVisibility();
+  productFeaturesControl.applyDefaultsForNewProduct();
+  productMeliControl.clearSelection();
   // Inicializar valores por defecto de cálculo de precio
   const pricePercentageEl = document.getElementById("price-percentage");
   const logisticAmountEl = document.getElementById("logistic-amount");
@@ -6306,6 +6656,11 @@ async function cloneCurrentProductAsDraft() {
   if (supplierEl) supplierEl.value = sourceSupplierId;
   updateDeleteHardButtonVisibility("draft");
   const sizeChartCloneWarning = sizeChartControl.prepareClone();
+  productFeaturesControl.prepareClone();
+  productMeliControl.prepareClone();
+  // Clon: temporada vuelve a automático (se recalcula al guardar según Tag 1)
+  seasonSource = "auto";
+  await refreshSeasonFromAuto();
 
   variantsTable.innerHTML = "";
   reusableVariants.forEach((variantData) => {
@@ -6457,6 +6812,16 @@ async function saveProduct(shouldReset = true) {
     }
   }
   
+  const dimensionsError = validateDimensionsBeforeSave();
+  if (dimensionsError) {
+    statusEl.textContent = dimensionsError;
+    statusEl.style.color = "#c00";
+    if (saveBtn) saveBtn.disabled = false;
+    if (preSaveBtn) preSaveBtn.disabled = false;
+    isSaving = false;
+    return;
+  }
+
   const payloadProduct = {
     category: document.getElementById("category").value,
     handle: handleNormalized,
@@ -6465,6 +6830,10 @@ async function saveProduct(shouldReset = true) {
     status: finalStatus,
     supplier_id: supplierValue || null,
     ...sizeChartControl.payloadField(),
+    ...seasonPayloadFields(),
+    ...dimensionsPayloadFields(),
+    ...productFeaturesControl.payloadField(),
+    ...productMeliControl.payloadField(),
     created_at: new Date().toISOString(),
   };
   const isNewProduct = !currentProductId;
@@ -6518,7 +6887,7 @@ async function saveProduct(shouldReset = true) {
           "Error de permisos: No tienes permisos para crear productos. Contacta al administrador.";
         statusEl.style.color = "#c00";
       } else {
-        statusEl.textContent = `Error al crear producto: ${productSaveErrorMessage(prodErr)}`;
+        statusEl.textContent = `Error al crear producto: ${meliSaveErrorMessage(prodErr) ?? productSaveErrorMessage(prodErr)}`;
         statusEl.style.color = "#c00";
       }
       if (saveBtn) saveBtn.disabled = false;
@@ -6541,7 +6910,7 @@ async function saveProduct(shouldReset = true) {
           "Error de permisos: No tienes permisos para actualizar productos. Contacta al administrador.";
         statusEl.style.color = "#c00";
       } else {
-        statusEl.textContent = `Error al actualizar producto: ${productSaveErrorMessage(upErr)}`;
+        statusEl.textContent = `Error al actualizar producto: ${meliSaveErrorMessage(upErr) ?? productSaveErrorMessage(upErr)}`;
         statusEl.style.color = "#c00";
       }
       if (saveBtn) saveBtn.disabled = false;
@@ -6889,6 +7258,16 @@ async function saveProduct(shouldReset = true) {
       if (insertErr) {
         console.warn("Error insertando tags jerárquicos:", insertErr);
       }
+    }
+
+    // Tras tags, leer temporada efectiva (trigger DB) para alinear UI
+    const { data: seasonRow } = await supabase
+      .from("products")
+      .select("season, season_source")
+      .eq("id", prodId)
+      .maybeSingle();
+    if (seasonRow) {
+      setSeasonUi(seasonRow.season, seasonRow.season_source === "manual" ? "manual" : "auto");
     }
   } catch (e) {
     console.warn("No se pudieron sincronizar tags jerárquicos", e);

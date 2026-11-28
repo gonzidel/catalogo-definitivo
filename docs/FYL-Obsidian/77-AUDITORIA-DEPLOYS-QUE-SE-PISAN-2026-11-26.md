@@ -74,3 +74,14 @@ El mismo patrón ya ocurrió el 2026-11-18/19: `996a46a` (aviso WhatsApp) y `cea
 - Dos migraciones `383_*` con el mismo número.
 - ~50 worktrees y ramas viejas: limpiar las ya integradas (decisión del usuario).
 - Evaluar conectar el proyecto Vercel `nj` a Git con ramas de producción protegidas, o un script único de publicación que ejecute la verificación de ancestro. Hoy el control es solo por regla + smoke.
+## Segundo caso (2026-11-28): admin de productos pisado (peso y medidas de cajas, características, Mercado Libre)
+
+**Clasificación:** TÉCNICA VERIFICADA (HTML/JS en vivo de `app.fylmoda.com.ar` + comparación de archivos + lectura de solo lectura en Supabase `fyl-core`).
+
+- **Síntoma:** en `/admin/products` ya no se cargan medidas/peso del producto ni otros datos.
+- **Causa:** esas funciones se desarrollaron en carpetas de staging de Firebase que **no son repos git** (`fyl-firebase-features-2026-10-27`, `fyl-firebase-meli-2026-10-27` y `b`, `fyl-firebase-enviar-local-2026-11-05`) y nunca se commitearon. `admin/product-features.js` y `admin/product-meli.js` no existen en ninguna rama; `admin/products.js` de esas carpetas tiene ~385 líneas más que `nj-main` (base `deccfe4`, 2026-10-10). El último `firebase deploy` (`admin/products.js` con Last-Modified 2026-11-26 13:22 GMT, worktree `fyl-promociones-banner` sobre `nj-main`) reemplazó el admin completo.
+- **Evidencia en vivo:** `/admin/products.html` sin `dim-height`; `/admin/product-features.js` y `/admin/product-meli.js` devuelven la página de inicio (fallback), no el archivo.
+- **La base de datos sí tiene todo:** `products.height_cm/width_cm/length_cm/weight_kg`, `capellada_material_id`, `base_material_id`, `base_altura_id`, `meli_enabled/meli_brand/meli_gender`, tabla `product_feature_options` y las RPC `rpc_admin_product_meli_readiness` y `rpc_admin_set_feature_option_default`. No hay que tocar SQL.
+- **Restauración preparada (sin publicar):** rama `fix/admin-restaurar-products-staging` desde `origin/nj-main`: archivos nuevos copiados, `products.html` y `size-charts-*` / `product-size-chart.js` iguales a `nj-main` + la mejora, y `products.js` / `product-pricing.js` con merge de tres vías (base `deccfe4`) sin conflictos. `node --check` OK en los 7 archivos.
+- **Otros cambios de admin que tampoco están en `nj-main`** y por lo tanto tampoco en vivo: `fix/enviar-al-local-sin-sent` (`36c6124`, Enviar al local sin marcar `sent`) y `fix/disk-io-purga-cron-y-admin-customers` (`fetchOrderById` sin `customers.name`). A decidir con el usuario.
+- **Regla agregada:** no publicar admin desde carpetas que no sean worktrees git; el smoke ahora cubre el admin.

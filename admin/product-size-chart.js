@@ -79,13 +79,28 @@ export function createProductSizeChartControl({ getCategory, canEdit }) {
     }
     const chart = findChart(state.selectedId);
     const parts = [];
+    const active = state.charts.filter((c) => chartStatus(c) !== "archived");
+    const complete = active.filter((c) => chartStatus(c) === "complete");
+    const drafts = active.filter((c) => chartStatus(c) === "draft");
     if (chart) {
       parts.push(`${MEASURE_TYPES[chart.measure_type] || chart.measure_type} · ${chart.rows_count} talles.`);
       if (chartStatus(chart) === "archived") {
         parts.push("Archivada: el producto la conserva, pero no se puede volver a elegir.");
+      } else if (chartStatus(chart) === "draft") {
+        parts.push("Incompleta: llená todas las medidas (cm) para poder asignarla al guardar.");
       }
     } else if (!state.selectedId) {
-      parts.push("Guía de medidas orientativa. No cambia talles ni stock.");
+      if (active.length === 0) {
+        parts.push(
+          "Todavía no hay tablas. Usá «+ Nueva», cargá los talles con su medida en cm y guardá. Solo las tablas completas se pueden asignar (no es como materiales: acá hace falta cada medida)."
+        );
+      } else if (complete.length === 0 && drafts.length > 0) {
+        parts.push(
+          `Hay ${drafts.length} tabla(s) en borrador. Completá todas las medidas (cm) — las incompletas aparecen deshabilitadas en la lista.`
+        );
+      } else {
+        parts.push("Guía de medidas orientativa. No cambia talles ni stock.");
+      }
     }
     if (state.notice) parts.push(state.notice);
     hint.textContent = parts.join(" ");
@@ -182,6 +197,8 @@ export function createProductSizeChartControl({ getCategory, canEdit }) {
   return {
     init: load,
     refreshVisibility,
+    /** Vuelve a pintar habilitando o apagando según el permiso actual. */
+    refreshEditable: () => render(),
 
     /** Producto cargado desde la base. */
     setProduct(sizeChartId) {
@@ -217,6 +234,18 @@ export function createProductSizeChartControl({ getCategory, canEdit }) {
       state.notice = warning;
       render();
       return warning;
+    },
+
+    /** Copia la tabla de talles de otro producto (solo si sigue activa y completa). Devuelve un aviso o "". */
+    copyFrom(sizeChartId) {
+      if (!sizeChartId) return "El producto origen no tiene tabla de talles.";
+      if (!state.loaded) return "No se pudieron cargar las tablas de talles.";
+      const chart = findChart(sizeChartId);
+      if (!chart || !isAssignable(chart)) return "La tabla de talles del producto origen está archivada o incompleta: no se copió.";
+      state.selectedId = sizeChartId;
+      state.notice = "";
+      render();
+      return "";
     },
 
     /** Campos a sumar al insert/update de products. */

@@ -21,8 +21,10 @@
  */
 
 const base = (process.argv[2] || "https://www.fylmoda.com.ar").replace(/\/+$/, "");
+/** Admin legacy (Firebase Hosting). Segundo argumento opcional. */
+const adminBase = (process.argv[3] || "https://app.fylmoda.com.ar").replace(/\/+$/, "");
 
-/** @type {{ name: string, path: string, kind: "html" | "redirect", expect: string }[]} */
+/** @type {{ name: string, path: string, kind: "html" | "redirect", expect: string, admin?: boolean }[]} */
 const MARKERS = [
   {
     name: "Banner de ofertas en el inicio (76-BANNER-OFERTAS)",
@@ -48,10 +50,31 @@ const MARKERS = [
     kind: "redirect",
     expect: "/producto/B6180",
   },
+  {
+    name: "Admin: Peso y medidas del producto (alto/ancho/largo/peso)",
+    path: "/admin/products.html",
+    kind: "html",
+    expect: "dim-height",
+    admin: true,
+  },
+  {
+    name: "Admin: caracteristicas de calzado (product-features.js)",
+    path: "/admin/product-features.js",
+    kind: "html",
+    expect: "Características de Calzado",
+    admin: true,
+  },
+  {
+    name: "Admin: datos Mercado Libre del producto (product-meli.js)",
+    path: "/admin/product-meli.js",
+    kind: "html",
+    expect: "Habilitar en Mercado Libre",
+    admin: true,
+  },
 ];
 
 async function check(marker) {
-  const url = base + marker.path;
+  const url = (marker.admin ? adminBase : base) + marker.path;
   try {
     if (marker.kind === "redirect") {
       const res = await fetch(url, { redirect: "manual" });
@@ -67,7 +90,7 @@ async function check(marker) {
 }
 
 let failed = 0;
-console.log(`Smoke de marcadores NJ contra ${base}\n`);
+console.log(`Smoke de marcadores NJ contra ${base} (admin: ${adminBase})\n`);
 for (const marker of MARKERS) {
   const { ok, detail } = await check(marker);
   if (!ok) failed += 1;

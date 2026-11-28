@@ -48,3 +48,5 @@ primero se integra.
 - No tapar un deploy que perdió algo con un "fix" que vuelve a copiar el código (ya pasó con el banner de ofertas): integrar la rama que lo tenía.
 - Si dos agentes tienen trabajo publicable a la vez, **uno publica primero y el otro rebasea/mergea sobre lo publicado** antes de su deploy. No publicar en paralelo.
 - Verificar el estado real en vivo (`www`), no solo los documentos: la documentación puede estar atrasada respecto de lo publicado.
+- **Prohibido publicar el admin desde una carpeta que no sea un worktree de git** (p. ej. `fyl-firebase-*`, copias para `firebase deploy`). Ahí se desarrollaron `product-features.js`, `product-meli.js`, peso/medidas y mejoras de `products.js` que nunca se commitearon y se perdieron al publicar otro admin. Todo cambio de `admin/` se commitea ANTES de copiarlo o desplegarlo, y el deploy sale de un worktree limpio que contenga `origin/nj-main`.
+- El smoke también cubre el admin (`https://app.fylmoda.com.ar`): correr `npm run smoke:prod-nj` después de un `firebase deploy` y agregar un marcador por cada funcionalidad nueva de `admin/`.

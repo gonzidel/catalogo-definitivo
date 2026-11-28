@@ -10,6 +10,10 @@ import {
   MEASURE_TYPES,
   chartMeasuresChanged,
   copyName,
+  describeFoot,
+  footHintText,
+  mlSizeNotice,
+  previewMlSizes,
   formatCm,
   generateSizeRange,
   isVersionConflict,
@@ -24,6 +28,24 @@ export async function listSizeCharts() {
   const { data, error } = await supabase.rpc("rpc_admin_size_charts_overview");
   if (error) throw error;
   return data || [];
+}
+
+/** Ajuste plantilla -> pie y tabla estándar argentina (solo administradores). Si falla, el editor sigue sin las ayudas. */
+export async function getFootReference(chartId = null) {
+  const { data, error } = await supabase.rpc("rpc_admin_foot_reference", { p_chart_id: chartId });
+  if (error) throw error;
+  return data;
+}
+
+/** Fija la holgura propia de la tabla (sube su versión). null = usar la general. */
+export async function setSizeChartAllowance(id, expectedVersion, allowance) {
+  const { data, error } = await supabase.rpc("rpc_admin_set_size_chart_allowance", {
+    p_id: id,
+    p_expected_version: expectedVersion,
+    p_allowance: allowance,
+  });
+  if (error) throw error;
+  return data;
 }
 
 export async function getSizeChart(id) {
@@ -91,6 +113,12 @@ const EDITOR_STYLES = `
 .sc-rows input.sc-invalid{border-color:#dc2626;background:#fef2f2}
 .sc-row-actions{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
 .sc-counter{font-size:12px;color:#555}
+.sc-foot{font-size:12px;color:#555;white-space:nowrap}
+.sc-foot.sc-moved{color:#b45309;font-weight:700}
+.sc-notice{padding:8px 10px;border-radius:6px;margin-bottom:10px;font-size:13px;line-height:1.4;display:none}
+.sc-notice.sc-n-warn{display:block;background:#fff7ed;border:2px solid #f59e0b;color:#7c2d12;font-weight:600}
+.sc-notice.sc-n-info{display:block;background:#eef4ff;border:1px solid #c7d7fe;color:#1e3a8a}
+.sc-type-hint{font-weight:400;font-size:12px;color:#555;line-height:1.4}
 .sc-footer{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;border-top:1px solid #eee;padding-top:12px}
 .sc-confirm{display:flex;flex-direction:column;gap:8px}
 .sc-confirm .sc-btn{width:100%}
@@ -149,6 +177,19 @@ export async function openSizeChartEditor({ chartId = null, duplicateFromId = nu
     el("option", { value: "", text: "Elegí qué se mide" }),
     ...Object.entries(MEASURE_TYPES).map(([value, text]) => el("option", { value, text })),
   ]);
+  const typeHint = el("small", { className: "sc-type-hint" });
+  let footRef = null;
+  const notice = el("div", { className: "sc-notice" });
+  const allowanceInput = el("input", { type: "number", min: 0, max: 3, step: 0.1, inputMode: "decimal" });
+  const allowanceLabel = el("label", { text: "Holgura entre el pie y la plantilla (cm)" }, [allowanceInput]);
+  allowanceLabel.style.display = "none";
+  let originalAllowance = null;
+  let mlPreview = null;
+  const currentAllowance = () => {
+    const raw = String(allowanceInput.value ?? "").replace(",", ".").trim();
+    const n = raw === "" ? NaN : Number(raw);
+    return Number.isFinite(n) ? n : Number(footRef?.insole_to_foot_cm) || 0;
+  };
   const notesInput = el("textarea", { maxLength: MAX_NOTES_LENGTH });
   notesInput.placeholder = "Opcional (ej: fábrica, horma)";
 
@@ -172,6 +213,7 @@ export async function openSizeChartEditor({ chartId = null, duplicateFromId = nu
       el("tr", {}, [
         el("th", { text: "Talle" }),
         el("th", { text: "Medida (cm)" }),
+        el("th", { text: "Pie aprox." }),
         el("th", { text: "" }),
       ]),
     ]),
@@ -192,9 +234,11 @@ export async function openSizeChartEditor({ chartId = null, duplicateFromId = nu
     title,
     banners,
     el("label", { text: "Nombre" }, [nameInput]),
-    el("label", { text: "Qué representa la medida" }, [typeSelect]),
+    el("label", { text: "Qué representa la medida" }, [typeSelect, typeHint]),
+    allowanceLabel,
     el("label", { text: "Notas" }, [notesInput]),
     rangeBox,
+    notice,
     rowsTable,
     el("div", { className: "sc-row-actions" }, [addRowBtn, sortBtn, counter]),
     messages,
@@ -253,7 +297,8 @@ export async function openSizeChartEditor({ chartId = null, duplicateFromId = nu
     });
     measureInput.placeholder = "22,5";
     const removeBtn = el("button", { type: "button", className: "sc-btn sc-danger", text: "×", title: "Quitar fila" });
-    const tr = el("tr", {}, [el("td", {}, [labelInput]), el("td", {}, [measureInput]), el("td", {}, [removeBtn])]);
+    const footCell = el("td", {}, [el("span", { className: "sc-foot" })]);
+    const tr = el("tr", {}, [el("td", {}, [labelInput]), el("td", {}, [measureInput]), footCell, el("td", {}, [removeBtn])]);
     removeBtn.addEventListener("click", () => {
       tr.remove();
       markDirty();
@@ -276,6 +321,23 @@ export async function openSizeChartEditor({ chartId = null, duplicateFromId = nu
   }
 
   function refreshRowHints() {
+    // 1) Cómo se publica la tabla en Mercado Libre (talle de ML por fila), antes de pintar las filas.
+    allowanceLabel.style.display = footRef && typeSelect.value === "largo_plantilla" ? "" : "none";
+    mlPreview = null;
+    if (footRef) {
+      const measured = Array.from(rowsBody.querySelectorAll("tr"))
+        .map((tr) => ({
+          label: tr.querySelector(".sc-label").value,
+          cm: parseCm(tr.querySelector(".sc-measure").value).value ?? null,
+        }))
+        .filter((r) => String(r.label).trim() && r.cm !== null);
+      mlPreview = previewMlSizes(measured, typeSelect.value, currentAllowance(), footRef.standard);
+    }
+    const mlNotice = mlSizeNotice(mlPreview);
+    notice.className = mlNotice ? `sc-notice sc-n-${mlNotice.kind}` : "sc-notice";
+    notice.textContent = mlNotice ? mlNotice.text : "";
+
+    // 2) Filas.
     let filled = 0;
     let missing = 0;
     rowsBody.querySelectorAll("tr").forEach((tr) => {
@@ -284,10 +346,30 @@ export async function openSizeChartEditor({ chartId = null, duplicateFromId = nu
       const parsed = parseCm(measureInput.value);
       measureInput.classList.toggle("sc-invalid", !parsed.ok);
       measureInput.classList.toggle("sc-missing", parsed.ok && parsed.value === null && !!label);
+      const footSpan = tr.querySelector(".sc-foot");
+      if (footSpan) {
+        const hit = mlPreview?.ok ? mlPreview.rows.find((x) => x.label === label) : null;
+        if (hit) {
+          const moved = hit.mlSize !== Number(label);
+          footSpan.textContent = `pie ${String(hit.foot).replace(".", ",")} cm · ML: ${hit.mlSize}${moved ? " ⚠" : ""}`;
+          footSpan.classList.toggle("sc-moved", moved);
+        } else {
+          footSpan.textContent = parsed.ok && parsed.value !== null ? footHintText(describeFoot(parsed.value, typeSelect.value, footRef)) : "";
+          footSpan.classList.remove("sc-moved");
+        }
+      }
       if (!label) return;
       filled += 1;
       if (!parsed.ok || parsed.value === null) missing += 1;
     });
+
+    typeHint.textContent = !footRef
+      ? ""
+      : typeSelect.value === "largo_plantilla"
+        ? "Medí la plantilla interna del calzado en cada talle. El sistema calcula el pie restando la holgura de abajo, y en Mercado Libre cada talle se publica con el número que le corresponde a ese pie (puede ser distinto del número del calzado: te avisamos). Es aproximado."
+        : typeSelect.value === "largo_pie"
+          ? "Cargá el largo del pie para el que sirve cada talle de este calzado. En Mercado Libre cada talle se publica con el número que le corresponde a ese pie."
+          : "";
     counter.textContent = missing
       ? `${filled} talle${filled === 1 ? "" : "s"} · ${missing} sin medida válida (se guarda como borrador)`
       : `${filled} talle${filled === 1 ? "" : "s"}`;
@@ -427,7 +509,15 @@ export async function openSizeChartEditor({ chartId = null, duplicateFromId = nu
     saveBtn.disabled = true;
     saveBtn.textContent = "Guardando…";
     try {
-      const saved = await saveSizeChart({ id: state.id, expectedVersion: state.version, payload: result.payload });
+      let saved = await saveSizeChart({ id: state.id, expectedVersion: state.version, payload: result.payload });
+      if (footRef && typeSelect.value === "largo_plantilla") {
+        const wanted = Math.round(currentAllowance() * 10) / 10;
+        const baseline = originalAllowance ?? Number(footRef.insole_to_foot_cm);
+        if (wanted !== baseline) {
+          const res = await setSizeChartAllowance(saved.id, saved.version, wanted);
+          saved = { ...saved, version: res?.version ?? saved.version };
+        }
+      }
       state.dirty = false;
       close();
       onSaved?.({ ...saved, name: result.payload.name });
@@ -487,6 +577,15 @@ export async function openSizeChartEditor({ chartId = null, duplicateFromId = nu
   setTitle("Nueva tabla de talles");
   refreshRowHints();
   document.body.appendChild(overlay);
+
+  getFootReference(chartId || duplicateFromId || null)
+    .then((ref) => {
+      footRef = ref;
+      originalAllowance = ref.chart_allowance_cm != null ? Number(ref.chart_allowance_cm) : null;
+      allowanceInput.value = String(originalAllowance ?? ref.insole_to_foot_cm ?? 1);
+      refreshRowHints();
+    })
+    .catch((error) => console.warn("[size-charts] sin referencia de pie:", error));
 
   const sourceId = chartId || duplicateFromId;
   if (sourceId) {

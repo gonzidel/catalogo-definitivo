@@ -34,6 +34,8 @@
 | 9 | TV local (pantalla + admin; SQL `383_tv_local_settings`) | `803d079` … `89ce501` | `feat/tv-local` | No |
 | 10 | Admin de ofertas: imagen de campaña validada (`admin/offers.*`, Firebase) | en `fix/home-banners-especiales` | `fix/home-banners-especiales` | No |
 
+| 11 | Admin legacy `/admin/products.html`: peso y medidas (alto/ancho/largo/peso), características de calzado (`product-features.js`), datos Mercado Libre (`product-meli.js`), tablas de talles ampliadas | **sin commit en ningún lado**: solo en la carpeta no-git `E:\PROYECTOS\fyl-firebase-enviar-local-2026-11-05` (Oct 27–28) | restaurado en `fix/admin-restaurar-products-staging` | Sí (3 marcadores de admin) |
+
 Cada vez que una funcionalidad llega a producción: agregar fila acá **y** su marcador en `test/smoke-prod-nj-markers.mjs`.
 
 ## Rama que reúne todo

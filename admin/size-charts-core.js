@@ -206,3 +206,117 @@ export function sizeChartErrorMessage(error) {
 export function isVersionConflict(error) {
   return /SIZE_CHART_VERSION_CONFLICT/.test(String(error?.message ?? ""));
 }
+
+/**
+ * A qué pie corresponde la medida de un calzado. Si la tabla es de plantilla se resta la holgura (reference.insole_to_foot_cm);
+ * si es de largo del pie se usa tal cual. Devuelve el pie en cm (una décima) y el talle estándar argentino más cercano
+ * (a menos de 0,4 cm), o null si no hay medida o referencia. Es una guía aproximada, no una medida exacta.
+ * @param {number|null} measureCm
+ * @param {string} measureType "largo_plantilla" | "largo_pie"
+ * @param {{insole_to_foot_cm:number, standard:Array<{size:number, foot_cm:number}>}|null} reference
+ */
+export function describeFoot(measureCm, measureType, reference) {
+  if (measureCm == null || !Number.isFinite(Number(measureCm)) || !reference) return null;
+  const offset = measureType === "largo_plantilla" ? Number(reference.insole_to_foot_cm) || 0 : 0;
+  const foot = Math.round((Number(measureCm) - offset) * 10) / 10;
+  let best = null;
+  for (const row of Array.isArray(reference.standard) ? reference.standard : []) {
+    const diff = Math.abs(Number(row.foot_cm) - foot);
+    if (!best || diff < best.diff) best = { size: row.size, diff };
+  }
+  return { foot, nearestSize: best && best.diff <= 0.4 ? best.size : null };
+}
+
+/** Texto corto para mostrar junto a la medida: "pie 23 cm ≈ talle 35". */
+export function footHintText(info) {
+  if (!info) return "";
+  const cm = String(info.foot).replace(".", ",");
+  return info.nearestSize != null ? `pie ${cm} cm ≈ talle ${info.nearestSize}` : `pie ${cm} cm`;
+}
+
+/**
+ * Cómo se publica en Mercado Libre una tabla de talles (misma regla que mapFootToSizes de supabase/functions/meli-publish/copy.ts):
+ * el talle de ML es el del PIE calculado (medida menos holgura si es de plantilla -> talle estándar más cercano), no el
+ * número marcado en el calzado. Como los talles del calzado pueden avanzar distinto al estándar, se aplica UN corrimiento a
+ * toda la tabla (mediana redondeada). Devuelve { ok, rows:[{label, foot, mlSize}], shift, maxDeviation } o { ok:false, error }.
+ * @param {Array<{label:string, cm:number|null}>} rows filas con medida válida
+ * @param {string} measureType "largo_plantilla" | "largo_pie"
+ * @param {number} allowanceCm holgura (solo se resta en largo_plantilla)
+ * @param {Array<{size:number, foot_cm:number}>} standard tabla estándar
+ */
+export function previewMlSizes(rows, measureType, allowanceCm, standard) {
+  const list = (rows || []).filter((r) => r && r.cm != null && Number.isFinite(Number(r.cm)));
+  if (!list.length) return { ok: false, error: "sin_medidas" };
+  const off = measureType === "largo_plantilla" ? Number(allowanceCm) || 0 : 0;
+  const parsed = [];
+  for (const r of list) {
+    const label = String(r.label ?? "").trim();
+    if (!/^\d{1,2}$/.test(label)) return { ok: false, error: `talle_no_numerico:${label}` };
+    const foot = Math.round((Number(r.cm) - off) * 10) / 10;
+    if (!(foot > 0)) return { ok: false, error: `largo_de_pie_invalido:${label}` };
+    let best = null;
+    for (const s of standard || []) {
+      const diff = Math.abs(Number(s.foot_cm) - foot);
+      if (!best || diff < best.diff) best = { size: Number(s.size), diff };
+    }
+    if (!best || best.diff > 0.4) return { ok: false, error: `pie_fuera_de_referencia:${label}` };
+    parsed.push({ label, n: Number(label), foot, want: best.size });
+  }
+  const deltas = parsed.map((r) => r.want - r.n).sort((a, b) => a - b);
+  const mid = deltas.length >> 1;
+  const median = deltas.length % 2 ? deltas[mid] : (deltas[mid - 1] + deltas[mid]) / 2;
+  // Solo se corre hacia ABAJO (calza más chico). Si calza más grande se mantienen los números marcados.
+  const rawShift = Math.round(median);
+  const shift = Math.min(rawShift, 0);
+  const seen = new Set();
+  const out = [];
+  let maxDeviation = 0;
+  for (const r of parsed) {
+    const mlSize = r.n + shift;
+    if (seen.has(mlSize)) return { ok: false, error: `talles_repetidos:${r.label}` };
+    seen.add(mlSize);
+    out.push({ label: r.label, foot: r.foot, mlSize });
+    maxDeviation = Math.max(maxDeviation, Math.abs(r.want - r.n - shift));
+  }
+  return { ok: true, rows: out, shift, rawShift, maxDeviation };
+}
+
+/** Aviso visible sobre cómo se publica la tabla en Mercado Libre. kind: "warn" | "error" | "info" | null (sin aviso). */
+export function mlSizeNotice(preview) {
+  if (!preview) return null;
+  if (!preview.ok) {
+    const [code] = String(preview.error).split(":");
+    if (code === "sin_medidas") return null;
+    const text = {
+      talle_no_numerico: "Para publicar en Mercado Libre los talles tienen que ser números enteros (35, 36…); un talle como «35/36» no se puede publicar.",
+      largo_de_pie_invalido: "Hay una medida demasiado chica: el pie calculado queda en cero o negativo.",
+      pie_fuera_de_referencia: "Hay una medida de pie que no corresponde a ningún talle de la referencia (21 a 46).",
+      talles_repetidos: "Dos talles caen en el mismo talle de Mercado Libre.",
+    }[code] || "No se puede calcular el talle de Mercado Libre con estas medidas.";
+    return { kind: "warn", text };
+  }
+  if (preview.rawShift > 0) {
+    const up = preview.rawShift;
+    return {
+      kind: "info",
+      text: `Este calzado calza ${up} talle${up === 1 ? "" : "s"} más grande que su número. En Mercado Libre se publica con el número marcado (el 36 sigue siendo 36); no se corre hacia arriba. Revisá que las medidas sean correctas.`,
+    };
+  }
+  if (preview.shift === 0 && preview.maxDeviation < 2) {
+    return { kind: "info", text: "Los talles se publican en Mercado Libre con el mismo número que tiene el calzado." };
+  }
+  const abs = Math.abs(preview.shift);
+  const examples = preview.rows.slice(0, 3).map((r) => `${r.label} → ${r.mlSize}`).join(", ");
+  const parts = [];
+  if (preview.shift !== 0) {
+    parts.push(
+      `ATENCIÓN: este calzado calza ${abs} talle${abs === 1 ? "" : "s"} más ${preview.shift < 0 ? "chico" : "grande"} que su número. ` +
+        `En Mercado Libre se publica corrido: ${examples}${preview.rows.length > 3 ? "…" : ""}. ` +
+        "El stock y los pedidos siguen siendo los del talle marcado en el calzado."
+    );
+  }
+  if (preview.maxDeviation >= 2) {
+    parts.push("Las medidas de esta tabla no avanzan parejo con el estándar: revisalas.");
+  }
+  return { kind: "warn", text: parts.join(" ") };
+}
